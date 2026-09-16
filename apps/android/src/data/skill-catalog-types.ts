@@ -1,28 +1,28 @@
 import type { PrivateAssetSource } from "./private-transfer";
 
 export type SkillSource = "repo" | "user" | "system" | "admin";
-export type SkillPlugin = { id: string; label: string; icon: PrivateAssetSource | null };
+export type SkillPlugin = { icon: PrivateAssetSource | null; id: string; label: string };
 type SkillPluginLink =
-  | { status: "resolved"; plugin: SkillPlugin | null }
+  | { plugin: SkillPlugin | null; status: "resolved" }
   | { status: "unavailable" };
 
 /** Catalog metadata is optional only for persisted controls from older clients. */
 export type CatalogSkill = {
-  name: string;
-  path: string;
+  catalog?: {
+    description: string;
+    pluginLink: SkillPluginLink;
+    source: SkillSource | null;
+    title: string;
+  };
   description: string;
   enabled: boolean;
-  catalog?: {
-    title: string;
-    description: string;
-    source: SkillSource | null;
-    pluginLink: SkillPluginLink;
-  };
+  name: string;
+  path: string;
 };
 
 export type InstalledSkillPlugin = {
+  marketplacePath: string | null;
   plugin: SkillPlugin;
   pluginName: string;
-  marketplacePath: string | null;
   remoteMarketplaceName: string | null;
 };

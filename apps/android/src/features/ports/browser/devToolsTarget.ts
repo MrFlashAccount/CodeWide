@@ -1,17 +1,17 @@
-import { WebView } from "react-native-webview";
+import type { WebView } from "react-native-webview";
 import type { NativeBrowserDevToolsBridge } from "../../../native/native-transport";
 
 /** Inspectable browser target returned by the local DevTools endpoint. */
 export type DevToolsTarget = {
+  description?: string;
   id: string;
-  type: string;
   title: string;
+  type: string;
   url: string;
   webSocketDebuggerUrl: string;
-  description?: string;
 };
 
-export type InspectablePageMarker = { id: string; apply(): void; restore(): void };
+export type InspectablePageMarker = { apply: () => void; id: string; restore: () => void };
 
 export async function findInspectablePage(
   endpoint: NativeBrowserDevToolsBridge,
@@ -24,12 +24,15 @@ export async function findInspectablePage(
       marker.apply();
       await delay(50);
       const response = await fetch(
-        `http://${endpoint.host}:${endpoint.port}/json/list?codewide_token=${endpoint.token}`,
+        `http://${endpoint.host}:${String(endpoint.port)}/json/list?codewide_token=${endpoint.token}`,
       );
-      if (!response.ok) throw new Error(`DevTools discovery returned HTTP ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`DevTools discovery returned HTTP ${String(response.status)}`);
+      }
       const payload: unknown = await response.json();
-      if (!Array.isArray(payload))
+      if (!Array.isArray(payload)) {
         throw new Error("DevTools discovery returned an invalid target list");
+      }
       const targets = payload
         .filter(isDevToolsTarget)
         .filter((target) => target.type === "page" && !isBundledDevToolsUrl(target.url));
@@ -43,13 +46,15 @@ export async function findInspectablePage(
           })),
         );
         const exact = probes.find((probe) => probe.matched);
-        if (exact !== undefined) return exact.candidate;
+        if (exact !== undefined) {
+          return exact.candidate;
+        }
       }
       lastError = new Error(
-        `No CDP target owns the browser WebView at ${browserLocation(pageUrl)} (${targets.length} targets probed)`,
+        `No CDP target owns the browser WebView at ${browserLocation(pageUrl)} (${String(targets.length)} targets probed)`,
       );
-    } catch (cause) {
-      lastError = cause;
+    } catch (error) {
+      lastError = error;
     }
     await delay(100);
   }
@@ -63,8 +68,8 @@ export function chromiumDevToolsUrl(
   target: DevToolsTarget,
 ): string {
   const websocket = proxiedWebSocketUrl(endpoint, target).replace(/^ws:\/\//u, "");
-  const query = new URLSearchParams({ ws: websocket, can_dock: "true" });
-  return `http://${endpoint.host}:${endpoint.port}/browser-devtools/${endpoint.token}/front_end/inspector.html?${query.toString()}`;
+  const query = new URLSearchParams({ can_dock: "true", ws: websocket });
+  return `http://${endpoint.host}:${String(endpoint.port)}/browser-devtools/${endpoint.token}/front_end/inspector.html?${query.toString()}`;
 }
 
 export function proxiedWebSocketUrl(
@@ -77,7 +82,7 @@ export function proxiedWebSocketUrl(
   }
   const path = `${discoveredSocket.pathname}${discoveredSocket.search}`;
   const separator = discoveredSocket.search.length > 0 ? "&" : "?";
-  return `ws://${endpoint.host}:${endpoint.port}${path}${separator}codewide_token=${encodeURIComponent(endpoint.token)}`;
+  return `ws://${endpoint.host}:${String(endpoint.port)}${path}${separator}codewide_token=${encodeURIComponent(endpoint.token)}`;
 }
 
 export function isDevToolsTarget(value: unknown): value is DevToolsTarget {
@@ -100,7 +105,7 @@ export function isDevToolsTarget(value: unknown): value is DevToolsTarget {
   );
 }
 
-export function targetContainsMarker(
+export async function targetContainsMarker(
   endpoint: NativeBrowserDevToolsBridge,
   target: DevToolsTarget,
   marker: string,
@@ -109,14 +114,19 @@ export function targetContainsMarker(
     let settled = false;
     let socket: WebSocket | null = null;
     const finish = (matched: boolean) => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       clearTimeout(timeout);
-      if (socket !== null && socket.readyState < WebSocket.CLOSING)
+      if (socket !== null && socket.readyState < WebSocket.CLOSING) {
         socket.close(1000, "probe complete");
+      }
       resolve(matched);
     };
-    const timeout = setTimeout(() => finish(false), 750);
+    const timeout = setTimeout(() => {
+      finish(false);
+    }, 750);
     try {
       socket = new WebSocket(proxiedWebSocketUrl(endpoint, target));
       socket.onopen = () => {
@@ -139,8 +149,9 @@ export function targetContainsMarker(
             typeof response !== "object" ||
             !("id" in response) ||
             response.id !== 1
-          )
+          ) {
             return;
+          }
           const result = "result" in response ? response.result : null;
           const nested =
             result !== null && typeof result === "object" && "result" in result
@@ -155,8 +166,12 @@ export function targetContainsMarker(
           finish(false);
         }
       };
-      socket.onerror = () => finish(false);
-      socket.onclose = () => finish(false);
+      socket.onerror = () => {
+        finish(false);
+      };
+      socket.onclose = () => {
+        finish(false);
+      };
     } catch {
       finish(false);
     }
@@ -165,9 +180,10 @@ export function targetContainsMarker(
 
 export function markInspectablePage(target: WebView | null): InspectablePageMarker {
   const id = `__codewide_devtools_target_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-  if (target === null) return { id, apply() {}, restore() {} };
+  if (target === null) {
+    return { apply() {}, id, restore() {} };
+  }
   return {
-    id,
     apply() {
       try {
         target.injectJavaScript(`
@@ -178,6 +194,7 @@ export function markInspectablePage(target: WebView | null): InspectablePageMark
         // Discovery retries before reporting that no exact target was found.
       }
     },
+    id,
     restore() {
       try {
         target.injectJavaScript(`
@@ -219,8 +236,10 @@ export function normalizePath(path: string): string {
   return path.length > 1 ? path.replace(/\/$/u, "") : path;
 }
 
-export function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+export async function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }
 
 export function browserLocation(url: string): string {

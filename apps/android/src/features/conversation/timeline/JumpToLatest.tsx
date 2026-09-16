@@ -6,25 +6,25 @@ import { styles } from "./JumpToLatest.styles";
 import type { JumpToLatestProps } from "./JumpToLatestContract";
 
 export function JumpToLatest({
-  newItemCount,
   bottomChromeHeight,
   jumpTimelineToLatest,
+  newItemCount,
 }: JumpToLatestProps) {
   return (
     <Pressable
-      accessibilityRole="button"
       accessibilityLabel={
-        newItemCount > 0 ? `Jump to latest, ${newItemCount} new turns` : "Jump to latest"
+        newItemCount > 0 ? `Jump to latest, ${String(newItemCount)} new turns` : "Jump to latest"
       }
-      testID="jump-to-latest"
+      accessibilityRole="button"
+      onPress={jumpTimelineToLatest}
       style={({ pressed }) => [
         styles.jumpToLatest,
         { bottom: bottomChromeHeight + spacing.xs },
         pressed && styles.pressed,
       ]}
-      onPress={jumpTimelineToLatest}
+      testID="jump-to-latest"
     >
-      <Ionicons name="chevron-down" size={iconSize.navigation} color={colors.onPrimaryContainer} />
+      <Ionicons color={colors.onPrimaryContainer} name="chevron-down" size={iconSize.navigation} />
       {newItemCount > 0 && (
         <View style={styles.jumpToLatestBadge}>
           <Text accessibilityLiveRegion="polite" style={styles.jumpToLatestBadgeText}>

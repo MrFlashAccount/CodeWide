@@ -1,56 +1,58 @@
 /** Authenticated bidirectional channel leased from the native transport. */
 export type AuthenticatedDuplexChannel = {
+  addEventListener: {
+    (type: "open", listener: () => void): void;
+    (type: "message", listener: (event: { data: unknown }) => void): void;
+    (type: "close", listener: () => void): void;
+    (type: "error", listener: () => void): void;
+  };
+  close: (code?: number, reason?: string) => void;
   readonly readyState: number;
-  send(data: string): void;
-  close(code?: number, reason?: string): void;
-  addEventListener(type: "open", listener: () => void): void;
-  addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
-  addEventListener(type: "close", listener: () => void): void;
-  addEventListener(type: "error", listener: () => void): void;
+  send: (data: string) => void;
 };
 
 /** Closed request set accepted by the authenticated native transport. */
 export type AuthenticatedRequest =
-  | { operation: "file.download"; rootId: string; path: string; head: boolean }
-  | { operation: "file.preview"; path: string; head: boolean }
-  | { operation: "file.upload"; rootId: string; path: string; bodyBase64: string }
-  | { operation: "file.uploadStatus"; rootId: string; path: string }
-  | { operation: "file.uploadCancel"; rootId: string; path: string }
+  | { head: boolean; operation: "file.download"; path: string; rootId: string }
+  | { head: boolean; operation: "file.preview"; path: string }
+  | { bodyBase64: string; operation: "file.upload"; path: string; rootId: string }
+  | { operation: "file.uploadStatus"; path: string; rootId: string }
+  | { operation: "file.uploadCancel"; path: string; rootId: string }
   | {
-      operation: "content.read";
       digest: string;
-      offset: number | null;
-      limit: number | null;
       head: boolean;
+      limit: number | null;
+      offset: number | null;
+      operation: "content.read";
     }
   | { operation: "media.materialize"; sourceUrl: string }
   | { operation: "media.streamCreate"; sourceUrl: string }
   | {
-      operation: "media.streamRead";
-      id: string;
-      offset: number;
-      limit: number;
       head: boolean;
+      id: string;
+      limit: number;
+      offset: number;
+      operation: "media.streamRead";
     }
-  | { operation: "media.read"; id: string; head: boolean }
+  | { head: boolean; id: string; operation: "media.read" }
   | { operation: "ports.list" }
   | { operation: "tunnel.create"; port: number; ttlSeconds: number | null }
   | { operation: "tunnel.delete"; tunnelId: string };
 
 /** Content response returned by an authenticated native request. */
 export type AuthenticatedResponse = {
-  status: number;
-  contentType: string;
   bodyBase64: string;
+  contentType: string;
+  status: number;
 };
 
 /** Shared authenticated transport authority for one saved server. */
 export type AuthenticatedTransportLease = {
-  readonly savedServerId: string;
-  openDuplex(purpose: "sync-v2" | "terminal-v2" | "voice-v2"): AuthenticatedDuplexChannel;
-  request(
+  openDuplex: (purpose: "sync-v2" | "terminal-v2" | "voice-v2") => AuthenticatedDuplexChannel;
+  release: () => Promise<void>;
+  request: (
     purpose: "files-v2" | "media-v2" | "ports-v2" | "tunnels-v2",
     input: AuthenticatedRequest,
-  ): Promise<AuthenticatedResponse>;
-  release(): Promise<void>;
+  ) => Promise<AuthenticatedResponse>;
+  readonly savedServerId: string;
 };

@@ -1,4 +1,4 @@
-import { useMemo, useTransition } from "react";
+import { useTransition } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { SubagentListProjection } from "../../../../../../src/data/subagent-projection";
@@ -10,6 +10,7 @@ import type { SubagentRouteSelection } from "../../../../../../src/features/agen
 import { SUBAGENT_LIST_LIMIT } from "../../../../../../src/features/agents/agentSelection";
 import { SubagentConversation } from "../../../../../../src/features/conversation/SubagentConversation";
 import { useTurnChangesLoader } from "../../../../../../src/features/changes/turnChanges";
+import { useConstant } from "../../../../../../src/react/useConstant";
 import { workspaceFeatures as features } from "../../../../../../src/features/workspace/createWorkspaceFeatures";
 import {
   threadIdParam,
@@ -52,8 +53,6 @@ export function V1AgentsRouteContent(props: V1AgentsRouteContentProps): React.JS
     return (
       <RouteUnavailable
         message="This thread link is invalid."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           router.dismissTo("/v1");
         }}
@@ -75,9 +74,7 @@ function ValidAgentsRoute(props: ValidAgentsRouteProps): React.JSX.Element {
   const router = useRouter();
   const resources = useWorkspaceRouteResources();
   const { loadTurnChanges } = useTurnChangesLoader(loadTurnItems);
-  // WHY: The projection cache must retain source identity across renders.
-  // oxlint-disable-next-line react-doctor/react-compiler-no-manual-memoization
-  const projection = useMemo(() => new SubagentListProjection(), []);
+  const projection = useConstant(() => new SubagentListProjection());
   const [, startSubagentTransition] = useTransition();
   const connectionId = params.connectionId.value;
   const threadId = params.threadId.value;
@@ -101,8 +98,6 @@ function ValidAgentsRoute(props: ValidAgentsRouteProps): React.JSX.Element {
     return (
       <RouteUnavailable
         message="Thread details are not ready."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={back}
         title="Subagents unavailable"
       />
@@ -124,31 +119,19 @@ function ValidAgentsRoute(props: ValidAgentsRouteProps): React.JSX.Element {
   return (
     <RouteSubagentWorkspace
       connectionId={connectionId}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onBack={back}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={back}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onSelect={select}
       parentThread={threadDetails.getThread(connectionId, parentThreadId)}
       parentThreadId={parentThreadId}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       renderThread={(viewProps) => (
         <SubagentConversation
           details={resources.runtime.threadDetails}
           fixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-          // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
           getTransferAccess={async (forceRefresh) =>
             features.attachments.transferAccess(connectionId, forceRefresh)
           }
           loadTurnChanges={loadTurnChanges}
-          // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
           refresh={async (rootThreadId) =>
             features.agents.refreshSubagents(connectionId, rootThreadId)
           }

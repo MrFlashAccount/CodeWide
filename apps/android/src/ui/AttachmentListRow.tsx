@@ -9,31 +9,31 @@ import type { AttachmentListRowProps } from "./AttachmentListRow.types";
 import { AppText } from "./Typography";
 
 const leadingIcons = {
-  image: "image-outline",
   audio: "musical-note-outline",
   file: "document-attach-outline",
+  image: "image-outline",
 } as const;
-const trailingIcons = { open: "open-outline", download: "download-outline" } as const;
+const trailingIcons = { download: "download-outline", open: "open-outline" } as const;
 
 /** RN fallback; Android supplies a Compose-only cell with the same display contract. */
 export function AttachmentListRow(props: AttachmentListRowProps) {
   return (
     <View style={[styles.surface, styles[props.position], localStyles.cell]}>
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={props.accessibilityLabel}
+        accessibilityRole="button"
         onPress={props.onPress}
         style={({ pressed }) => [styles.row, localStyles.cell, pressed && styles.pressed]}
       >
         <View pointerEvents="none" style={styles.slot}>
           <Ionicons
+            color={colors.textMuted}
             name={leadingIcons[props.leading]}
             size={iconSize.action}
-            color={colors.textMuted}
           />
         </View>
         <View pointerEvents="none" style={styles.text}>
-          <AppText numberOfLines={1} ellipsizeMode="middle" style={styles.title}>
+          <AppText ellipsizeMode="middle" numberOfLines={1} style={styles.title}>
             {props.title}
           </AppText>
           <AppText numberOfLines={1} style={styles.description}>
@@ -43,9 +43,9 @@ export function AttachmentListRow(props: AttachmentListRowProps) {
         <View pointerEvents="none" style={styles.slot}>
           {props.trailing !== undefined && (
             <Ionicons
+              color={colors.textDim}
               name={trailingIcons[props.trailing]}
               size={iconSize.inline}
-              color={colors.textDim}
             />
           )}
         </View>

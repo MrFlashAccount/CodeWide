@@ -23,7 +23,7 @@ export function QueueDragHandle({
   onDrop,
 }: {
   disabled: boolean;
-  onDrop(offset: number): void;
+  onDrop: (offset: number) => void;
 }) {
   const translation = useSharedValue(0);
   const dragStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translation.get() }] }));
@@ -36,7 +36,9 @@ export function QueueDragHandle({
     .onEnd((event) => {
       const offset = Math.round(event.translationY / QUEUE_DRAG_ROW_STEP);
       translation.set(withTiming(0, { duration: 140 }));
-      if (offset !== 0) runOnJS(onDrop)(offset);
+      if (offset !== 0) {
+        runOnJS(onDrop)(offset);
+      }
     })
     .onFinalize(() => {
       translation.set(withTiming(0, { duration: 140 }));
@@ -48,9 +50,9 @@ export function QueueDragHandle({
         style={[styles.queueDragHandle, dragStyle]}
       >
         <Ionicons
+          color={disabled ? colors.textDim : colors.textMuted}
           name="reorder-three"
           size={iconSize.navigation}
-          color={disabled ? colors.textDim : colors.textMuted}
         />
       </Reanimated.View>
     </GestureDetector>
@@ -58,25 +60,25 @@ export function QueueDragHandle({
 }
 
 export function QueueManagerSheet({
-  visible,
-  onClose,
+  activeTurnId,
   embedded = false,
   items,
-  activeTurnId,
-  onEdit,
   onCancel,
+  onClose,
+  onEdit,
   onMove,
   onSteer,
+  visible,
 }: {
-  visible: boolean;
-  onClose(): void;
+  activeTurnId: string | null;
   embedded?: boolean;
   items: QueuedPrompt[];
-  activeTurnId: string | null;
-  onEdit?(item: QueuedPrompt): void;
-  onCancel?(commandId: string): Promise<void>;
-  onMove?(commandId: string, direction: -1 | 1): Promise<void>;
-  onSteer?(commandId: string, expectedTurnId: string): Promise<void>;
+  onCancel?: (commandId: string) => Promise<void>;
+  onClose: () => void;
+  onEdit?: (item: QueuedPrompt) => void;
+  onMove?: (commandId: string, direction: -1 | 1) => Promise<void>;
+  onSteer?: (commandId: string, expectedTurnId: string) => Promise<void>;
+  visible: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,16 +87,20 @@ export function QueueManagerSheet({
     setError(null);
     try {
       await action();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Queue action failed");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Queue action failed");
     }
     setBusy(false);
   };
   const moveBy = async (item: QueuedPrompt, index: number, offset: number) => {
-    if (onMove === undefined || item.state !== "queued") return;
+    if (onMove === undefined || item.state !== "queued") {
+      return;
+    }
     const target = Math.max(0, Math.min(items.length - 1, index + offset));
     const direction: -1 | 1 = target < index ? -1 : 1;
     for (let step = 0; step < Math.abs(target - index); step += 1) {
+      // WHY: Each move changes the authoritative queue position consumed by the following move.
+      // oxlint-disable-next-line react-doctor/async-await-in-loop
       await onMove(item.commandId, direction);
     }
   };
@@ -110,20 +116,22 @@ export function QueueManagerSheet({
         <Text style={styles.menuNotice}>Nothing is waiting for this thread.</Text>
       )}
       <AppSheetScrollView
-        style={styles.menuScroll}
         contentContainerStyle={styles.menuScrollContent}
         keyboardShouldPersistTaps="handled"
+        style={styles.menuScroll}
       >
         {items.map((item, index) => (
           <View key={item.commandId} style={styles.queueRow}>
             <View style={styles.queueCompactRow}>
               <QueueDragHandle
                 disabled={busy || item.state !== "queued" || onMove === undefined}
-                onDrop={(offset) => void run(() => moveBy(item, index, offset))}
+                onDrop={(offset) => void run(async () => moveBy(item, index, offset))}
               />
               <View style={styles.queueBody}>
-                <Text numberOfLines={2} ellipsizeMode="tail" style={styles.queueText}>
-                  {item.text || item.attachments.map(({ name }) => name).join(", ")}
+                <Text ellipsizeMode="tail" numberOfLines={2} style={styles.queueText}>
+                  {item.text === ""
+                    ? item.attachments.map(({ name }) => name).join(", ")
+                    : item.text}
                 </Text>
                 <View style={styles.queueMetaRow}>
                   <Text numberOfLines={1} style={styles.queueTime}>
@@ -147,11 +155,13 @@ export function QueueManagerSheet({
                   accessibilityLabel="Steer queued prompt"
                   disabled={busy || item.state !== "queued" || onSteer === undefined}
                   onPress={() =>
-                    void run(() => onSteer?.(item.commandId, activeTurnId) ?? Promise.resolve())
+                    void run(
+                      async () => onSteer?.(item.commandId, activeTurnId) ?? Promise.resolve(),
+                    )
                   }
                   style={styles.queueSteerButton}
                 >
-                  <InlineIcon name="navigate-outline" role="label" color={colors.onPrimary} />
+                  <InlineIcon color={colors.onPrimary} name="navigate-outline" role="label" />
                   <Text style={styles.queueSteerLabel}>Steer</Text>
                 </Pressable>
               )}
@@ -161,15 +171,17 @@ export function QueueManagerSheet({
                 onPress={() => onEdit?.(item)}
                 style={styles.headerIcon}
               >
-                <Ionicons name="create-outline" size={iconSize.action} color={colors.text} />
+                <Ionicons color={colors.text} name="create-outline" size={iconSize.action} />
               </Pressable>
               <Pressable
                 accessibilityLabel="Delete queued prompt"
                 disabled={busy || item.state === "uncertain" || onCancel === undefined}
-                onPress={() => void run(() => onCancel?.(item.commandId) ?? Promise.resolve())}
+                onPress={() =>
+                  void run(async () => onCancel?.(item.commandId) ?? Promise.resolve())
+                }
                 style={styles.headerIcon}
               >
-                <Ionicons name="trash-outline" size={iconSize.action} color={colors.red} />
+                <Ionicons color={colors.red} name="trash-outline" size={iconSize.action} />
               </Pressable>
             </View>
             {item.lastError !== null && <Text style={styles.errorText}>{item.lastError}</Text>}
@@ -183,17 +195,19 @@ export function QueueManagerSheet({
     content
   ) : (
     <AppSheet
-      isOpen={visible}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
       contentProps={{
+        contentContainerClassName: "h-full",
         dismissLabel: "Close queue",
-        index: 0,
-        snapPoints: ["55%", "90%"],
         enableDynamicSizing: false,
         enableOverDrag: false,
-        contentContainerClassName: "h-full",
+        index: 0,
+        snapPoints: ["55%", "90%"],
+      }}
+      isOpen={visible}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
       }}
     >
       {content}
@@ -204,13 +218,17 @@ export function QueueManagerSheet({
 import type { InlineQueueOverlayItem } from "./inlineQueueContract";
 
 export function projectInlineQueue(visibleQueuedPrompts: QueuedPrompt[]) {
-  const inlineQueueOverlayItems: InlineQueueOverlayItem[] = visibleQueuedPrompts.map((entry) => ({
-    id: entry.commandId,
-    text: entry.text || entry.attachments.map(({ name }) => name).join(", ") || "Attachment",
-    attachmentCount: entry.attachments.length,
-    createdAt: entry.createdAt,
-    state: entry.state,
-    lastError: entry.lastError,
-  }));
+  const inlineQueueOverlayItems: InlineQueueOverlayItem[] = visibleQueuedPrompts.map((entry) => {
+    const attachmentNames = entry.attachments.map(({ name }) => name).join(", ");
+    return {
+      attachmentCount: entry.attachments.length,
+      createdAt: entry.createdAt,
+      id: entry.commandId,
+      lastError: entry.lastError,
+      state: entry.state,
+      text:
+        entry.text !== "" ? entry.text : attachmentNames === "" ? "Attachment" : attachmentNames,
+    };
+  });
   return { inlineQueueOverlayItems };
 }

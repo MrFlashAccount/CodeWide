@@ -4,7 +4,7 @@ import { parseHistoryTurns } from "./thread-cursor-sync";
 import { isThreadHistorySourceWitness } from "./thread-history-source-witness";
 
 /** The Companion semantic history endpoints publish terminal message summaries. */
-export type ThreadHistorySummaryPage = { turns: Turn[]; hasMore: boolean; sourceWitness: string };
+export type ThreadHistorySummaryPage = { hasMore: boolean; sourceWitness: string; turns: Turn[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -21,7 +21,9 @@ function isOptionalTime(value: unknown): boolean {
 }
 
 function isUserInput(value: unknown): boolean {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {
+    return false;
+  }
   switch (value.type) {
     case "text":
       return (
@@ -51,7 +53,9 @@ function isUserInput(value: unknown): boolean {
 }
 
 function isSummaryItem(value: unknown): boolean {
-  if (!isRecord(value) || !isId(value.id)) return false;
+  if (!isRecord(value) || !isId(value.id)) {
+    return false;
+  }
   switch (value.type) {
     case "userMessage":
       return (
@@ -84,8 +88,9 @@ function isSummaryTurn(value: unknown): boolean {
     (value.error !== undefined &&
       value.error !== null &&
       (!isRecord(value.error) || typeof value.error.message !== "string"))
-  )
+  ) {
     return false;
+  }
   if (value.items === undefined) {
     // Bounded projections may externalize a whole turn. Retain its canonical
     // identity and let the existing Conversation adapter mark content unloaded.
@@ -102,10 +107,14 @@ function isSummaryTurn(value: unknown): boolean {
       typeof whole.contentType === "string"
     );
   }
-  if (!Array.isArray(value.items) || !value.items.every(isSummaryItem)) return false;
+  if (!Array.isArray(value.items) || !value.items.every(isSummaryItem)) {
+    return false;
+  }
   const ids = new Set<string>();
   for (const item of value.items) {
-    if (!isRecord(item) || !isId(item.id) || ids.has(item.id)) return false;
+    if (!isRecord(item) || !isId(item.id) || ids.has(item.id)) {
+      return false;
+    }
     ids.add(item.id);
   }
   return (
@@ -129,8 +138,9 @@ export function parseThreadHistorySummaryPage(
     value.data.length > requestedLimit ||
     (value.hasMore && value.data.length === 0) ||
     !value.data.every(isSummaryTurn)
-  )
+  ) {
     throw new Error("Companion returned an invalid history summary page");
+  }
   const ids = new Set<string>([anchorTurnId]);
   for (const turn of value.data) {
     if (!isRecord(turn) || !isId(turn.id) || ids.has(turn.id)) {
@@ -139,6 +149,8 @@ export function parseThreadHistorySummaryPage(
     ids.add(turn.id);
   }
   const turns = parseHistoryTurns(value.data);
-  if (turns === null) throw new Error("Companion returned an invalid history summary page");
-  return { turns, hasMore: value.hasMore, sourceWitness: value.sourceWitness };
+  if (turns === null) {
+    throw new Error("Companion returned an invalid history summary page");
+  }
+  return { hasMore: value.hasMore, sourceWitness: value.sourceWitness, turns };
 }

@@ -10,18 +10,18 @@ import type { ConnectionSheetSessionProps } from "./connectionSheetContract";
 import type { PairingSession } from "./pairingSession";
 
 export function PairingReview({
-  emoji,
   displayName,
-  setEmoji,
-  setDisplayName,
+  emoji,
   endpointLabel,
-  minutesLeft,
   error,
   localError,
-  onRetryStartup,
-  saving,
   localReady,
+  minutesLeft,
+  onRetryStartup,
   save,
+  saving,
+  setDisplayName,
+  setEmoji,
   setMode,
 }: Pick<
   PairingSession,
@@ -41,51 +41,55 @@ export function PairingReview({
       <View style={styles.pairingReviewCard}>
         <View style={styles.pairingIdentityRow}>
           <TextInput
-            voiceInput={false}
             accessibilityLabel="Server emoji"
-            value={emoji}
             onChangeText={setEmoji}
             style={styles.pairingEmojiInput}
+            value={emoji}
+            voiceInput={false}
           />
           <TextInput
             accessibilityLabel="Server name"
-            value={displayName}
             onChangeText={setDisplayName}
             selectTextOnFocus
             style={styles.pairingNameInput}
+            value={displayName}
           />
         </View>
         <View style={styles.pairingServerMeta}>
-          <Ionicons name="lock-closed-outline" size={iconSize.inline} color={colors.green} />
-          <Text numberOfLines={1} ellipsizeMode="middle" style={styles.pairingEndpoint}>
+          <Ionicons color={colors.green} name="lock-closed-outline" size={iconSize.inline} />
+          <Text ellipsizeMode="middle" numberOfLines={1} style={styles.pairingEndpoint}>
             {endpointLabel}
           </Text>
         </View>
         <View style={styles.pairingServerMeta}>
-          <Ionicons name="time-outline" size={iconSize.inline} color={colors.textMuted} />
-          <Text numberOfLines={1} ellipsizeMode="tail" style={styles.pairingMetaText}>
-            {minutesLeft === null ? "One-time connection" : `Code expires in ${minutesLeft} min`}
+          <Ionicons color={colors.textMuted} name="time-outline" size={iconSize.inline} />
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.pairingMetaText}>
+            {minutesLeft === null
+              ? "One-time connection"
+              : `Code expires in ${String(minutesLeft)} min`}
           </Text>
         </View>
       </View>
       <PairingSubmission
+        accessibilityLabel="Connect server"
         error={error}
         localError={localError}
-        onRetryStartup={onRetryStartup}
-        saving={saving}
         localReady={localReady}
+        onRetryStartup={onRetryStartup}
         save={save}
-        accessibilityLabel="Connect server"
+        saving={saving}
       />
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel="Edit connection details"
+        accessibilityRole="button"
         disabled={saving}
-        onPress={() => setMode("manual")}
+        onPress={() => {
+          setMode("manual");
+        }}
         style={styles.pairingTextAction}
       >
         <Text style={styles.pairingTextActionLabel}>Edit details</Text>
-        <Ionicons name="options-outline" size={iconSize.inline} color={colors.textMuted} />
+        <Ionicons color={colors.textMuted} name="options-outline" size={iconSize.inline} />
       </Pressable>
     </View>
   );

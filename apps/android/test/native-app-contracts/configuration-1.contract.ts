@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { sourceObjectDeclaration } from "../source-contract";
+import { sourceHasJsxElement, sourceObjectDeclaration } from "../source-contract";
 import { calmSpinner, waveText, threadTitle, voiceAura } from "./presentation-sources";
 import { reducedMotionStore, nativeShimmerTextHost, screen } from "./platform-sources";
 import {
@@ -41,7 +41,7 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
   expect(waveText).toContain("function WaveText");
   expect(reducedMotionStore).toContain('AccessibilityInfo.addEventListener("reduceMotionChanged"');
   expect(waveText).toContain("useReducedMotionPreference()");
-  expect(ownerTurnFooter).toContain("durationMs={3_000}");
+  expect(ownerTurnFooter).toMatch(/durationMs=\{3_?000\}/u);
   const shimmerRegistration = 'requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")';
   expect(nativeShimmerTextHost).toContain(shimmerRegistration);
   expect(
@@ -54,9 +54,15 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
   expect(calmSpinner).toContain('borderTopColor: "transparent"');
   expect(calmSpinner).toContain("<ActivityIndicator");
   expect(screen).not.toContain("withRepeat(");
-  expect(ownerCard).toMatch(
-    /\? \(\s*<WaveText\s+key="running-title"\s+text=\{title\}\s+style=\{styles\.cardTitle\}\s+containerStyle=\{styles\.cardTitleWave\}\s*\/>/u,
-  );
+  expect(ownerCard).toContain("{isRunning ? (");
+  expect(
+    sourceHasJsxElement(ownerCard, "WaveText", [
+      "containerStyle={styles.cardTitleWave}",
+      'key="running-title"',
+      "style={styles.cardTitle}",
+      "text={title}",
+    ]),
+  ).toBe(true);
   expect(screen).not.toContain("autoExpandWhileRunning=");
   expect(screen).not.toContain("function AgentBubbleHeader");
   expect(screen).not.toContain('testID="active-turn-shimmer"');
@@ -131,9 +137,8 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
   expect(ownerSubmission).toContain("send(undefined, id)");
   expect(screen).not.toContain("setSendMode(id)");
   expect(screen).not.toContain("selected: effectiveSendMode");
-  expect(voiceController).toContain(
-    "if (previousFinish !== null) await previousFinish.catch(() => undefined)",
-  );
+  expect(voiceController).toContain("if (previousFinish !== null)");
+  expect(voiceController).toContain("await previousFinish.catch(() => undefined);");
   expect(voiceController).toContain("sendAfter?.(finalDraft)");
   expect(screen).not.toContain("<ActivityIndicator size={14} color={colors.accent} />");
 });

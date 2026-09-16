@@ -40,8 +40,6 @@ export default function V1ContentRoute(): React.JSX.Element {
     return (
       <RouteUnavailable
         message="This content session has expired."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           recoverUnavailableRoute(
             router,
@@ -56,7 +54,5 @@ export default function V1ContentRoute(): React.JSX.Element {
     contentRouteSessions.close(session.id);
     router.back();
   };
-  // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-  // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
   return <LargeContentViewerSession initialRequest={session.request} onClose={close} />;
 }

@@ -2,34 +2,34 @@ import { StyleSheet } from "react-native";
 import { colors, spacing, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  searchResult: {
-    paddingVertical: spacing.compact,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft,
-  },
-  rawLink: {
-    color: colors.accent,
+  controlSectionLabel: {
+    color: colors.textMuted,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
-  },
-  protocolBody: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    alignSelf: "stretch",
-    gap: spacing.xxs,
+    paddingBottom: spacing.xs,
+    paddingTop: spacing.md,
+    textTransform: "uppercase",
   },
   menuActionSubtitle: {
     color: colors.textMuted,
     ...typeScale.label,
     marginTop: spacing.optical,
   },
-  controlSectionLabel: {
-    color: colors.textMuted,
+  protocolBody: {
+    alignSelf: "stretch",
+    gap: spacing.xxs,
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
+  },
+  rawLink: {
+    color: colors.accent,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
-    textTransform: "uppercase",
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xs,
+  },
+  searchResult: {
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: 1,
+    paddingVertical: spacing.compact,
   },
 });

@@ -2,10 +2,14 @@
 export const SIDEBAR_PROJECT_ORDER_ID = "sidebar-project-order";
 
 export function decodeProjectOrder(value: string | null | undefined): string[] {
-  if (value == null) return [];
+  if (value === null || value === undefined) {
+    return [];
+  }
   try {
     const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
     return parsed.filter((key): key is string => typeof key === "string");
   } catch {
     return [];
@@ -35,8 +39,9 @@ export function moveSidebarProject(
   ).map((project) => project.key);
   const index = keys.indexOf(key);
   const neighbour = keys[index + direction];
-  if (index < 0 || neighbour === undefined)
+  if (index < 0 || neighbour === undefined) {
     return keys.concat(order.filter((entry) => !keys.includes(entry)));
+  }
   keys[index] = neighbour;
   keys[index + direction] = key;
   return keys.concat(order.filter((entry) => !keys.includes(entry)));

@@ -8,6 +8,11 @@ import { checkAborted } from "../native/check-aborted";
 let sequence = 0;
 const MAX_RENDER_ATTEMPTS = 3;
 
+type DiagramPreviewBridge = {
+  cancel: (id: string) => void;
+  render: (id: string, source: string) => Promise<unknown>;
+};
+
 export function diagramPreviewKey(source: string): string {
   return `diagram-svg:${bytesToHex(sha256(utf8ToBytes(source)))}`;
 }
@@ -17,14 +22,7 @@ export async function renderDiagramPreview(
   signal: AbortSignal,
 ): Promise<DiagramPreviewResult> {
   const bridge: unknown = NativeModules.CodeWideDiagramPreview;
-  if (
-    typeof bridge !== "object" ||
-    bridge === null ||
-    !("render" in bridge) ||
-    typeof bridge.render !== "function" ||
-    !("cancel" in bridge) ||
-    typeof bridge.cancel !== "function"
-  ) {
+  if (!isDiagramPreviewBridge(bridge)) {
     throw new Error("Diagram previews require an updated Android app");
   }
   checkAborted(signal);
@@ -38,16 +36,31 @@ export async function renderDiagramPreview(
     try {
       const result: unknown = await bridge.render(id, source);
       checkAborted(signal);
-      if (typeof result !== "string") throw new Error("Invalid diagram renderer response");
+      if (typeof result !== "string") {
+        throw new Error("Invalid diagram renderer response");
+      }
       return parseDiagramPreviewResult(result);
-    } catch (cause) {
+    } catch (error) {
       checkAborted(signal);
-      if (attempt === MAX_RENDER_ATTEMPTS || !isRetryableRendererFailure(cause)) throw cause;
+      if (attempt === MAX_RENDER_ATTEMPTS || !isRetryableRendererFailure(error)) {
+        throw error;
+      }
     } finally {
       signal.removeEventListener("abort", cancel);
     }
   }
   throw new Error("Diagram renderer exhausted its retry limit");
+}
+
+function isDiagramPreviewBridge(value: unknown): value is DiagramPreviewBridge {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "render" in value &&
+    typeof value.render === "function" &&
+    "cancel" in value &&
+    typeof value.cancel === "function"
+  );
 }
 
 function isRetryableRendererFailure(cause: unknown): boolean {

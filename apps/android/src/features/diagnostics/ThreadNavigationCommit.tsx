@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
   incrementDiagnosticMetric,
   operationalDiagnosticsEnabled,
@@ -9,36 +9,43 @@ import {
 } from "../../data/thread-navigation-metrics";
 import { EveryCommitProbe } from "../../ui/CommitProbe";
 
+function recordThreadRowCommit(): void {
+  incrementDiagnosticMetric("thread_row_commits");
+}
+
 export function ThreadRowCommitBoundary({ children }: { children: ReactNode }) {
-  if (!operationalDiagnosticsEnabled()) return <>{children}</>;
-  const onCommit = () => {
-    incrementDiagnosticMetric("thread_row_commits");
-  };
+  if (!operationalDiagnosticsEnabled()) {
+    return <>{children}</>;
+  }
   return (
     <>
       {children}
-      <EveryCommitProbe onCommit={onCommit} />
+      <EveryCommitProbe onCommit={recordThreadRowCommit} />
     </>
   );
 }
 
 export function ThreadNavigationRowCommitBoundary({
-  connectionId,
-  threadId,
-  rowKey,
   children,
+  connectionId,
+  rowKey,
+  threadId,
 }: {
-  connectionId: string;
-  threadId: string;
-  rowKey: string;
   children: ReactNode;
+  connectionId: string;
+  rowKey: string;
+  threadId: string;
 }) {
-  if (!isThreadNavigationActiveFor(connectionId, threadId)) return <>{children}</>;
+  if (!isThreadNavigationActiveFor(connectionId, threadId)) {
+    return <>{children}</>;
+  }
   return (
     <>
       {children}
       <EveryCommitProbe
-        onCommit={() => recordThreadNavigationRowCommit(connectionId, threadId, rowKey)}
+        onCommit={() => {
+          recordThreadNavigationRowCommit(connectionId, threadId, rowKey);
+        }}
       />
     </>
   );

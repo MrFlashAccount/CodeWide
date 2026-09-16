@@ -10,33 +10,31 @@ import type { ConversationLayoutProps } from "./ConversationLayoutContract";
 import { ThreadCwdContext } from "./turns/turnContexts";
 
 export function ConversationLayout({
-  searchContent,
-  jumpContent,
-  projectPickerContent,
-  renameContent,
-  compact,
-  setConversationPaneHeight,
-  setNarrowConversationPane,
-  headerContent,
-  threadSearchVisible,
-  conversationInsets,
-  setComposerTrayVisible,
-  cwd,
-  openCodeDocument,
-  presentTurnChanges,
-  timelineSurface,
-  conversationBackdropVisible,
   awayFromLatest,
   bottomChrome,
-  reviewContent,
+  compact,
+  conversationBackdropVisible,
+  conversationInsets,
+  cwd,
+  headerContent,
+  jumpContent,
+  openCodeDocument,
+  presentTurnChanges,
+  projectPickerContent,
   projectPickerVisible,
+  renameContent,
+  reviewContent,
+  searchContent,
+  setComposerTrayVisible,
+  setConversationPaneHeight,
+  setNarrowConversationPane,
   threadRenameVisible,
+  threadSearchVisible,
+  timelineSurface,
 }: ConversationLayoutProps) {
   return (
     <ThreadCodeDocumentContext.Provider value={openCodeDocument}>
       <View
-        testID="thread-detail-pane-shell"
-        style={[styles.conversation, compact ? undefined : styles.conversationRaised]}
         onLayout={({ nativeEvent }) => {
           const paneWidth = Math.max(0, Math.floor(nativeEvent.layout.width));
           const paneHeight = Math.max(0, Math.floor(nativeEvent.layout.height));
@@ -44,8 +42,10 @@ export function ConversationLayout({
           const next = paneWidth < 520;
           setNarrowConversationPane((current) => (current === next ? current : next));
         }}
+        style={[styles.conversation, compact ? undefined : styles.conversationRaised]}
+        testID="thread-detail-pane-shell"
       >
-        <View testID="thread-detail-pane" style={styles.conversationKeyboard}>
+        <View style={styles.conversationKeyboard} testID="thread-detail-pane">
           <View pointerEvents="box-none" style={styles.conversationHeaderChrome}>
             {headerContent}
 
@@ -57,8 +57,10 @@ export function ConversationLayout({
               enableSwipeToDismiss
               interpolator="ios"
               offset={conversationInsets.bottom}
+              onTouchStart={() => {
+                setComposerTrayVisible(false);
+              }}
               style={styles.conversationKeyboardBody}
-              onTouchStart={() => setComposerTrayVisible(false)}
             >
               <ThreadCwdContext.Provider value={cwd}>
                 <TurnChangesContext.Provider value={presentTurnChanges}>

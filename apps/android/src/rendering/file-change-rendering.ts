@@ -1,11 +1,11 @@
 export type FileChangeKind = "add" | "delete" | "update";
 
 export type FileChangeProjection = {
+  additions: number;
+  deletions: number;
   kind: FileChangeKind;
   lines: string[];
   renderSource: string;
-  additions: number;
-  deletions: number;
 };
 
 export function normalizeFileChangeKind(value: unknown): FileChangeKind {
@@ -15,7 +15,9 @@ export function normalizeFileChangeKind(value: unknown): FileChangeKind {
       : isRecord(value) && typeof value.type === "string"
         ? value.type
         : "update";
-  if (candidate === "add" || candidate === "delete") return candidate;
+  if (candidate === "add" || candidate === "delete") {
+    return candidate;
+  }
   return "update";
 }
 
@@ -23,14 +25,16 @@ export function projectFileChange(diff: string, rawKind: unknown): FileChangePro
   const kind = normalizeFileChangeKind(rawKind);
   if (kind === "add" || kind === "delete") {
     const sourceLines = logicalLines(diff);
-    if (isUnifiedDiff(sourceLines)) return projectUnifiedDiff(sourceLines, kind);
+    if (isUnifiedDiff(sourceLines)) {
+      return projectUnifiedDiff(sourceLines, kind);
+    }
     const marker = kind === "add" ? "+" : "-";
     return {
+      additions: kind === "add" ? sourceLines.length : 0,
+      deletions: kind === "delete" ? sourceLines.length : 0,
       kind,
       lines: sourceLines.map((line) => `${marker}${line}`),
       renderSource: sourceLines.map((line) => `${marker}${line}`).join("\n"),
-      additions: kind === "add" ? sourceLines.length : 0,
-      deletions: kind === "delete" ? sourceLines.length : 0,
     };
   }
 
@@ -49,12 +53,17 @@ function projectUnifiedDiff(lines: string[], kind: FileChangeKind): FileChangePr
       sawHunk = true;
       continue;
     }
-    if (isUnifiedDiffMetadata(lines, index, sawHunk)) continue;
+    if (isUnifiedDiffMetadata(lines, index, sawHunk)) {
+      continue;
+    }
     visibleLines.push(line);
-    if (line.startsWith("+")) additions += 1;
-    else if (line.startsWith("-")) deletions += 1;
+    if (line.startsWith("+")) {
+      additions += 1;
+    } else if (line.startsWith("-")) {
+      deletions += 1;
+    }
   }
-  return { kind, lines: visibleLines, renderSource: lines.join("\n"), additions, deletions };
+  return { additions, deletions, kind, lines: visibleLines, renderSource: lines.join("\n") };
 }
 
 function isUnifiedDiff(lines: string[]): boolean {
@@ -68,14 +77,18 @@ function isUnifiedDiffMetadata(lines: string[], index: number, sawHunk: boolean)
     line.startsWith("index ") ||
     (!sawHunk && line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ") === true) ||
     (!sawHunk && line.startsWith("+++ ") && lines[index - 1]?.startsWith("--- ") === true) ||
-    line.startsWith("\\ No newline at end of file")
+    line.startsWith(String.raw`\ No newline at end of file`)
   );
 }
 
 function logicalLines(value: string): string[] {
-  if (value === "") return [];
+  if (value === "") {
+    return [];
+  }
   const lines = value.split("\n");
-  if (lines.at(-1) === "") lines.pop();
+  if (lines.at(-1) === "") {
+    lines.pop();
+  }
   return lines;
 }
 

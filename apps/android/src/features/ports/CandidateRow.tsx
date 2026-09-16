@@ -3,48 +3,48 @@ import { ActivityIndicator, Pressable } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight, type AppListRowProps } from "../../ui/AppListRow.types";
-import { type PortForwardingCandidate } from "./portForwardingContract";
+import type { PortForwardingCandidate } from "./portForwardingContract";
 import { styles } from "./PortForwardingManager.styles";
 import { ServiceIcon, candidateIcon, shortCwd } from "./PortPresentation";
 
 export function CandidateRow({
   candidate,
-  position,
-  pending,
-  onPress,
   onExclude,
+  onPress,
+  pending,
+  position,
 }: {
   candidate: PortForwardingCandidate;
-  position: NonNullable<AppListRowProps["position"]>;
+  onExclude: () => void;
+  onPress: () => void;
   pending: boolean;
-  onPress(): void;
-  onExclude(): void;
+  position: NonNullable<AppListRowProps["position"]>;
 }) {
   const detail = candidate.cwd === null ? candidate.process : shortCwd(candidate.cwd);
   return (
     <AppListRow
-      testID={`discovered-port-${candidate.port}`}
-      title={candidate.name}
-      description={`:${candidate.port}${detail === null ? "" : ` · ${detail}`}`}
-      accessibilityLabel={`Forward ${candidate.name} port ${candidate.port}`}
+      accessibilityLabel={`Forward ${candidate.name} port ${String(candidate.port)}`}
+      description={`:${String(candidate.port)}${detail === null ? "" : ` · ${detail}`}`}
       disabled={pending}
-      onPress={onPress}
       fixedHeight={listRowHeight.double}
-      position={position}
       leading={<ServiceIcon name={candidateIcon(candidate.kind)} />}
+      onPress={onPress}
+      position={position}
+      testID={`discovered-port-${String(candidate.port)}`}
+      title={candidate.name}
       trailing={
         pending ? (
-          <ActivityIndicator size="small" color={colors.textMuted} />
+          <ActivityIndicator color={colors.textMuted} size="small" />
         ) : (
           <>
-            <Ionicons name="add" size={iconSize.action} color={colors.textMuted} />
+            <Ionicons color={colors.textMuted} name="add" size={iconSize.action} />
             <Pressable
+              accessibilityLabel={`Exclude ${candidate.name} port ${String(candidate.port)}`}
               accessibilityRole="button"
-              accessibilityLabel={`Exclude ${candidate.name} port ${candidate.port}`}
               onPress={onExclude}
               style={styles.iconButton}
             >
-              <Ionicons name="ban-outline" size={iconSize.action} color={colors.textDim} />
+              <Ionicons color={colors.textDim} name="ban-outline" size={iconSize.action} />
             </Pressable>
           </>
         )

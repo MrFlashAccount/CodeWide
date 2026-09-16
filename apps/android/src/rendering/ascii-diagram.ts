@@ -25,19 +25,25 @@ export function looksLikeAsciiDiagram(
   source: string,
   language: string | null | undefined,
 ): boolean {
-  const lines = source.replace(/\r\n?/gu, "\n").split("\n");
-  if (lines.length < 4 || source.length > 128 * 1024) return false;
+  const lines = source.replaceAll(/\r\n?/gu, "\n").split("\n");
+  if (lines.length < 4 || source.length > 128 * 1024) {
+    return false;
+  }
 
   const unicodeConnectors = source.match(UNICODE_CONNECTOR_PATTERN)?.length ?? 0;
   const unicodeArrows = source.match(UNICODE_ARROW_PATTERN)?.length ?? 0;
   const connectorLines = lines.filter((line) => /[┌┐└┘├┤┬┴┼│─━┃╭╮╯╰╱╲]/u.test(line)).length;
-  if (unicodeConnectors >= 4 && unicodeArrows >= 1 && connectorLines >= 3) return true;
+  if (unicodeConnectors >= 4 && unicodeArrows >= 1 && connectorLines >= 3) {
+    return true;
+  }
 
   const normalizedLanguage = (language ?? "")
     .trim()
     .toLocaleLowerCase()
     .replace(/^language-/u, "");
-  if (!PLAIN_TEXT_LANGUAGES.has(normalizedLanguage)) return false;
+  if (!PLAIN_TEXT_LANGUAGES.has(normalizedLanguage)) {
+    return false;
+  }
   const asciiConnectors = source.match(ASCII_CONNECTOR_PATTERN)?.length ?? 0;
   const asciiArrows = source.match(ASCII_ARROW_PATTERN)?.length ?? 0;
   const asciiConnectorLines = lines.filter((line) =>
@@ -47,12 +53,18 @@ export function looksLikeAsciiDiagram(
 }
 
 function decodeXmlText(value: string): string {
-  return value.replace(
+  return value.replaceAll(
     /&(?:#x([\da-f]+)|#(\d+)|(amp|apos|gt|lt|quot));/giu,
     (entity, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
-      if (hex !== undefined) return String.fromCodePoint(Number.parseInt(hex, 16));
-      if (decimal !== undefined) return String.fromCodePoint(Number.parseInt(decimal, 10));
+      if (hex !== undefined) {
+        return String.fromCodePoint(Number.parseInt(hex, 16));
+      }
+      if (decimal !== undefined) {
+        return String.fromCodePoint(Number.parseInt(decimal, 10));
+      }
       switch (named?.toLocaleLowerCase()) {
+        case undefined:
+          return entity;
         case "amp":
           return "&";
         case "apos":
@@ -72,24 +84,32 @@ function decodeXmlText(value: string): string {
 
 function escapeXmlText(value: string): string {
   return value
-    .replace(/&/gu, "&amp;")
-    .replace(/</gu, "&lt;")
-    .replace(/>/gu, "&gt;")
-    .replace(/"/gu, "&quot;")
-    .replace(/'/gu, "&apos;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 }
 
 function utf8Width(value: string): number {
   const codePoint = value.codePointAt(0) ?? 0;
-  if (codePoint <= 0x7f) return 1;
-  if (codePoint <= 0x7ff) return 2;
-  if (codePoint <= 0xffff) return 3;
+  if (codePoint <= 0x7f) {
+    return 1;
+  }
+  if (codePoint <= 0x7_ff) {
+    return 2;
+  }
+  if (codePoint <= 0xff_ff) {
+    return 3;
+  }
   return 4;
 }
 
 function numericSvgAttribute(attributes: string, name: string): number | null {
   const match = new RegExp(`\\b${name}=["']([\\d.-]+)["']`, "u").exec(attributes);
-  if (match === null) return null;
+  if (match === null) {
+    return null;
+  }
   const value = Number(match[1]);
   return Number.isFinite(value) ? value : null;
 }
@@ -112,9 +132,13 @@ export function repairSvgbobUnicodeText(source: string): string {
     const content = match[2] ?? "";
     const x = numericSvgAttribute(attributes, "x");
     const y = numericSvgAttribute(attributes, "y");
-    if (x === null || y === null || match.index === undefined) continue;
+    if (x === null || y === null) {
+      continue;
+    }
     const decoded = decodeXmlText(content);
-    if (!/[^\u0000-\u007f]/u.test(decoded)) continue;
+    if (!/[^\u0000-\u007F]/u.test(decoded)) {
+      continue;
+    }
     fragments.push({
       attributes,
       decoded,
@@ -124,33 +148,54 @@ export function repairSvgbobUnicodeText(source: string): string {
       y,
     });
   }
-  if (fragments.length < 2) return source;
+  if (fragments.length < 2) {
+    return source;
+  }
 
   const parent = fragments.map((_, index) => index);
-  const find = (index: number): number =>
-    parent[index] === index ? index : (parent[index] = find(parent[index]!));
+  const find = (index: number): number => {
+    const parentIndex = parent[index];
+    if (parentIndex === undefined || parentIndex === index) {
+      return index;
+    }
+    const root = find(parentIndex);
+    parent[index] = root;
+    return root;
+  };
   const unite = (left: number, right: number) => {
     const leftRoot = find(left);
     const rightRoot = find(right);
-    if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot;
+    if (leftRoot !== rightRoot) {
+      parent[rightRoot] = leftRoot;
+    }
   };
   const range = (fragment: SvgTextFragment) => ({
-    start: fragment.x,
     end:
       fragment.x +
       Array.from(fragment.decoded).reduce(
         (width, character) => width + utf8Width(character) * SVGBOB_CELL_WIDTH,
         0,
       ),
+    start: fragment.x,
   });
   for (let left = 0; left < fragments.length; left += 1) {
-    const leftFragment = fragments[left]!;
+    const leftFragment = fragments[left];
+    if (leftFragment === undefined) {
+      continue;
+    }
     const leftRange = range(leftFragment);
     for (let right = left + 1; right < fragments.length; right += 1) {
-      const rightFragment = fragments[right]!;
-      if (leftFragment.y !== rightFragment.y) continue;
+      const rightFragment = fragments[right];
+      if (rightFragment === undefined) {
+        continue;
+      }
+      if (leftFragment.y !== rightFragment.y) {
+        continue;
+      }
       const rightRange = range(rightFragment);
-      if (leftRange.start < rightRange.end && rightRange.start < leftRange.end) unite(left, right);
+      if (leftRange.start < rightRange.end && rightRange.start < leftRange.end) {
+        unite(left, right);
+      }
     }
   }
 
@@ -158,13 +203,19 @@ export function repairSvgbobUnicodeText(source: string): string {
   for (let index = 0; index < fragments.length; index += 1) {
     const root = find(index);
     const group = groups.get(root) ?? [];
-    group.push(fragments[index]!);
+    const fragment = fragments[index];
+    if (fragment === undefined) {
+      continue;
+    }
+    group.push(fragment);
     groups.set(root, group);
   }
 
   const replacements = new Map<number, { end: number; value: string }>();
   for (const group of groups.values()) {
-    if (group.length < 2) continue;
+    if (group.length < 2) {
+      continue;
+    }
     const cells = new Map<number, string>();
     for (const fragment of group) {
       let x = fragment.x;
@@ -174,8 +225,13 @@ export function repairSvgbobUnicodeText(source: string): string {
       }
     }
     const occupied = [...cells.entries()].sort(([left], [right]) => left - right);
+    const firstOccupied = occupied[0];
+    const lastOccupied = occupied.at(-1);
+    if (firstOccupied === undefined || lastOccupied === undefined) {
+      continue;
+    }
     const ordered: Array<[number, string]> = [];
-    for (let x = occupied[0]![0]; x <= occupied[occupied.length - 1]![0]; x += SVGBOB_CELL_WIDTH) {
+    for (let x = firstOccupied[0]; x <= lastOccupied[0]; x += SVGBOB_CELL_WIDTH) {
       ordered.push([x, cells.get(x) ?? " "]);
     }
     const leftmost = group.reduce((current, fragment) =>
@@ -195,10 +251,14 @@ export function repairSvgbobUnicodeText(source: string): string {
       value: `<text${attributes}>${escapeXmlText(content)}</text>`,
     });
     for (const fragment of group) {
-      if (fragment !== keeper) replacements.set(fragment.start, { end: fragment.end, value: "" });
+      if (fragment !== keeper) {
+        replacements.set(fragment.start, { end: fragment.end, value: "" });
+      }
     }
   }
-  if (replacements.size === 0) return source;
+  if (replacements.size === 0) {
+    return source;
+  }
 
   let result = "";
   let cursor = 0;

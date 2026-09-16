@@ -1,3 +1,5 @@
+import { unknownRecord } from "./unknownRecord";
+import { isThread } from "./thread-cursor-sync";
 import { threadSummaryDescendants } from "./thread-summary-descendants";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import {
@@ -22,7 +24,7 @@ export function retainThreadSummaryMissingFromSnapshot(summary: StoredThreadSumm
   // The global interactive-thread snapshot does not contain descendants.
   // Those rows come from the Companion parent index and must survive later
   // reconnect snapshots; explicit thread/deleted events still remove them.
-  return summary.provisionalThread != null || summary.parentThreadId != null;
+  return isThread(summary.provisionalThread) || typeof summary.parentThreadId === "string";
 }
 
 export function threadSummaryDescendantKeys(
@@ -42,54 +44,70 @@ export function projectThreadSummarySnapshot(
   archived: boolean,
   previous?: StoredThreadSummary,
 ): StoredThreadSummary {
-  const isSubagent = thread.parentThreadId != null;
+  const isSubagent = typeof thread.parentThreadId === "string";
   const previewThread = isSubagent ? { ...thread, turns: subagentOwnTurns(thread) } : thread;
   const snapshotPreview =
     previewThread.turns.length > 0 ? latestThreadMessagePreview(previewThread) : "";
   const listedPreview = plainThreadPreview(thread.preview);
   return {
-    connectionId,
-    remoteThreadId: thread.id,
-    parentThreadId: thread.parentThreadId ?? null,
     agentNickname: thread.agentNickname,
     agentRole: thread.agentRole,
+    connectionId,
     name: thread.name,
+    parentThreadId: thread.parentThreadId ?? null,
+    remoteThreadId: thread.id,
     // The companion contract deliberately projects the newest canonical
     // conversation message into `preview`. A detailed snapshot with turns is
     // still more authoritative than the list projection.
-    preview: isSubagent
-      ? snapshotPreview ||
-        listedPreview ||
-        ((previous?.latestActivityCursor ?? 0) > 0 ? (previous?.preview ?? "") : "")
-      : snapshotPreview || listedPreview || previous?.preview || "",
+    archived,
     cwd: thread.cwd,
     gitOriginUrl: thread.gitInfo?.originUrl ?? previous?.gitOriginUrl ?? null,
-    updatedAt: thread.updatedAt,
+    lastSeenCursor: previous?.lastSeenCursor ?? 0,
+    latestActivityCursor: previous?.latestActivityCursor ?? 0,
+    pendingRequestCount: previous?.pendingRequestCount ?? 0,
+    pinned: previous?.pinned ?? false,
+    preview: selectPreview(
+      snapshotPreview,
+      listedPreview,
+      isSubagent && (previous?.latestActivityCursor ?? 0) <= 0 ? undefined : previous?.preview,
+    ),
     recencyAt: thread.recencyAt,
     status: normalizeThreadStatus(thread.status),
-    pinned: previous?.pinned ?? false,
-    archived,
-    pendingRequestCount: previous?.pendingRequestCount ?? 0,
-    latestActivityCursor: previous?.latestActivityCursor ?? 0,
-    lastSeenCursor: previous?.lastSeenCursor ?? 0,
     unread: previous?.unread ?? 0,
+    updatedAt: thread.updatedAt,
     // A list snapshot means the thread is now materialized by the companion.
     // Keeping an older thread/started shell here makes the conversation screen
     // skip thread/resume forever and renders that empty shell instead.
-    provisionalThread: null,
     deleteCommandId: previous?.deleteCommandId ?? null,
+    provisionalThread: null,
   };
+}
+
+function selectPreview(
+  snapshotPreview: string | null | undefined,
+  listedPreview: string,
+  previousPreview: string | undefined,
+): string {
+  if (snapshotPreview !== null && snapshotPreview !== undefined && snapshotPreview !== "") {
+    return snapshotPreview;
+  }
+  if (listedPreview !== "") {
+    return listedPreview;
+  }
+  return previousPreview ?? "";
 }
 
 export function projectThreadSummaryEvent(
   connectionId: string,
   payload: Record<string, unknown>,
   previousFor: (threadId: string) => StoredThreadSummary | undefined,
-  nowSeconds = Math.floor(Date.now() / 1_000),
+  nowSeconds = Math.floor(Date.now() / 1000),
   cursor = 0,
 ): ThreadSummaryMutation | null {
   const patch = threadProjectionPatchFromEvent(payload);
-  if (patch === null || isHighFrequencySummaryPatch(patch.operation.kind)) return null;
+  if (patch === null || isHighFrequencySummaryPatch(patch.operation.kind)) {
+    return null;
+  }
   return projectThreadSummaryPatch(connectionId, patch, previousFor, nowSeconds, cursor);
 }
 
@@ -117,8 +135,10 @@ function projectThreadSummaryPatch(
 ): ThreadSummaryMutation | null {
   const operation = patch.operation;
   if (operation.kind === "threadStarted") {
-    const thread = object(operation.thread) as Thread | null;
-    if (thread === null || typeof thread.id !== "string" || thread.ephemeral) return null;
+    const thread = operation.thread;
+    if (!isThread(thread) || thread.ephemeral) {
+      return null;
+    }
     const previous = previousFor(thread.id);
     return {
       key: threadSummaryKey(connectionId, thread.id),
@@ -129,42 +149,50 @@ function projectThreadSummaryPatch(
     };
   }
   const key = threadSummaryKey(connectionId, patch.threadId);
-  if (operation.kind === "threadDeleted") return { key, value: null };
+  if (operation.kind === "threadDeleted") {
+    return { key, value: null };
+  }
   const previous = previousFor(patch.threadId);
-  if (previous === undefined) return null;
+  if (previous === undefined) {
+    return null;
+  }
   const next: StoredThreadSummary = { ...previous };
-  if (operation.kind === "threadName")
+  if (operation.kind === "threadName") {
     next.name = typeof operation.threadName === "string" ? operation.threadName : null;
-  else if (operation.kind === "threadStatus" && object(operation.status) !== null)
+  } else if (operation.kind === "threadStatus" && object(operation.status) !== null) {
     next.status = normalizeThreadStatus(operation.status);
-  else if (operation.kind === "threadArchived") next.archived = operation.archived === true;
-  else {
+  } else if (operation.kind === "threadArchived") {
+    next.archived = operation.archived === true;
+  } else {
     const lifecycleChanged = operation.kind === "turnStarted" || operation.kind === "turnCompleted";
     if (operation.kind === "turnStarted" && next.status.type !== "active") {
-      next.status = { type: "active", activeFlags: [] };
+      next.status = { activeFlags: [], type: "active" };
     } else if (operation.kind === "turnCompleted") {
       next.status = { type: "idle" };
     }
     const summary = object(operation.summary);
-    if (summary === null || summary.activity !== true)
+    if (summary === null || summary.activity !== true) {
       return lifecycleChanged ? { key, value: next } : null;
+    }
     if (typeof summary.previewText === "string") {
       const preview = plainThreadPreview(summary.previewText);
-      if (preview !== "") next.preview = preview;
+      if (preview !== "") {
+        next.preview = preview;
+      }
     }
     next.provisionalThread = null;
     next.updatedAt = Math.max(next.updatedAt, nowSeconds);
     next.latestActivityCursor = Math.max(next.latestActivityCursor, cursor);
-    if (summary.conversationMessage === true)
+    if (summary.conversationMessage === true) {
       next.recencyAt = Math.max(next.recencyAt ?? 0, nowSeconds);
-    if (summary.finalAgentResponse === true)
+    }
+    if (summary.finalAgentResponse === true) {
       next.unread = next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;
+    }
   }
   return { key, value: next };
 }
 
 function object(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return unknownRecord(value);
 }

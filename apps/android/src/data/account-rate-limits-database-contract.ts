@@ -8,13 +8,13 @@ import type { AccountPoolSnapshot } from "./account-pool";
 
 /** Persists and projects rate-limit snapshots for each connected account. */
 export type AccountRateLimitsDatabase = {
+  close: () => void;
   collection: Collection<AccountRateLimitsRow, string>;
-  get(connectionId: string): AccountRateLimitsRow | null;
-  markLoading(connectionId: string): void;
-  putSnapshot(connectionId: string, snapshot: GetAccountRateLimitsResponse): void;
-  putAccountPool(connectionId: string, accountPool: AccountPoolSnapshot): void;
-  mergeUpdate(connectionId: string, update: AccountRateLimitsUpdatedNotification): void;
-  markError(connectionId: string, error: string): void;
-  remove(connectionId: string): void;
-  close(): void;
+  get: (connectionId: string) => AccountRateLimitsRow | null;
+  markError: (connectionId: string, error: string) => void;
+  markLoading: (connectionId: string) => void;
+  mergeUpdate: (connectionId: string, update: AccountRateLimitsUpdatedNotification) => void;
+  putAccountPool: (connectionId: string, accountPool: AccountPoolSnapshot) => void;
+  putSnapshot: (connectionId: string, snapshot: GetAccountRateLimitsResponse) => void;
+  remove: (connectionId: string) => void;
 };

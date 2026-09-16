@@ -7,17 +7,19 @@ import type { AccountsWorkspaceCapabilities } from "./workspaceCapabilities";
 export function createAccountsWorkspaceAdapter({
   getAccountRateLimits,
   getSession,
-  rpcAfterAttach,
   refreshAccountRateLimits,
+  rpcAfterAttach,
 }: {
-  getAccountRateLimits(): AccountRateLimitsDatabase | null;
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
-  rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
+  getAccountRateLimits: () => AccountRateLimitsDatabase | null;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   refreshAccountRateLimits: AccountsWorkspaceCapabilities["refreshAccountRateLimits"];
+  rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): AccountsWorkspaceCapabilities {
   const refreshAccountPool = async (connectionId: string): Promise<AccountPoolSnapshot> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const snapshot = await rpcAfterAttach<AccountPoolSnapshot>(
       session,
       "companion/accountPool/refresh",
@@ -29,13 +31,17 @@ export function createAccountsWorkspaceAdapter({
 
   const startAccountLogin = async (connectionId: string): Promise<AccountLoginStart> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
-    return await rpcAfterAttach<AccountLoginStart>(session, "companion/accountPool/add/start", {});
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
+    return rpcAfterAttach<AccountLoginStart>(session, "companion/accountPool/add/start", {});
   };
 
   const cancelAccountLogin = async (connectionId: string, loginId: string): Promise<void> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     await rpcAfterAttach(session, "companion/accountPool/add/cancel", { loginId });
   };
 
@@ -44,7 +50,9 @@ export function createAccountsWorkspaceAdapter({
     profileId: string,
   ): Promise<AccountPoolSnapshot> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const snapshot = await rpcAfterAttach<AccountPoolSnapshot>(
       session,
       "companion/accountPool/profile/activate",
@@ -60,7 +68,9 @@ export function createAccountsWorkspaceAdapter({
     update: { enabled?: boolean; priority?: number },
   ): Promise<AccountPoolSnapshot> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const snapshot = await rpcAfterAttach<AccountPoolSnapshot>(
       session,
       "companion/accountPool/profile/update",
@@ -75,7 +85,9 @@ export function createAccountsWorkspaceAdapter({
     profileId: string,
   ): Promise<AccountPoolSnapshot> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const snapshot = await rpcAfterAttach<AccountPoolSnapshot>(
       session,
       "companion/accountPool/profile/remove",
@@ -85,12 +97,12 @@ export function createAccountsWorkspaceAdapter({
     return snapshot;
   };
   return {
-    refreshAccountRateLimits,
-    refreshAccountPool,
-    startAccountLogin,
-    cancelAccountLogin,
     activateAccountProfile,
-    updateAccountProfile,
+    cancelAccountLogin,
+    refreshAccountPool,
+    refreshAccountRateLimits,
     removeAccountProfile,
+    startAccountLogin,
+    updateAccountProfile,
   };
 }

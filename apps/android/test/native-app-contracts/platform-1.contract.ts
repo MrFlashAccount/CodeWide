@@ -89,13 +89,13 @@ it("preserves platform integration contracts — 2", () => {
   expect(imagePreviewHost).toContain("Image decode failed");
   expect(screen).not.toContain("asyncResourceFunctionKey(getTransferAccess)");
   expect(privateImageUri).toContain(
-    "`private-asset:${accessScope}:${revision}:${privateImageResourceKey(source)}`",
+    "`private-asset:${accessScope}:${String(revision)}:${privateImageResourceKey(source)}`",
   );
   expect(documentPreviewHost).toContain("readPrivateAssetText(");
   expect(screen).not.toContain("url.pathname = `/v1/content/${reference.id}`");
   expect(nativeCodeBlock).toContain("fillAvailableWidth && availableWidth !== null");
   expect(privateImageUri).not.toContain("asyncResourceFunctionKey");
-  expect(imagePreviewHost).toContain("const [controller] = useState<ImagePreviewController>");
+  expect(imagePreviewHost).toContain("const controller = useConstant<ImagePreviewController>");
   expect(screen).not.toContain("turnItemsInFlightRef");
   expect(screen).not.toContain("lifecycleRepairAttemptRef");
   expect(screen).not.toContain("activeThreadHydrationScope !== hydratedThreadScope");

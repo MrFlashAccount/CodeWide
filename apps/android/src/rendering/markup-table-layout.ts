@@ -1,16 +1,16 @@
 import type { TNode } from "@native-html/render";
 
 export interface MarkupTableCell {
+  readonly colSpan: number;
+  readonly column: number;
   readonly node: TNode;
   readonly row: number;
-  readonly column: number;
   readonly rowSpan: number;
-  readonly colSpan: number;
 }
 export interface MarkupTableGrid {
   readonly cells: readonly MarkupTableCell[];
-  readonly rows: number;
   readonly columns: number;
+  readonly rows: number;
 }
 interface TableRow {
   readonly node: TNode;
@@ -27,22 +27,25 @@ export function markupTableGrid(table: TNode): MarkupTableGrid {
   for (const [row, element] of rows.entries()) {
     let column = 0;
     for (const node of element.node.children) {
-      if (node.tagName !== "td" && node.tagName !== "th") continue;
-      const rawRowSpan = span(node.attributes.rowspan, 0, 65534);
+      if (node.tagName !== "td" && node.tagName !== "th") {
+        continue;
+      }
+      const rawRowSpan = span(node.attributes.rowspan, 0, 65_534);
       const colSpan = span(node.attributes.colspan, 1, 1000);
       column = availableColumn(occupiedUntil, row, column, colSpan);
       const rowSpan = Math.min(
         rawRowSpan === 0 ? element.remaining : rawRowSpan,
         element.remaining,
       );
-      cells.push({ node, row, column, rowSpan, colSpan });
-      for (let offset = 0; offset < colSpan; offset += 1)
+      cells.push({ colSpan, column, node, row, rowSpan });
+      for (let offset = 0; offset < colSpan; offset += 1) {
         occupiedUntil[column + offset] = row + rowSpan;
+      }
       column += colSpan;
       columns = Math.max(columns, column);
     }
   }
-  return { cells, rows: rows.length, columns };
+  return { cells, columns, rows: rows.length };
 }
 
 function collectRows(node: TNode, rows: TableRow[]): void {
@@ -54,7 +57,9 @@ function collectRows(node: TNode, rows: TableRow[]): void {
     if (child.tagName === "tr") {
       rows.push({ node: child, remaining });
       remaining -= 1;
-    } else if (["thead", "tbody", "tfoot"].includes(child.tagName ?? "")) collectRows(child, rows);
+    } else if (["thead", "tbody", "tfoot"].includes(child.tagName ?? "")) {
+      collectRows(child, rows);
+    }
   }
 }
 
@@ -87,14 +92,16 @@ export function markupTableRowHeights(
   measured: Readonly<Record<number, number>>,
   minimum: number,
 ): number[] {
-  const heights = Array<number>(grid.rows).fill(minimum);
+  const heights = new Array<number>(grid.rows).fill(minimum);
   for (const [index, cell] of grid.cells.entries()) {
     let available = 0;
-    for (let row = cell.row; row < cell.row + cell.rowSpan; row += 1)
+    for (let row = cell.row; row < cell.row + cell.rowSpan; row += 1) {
       available += heights[row] ?? 0;
+    }
     const extra = Math.max(0, (measured[index] ?? minimum) - available) / cell.rowSpan;
-    for (let row = cell.row; row < cell.row + cell.rowSpan; row += 1)
+    for (let row = cell.row; row < cell.row + cell.rowSpan; row += 1) {
       heights[row] = (heights[row] ?? 0) + extra;
+    }
   }
   return heights;
 }

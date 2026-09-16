@@ -27,7 +27,9 @@ const MessageActionMenuContext = createContext<OpenMessageActionMenu | null>(nul
 
 export function useMessageActionMenu(): OpenMessageActionMenu {
   const open = useContext(MessageActionMenuContext);
-  if (open === null) throw new Error("Message actions require MessageActionMenuProvider");
+  if (open === null) {
+    throw new Error("Message actions require MessageActionMenuProvider");
+  }
   return open;
 }
 
@@ -51,18 +53,18 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
     const rootRef = useRef<View>(null);
     const generationRef = useRef(0);
     const [menu, setMenu] = useState<{
-      request: MessageActionMenuRequest;
-      anchor: { left: number; top: number; width: number; height: number };
+      anchor: { height: number; left: number; top: number; width: number };
       generation: number;
+      request: MessageActionMenuRequest;
     } | null>(null);
 
-    const open = useEvent<OpenMessageActionMenu>((nextRequest, { pageX, pageY, width, height }) => {
+    const open = useEvent<OpenMessageActionMenu>((nextRequest, { height, pageX, pageY, width }) => {
       rootRef.current?.measureInWindow((rootX, rootY) => {
         generationRef.current += 1;
         setMenu({
-          request: nextRequest,
-          anchor: { left: pageX - rootX, top: pageY - rootY, width, height },
+          anchor: { height, left: pageX - rootX, top: pageY - rootY, width },
           generation: generationRef.current,
+          request: nextRequest,
         });
       });
     });
@@ -74,30 +76,35 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
     };
     const handleSelect = (id: "copy" | "fork" | "review") => {
       const selectedRequest = menu?.request;
-      if (selectedRequest === undefined) return;
+      if (selectedRequest === undefined) {
+        return;
+      }
       dismiss();
       void Haptics.selectionAsync().catch(() => undefined);
       if (id === "copy") {
-        if (selectedRequest.copyText !== "")
-          void Clipboard.setStringAsync(selectedRequest.copyText);
+        if (selectedRequest.copyText !== "") {
+          Clipboard.setStringAsync(selectedRequest.copyText).catch((error: unknown) => {
+            dialog.alert("Copy failed", error instanceof Error ? error.message : "Could not copy");
+          });
+        }
         return;
       }
       if (id === "review") {
         if (selectedRequest.onReview !== undefined) {
-          void Promise.resolve(selectedRequest.onReview()).catch((cause) => {
+          void Promise.resolve(selectedRequest.onReview()).catch((error: unknown) => {
             dialog.alert(
               "Review failed",
-              cause instanceof Error ? cause.message : "Could not review response",
+              error instanceof Error ? error.message : "Could not review response",
             );
           });
         }
         return;
       }
       if (selectedRequest.onFork !== undefined) {
-        void selectedRequest.onFork().catch((cause) => {
+        void selectedRequest.onFork().catch((error: unknown) => {
           dialog.alert(
             "Fork failed",
-            cause instanceof Error ? cause.message : "Could not fork thread",
+            error instanceof Error ? error.message : "Could not fork thread",
           );
         });
       }
@@ -108,29 +115,33 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
     const canFork = request?.onFork !== undefined;
     const canReview = request?.onReview !== undefined;
     const actions: readonly CodeWideMenuAction[] = [
-      { id: "copy", label: "Copy", icon: "copy-outline", disabled: !canCopy },
-      { id: "fork", label: "Fork", icon: "git-branch-outline", disabled: !canFork },
+      { disabled: !canCopy, icon: "copy-outline", id: "copy", label: "Copy" },
+      { disabled: !canFork, icon: "git-branch-outline", id: "fork", label: "Fork" },
       {
+        disabled: !canReview,
+        icon: "chatbubble-ellipses-outline",
         id: "review",
         label: "Review response",
-        icon: "chatbubble-ellipses-outline",
-        disabled: !canReview,
       },
     ];
 
     return (
-      <View ref={rootRef} collapsable={false} pointerEvents="box-none" style={styles.host}>
+      <View collapsable={false} pointerEvents="box-none" ref={rootRef} style={styles.host}>
         <CodeWideMenu
-          key={menu?.generation ?? "closed"}
           actions={actions}
           expanded={menu !== null}
-          style={[styles.anchor, menu?.anchor ?? { left: 0, top: 0, width: 1, height: 1 }]}
+          key={menu?.generation ?? "closed"}
           onDismiss={dismiss}
-          onSelect={(id) => handleSelect(id as "copy" | "fork" | "review")}
+          onSelect={(id) => {
+            if (id === "copy" || id === "fork" || id === "review") {
+              handleSelect(id);
+            }
+          }}
+          style={[styles.anchor, menu?.anchor ?? { height: 1, left: 0, top: 0, width: 1 }]}
         >
           <View
             pointerEvents="none"
-            style={{ width: menu?.anchor.width ?? 1, height: menu?.anchor.height ?? 1 }}
+            style={{ height: menu?.anchor.height ?? 1, width: menu?.anchor.width ?? 1 }}
           />
         </CodeWideMenu>
       </View>
@@ -143,10 +154,10 @@ const styles = StyleSheet.create({
     position: "absolute",
   },
   host: {
-    position: "absolute",
-    top: 0,
-    right: 0,
     bottom: 0,
     left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
   },
 });

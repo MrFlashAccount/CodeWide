@@ -1,6 +1,6 @@
 /** V1 TokenUsageProtocolBlock owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock } from "@codewide/renderers";
-import { Ionicons } from "@expo/vector-icons";
+import type { RenderBlock } from "@codewide/renderers";
+import type { Ionicons } from "@expo/vector-icons";
 import { View } from "react-native";
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
 import { colors } from "../../../theme";
@@ -35,19 +35,19 @@ export function TokenUsageProtocolBlock({ block }: { block: RenderBlock }) {
   return (
     <View style={[styles.tokenStrip, insideBubbleSurface && styles.bubbleNestedSurface]}>
       <View style={styles.tokenStripTitle}>
-        <InlineIcon name="speedometer-outline" role="label" color={colors.textMuted} />
+        <InlineIcon color={colors.textMuted} name="speedometer-outline" role="label" />
         <Text style={styles.cardTitle}>Usage</Text>
       </View>
       <View style={styles.tokenMetrics}>
         {metrics.map((metric) =>
           metric.value === null ? null : (
             <View
-              key={metric.label}
-              accessible
               accessibilityLabel={`${metric.label}: ${metric.value.toLocaleString()} tokens`}
+              accessible
+              key={metric.label}
               style={styles.tokenMetric}
             >
-              <InlineIcon name={metric.icon} role="label" color={colors.textMuted} />
+              <InlineIcon color={colors.textMuted} name={metric.icon} role="label" />
               <Text style={styles.tokenMetricValue}>
                 {TOKEN_SYMBOL}
                 {compactNumber(metric.value)}

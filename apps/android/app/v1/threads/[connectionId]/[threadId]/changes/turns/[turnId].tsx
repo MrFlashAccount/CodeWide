@@ -79,7 +79,5 @@ export default function V1TurnChangesRoute(): React.JSX.Element {
     changesRouteSessions.close(session.id);
     router.back();
   };
-  // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-  // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
   return <TurnChangesRoute onClose={close} request={session.request} />;
 }

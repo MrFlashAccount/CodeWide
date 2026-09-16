@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { sourceHasJsxElement } from "../source-contract";
 import {
   ownerTimelineProjection,
   ownerTimelineViewport,
@@ -11,9 +12,18 @@ import {
   ownerThreadTimeline,
 } from "./conversation-timeline-sources";
 
-const ownerTimelineMeasurementBindings = readFileSync(new URL("../../src/features/conversation/timeline/timelineMeasurementBindings.ts", import.meta.url), "utf8");
+const ownerTimelineMeasurementBindings = readFileSync(
+  new URL(
+    "../../src/features/conversation/timeline/timelineMeasurementBindings.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
-const gestureBindings = readFileSync(new URL("../../src/features/conversation/timeline/timelineGestureBindings.ts", import.meta.url), "utf8");
+const gestureBindings = readFileSync(
+  new URL("../../src/features/conversation/timeline/timelineGestureBindings.ts", import.meta.url),
+  "utf8",
+);
 
 it("preserves conversation timeline integration contracts", () => {
   expect(ownerTimelineProjection).toContain(
@@ -25,9 +35,12 @@ it("preserves conversation timeline integration contracts", () => {
   expect(gestureBindings).toMatch(
     /const away =\s*!props\.historyViewport\.containsLatest\s*\|\|\s*distance > LATEST_TIMELINE_THRESHOLD_PX;/,
   );
-  expect(ownerTimelineViewport).toMatch(
-    /<ThreadTimelineList\s+key=\{props\.composerScope\}\s+ref=\{timelineRef\}/,
-  );
+  expect(
+    sourceHasJsxElement(ownerTimelineViewport, "ThreadTimelineList", [
+      "key={props.composerScope}",
+      "ref={timelineRef}",
+    ]),
+  ).toBe(true);
   expect(ownerOverlayScrollOwnership).toContain(
     "KeyboardController.dismiss({ animated: true, keepFocus: false })",
   );
@@ -75,11 +88,19 @@ it("preserves conversation timeline integration contracts", () => {
   expect(ownerThreadTimeline).toContain(
     'await onFork({ boundary: { kind: "through", turnId }, ephemeral: false })',
   );
-  expect(ownerThreadTimeline).toMatch(
-    /<RecoverableRenderBoundary\s+key=\{boundaryKey\}\s+scope="bubble"\s+label="Conversation item"/,
-  );
+  expect(
+    sourceHasJsxElement(ownerThreadTimeline, "RecoverableRenderBoundary", [
+      "key={boundaryKey}",
+      'label="Conversation item"',
+      'scope="bubble"',
+    ]),
+  ).toBe(true);
   expect(ownerTimelineViewport).toContain("renderRevision={props.composerScope}");
   expect(ownerTimelineViewport).toContain("<ThreadTimelineList");
   expect(ownerThreadTimeline).toContain("{ getAccess: props.getStableTransferAccess }");
-  expect(ownerThreadTimeline).toMatch(/<PrivateImageAccessProvider\s+scope=\{props\.composerScope\}/);
+  expect(
+    sourceHasJsxElement(ownerThreadTimeline, "PrivateImageAccessProvider", [
+      "scope={props.composerScope}",
+    ]),
+  ).toBe(true);
 });

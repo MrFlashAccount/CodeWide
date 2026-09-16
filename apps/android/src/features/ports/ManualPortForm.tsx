@@ -2,31 +2,33 @@ import { Ionicons } from "@expo/vector-icons";
 import { ActivityIndicator, Pressable, ScrollView, Switch, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
-import { type FormState } from "./portForwardingForm";
+import type { FormState } from "./portForwardingForm";
 import { styles } from "./PortForwardingManager.styles";
 import { InlineError } from "./PortPresentation";
 
 export function ManualPortForm(props: {
-  serverName: string;
-  form: FormState;
-  submitting: boolean;
   error: string | null;
-  onChange(next: FormState): void;
-  onBack(): void;
-  onSubmit(): void;
+  form: FormState;
+  onBack: () => void;
+  onChange: (next: FormState) => void;
   onRemove?: () => void;
+  onSubmit: () => void;
+  serverName: string;
+  submitting: boolean;
 }) {
-  const update = (patch: Partial<FormState>) => props.onChange({ ...props.form, ...patch });
+  const update = (patch: Partial<FormState>) => {
+    props.onChange({ ...props.form, ...patch });
+  };
   return (
-    <View testID="port-forwarding-form" style={styles.root}>
+    <View style={styles.root} testID="port-forwarding-form">
       <View style={styles.header}>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Back to open ports"
+          accessibilityRole="button"
           onPress={props.onBack}
           style={styles.iconButton}
         >
-          <Ionicons name="arrow-back" size={iconSize.action} color={colors.text} />
+          <Ionicons color={colors.text} name="arrow-back" size={iconSize.action} />
         </Pressable>
         <View style={styles.titleBlock}>
           <Text style={styles.title}>{props.form.id === null ? "Manual port" : "Edit port"}</Text>
@@ -35,32 +37,38 @@ export function ManualPortForm(props: {
           </Text>
         </View>
       </View>
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent}>
+      <ScrollView contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled">
         <Text style={styles.fieldLabel}>Name</Text>
         <TextInput
           accessibilityLabel="Forwarding name"
-          value={props.form.label}
-          onChangeText={(label) => update({ label })}
+          onChangeText={(label) => {
+            update({ label });
+          }}
           placeholder="Frontend"
           placeholderTextColor={colors.textDim}
           style={styles.textInput}
+          value={props.form.label}
         />
         <View style={styles.formGroup}>
           <PortField
-            label="Remote port"
-            hint="server localhost"
             accessibilityLabel="Remote server port"
+            hint="server localhost"
+            label="Remote port"
+            onChange={(remotePort) => {
+              update({ remotePort });
+            }}
             value={props.form.remotePort}
-            onChange={(remotePort) => update({ remotePort })}
           />
           <View style={styles.divider} />
           <PortField
-            label="Phone port"
-            hint="automatic if empty"
             accessibilityLabel="Preferred phone port"
-            value={props.form.localPort}
+            hint="automatic if empty"
+            label="Phone port"
+            onChange={(localPort) => {
+              update({ localPort });
+            }}
             placeholder="Auto"
-            onChange={(localPort) => update({ localPort })}
+            value={props.form.localPort}
           />
           <View style={styles.divider} />
           <View style={styles.switchRow}>
@@ -69,8 +77,10 @@ export function ManualPortForm(props: {
               <Text style={styles.rowSubtitle}>Keep available on this phone</Text>
             </View>
             <Switch
+              onValueChange={(startImmediately) => {
+                update({ startImmediately });
+              }}
               value={props.form.startImmediately}
-              onValueChange={(startImmediately) => update({ startImmediately })}
             />
           </View>
         </View>
@@ -107,12 +117,12 @@ export function ManualPortForm(props: {
 }
 
 function PortField(props: {
-  label: string;
-  hint: string;
   accessibilityLabel: string;
-  value: string;
+  hint: string;
+  label: string;
+  onChange: (value: string) => void;
   placeholder?: string;
-  onChange(value: string): void;
+  value: string;
 }) {
   return (
     <View style={styles.portField}>
@@ -124,11 +134,11 @@ function PortField(props: {
         accessibilityLabel={props.accessibilityLabel}
         keyboardType="number-pad"
         maxLength={5}
-        value={props.value}
+        onChangeText={props.onChange}
         placeholder={props.placeholder}
         placeholderTextColor={colors.textDim}
-        onChangeText={props.onChange}
         style={styles.portInput}
+        value={props.value}
       />
     </View>
   );

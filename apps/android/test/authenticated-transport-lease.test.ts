@@ -17,7 +17,7 @@ describe("opaque authenticated transport lease", () => {
     expect(contract).toContain('operation: "ports.list"');
     expect(contract).toContain('operation: "tunnel.create"');
     expect(contract).toContain('operation: "tunnel.delete"');
-    expect(contract).toContain("release(): Promise<void>");
+    expect(contract).toContain("release: () => Promise<void>");
     for (const forbidden of [
       "endpoint",
       "origin",

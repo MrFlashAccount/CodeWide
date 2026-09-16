@@ -3,11 +3,11 @@ import { createContext, useContext, type ReactNode } from "react";
 const FullscreenWindowReadyContext = createContext(false);
 
 export function FullscreenWindowReadyProvider({
-  ready,
   children,
+  ready,
 }: {
-  ready: boolean;
   children: ReactNode;
+  ready: boolean;
 }) {
   return (
     <FullscreenWindowReadyContext.Provider value={ready}>

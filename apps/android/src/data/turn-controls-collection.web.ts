@@ -6,8 +6,8 @@ import type { TurnControlsRow } from "./turn-controls-types";
 export function createTurnControlsCollection(): Collection<TurnControlsRow, string> {
   return createCollection(
     localOnlyCollectionOptions<TurnControlsRow, string>({
-      id: "workspace-turn-controls-v2-web",
       getKey: (row) => row.id,
+      id: "workspace-turn-controls-v2-web",
     }),
   );
 }

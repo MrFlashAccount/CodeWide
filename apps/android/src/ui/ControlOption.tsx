@@ -1,48 +1,48 @@
 /** V1 ControlOption owner, extracted without changing interaction or resource lifetime. */
 import { Ionicons } from "@expo/vector-icons";
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { colors, iconSize } from "../theme";
 import { AppListRow } from "./AppListRow";
 import { listRowHeight } from "./AppListRow.types";
 
 export function ControlOption({
   accessibilityLabel,
-  title,
-  titleAccessory,
-  subtitle,
-  selected,
   attention = false,
   disabled = false,
-  position = "only",
   onPress,
+  position = "only",
+  selected,
+  subtitle,
+  title,
+  titleAccessory,
 }: {
   accessibilityLabel?: string;
-  title: string;
-  titleAccessory?: ReactNode;
-  subtitle?: string;
-  selected: boolean;
   attention?: boolean;
   disabled?: boolean;
+  onPress: () => void;
   position?: "only" | "first" | "middle" | "last";
-  onPress(): void;
+  selected: boolean;
+  subtitle?: string;
+  title: string;
+  titleAccessory?: ReactNode;
 }) {
   return (
     <AppListRow
       title={title}
       {...(subtitle === undefined ? {} : { description: subtitle })}
       accessibilityLabel={`${accessibilityLabel ?? title}${selected ? ", selected" : ""}`}
-      selected={selected}
       disabled={disabled}
+      fixedHeight={subtitle === undefined ? listRowHeight.single : listRowHeight.double}
       onPress={onPress}
       position={position}
-      fixedHeight={subtitle === undefined ? listRowHeight.single : listRowHeight.double}
+      selected={selected}
       {...(titleAccessory === undefined
         ? attention
           ? {
               trailingIcon: {
+                color: colors.amber,
                 name: "alert-circle-outline",
                 size: iconSize.inline,
-                color: colors.amber,
               },
             }
           : {}
@@ -52,9 +52,9 @@ export function ControlOption({
                 {titleAccessory}
                 {attention && (
                   <Ionicons
+                    color={colors.amber}
                     name="alert-circle-outline"
                     size={iconSize.inline}
-                    color={colors.amber}
                   />
                 )}
               </>

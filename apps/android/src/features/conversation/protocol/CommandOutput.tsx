@@ -1,9 +1,9 @@
 /** V1 CommandOutput owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 import { commandOutputReferences, type OutputFootprintProjection } from "@codewide/sync-client";
 import { useContext, useState } from "react";
 import { Pressable, View } from "react-native";
-import { type GetTransferAccess } from "../../../data/private-transfer";
+import type { GetTransferAccess } from "../../../data/private-transfer";
 import { useEphemeralAsyncResource } from "../../../rendering/async-resource-store";
 import {
   commandActivityInput,
@@ -36,7 +36,7 @@ export function CommandExecutionProtocolBlock({
   getTransferAccess,
 }: {
   block: RenderBlock;
-  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
+  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
 }) {
   const activeToolCall = useContext(ActiveToolCallContext);
   const command = commandActivityInput(block.raw, block.title);
@@ -44,24 +44,24 @@ export function CommandExecutionProtocolBlock({
   const outputFootprint = commandOutputFootprint(block.raw, block.body ?? "");
   return (
     <Card
-      title={commandActivityTitle(command)}
       icon="terminal-outline"
+      title={commandActivityTitle(command)}
       {...(block.status === null ? {} : { status: block.status })}
-      headerMeta={<OutputFootprintMetric footprint={outputFootprint} />}
       collapsible
+      headerMeta={<OutputFootprintMetric footprint={outputFootprint} />}
       initiallyExpanded={false}
     >
       <View style={styles.commandActivitySection}>
         <View style={styles.commandActivitySectionHeader}>
           <Text style={styles.commandActivitySectionLabel}>Input</Text>
-          <CopyButton text={command} compact />
+          <CopyButton compact text={command} />
         </View>
         <NativeCodeBlock
-          value={command}
+          fillAvailableWidth
           language="shellscript"
           maxHeight={TOOL_RESULT_MAX_HEIGHT}
-          fillAvailableWidth
           truncate={false}
+          value={command}
         />
       </View>
       <LazyCommandOutput
@@ -82,8 +82,8 @@ export function CommandExecutionProtocolBlock({
 
 export interface LazyCommandOutputProps {
   readonly block: RenderBlock;
-  readonly running: boolean;
   readonly getTransferAccess?: GetTransferAccess;
+  readonly running: boolean;
 }
 
 export function LazyCommandOutput(props: LazyCommandOutputProps) {
@@ -100,9 +100,10 @@ export function LazyCommandOutput(props: LazyCommandOutputProps) {
     key,
     revision,
     async (_publish, signal) => {
-      if (getTransferAccess === undefined)
+      if (getTransferAccess === undefined) {
         throw new Error("Command output connection is unavailable");
-      return await readCommandOutput({ scope, references, byteLimit, getTransferAccess }, signal);
+      }
+      return readCommandOutput({ byteLimit, getTransferAccess, references, scope }, signal);
     },
     (value) => value.text.length * 2,
     true,
@@ -112,21 +113,21 @@ export function LazyCommandOutput(props: LazyCommandOutputProps) {
     <View style={styles.commandActivitySection}>
       <View style={styles.commandActivitySectionHeader}>
         <Text style={styles.commandActivitySectionLabel}>Output</Text>
-        {body !== "" && <CopyButton text={body} compact />}
+        {body !== "" && <CopyButton compact text={body} />}
       </View>
       {body !== "" && (
         <ProtocolBody
           body={body}
           code
+          codeVariant="terminal"
           collapsible={props.block.collapsible}
           expandedMaxHeight={TOOL_RESULT_MAX_HEIGHT}
           section="output"
-          codeVariant="terminal"
           showCopyAction={false}
         />
       )}
       {resource.status === "loading" && (
-        <WaveText text="Loading output…" style={styles.menuNotice} />
+        <WaveText style={styles.menuNotice} text="Loading output…" />
       )}
       {resource.error !== null && <Text style={styles.errorText}>{resource.error}</Text>}
       {references.length > 0 && getTransferAccess === undefined && (
@@ -138,7 +139,9 @@ export function LazyCommandOutput(props: LazyCommandOutputProps) {
       {resource.value?.hasMore === true && (
         <Pressable
           accessibilityRole="button"
-          onPress={() => setByteLimit(byteLimit + COMMAND_OUTPUT_PAGE_BYTES)}
+          onPress={() => {
+            setByteLimit(byteLimit + COMMAND_OUTPUT_PAGE_BYTES);
+          }}
         >
           <Text style={styles.menuNotice}>Load more output</Text>
         </Pressable>
@@ -153,7 +156,9 @@ export function OutputFootprintMetric({
   footprint: OutputFootprintProjection | null;
 }) {
   const usage = useContext(TurnUsageContext);
-  if (footprint === null || footprint.estimatedTokens === 0) return null;
+  if (footprint === null || footprint.estimatedTokens === 0) {
+    return null;
+  }
   const costUsd = estimatedOutputInputCostUsd(footprint, usage);
   const label =
     costUsd === null
@@ -161,7 +166,7 @@ export function OutputFootprintMetric({
       : `Estimated command output footprint ${footprint.estimatedTokens.toLocaleString()} tokens, ${formatEstimatedTurnCost(costUsd)} API-equivalent input cost`;
   const value = `≈${TOKEN_SYMBOL}${compactNumber(footprint.estimatedTokens)}${costUsd === null ? "" : ` · ≈${formatEstimatedTurnCost(costUsd)}`}`;
   return (
-    <View accessible accessibilityLabel={label} style={styles.outputFootprintMetric}>
+    <View accessibilityLabel={label} accessible style={styles.outputFootprintMetric}>
       <Text numberOfLines={1} style={styles.outputFootprintMetricText}>
         {value}
       </Text>

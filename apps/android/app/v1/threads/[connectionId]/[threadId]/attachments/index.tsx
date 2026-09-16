@@ -41,13 +41,9 @@ export default function V1AttachmentsRoute(): React.JSX.Element {
   return (
     <ThreadAttachmentsRoute
       cwd={cwd}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       getTransferAccess={getTransferAccess}
       model={resources.runtime.resources?.threadResources ?? null}
       onClose={router.back}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onOpenDocument={(request) => {
         const session = documentRouteService.open(threadRouteSessionOwner(params.value), request);
         router.push({
@@ -55,8 +51,6 @@ export default function V1AttachmentsRoute(): React.JSX.Element {
           pathname: "/v1/threads/[connectionId]/[threadId]/documents/[sessionId]",
         });
       }}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onReload={async () =>
         features.changes.loadThreadResources(connectionId, threadId, undefined, "attachments")
       }

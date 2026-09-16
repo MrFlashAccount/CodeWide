@@ -6,7 +6,7 @@ import type {
   ThreadHistoryModel,
 } from "./thread-history-model";
 
-const IDLE_ACTIVITY: ThreadHistoryActivity = { status: "idle", error: null };
+const IDLE_ACTIVITY: ThreadHistoryActivity = { error: null, status: "idle" };
 
 /** Remote cursor changes do not replace the mounted Legend chat window. */
 export function useThreadHistoryCursor(

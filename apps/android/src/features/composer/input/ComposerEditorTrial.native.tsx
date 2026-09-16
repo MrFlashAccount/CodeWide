@@ -16,8 +16,8 @@ export default function ComposerEditorTrial(props: TrialProps) {
       <View style={styles.header}>
         <AppText style={styles.title}>Markdown composer · Trial</AppText>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Close composer trial"
+          accessibilityRole="button"
           onPress={props.onClose}
           style={styles.close}
         >
@@ -25,9 +25,9 @@ export default function ComposerEditorTrial(props: TrialProps) {
         </Pressable>
       </View>
       <ScrollView
+        contentContainerStyle={styles.bodyContent}
         keyboardShouldPersistTaps="always"
         style={styles.body}
-        contentContainerStyle={styles.bodyContent}
       >
         <AppText style={styles.hint}>
           Try / for skills or @ for context. Select text for Format; + inserts blocks and lists.
@@ -56,52 +56,52 @@ export default function ComposerEditorTrial(props: TrialProps) {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    minHeight: 0,
-    backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    padding: spacing.md,
-  },
   body: { flex: 1 },
   bodyContent: {
-    paddingHorizontal: spacing.md,
     gap: spacing.md,
     paddingBottom: controlSize.touch * 4,
-  },
-  notice: {
-    ...typeScale.caption,
-    color: colors.textMuted,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xxs,
-    backgroundColor: colors.surface,
-  },
-  title: {
-    ...typeScale.title,
-    flex: 1,
-    color: colors.text,
   },
   close: {
-    minHeight: controlSize.regular,
     justifyContent: "center",
+    minHeight: controlSize.regular,
     paddingHorizontal: spacing.sm,
   },
-  text: {
-    ...typeScale.body,
-    color: colors.text,
+  header: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    padding: spacing.md,
   },
   hint: {
     ...typeScale.caption,
     color: colors.textMuted,
   },
+  notice: {
+    ...typeScale.caption,
+    backgroundColor: colors.surface,
+    color: colors.textMuted,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xxs,
+  },
   preview: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.medium,
     gap: spacing.xxs,
     padding: spacing.sm,
-    borderRadius: radii.medium,
-    backgroundColor: colors.surfaceRaised,
+  },
+  root: {
+    backgroundColor: colors.background,
+    flex: 1,
+    minHeight: 0,
+  },
+  text: {
+    ...typeScale.body,
+    color: colors.text,
+  },
+  title: {
+    ...typeScale.title,
+    color: colors.text,
+    flex: 1,
   },
 });

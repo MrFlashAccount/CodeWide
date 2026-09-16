@@ -1,5 +1,5 @@
 import { View } from "react-native";
-import { type OperationalMetricsSnapshot } from "../../data/operational-metrics";
+import type { OperationalMetricsSnapshot } from "../../data/operational-metrics";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./PerformanceDiagnostics.styles";
 import { type ExperimentResult, EXPERIMENTS, STAGE_METRICS } from "./performanceExperiment";
@@ -23,7 +23,9 @@ export function OperationalMetrics({ metrics }: { metrics: OperationalMetricsSna
       ) : (
         visibleStages.map(({ id, label }) => {
           const timing = metrics.timings[id];
-          if (timing === undefined) return null;
+          if (timing === undefined) {
+            return null;
+          }
           return (
             <View key={id} style={styles.stageRow}>
               <Text style={styles.stageLabel}>{label}</Text>
@@ -107,7 +109,9 @@ export function ExperimentResultCard({ result }: { result: ExperimentResult }) {
       {STAGE_METRICS.map(({ id, label }) => {
         const baseline = result.baseline.stages[id] ?? 0;
         const variant = result.variant.stages[id] ?? 0;
-        if (baseline === 0 && variant === 0) return null;
+        if (baseline === 0 && variant === 0) {
+          return null;
+        }
         return (
           <Text key={id} style={styles.experimentDescription}>
             {label}: {decimal(baseline)} → {decimal(variant)} ms/s

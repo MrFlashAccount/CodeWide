@@ -5,22 +5,17 @@ import type { ConversationWorkspaceCapabilities } from "./workspaceCapabilities"
 /** Converts conversation intents using retained lower authorities. */
 export function createConversationWorkspaceAdapter({
   getThreadUiState,
-  readThread,
-  observeThread,
   loadTurnItems,
+  observeThread,
+  readThread,
 }: {
-  getThreadUiState(): ThreadUiStateDatabase | null;
-  readThread: ConversationWorkspaceCapabilities["readThread"];
-  observeThread: ConversationWorkspaceCapabilities["observeThread"];
+  getThreadUiState: () => ThreadUiStateDatabase | null;
   loadTurnItems: ConversationWorkspaceCapabilities["loadTurnItems"];
+  observeThread: ConversationWorkspaceCapabilities["observeThread"];
+  readThread: ConversationWorkspaceCapabilities["readThread"];
 }): ConversationWorkspaceCapabilities {
-  const loadScrollOffset = async (
-    connectionId: string,
-    threadId: string,
-  ): Promise<number | null> => {
-    return (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState()))
-      .scrollOffset;
-  };
+  const loadScrollOffset = async (connectionId: string, threadId: string): Promise<number | null> =>
+    (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState())).scrollOffset;
 
   const saveScrollOffset = async (
     connectionId: string,
@@ -37,11 +32,13 @@ export function createConversationWorkspaceAdapter({
       historyAnchorOffsetPx,
     );
   };
-  return { loadScrollOffset, saveScrollOffset, readThread, observeThread, loadTurnItems };
+  return { loadScrollOffset, loadTurnItems, observeThread, readThread, saveScrollOffset };
 }
 function requireThreadUiStateDatabase(
   database: ThreadUiStateDatabase | null,
 ): ThreadUiStateDatabase {
-  if (database === null) throw new Error("Local thread UI state is not ready");
+  if (database === null) {
+    throw new Error("Local thread UI state is not ready");
+  }
   return database;
 }

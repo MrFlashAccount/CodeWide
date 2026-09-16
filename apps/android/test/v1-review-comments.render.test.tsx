@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react-native";
-import { useReviewComments } from "../src/features/review/reviewComments";
+import { useReviewComments } from "../src/features/review/comments/reviewComments";
 import { useReviewAttachmentIds } from "../src/features/composer/attachments/reviewAdmission";
-import type { CodeReviewLineReference } from "../src/rendering/code-review";
+import type { CodeReviewLineReference } from "../src/features/review/comments/reviewComment";
 
 it("keeps a delayed transcript on its captured line and commits without closing another selected line", () => {
   const first: CodeReviewLineReference = { path: "/repo/a.ts", side: "new", line: 10 };
@@ -16,7 +16,14 @@ it("keeps a delayed transcript on its captured line and commits without closing 
   act(() => updateCaptured(first, "First transcript"));
   expect(hook.result.current.commentDraft).toBe("Second draft");
   act(() => hook.result.current.commitComment(first, "  First transcript  "));
-  expect(hook.result.current.comments).toEqual([expect.objectContaining({ path: first.path, line: first.line, side: first.side, body: "First transcript" })]);
+  expect(hook.result.current.comments).toEqual([
+    expect.objectContaining({
+      path: first.path,
+      line: first.line,
+      side: first.side,
+      body: "First transcript",
+    }),
+  ]);
   expect(hook.result.current.selectedReference).toBe(second);
   expect(hook.result.current.commentDraft).toBe("Second draft");
   act(() => hook.result.current.selectLine(first));
@@ -24,7 +31,9 @@ it("keeps a delayed transcript on its captured line and commits without closing 
 });
 
 it("acknowledges only the sent review attachment and retains a newer attachment in the same conversation", () => {
-  const hook = renderHook(({ scope }) => useReviewAttachmentIds(scope), { initialProps: { scope: "first" } });
+  const hook = renderHook(({ scope }) => useReviewAttachmentIds(scope), {
+    initialProps: { scope: "first" },
+  });
   act(() => hook.result.current.setContentReviewAttachmentId("first", "sent"));
   act(() => hook.result.current.setContentReviewAttachmentId("first", "newer"));
   act(() => hook.result.current.clearContentReviewAttachmentId("first", "sent"));

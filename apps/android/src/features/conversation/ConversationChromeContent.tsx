@@ -3,49 +3,58 @@ import type { ThreadConversationCapabilities } from "../turnActions/threadConver
 import type { MainThreadReadCapabilities } from "./mainThreadReadCapabilities";
 import type { ConversationSurfaceCapabilities } from "./conversationSurfaceCapabilities";
 import type { ConversationAccountCapabilities } from "../accounts/conversationAccountCapabilities";
-import { useTerminalDeletion } from "../terminal/terminalActions";
-import { useThreadRename } from "../turnActions/threadRename";
+import type { useTerminalDeletion } from "../terminal/terminalActions";
+import type { useThreadRename } from "../turnActions/threadRename";
 import { ConversationBottomChrome } from "./ConversationBottomChrome";
-import { createConversationComposerContent } from "./ConversationComposerContent";
+import type { createConversationComposerContent } from "./ConversationComposerContent";
 import { ConversationHeader } from "./header/ConversationHeader";
-import { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
-import { useConversationTimelineState } from "./timeline/conversationTimelineState";
+import type { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
+import type { useConversationTimelineState } from "./timeline/conversationTimelineState";
 import { JumpToLatest } from "./timeline/JumpToLatest";
-import { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
+import type { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
 import { TimelineSearchBar } from "./timeline/TimelineSearchBar";
 
 export function createConversationChromeContent({
-  thread,
+  accountRateLimitsDatabase,
+  accountsInputs,
+  actionsInputs,
+  archived,
   compact,
-  surfaceInputs,
-  threadChatModel,
+  composerView,
+  currentOutcome,
+  currentUsage,
+  cwd,
+  deleteThread,
   draftConnectionId,
   draftThreadId,
   historyActivityModel,
   historyActivityResourceId,
-  cwd,
   newChat,
-  timelineState,
-  timelineRead,
-  readInputs,
-  currentUsage,
-  accountRateLimitsDatabase,
-  accountsInputs,
-  readOnly,
-  archived,
-  pinned,
   overlayScrollOwnershipBinding,
-  threadRenameBinding,
-  actionsInputs,
-  deleteThread,
+  pinned,
+  readInputs,
+  readOnly,
   requestPrompt,
-  currentOutcome,
-  composerView,
+  surfaceInputs,
+  thread,
+  threadChatModel,
+  threadRenameBinding,
+  timelineRead,
+  timelineState,
 }: {
+  accountRateLimitsDatabase: Exclude<
+    ConversationAccountCapabilities["accountRateLimitsDatabase"],
+    undefined
+  >;
+  accountsInputs: ConversationAccountCapabilities;
+  actionsInputs: ThreadConversationCapabilities;
+  archived: Exclude<ThreadConversationCapabilities["archived"], undefined>;
   compact: Exclude<ConversationSurfaceCapabilities["compact"], undefined>;
-  thread: NonNullable<ConversationSurfaceCapabilities["thread"]>;
-  surfaceInputs: ConversationSurfaceCapabilities;
-  threadChatModel: Exclude<MainThreadReadCapabilities["threadChatModel"], undefined>;
+  composerView: ReturnType<typeof createConversationComposerContent>;
+  currentOutcome: Exclude<MainThreadReadCapabilities["currentOutcome"], undefined>;
+  currentUsage: Exclude<MainThreadReadCapabilities["currentUsage"], undefined>;
+  cwd: Exclude<ConversationSurfaceCapabilities["cwd"], undefined>;
+  deleteThread: ReturnType<typeof useTerminalDeletion>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
   historyActivityModel: Exclude<MainThreadReadCapabilities["historyActivityModel"], undefined>;
@@ -53,97 +62,88 @@ export function createConversationChromeContent({
     MainThreadReadCapabilities["historyActivityResourceId"],
     undefined
   >;
-  cwd: Exclude<ConversationSurfaceCapabilities["cwd"], undefined>;
   newChat: Exclude<ConversationSurfaceCapabilities["newChat"], undefined>;
-  timelineState: ReturnType<typeof useConversationTimelineState>;
-  timelineRead: ReturnType<typeof useConversationTimelineRead>;
-  readInputs: MainThreadReadCapabilities;
-  currentUsage: Exclude<MainThreadReadCapabilities["currentUsage"], undefined>;
-  accountRateLimitsDatabase: Exclude<
-    ConversationAccountCapabilities["accountRateLimitsDatabase"],
-    undefined
-  >;
-  accountsInputs: ConversationAccountCapabilities;
-  readOnly: Exclude<ConversationSurfaceCapabilities["readOnly"], undefined>;
-  archived: Exclude<ThreadConversationCapabilities["archived"], undefined>;
-  pinned: Exclude<ThreadConversationCapabilities["pinned"], undefined>;
   overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
-  threadRenameBinding: ReturnType<typeof useThreadRename>;
-  actionsInputs: ThreadConversationCapabilities;
-  deleteThread: ReturnType<typeof useTerminalDeletion>;
+  pinned: Exclude<ThreadConversationCapabilities["pinned"], undefined>;
+  readInputs: MainThreadReadCapabilities;
+  readOnly: Exclude<ConversationSurfaceCapabilities["readOnly"], undefined>;
   requestPrompt: ReactNode;
-  currentOutcome: Exclude<MainThreadReadCapabilities["currentOutcome"], undefined>;
-  composerView: ReturnType<typeof createConversationComposerContent>;
+  surfaceInputs: ConversationSurfaceCapabilities;
+  thread: NonNullable<ConversationSurfaceCapabilities["thread"]>;
+  threadChatModel: Exclude<MainThreadReadCapabilities["threadChatModel"], undefined>;
+  threadRenameBinding: ReturnType<typeof useThreadRename>;
+  timelineRead: ReturnType<typeof useConversationTimelineRead>;
+  timelineState: ReturnType<typeof useConversationTimelineState>;
 }) {
   const headerContent = (
     <ConversationHeader
+      accountRateLimitsDatabase={accountRateLimitsDatabase}
+      archived={archived}
+      closeThreadSearch={timelineRead.timelineSearchActionsBinding.closeThreadSearch}
       compact={compact}
-      onBack={surfaceInputs.onBack}
-      thread={thread}
-      threadChatModel={threadChatModel}
+      currentUsage={currentUsage}
+      cwd={cwd}
+      deleteThread={deleteThread}
+      dismissComposerKeyboardForOverlay={
+        overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay
+      }
       draftConnectionId={draftConnectionId}
       draftThreadId={draftThreadId}
       historyActivityModel={historyActivityModel}
       historyActivityResourceId={historyActivityResourceId}
-      server={surfaceInputs.server}
-      cwd={cwd}
       newChat={newChat}
-      threadSearchVisible={timelineState.timelineSearchStateBinding.threadSearchVisible}
-      closeThreadSearch={timelineRead.timelineSearchActionsBinding.closeThreadSearch}
-      setThreadSearchVisible={timelineState.timelineSearchStateBinding.setThreadSearchVisible}
-      remoteThread={readInputs.remoteThread}
-      currentUsage={currentUsage}
-      sessionCompactionCount={timelineRead.conversationPresentationBinding.sessionCompactionCount}
-      accountRateLimitsDatabase={accountRateLimitsDatabase}
-      onRefreshAccountRateLimits={accountsInputs.onRefreshAccountRateLimits}
-      readOnly={readOnly}
-      archived={archived}
-      pinned={pinned}
-      dismissComposerKeyboardForOverlay={
-        overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay
-      }
-      openThreadRename={threadRenameBinding.openThreadRename}
-      onTogglePin={actionsInputs.onTogglePin}
-      onUnarchive={actionsInputs.onUnarchive}
       onArchive={actionsInputs.onArchive}
+      onBack={surfaceInputs.onBack}
       onCompact={actionsInputs.onCompact}
       onFork={actionsInputs.onFork}
-      deleteThread={deleteThread}
+      onRefreshAccountRateLimits={accountsInputs.onRefreshAccountRateLimits}
+      onTogglePin={actionsInputs.onTogglePin}
+      onUnarchive={actionsInputs.onUnarchive}
+      openThreadRename={threadRenameBinding.openThreadRename}
+      pinned={pinned}
+      readOnly={readOnly}
+      remoteThread={readInputs.remoteThread}
+      server={surfaceInputs.server}
+      sessionCompactionCount={timelineRead.conversationPresentationBinding.sessionCompactionCount}
+      setThreadSearchVisible={timelineState.timelineSearchStateBinding.setThreadSearchVisible}
+      thread={thread}
+      threadChatModel={threadChatModel}
+      threadSearchVisible={timelineState.timelineSearchStateBinding.threadSearchVisible}
     />
   );
   const searchContent = (
     <TimelineSearchBar
-      threadSearch={timelineState.timelineSearchStateBinding.threadSearch}
-      updateThreadSearch={timelineRead.timelineSearchActionsBinding.updateThreadSearch}
-      setThreadSearchMatch={timelineState.timelineSearchStateBinding.setThreadSearchMatch}
+      closeThreadSearch={timelineRead.timelineSearchActionsBinding.closeThreadSearch}
+      compact={compact}
+      moveThreadSearch={timelineRead.timelineSearchActionsBinding.moveThreadSearch}
       scrollToThreadSearchIndex={
         timelineRead.timelineSearchActionsBinding.scrollToThreadSearchIndex
       }
-      threadSearchMatches={timelineRead.timelineSearchProjectionBinding.threadSearchMatches}
+      setThreadSearchMatch={timelineState.timelineSearchStateBinding.setThreadSearchMatch}
+      threadSearch={timelineState.timelineSearchStateBinding.threadSearch}
       threadSearchMatch={timelineState.timelineSearchStateBinding.threadSearchMatch}
-      compact={compact}
-      moveThreadSearch={timelineRead.timelineSearchActionsBinding.moveThreadSearch}
-      closeThreadSearch={timelineRead.timelineSearchActionsBinding.closeThreadSearch}
+      threadSearchMatches={timelineRead.timelineSearchProjectionBinding.threadSearchMatches}
+      updateThreadSearch={timelineRead.timelineSearchActionsBinding.updateThreadSearch}
     />
   );
   const jumpContent = (
     <JumpToLatest
-      newItemCount={timelineRead.newItemCount}
       bottomChromeHeight={timelineState.timelineViewportStateBinding.bottomChromeHeight}
       jumpTimelineToLatest={timelineRead.historyAnchorActionsBinding.jumpTimelineToLatest}
+      newItemCount={timelineRead.newItemCount}
     />
   );
   const bottomChrome = (
     <ConversationBottomChrome
-      setBottomChromeHeight={timelineState.timelineViewportStateBinding.setBottomChromeHeight}
-      readOnly={readOnly}
-      requestPrompt={requestPrompt}
-      timeline={timelineRead.conversationTimelineBinding.timeline}
-      failureNotice={timelineRead.conversationPresentationBinding.failureNotice}
-      remoteThread={readInputs.remoteThread}
-      currentOutcome={currentOutcome}
       composerContent={composerView.composerContent}
+      currentOutcome={currentOutcome}
+      failureNotice={timelineRead.conversationPresentationBinding.failureNotice}
+      readOnly={readOnly}
+      remoteThread={readInputs.remoteThread}
+      requestPrompt={requestPrompt}
+      setBottomChromeHeight={timelineState.timelineViewportStateBinding.setBottomChromeHeight}
+      timeline={timelineRead.conversationTimelineBinding.timeline}
     />
   );
-  return { searchContent, jumpContent, headerContent, bottomChrome };
+  return { bottomChrome, headerContent, jumpContent, searchContent };
 }

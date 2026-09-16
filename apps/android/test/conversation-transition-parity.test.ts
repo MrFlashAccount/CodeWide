@@ -128,7 +128,9 @@ describe("conversation transition parity", () => {
     expect(workspaceView).toContain("threadResourcesModel: props.runtime.resources?.threadResources ?? null");
     expect(pane).not.toContain("useThreadResources(");
     expect(toolsOwner).toContain("<ThreadResourceContextChips");
-    expect(ownerThreadResourceContextChips).toContain("const resource = useThreadResources(model, resourceId, () => load(), { revision });");
+    expect(ownerThreadResourceContextChips).toContain(
+      "const resource = useThreadResources(model, resourceId, async () => load(), { revision });",
+    );
   });
 
   it("keeps local presentation state stable across ordinary reopenings", () => {

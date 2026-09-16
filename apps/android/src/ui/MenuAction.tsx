@@ -6,47 +6,47 @@ import { AppListRow } from "./AppListRow";
 import { listRowHeight } from "./AppListRow.types";
 
 export function MenuAction({
-  icon,
-  title,
-  subtitle,
   danger = false,
+  icon,
   onPress,
+  subtitle,
+  title,
 }: {
-  icon: keyof typeof Ionicons.glyphMap | "push-pin";
-  title: string;
-  subtitle: string;
   danger?: boolean;
-  onPress?(): void;
+  icon: keyof typeof Ionicons.glyphMap | "push-pin";
+  onPress?: () => void;
+  subtitle: string;
+  title: string;
 }) {
   return (
     <AppListRow
-      title={title}
-      description={subtitle}
       danger={danger}
-      fixedHeight={listRowHeight.double}
+      description={subtitle}
       disabled={onPress === undefined}
+      fixedHeight={listRowHeight.double}
+      title={title}
       {...(onPress === undefined ? {} : { onPress })}
       {...(isComposeIconName(icon)
         ? {
             leadingIcon: {
+              color: danger ? colors.red : colors.textMuted,
               name: icon,
               size: iconSize.action,
-              color: danger ? colors.red : colors.textMuted,
             },
           }
         : {
             leading:
               icon === "push-pin" ? (
                 <MaterialIcons
+                  color={danger ? colors.red : colors.textMuted}
                   name="push-pin"
                   size={iconSize.action}
-                  color={danger ? colors.red : colors.textMuted}
                 />
               ) : (
                 <Ionicons
+                  color={danger ? colors.red : colors.textMuted}
                   name={icon}
                   size={iconSize.action}
-                  color={danger ? colors.red : colors.textMuted}
                 />
               ),
           })}

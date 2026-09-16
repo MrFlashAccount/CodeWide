@@ -6,8 +6,8 @@ import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../src/ui/typography-policy";
 import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
 const typography = readFileSync(new URL("../src/ui/Typography.tsx", import.meta.url), "utf8");
-const heroNative = readFileSync(
-  new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url),
+const productText = readFileSync(
+  new URL("../src/presentation/text/ProductText.tsx", import.meta.url),
   "utf8",
 );
 const screen = compactSource(
@@ -33,12 +33,15 @@ const portForwarding = compactSource(
 );
 const codeReviewStyles = compactSource(
   readFileSync(
-    new URL("../src/features/review/CodeReviewWorkspace.styles.ts", import.meta.url),
+    new URL("../src/features/review/workspace/CodeReviewWorkspace.styles.ts", import.meta.url),
     "utf8",
   ),
 );
 const codeReview = compactSource(
-  readFileSync(new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url), "utf8"),
+  readFileSync(
+    new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
+    "utf8",
+  ),
 );
 
 const ownerThreadSidebar = compactSource(
@@ -115,7 +118,7 @@ describe("windowed typography scaling contract", () => {
     expect(APP_MAX_FONT_SIZE_MULTIPLIER).toBeGreaterThan(1);
     expect(APP_MAX_FONT_SIZE_MULTIPLIER).toBeLessThanOrEqual(1.3);
     expect(typography).toContain("maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER");
-    expect(heroNative).toContain("maxFontSizeMultiplier: APP_MAX_FONT_SIZE_MULTIPLIER");
+    expect(productText).toContain("maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER");
   });
 
   it("invalidates variable timeline measurements while keeping fixed thread rows stable", () => {

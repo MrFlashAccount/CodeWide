@@ -1,6 +1,7 @@
 import Constants from "expo-constants";
 import { randomUUID } from "expo-crypto";
 import { Platform } from "react-native";
+import { appLogger } from "../observability/logger";
 import { NativeEngineSupervisor } from "../native/native-engine";
 import {
   enqueueNativeCommand,
@@ -52,56 +53,62 @@ import { createWorkspaceSession } from "./workspace-session";
 import { createWorkspaceTelemetryUpload } from "./workspace-telemetry";
 
 export type WorkspaceRuntimeSnapshot = {
-  ready: boolean;
-  error: string | null;
+  accountRateLimits: AccountRateLimitsDatabase | null;
   connectionProfiles: ConnectionProfileDatabase | null;
   connectionState: ConnectionStateModel | null;
-  threadSummaries: ThreadSummaryDatabase | null;
-  threadDetails: ThreadDetailDatabase | null;
+  error: string | null;
   pendingRequests: PendingRequestDatabase | null;
-  threadUiState: ThreadUiStateDatabase | null;
+  ready: boolean;
   resources: WorkspaceResourceDatabase | null;
-  accountRateLimits: AccountRateLimitsDatabase | null;
+  threadDetails: ThreadDetailDatabase | null;
+  threadSummaries: ThreadSummaryDatabase | null;
+  threadUiState: ThreadUiStateDatabase | null;
 };
 
 class WorkspaceRuntime {
   readonly native = Platform.OS === "android";
   snapshot: WorkspaceRuntimeSnapshot = {
-    ready: !this.native,
-    error: null,
+    accountRateLimits: null,
     connectionProfiles: null,
     connectionState: null,
-    threadSummaries: null,
-    threadDetails: null,
+    error: null,
     pendingRequests: null,
-    threadUiState: null,
+    ready: !this.native,
     resources: null,
-    accountRateLimits: null,
+    threadDetails: null,
+    threadSummaries: null,
+    threadUiState: null,
   };
   readonly listeners = new Set<() => void>();
   supervisor: WorkspaceSyncSupervisor | null = null;
   voiceController: VoiceInputController | null = null;
   fileTransferController: FileTransferController | null = null;
   startPromise: Promise<void> | null = null;
-  profileSubscription: { unsubscribe(): void } | null = null;
-  connectionStateSubscription: { unsubscribe(): void } | null = null;
+  profileSubscription: { unsubscribe: () => void } | null = null;
+  connectionStateSubscription: { unsubscribe: () => void } | null = null;
 
   get resourceDatabase(): WorkspaceResourceDatabase {
     const database = this.snapshot.resources;
-    if (database === null) throw new Error("Workspace resources are not ready");
+    if (database === null) {
+      throw new Error("Workspace resources are not ready");
+    }
     return database;
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   };
 
   readonly getSnapshot = (): WorkspaceRuntimeSnapshot => this.snapshot;
 
   update(patch: Partial<WorkspaceRuntimeSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch };
-    for (const listener of this.listeners) listener();
+    for (const listener of this.listeners) {
+      listener();
+    }
   }
 
   enabledConnectionIds(): string[] {
@@ -113,12 +120,16 @@ class WorkspaceRuntime {
   }
 }
 
-function ensureWorkspaceRuntimeStarted(): Promise<void> {
-  if (!workspaceRuntime.native) return Promise.resolve();
-  if (workspaceRuntime.startPromise !== null) return workspaceRuntime.startPromise;
-  workspaceRuntime.startPromise = startWorkspaceRuntime().catch((cause: unknown) => {
-    const message = cause instanceof Error ? cause.message : "unknown startup error";
-    workspaceRuntime.update({ ready: true, error: message });
+async function ensureWorkspaceRuntimeStarted(): Promise<void> {
+  if (!workspaceRuntime.native) {
+    return;
+  }
+  if (workspaceRuntime.startPromise !== null) {
+    return workspaceRuntime.startPromise;
+  }
+  workspaceRuntime.startPromise = startWorkspaceRuntime().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : "unknown startup error";
+    workspaceRuntime.update({ error: message, ready: true });
     workspaceRuntime.startPromise = null;
   });
   return workspaceRuntime.startPromise;
@@ -146,21 +157,21 @@ async function startWorkspaceRuntime(): Promise<void> {
     // connection engine finish. The workspace can paint immediately while
     // its reactive stores fill from disk in the background.
     workspaceRuntime.update({
-      ready: false,
-      error: null,
+      accountRateLimits,
       connectionProfiles: profiles,
       connectionState,
-      threadSummaries: summaries,
-      threadDetails: details,
+      error: null,
       pendingRequests,
-      threadUiState,
+      ready: false,
       resources,
-      accountRateLimits,
+      threadDetails: details,
+      threadSummaries: summaries,
+      threadUiState,
     });
     summaries.setRenameHandler(async (connectionId, threadId, name) => {
       await enqueueNativeCommand(connectionId, `thread-name-${randomUUID()}`, "thread/name/set", {
-        threadId,
         name,
+        threadId,
       });
     });
     await Promise.all([
@@ -168,7 +179,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       details.prepare(),
       profiles.collection.preload(),
       pendingRequests.collection.preload(),
-      threadUiState.collection.preload(),
+      threadUiState.ready,
       resources.turnControls.preload(),
       accountRateLimits.collection.preload(),
     ]);
@@ -177,8 +188,8 @@ async function startWorkspaceRuntime(): Promise<void> {
     // already active (thread deletion) and never persists a second outbox copy.
     try {
       await summaries.reconcileDeleteCommands(await listNativeCommands());
-    } catch (cause) {
-      console.warn("Could not reconcile native command state during startup", cause);
+    } catch (error) {
+      appLogger.warnCaught({ error, event: "workspace.native_command.reconcile.failed" });
     }
 
     startupStage = "profile migration";
@@ -193,26 +204,27 @@ async function startWorkspaceRuntime(): Promise<void> {
           connectionState.setState(connectionId, state, diagnostic, rpcAvailable);
         },
       },
-      projection: createThreadSyncProjection({
-        details,
-        summaries,
-        resources,
-        accountRateLimits,
-        sync: workspaceThreadSync,
-        catalog: workspaceCatalog,
-      }),
-      onPendingRequests: (connectionId, requests) =>
-        pendingRequests.replace(connectionId, requests),
       onOutboxChange: createCommandDeliveryProjection(details, summaries),
+      onPendingRequests: (connectionId, requests) => {
+        pendingRequests.replace(connectionId, requests);
+      },
+      projection: createThreadSyncProjection({
+        accountRateLimits,
+        catalog: workspaceCatalog,
+        details,
+        resources,
+        summaries,
+        sync: workspaceThreadSync,
+      }),
     };
     const supervisor: WorkspaceSyncSupervisor = new NativeEngineSupervisor(nativeSupervisorOptions);
     workspaceRuntime.supervisor = supervisor;
     workspaceCatalog.bindSummaryDemand(summaries);
     connectionState.reconcileProfiles(
       initialProfiles.map((connection) => ({
-        id: connection.id,
         connectionId: connection.id,
         enabled: connection.enabled,
+        id: connection.id,
       })),
     );
     supervisor.replaceConnections(initialProfiles);
@@ -225,48 +237,48 @@ async function startWorkspaceRuntime(): Promise<void> {
     workspaceRuntime.connectionStateSubscription?.unsubscribe();
     workspaceRuntime.connectionStateSubscription = connectionState.subscribeChanges(
       createThreadSyncReconnect({
-        sync: workspaceThreadSync,
+        accountRateLimits,
         catalog: workspaceCatalog,
         details,
-        accountRateLimits,
         refreshAccountRateLimits,
+        sync: workspaceThreadSync,
       }),
       { includeInitialState: true },
     );
     workspaceRuntime.update({
-      ready: true,
-      error: null,
+      accountRateLimits,
       connectionProfiles: profiles,
       connectionState,
-      threadSummaries: summaries,
-      threadDetails: details,
+      error: null,
       pendingRequests,
-      threadUiState,
+      ready: true,
       resources,
-      accountRateLimits,
+      threadDetails: details,
+      threadSummaries: summaries,
+      threadUiState,
     });
     workspaceCatalog.registerLifecycle(workspaceThreadSync.bindForegroundRepair(supervisor));
-  } catch (cause) {
+  } catch (error) {
     if (createdThreadDetails !== null) {
       if (workspaceRuntime.snapshot.threadDetails === createdThreadDetails) {
         workspaceRuntime.update({ threadDetails: null });
       }
       try {
         await createdThreadDetails.close();
-      } catch (closeCause) {
-        console.warn("Could not close failed thread detail startup", closeCause);
+      } catch (error) {
+        appLogger.warnCaught({ error: error, event: "workspace.thread_detail.close_failed" });
       }
     }
-    const message = cause instanceof Error ? cause.message : "unknown startup error";
-    throw new Error(`Local runtime startup failed (${startupStage}): ${message}`, { cause });
+    const message = error instanceof Error ? error.message : "unknown startup error";
+    throw new Error(`Local runtime startup failed (${startupStage}): ${message}`, { cause: error });
   }
 }
 
 const workspaceRuntime = new WorkspaceRuntime();
-const { currentConnections, scopedHttpAuthorization, forgetHttpAuthorization, rpcAfterAttach } =
+const { currentConnections, forgetHttpAuthorization, rpcAfterAttach, scopedHttpAuthorization } =
   createWorkspaceSession({
-    projectConnections: () => workspaceRuntime.snapshot.connectionProfiles?.project() ?? [],
     mintNativeSession,
+    projectConnections: () => workspaceRuntime.snapshot.connectionProfiles?.project() ?? [],
     randomUUID,
   });
 
@@ -282,28 +294,28 @@ const uploadTelemetryBatch = createWorkspaceTelemetryUpload({
 configureTelemetryTransport(uploadTelemetryBatch);
 configureTelemetryAppVersion(Constants.expoConfig?.version);
 const workspaceThreadSync = createThreadSyncRuntime({
-  getDetails: () => workspaceRuntime.snapshot.threadDetails,
-  getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
-  getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
-  rpcAfterAttach,
-  refreshSubagents: (connectionId, threadId) =>
-    workspaceCatalog.refreshSubagents(connectionId, threadId),
-  loadTurnControls: (connectionId, cwd) => loadTurnControls(connectionId, cwd),
-  transferAccess: (connectionId, forceRefresh) => transferAccess(connectionId, forceRefresh),
-  readInvalidationArchived: (key) => workspaceCatalog.readInvalidationArchived(key),
   clearInvalidationArchived: (key) => {
     workspaceCatalog.clearInvalidationArchived(key);
   },
-  refreshThreadCatalog: (connectionId, force) =>
+  getDetails: () => workspaceRuntime.snapshot.threadDetails,
+  getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+  getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
+  loadTurnControls: async (connectionId, cwd) => loadTurnControls(connectionId, cwd),
+  readInvalidationArchived: (key) => workspaceCatalog.readInvalidationArchived(key),
+  refreshSubagents: async (connectionId, threadId) =>
+    workspaceCatalog.refreshSubagents(connectionId, threadId),
+  refreshThreadCatalog: async (connectionId, force) =>
     workspaceCatalog.refreshThreadCatalog(connectionId, force),
+  rpcAfterAttach,
+  transferAccess: async (connectionId, forceRefresh) => transferAccess(connectionId, forceRefresh),
 });
 
 const workspaceCatalog = createCatalogRuntime({
+  desiredThreadId: (connectionId) => workspaceThreadSync.desiredThreadId(connectionId),
+  enabledConnectionIds: () => workspaceRuntime.enabledConnectionIds(),
   getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
   getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
-  enabledConnectionIds: () => workspaceRuntime.enabledConnectionIds(),
-  desiredThreadId: (connectionId) => workspaceThreadSync.desiredThreadId(connectionId),
-  readThread: (connectionId, threadId, cached, authoritative, repairShortWindow) =>
+  readThread: async (connectionId, threadId, cached, authoritative, repairShortWindow) =>
     workspaceThreadSync.readThread(
       connectionId,
       threadId,
@@ -318,16 +330,20 @@ const workspaceCatalog = createCatalogRuntime({
 // UI observes the resulting local-first collections.
 
 const retryStartup = async (): Promise<void> => {
-  if (!workspaceRuntime.native || workspaceRuntime.snapshot.error === null) return;
+  if (!workspaceRuntime.native || workspaceRuntime.snapshot.error === null) {
+    return;
+  }
   workspaceRuntime.startPromise = null;
-  workspaceRuntime.update({ ready: false, error: null });
+  workspaceRuntime.update({ error: null, ready: false });
   await ensureWorkspaceRuntimeStarted();
 };
 
 const startVoiceTranscription = createVoiceTransport({
   getEnabledSession(connectionId) {
     const connection = currentConnections().find((candidate) => candidate.id === connectionId);
-    if (connection === undefined || !connection.enabled) return undefined;
+    if (connection === undefined || !connection.enabled) {
+      return undefined;
+    }
     return workspaceRuntime.supervisor?.session(connectionId);
   },
   rpcAfterAttach,
@@ -377,4 +393,12 @@ export const workspaceThreadResources = createThreadResourceLoader({
     null,
   rpcAfterAttach,
 });
-void ensureWorkspaceRuntimeStarted();
+function startWorkspaceRuntimeInBackground(): void {
+  ensureWorkspaceRuntimeStarted().catch((error: unknown) => {
+    workspaceRuntime.update({
+      error: error instanceof Error ? error.message : "unknown startup error",
+      ready: true,
+    });
+  });
+}
+startWorkspaceRuntimeInBackground();

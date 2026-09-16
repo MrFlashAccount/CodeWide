@@ -1,7 +1,7 @@
 export type ComposerLatestValue<T> = {
-  scope: string;
-  rendered: T;
   latest: T;
+  rendered: T;
+  scope: string;
 };
 
 /**
@@ -13,10 +13,12 @@ export function reconcileComposerLatestValue<T>(
   scope: string,
   rendered: T,
 ): ComposerLatestValue<T> {
-  if (current.scope !== scope) return { scope, rendered, latest: rendered };
+  if (current.scope !== scope) {
+    return { latest: rendered, rendered, scope };
+  }
   return {
-    scope,
-    rendered,
     latest: Object.is(current.latest, current.rendered) ? rendered : current.latest,
+    rendered,
+    scope,
   };
 }

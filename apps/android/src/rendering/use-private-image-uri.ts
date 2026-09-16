@@ -1,32 +1,32 @@
 import { createContext, createElement, type ReactNode, useContext } from "react";
 
-import { type GetTransferAccess, type PrivateAssetSource } from "../data/private-transfer";
+import type { GetTransferAccess, PrivateAssetSource } from "../data/private-transfer";
 import { materializePrivateAsset } from "./private-asset";
 import { useEphemeralAsyncResource } from "./async-resource-store";
 import { privateImageResourceKey } from "./private-image-resource-key";
 import { incrementMetric, recordTiming } from "../data/operational-metrics";
 
-type ResolvedImageSource = { uri: string; headers?: Record<string, string> };
+type ResolvedImageSource = { headers?: Record<string, string>; uri: string };
 type PrivateImageSource = {
-  uri: string | null;
+  failed: boolean;
   headers?: Record<string, string>;
   source: ResolvedImageSource | null;
-  failed: boolean;
+  uri: string | null;
 };
 const PrivateImageAccessContext = createContext<GetTransferAccess | null>(null);
 const PrivateFileAccessScopeContext = createContext("none");
 const PrivateAssetRecoveryContext = createContext<(() => Promise<void>) | null>(null);
-const EMPTY_PRIVATE_IMAGE: PrivateImageSource = { uri: null, source: null, failed: false };
-const FAILED_PRIVATE_IMAGE: PrivateImageSource = { uri: null, source: null, failed: true };
+const EMPTY_PRIVATE_IMAGE: PrivateImageSource = { failed: false, source: null, uri: null };
+const FAILED_PRIVATE_IMAGE: PrivateImageSource = { failed: true, source: null, uri: null };
 
 export function PrivateImageAccessProvider({
-  scope,
-  getAccess,
   children,
+  getAccess,
+  scope,
 }: {
-  scope: string;
-  getAccess?: GetTransferAccess;
   children: ReactNode;
+  getAccess?: GetTransferAccess;
+  scope: string;
 }) {
   return createElement(
     PrivateFileAccessScopeContext.Provider,
@@ -36,11 +36,11 @@ export function PrivateImageAccessProvider({
 }
 
 export function PrivateAssetRecoveryProvider({
-  recover,
   children,
+  recover,
 }: {
-  recover?: () => Promise<void>;
   children: ReactNode;
+  recover?: () => Promise<void>;
 }) {
   return createElement(PrivateAssetRecoveryContext.Provider, { value: recover ?? null }, children);
 }
@@ -70,12 +70,14 @@ export function usePrivateAssetUri(
   const key =
     source === null
       ? null
-      : `private-asset:${accessScope}:${revision}:${privateImageResourceKey(source)}`;
+      : `private-asset:${accessScope}:${String(revision)}:${privateImageResourceKey(source)}`;
   const resource = useEphemeralAsyncResource<PrivateImageSource>(
     key,
     key ?? "none",
     async (_publish, signal) => {
-      if (source === null) return EMPTY_PRIVATE_IMAGE;
+      if (source === null) {
+        return EMPTY_PRIVATE_IMAGE;
+      }
       const materialize = materializePrivateAsset(
         source,
         getAccess,
@@ -83,24 +85,23 @@ export function usePrivateAssetUri(
         signal,
       );
       const materializeStartedAt = performance.now();
-      return await materialize.then(
+      return materialize.then(
         (resolved) => {
-          if (!signal.aborted)
+          if (!signal.aborted) {
             recordTiming("image_materialize_ms", performance.now() - materializeStartedAt);
-          return resolved.headers === undefined
-            ? { uri: resolved.uri, source: { uri: resolved.uri }, failed: false }
-            : {
-                uri: resolved.uri,
-                headers: resolved.headers,
-                source: { uri: resolved.uri, headers: resolved.headers },
-                failed: false,
-              };
+          }
+          return {
+            failed: false,
+            headers: resolved.headers,
+            source: { headers: resolved.headers, uri: resolved.uri },
+            uri: resolved.uri,
+          };
         },
-        async (cause: unknown) => {
-          if ((cause as { name?: unknown }).name !== "AbortError") {
+        (error: unknown) => {
+          if (!(error instanceof Error && error.name === "AbortError")) {
             incrementMetric("image_failures");
           }
-          return await Promise.reject(cause);
+          throw error instanceof Error ? error : new Error("Private image request failed");
         },
       );
     },
@@ -112,10 +113,14 @@ export function usePrivateAssetUri(
 }
 
 function imageAssetSource(uri: string, headers?: Record<string, string>): PrivateAssetSource {
-  if (headers !== undefined) return { kind: "direct", uri, headers };
+  if (headers !== undefined) {
+    return { headers, kind: "direct", uri };
+  }
   try {
     const url = new URL(uri);
-    if (url.protocol === "http:" || url.protocol === "https:") return { kind: "remote", url: uri };
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return { kind: "remote", url: uri };
+    }
   } catch {
     // Data and app-private file URIs are handled directly.
   }

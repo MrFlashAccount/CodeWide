@@ -6,11 +6,11 @@ import { useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, Platform, Switch, View } from "react-native";
 import { UiGenerationControl } from "../../boot/UiGenerationControl";
 import { subscribeUiGeneration, uiGenerationSnapshot } from "../../boot/uiGenerationResource";
-import { type AccountPoolSnapshot } from "../../data/account-pool";
-import { type AccountRateLimitsRow } from "../../data/account-rate-limits";
+import type { AccountPoolSnapshot } from "../../data/account-pool";
+import type { AccountRateLimitsRow } from "../../data/account-rate-limits";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
 import type { StoredConnection } from "../../data/connection-profile-types";
-import { type ConnectionUpdateInput } from "../../data/connection-validation";
+import type { ConnectionUpdateInput } from "../../data/connection-validation";
 import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
@@ -37,43 +37,49 @@ export function SubscribedConnectionSettings({
 }
 
 export function ConnectionSettings({
-  connections,
-  onClose,
-  onAddServer,
-  onToggle,
-  onReconnect,
-  onDelete,
-  onUpdate,
-  onMove,
   accountRateLimits,
-  onRefreshAccountPool,
-  onStartAccountLogin,
-  onCancelAccountLogin,
+  connections,
   onActivateAccountProfile,
-  onUpdateAccountProfile,
+  onAddServer,
+  onCancelAccountLogin,
+  onClose,
+  onDelete,
+  onMove,
+  onReconnect,
+  onRefreshAccountPool,
   onRemoveAccountProfile,
+  onStartAccountLogin,
+  onToggle,
+  onUpdate,
+  onUpdateAccountProfile,
 }: {
-  connections: StoredConnection[];
-  onClose(): void;
-  onAddServer(): void;
-  onToggle(connectionId: string, enabled: boolean): Promise<void>;
-  onReconnect(connectionId: string): Promise<void>;
-  onDelete(connectionId: string): Promise<void>;
-  onUpdate(connectionId: string, input: ConnectionUpdateInput): Promise<void>;
-  onMove(connectionId: string, direction: -1 | 1): Promise<void>;
   accountRateLimits: AccountRateLimitsRow[];
-  onRefreshAccountPool?(connectionId: string): Promise<AccountPoolSnapshot>;
-  onStartAccountLogin?(
+  connections: StoredConnection[];
+  onActivateAccountProfile?: (
     connectionId: string,
-  ): Promise<{ loginId: string; verificationUrl: string; userCode: string }>;
-  onCancelAccountLogin?(connectionId: string, loginId: string): Promise<void>;
-  onActivateAccountProfile?(connectionId: string, profileId: string): Promise<AccountPoolSnapshot>;
-  onUpdateAccountProfile?(
+    profileId: string,
+  ) => Promise<AccountPoolSnapshot>;
+  onAddServer: () => void;
+  onCancelAccountLogin?: (connectionId: string, loginId: string) => Promise<void>;
+  onClose: () => void;
+  onDelete: (connectionId: string) => Promise<void>;
+  onMove: (connectionId: string, direction: -1 | 1) => Promise<void>;
+  onReconnect: (connectionId: string) => Promise<void>;
+  onRefreshAccountPool?: (connectionId: string) => Promise<AccountPoolSnapshot>;
+  onRemoveAccountProfile?: (
+    connectionId: string,
+    profileId: string,
+  ) => Promise<AccountPoolSnapshot>;
+  onStartAccountLogin?: (
+    connectionId: string,
+  ) => Promise<{ loginId: string; userCode: string; verificationUrl: string }>;
+  onToggle: (connectionId: string, enabled: boolean) => Promise<void>;
+  onUpdate: (connectionId: string, input: ConnectionUpdateInput) => Promise<void>;
+  onUpdateAccountProfile?: (
     connectionId: string,
     profileId: string,
     update: { enabled?: boolean; priority?: number },
-  ): Promise<AccountPoolSnapshot>;
-  onRemoveAccountProfile?(connectionId: string, profileId: string): Promise<AccountPoolSnapshot>;
+  ) => Promise<AccountPoolSnapshot>;
 }) {
   const appLock = useAppLockSettings();
   const uiGeneration = useSyncExternalStore(
@@ -84,61 +90,33 @@ export function ConnectionSettings({
   const [appLockSaving, setAppLockSaving] = useState(false);
   const [appLockError, setAppLockError] = useState<string | null>(null);
   const changeAppLock = useEvent(async (enabled: boolean) => {
-    if (appLockSaving) return;
+    if (appLockSaving) {
+      return;
+    }
     setAppLockSaving(true);
     setAppLockError(null);
     try {
       await appLock.setEnabled(enabled);
-    } catch (cause) {
-      setAppLockError(cause instanceof Error ? cause.message : "Could not update app lock");
+    } catch (error) {
+      setAppLockError(error instanceof Error ? error.message : "Could not update app lock");
     }
     setAppLockSaving(false);
   });
   return (
     <SettingsSheet
-      onClose={onClose}
-      onAddServer={onAddServer}
-      security={
-        Platform.OS === "web" ? null : (
-          <View testID="app-lock-setting">
-            <AppListRow
-              title="App lock"
-              description="Use fingerprint, face or device authentication"
-              fixedHeight={listRowHeight.double}
-              leadingIcon={{ name: "finger-print", size: iconSize.action, color: colors.textMuted }}
-              trailing={
-                <>
-                  {appLockSaving && <ActivityIndicator color={colors.textMuted} size="small" />}
-                  <Switch
-                    accessibilityLabel="Biometric app lock"
-                    disabled={appLockSaving}
-                    value={appLock.enabled}
-                    onValueChange={changeAppLock}
-                  />
-                </>
-              }
-            />
-            {appLockError !== null && (
-              <Text accessibilityLiveRegion="polite" style={styles.errorText}>
-                {appLockError}
-              </Text>
-            )}
-          </View>
-        )
-      }
       advanced={
         <>
           <SettingsSection title="Interface">
             <View testID="ui-generation-setting">
               <AppListRow
-                title="Interface"
                 description="Legacy"
                 fixedHeight={listRowHeight.double}
                 leadingIcon={{
+                  color: colors.textMuted,
                   name: "layers-outline",
                   size: iconSize.action,
-                  color: colors.textMuted,
                 }}
+                title="Interface"
               />
               {uiGeneration.status === "ready" ? (
                 <UiGenerationControl current={uiGeneration.generation} />
@@ -159,14 +137,44 @@ export function ConnectionSettings({
           </SettingsSection>
         </>
       }
+      onAddServer={onAddServer}
+      onClose={onClose}
+      security={
+        Platform.OS === "web" ? null : (
+          <View testID="app-lock-setting">
+            <AppListRow
+              description="Use fingerprint, face or device authentication"
+              fixedHeight={listRowHeight.double}
+              leadingIcon={{ color: colors.textMuted, name: "finger-print", size: iconSize.action }}
+              title="App lock"
+              trailing={
+                <>
+                  {appLockSaving && <ActivityIndicator color={colors.textMuted} size="small" />}
+                  <Switch
+                    accessibilityLabel="Biometric app lock"
+                    disabled={appLockSaving}
+                    onValueChange={changeAppLock}
+                    value={appLock.enabled}
+                  />
+                </>
+              }
+            />
+            {appLockError !== null && (
+              <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+                {appLockError}
+              </Text>
+            )}
+          </View>
+        )
+      }
       servers={connectionSettingsSections({
-        connections,
         accountRateLimits,
-        onToggle,
-        onReconnect,
+        connections,
         onDelete,
-        onUpdate,
         onMove,
+        onReconnect,
+        onToggle,
+        onUpdate,
         ...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool }),
         ...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin }),
         ...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin }),

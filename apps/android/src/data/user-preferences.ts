@@ -1,22 +1,22 @@
 export type UserPreferenceRow = {
   id: string;
-  value: string;
   updatedAt: number;
+  value: string;
 };
 
 export type DocumentLayoutMode = "reading" | "wide";
 
 export type DocumentViewerPreferences = {
-  textScale: number;
   layoutMode: DocumentLayoutMode;
+  textScale: number;
 };
 
 export const DOCUMENT_VIEWER_PREFERENCE_ID = "document-viewer";
 const MIN_DOCUMENT_TEXT_SCALE = 0.8;
 const MAX_DOCUMENT_TEXT_SCALE = 1.4;
 export const DEFAULT_DOCUMENT_VIEWER_PREFERENCES: DocumentViewerPreferences = {
-  textScale: 1,
   layoutMode: "wide",
+  textScale: 1,
 };
 
 // React Native has no CSS `ch` unit. 640 dp at the default type scale gives
@@ -27,19 +27,21 @@ const DOCUMENT_READING_WIDTH_AT_100_PERCENT = 640;
 export function decodeDocumentViewerPreferences(
   value: string | null | undefined,
 ): DocumentViewerPreferences {
-  if (value === null || value === undefined) return DEFAULT_DOCUMENT_VIEWER_PREFERENCES;
+  if (value === null || value === undefined) {
+    return DEFAULT_DOCUMENT_VIEWER_PREFERENCES;
+  }
   try {
     const parsed: unknown = JSON.parse(value);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const candidate = unknownRecord(parsed);
+    if (candidate === null) {
       return DEFAULT_DOCUMENT_VIEWER_PREFERENCES;
     }
-    const candidate = parsed as Record<string, unknown>;
     return {
-      textScale: normalizeDocumentTextScale(candidate.textScale),
       layoutMode:
         candidate.layoutMode === "reading" || candidate.layoutMode === "wide"
           ? candidate.layoutMode
           : DEFAULT_DOCUMENT_VIEWER_PREFERENCES.layoutMode,
+      textScale: normalizeDocumentTextScale(candidate.textScale),
     };
   } catch {
     return DEFAULT_DOCUMENT_VIEWER_PREFERENCES;
@@ -48,14 +50,15 @@ export function decodeDocumentViewerPreferences(
 
 export function encodeDocumentViewerPreferences(preferences: DocumentViewerPreferences): string {
   return JSON.stringify({
-    textScale: normalizeDocumentTextScale(preferences.textScale),
     layoutMode: preferences.layoutMode,
+    textScale: normalizeDocumentTextScale(preferences.textScale),
   });
 }
 
 export function normalizeDocumentTextScale(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value))
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_DOCUMENT_VIEWER_PREFERENCES.textScale;
+  }
   return Math.min(
     MAX_DOCUMENT_TEXT_SCALE,
     Math.max(MIN_DOCUMENT_TEXT_SCALE, Number(value.toFixed(1))),
@@ -65,3 +68,4 @@ export function normalizeDocumentTextScale(value: unknown): number {
 export function documentReadingWidth(textScale: number): number {
   return Math.round(DOCUMENT_READING_WIDTH_AT_100_PERCENT * normalizeDocumentTextScale(textScale));
 }
+import { unknownRecord } from "./unknownRecord";

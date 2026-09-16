@@ -6,26 +6,34 @@ export function useConversationState<Value>(
   scope: string,
   initialize: () => Value,
 ): readonly [Value, Dispatch<SetStateAction<Value>>] {
-  const [stored, setStored] = useState(() => ({ scope, owner: {}, value: initialize() }));
+  const [stored, setStored] = useState(() => ({ owner: {}, scope, value: initialize() }));
   let current = stored;
   if (stored.scope !== scope) {
-    current = { scope, owner: {}, value: initialize() };
+    current = { owner: {}, scope, value: initialize() };
     setStored(current);
   }
   const owner = current.owner;
   const update: Dispatch<SetStateAction<Value>> = (action) => {
     setStored((previous) => {
-      if (previous.owner !== owner) return previous;
-      const value =
-        typeof action === "function"
-          ? // WHY: React's SetStateAction deliberately includes a callable Value;
-            // its function branch follows the same updater contract as useState.
-            (action as (previous: Value) => Value)(previous.value)
-          : action;
+      if (previous.owner !== owner) {
+        return previous;
+      }
+      const value = applyStateAction(action, previous.value);
       return Object.is(value, previous.value) ? previous : { ...previous, value };
     });
   };
   return [current.value, update];
+}
+
+function applyStateAction<Value>(action: SetStateAction<Value>, previous: Value): Value {
+  if (typeof action !== "function") {
+    return action;
+  }
+  // WHY: React's SetStateAction deliberately includes a callable Value; after React's function
+  // branch check, invoking it with the previous value is the exact useState updater contract.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const update = action as (previous: Value) => Value;
+  return update(previous);
 }
 
 /** Mutable runtime handles belong to one chat activation, not the shared shell. */
@@ -43,5 +51,10 @@ export function useConversationCleanup(scope: string, dispose: () => void): void
   useLayoutEffect(() => {
     referenceRef.current = dispose;
   });
-  useLayoutEffect(() => () => referenceRef.current(), [referenceRef]);
+  useLayoutEffect(
+    () => () => {
+      referenceRef.current();
+    },
+    [referenceRef],
+  );
 }

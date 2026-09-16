@@ -6,12 +6,12 @@ import type { ThreadCurrentOutcome } from "../../data/thread-current-outcome";
 
 /** Layout and action contract for the conversation's bottom chrome. */
 export type ConversationBottomChromeProps = {
-  setBottomChromeHeight: Dispatch<SetStateAction<number>>;
-  readOnly: boolean;
-  requestPrompt: ReactNode;
-  timeline: TimelineItem[];
-  failureNotice: { message: string; acceptsInput: boolean } | null;
-  remoteThread: Thread | null | undefined;
-  currentOutcome: ThreadCurrentOutcome | null;
   composerContent: ReactElement;
+  currentOutcome: ThreadCurrentOutcome | null;
+  failureNotice: { acceptsInput: boolean; message: string } | null;
+  readOnly: boolean;
+  remoteThread: Thread | null | undefined;
+  requestPrompt: ReactNode;
+  setBottomChromeHeight: Dispatch<SetStateAction<number>>;
+  timeline: TimelineItem[];
 };

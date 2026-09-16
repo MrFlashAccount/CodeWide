@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useMemo, useState } from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
 
 import { useEvent } from "../react/useEvent";
 import { AppDialogSurface } from "./AppDialogSurface";
@@ -6,8 +6,8 @@ import type { AppDialogAction, AppDialogRequest } from "./AppDialog.types";
 import { errorDiagnostic } from "./error-diagnostic";
 
 type AppDialogController = {
-  alert(title: string, message?: string, actions?: readonly AppDialogAction[]): void;
-  error(title: string, cause: unknown, actions?: readonly AppDialogAction[]): void;
+  alert: (title: string, message?: string, actions?: readonly AppDialogAction[]) => void;
+  error: (title: string, cause: unknown, actions?: readonly AppDialogAction[]) => void;
 };
 
 const AppDialogContext = createContext<AppDialogController | null>(null);
@@ -33,20 +33,22 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
     setState({
       isOpen: true,
       request: {
-        title,
+        actions: actions === undefined || actions.length === 0 ? [{ text: "OK" }] : actions,
+        diagnostic: errorDiagnostic(title, cause),
         message:
           cause instanceof Error
             ? cause.message
             : typeof cause === "string"
               ? cause
               : "The operation failed",
-        diagnostic: errorDiagnostic(title, cause),
-        actions: actions === undefined || actions.length === 0 ? [{ text: "OK" }] : actions,
+        title,
       },
     });
   });
-  const controller = useMemo<AppDialogController>(() => ({ alert, error }), [alert, error]);
-  const dismiss = useEvent(() => setState((current) => ({ ...current, isOpen: false })));
+  const controller: AppDialogController = { alert, error };
+  const dismiss = useEvent(() => {
+    setState((current) => ({ ...current, isOpen: false }));
+  });
   const handleAction = useEvent((action: AppDialogAction) => {
     setState((current) => ({ ...current, isOpen: false }));
     action.onPress?.();
@@ -58,9 +60,9 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
       {state.isOpen && (
         <AppDialogSurface
           isOpen
-          request={state.request}
-          onDismiss={dismiss}
           onAction={handleAction}
+          onDismiss={dismiss}
+          request={state.request}
         />
       )}
     </AppDialogContext.Provider>
@@ -69,6 +71,8 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
 
 export function useAppDialog(): AppDialogController {
   const value = useContext(AppDialogContext);
-  if (value === null) throw new Error("useAppDialog must be used inside AppDialogProvider");
+  if (value === null) {
+    throw new Error("useAppDialog must be used inside AppDialogProvider");
+  }
   return value;
 }

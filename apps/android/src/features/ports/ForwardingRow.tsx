@@ -5,25 +5,25 @@ import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight, type AppListRowProps } from "../../ui/AppListRow.types";
 import { AppText as Text } from "../../ui/Typography";
-import { type PortForwardingCandidate, type PortForwardingProfile } from "./portForwardingContract";
+import type { PortForwardingCandidate, PortForwardingProfile } from "./portForwardingContract";
 import { hasProfileError } from "./portForwardingList";
 import { styles } from "./PortForwardingManager.styles";
 import { candidateIcon, ServiceIcon, SmallAction } from "./PortPresentation";
 
 export function ForwardingRow(props: {
-  profile: PortForwardingProfile;
   kind: PortForwardingCandidate["kind"];
-  position: NonNullable<AppListRowProps["position"]>;
+  onEdit: () => void;
+  onInclude: () => void;
+  onOpen: () => void;
+  onReconnect: () => void;
+  onRemove: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  onToggleWebMenu: () => void;
   pending: boolean;
+  position: NonNullable<AppListRowProps["position"]>;
+  profile: PortForwardingProfile;
   webMenuVisible: boolean;
-  onToggleWebMenu(): void;
-  onEdit(): void;
-  onOpen(): void;
-  onStart(): void;
-  onStop(): void;
-  onReconnect(): void;
-  onRemove(): void;
-  onInclude(): void;
 }) {
   const { profile } = props;
   const live = profile.status === "live";
@@ -74,39 +74,43 @@ export function ForwardingRow(props: {
         : "Start";
   const actions: ActionMenuItem[] = [
     {
+      icon: live || connecting ? "stop-circle-outline" : "play-circle-outline",
       id: primaryId,
       label: primaryTitle,
-      icon: live || connecting ? "stop-circle-outline" : "play-circle-outline",
     },
-    { id: "edit", label: "Edit", icon: "pencil-outline" },
-    { id: "remove", label: "Remove", icon: "trash-outline", destructive: true },
+    { icon: "pencil-outline", id: "edit", label: "Edit" },
+    { destructive: true, icon: "trash-outline", id: "remove", label: "Remove" },
   ];
   const onAction = (id: string) => {
-    if (id === "edit") props.onEdit();
-    else if (id === "remove") props.onRemove();
-    else primary();
+    if (id === "edit") {
+      props.onEdit();
+    } else if (id === "remove") {
+      props.onRemove();
+    } else {
+      primary();
+    }
   };
   return (
     <View testID={`forwarding-profile-${profile.id}`}>
       <AppListRow
-        title={profile.label}
-        description={`:${profile.remotePort} → phone :${profile.localPort ?? "auto"} · ${status}`}
         accessibilityLabel={`${profile.label}, ${status}`}
-        onPress={live ? props.onOpen : props.onEdit}
+        description={`:${String(profile.remotePort)} → phone :${String(profile.localPort ?? "auto")} · ${status}`}
         fixedHeight={listRowHeight.double}
+        leading={<ServiceIcon live={live} name={candidateIcon(props.kind)} />}
+        onPress={live ? props.onOpen : props.onEdit}
         position={props.position}
-        leading={<ServiceIcon name={candidateIcon(props.kind)} live={live} />}
+        title={profile.label}
         trailing={
           <>
-            {(connecting || props.pending) && <ActivityIndicator size="small" color={color} />}
+            {(connecting || props.pending) && <ActivityIndicator color={color} size="small" />}
             {Platform.OS === "web" ? (
               <Pressable
-                accessibilityRole="button"
                 accessibilityLabel={`Forwarding actions ${profile.label}`}
+                accessibilityRole="button"
                 onPress={props.onToggleWebMenu}
                 style={styles.iconButton}
               >
-                <Ionicons name="ellipsis-vertical" size={iconSize.action} color={colors.textDim} />
+                <Ionicons color={colors.textDim} name="ellipsis-vertical" size={iconSize.action} />
               </Pressable>
             ) : (
               <ActionMenu
@@ -120,9 +124,9 @@ export function ForwardingRow(props: {
                   style={styles.iconButton}
                 >
                   <Ionicons
+                    color={colors.textDim}
                     name="ellipsis-vertical"
                     size={iconSize.action}
-                    color={colors.textDim}
                   />
                 </Pressable>
               </ActionMenu>
@@ -134,15 +138,15 @@ export function ForwardingRow(props: {
         <View style={styles.webActions}>
           <SmallAction
             label={`${primaryTitle} ${profile.label}`}
-            title={primaryTitle}
             onPress={primary}
+            title={primaryTitle}
           />
-          <SmallAction label={`Edit ${profile.label}`} title="Edit" onPress={props.onEdit} />
+          <SmallAction label={`Edit ${profile.label}`} onPress={props.onEdit} title="Edit" />
           <SmallAction
-            label={`Remove ${profile.label}`}
-            title="Remove"
-            onPress={props.onRemove}
             danger
+            label={`Remove ${profile.label}`}
+            onPress={props.onRemove}
+            title="Remove"
           />
         </View>
       )}

@@ -4,7 +4,7 @@ import { useAttachmentDocumentResource } from "./attachmentDocumentResource";
 import { useId, useRef, useState } from "react";
 import { Linking } from "react-native";
 import { useThreadResources } from "../../data/use-thread-resources";
-import { type ThreadAttachmentResource } from "../../data/workspace-resource-database";
+import type { ThreadAttachmentResource } from "../../data/workspace-resource-database";
 import {
   isAttachmentVideo,
   useAttachmentVideoPreview,
@@ -23,24 +23,24 @@ import {
 import { isSafeHttpUrl } from "../../rendering/http-link";
 import { useAppDialog } from "../../ui/AppDialog";
 import { useAppFullscreenOverlay } from "../../ui/AppFullscreenOverlay";
-import { codeReviewFilesForDocument } from "../review/code-review-files";
-import { CodeReviewWorkspace } from "../review/CodeReviewWorkspace";
-import { type ThreadResourceDocumentRoute } from "./documentNavigation";
+import { codeReviewFilesForDocument } from "../review/resources/reviewFiles";
+import { CodeReviewWorkspace } from "../review/workspace/CodeReviewWorkspace";
+import type { ThreadResourceDocumentRoute } from "./documentNavigation";
 
 import type { AttachmentSheetProps } from "./attachmentSheetContract";
 
 export function useAttachmentPreview({
+  cwd,
+  getTransferAccess,
   model,
+  onAttachReview,
+  onClose,
+  onLoadThreadChangeDiff,
+  onReload,
   resourceId,
   revision,
-  cwd,
   thread,
   voiceRuntime,
-  getTransferAccess,
-  onLoadThreadChangeDiff,
-  onAttachReview,
-  onReload,
-  onClose,
 }: AttachmentSheetProps) {
   const resource = useThreadResources(model, resourceId, onReload, { revision });
   const dialog = useAppDialog();
@@ -61,13 +61,13 @@ export function useAttachmentPreview({
       : resource.pendingKinds.includes("attachments"));
   const attachmentsReady =
     resource?.readyKinds === undefined
-      ? resource?.value != null
+      ? resource?.value !== null && resource?.value !== undefined
       : resource.readyKinds.includes("attachments");
   const attachmentsInitialLoading = attachmentsPending && !attachmentsReady;
   const attachmentsError =
     resource?.resourceErrors?.attachments ??
     (resource?.readyKinds === undefined && resource?.status === "error" ? resource.error : null);
-  const title = `Attachments · ${attachments.length}`;
+  const title = `Attachments · ${String(attachments.length)}`;
   const document = documentStack.at(-1) ?? null;
   const { documentResult } = useAttachmentDocumentResource({ document, previewResourceOwnerId });
   const loadPreview = useEvent((request: DocumentPreviewRequest, replace: boolean) => {
@@ -81,14 +81,16 @@ export function useAttachmentPreview({
   const openPreview = useEvent((request: DocumentPreviewRequest) => {
     if (isAttachmentVideo(request.name)) {
       openVideo({
+        getAccess: request.getTransferAccess,
         name: request.name,
         source: request.source ?? { kind: "path", path: request.path },
-        getAccess: request.getTransferAccess,
       });
       return;
     }
     if (request.kind === "download") {
-      void downloadDocument(request);
+      downloadDocument(request).catch((error: unknown) => {
+        dialog.error("Download failed", error);
+      });
       return;
     }
     if (request.kind === "image") {
@@ -98,8 +100,8 @@ export function useAttachmentPreview({
     if (request.kind === "text") {
       fullscreenOverlay.present(({ close }) => (
         <CodeReviewWorkspace
-          key={`${request.path}:${request.line ?? ""}:${request.column ?? ""}`}
           changes={codeReviewFilesForDocument(changes, request.path)}
+          key={`${request.path}:${String(request.line ?? "")}:${String(request.column ?? "")}`}
           {...(request.source === undefined
             ? {}
             : { sourceAssets: { [request.path]: request.source } })}
@@ -109,12 +111,12 @@ export function useAttachmentPreview({
           {...(request.line === undefined ? {} : { initialLine: request.line })}
           {...(request.column === undefined ? {} : { initialColumn: request.column })}
           cwd={cwd}
-          thread={thread}
-          voiceRuntime={voiceRuntime}
           getTransferAccess={getTransferAccess}
           onAttach={onAttachReview}
           onClose={close}
           onDownload={() => void downloadDocument(request)}
+          thread={thread}
+          voiceRuntime={voiceRuntime}
           {...(onLoadThreadChangeDiff === undefined ? {} : { onLoadDiff: onLoadThreadChangeDiff })}
         />
       ));
@@ -138,10 +140,10 @@ export function useAttachmentPreview({
       return;
     }
     openPreview({
+      getTransferAccess,
       kind: remoteFileKind(name, resolvedPath),
       name,
       path: resolvedPath,
-      getTransferAccess,
     });
   });
   const openAttachment = useEvent((attachment: ThreadAttachmentResource) => {
@@ -152,52 +154,68 @@ export function useAttachmentPreview({
     if (attachment.url !== null && isSafeHttpUrl(attachment.url)) {
       const kind = remoteFileKind(attachment.name, attachment.url);
       if (kind === "download" && !isAttachmentVideo(attachment.name)) {
-        void Linking.openURL(attachment.url);
+        Linking.openURL(attachment.url).catch((error: unknown) => {
+          dialog.alert(
+            "Could not open attachment",
+            error instanceof Error ? error.message : "Could not open attachment",
+          );
+        });
         return;
       }
       openPreview({
+        getTransferAccess,
         kind,
         name: attachment.name,
         path: attachment.name,
         source: { kind: "remote", url: attachment.url },
-        getTransferAccess,
       });
-    } else dialog.alert("Attachment unavailable", "This attachment has no openable source.");
+    } else {
+      dialog.alert("Attachment unavailable", "This attachment has no openable source.");
+    }
   });
   const openNestedDocument = useEvent((href: string) => {
-    if (document === null) return false;
+    if (document === null) {
+      return false;
+    }
     const target = resolvePreviewableDocumentLink(
       href,
       remoteDocumentDirectory(document.request.path),
     );
-    if (target === null) return false;
+    if (target === null) {
+      return false;
+    }
     const request = {
       ...target,
       getTransferAccess,
     };
-    if (target.kind === "text") openPreview(request);
-    else openPreview(request);
+    if (target.kind === "text") {
+      openPreview(request);
+    } else {
+      openPreview(request);
+    }
     return true;
   });
   const retryPreview = useEvent(() => {
-    if (document !== null) loadPreview(document.request, true);
+    if (document !== null) {
+      loadPreview(document.request, true);
+    }
   });
 
   return {
     attachments,
-    attachmentsInitialLoading,
     attachmentsError,
+    attachmentsInitialLoading,
     attachmentsReady,
-    title,
+    closeSheet,
     document,
     documentResult,
     documentViewportWidth,
-    setDocumentViewportWidth,
     downloadDocument,
     navigateBack,
-    closeSheet,
     openAttachment,
-    retryPreview,
     openNestedDocument,
+    retryPreview,
+    setDocumentViewportWidth,
+    title,
   };
 }

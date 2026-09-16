@@ -4,9 +4,9 @@ import type { PendingServerRequest } from "./pending-request-types";
 
 /** Stores server requests and arbitrates their single active claimant. */
 export type PendingRequestDatabase = {
+  claim: (connectionId: string, requestKey: string) => boolean;
+  close: () => void;
   collection: Collection<PendingServerRequest, string>;
-  replace(connectionId: string, requests: SyncServerRequest[]): void;
-  claim(connectionId: string, requestKey: string): boolean;
-  release(connectionId: string, requestKey: string): void;
-  close(): void;
+  release: (connectionId: string, requestKey: string) => void;
+  replace: (connectionId: string, requests: SyncServerRequest[]) => void;
 };

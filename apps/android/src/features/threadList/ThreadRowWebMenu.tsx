@@ -8,71 +8,71 @@ import type { ThreadRowActions } from "./threadRowActions";
 import type { ThreadRowProps } from "./threadRowContract";
 
 export function ThreadRowWebMenu({
-  props,
   actions,
+  props,
 }: {
-  props: ThreadRowProps;
   actions: ThreadRowActions;
+  props: ThreadRowProps;
 }) {
-  const { thread, onTogglePin, onMarkRead } = props;
+  const { onMarkRead, onTogglePin, thread } = props;
   const {
-    dialog,
-    webContextVisible,
-    setWebContextVisible,
     archiveAction,
     archiveLabel,
+    dialog,
     runThreadAction,
+    setWebContextVisible,
+    webContextVisible,
   } = actions;
   return (
     <>
       {Platform.OS === "web" && webContextVisible && (
         <AppSheet
+          contentProps={{ enableDynamicSizing: true, index: 0 }}
           isOpen={webContextVisible}
           onOpenChange={setWebContextVisible}
-          contentProps={{ index: 0, enableDynamicSizing: true }}
         >
           <Text style={styles.sheetTitle}>Thread</Text>
           <MenuAction
             icon="copy-outline"
-            title="Copy session ID"
-            subtitle=""
             onPress={() => {
               setWebContextVisible(false);
-              void copySessionId(thread.id).catch((cause) =>
+              void copySessionId(thread.id).catch((error: unknown) => {
                 dialog.alert(
                   "Copy failed",
-                  cause instanceof Error ? cause.message : "Could not copy session ID",
-                ),
-              );
+                  error instanceof Error ? error.message : "Could not copy session ID",
+                );
+              });
             }}
+            subtitle=""
+            title="Copy session ID"
           />
           <MenuAction
             icon="push-pin"
-            title={thread.pinned ? "Unpin" : "Pin"}
-            subtitle=""
             onPress={() => {
               setWebContextVisible(false);
               runThreadAction(onTogglePin, thread.pinned ? "Unpin" : "Pin");
             }}
+            subtitle=""
+            title={thread.pinned ? "Unpin" : "Pin"}
           />
           <MenuAction
             icon="checkmark-done-outline"
-            title="Mark as read"
-            subtitle=""
             onPress={() => {
               setWebContextVisible(false);
               runThreadAction(onMarkRead, "Mark as read");
             }}
+            subtitle=""
+            title="Mark as read"
           />
           <MenuAction
-            danger={!thread.archived}
-            icon={thread.archived ? "archive" : "archive-outline"}
-            title={archiveLabel}
-            subtitle=""
+            danger={thread.archived !== true}
+            icon={thread.archived === true ? "archive" : "archive-outline"}
             onPress={() => {
               setWebContextVisible(false);
               runThreadAction(archiveAction, archiveLabel);
             }}
+            subtitle=""
+            title={archiveLabel}
           />
         </AppSheet>
       )}

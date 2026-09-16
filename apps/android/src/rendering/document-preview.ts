@@ -12,29 +12,35 @@ export type DocumentPreviewSurface = "sheet" | "fullscreen" | "image-viewer" | "
 /** Pick the presentation primitive before IO starts, so an image tap never
  * flashes the generic document sheet while its private file is materialized. */
 export function documentPreviewSurface(kind: DocumentPreviewKind): DocumentPreviewSurface {
-  if (kind === "image") return "image-viewer";
-  if (kind === "html" || kind === "markdown") return "fullscreen";
-  if (kind === "download") return "download";
+  if (kind === "image") {
+    return "image-viewer";
+  }
+  if (kind === "html" || kind === "markdown") {
+    return "fullscreen";
+  }
+  if (kind === "download") {
+    return "download";
+  }
   return "sheet";
 }
 
 export type PreviewableDocumentTarget = {
+  column?: number;
   kind: DocumentPreviewKind;
+  line?: number;
   name: string;
   path: string;
-  line?: number;
-  column?: number;
 };
 
 export type RemoteDocumentLocation = {
-  path: string;
-  line?: number;
   column?: number;
+  line?: number;
+  path: string;
 };
 
 export type MarkdownLineTarget = {
-  segmentIndex: number;
   line: number;
+  segmentIndex: number;
 };
 
 /** Maps a source line to the bounded Markdown segment that renders it.
@@ -46,14 +52,19 @@ export function markdownLineTarget(
   segments: readonly string[],
   requestedLine: number | undefined,
 ): MarkdownLineTarget | null {
-  if (requestedLine === undefined || requestedLine < 1 || segments.length === 0) return null;
+  if (requestedLine === undefined || requestedLine < 1 || segments.length === 0) {
+    return null;
+  }
   const sourceLineCount = countNewlines(source) + 1;
   const line = Math.min(requestedLine, sourceLineCount);
   const targetOffset = sourceLineStartOffset(source, line);
   let sourceOffset = 0;
 
   for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
-    const segment = segments[segmentIndex]!;
+    const segment = segments[segmentIndex];
+    if (segment === undefined) {
+      continue;
+    }
     const contribution = segmentSourceContribution(segment, source, sourceOffset);
     const contributionEnd = sourceOffset + contribution.length;
     const isLast = segmentIndex === segments.length - 1;
@@ -63,11 +74,11 @@ export function markdownLineTarget(
         Math.min(contribution.length, targetOffset - sourceOffset),
       );
       return {
-        segmentIndex,
         line:
           1 +
           countNewlines(segment.slice(0, contribution.renderedStart)) +
           countNewlines(source.slice(sourceOffset, sourceOffset + sourcePrefixLength)),
+        segmentIndex,
       };
     }
     sourceOffset = contributionEnd;
@@ -77,17 +88,27 @@ export function markdownLineTarget(
 
 export function previewableDocumentKind(name: string, path: string): DocumentPreviewKind | null {
   const candidates = [name, path].map((candidate) => parseTextDocumentLocation(candidate).path);
-  if (candidates.some(isMarkdownFile)) return "markdown";
-  if (candidates.some(isHtmlFile)) return "html";
+  if (candidates.some(isMarkdownFile)) {
+    return "markdown";
+  }
+  if (candidates.some(isHtmlFile)) {
+    return "html";
+  }
   return null;
 }
 
 export function remoteFileKind(name: string, path: string): DocumentPreviewKind {
   const candidates = [name, path].map((candidate) => parseTextDocumentLocation(candidate).path);
   const document = previewableDocumentKind(candidates[0] ?? name, candidates[1] ?? path);
-  if (document !== null) return document;
-  if (candidates.some((candidate) => fileMediaKind(candidate) === "image")) return "image";
-  if (candidates.some(isKnownCodeOrTextFile)) return "text";
+  if (document !== null) {
+    return document;
+  }
+  if (candidates.some((candidate) => fileMediaKind(candidate) === "image")) {
+    return "image";
+  }
+  if (candidates.some(isKnownCodeOrTextFile)) {
+    return "text";
+  }
   return "download";
 }
 
@@ -116,17 +137,23 @@ export function resolveRemoteDocumentLocation(
   cwd: string,
 ): RemoteDocumentLocation | null {
   const raw = value.trim();
-  if (!isRemoteFileHref(raw)) return null;
+  if (!isRemoteFileHref(raw)) {
+    return null;
+  }
   const withoutFragment = raw.split("#", 1)[0] ?? "";
   const withoutQuery = withoutFragment.split("?", 1)[0] ?? "";
-  if (withoutQuery === "") return null;
+  if (withoutQuery === "") {
+    return null;
+  }
   let decoded: string;
   try {
     decoded = decodeURIComponent(withoutQuery);
   } catch {
     return null;
   }
-  if (decoded.includes("\0")) return null;
+  if (decoded.includes("\0")) {
+    return null;
+  }
   const base = cwd.startsWith("/") ? cwd : "/workspace";
   const normalized = normalizeAbsoluteRemotePath(
     decoded.startsWith("/") ? decoded : `${base}/${decoded}`,
@@ -139,7 +166,9 @@ export function resolvePreviewableDocumentLink(
   cwd: string,
 ): PreviewableDocumentTarget | null {
   const location = resolveRemoteDocumentLocation(href, cwd);
-  if (location === null) return null;
+  if (location === null) {
+    return null;
+  }
   const name = remoteDocumentBasename(location.path);
   const kind = remoteFileKind(name, location.path);
   return {
@@ -165,7 +194,9 @@ function sourceLineStartOffset(source: string, line: number): number {
   let offset = 0;
   for (let currentLine = 1; currentLine < line; currentLine += 1) {
     const newline = source.indexOf("\n", offset);
-    if (newline < 0) return source.length;
+    if (newline < 0) {
+      return source.length;
+    }
     offset = newline + 1;
   }
   return offset;
@@ -175,7 +206,7 @@ function segmentSourceContribution(
   segment: string,
   source: string,
   sourceOffset: number,
-): { renderedStart: number; length: number } {
+): { length: number; renderedStart: number } {
   const remaining = source.slice(sourceOffset);
   const candidateStarts = [0];
   let newline = segment.indexOf("\n");
@@ -183,10 +214,12 @@ function segmentSourceContribution(
     candidateStarts.push(newline + 1);
     newline = segment.indexOf("\n", newline + 1);
   }
-  let best = { renderedStart: 0, length: 0 };
+  let best = { length: 0, renderedStart: 0 };
   for (const renderedStart of candidateStarts) {
     const length = commonPrefixLength(segment, renderedStart, remaining);
-    if (length > best.length) best = { renderedStart, length };
+    if (length > best.length) {
+      best = { length, renderedStart };
+    }
   }
   return best;
 }
@@ -194,15 +227,21 @@ function segmentSourceContribution(
 function commonPrefixLength(segment: string, segmentStart: number, source: string): number {
   const limit = Math.min(segment.length - segmentStart, source.length);
   let length = 0;
-  while (length < limit && segment.charCodeAt(segmentStart + length) === source.charCodeAt(length))
+  while (
+    length < limit &&
+    segment.charCodeAt(segmentStart + length) === source.charCodeAt(length)
+  ) {
     length += 1;
+  }
   return length;
 }
 
 function countNewlines(value: string): number {
   let count = 0;
   for (let index = 0; index < value.length; index += 1) {
-    if (value.charCodeAt(index) === 10) count += 1;
+    if (value.charCodeAt(index) === 10) {
+      count += 1;
+    }
   }
   return count;
 }
@@ -213,14 +252,18 @@ function countNewlines(value: string): number {
  * with numeric colon suffixes retain their literal path. */
 function parseTextDocumentLocation(path: string): RemoteDocumentLocation {
   const match = /^(.*?):([1-9]\d*)(?::([1-9]\d*))?$/u.exec(path);
-  if (match === null) return { path };
+  if (match === null) {
+    return { path };
+  }
   const documentPath = match[1];
-  if (documentPath === undefined || !isKnownCodeOrTextFile(documentPath)) return { path };
+  if (documentPath === undefined || !isKnownCodeOrTextFile(documentPath)) {
+    return { path };
+  }
   const line = Number(match[2]);
   const column = match[3] === undefined ? undefined : Number(match[3]);
   return {
-    path: documentPath,
     line,
+    path: documentPath,
     ...(column === undefined ? {} : { column }),
   };
 }
@@ -228,7 +271,9 @@ function parseTextDocumentLocation(path: string): RemoteDocumentLocation {
 function normalizeAbsoluteRemotePath(value: string): string {
   const segments: string[] = [];
   for (const segment of value.split("/")) {
-    if (segment === "" || segment === ".") continue;
+    if (segment === "" || segment === ".") {
+      continue;
+    }
     if (segment === "..") {
       segments.pop();
       continue;
@@ -242,9 +287,12 @@ function normalizeAbsoluteRemotePath(value: string): string {
 export function interactiveHtmlDocument(source: string): string {
   const head = `<meta name="viewport" content="width=device-width, initial-scale=1"><style>:root{color-scheme:light dark}html{font-family:system-ui,sans-serif;line-height:1.45;padding:16px}body{margin:0;overflow-wrap:anywhere}img,video,svg,canvas{max-width:100%;height:auto}table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}pre{overflow:auto}a{color:#79a9ff}</style>`;
   const headTag = /<head(?:\s[^>]*)?>/iu;
-  if (headTag.test(source)) return source.replace(headTag, (match) => `${match}${head}`);
+  if (headTag.test(source)) {
+    return source.replace(headTag, (match) => `${match}${head}`);
+  }
   const htmlTag = /<html(?:\s[^>]*)?>/iu;
-  if (htmlTag.test(source))
+  if (htmlTag.test(source)) {
     return source.replace(htmlTag, (match) => `${match}<head>${head}</head>`);
+  }
   return `<!doctype html><html><head>${head}</head><body>${source}</body></html>`;
 }

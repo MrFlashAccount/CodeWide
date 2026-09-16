@@ -25,7 +25,9 @@ export function useThreadSearch(
     native && sidebarProject === null ? "mobile-thread-search" : null,
     mobileSearchKey,
     async (_publish, signal) => {
-      if (normalizedMobileThreadQuery === "") return [];
+      if (normalizedMobileThreadQuery === "") {
+        return [];
+      }
       await abortableDelay(60, signal);
       const results = await searchThreads(mobileThreadQuery, serverScopeConnectionId(serverScope));
       return results.map(storedThreadToListItem);
@@ -38,16 +40,16 @@ export function useThreadSearch(
   const mobileVisibleThreads =
     mobileNativeSearch === null
       ? serverThreads
-      : mobileNativeSearch.filter((thread) => !thread.archived);
+      : mobileNativeSearch.filter((thread) => thread.archived !== true);
 
   const mobileVisibleArchivedThreads =
     mobileNativeSearch === null
       ? archivedThreads
-      : mobileNativeSearch.filter((thread) => thread.archived);
+      : mobileNativeSearch.filter((thread) => thread.archived === true);
   return {
-    normalizedMobileThreadQuery,
     mobileRemoteSearchResource,
-    mobileVisibleThreads,
     mobileVisibleArchivedThreads,
+    mobileVisibleThreads,
+    normalizedMobileThreadQuery,
   };
 }

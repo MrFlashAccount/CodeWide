@@ -2,17 +2,17 @@ import type { RemoteDirectoryEntry, RemoteProject } from "../../data/remote-proj
 
 /** Project choices and selection actions exposed to the project picker. */
 export type ProjectPickerProps = {
-  visible: boolean;
-  cwd: string;
-  projects: readonly RemoteProject[];
-  discoveredProjects: readonly RemoteProject[];
-  busy: boolean;
-  error: string | null;
-  onSelect(cwd: string | null): Promise<void>;
-  onAddProject?(path: string): Promise<RemoteProject>;
-  onReadDirectory?(path: string): Promise<RemoteDirectoryEntry[]>;
-  onReadHomeDirectory?(): Promise<string>;
-  onClose(): void;
   browseOnly?: boolean;
-  onManageProjects?(): void;
+  busy: boolean;
+  cwd: string;
+  discoveredProjects: readonly RemoteProject[];
+  error: string | null;
+  onAddProject?: (path: string) => Promise<RemoteProject>;
+  onClose: () => void;
+  onManageProjects?: () => void;
+  onReadDirectory?: (path: string) => Promise<RemoteDirectoryEntry[]>;
+  onReadHomeDirectory?: () => Promise<string>;
+  onSelect: (cwd: string | null) => Promise<void>;
+  projects: readonly RemoteProject[];
+  visible: boolean;
 };

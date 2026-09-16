@@ -20,8 +20,8 @@ export function useProjectSelection(
     setMobileThreadQuery("");
   });
   return {
-    sidebarProject,
-    openSidebarProject,
     closeSidebarProject,
+    openSidebarProject,
+    sidebarProject,
   };
 }

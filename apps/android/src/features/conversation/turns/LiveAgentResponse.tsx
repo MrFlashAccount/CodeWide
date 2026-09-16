@@ -6,6 +6,7 @@ import {
   type LiveMarkdownProjection,
 } from "../../../rendering/live-text-stream";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
+import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
 import { StreamingRevealSurface } from "../../../rendering/StreamingRevealSurface";
 import { CommitOnChangeProbe } from "../../../ui/CommitProbe";
 import { AppText as Text } from "../../../ui/Typography";
@@ -14,18 +15,18 @@ import { styles } from "./LiveAgentResponse.styles";
 export type LiveContentMode = "markdown" | "code";
 
 export function StableLiveTextSegment({
-  text,
-  mode,
   streaming = false,
   animateStreaming = streaming,
+  mode,
+  text,
 }: {
-  text: string;
+  animateStreaming?: boolean;
   mode: LiveContentMode;
   streaming?: boolean;
-  animateStreaming?: boolean;
+  text: string;
 }) {
   return mode === "markdown" ? (
-    <RichMarkdown source={text} streaming={streaming} animateStreaming={animateStreaming} />
+    <RichMarkdown animateStreaming={animateStreaming} source={text} streaming={streaming} />
   ) : (
     <Text selectable style={styles.codeLine}>
       {text}
@@ -34,21 +35,21 @@ export function StableLiveTextSegment({
 }
 
 export function AppendOnlyLiveContent({
-  cacheKey,
-  source,
-  mode,
-  streamMetricKey = null,
-  markdownProjection,
-  fill = false,
   animateNew = true,
+  cacheKey,
+  fill = false,
+  markdownProjection,
+  mode,
+  source,
+  streamMetricKey = null,
 }: {
-  cacheKey: string;
-  source: string;
-  mode: LiveContentMode;
-  streamMetricKey?: string | null;
-  markdownProjection?: LiveMarkdownProjection;
-  fill?: boolean;
   animateNew?: boolean;
+  cacheKey: string;
+  fill?: boolean;
+  markdownProjection?: LiveMarkdownProjection;
+  mode: LiveContentMode;
+  source: string;
+  streamMetricKey?: string | null;
 }) {
   const singleMarkdownTree = mode === "markdown";
   const projection = markdownProjection ?? projectCachedLiveText(cacheKey, source);
@@ -56,45 +57,52 @@ export function AppendOnlyLiveContent({
   const visibleMarkdownSource = singleMarkdownTree
     ? (markdownProjection?.visibleSource ?? [...projection.segments, visibleRemainder].join(""))
     : "";
+  const segmentOccurrences = new Map<string, number>();
   return (
     <>
       <View
-        testID={mode === "markdown" ? "live-agent-response" : "live-tool-output"}
         style={[
           styles.liveAgentResponse,
           (mode === "code" || fill) && styles.liveAgentResponseFill,
           mode === "markdown" && styles.liveMarkdownResponse,
         ]}
+        testID={mode === "markdown" ? "live-agent-response" : "live-tool-output"}
       >
         {singleMarkdownTree ? (
           visibleMarkdownSource === "" ? null : (
-            <StreamingRevealSurface streamKey={cacheKey} animateNew={animateNew}>
+            <StreamingRevealSurface animateNew={animateNew} streamKey={cacheKey}>
               <StableLiveTextSegment
-                text={visibleMarkdownSource}
+                animateStreaming={animateNew}
                 mode={mode}
                 streaming
-                animateStreaming={animateNew}
+                text={visibleMarkdownSource}
               />
             </StreamingRevealSurface>
           )
         ) : (
           <>
-            {projection.segments.map((segment, index) => (
-              <StableLiveTextSegment key={`${cacheKey}:${index}`} text={segment} mode={mode} />
-            ))}
+            {projection.segments.map((segment) => {
+              const key = occurrenceKey(
+                segmentOccurrences,
+                `${cacheKey}:${textFingerprint(segment)}`,
+              );
+              return <StableLiveTextSegment key={key} mode={mode} text={segment} />;
+            })}
             {visibleRemainder !== "" && (
-              <StableLiveTextSegment text={visibleRemainder} mode={mode} />
+              <StableLiveTextSegment mode={mode} text={visibleRemainder} />
             )}
           </>
         )}
       </View>
       {streamMetricKey === null ? null : (
         <CommitOnChangeProbe
-          scope={streamMetricKey}
-          revision={source}
           onCommit={() => {
-            if (source !== "") recordLiveRenderCommit(streamMetricKey);
+            if (source !== "") {
+              recordLiveRenderCommit(streamMetricKey);
+            }
           }}
+          revision={source}
+          scope={streamMetricKey}
         />
       )}
     </>
@@ -102,27 +110,27 @@ export function AppendOnlyLiveContent({
 }
 
 export function LiveAgentResponse({
+  animateNew,
   cacheKey,
   fill,
   projection,
   streamMetricKey,
-  animateNew,
 }: {
+  animateNew: boolean;
   cacheKey: string;
   fill: boolean;
   projection: LiveMarkdownProjection;
   streamMetricKey: string | null;
-  animateNew: boolean;
 }) {
   return (
     <AppendOnlyLiveContent
-      cacheKey={cacheKey}
-      source={projection.source}
-      mode="markdown"
-      streamMetricKey={streamMetricKey}
-      markdownProjection={projection}
-      fill={fill}
       animateNew={animateNew}
+      cacheKey={cacheKey}
+      fill={fill}
+      markdownProjection={projection}
+      mode="markdown"
+      source={projection.source}
+      streamMetricKey={streamMetricKey}
     />
   );
 }

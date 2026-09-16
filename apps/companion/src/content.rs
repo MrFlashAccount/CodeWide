@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BinaryHeap, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -16,6 +16,8 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
+use crate::{rollout_content, store::IndexStore};
+
 pub const MAX_INLINE_TEXT_BYTES: usize = 16 * 1024;
 pub const MAX_PROJECTED_ITEM_BYTES: usize = 32 * 1024;
 pub const MAX_PROJECTED_TURN_BYTES: usize = 96 * 1024;
@@ -23,10 +25,16 @@ pub const MAX_PROJECTED_PAGE_BYTES: usize = 256 * 1024;
 const MAX_PROJECTED_NOTIFICATION_BYTES: usize = 96 * 1024;
 const MAX_COLLECTION_ENTRIES: usize = 128;
 const MAX_CHUNK_BYTES: usize = 256 * 1024;
+const MAX_TEXT_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PENDING_WRITES: usize = 64;
 const MAX_DISK_BYTES: u64 = 1024 * 1024 * 1024;
-const PRUNE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+const FALLBACK_PRUNE_TARGET_BYTES: u64 = 960 * 1024 * 1024;
+const MAX_REPLAY_DISK_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_REPLAY_DISK_ENTRIES: usize = 4_096;
+const REPLAY_PRUNE_TARGET_BYTES: u64 = 48 * 1024 * 1024;
+const REPLAY_PRUNE_TARGET_ENTRIES: usize = 3_072;
+const MAX_PRUNE_CANDIDATES: usize = 4_096;
 const MAX_INLINE_ASSET_BYTES: usize = 32 * 1024 * 1024;
 const APPROX_BYTES_PER_TOKEN: usize = 4;
 
@@ -43,7 +51,9 @@ pub struct ContentReference {
 #[derive(Clone)]
 pub struct PrivateContentService {
     directory: PathBuf,
+    replay_directory: PathBuf,
     fallback_directories: Arc<[PathBuf]>,
+    rollout_store: Option<Arc<IndexStore>>,
     memory: Arc<Mutex<MemoryCache>>,
     writes: tokio::sync::mpsc::Sender<PersistRequest>,
 }
@@ -66,6 +76,12 @@ struct CachedContent {
     content_type: String,
     last_access: u64,
     persistence: PersistenceStatus,
+    retention: ContentRetention,
+}
+
+pub(crate) struct ContentAsset {
+    pub(crate) bytes: Arc<[u8]>,
+    pub(crate) content_type: String,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -75,10 +91,28 @@ enum PersistenceStatus {
     Persisted,
 }
 
+#[derive(Clone, Copy)]
+enum ContentRetention {
+    Fallback,
+    Replay,
+}
+
 struct PersistRequest {
     id: String,
     bytes: Arc<[u8]>,
     content_type: String,
+    retention: ContentRetention,
+}
+
+#[derive(Clone, Copy, Default)]
+struct DiskUsage {
+    bytes: u64,
+    entries: usize,
+}
+
+struct PersistOutcome {
+    created: bool,
+    bytes: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -110,7 +144,7 @@ impl PrivateContentService {
     /// worker. Writes are serialized off the sync lane.
     #[must_use]
     pub fn open(directory: PathBuf) -> Arc<Self> {
-        Self::open_with_fallbacks(directory, Vec::new())
+        Self::open_inner(directory, Vec::new(), None)
     }
 
     /// Opens the writable content store with read-only compatibility roots.
@@ -125,12 +159,40 @@ impl PrivateContentService {
         directory: PathBuf,
         fallback_directories: Vec<PathBuf>,
     ) -> Arc<Self> {
+        Self::open_inner(directory, fallback_directories, None)
+    }
+
+    /// Opens a source-aware store that resolves proven canonical rollout
+    /// locators before falling back to companion-owned bytes.
+    #[must_use]
+    pub fn open_indexed(
+        directory: PathBuf,
+        fallback_directories: Vec<PathBuf>,
+        rollout_store: Arc<IndexStore>,
+    ) -> Arc<Self> {
+        Self::open_inner(directory, fallback_directories, Some(rollout_store))
+    }
+
+    fn open_inner(
+        directory: PathBuf,
+        fallback_directories: Vec<PathBuf>,
+        rollout_store: Option<Arc<IndexStore>>,
+    ) -> Arc<Self> {
         let (writes, receiver) = tokio::sync::mpsc::channel(MAX_PENDING_WRITES);
         let memory = Arc::new(Mutex::new(MemoryCache::default()));
-        tokio::spawn(persist_worker(directory.clone(), receiver, memory.clone()));
+        let replay_directory = directory.join("replay");
+        tokio::spawn(persist_worker(
+            directory.clone(),
+            replay_directory.clone(),
+            rollout_store.clone(),
+            receiver,
+            memory.clone(),
+        ));
         Arc::new(Self {
             directory,
+            replay_directory,
             fallback_directories: fallback_directories.into(),
+            rollout_store,
             memory,
             writes,
         })
@@ -138,7 +200,19 @@ impl PrivateContentService {
 
     #[must_use]
     pub fn put_text(&self, value: &str, content_type: &str) -> ContentReference {
-        let mut reference = self.put_bytes(value.as_bytes(), content_type);
+        let mut reference = self.put_bytes_with_retention(
+            value.as_bytes(),
+            content_type,
+            ContentRetention::Fallback,
+        );
+        reference.encoding = Some("utf-8");
+        reference
+    }
+
+    #[must_use]
+    fn put_replay_text(&self, value: &str, content_type: &str) -> ContentReference {
+        let mut reference =
+            self.put_bytes_with_retention(value.as_bytes(), content_type, ContentRetention::Replay);
         reference.encoding = Some("utf-8");
         reference
     }
@@ -153,6 +227,15 @@ impl PrivateContentService {
 
     #[must_use]
     pub fn put_bytes(&self, bytes: &[u8], content_type: &str) -> ContentReference {
+        self.put_bytes_with_retention(bytes, content_type, ContentRetention::Fallback)
+    }
+
+    fn put_bytes_with_retention(
+        &self,
+        bytes: &[u8],
+        content_type: &str,
+        retention: ContentRetention,
+    ) -> ContentReference {
         let id = hex::encode(Sha256::digest(bytes));
         let bytes: Arc<[u8]> = Arc::from(bytes);
         remember(
@@ -161,22 +244,27 @@ impl PrivateContentService {
             bytes.clone(),
             content_type,
             PersistenceStatus::MemoryOnly,
+            retention,
         );
-        if queue_persistence(&self.memory, &id)
-            && self
-                .writes
-                .try_send(PersistRequest {
-                    id: id.clone(),
-                    bytes: bytes.clone(),
-                    content_type: content_type.to_owned(),
-                })
-                .is_err()
-        {
-            mark_persistence(&self.memory, &id, PersistenceStatus::MemoryOnly);
-            tracing::warn!(
-                id,
-                "private content persistence queue is full; keeping memory copy"
-            );
+        if queue_persistence(&self.memory, &id) {
+            let request = PersistRequest {
+                id: id.clone(),
+                bytes: bytes.clone(),
+                content_type: content_type.to_owned(),
+                retention,
+            };
+            match self.writes.try_send(request) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(request)) => {
+                    // The single worker drains retryable values directly from
+                    // the bounded memory cache. Spawning one waiter per full
+                    // send would turn disk backpressure into unbounded RAM.
+                    mark_persistence(&self.memory, &request.id, PersistenceStatus::MemoryOnly);
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_request)) => {
+                    mark_persistence(&self.memory, &id, PersistenceStatus::MemoryOnly);
+                }
+            }
         }
         ContentReference {
             id,
@@ -199,10 +287,19 @@ impl PrivateContentService {
         headers: &HeaderMap,
         head_only: bool,
     ) -> Result<Response<Body>, ContentError> {
-        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        if !valid_digest(digest) {
             return Err(ContentError::NotFound);
         }
         let content = self.load(digest).await?.ok_or(ContentError::NotFound)?;
+        let etag = format!("\"sha256-{digest}\"");
+        if !headers.contains_key(header::RANGE) && header_matches(headers, &etag) {
+            return Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header(header::ETAG, etag)
+                .header(header::CACHE_CONTROL, "private, no-store")
+                .body(Body::empty())
+                .map_err(|_| ContentError::InvalidRange);
+        }
         let mut range = requested_range(query, headers, content.bytes.len())?;
         if content.content_type.contains("charset=utf-8") {
             align_utf8_range(&content.bytes, &mut range);
@@ -227,6 +324,7 @@ impl PrivateContentService {
                 ),
             )
             .header(header::CACHE_CONTROL, "private, no-store")
+            .header(header::ETAG, etag)
             .header("content-security-policy", "default-src 'none'; sandbox")
             .header("x-content-type-options", "nosniff")
             .header("referrer-policy", "no-referrer");
@@ -239,22 +337,116 @@ impl PrivateContentService {
             .map_err(|_| ContentError::InvalidRange)
     }
 
+    /// Serves one logical UTF-8 page as a normal 200 response so HTTP gzip can
+    /// be applied without changing byte-range semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found, invalid-range, or host I/O errors.
+    pub async fn serve_text(
+        &self,
+        digest: &str,
+        query: ContentQuery,
+        headers: &HeaderMap,
+        head_only: bool,
+    ) -> Result<Response<Body>, ContentError> {
+        if !valid_digest(digest) {
+            return Err(ContentError::NotFound);
+        }
+        if headers.contains_key(header::RANGE) {
+            return Err(ContentError::InvalidRange);
+        }
+        let content = self.load(digest).await?.ok_or(ContentError::NotFound)?;
+        if !textual_content_type(&content.content_type) {
+            return Err(ContentError::InvalidRange);
+        }
+        let etag = format!("\"sha256-{digest}\"");
+        if header_matches(headers, &etag) {
+            return Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header(header::ETAG, etag)
+                .header(header::CACHE_CONTROL, "private, no-store")
+                .body(Body::empty())
+                .map_err(|_| ContentError::InvalidRange);
+        }
+        let mut range = if content.bytes.is_empty() {
+            RequestedRange {
+                start: 0,
+                end: 0,
+                partial: false,
+            }
+        } else {
+            requested_text_range(query, content.bytes.len())?
+        };
+        align_utf8_range(&content.bytes, &mut range);
+        let body = &content.bytes[range.start..range.end];
+        let mut response = Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content.content_type)
+            .header(header::CONTENT_LENGTH, body.len())
+            .header(header::CACHE_CONTROL, "private, no-store")
+            .header(header::ETAG, etag)
+            .header("x-content-offset", range.start)
+            .header("x-content-total-bytes", content.bytes.len())
+            .header(
+                "x-content-complete",
+                if range.end >= content.bytes.len() {
+                    "true"
+                } else {
+                    "false"
+                },
+            )
+            .header("content-security-policy", "default-src 'none'; sandbox")
+            .header("x-content-type-options", "nosniff")
+            .header("referrer-policy", "no-referrer");
+        if range.end < content.bytes.len() {
+            response = response.header("x-content-next-offset", range.end);
+        }
+        response
+            .body(if head_only {
+                Body::empty()
+            } else {
+                Body::from(body.to_vec())
+            })
+            .map_err(|_| ContentError::InvalidRange)
+    }
+
+    pub(crate) async fn asset(&self, digest: &str) -> Result<ContentAsset, ContentError> {
+        if !valid_digest(digest) {
+            return Err(ContentError::NotFound);
+        }
+        let content = self.load(digest).await?.ok_or(ContentError::NotFound)?;
+        Ok(ContentAsset {
+            bytes: content.bytes,
+            content_type: content.content_type,
+        })
+    }
+
     async fn load(&self, id: &str) -> Result<Option<CachedContent>, ContentError> {
         if let Some(value) = cached(&self.memory, id) {
             return Ok(Some(value));
         }
-        let mut directories = Vec::with_capacity(1 + self.fallback_directories.len());
+        if let Some(store) = self.rollout_store.as_deref() {
+            match rollout_content::load(store, id).await {
+                Ok(Some(content)) => {
+                    return Ok(Some(CachedContent {
+                        bytes: content.bytes,
+                        content_type: content.content_type,
+                        last_access: unix_time_ms(),
+                        persistence: PersistenceStatus::Persisted,
+                        retention: ContentRetention::Fallback,
+                    }));
+                }
+                Ok(None) => {}
+                Err(error) => tracing::warn!(%error, "rollout content lookup failed"),
+            }
+        }
+        let mut directories = Vec::with_capacity(2 + self.fallback_directories.len());
         directories.push(self.directory.as_path());
+        directories.push(self.replay_directory.as_path());
         directories.extend(self.fallback_directories.iter().map(PathBuf::as_path));
         for directory in directories {
             if let Some(content) = load_from_directory(directory, id).await? {
-                remember(
-                    &self.memory,
-                    id,
-                    content.bytes.clone(),
-                    &content.content_type,
-                    PersistenceStatus::Persisted,
-                );
                 return Ok(Some(content));
             }
         }
@@ -285,6 +477,7 @@ async fn load_from_directory(
         content_type,
         last_access: unix_time_ms(),
         persistence: PersistenceStatus::Persisted,
+        retention: ContentRetention::Fallback,
     }))
 }
 
@@ -311,13 +504,15 @@ impl ContentProjector {
                 project_nested(params, "thread", |value| self.project_thread(value))
             }
             // The replay ingestor already splits these deltas to its bounded
-            // 64 KiB contract. Replacing them with a content preview would
+            // inline-text contract. Replacing them with a content preview would
             // make the append-only client reducer permanently lose bytes.
             "item/agentMessage/delta"
             | "item/plan/delta"
             | "item/reasoning/summaryTextDelta"
             | "item/reasoning/textDelta" => params,
-            "item/commandExecution/outputDelta" => self.externalize_text_field(params, "delta"),
+            "item/commandExecution/outputDelta" => {
+                self.externalize_replay_text_field(params, "delta")
+            }
             _ => self.project_bounded(params, MAX_PROJECTED_NOTIFICATION_BYTES),
         };
         let mut envelope = payload;
@@ -522,14 +717,32 @@ impl ContentProjector {
     // Hidden output never travels inline, including short live deltas. The
     // existing private content store owns the bytes; clients receive references
     // and only read them while the command is expanded.
-    fn externalize_text_field(&self, mut value: Value, field: &str) -> Value {
+    fn externalize_text_field(&self, value: Value, field: &str) -> Value {
+        self.externalize_text_field_with_retention(value, field, ContentRetention::Fallback)
+    }
+
+    fn externalize_replay_text_field(&self, value: Value, field: &str) -> Value {
+        self.externalize_text_field_with_retention(value, field, ContentRetention::Replay)
+    }
+
+    fn externalize_text_field_with_retention(
+        &self,
+        mut value: Value,
+        field: &str,
+        retention: ContentRetention,
+    ) -> Value {
         let Some(text) = value.get(field).and_then(Value::as_str) else {
             return value;
         };
         if text.is_empty() {
             return value;
         }
-        let reference = self.content.put_text(text, "text/plain; charset=utf-8");
+        let reference = match retention {
+            ContentRetention::Fallback => self.content.put_text(text, "text/plain; charset=utf-8"),
+            ContentRetention::Replay => self
+                .content
+                .put_replay_text(text, "text/plain; charset=utf-8"),
+        };
         if let Some(object) = value.as_object_mut() {
             object.insert(field.into(), Value::String(String::new()));
         }
@@ -1244,6 +1457,7 @@ fn remember(
     bytes: Arc<[u8]>,
     content_type: &str,
     persistence: PersistenceStatus,
+    retention: ContentRetention,
 ) {
     if bytes.len() > MAX_MEMORY_BYTES {
         return;
@@ -1255,6 +1469,9 @@ fn remember(
     let last_access = cache.clock;
     if let Some(existing) = cache.values.get_mut(id) {
         existing.last_access = last_access;
+        if matches!(retention, ContentRetention::Fallback) {
+            existing.retention = ContentRetention::Fallback;
+        }
         if persistence == PersistenceStatus::Persisted {
             existing.persistence = PersistenceStatus::Persisted;
         }
@@ -1281,6 +1498,7 @@ fn remember(
             content_type: content_type.to_owned(),
             last_access,
             persistence,
+            retention,
         },
     );
 }
@@ -1308,6 +1526,44 @@ fn mark_persistence(cache: &Mutex<MemoryCache>, id: &str, status: PersistenceSta
     }
 }
 
+fn take_pending_request(cache: &Mutex<MemoryCache>) -> Option<PersistRequest> {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let id = cache
+        .values
+        .iter()
+        .filter(|(_, content)| content.persistence == PersistenceStatus::MemoryOnly)
+        .min_by_key(|(_, content)| content.last_access)
+        .map(|(id, _)| id.clone())?;
+    let content = cache.values.get_mut(&id)?;
+    content.persistence = PersistenceStatus::Queued;
+    Some(PersistRequest {
+        id,
+        bytes: content.bytes.clone(),
+        content_type: content.content_type.clone(),
+        retention: content.retention,
+    })
+}
+
+fn pending_retention(cache: &Mutex<MemoryCache>, id: &str) -> Option<ContentRetention> {
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values
+        .get(id)
+        .map(|content| content.retention)
+}
+
+fn forget_persisted(cache: &Mutex<MemoryCache>, id: &str) {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(removed) = cache.values.remove(id) {
+        cache.bytes = cache.bytes.saturating_sub(removed.bytes.len());
+    }
+}
+
 fn cached(cache: &Mutex<MemoryCache>, id: &str) -> Option<CachedContent> {
     let mut cache = cache
         .lock()
@@ -1321,28 +1577,106 @@ fn cached(cache: &Mutex<MemoryCache>, id: &str) -> Option<CachedContent> {
 
 async fn persist_worker(
     directory: PathBuf,
+    replay_directory: PathBuf,
+    rollout_store: Option<Arc<IndexStore>>,
     mut receiver: tokio::sync::mpsc::Receiver<PersistRequest>,
     memory: Arc<Mutex<MemoryCache>>,
 ) {
-    let mut last_prune = tokio::time::Instant::now() - PRUNE_INTERVAL;
-    while let Some(request) = receiver.recv().await {
-        match persist_one(&directory, &request).await {
-            Ok(()) => mark_persistence(&memory, &request.id, PersistenceStatus::Persisted),
+    let mut fallback_usage = disk_usage(&directory).await.unwrap_or_default();
+    let mut replay_usage = disk_usage(&replay_directory).await.unwrap_or_default();
+    let mut request = receiver.recv().await;
+    let mut prefer_pending = false;
+    while let Some(current) = request {
+        let retention = pending_retention(&memory, &current.id).unwrap_or(current.retention);
+        let canonical = if let Some(store) = rollout_store.as_deref() {
+            match rollout_content::load(store, &current.id).await {
+                Ok(content) => content.is_some(),
+                Err(error) => {
+                    tracing::warn!(%error, "rollout content persistence lookup failed");
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        let target = match retention {
+            ContentRetention::Fallback => &directory,
+            ContentRetention::Replay => &replay_directory,
+        };
+        let persisted = if canonical {
+            Ok(PersistOutcome {
+                created: false,
+                bytes: 0,
+            })
+        } else {
+            persist_one(target, &current).await
+        };
+        let persisted = match persisted {
+            Ok(outcome) => {
+                forget_persisted(&memory, &current.id);
+                if outcome.created {
+                    let usage = match retention {
+                        ContentRetention::Fallback => &mut fallback_usage,
+                        ContentRetention::Replay => &mut replay_usage,
+                    };
+                    usage.bytes = usage.bytes.saturating_add(outcome.bytes);
+                    usage.entries = usage.entries.saturating_add(1);
+                }
+                true
+            }
             Err(error) => {
-                mark_persistence(&memory, &request.id, PersistenceStatus::MemoryOnly);
-                tracing::warn!(id = request.id, %error, "private content persistence failed");
+                mark_persistence(&memory, &current.id, PersistenceStatus::MemoryOnly);
+                tracing::warn!(id = current.id, %error, "private content persistence failed");
+                false
+            }
+        };
+        if fallback_usage.bytes > MAX_DISK_BYTES {
+            match prune_disk_to(&directory, &memory, FALLBACK_PRUNE_TARGET_BYTES, None).await {
+                Ok(usage) => fallback_usage = usage,
+                Err(error) => tracing::warn!(%error, "private content disk prune failed"),
             }
         }
-        if last_prune.elapsed() >= PRUNE_INTERVAL {
-            if let Err(error) = prune_disk_to(&directory, &memory, MAX_DISK_BYTES).await {
-                tracing::warn!(%error, "private content disk prune failed");
+        if replay_usage.bytes > MAX_REPLAY_DISK_BYTES
+            || replay_usage.entries > MAX_REPLAY_DISK_ENTRIES
+        {
+            match prune_disk_to(
+                &replay_directory,
+                &memory,
+                REPLAY_PRUNE_TARGET_BYTES,
+                Some(REPLAY_PRUNE_TARGET_ENTRIES),
+            )
+            .await
+            {
+                Ok(usage) => replay_usage = usage,
+                Err(error) => tracing::warn!(%error, "private replay content disk prune failed"),
             }
-            last_prune = tokio::time::Instant::now();
         }
+        request = if persisted {
+            let ready = if prefer_pending {
+                take_pending_request(&memory).or_else(|| receiver.try_recv().ok())
+            } else {
+                receiver
+                    .try_recv()
+                    .ok()
+                    .or_else(|| take_pending_request(&memory))
+            };
+            prefer_pending = !prefer_pending;
+            match ready {
+                Some(ready) => Some(ready),
+                None => receiver.recv().await,
+            }
+        } else {
+            // A real I/O failure should not become a tight retry loop. A later
+            // queued write will wake the worker and make the value retryable.
+            receiver.recv().await
+        };
     }
 }
 
-async fn persist_one(directory: &Path, request: &PersistRequest) -> Result<(), std::io::Error> {
+async fn persist_one(
+    directory: &Path,
+    request: &PersistRequest,
+) -> Result<PersistOutcome, std::io::Error> {
     tokio::fs::create_dir_all(directory).await?;
     #[cfg(unix)]
     tokio::fs::set_permissions(
@@ -1351,7 +1685,15 @@ async fn persist_one(directory: &Path, request: &PersistRequest) -> Result<(), s
     )
     .await?;
     let target = directory.join(&request.id);
-    if !tokio::fs::try_exists(&target).await? {
+    let metadata_target = target.with_extension("meta.json");
+    if tokio::fs::try_exists(&target).await? && tokio::fs::try_exists(&metadata_target).await? {
+        return Ok(PersistOutcome {
+            created: false,
+            bytes: u64::try_from(request.bytes.len()).unwrap_or(u64::MAX),
+        });
+    }
+    let created = !tokio::fs::try_exists(&target).await?;
+    if created {
         let temporary = target.with_extension(format!("tmp-{}", std::process::id()));
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
@@ -1364,7 +1706,6 @@ async fn persist_one(directory: &Path, request: &PersistRequest) -> Result<(), s
         file.sync_all().await?;
         tokio::fs::rename(temporary, &target).await?;
     }
-    let metadata_target = target.with_extension("meta.json");
     let mut metadata = tokio::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -1379,51 +1720,103 @@ async fn persist_one(directory: &Path, request: &PersistRequest) -> Result<(), s
                 .as_bytes(),
         )
         .await?;
-    metadata.sync_all().await
+    metadata.sync_all().await?;
+    Ok(PersistOutcome {
+        created,
+        bytes: u64::try_from(request.bytes.len()).unwrap_or(u64::MAX),
+    })
+}
+
+async fn disk_usage(directory: &Path) -> Result<DiskUsage, std::io::Error> {
+    let mut reader = match tokio::fs::read_dir(directory).await {
+        Ok(reader) => reader,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DiskUsage::default());
+        }
+        Err(error) => return Err(error),
+    };
+    let mut usage = DiskUsage::default();
+    while let Some(entry) = reader.next_entry().await? {
+        let name = entry.file_name();
+        let Some(id) = name.to_str() else { continue };
+        if !valid_digest(id) {
+            continue;
+        }
+        let metadata = entry.metadata().await?;
+        if metadata.is_file() {
+            usage.bytes = usage.bytes.saturating_add(metadata.len());
+            usage.entries = usage.entries.saturating_add(1);
+        }
+    }
+    Ok(usage)
 }
 
 async fn prune_disk_to(
     directory: &Path,
     memory: &Mutex<MemoryCache>,
     max_bytes: u64,
-) -> Result<(), std::io::Error> {
-    let mut reader = match tokio::fs::read_dir(directory).await {
-        Ok(reader) => reader,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    let mut entries = Vec::new();
-    let mut total = 0_u64;
-    while let Some(entry) = reader.next_entry().await? {
-        let name = entry.file_name();
-        let Some(id) = name.to_str() else { continue };
-        if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            continue;
+    max_entries: Option<usize>,
+) -> Result<DiskUsage, std::io::Error> {
+    loop {
+        let mut reader = match tokio::fs::read_dir(directory).await {
+            Ok(reader) => reader,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(DiskUsage::default());
+            }
+            Err(error) => return Err(error),
+        };
+        let mut oldest = BinaryHeap::with_capacity(MAX_PRUNE_CANDIDATES);
+        let mut usage = DiskUsage::default();
+        while let Some(entry) = reader.next_entry().await? {
+            let name = entry.file_name();
+            let Some(id) = name.to_str() else { continue };
+            if !valid_digest(id) {
+                continue;
+            }
+            let metadata = entry.metadata().await?;
+            if !metadata.is_file() {
+                continue;
+            }
+            usage.bytes = usage.bytes.saturating_add(metadata.len());
+            usage.entries = usage.entries.saturating_add(1);
+            oldest.push((
+                metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                id.to_owned(),
+                metadata.len(),
+                entry.path(),
+            ));
+            if oldest.len() > MAX_PRUNE_CANDIDATES {
+                oldest.pop();
+            }
         }
-        let metadata = entry.metadata().await?;
-        if !metadata.is_file() {
-            continue;
+        if usage.bytes <= max_bytes && max_entries.is_none_or(|limit| usage.entries <= limit) {
+            return Ok(usage);
         }
-        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        total = total.saturating_add(metadata.len());
-        entries.push((modified, id.to_owned(), metadata.len(), entry.path()));
+        let mut candidates = oldest.into_vec();
+        candidates.sort_by_key(|(modified, _, _, _)| *modified);
+        let mut deleted = false;
+        for (_modified, id, bytes, path) in candidates {
+            if usage.bytes <= max_bytes && max_entries.is_none_or(|limit| usage.entries <= limit) {
+                break;
+            }
+            if tokio::fs::remove_file(&path).await.is_err() {
+                continue;
+            }
+            let _ = tokio::fs::remove_file(path.with_extension("meta.json")).await;
+            usage.bytes = usage.bytes.saturating_sub(bytes);
+            usage.entries = usage.entries.saturating_sub(1);
+            deleted = true;
+            let mut cache = memory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(removed) = cache.values.remove(&id) {
+                cache.bytes = cache.bytes.saturating_sub(removed.bytes.len());
+            }
+        }
+        if !deleted {
+            return Ok(usage);
+        }
     }
-    entries.sort_by_key(|(modified, _, _, _)| *modified);
-    for (_modified, id, bytes, path) in entries {
-        if total <= max_bytes {
-            break;
-        }
-        let _ = tokio::fs::remove_file(&path).await;
-        let _ = tokio::fs::remove_file(path.with_extension("meta.json")).await;
-        total = total.saturating_sub(bytes);
-        let mut cache = memory
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(removed) = cache.values.remove(&id) {
-            cache.bytes = cache.bytes.saturating_sub(removed.bytes.len());
-        }
-    }
-    Ok(())
 }
 
 fn requested_range(
@@ -1464,6 +1857,20 @@ fn requested_range(
     })
 }
 
+fn requested_text_range(query: ContentQuery, total: usize) -> Result<RequestedRange, ContentError> {
+    let start = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(MAX_TEXT_PAGE_BYTES);
+    if start >= total || limit == 0 || limit > MAX_TEXT_PAGE_BYTES {
+        return Err(ContentError::InvalidRange);
+    }
+    let end = start.saturating_add(limit).min(total);
+    Ok(RequestedRange {
+        start,
+        end,
+        partial: start != 0 || end != total,
+    })
+}
+
 fn align_utf8_range(bytes: &[u8], range: &mut RequestedRange) {
     while range.start < range.end
         && range.start > 0
@@ -1482,6 +1889,31 @@ fn align_utf8_range(bytes: &[u8], range: &mut RequestedRange) {
     }
 }
 
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn header_matches(headers: &HeaderMap, expected: &str) -> bool {
+    headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value == "*"
+                || value
+                    .split(',')
+                    .any(|candidate| candidate.trim() == expected)
+        })
+}
+
+fn textual_content_type(value: &str) -> bool {
+    value.starts_with("text/")
+        || value.starts_with("application/json")
+        || value.starts_with("application/javascript")
+        || value.starts_with("application/xml")
+        || value.contains("+json")
+        || value.contains("+xml")
+}
+
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1494,6 +1926,7 @@ fn unix_time_ms() -> u64 {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::rollout::index_rollout_fully;
 
     #[test]
     fn repeated_content_queues_one_persistence_write() {
@@ -1501,7 +1934,9 @@ mod tests {
         let (writes, mut receiver) = tokio::sync::mpsc::channel(1);
         let content = PrivateContentService {
             directory: directory.path().to_path_buf(),
+            replay_directory: directory.path().join("replay"),
             fallback_directories: Vec::new().into(),
+            rollout_store: None,
             memory: Arc::new(Mutex::new(MemoryCache::default())),
             writes,
         };
@@ -1526,7 +1961,9 @@ mod tests {
         let (writes, mut receiver) = tokio::sync::mpsc::channel(1);
         let content = PrivateContentService {
             directory: directory.path().to_path_buf(),
+            replay_directory: directory.path().join("replay"),
             fallback_directories: Vec::new().into(),
+            rollout_store: None,
             memory: Arc::new(Mutex::new(MemoryCache::default())),
             writes,
         };
@@ -1543,6 +1980,138 @@ mod tests {
             receiver.try_recv().expect("retried persistence write").id,
             retryable.id
         );
+    }
+
+    #[tokio::test]
+    async fn persistence_worker_drains_backpressure_from_bounded_memory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let fallback = directory.path().join("fallback");
+        let replay = fallback.join("replay");
+        let (writes, receiver) = tokio::sync::mpsc::channel(1);
+        let memory = Arc::new(Mutex::new(MemoryCache::default()));
+        let content = PrivateContentService {
+            directory: fallback.clone(),
+            replay_directory: replay.clone(),
+            fallback_directories: Vec::new().into(),
+            rollout_store: None,
+            memory: memory.clone(),
+            writes,
+        };
+
+        let queued = content.put_text("queued", "text/plain");
+        let backpressured = content.put_text("backpressured", "text/plain");
+        let worker = tokio::spawn(persist_worker(
+            fallback.clone(),
+            replay,
+            None,
+            receiver,
+            memory,
+        ));
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if fallback.join(&queued.id).is_file() && fallback.join(&backpressured.id).is_file()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
+        worker.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn proven_rollout_content_is_not_duplicated_in_the_fallback_store()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let rollout = directory.path().join("rollout.jsonl");
+        std::fs::write(
+            &rollout,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread\",\"cwd\":\"/tmp\",\"timestamp\":\"2026-01-01T00:00:00Z\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"thread_id\":\"thread\",\"turn_id\":\"turn\",\"item\":{\"type\":\"CommandExecution\",\"id\":\"command\",\"aggregated_output\":\"canonical output\"}}}\n",
+            ),
+        )?;
+        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
+        index_rollout_fully(&store, &rollout)?;
+        let fallback = directory.path().join("fallback");
+        let content = PrivateContentService::open_indexed(fallback.clone(), Vec::new(), store);
+
+        let reference = content.put_text("canonical output", "text/plain; charset=utf-8");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if !content
+                    .memory
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .values
+                    .contains_key(&reference.id)
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+
+        assert!(!fallback.join(&reference.id).exists());
+        let asset = content.asset(&reference.id).await?;
+        assert_eq!(asset.bytes.as_ref(), b"canonical output");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn live_command_deltas_use_the_bounded_replay_store()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let content = PrivateContentService::open(directory.path().join("fallback"));
+        let projector = ContentProjector::new(content.clone());
+        let projected = projector.project_notification(json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {"delta": "live output"}
+        }));
+        let digest = projected["params"]["codewideContent"]["fields"]["/delta"]["id"]
+            .as_str()
+            .ok_or("digest")?;
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if content.replay_directory.join(digest).is_file() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        assert!(!content.directory.join(digest).exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fallback_bytes_leave_memory_after_persistence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let content = PrivateContentService::open(directory.path().join("fallback"));
+        let reference = content.put_text("fallback only", "text/plain; charset=utf-8");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if content.directory.join(&reference.id).is_file()
+                    && !content
+                        .memory
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .values
+                        .contains_key(&reference.id)
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        Ok(())
     }
 
     #[test]
@@ -2045,6 +2614,7 @@ mod tests {
                 id: id.clone(),
                 bytes: Arc::from(vec![index; 8]),
                 content_type: "application/octet-stream".into(),
+                retention: ContentRetention::Fallback,
             };
             remember(
                 &memory,
@@ -2052,11 +2622,12 @@ mod tests {
                 request.bytes.clone(),
                 &request.content_type,
                 PersistenceStatus::Persisted,
+                ContentRetention::Fallback,
             );
             persist_one(directory.path(), &request).await?;
             tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
-        prune_disk_to(directory.path(), &memory, 8).await?;
+        prune_disk_to(directory.path(), &memory, 8, None).await?;
         let retained = std::fs::read_dir(directory.path())?
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name().to_string_lossy().len() == 64)

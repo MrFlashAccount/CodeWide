@@ -1,9 +1,9 @@
 export type PendingServerRequest = {
   connectionId: string;
-  requestKey: string;
-  requestId: string | number;
+  createdAt: number;
   method: string;
   params: Record<string, unknown>;
+  requestId: string | number;
+  requestKey: string;
   state: "pending" | "resolving";
-  createdAt: number;
 };

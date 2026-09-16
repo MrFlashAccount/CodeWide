@@ -4,8 +4,8 @@ type MentionedUserFile = {
 };
 
 export type NormalizedUserMessage = {
-  text: string;
   files: MentionedUserFile[];
+  text: string;
 };
 
 const REQUEST_HEADING = /^## My request for Codex:\s*$/m;
@@ -33,8 +33,8 @@ export function normalizeUserMessage(source: string): NormalizedUserMessage {
       : [];
   const authored = request === null ? source : source.slice(request.index + request[0].length);
   return {
-    text: authored.replace(AMBIENT_CONTEXT, "").replace(IMAGE_TAG, "").trim(),
     files,
+    text: authored.replace(AMBIENT_CONTEXT, "").replace(IMAGE_TAG, "").trim(),
   };
 }
 
@@ -43,7 +43,9 @@ function parseMentionedFiles(section: string): MentionedUserFile[] {
   for (const match of section.matchAll(FILE_ENTRY)) {
     const name = match[1]?.trim();
     const path = (match[2] ?? match[3])?.trim();
-    if (name === undefined || name === "" || path === undefined || path === "") continue;
+    if (name === undefined || name === "" || path === undefined || path === "") {
+      continue;
+    }
     files.push({ name, path });
   }
   return files;

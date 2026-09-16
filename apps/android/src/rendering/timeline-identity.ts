@@ -1,4 +1,4 @@
-type TimelineIdentityItem = { type?: unknown; clientId?: unknown };
+type TimelineIdentityItem = { clientId?: unknown; type?: unknown };
 
 export function optimisticTimelineKey(scope: string, clientId: string): string {
   return `turn-client:${scope}:${clientId}`;

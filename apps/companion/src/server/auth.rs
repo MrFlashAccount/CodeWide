@@ -43,6 +43,7 @@ async fn authenticate(
                 registry,
                 state.services.sync_v2.as_ref(),
                 state.services.media.as_deref(),
+                state.services.image_previews.as_deref(),
                 PairingClaim {
                     pairing_token,
                     device_name,
@@ -99,6 +100,7 @@ async fn authenticate_bootstrap(
         registry,
         state.services.sync_v2.as_ref(),
         state.services.media.as_deref(),
+        state.services.image_previews.as_deref(),
         PairingClaim {
             pairing_token,
             device_name,
@@ -147,6 +149,7 @@ async fn pairing_claim(
         registry,
         state.services.sync_v2.as_ref(),
         state.services.media.as_deref(),
+        state.services.image_previews.as_deref(),
         claim,
     )
     .await
@@ -156,6 +159,7 @@ async fn complete_pairing_claim(
     registry: &DeviceRegistry,
     sync_v2: Option<&SyncV2Runtime>,
     media: Option<&MediaProxyService>,
+    image_previews: Option<&ImagePreviewService>,
     claim: PairingClaim,
 ) -> Response {
     #[cfg(feature = "e2e-command-fault")]
@@ -169,6 +173,9 @@ async fn complete_pairing_claim(
     if result.replaced_existing {
         if let Some(media) = media {
             media.purge_owner(&result.device_id);
+        }
+        if let Some(image_previews) = image_previews {
+            image_previews.purge_media_owner(&result.device_id);
         }
         if let Some(runtime) = sync_v2
             && !runtime.purge_device_context(&result.device_id).await
@@ -272,6 +279,9 @@ async fn device_revoke(
         Ok(revoked) => {
             if revoked && let Some(media) = &state.services.media {
                 media.purge_owner(&device_id);
+            }
+            if revoked && let Some(image_previews) = &state.services.image_previews {
+                image_previews.purge_media_owner(&device_id);
             }
             if revoked
                 && let Some(runtime) = &state.services.sync_v2

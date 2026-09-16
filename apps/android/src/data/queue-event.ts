@@ -1,20 +1,23 @@
+import { unknownRecord } from "./unknownRecord";
 import type { NativeCommandDelivery } from "../native/native-transport";
 
 export type HostQueuedPrompt = {
   commandId: string;
-  remoteThreadId: string;
+  createdAt: number;
+  lastError: string | null;
+  order: number;
   params: Record<string, unknown>;
   presentation: "delivery" | "queue";
-  workspaceRequestId: string | null;
+  remoteThreadId: string;
   state: "queued" | "uncertain" | "failed" | "delivered";
-  order: number;
-  createdAt: number;
   updatedAt: number;
-  lastError: string | null;
+  workspaceRequestId: string | null;
 };
 
 export function parseHostQueueSnapshot(value: unknown): HostQueuedPrompt[] | null {
-  if (!Array.isArray(value)) return null;
+  if (!Array.isArray(value)) {
+    return null;
+  }
   const commands: HostQueuedPrompt[] = [];
   for (const entry of value) {
     const command = asRecord(entry);
@@ -24,9 +27,14 @@ export function parseHostQueueSnapshot(value: unknown): HostQueuedPrompt[] | nul
       params === null ||
       typeof command.commandId !== "string" ||
       typeof command.remoteThreadId !== "string" ||
+      typeof command.order !== "number" ||
       !Number.isSafeInteger(command.order) ||
+      typeof command.createdAt !== "number" ||
       !Number.isSafeInteger(command.createdAt) ||
-      !(command.updatedAt === undefined || Number.isSafeInteger(command.updatedAt)) ||
+      !(
+        command.updatedAt === undefined ||
+        (typeof command.updatedAt === "number" && Number.isSafeInteger(command.updatedAt))
+      ) ||
       (command.presentation !== undefined &&
         command.presentation !== "delivery" &&
         command.presentation !== "queue") ||
@@ -40,23 +48,21 @@ export function parseHostQueueSnapshot(value: unknown): HostQueuedPrompt[] | nul
         command.state !== "failed" &&
         command.state !== "delivered") ||
       (command.lastError !== null && typeof command.lastError !== "string")
-    )
+    ) {
       return null;
+    }
     commands.push({
       commandId: command.commandId,
-      remoteThreadId: command.remoteThreadId,
+      createdAt: command.createdAt,
+      lastError: command.lastError,
+      order: command.order,
       params,
       presentation: command.presentation === "delivery" ? "delivery" : "queue",
+      remoteThreadId: command.remoteThreadId,
+      state: command.state,
+      updatedAt: command.updatedAt ?? command.createdAt,
       workspaceRequestId:
         typeof command.workspaceRequestId === "string" ? command.workspaceRequestId : null,
-      state: command.state,
-      order: command.order as number,
-      createdAt: command.createdAt as number,
-      updatedAt:
-        command.updatedAt === undefined
-          ? (command.createdAt as number)
-          : (command.updatedAt as number),
-      lastError: command.lastError as string | null,
     });
   }
   return commands;
@@ -86,7 +92,5 @@ export function hasUnresolvedDeliveredCommand(
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return unknownRecord(value);
 }

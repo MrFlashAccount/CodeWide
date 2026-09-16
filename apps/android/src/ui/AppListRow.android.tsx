@@ -30,41 +30,48 @@ export function AppListRow(props: AppListRowProps) {
 
 function ComposeListRow(props: AppListRowProps) {
   const press = useEvent(() => {
-    if (!props.disabled) props.onPress?.();
+    if (props.disabled !== true) {
+      props.onPress?.();
+    }
   });
   const position = props.position ?? "only";
   const modifiers = [fillMaxWidth()];
-  if (position === "only") modifiers.push(clip(Shapes.RoundedCorner(radii.medium)));
-  else if (position === "first") {
-    modifiers.push(clip(Shapes.RoundedCorner({ topStart: radii.medium, topEnd: radii.medium })));
+  if (position === "only") {
+    modifiers.push(clip(Shapes.RoundedCorner(radii.medium)));
+  } else if (position === "first") {
+    modifiers.push(clip(Shapes.RoundedCorner({ topEnd: radii.medium, topStart: radii.medium })));
   } else if (position === "last") {
     modifiers.push(
-      clip(Shapes.RoundedCorner({ bottomStart: radii.medium, bottomEnd: radii.medium })),
+      clip(Shapes.RoundedCorner({ bottomEnd: radii.medium, bottomStart: radii.medium })),
     );
   }
-  if (props.fixedHeight !== undefined) modifiers.push(height(props.fixedHeight));
-  if (props.onPress !== undefined && !props.disabled) modifiers.push(clickable(press));
+  if (props.fixedHeight !== undefined) {
+    modifiers.push(height(props.fixedHeight));
+  }
+  if (props.onPress !== undefined && props.disabled !== true) {
+    modifiers.push(clickable(press));
+  }
   return (
     <View
-      testID={props.testID}
+      accessibilityHint={props.accessibilityHint}
+      accessibilityLabel={props.accessibilityLabel ?? props.title}
+      accessibilityRole={
+        props.onPress === undefined ? undefined : props.selected === undefined ? "button" : "radio"
+      }
+      accessibilityState={{
+        busy: props.trailingBusy === true,
+        disabled: props.disabled ?? false,
+        ...(props.selected === undefined ? {} : { checked: props.selected }),
+      }}
+      accessible={props.onPress !== undefined && props.trailing === undefined}
+      onAccessibilityTap={press}
       style={[
         styles.surface,
         styles[position],
         props.fixedHeight === undefined ? undefined : { height: props.fixedHeight },
-        props.disabled && styles.disabled,
+        props.disabled === true && styles.disabled,
       ]}
-      accessible={props.onPress !== undefined && props.trailing === undefined}
-      accessibilityRole={
-        props.onPress === undefined ? undefined : props.selected === undefined ? "button" : "radio"
-      }
-      accessibilityLabel={props.accessibilityLabel ?? props.title}
-      accessibilityHint={props.accessibilityHint}
-      accessibilityState={{
-        disabled: props.disabled ?? false,
-        busy: props.trailingBusy === true,
-        ...(props.selected === undefined ? {} : { checked: props.selected }),
-      }}
-      onAccessibilityTap={press}
+      testID={props.testID}
     >
       <Host
         colorScheme="dark"
@@ -75,30 +82,31 @@ function ComposeListRow(props: AppListRowProps) {
         }}
       >
         <ListItem
-          modifiers={modifiers}
           colors={{
-            containerColor: props.selected ? colors.surfaceContainerHigh : colors.surfaceContainer,
-            contentColor: props.danger ? colors.red : colors.text,
+            containerColor:
+              props.selected === true ? colors.surfaceContainerHigh : colors.surfaceContainer,
+            contentColor: props.danger === true ? colors.red : colors.text,
             supportingContentColor: colors.textMuted,
           }}
+          modifiers={modifiers}
         >
           {props.leadingIcon !== undefined && (
             <ListItem.LeadingContent>
               <ComposeNamedIcon
+                color={props.leadingIcon.color ?? colors.textMuted}
                 name={props.leadingIcon.name}
                 size={props.leadingIcon.size ?? iconSize.inline}
-                color={props.leadingIcon.color ?? colors.textMuted}
               />
             </ListItem.LeadingContent>
           )}
           <ListItem.HeadlineContent>
             <Text
-              maxLines={props.multiline ? 2 : 1}
+              maxLines={props.multiline === true ? 2 : 1}
               overflow="ellipsis"
               style={{
+                fontFamily: "RobotoFlex-Regular",
                 fontSize: typeScale.body.fontSize,
                 lineHeight: typeScale.body.lineHeight,
-                fontFamily: "RobotoFlex-Regular",
               }}
             >
               {props.title}
@@ -106,22 +114,22 @@ function ComposeListRow(props: AppListRowProps) {
           </ListItem.HeadlineContent>
           {props.description !== undefined && props.description !== "" && (
             <ListItem.SupportingContent>
-              <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: spacing.xxs }}>
+              <Row horizontalArrangement={{ spacedBy: spacing.xxs }} verticalAlignment="center">
                 {props.descriptionIcon !== undefined && (
                   <ComposeNamedIcon
+                    color={props.descriptionIcon.color ?? colors.textMuted}
                     name={props.descriptionIcon.name}
                     size={props.descriptionIcon.size ?? iconSize.inline}
-                    color={props.descriptionIcon.color ?? colors.textMuted}
                   />
                 )}
                 <Text
+                  maxLines={props.multiline === true ? 2 : 1}
                   modifiers={[weight(1)]}
-                  maxLines={props.multiline ? 2 : 1}
                   overflow="ellipsis"
                   style={{
+                    fontFamily: "RobotoFlex-Regular",
                     fontSize: typeScale.label.fontSize,
                     lineHeight: typeScale.label.lineHeight,
-                    fontFamily: "RobotoFlex-Regular",
                   }}
                 >
                   {props.description}
@@ -134,23 +142,23 @@ function ComposeListRow(props: AppListRowProps) {
             props.trailingBusy === true ||
             props.selected === true) && (
             <ListItem.TrailingContent>
-              <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: spacing.xs }}>
+              <Row horizontalArrangement={{ spacedBy: spacing.xs }} verticalAlignment="center">
                 {props.trailingIcon !== undefined && (
                   <ComposeNamedIcon
+                    color={props.trailingIcon.color ?? colors.textMuted}
                     name={props.trailingIcon.name}
                     size={props.trailingIcon.size ?? iconSize.inline}
-                    color={props.trailingIcon.color ?? colors.textMuted}
                   />
                 )}
                 {props.trailingBusy === true && (
                   <CircularProgressIndicator
                     color={colors.textMuted}
-                    strokeWidth={2}
                     modifiers={[size(iconSize.inline, iconSize.inline)]}
+                    strokeWidth={2}
                   />
                 )}
                 {props.selected === true && (
-                  <ComposeNamedIcon name="checkmark" size={iconSize.inline} color={colors.text} />
+                  <ComposeNamedIcon color={colors.text} name="checkmark" size={iconSize.inline} />
                 )}
               </Row>
             </ListItem.TrailingContent>

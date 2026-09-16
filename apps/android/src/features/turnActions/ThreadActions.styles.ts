@@ -3,21 +3,21 @@ import { colors, radii, touchTarget, typeScale } from "../../theme";
 
 export const styles = StyleSheet.create({
   headerIcon: {
-    width: touchTarget,
-    height: touchTarget,
     alignItems: "center",
-    justifyContent: "center",
     borderRadius: radii.large,
+    height: touchTarget,
+    justifyContent: "center",
+    width: touchTarget,
   },
   headerMenuAnchor: {
-    width: touchTarget,
-    height: touchTarget,
     flexShrink: 0,
+    height: touchTarget,
+    width: touchTarget,
   },
   sheetTitle: {
-    minWidth: 0,
-    flexShrink: 1,
     color: colors.text,
+    flexShrink: 1,
+    minWidth: 0,
     ...typeScale.heading,
   },
 });

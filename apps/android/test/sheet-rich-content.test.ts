@@ -46,7 +46,7 @@ describe("document preview surfaces", () => {
   });
 
   it("does not overlay diff fallback notices or late render spinners on code", () => {
-    const editor = readSource("../src/rendering/CodeReviewEditor.native.tsx");
+    const editor = readSource("../src/features/review/editor/CodeReviewEditor.native.tsx");
 
     expect(editor).not.toContain("showInitialLoading");
     expect(editor).toContain("loading && document === null && !sidebarOpen");

@@ -12,25 +12,25 @@ import {
 import { AppText as Text } from "../../ui/Typography";
 
 interface SessionUsageDetailsProps {
-  readonly tokens: {
-    readonly input: number;
-    readonly cached: number;
-    readonly output: number;
-    readonly total: number;
-  } | null;
-  readonly cost: {
-    readonly input: number;
-    readonly cached: number;
-    readonly output: number;
-    readonly total: number;
-  } | null;
   readonly compactionCount: number | null;
+  readonly cost: {
+    readonly cached: number;
+    readonly input: number;
+    readonly output: number;
+    readonly total: number;
+  } | null;
+  readonly tokens: {
+    readonly cached: number;
+    readonly input: number;
+    readonly output: number;
+    readonly total: number;
+  } | null;
 }
 
-export function SessionUsageDetails({ tokens, cost, compactionCount }: SessionUsageDetailsProps) {
+export function SessionUsageDetails({ compactionCount, cost, tokens }: SessionUsageDetailsProps) {
   const [explanationOpen, setExplanationOpen] = useState(false);
   return (
-    <View testID="usage-session-details" style={styles.content}>
+    <View style={styles.content} testID="usage-session-details">
       {tokens === null ? (
         <Text style={styles.label}>Token usage unavailable</Text>
       ) : (
@@ -40,10 +40,10 @@ export function SessionUsageDetails({ tokens, cost, compactionCount }: SessionUs
             <Text style={[styles.columnHeading, styles.numberColumn]}>Tokens</Text>
             <Text style={[styles.columnHeading, styles.numberColumn]}>Est. cost</Text>
           </View>
-          <SessionUsageRow label="Input" tokens={tokens.input} cost={cost?.input ?? null} />
-          <SessionUsageRow label="Cached" tokens={tokens.cached} cost={cost?.cached ?? null} />
-          <SessionUsageRow label="Output" tokens={tokens.output} cost={cost?.output ?? null} />
-          <SessionUsageRow label="Total" tokens={tokens.total} cost={cost?.total ?? null} total />
+          <SessionUsageRow cost={cost?.input ?? null} label="Input" tokens={tokens.input} />
+          <SessionUsageRow cost={cost?.cached ?? null} label="Cached" tokens={tokens.cached} />
+          <SessionUsageRow cost={cost?.output ?? null} label="Output" tokens={tokens.output} />
+          <SessionUsageRow cost={cost?.total ?? null} label="Total" tokens={tokens.total} total />
         </>
       )}
       <View style={styles.compactions}>
@@ -57,10 +57,10 @@ export function SessionUsageDetails({ tokens, cost, compactionCount }: SessionUs
           </Text>
         ) : (
           <AnimatedNumber
-            value={compactionCount}
+            accessibilityLabel={`${String(compactionCount)} compactions`}
             format={integerNumberFormat}
-            accessibilityLabel={`${compactionCount} compactions`}
             style={styles.caption}
+            value={compactionCount}
           />
         )}
       </View>
@@ -69,24 +69,26 @@ export function SessionUsageDetails({ tokens, cost, compactionCount }: SessionUs
       ) : (
         <>
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="About the cost estimate"
+            accessibilityRole="button"
             accessibilityState={{ expanded: explanationOpen }}
-            onPress={() => setExplanationOpen(!explanationOpen)}
+            onPress={() => {
+              setExplanationOpen(!explanationOpen);
+            }}
             style={({ pressed }) => [styles.explanationButton, pressed && styles.pressed]}
           >
             <Ionicons
+              color={colors.textDim}
               name="information-circle-outline"
               size={iconSize.inline}
-              color={colors.textDim}
             />
             <Text style={[styles.caption, styles.explanationLabel]}>
               API estimate · current model prices
             </Text>
             <Ionicons
+              color={colors.textDim}
               name={explanationOpen ? "chevron-up" : "chevron-down"}
               size={iconSize.indicator}
-              color={colors.textDim}
             />
           </Pressable>
           {explanationOpen && (
@@ -102,25 +104,25 @@ export function SessionUsageDetails({ tokens, cost, compactionCount }: SessionUs
 }
 
 function SessionUsageRow({
+  cost,
   label,
   tokens,
-  cost,
   total = false,
 }: {
+  cost: number | null;
   label: string;
   tokens: number;
-  cost: number | null;
   total?: boolean;
 }) {
   return (
     <View style={[styles.row, total && styles.total]}>
       <Text style={[styles.label, styles.labelColumn, total && styles.emphasized]}>{label}</Text>
       <AnimatedNumber
-        value={tokens}
-        format={compactNumberFormat}
         accessibilityLabel={`${label}: ${tokens.toLocaleString()} tokens`}
         containerStyle={styles.numberColumn}
+        format={compactNumberFormat}
         style={[styles.value, total && styles.emphasized]}
+        value={tokens}
       />
       {cost === null ? (
         <Text
@@ -131,10 +133,10 @@ function SessionUsageRow({
         </Text>
       ) : (
         <AnimatedNumber
-          value={cost}
-          format={usdNumberFormat(cost)}
           containerStyle={styles.numberColumn}
+          format={usdNumberFormat(cost)}
           style={[styles.value, total && styles.emphasized]}
+          value={cost}
         />
       )}
     </View>
@@ -142,71 +144,71 @@ function SessionUsageRow({
 }
 
 const styles = StyleSheet.create({
+  caption: {
+    ...typeScale.caption,
+    color: colors.textDim,
+  },
+  columnHeading: {
+    ...typeScale.caption,
+    color: colors.textDim,
+  },
+  compactions: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    justifyContent: "space-between",
+    paddingVertical: spacing.xs,
+  },
   content: {
     gap: spacing.optical,
     paddingBottom: spacing.xxs,
   },
+  emphasized: {
+    color: colors.text,
+    fontWeight: typeWeight.semibold,
+  },
+  explanationButton: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xxs,
+    minHeight: controlSize.regular,
+  },
+  explanationLabel: { flex: 1 },
   heading: {
     flexDirection: "row",
     gap: spacing.xs,
     paddingVertical: spacing.xxs,
   },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    minHeight: controlSize.compact,
-    gap: spacing.xs,
+  label: {
+    ...typeScale.label,
+    color: colors.textMuted,
   },
   labelColumn: {
     flex: 1,
     minWidth: 0,
   },
   numberColumn: {
+    alignSelf: "center",
     flex: 1,
     minWidth: 0,
-    alignSelf: "center",
     textAlign: "right",
   },
-  columnHeading: {
-    ...typeScale.caption,
-    color: colors.textDim,
+  pressed: { opacity: 0.7 },
+  row: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: controlSize.compact,
   },
-  label: {
-    ...typeScale.label,
-    color: colors.textMuted,
+  total: {
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: spacing.xxs,
+    paddingTop: spacing.xxs,
   },
   value: {
     ...typeScale.label,
     color: colors.text,
-    textAlign: "right",
     fontVariant: ["tabular-nums"],
+    textAlign: "right",
   },
-  total: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    marginTop: spacing.xxs,
-    paddingTop: spacing.xxs,
-  },
-  emphasized: {
-    color: colors.text,
-    fontWeight: typeWeight.semibold,
-  },
-  compactions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.xs,
-    paddingVertical: spacing.xs,
-  },
-  caption: {
-    ...typeScale.caption,
-    color: colors.textDim,
-  },
-  explanationButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-    minHeight: controlSize.regular,
-  },
-  explanationLabel: { flex: 1 },
-  pressed: { opacity: 0.7 },
 });

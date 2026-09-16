@@ -18,50 +18,79 @@ import { connectionDiagnosticReport } from "./connectionDiagnosticReport";
 import { styles } from "./ConnectionRowEditor.styles";
 
 export function ConnectionRowEditor({
-  connection,
-  onToggle,
-  onReconnect,
-  onDelete,
-  onUpdate,
-  onMove,
   accountPool,
-  onRefreshAccountPool,
-  onStartAccountLogin,
-  onCancelAccountLogin,
+  connection,
   onActivateAccountProfile,
-  onUpdateAccountProfile,
+  onCancelAccountLogin,
+  onDelete,
+  onMove,
+  onReconnect,
+  onRefreshAccountPool,
   onRemoveAccountProfile,
+  onStartAccountLogin,
+  onToggle,
+  onUpdate,
+  onUpdateAccountProfile,
 }: ConnectionEditorProps) {
   const {
-    editing,
-    setEditing,
-    name,
-    setName,
-    emoji,
-    setEmoji,
-    endpoint,
-    setEndpoint,
-    replacementToken,
-    setReplacementToken,
-    tlsPinSha256,
-    setTlsPinSha256,
-    saving,
-    error,
     cancelEditing,
+    editing,
+    emoji,
+    endpoint,
+    error,
+    name,
+    replacementToken,
     save,
+    saving,
+    setEditing,
+    setEmoji,
+    setEndpoint,
+    setName,
+    setReplacementToken,
+    setTlsPinSha256,
+    tlsPinSha256,
   } = useConnectionEditor({ connection, onUpdate });
   const [diagnosticExpanded, setDiagnosticExpanded] = useState(false);
+  const [actionPending, setActionPending] = useState(false);
   const dialog = useAppDialog();
+  const runAction = (operation: () => Promise<void>, fallback: string): void => {
+    if (actionPending) {
+      return;
+    }
+    setActionPending(true);
+    operation().then(
+      () => {
+        setActionPending(false);
+      },
+      (error: unknown) => {
+        setActionPending(false);
+        dialog.alert(fallback, error instanceof Error ? error.message : fallback);
+      },
+    );
+  };
   const connectionActions: ActionMenuItem[] = [
-    { id: "reconnect", label: "Reconnect", icon: "refresh", disabled: !connection.enabled },
-    { id: "edit", label: "Edit server", icon: "pencil-outline" },
-    { id: "move-up", label: "Move up", icon: "arrow-up" },
-    { id: "move-down", label: "Move down", icon: "arrow-down" },
-    { id: "delete", label: "Delete server", icon: "trash-outline", destructive: true },
+    {
+      disabled: actionPending || !connection.enabled,
+      icon: "refresh",
+      id: "reconnect",
+      label: "Reconnect",
+    },
+    { disabled: actionPending, icon: "pencil-outline", id: "edit", label: "Edit server" },
+    { disabled: actionPending, icon: "arrow-up", id: "move-up", label: "Move up" },
+    { disabled: actionPending, icon: "arrow-down", id: "move-down", label: "Move down" },
+    {
+      destructive: true,
+      disabled: actionPending,
+      icon: "trash-outline",
+      id: "delete",
+      label: "Delete server",
+    },
   ];
   const secureLive = connection.enabled && connection.state === "live";
   const copyDiagnostic = async () => {
-    if (connection.lastError === null) return;
+    if (connection.lastError === null) {
+      return;
+    }
     await Clipboard.setStringAsync(
       connectionDiagnosticReport({
         appVersion: Constants.expoConfig?.version ?? null,
@@ -76,19 +105,31 @@ export function ConnectionRowEditor({
     );
   };
   const handleConnectionAction = (id: string) => {
-    if (id === "reconnect") void onReconnect(connection.id);
-    else if (id === "edit") setEditing(true);
-    else if (id === "move-up") void onMove(connection.id, -1);
-    else if (id === "move-down") void onMove(connection.id, 1);
-    else if (id === "delete") {
+    if (id === "reconnect") {
+      runAction(async () => {
+        await onReconnect(connection.id);
+      }, "Could not reconnect server");
+    } else if (id === "edit") {
+      setEditing(true);
+    } else if (id === "move-up") {
+      runAction(async () => {
+        await onMove(connection.id, -1);
+      }, "Could not move server");
+    } else if (id === "move-down") {
+      runAction(async () => {
+        await onMove(connection.id, 1);
+      }, "Could not move server");
+    } else if (id === "delete") {
       dialog.alert("Delete server?", `Remove ${connection.displayName} from this device?`, [
-        { text: "Cancel", style: "cancel" },
+        { style: "cancel", text: "Cancel" },
         {
-          text: "Delete",
-          style: "destructive",
           onPress: () => {
-            void onDelete(connection.id);
+            runAction(async () => {
+              await onDelete(connection.id);
+            }, "Could not delete server");
           },
+          style: "destructive",
+          text: "Delete",
         },
       ]);
     }
@@ -97,45 +138,45 @@ export function ConnectionRowEditor({
     <View style={styles.connectionEditor}>
       {editing ? (
         <ConnectionEditFields
-          connection={connection}
-          name={name}
-          setName={setName}
-          emoji={emoji}
-          setEmoji={setEmoji}
-          endpoint={endpoint}
-          setEndpoint={setEndpoint}
-          replacementToken={replacementToken}
-          setReplacementToken={setReplacementToken}
-          tlsPinSha256={tlsPinSha256}
-          setTlsPinSha256={setTlsPinSha256}
-          saving={saving}
-          error={error}
           cancelEditing={cancelEditing}
+          connection={connection}
+          emoji={emoji}
+          endpoint={endpoint}
+          error={error}
+          name={name}
+          replacementToken={replacementToken}
           save={save}
+          saving={saving}
+          setEmoji={setEmoji}
+          setEndpoint={setEndpoint}
+          setName={setName}
+          setReplacementToken={setReplacementToken}
+          setTlsPinSha256={setTlsPinSha256}
+          tlsPinSha256={tlsPinSha256}
         />
       ) : (
         <View style={styles.connectionRow}>
           <AppListRow
-            title="Connection"
             description={connection.endpoint}
-            fixedHeight={listRowHeight.double}
-            leadingIcon={{ name: "server-outline", size: iconSize.action, color: colors.textMuted }}
             descriptionLeading={
               secureLive ? (
                 <Ionicons
                   accessibilityLabel="Secure connection"
+                  color={colors.green}
                   name="lock-closed"
                   size={iconSize.indicator}
-                  color={colors.green}
                 />
               ) : undefined
             }
+            fixedHeight={listRowHeight.double}
+            leadingIcon={{ color: colors.textMuted, name: "server-outline", size: iconSize.action }}
+            title="Connection"
             trailing={
               <>
                 <Switch
                   accessibilityLabel={`Enable ${connection.displayName}`}
-                  value={connection.enabled}
                   onValueChange={(enabled) => void onToggle(connection.id, enabled)}
+                  value={connection.enabled}
                 />
                 <ActionMenu
                   accessibilityLabel={`Actions for ${connection.displayName}`}
@@ -148,9 +189,9 @@ export function ConnectionRowEditor({
                     style={styles.connectionMiniButton}
                   >
                     <Ionicons
+                      color={colors.textMuted}
                       name="ellipsis-horizontal"
                       size={iconSize.action}
-                      color={colors.textMuted}
                     />
                   </Pressable>
                 </ActionMenu>
@@ -159,10 +200,10 @@ export function ConnectionRowEditor({
           />
           <ConnectionStatus
             connection={connection}
-            secureLive={secureLive}
-            diagnosticExpanded={diagnosticExpanded}
-            setDiagnosticExpanded={setDiagnosticExpanded}
             copyDiagnostic={copyDiagnostic}
+            diagnosticExpanded={diagnosticExpanded}
+            secureLive={secureLive}
+            setDiagnosticExpanded={setDiagnosticExpanded}
           />
           {onRefreshAccountPool !== undefined &&
             onStartAccountLogin !== undefined &&
@@ -171,14 +212,14 @@ export function ConnectionRowEditor({
             onUpdateAccountProfile !== undefined &&
             onRemoveAccountProfile !== undefined && (
               <AccountPoolEditor
-                connectionId={connection.id}
                 accountPool={accountPool}
-                onRefresh={onRefreshAccountPool}
-                onStartLogin={onStartAccountLogin}
-                onCancelLogin={onCancelAccountLogin}
+                connectionId={connection.id}
                 onActivate={onActivateAccountProfile}
-                onUpdate={onUpdateAccountProfile}
+                onCancelLogin={onCancelAccountLogin}
+                onRefresh={onRefreshAccountPool}
                 onRemove={onRemoveAccountProfile}
+                onStartLogin={onStartAccountLogin}
+                onUpdate={onUpdateAccountProfile}
               />
             )}
         </View>

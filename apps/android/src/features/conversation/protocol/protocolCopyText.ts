@@ -20,16 +20,30 @@ export function protocolCopyText(block: RenderBlock): string {
     const content = Array.isArray(block.raw.content) ? block.raw.content : [];
     return content
       .map((part) => {
-        if (!isProtocolRecord(part)) return "";
+        if (!isProtocolRecord(part)) {
+          return "";
+        }
         const value = part;
-        if (typeof value.text === "string") return normalizeUserMessage(value.text).text;
-        if (typeof value.path === "string") return value.path;
-        if (typeof value.url === "string") return value.url;
-        if (typeof value.name === "string") return value.name;
+        if (typeof value.text === "string") {
+          return normalizeUserMessage(value.text).text;
+        }
+        if (typeof value.path === "string") {
+          return value.path;
+        }
+        if (typeof value.url === "string") {
+          return value.url;
+        }
+        if (typeof value.name === "string") {
+          return value.name;
+        }
         return JSON.stringify(value);
       })
       .filter(Boolean)
       .join("\n");
   }
-  return boundedJsonStringify(block.raw, 96_000) || block.body || "";
+  const serialized = boundedJsonStringify(block.raw, 96_000);
+  if (serialized !== "") {
+    return serialized;
+  }
+  return block.body ?? "";
 }

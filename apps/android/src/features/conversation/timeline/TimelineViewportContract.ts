@@ -10,60 +10,31 @@ import type { TimelineItem } from "./timelineTypes";
 
 /** Content, measurements, and controls owned by the timeline viewport. */
 export type TimelineViewportProps = {
-  footerContent: ReactElement | null;
-  emptyContent: ReactElement | null;
-  composerScope: string;
-  timelineRef: RefObject<ThreadTimelineListRef | null>;
-  displayedTimeline: TimelineItem[];
-  timelineInitialPosition: TimelineInitialPosition;
-  threadSearch: string;
-  threadSearchMatch: number;
-  windowLayout: Readonly<{
-    width: number;
-    height: number;
-    scale: number;
-    fontScale: number;
-    measurementRevision: string;
-    desktop: boolean;
-  }>;
-  timelineCompact: boolean;
-  bottomChromeHeight: number;
-  liveStatusVisible: boolean;
-  threadSearchVisible: boolean;
-  conversationInsets: EdgeInsets;
-  fullscreenCovered: boolean;
-  historyViewport: ThreadHistoryViewport;
   awayFromLatest: boolean;
-  threadSearchActive: boolean;
-  inlineQueueExpanded: boolean;
+  awayFromLatestRef: { current: boolean };
+  bottomChromeHeight: number;
+  cancelScheduledPaginationTrim: () => void;
+  commitInitialTimelineLoad: () => void;
+  composerScope: string;
+  conversationInsets: EdgeInsets;
+  displayedTimeline: TimelineItem[];
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  commitInitialTimelineLoad: () => void;
-  timelineViewportHeightRef: { current: number };
-  reportHistoryViewport: () => void;
-  scheduleUnreadAgentVisibilityCheck: () => void;
-  setTimelineGestureActive: Dispatch<SetStateAction<boolean>>;
-  fullscreenScrollOwnership: {
-    isCovered: () => boolean;
-    willOpen(id: string): void;
-    didClose(id: string): void;
-  };
-  cancelScheduledPaginationTrim: () => void;
-  paginationEdgeLockRef: { current: "older" | "newer" | null };
-  scrollGestureStartedAtRef: { current: number | null };
-  lastTimelineOffsetYRef: { current: number | null };
+  emptyContent: ReactElement | null;
   firstVisibleHistoryAnchorRef: { current: string | null };
-  timelineContentHeightRef: { current: number };
-  scrollOffsetRef: { current: number };
-  awayFromLatestRef: { current: boolean };
-  setAwayFromLatest: Dispatch<SetStateAction<boolean>>;
-  persistTimelineAtEnd: () => void;
-  schedulePaginationWindowTrim: () => void;
-  persistTimelineOffset: (offset: number) => void;
-  trimPaginationWindow: () => void;
-  timelinePositioned: boolean;
-  loadOlderAtTimelineStart: () => void;
+  footerContent: ReactElement | null;
+  fullscreenCovered: boolean;
+  fullscreenScrollOwnership: {
+    didClose: (id: string) => void;
+    isCovered: () => boolean;
+    willOpen: (id: string) => void;
+  };
+  historyViewport: ThreadHistoryViewport;
+  inlineQueueExpanded: boolean;
+  lastTimelineOffsetYRef: { current: number | null };
+  liveStatusVisible: boolean;
   loadNewerAtTimelineEnd: () => void;
+  loadOlderAtTimelineStart: () => void;
   onTimelineFirstVisibleItemChanged: ({
     index,
     item,
@@ -72,6 +43,35 @@ export type TimelineViewportProps = {
     item: TimelineItem;
     key: string;
   }) => void;
-
+  paginationEdgeLockRef: { current: "older" | "newer" | null };
+  persistTimelineAtEnd: () => void;
+  persistTimelineOffset: (offset: number) => void;
   renderTimelineItem: ({ item }: LegendListRenderItemProps<TimelineItem>) => ReactElement;
+  reportHistoryViewport: () => void;
+  schedulePaginationWindowTrim: () => void;
+  scheduleUnreadAgentVisibilityCheck: () => void;
+  scrollGestureStartedAtRef: { current: number | null };
+  scrollOffsetRef: { current: number };
+  setAwayFromLatest: Dispatch<SetStateAction<boolean>>;
+  setTimelineGestureActive: Dispatch<SetStateAction<boolean>>;
+  threadSearch: string;
+  threadSearchActive: boolean;
+  threadSearchMatch: number;
+  threadSearchVisible: boolean;
+  timelineCompact: boolean;
+  timelineContentHeightRef: { current: number };
+  timelineInitialPosition: TimelineInitialPosition;
+  timelinePositioned: boolean;
+  timelineRef: RefObject<ThreadTimelineListRef | null>;
+  timelineViewportHeightRef: { current: number };
+  trimPaginationWindow: () => void;
+
+  windowLayout: Readonly<{
+    desktop: boolean;
+    fontScale: number;
+    height: number;
+    measurementRevision: string;
+    scale: number;
+    width: number;
+  }>;
 };

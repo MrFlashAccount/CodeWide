@@ -10,13 +10,13 @@ import type { MessageActionMenuRequest } from "../../../ui/MessageActionMenu.typ
 import { styles } from "./MessageActionRail.styles";
 
 export function CopyButton({
-  text,
-  getText,
   compact = false,
+  getText,
+  text,
 }: {
-  text?: string;
-  getText?: () => string;
   compact?: boolean;
+  getText?: () => string;
+  text?: string;
 }) {
   return (
     <Pressable
@@ -25,7 +25,7 @@ export function CopyButton({
       onPress={() => void Clipboard.setStringAsync(getText?.() ?? text ?? "")}
       style={compact ? styles.copyButtonCompact : styles.copyButton}
     >
-      <InlineIcon name="copy-outline" role="label" color={colors.textMuted} />
+      <InlineIcon color={colors.textMuted} name="copy-outline" role="label" />
     </Pressable>
   );
 }
@@ -39,21 +39,21 @@ export function MessageActionRail(props: MessageActionRailProps) {
   const actionButtonRef = useRef<View>(null);
   const openActions = () => {
     actionButtonRef.current?.measureInWindow((pageX, pageY, width, height) => {
-      openMessageActions(props.request, { pageX, pageY, width, height });
+      openMessageActions(props.request, { height, pageX, pageY, width });
     });
   };
   return (
     <View style={styles.messageActionRail}>
       <Pressable
-        ref={actionButtonRef}
-        accessibilityRole="button"
         accessibilityLabel="Message actions"
+        accessibilityRole="button"
         collapsable={false}
         hitSlop={controlHitSlop.compact}
         onPress={openActions}
+        ref={actionButtonRef}
         style={({ pressed }) => [styles.messageActionButton, pressed && styles.pressed]}
       >
-        <Ionicons name="ellipsis-vertical" size={iconSize.action} color={colors.textDim} />
+        <Ionicons color={colors.textDim} name="ellipsis-vertical" size={iconSize.action} />
       </Pressable>
     </View>
   );

@@ -25,7 +25,9 @@ export function useComposerProjectSelection(
   );
 
   const openProjectPicker = useEvent(() => {
-    if (onChangeProject === undefined) return;
+    if (onChangeProject === undefined) {
+      return;
+    }
     dismissComposerKeyboardForOverlay();
     setProjectChangeError(null);
     setProjectPickerVisible(true);
@@ -36,14 +38,18 @@ export function useComposerProjectSelection(
   });
 
   const selectProject = useEvent(async (nextCwd: string | null) => {
-    if (onChangeProject === undefined || projectChangeBusy) return;
+    if (onChangeProject === undefined || projectChangeBusy) {
+      return;
+    }
     setProjectChangeBusy(true);
     setProjectChangeError(null);
     const cause = await onChangeProject(nextCwd).then(
       () => null,
       (error: unknown) => error,
     );
-    if (!conversationOwner.isCurrent()) return;
+    if (!conversationOwner.isCurrent()) {
+      return;
+    }
     setProjectChangeBusy(false);
     if (cause === null) {
       closeProjectPicker();
@@ -52,11 +58,11 @@ export function useComposerProjectSelection(
     }
   });
   return {
-    projectPickerVisible,
+    closeProjectPicker,
+    openProjectPicker,
     projectChangeBusy,
     projectChangeError,
-    openProjectPicker,
-    closeProjectPicker,
+    projectPickerVisible,
     selectProject,
   };
 }

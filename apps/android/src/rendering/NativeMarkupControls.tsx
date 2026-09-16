@@ -2,6 +2,7 @@ import type { CustomRendererProps, TBlock, TPhrasing, TText } from "@native-html
 import { StyleSheet, Text, View } from "react-native";
 
 import { colors, radii, spacing, typeScale } from "../theme";
+import { percentageDimension } from "../ui/percentageDimension";
 import { productFonts } from "../ui/product-fonts";
 
 type ControlProps = CustomRendererProps<TBlock | TPhrasing | TText>;
@@ -9,7 +10,9 @@ type ControlProps = CustomRendererProps<TBlock | TPhrasing | TText>;
 /** Form snippets are readable examples, not executable controls or credential inputs. */
 export function MarkupInput(props: ControlProps) {
   const attributes = props.tnode.attributes;
-  if (attributes.type === "hidden") return null;
+  if (attributes.type === "hidden") {
+    return null;
+  }
   const checkable = attributes.type === "checkbox" || attributes.type === "radio";
   const value = checkable
     ? Object.hasOwn(attributes, "checked")
@@ -29,12 +32,12 @@ export function MarkupProgress(props: ControlProps) {
   const fraction = max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
   return (
     <View
-      accessible
       accessibilityRole="progressbar"
-      accessibilityValue={{ min: 0, max: 100, now: Math.round(fraction * 100) }}
+      accessibilityValue={{ max: 100, min: 0, now: Math.round(fraction * 100) }}
+      accessible
       style={styles.progress}
     >
-      <View style={[styles.fill, { width: `${fraction * 100}%` }]} />
+      <View style={[styles.fill, { width: percentageDimension(fraction * 100) }]} />
     </View>
   );
 }
@@ -45,19 +48,19 @@ function finite(value: string | undefined, fallback: number): number {
 }
 
 const styles = StyleSheet.create({
+  fill: {
+    backgroundColor: colors.primary,
+    height: "100%",
+  },
+  progress: {
+    backgroundColor: colors.surfaceContainerHigh,
+    borderRadius: radii.pill,
+    height: spacing.xs,
+    overflow: "hidden",
+  },
   text: {
     color: colors.text,
     fontFamily: productFonts.regular,
     ...typeScale.body,
-  },
-  progress: {
-    height: spacing.xs,
-    backgroundColor: colors.surfaceContainerHigh,
-    borderRadius: radii.pill,
-    overflow: "hidden",
-  },
-  fill: {
-    height: "100%",
-    backgroundColor: colors.primary,
   },
 });

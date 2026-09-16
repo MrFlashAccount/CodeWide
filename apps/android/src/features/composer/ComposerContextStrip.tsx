@@ -27,55 +27,55 @@ type Props = Pick<
   | "toolContextChips"
 >;
 export function ComposerContextStrip({
-  newChat,
-  workspaceResources,
+  closeQuickControlMenu,
+  controlError,
   controlsResourceId,
   cwd,
-  remoteThread,
-  readOnly,
-  selectedModel,
-  selectedEffort,
-  selectedPersonality,
-  selectedPermissions,
-  controlError,
+  newChat,
   onLoadControls,
-  openQuickControlMenu,
-  closeQuickControlMenu,
   openControls,
-  selectModel,
+  openQuickControlMenu,
+  readOnly,
+  remoteThread,
+  selectedEffort,
+  selectedModel,
+  selectedPermissions,
+  selectedPersonality,
   selectEffort,
-  setSelectedPersonality,
+  selectModel,
   selectPermissions,
+  setSelectedPersonality,
   toolContextChips,
+  workspaceResources,
 }: Props) {
   return (
     <ScrollView
-      testID="composer-context-strip"
+      contentContainerStyle={styles.composerContextContent}
       horizontal
       showsHorizontalScrollIndicator={false}
       style={styles.composerContextStrip}
-      contentContainerStyle={styles.composerContextContent}
+      testID="composer-context-strip"
     >
       <ComposerControlChips
-        newChat={newChat}
-        resources={workspaceResources}
-        resourceId={controlsResourceId}
         cwd={cwd}
-        remoteThread={remoteThread}
-        readOnly={readOnly}
-        selectedModel={selectedModel}
-        selectedEffort={selectedEffort}
-        selectedPersonality={selectedPersonality}
-        selectedPermissions={selectedPermissions}
         error={controlError}
+        newChat={newChat}
+        readOnly={readOnly}
+        remoteThread={remoteThread}
+        resourceId={controlsResourceId}
+        resources={workspaceResources}
+        selectedEffort={selectedEffort}
+        selectedModel={selectedModel}
+        selectedPermissions={selectedPermissions}
+        selectedPersonality={selectedPersonality}
         {...(onLoadControls === undefined ? {} : { load: onLoadControls })}
-        onQuickOpen={openQuickControlMenu}
         onClose={closeQuickControlMenu}
         onFallback={openControls}
-        onSelectModel={selectModel}
+        onQuickOpen={openQuickControlMenu}
         onSelectEffort={selectEffort}
-        onSelectPersonality={setSelectedPersonality}
+        onSelectModel={selectModel}
         onSelectPermissions={selectPermissions}
+        onSelectPersonality={setSelectedPersonality}
       />
       {toolContextChips}
     </ScrollView>

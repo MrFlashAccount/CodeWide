@@ -348,7 +348,7 @@ fn logic_upgrade_does_not_materialize_row_deletion_copies() -> Result<(), Box<dy
     {
         let database = Database::create(&path)?;
         let write = database.begin_write()?;
-        write.open_table(META)?.remove("rollout_logic_version")?;
+        write.open_table(META)?.insert("rollout_logic_version", 1)?;
         {
             let mut records = write.open_table(RECORDS)?;
             let payload = [7_u8; 128];

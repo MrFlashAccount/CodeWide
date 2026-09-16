@@ -17,24 +17,24 @@ export function useComposerLatestValues<Draft, Attachment, Preferences>(
   attachments: Attachment,
   preferences: Preferences,
 ): {
-  draft: MutableRefObject<ComposerLatestValue<Draft>>;
   attachments: MutableRefObject<ComposerLatestValue<Attachment>>;
+  draft: MutableRefObject<ComposerLatestValue<Draft>>;
   preferences: MutableRefObject<ComposerLatestValue<Preferences>>;
 } {
   const latestDraftRef = useConversationRef(scope, () => ({
-    scope,
-    rendered: draft,
     latest: draft,
+    rendered: draft,
+    scope,
   }));
   const latestAttachmentsRef = useConversationRef(scope, () => ({
-    scope,
-    rendered: attachments,
     latest: attachments,
+    rendered: attachments,
+    scope,
   }));
   const latestPreferencesRef = useConversationRef(scope, () => ({
-    scope,
-    rendered: preferences,
     latest: preferences,
+    rendered: preferences,
+    scope,
   }));
   useLayoutEffect(() => {
     latestDraftRef.current = reconcileComposerLatestValue(latestDraftRef.current, scope, draft);
@@ -58,8 +58,8 @@ export function useComposerLatestValues<Draft, Attachment, Preferences>(
     latestPreferencesRef,
   ]);
   return {
-    draft: latestDraftRef,
     attachments: latestAttachmentsRef,
+    draft: latestDraftRef,
     preferences: latestPreferencesRef,
   };
 }

@@ -2,22 +2,49 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
-import { COMPOSER_SWIPE_THRESHOLD, COMPOSER_SWIPE_TARGET, composerSwipeArmed, composerSwipeDirection, composerSwipeTravel } from "../src/ui/composer-swipe";
+import {
+  COMPOSER_SWIPE_THRESHOLD,
+  COMPOSER_SWIPE_TARGET,
+  composerSwipeArmed,
+  composerSwipeDirection,
+  composerSwipeTravel,
+} from "../src/ui/composer-swipe";
 import { sourceObjectDeclaration } from "./source-contract";
 
-const swipeActionSource = readFileSync(fileURLToPath(new URL("../src/ui/SwipeDiscardAction.tsx", import.meta.url)), "utf8");
-const workspaceSource = readFileSync(fileURLToPath(new URL("../src/features/composer/ComposerFeature.tsx", import.meta.url)), "utf8");
+const swipeActionSource = readFileSync(
+  fileURLToPath(new URL("../src/ui/SwipeDiscardAction.tsx", import.meta.url)),
+  "utf8",
+);
+const workspaceSource = readFileSync(
+  fileURLToPath(new URL("../src/features/composer/ComposerFeature.tsx", import.meta.url)),
+  "utf8",
+);
 
-const ownerComposerSubmitAction = readFileSync(new URL("../src/features/composer/ComposerSubmitAction.tsx", import.meta.url), "utf8");
+const ownerComposerSubmitAction = readFileSync(
+  new URL("../src/features/composer/ComposerSubmitAction.tsx", import.meta.url),
+  "utf8",
+);
 
-const composerStyles=readFileSync(new URL("../src/features/composer/ComposerFeature.styles.ts",import.meta.url),"utf8");
-const submitAction=readFileSync(new URL("../src/features/composer/ComposerSubmitAction.tsx",import.meta.url),"utf8");
-const editor=readFileSync(new URL("../src/features/composer/ComposerEditor.tsx",import.meta.url),"utf8");
-const microphone=readFileSync(new URL("../src/features/composer/ComposerMicrophone.tsx",import.meta.url),"utf8");
+const composerStyles = readFileSync(
+  new URL("../src/features/composer/ComposerFeature.styles.ts", import.meta.url),
+  "utf8",
+);
+const submitAction = readFileSync(
+  new URL("../src/features/composer/ComposerSubmitAction.tsx", import.meta.url),
+  "utf8",
+);
+const editor = readFileSync(
+  new URL("../src/features/composer/ComposerEditor.tsx", import.meta.url),
+  "utf8",
+);
+const microphone = readFileSync(
+  new URL("../src/features/composer/ComposerMicrophone.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("composer swipe discard", () => {
   it("places the accessory menu before text inside the common composer surface", () => {
-    const composer = workspaceSource.slice(workspaceSource.indexOf('<View testID="composer-row"'));
+    const composer = workspaceSource.slice(workspaceSource.indexOf('testID="composer-row"'));
     const shell = composer.indexOf('testID="composer-input-shell"');
     const menu = composer.indexOf("{props.useAnchoredComposerMenu ? (");
     const input = composer.indexOf("<ComposerEditor");
@@ -33,7 +60,8 @@ describe("composer swipe discard", () => {
     expect(submitAction).toContain("<ComposerDeliveryMenu");
     const menuStyle = sourceObjectDeclaration(composerStyles, "composerMenu").replace(/\s+/gu, " ");
     expect(menuStyle).not.toContain("backgroundColor");
-    expect(menuStyle).toContain("width: touchTarget, height: touchTarget");
+    expect(menuStyle).toContain("height: touchTarget");
+    expect(menuStyle).toContain("width: touchTarget");
   });
 
   it("recognizes left discard and upward steer, not right or downward swipes", () => {
@@ -58,7 +86,9 @@ describe("composer swipe discard", () => {
     expect(composerSwipeTravel(-100)).toBe(0);
     expect(composerSwipeTravel(0)).toBe(0);
     expect(composerSwipeTravel(threshold)).toBe(COMPOSER_SWIPE_TARGET);
-    expect(composerSwipeTravel(threshold + 0.001) - composerSwipeTravel(threshold)).toBeLessThan(0.001);
+    expect(composerSwipeTravel(threshold + 0.001) - composerSwipeTravel(threshold)).toBeLessThan(
+      0.001,
+    );
     const first = composerSwipeTravel(threshold + 20) - composerSwipeTravel(threshold);
     const second = composerSwipeTravel(threshold + 40) - composerSwipeTravel(threshold + 20);
     expect(first).toBeGreaterThan(second);
@@ -69,8 +99,12 @@ describe("composer swipe discard", () => {
   it("gives one light threshold haptic and dispatches an armed action only on release", () => {
     expect(swipeActionSource).toContain("!hapticPlayed.get()");
     expect(swipeActionSource).toContain("Haptics.ImpactFeedbackStyle.Light");
-    const release = swipeActionSource.slice(swipeActionSource.indexOf(".onEnd("), swipeActionSource.indexOf(".onFinalize("));
-    expect(release).toContain("if (!success || !armed.get()) return");
+    const release = swipeActionSource.slice(
+      swipeActionSource.indexOf(".onEnd("),
+      swipeActionSource.indexOf(".onFinalize("),
+    );
+    expect(release).toContain("!success || !armed.get()");
+    expect(release).toContain("return;");
     expect(release).toContain('direction.get() === "discard" && discardEnabled');
     expect(release).toContain('direction.get() === "steer" && steerEnabled && !disabled');
     expect(release).toContain("runOnJS(discard)()");
@@ -81,8 +115,13 @@ describe("composer swipe discard", () => {
   });
 
   it("keeps the moving button outside the Compose trigger and unclipped by the input", () => {
-    const menu = readFileSync(new URL("../src/features/composer/ComposerDeliveryMenu.native.tsx", import.meta.url), "utf8");
-    expect(menu.indexOf("cloneElement(props.children")).toBeGreaterThan(menu.indexOf("</CodeWideMenu>"));
+    const menu = readFileSync(
+      new URL("../src/features/composer/ComposerDeliveryMenu.native.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(menu.indexOf("cloneElement(props.children")).toBeGreaterThan(
+      menu.indexOf("</CodeWideMenu>"),
+    );
     for (const owner of ["composer", "composerInputShell"]) {
       const style = sourceObjectDeclaration(composerStyles, owner);
       expect(style).toContain('overflow: "visible"');

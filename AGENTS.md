@@ -2,9 +2,9 @@
 
 ## React callbacks
 
-- Use `apps/android/src/react/useEvent.ts` when a callback identity escapes render: a custom hook returns it, a context or imperative handle exposes it, or an effect, subscription, timer, native API, or retained controller invokes it later. It provides stable identity while always calling the latest implementation.
-- Keep ordinary JSX handlers and render-local helpers as ordinary functions; React Compiler owns their memoization. Do not use `useEvent` for render callbacks (`renderItem`, render props, functional `style`), Reanimated/worklet callbacks, or any callback whose changing identity is an intentional signal.
-- Do not use `useCallback` or `useEffectEvent` directly as a general stabilization mechanism. A direct `useCallback` is allowed only when another API intentionally observes its identity change; document that contract at the call site.
+- Use `apps/android/src/react/useEvent.ts` for UI event handlers such as `onPress`, `onChange`, `onChangeText`, and `onDismiss`, and whenever a callback identity otherwise escapes render: a custom hook returns it, a context or imperative handle exposes it, or an effect, subscription, timer, native API, or retained controller invokes it later. It provides stable identity while always calling the latest implementation.
+- Keep render callbacks and render-local helpers as ordinary functions; React Compiler owns their memoization. Do not use `useEvent` for `renderItem`, render props, functional `style`, Reanimated/worklet callbacks, or any callback whose changing identity is an intentional signal.
+- Do not use `useCallback` or `useMemo` in V1. React Compiler owns render memoization. Retained callbacks use `useEvent`; stateful identities belong to an explicit state, ref, resource or model owner. Do not use `useEffectEvent` directly as a general stabilization mechanism.
 
 ## React data loading
 

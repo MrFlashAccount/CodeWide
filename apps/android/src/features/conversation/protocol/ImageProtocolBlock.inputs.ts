@@ -1,33 +1,37 @@
-import { type RenderBlock } from "@codewide/renderers";
-import { type StyleProp, type ViewStyle } from "react-native";
-import { type PrivateAssetSource } from "../../../data/private-transfer";
+import type { RenderBlock } from "@codewide/renderers";
+import type { StyleProp, ViewStyle } from "react-native";
+import type { PrivateAssetSource } from "../../../data/private-transfer";
 
 export type ImageProtocolBlockInput = {
   block: RenderBlock;
-  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
+  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
 };
 
 export type ImageProtocolContentInput = {
   block: RenderBlock;
-  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
+  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
 };
 
 export type ScopedRemoteImageInput = {
-  path: string;
-  getTransferAccess(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
   containerStyle?: StyleProp<ViewStyle>;
-  previewId?: string;
+  getTransferAccess: (
+    forceRefresh?: boolean,
+  ) => Promise<{ authorization: string; baseUrl: string }>;
   groupId?: string | null;
   order?: number;
+  path: string;
+  previewId?: string;
 };
 
 export type ScopedPrivateAssetImageInput = {
-  source: PrivateAssetSource;
-  label: string;
-  reference: string;
-  getTransferAccess(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
   containerStyle?: StyleProp<ViewStyle>;
-  previewId?: string;
+  getTransferAccess: (
+    forceRefresh?: boolean,
+  ) => Promise<{ authorization: string; baseUrl: string }>;
   groupId?: string | null;
+  label: string;
   order?: number;
+  previewId?: string;
+  reference: string;
+  source: PrivateAssetSource;
 };

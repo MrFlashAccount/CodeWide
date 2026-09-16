@@ -1,92 +1,98 @@
-import { spacing, controlSize } from "../theme";
-import { Button } from "heroui-native/button";
-import { Dialog } from "heroui-native/dialog";
+import { colors, controlSize, spacing, typeScale } from "../theme";
+import { AppButton as Button } from "../presentation/controls/AppButton";
 import { StyleSheet, View } from "react-native";
 
-import type { AppDialogSurfaceProps } from "./AppDialog.types";
+import { AppModalDialog } from "../presentation/overlay/AppModalDialog";
+import { useEvent } from "../react/useEvent";
+import type { AppDialogAction, AppDialogSurfaceProps } from "./AppDialog.types";
+import { AppText as Text } from "./AppText";
 import { CopyErrorButton } from "./CopyErrorButton";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 
 /** Renders the native implementation of the application confirmation dialog. */
-export function AppDialogSurface({ isOpen, request, onDismiss, onAction }: AppDialogSurfaceProps) {
+export function AppDialogSurface({ isOpen, onAction, onDismiss, request }: AppDialogSurfaceProps) {
   return (
     <RecoverableRenderBoundary
-      scope="dialog"
       label="Confirmation dialog"
-      resetKey={request?.title ?? "closed"}
       onDismiss={onDismiss}
+      resetKey={request?.title ?? "closed"}
+      scope="dialog"
     >
-      <Dialog
-        isOpen={isOpen}
-        onOpenChange={(open) => {
-          if (!open) onDismiss();
-        }}
-      >
-        <Dialog.Portal style={styles.portal}>
-          <Dialog.Overlay variant="blur" blurViewProps={{ intensity: 34 }} />
-          {request !== null && (
-            <Dialog.Content style={styles.content}>
-              <View style={styles.copy}>
-                <Dialog.Title>{request.title}</Dialog.Title>
-                {request.message !== undefined && (
-                  <Dialog.Description>{request.message}</Dialog.Description>
-                )}
-              </View>
-              <View style={styles.actions}>
-                {request.diagnostic !== undefined && (
-                  <CopyErrorButton key={request.diagnostic} report={request.diagnostic} />
-                )}
-                {request.actions.map((action, index) => (
-                  <Button
-                    key={`${action.text}-${index}`}
-                    size="sm"
-                    variant={
-                      action.style === "destructive"
-                        ? "danger"
-                        : action.style === "cancel"
-                          ? "ghost"
-                          : "primary"
-                    }
-                    onPress={() => onAction(action)}
-                    style={styles.button}
-                  >
-                    {action.text}
-                  </Button>
-                ))}
-              </View>
-            </Dialog.Content>
-          )}
-        </Dialog.Portal>
-      </Dialog>
+      <AppModalDialog contentStyle={styles.content} onDismiss={onDismiss} open={isOpen}>
+        {request !== null && (
+          <>
+            <View style={styles.copy}>
+              <Text style={styles.title}>{request.title}</Text>
+              {request.message !== undefined && (
+                <Text style={styles.message}>{request.message}</Text>
+              )}
+            </View>
+            <View style={styles.actions}>
+              {request.diagnostic !== undefined && (
+                <CopyErrorButton key={request.diagnostic} report={request.diagnostic} />
+              )}
+              {request.actions.map((action) => (
+                <DialogActionButton
+                  action={action}
+                  key={`${action.style ?? "default"}:${action.text}`}
+                  onAction={onAction}
+                />
+              ))}
+            </View>
+          </>
+        )}
+      </AppModalDialog>
     </RecoverableRenderBoundary>
   );
 }
 
+function DialogActionButton({
+  action,
+  onAction,
+}: {
+  readonly action: AppDialogAction;
+  readonly onAction: (action: AppDialogAction) => void;
+}): React.JSX.Element {
+  const activate = useEvent(() => {
+    onAction(action);
+  });
+  return (
+    <Button
+      onPress={activate}
+      size="sm"
+      style={styles.button}
+      variant={
+        action.style === "destructive" ? "danger" : action.style === "cancel" ? "ghost" : "primary"
+      }
+    >
+      {action.text}
+    </Button>
+  );
+}
+
 const styles = StyleSheet.create({
-  portal: {
-    position: "absolute",
-    inset: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.md,
+  actions: {
+    flexDirection: "row",
+    gap: spacing.inputInset,
+    justifyContent: "flex-end",
+  },
+  button: {
+    minHeight: controlSize.regular,
+    minWidth: controlSize.regular,
   },
   content: {
-    alignSelf: "center",
     gap: spacing.lg,
-    maxWidth: 420,
-    width: "92%",
   },
   copy: {
     gap: spacing.xs,
     paddingRight: spacing.xxs,
   },
-  actions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: spacing.inputInset,
+  message: {
+    color: colors.textMuted,
+    ...typeScale.body,
   },
-  button: {
-    minHeight: controlSize.regular,
-    minWidth: controlSize.regular,
+  title: {
+    color: colors.text,
+    ...typeScale.title,
   },
 });

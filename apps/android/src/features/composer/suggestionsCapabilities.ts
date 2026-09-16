@@ -11,9 +11,9 @@ export type ComposerSuggestionsCapabilities = Pick<
     ReturnType<typeof useComposerSettings>,
     "updateComposerPreferences" | "currentControlsResource"
   > & {
-    updateDraft: ReturnType<typeof useComposerDraftCommands>["updateDraft"];
-    voiceController: VoiceInputController | null;
     composerScope: string;
     cwd: string;
     onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
+    updateDraft: ReturnType<typeof useComposerDraftCommands>["updateDraft"];
+    voiceController: VoiceInputController | null;
   };

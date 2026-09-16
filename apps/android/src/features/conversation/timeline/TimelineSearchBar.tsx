@@ -7,55 +7,61 @@ import { styles } from "./TimelineSearchBar.styles";
 import type { TimelineSearchBarProps } from "./TimelineSearchBarContract";
 
 export function TimelineSearchBar({
-  threadSearch,
-  updateThreadSearch,
-  setThreadSearchMatch,
-  scrollToThreadSearchIndex,
-  threadSearchMatches,
-  threadSearchMatch,
+  closeThreadSearch,
   compact,
   moveThreadSearch,
-  closeThreadSearch,
+  scrollToThreadSearchIndex,
+  setThreadSearchMatch,
+  threadSearch,
+  threadSearchMatch,
+  threadSearchMatches,
+  updateThreadSearch,
 }: TimelineSearchBarProps) {
   return (
     <View style={styles.threadSearchBar}>
-      <InlineIcon name="search" role="body" color={colors.textMuted} />
+      <InlineIcon color={colors.textMuted} name="search" role="body" />
       <TextInput
+        accessibilityLabel="Search current thread"
         autoFocus
         compact
-        accessibilityLabel="Search current thread"
-        value={threadSearch}
         onChangeText={(value) => {
           updateThreadSearch(value);
           setThreadSearchMatch(0);
-          requestAnimationFrame(() => scrollToThreadSearchIndex(0));
+          requestAnimationFrame(() => {
+            scrollToThreadSearchIndex(0);
+          });
         }}
         placeholder="Find in thread"
         placeholderTextColor={colors.textDim}
         style={styles.searchInput}
+        value={threadSearch}
       />
       <Text style={styles.threadSearchCount}>
         {threadSearchMatches.length === 0
           ? "0"
-          : `${threadSearchMatch + 1}/${threadSearchMatches.length}`}
+          : `${String(threadSearchMatch + 1)}/${String(threadSearchMatches.length)}`}
       </Text>
       {!compact && (
         <Pressable
           accessibilityLabel="Previous match"
           hitSlop={controlHitSlop.regular}
-          onPress={() => moveThreadSearch(-1)}
+          onPress={() => {
+            moveThreadSearch(-1);
+          }}
           style={styles.searchAction}
         >
-          <Ionicons name="chevron-up" size={iconSize.action} color={colors.text} />
+          <Ionicons color={colors.text} name="chevron-up" size={iconSize.action} />
         </Pressable>
       )}
       <Pressable
         accessibilityLabel="Next match"
         hitSlop={controlHitSlop.regular}
-        onPress={() => moveThreadSearch(1)}
+        onPress={() => {
+          moveThreadSearch(1);
+        }}
         style={styles.searchAction}
       >
-        <Ionicons name="chevron-down" size={iconSize.action} color={colors.text} />
+        <Ionicons color={colors.text} name="chevron-down" size={iconSize.action} />
       </Pressable>
       <Pressable
         accessibilityLabel="Close thread search"
@@ -63,7 +69,7 @@ export function TimelineSearchBar({
         onPress={closeThreadSearch}
         style={styles.searchAction}
       >
-        <Ionicons name="close" size={iconSize.action} color={colors.text} />
+        <Ionicons color={colors.text} name="close" size={iconSize.action} />
       </Pressable>
     </View>
   );

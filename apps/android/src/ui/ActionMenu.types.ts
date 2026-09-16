@@ -11,31 +11,31 @@ export type ActionMenuIconName = ComponentProps<typeof Ionicons>["name"];
 
 type ActionMenuTriggerElement = ReactElement<{
   accessibilityLabel?: string;
-  onLongPress?(event: GestureResponderEvent): void;
-  onPress?(event: GestureResponderEvent): void;
+  onLongPress?: (event: GestureResponderEvent) => void;
+  onPress?: (event: GestureResponderEvent) => void;
 }>;
 
 export type ActionMenuItem = {
-  id: string;
-  section?: string;
-  label: string;
   description?: string;
-  icon?: ActionMenuIconName | ImageSourcePropType;
-  disabled?: boolean;
   destructive?: boolean;
-  selected?: boolean;
+  disabled?: boolean;
+  icon?: ActionMenuIconName | ImageSourcePropType;
+  id: string;
   keepOpen?: boolean;
+  label: string;
+  section?: string;
+  selected?: boolean;
 };
 
 export type ActionMenuProps = {
   accessibilityLabel: string;
   actions: readonly ActionMenuItem[];
-  children: ActionMenuTriggerElement;
-  trigger?: "press" | "long-press";
-  placement?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";
+  children: ActionMenuTriggerElement;
   menuWidth?: number;
+  onOpenChange?: (open: boolean) => void;
+  onSelect: (id: string) => void;
+  placement?: "top" | "bottom" | "left" | "right";
   style?: StyleProp<ViewStyle>;
-  onOpenChange?(open: boolean): void;
-  onSelect(id: string): void;
+  trigger?: "press" | "long-press";
 };

@@ -12,7 +12,7 @@ export function InlineMediaFrame({
   height?: number;
 }) {
   return (
-    <View testID="inline-media-frame" style={[styles.frame, { height }]}>
+    <View style={[styles.frame, { height }]} testID="inline-media-frame">
       <View style={StyleSheet.absoluteFill}>{children}</View>
     </View>
   );
@@ -20,8 +20,8 @@ export function InlineMediaFrame({
 
 const styles = StyleSheet.create({
   frame: {
-    width: "100%",
     minWidth: 0,
     overflow: "hidden",
+    width: "100%",
   },
 });

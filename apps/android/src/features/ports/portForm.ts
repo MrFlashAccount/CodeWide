@@ -23,52 +23,59 @@ export function usePortForm(props: PortForwardingManagerProps) {
     setForm({
       id: profile.id,
       label: profile.label,
-      remotePort: String(profile.remotePort),
       localPort: profile.preferredLocalPort === null ? "" : String(profile.preferredLocalPort),
+      remotePort: String(profile.remotePort),
       startImmediately: profile.enabled,
     });
     setFormError(null);
   });
   const submit = useEvent(async () => {
-    if (form === null) return;
+    if (form === null) {
+      return;
+    }
     let draft: PortForwardingDraft;
     try {
       draft = parseForwardingDraft(form);
-    } catch (cause) {
-      setFormError(message(cause, "Check the port values"));
+    } catch (error) {
+      setFormError(message(error, "Check the port values"));
       return;
     }
     setSubmitting(true);
     setFormError(null);
     try {
-      if (form.id === null) await props.onAdd(draft);
-      else await props.onEdit(form.id, draft);
+      if (form.id === null) {
+        await props.onAdd(draft);
+      } else {
+        await props.onEdit(form.id, draft);
+      }
       closeForm();
-    } catch (cause) {
-      setFormError(message(cause, "Could not save port forwarding"));
+    } catch (error) {
+      setFormError(message(error, "Could not save port forwarding"));
     }
     setSubmitting(false);
   });
   const removeCurrent = useEvent(async () => {
-    if (form?.id === null || form?.id === undefined) return;
+    if (form?.id === null || form?.id === undefined) {
+      return;
+    }
     setSubmitting(true);
     try {
       await props.onRemove(form.id);
       closeForm();
-    } catch (cause) {
-      setFormError(message(cause, "Could not remove port forwarding"));
+    } catch (error) {
+      setFormError(message(error, "Could not remove port forwarding"));
     }
     setSubmitting(false);
   });
   return {
-    form,
-    setForm,
-    submitting,
-    formError,
     closeForm,
-    openManual,
+    form,
+    formError,
     openEdit,
-    submit,
+    openManual,
     removeCurrent,
+    setForm,
+    submit,
+    submitting,
   };
 }

@@ -3,14 +3,41 @@ import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../.
 import { TURN_FOOTER_MIN_HEIGHT } from "./TurnFooter";
 
 export const styles = StyleSheet.create({
+  disabled: { opacity: 0.42 },
+  messageTime: {
+    color: colors.textDim,
+    flexShrink: 0,
+    ...typeScale.caption,
+    paddingHorizontal: spacing.sm,
+  },
+  optimisticError: {
+    alignSelf: "flex-end",
+    color: colors.red,
+    maxWidth: "82%",
+    paddingHorizontal: spacing.compact,
+    ...typeScale.caption,
+    textAlign: "right",
+  },
   pressed: { opacity: 0.68 },
-  turnGroup: { gap: spacing.xxs },
+  retryMessageButton: {
+    alignItems: "center",
+    borderRadius: radii.medium,
+    flexDirection: "row",
+    gap: spacing.xxs,
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.xs,
+  },
+  retryMessageText: {
+    color: colors.accent,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
   turnFooter: {
-    minHeight: TURN_FOOTER_MIN_HEIGHT,
+    alignItems: "center",
     flexDirection: "row",
     flexWrap: "wrap",
-    alignItems: "center",
     gap: spacing.compact,
+    minHeight: TURN_FOOTER_MIN_HEIGHT,
     paddingHorizontal: spacing.xxs,
   },
   turnFooterEnd: {
@@ -18,54 +45,27 @@ export const styles = StyleSheet.create({
     justifyContent: "flex-end",
     maxWidth: "86%",
   },
-  turnStatusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: radii.pill,
-  },
-  turnStatusFailed: { backgroundColor: colors.red },
-  userTurnCluster: {
-    width: "100%",
-    alignItems: "stretch",
-    gap: spacing.optical,
-  },
-  userMessageRow: {
-    width: "100%",
-    minWidth: 0,
-    flexDirection: "column",
-    alignItems: "flex-end",
-    gap: spacing.xxs,
-  },
-  messageTime: {
-    flexShrink: 0,
-    color: colors.textDim,
-    ...typeScale.caption,
-    paddingHorizontal: spacing.sm,
-  },
-  optimisticError: {
-    maxWidth: "82%",
-    alignSelf: "flex-end",
-    paddingHorizontal: spacing.compact,
-    color: colors.red,
-    ...typeScale.caption,
-    textAlign: "right",
-  },
-  retryMessageButton: {
-    minHeight: controlSize.compact,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-    paddingHorizontal: spacing.xs,
-    borderRadius: radii.medium,
-  },
-  retryMessageText: {
-    color: colors.accent,
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
+  turnGroup: { gap: spacing.xxs },
   turnMetaText: {
     color: colors.textMuted,
     ...typeScale.caption,
   },
-  disabled: { opacity: 0.42 },
+  turnStatusDot: {
+    borderRadius: radii.pill,
+    height: 7,
+    width: 7,
+  },
+  turnStatusFailed: { backgroundColor: colors.red },
+  userMessageRow: {
+    alignItems: "flex-end",
+    flexDirection: "column",
+    gap: spacing.xxs,
+    minWidth: 0,
+    width: "100%",
+  },
+  userTurnCluster: {
+    alignItems: "stretch",
+    gap: spacing.optical,
+    width: "100%",
+  },
 });

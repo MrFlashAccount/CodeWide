@@ -6,13 +6,13 @@ import type {
   ThreadChangeScope,
   ThreadResourcesValue,
 } from "../../data/workspace-resource-database";
-import type { CodeReviewComment } from "../../rendering/code-review";
+import type { CodeReviewComment } from "../../features/review/comments/reviewComment";
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 import type { ChangesPreferences } from "../../features/changes/changePresentation";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
-import type { CodeReviewFileResource } from "../../features/review/code-review-files";
+import type { CodeReviewFileResource } from "../../features/review/resources/reviewFiles";
 import { RouteSessionRegistry, ROUTE_SESSION_TTL_MS } from "../routeSessionPolicy";
 import { sameRouteSessionOwner, type V1RouteSessionOwner } from "../threads/threadRouteParams";
 

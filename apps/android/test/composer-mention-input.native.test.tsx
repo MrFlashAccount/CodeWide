@@ -1,16 +1,12 @@
 import { ComposerEditor } from "../src/features/composer/ComposerEditor";
 import { act, fireEvent, render as renderNative, waitFor } from "@testing-library/react-native";
-import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
-import { PortalHost } from "heroui-native/portal";
-import { Popover } from "heroui-native/popover";
-import { StyleSheet } from "react-native";
 import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markdown";
 import { ComposerMentionInput } from "../src/features/composer/input/ComposerMentionInput.native";
 import { ComposerMarkdownInput } from "../src/features/composer/input/ComposerMarkdownInput.native";
 import { searchComposerTrialMentions } from "../src/features/composer/input/composer-editor-trial";
-import { colors, radii, spacing, touchTarget, typeScale } from "../src/theme";
+import { colors, touchTarget, typeScale } from "../src/theme";
 import ComposerEditorTrial from "../src/features/composer/input/ComposerEditorTrial.native";
-import { Children, isValidElement, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 const mockEditor = {
   focus: jest.fn(),
@@ -86,14 +82,7 @@ beforeEach(() => jest.clearAllMocks());
 afterEach(() => jest.useRealTimers());
 
 function render(node: ReactNode) {
-  return renderNative(
-    <HeroUINativeProviderRaw
-      config={{ animation: "disable-all", devInfo: { stylingPrinciples: false } }}
-    >
-      {node}
-      <PortalHost />
-    </HeroUINativeProviderRaw>,
-  );
+  return renderNative(node);
 }
 
 function mountEditor(onPreviewMarkdown = jest.fn()) {
@@ -199,50 +188,20 @@ it("filters suggestions and inserts the selected display name and URL", async ()
   await act(async () => {
     await jest.runAllTimersAsync();
   });
-  expect(view.getByTestId("composer-input-layout")).toHaveStyle({ position: "static" });
-  const popover = view.UNSAFE_getByType(Popover);
-  expect(popover.props.isOpen).toBe(true);
+  expect(view.getByTestId("composer-input-layout")).toHaveStyle({ position: "relative" });
   expect(
     view.getByTestId("composer-suggestions-anchor", { includeHiddenElements: true }),
-  ).toHaveStyle({ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 });
-  expect(
-    view.getByTestId("composer-suggestions-anchor", { includeHiddenElements: true }).props
-      .pointerEvents,
-  ).toBe("none");
-  const portal = Children.toArray(popover.props.children)[1];
-  if (!isValidElement<{ readonly children?: ReactNode }>(portal))
-    throw new Error("Composer suggestions portal is missing");
-  const content = portal.props.children;
-  if (
-    !isValidElement<{
-      readonly children?: ReactNode;
-      readonly width?: unknown;
-      readonly offset?: unknown;
-      readonly style?: object;
-    }>(content)
-  ) {
-    throw new Error("Composer suggestions portal content is missing");
-  }
-  expect(content.props.width).toBe("trigger");
-  expect(content.props.offset).toBe(spacing.optical);
-  expect(StyleSheet.flatten(content.props.style)).toMatchObject({ borderRadius: radii.composer });
-  const popup = content.props.children;
-  if (!isValidElement(popup)) throw new Error("Composer suggestions list is missing");
-  // Native popup placement is unavailable in Jest; exercise the actual body
-  // supplied to the portal after verifying its anchor and sizing contract.
-  const suggestions = render(popup);
-  expect(suggestions.queryByLabelText("Insert Tests")).toBeNull();
-  expect(suggestions.getByLabelText("Composer suggestions")).toHaveStyle({ width: "100%" });
-  expect(suggestions.getByTestId("composer-suggestions-scroll").props.nestedScrollEnabled).toBe(
-    true,
-  );
-  expect(suggestions.queryByText("Demo plugin")).toBeNull();
-  fireEvent.press(suggestions.getByLabelText("Insert Review"));
+  ).toHaveStyle({ bottom: "100%", left: 0, position: "absolute", right: 0 });
+  expect(view.queryByLabelText("Insert Tests")).toBeNull();
+  expect(view.getByLabelText("Composer suggestions")).toHaveStyle({ width: "100%" });
+  expect(view.getByTestId("composer-suggestions-scroll").props.nestedScrollEnabled).toBe(true);
+  expect(view.queryByText("Demo plugin")).toBeNull();
+  fireEvent.press(view.getByLabelText("Insert Review"));
   expect(mockEditor.insertMention).toHaveBeenCalledWith(
     "$review",
     "codewide-skill://%2Fdemo%2Freview",
   );
-  expect(view.UNSAFE_getByType(Popover).props.isOpen).toBe(false);
+  expect(view.queryByLabelText("Composer suggestions")).toBeNull();
 });
 
 it("dismisses suggestions on blur, including a still scheduled search", async () => {
@@ -327,25 +286,38 @@ it("returns a large paste to the attachment owner without committing it to the d
 
 it("keeps the resident composer editor mounted while a new chat restores its draft", () => {
   const editorProps: Parameters<typeof ComposerEditor>[0] = {
-    voicePhase: "idle", composerScope: "server:first", getTransferAccess: undefined,
-    getStableTransferAccess: async () => { throw new Error("No attachment read expected"); },
-    composerInputRef: {current: null}, fileAttachmentEnabled: false,
-    pastedAttachmentPending: false, attachments: [], handleComposerLargePaste: () => undefined,
-    draft: "First draft", handleComposerTextChange: () => undefined,
-    handleComposerMarkdownChange: () => undefined, draftSelectionRef: {current: {start:0,end:0}},
-    pendingVoiceSelection: null, voiceController: null, searchComposerSuggestions: async () => [],
-    selectComposerMention: () => undefined, editingQueuedMessage: false,
-    voiceBackend: "remote", voiceResource: null,
+    voicePhase: "idle",
+    composerScope: "server:first",
+    getTransferAccess: undefined,
+    getStableTransferAccess: async () => {
+      throw new Error("No attachment read expected");
+    },
+    composerInputRef: { current: null },
+    fileAttachmentEnabled: false,
+    pastedAttachmentPending: false,
+    attachments: [],
+    handleComposerLargePaste: () => undefined,
+    draft: "First draft",
+    handleComposerTextChange: () => undefined,
+    handleComposerMarkdownChange: () => undefined,
+    draftSelectionRef: { current: { start: 0, end: 0 } },
+    pendingVoiceSelection: null,
+    voiceController: null,
+    searchComposerSuggestions: async () => [],
+    selectComposerMention: () => undefined,
+    editingQueuedMessage: false,
+    voiceBackend: "remote",
+    voiceResource: null,
   };
-  const wrapper = (props: Parameters<typeof ComposerEditor>[0]) => (
-    <HeroUINativeProviderRaw config={{animation: "disable-all", devInfo: {stylingPrinciples:false}}}>
-      <ComposerEditor {...props} />
-      <PortalHost />
-    </HeroUINativeProviderRaw>
-  );
+  const wrapper = (props: Parameters<typeof ComposerEditor>[0]) => <ComposerEditor {...props} />;
   const view = renderNative(wrapper(editorProps));
   const residentEditor = view.getByTestId("native-editor");
-  const nextProps = {...editorProps, composerScope:"server:second", draft:"Restored second draft", composerInputRef:{current:null}};
+  const nextProps = {
+    ...editorProps,
+    composerScope: "server:second",
+    draft: "Restored second draft",
+    composerInputRef: { current: null },
+  };
   view.rerender(wrapper(nextProps));
   expect(view.getByTestId("native-editor")).toBe(residentEditor);
   expect(mockEditor.setValue).toHaveBeenLastCalledWith("Restored second draft");

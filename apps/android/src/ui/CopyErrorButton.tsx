@@ -9,7 +9,9 @@ export function CopyErrorButton({ report }: { report: string }) {
   const inFlight = useRef(false);
   const [status, setStatus] = useState<"ready" | "copying" | "copied" | "failed">("ready");
   const copy = async () => {
-    if (inFlight.current) return;
+    if (inFlight.current) {
+      return;
+    }
     inFlight.current = true;
     setStatus("copying");
     let copied = false;
@@ -26,8 +28,8 @@ export function CopyErrorButton({ report }: { report: string }) {
   return (
     <View>
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel="Copy error"
+        accessibilityRole="button"
         disabled={status === "copying"}
         onPress={() => void copy()}
         style={styles.button}
@@ -47,16 +49,16 @@ export function CopyErrorButton({ report }: { report: string }) {
 
 const styles = StyleSheet.create({
   button: {
-    minHeight: controlSize.touch,
     justifyContent: "center",
+    minHeight: controlSize.touch,
     paddingHorizontal: spacing.xs,
-  },
-  label: {
-    color: colors.primary,
-    ...typeScale.body,
   },
   hint: {
     color: colors.textMuted,
     ...typeScale.label,
+  },
+  label: {
+    color: colors.primary,
+    ...typeScale.body,
   },
 });

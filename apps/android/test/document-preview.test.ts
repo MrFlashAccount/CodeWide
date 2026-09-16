@@ -20,15 +20,15 @@ const changes = readFileSync(
 );
 const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
 const workspace = readFileSync(
-  new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url),
+  new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const nativeEditor = readFileSync(
-  new URL("../src/rendering/CodeReviewEditor.native.tsx", import.meta.url),
+  new URL("../src/features/review/editor/CodeReviewEditor.native.tsx", import.meta.url),
   "utf8",
 );
 const editorRuntime = readFileSync(
-  new URL("../code-review-editor/entry.ts", import.meta.url),
+  new URL("../src/features/review/editor/webview/entry.web.ts", import.meta.url),
   "utf8",
 );
 const documentPreview = readFileSync(
@@ -177,7 +177,8 @@ describe("document preview", () => {
     expect(documentPreview).toContain('accessibilityLabel="Back from document preview"');
     expect(documentPreview).toContain('name="arrow-back"');
     expect(documentPreview).toContain('name="ellipsis-vertical"');
-    expect(documentPreview).toContain('{ id: "download", label: "Download"');
+    expect(documentPreview).toContain('id: "download"');
+    expect(documentPreview).toContain('label: "Download"');
     expect(documentPreview).toContain('id: "text-smaller"');
     expect(documentPreview).toContain('id: "text-reset"');
     expect(documentPreview).toContain('id: "text-larger"');
@@ -185,10 +186,10 @@ describe("document preview", () => {
     expect(documentPreview).toContain('id === "text-smaller"');
     expect(documentPreview).toContain('id === "text-reset"');
     expect(documentPreview).toContain('id === "text-larger"');
-    expect(compactSource(documentPreview)).toContain(
-      '{ id: "layout-reading", label: "Reading width"',
-    );
-    expect(compactSource(documentPreview)).toContain('{ id: "layout-wide", label: "Full width"');
+    expect(documentPreview).toContain('id: "layout-reading"');
+    expect(documentPreview).toContain('label: "Reading width"');
+    expect(documentPreview).toContain('id: "layout-wide"');
+    expect(documentPreview).toContain('label: "Full width"');
     expect(documentPreview).toContain("<RichMarkdownTextScaleProvider scale={textScale}>");
     expect(documentPreview).toContain(
       'layoutMode === "reading" ? { maxWidth: documentReadingWidth(textScale) }',

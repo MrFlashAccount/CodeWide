@@ -49,8 +49,6 @@ const CAPABILITY_FORBIDDEN_IMPORTS = [
   "expo-file-system/**",
   "expo-linking",
   "expo-secure-store",
-  "expo-sqlite",
-  "expo-sqlite/**",
 ];
 
 const base = defineHygieneConfig({

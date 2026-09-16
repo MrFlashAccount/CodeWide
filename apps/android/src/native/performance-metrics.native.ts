@@ -9,149 +9,157 @@ import { startFrameIncidentReporting } from "./frame-incidents.native";
 import { parseWindowFrameReport, type WindowFrameReport } from "../data/window-frame-report";
 
 export type PerformanceMetricPoint = {
-  sampledAtMs: number;
   cpuPercent: number;
+  jankPercent: number;
+  p95FrameMs: number;
   pssBytes: number;
   renderedFps: number;
-  p95FrameMs: number;
-  jankPercent: number;
   rxBytesPerSecond: number;
+  sampledAtMs: number;
   txBytesPerSecond: number;
 };
 
 export type CurrentPerformanceMetrics = PerformanceMetricPoint & {
-  sequence: number;
-  uptimeMs: number;
-  rssBytes: number;
+  averageFrameMs: number;
+  averageOverrunMs: number;
+  codePssBytes: number;
+  droppedFrameEstimate: number;
+  graphicsPssBytes: number;
+  jankFrames: number;
   javaHeapBytes: number;
   javaHeapLimitBytes: number;
-  nativeHeapBytes: number;
   javaHeapPssBytes: number;
-  nativeHeapPssBytes: number;
-  codePssBytes: number;
-  stackPssBytes: number;
-  graphicsPssBytes: number;
-  privateOtherPssBytes: number;
-  systemPssBytes: number;
-  rxSessionBytes: number;
-  txSessionBytes: number;
-  renderedFrames: number;
-  averageFrameMs: number;
   maxFrameMs: number;
-  jankFrames: number;
-  droppedFrameEstimate: number;
-  averageOverrunMs: number;
+  nativeHeapBytes: number;
+  nativeHeapPssBytes: number;
+  privateOtherPssBytes: number;
+  renderedFrames: number;
+  rssBytes: number;
+  rxSessionBytes: number;
+  sequence: number;
+  stackPssBytes: number;
+  systemPssBytes: number;
+  txSessionBytes: number;
+  uptimeMs: number;
 };
 
 export type PerformanceMetricsSnapshot = {
   available: boolean;
+  current: CurrentPerformanceMetrics | null;
   enabled: boolean;
-  samplePeriodMs: number;
   historyCapacity: number;
   historySamples: number;
   peakCpuPercent: number;
   peakPssBytes: number;
+  recent: PerformanceMetricPoint[];
+  samplePeriodMs: number;
+  sessionJankPercent: number;
+  totalDroppedFrameEstimate: number;
   totalFrames: number;
   totalJankFrames: number;
-  totalDroppedFrameEstimate: number;
-  sessionJankPercent: number;
-  current: CurrentPerformanceMetrics | null;
-  recent: PerformanceMetricPoint[];
 };
 
 export type HermesHeapSnapshot = {
-  uri: string;
-  name: string;
-  sizeBytes: number;
-  rawSizeBytes: number;
   collectedAtMs: number;
   location: string;
+  name: string;
+  rawSizeBytes: number;
+  sizeBytes: number;
+  uri: string;
 };
 
 export type MemoryCheckpoint = {
-  version: number;
-  collectedAtMs: number;
-  uptimeMs: number;
+  artAllocatedBytes: number | null;
+  artFreedBytes: number | null;
   captureDurationMs: number;
-  javaUsedBytes: number;
+  collectedAtMs: number;
+  errors: unknown[];
+  graphicsPssBytes: number;
   javaCommittedBytes: number;
+  javaHeapPssBytes: number;
+  javaUsedBytes: number;
   nativeAllocatedBytes: number;
   nativeCommittedBytes: number;
   nativeFreeBytes: number;
-  totalPssBytes: number;
-  javaHeapPssBytes: number;
   nativeHeapPssBytes: number;
-  graphicsPssBytes: number;
+  openFileDescriptors: number;
   privateOtherPssBytes: number;
   procRssBytes: number | null;
   smapsPssBytes: number | null;
   smapsRssBytes: number | null;
   smapsSwapPssBytes: number | null;
-  artAllocatedBytes: number | null;
-  artFreedBytes: number | null;
-  openFileDescriptors: number;
   threads: number;
-  errors: unknown[];
+  totalPssBytes: number;
+  uptimeMs: number;
+  version: number;
 };
 
 export type MemoryReclamationActionResult = {
-  performed: boolean;
   durationMs: number;
+  performed: boolean;
 };
 
 type PerformanceBridge = {
-  getWindowFrameReport?(): Promise<unknown>;
-  drainFrameIncidents?(): Promise<unknown>;
-  captureMemoryReport?(): Promise<unknown>;
-  captureMemoryCheckpoint?(): Promise<unknown>;
-  clearNativeCodeMemoryCache?(): Promise<unknown>;
-  clearImageMemoryCache?(): Promise<unknown>;
-  collectJavaGarbage?(): Promise<unknown>;
-  collectHermesGarbage?(): Promise<unknown>;
-  purgeNativeAllocator?(exhaustive: boolean): Promise<unknown>;
-  getPerformanceSnapshot(): Promise<PerformanceMetricsSnapshot>;
-  setPerformanceMonitoringEnabled(enabled: boolean): Promise<PerformanceMetricsSnapshot>;
-  beginNavigationTrace?(traceId: string): Promise<boolean>;
-  endNavigationTrace?(traceId: string): Promise<ThreadNavigationFrameProfile | null>;
-  captureHermesHeapSnapshot?(): Promise<HermesHeapSnapshot>;
+  addListener: (eventName: string) => void;
+  beginNavigationTrace?: (traceId: string) => Promise<boolean>;
+  captureHermesHeapSnapshot?: () => Promise<HermesHeapSnapshot>;
+  captureMemoryCheckpoint?: () => Promise<unknown>;
+  captureMemoryReport?: () => Promise<unknown>;
+  clearImageMemoryCache?: () => Promise<unknown>;
+  clearNativeCodeMemoryCache?: () => Promise<unknown>;
+  collectHermesGarbage?: () => Promise<unknown>;
+  collectJavaGarbage?: () => Promise<unknown>;
+  drainFrameIncidents?: () => Promise<unknown>;
+  endNavigationTrace?: (traceId: string) => Promise<ThreadNavigationFrameProfile | null>;
+  getPerformanceSnapshot: () => Promise<PerformanceMetricsSnapshot>;
+  getWindowFrameReport?: () => Promise<unknown>;
+  purgeNativeAllocator?: (exhaustive: boolean) => Promise<unknown>;
+  removeListeners: (count: number) => void;
+  setPerformanceMonitoringEnabled: (enabled: boolean) => Promise<PerformanceMetricsSnapshot>;
 };
 
 const EVENT_NAME = "CodexPerformanceSnapshot";
+// WHY: React Native's untyped module registry is the runtime capability boundary for this
+// optional native performance module; no generated declaration is available.
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion
 const bridge = NativeModules.CodexPerformanceNative as PerformanceBridge | undefined;
-const emitter =
-  bridge === undefined ? null : new NativeEventEmitter(NativeModules.CodexPerformanceNative);
+const emitter = bridge === undefined ? null : new NativeEventEmitter(bridge);
 const listeners = new Set<() => void>();
-let subscription: { remove(): void } | null = null;
+let subscription: { remove: () => void } | null = null;
 let loading: Promise<void> | null = null;
 let snapshot: PerformanceMetricsSnapshot = {
   available: bridge !== undefined,
+  current: null,
   enabled: false,
-  samplePeriodMs: 1_000,
-  historyCapacity: 3_600,
+  historyCapacity: 3600,
   historySamples: 0,
   peakCpuPercent: 0,
   peakPssBytes: 0,
+  recent: [],
+  samplePeriodMs: 1000,
+  sessionJankPercent: 0,
+  totalDroppedFrameEstimate: 0,
   totalFrames: 0,
   totalJankFrames: 0,
-  totalDroppedFrameEstimate: 0,
-  sessionJankPercent: 0,
-  current: null,
-  recent: [],
 };
 
 function publish(next: PerformanceMetricsSnapshot): void {
   snapshot = next;
   setOperationalDiagnosticsEnabled(next.enabled);
   setTelemetryEnabled(next.enabled);
-  listeners.forEach((listener) => listener());
+  listeners.forEach((listener) => {
+    listener();
+  });
 }
 
 function ensureNativeSubscription(): void {
-  if (bridge === undefined || emitter === null) return;
+  if (bridge === undefined || emitter === null) {
+    return;
+  }
   if (subscription === null) {
-    subscription = emitter.addListener(EVENT_NAME, (next: PerformanceMetricsSnapshot) =>
-      publish(next),
-    );
+    subscription = emitter.addListener(EVENT_NAME, (next: PerformanceMetricsSnapshot) => {
+      publish(next);
+    });
   }
   if (loading === null) {
     loading = bridge
@@ -170,7 +178,9 @@ function ensureNativeSubscription(): void {
 ensureNativeSubscription();
 const drainFrameIncidents = bridge?.drainFrameIncidents;
 if (typeof drainFrameIncidents === "function") {
-  startFrameIncidentReporting({ drainFrameIncidents: () => drainFrameIncidents.call(bridge) });
+  startFrameIncidentReporting({
+    drainFrameIncidents: async () => drainFrameIncidents.call(bridge),
+  });
 }
 
 export function subscribePerformanceMetrics(listener: () => void): () => void {
@@ -198,9 +208,13 @@ export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
 }
 
 export async function setPerformanceMonitoringEnabled(enabled: boolean): Promise<void> {
-  if (bridge === undefined) return;
+  if (bridge === undefined) {
+    return;
+  }
   const next = await bridge.setPerformanceMonitoringEnabled(enabled);
-  if (!next.enabled) resetPerformanceExperiments();
+  if (!next.enabled) {
+    resetPerformanceExperiments();
+  }
   publish(next);
 }
 
@@ -209,26 +223,29 @@ export async function beginNavigationFrameTrace(traceId: string): Promise<boolea
     bridge === undefined ||
     !snapshot.enabled ||
     typeof bridge.beginNavigationTrace !== "function"
-  )
+  ) {
     return false;
-  return await bridge.beginNavigationTrace(traceId).catch(() => false);
+  }
+  return bridge.beginNavigationTrace(traceId).catch(() => false);
 }
 
 export async function endNavigationFrameTrace(
   traceId: string,
 ): Promise<ThreadNavigationFrameProfile | null> {
-  if (bridge === undefined || typeof bridge.endNavigationTrace !== "function") return null;
-  return await bridge.endNavigationTrace(traceId).catch(() => null);
+  if (bridge === undefined || typeof bridge.endNavigationTrace !== "function") {
+    return null;
+  }
+  return bridge.endNavigationTrace(traceId).catch(() => null);
 }
 
 export async function captureHermesHeapSnapshot(): Promise<HermesHeapSnapshot> {
   if (bridge === undefined || typeof bridge.captureHermesHeapSnapshot !== "function") {
     throw new Error("Hermes heap capture requires a newer Android APK");
   }
-  return await bridge.captureHermesHeapSnapshot();
+  return bridge.captureHermesHeapSnapshot();
 }
 
-const MAX_MEMORY_REPORT_CHARACTERS = 512 * 1_024;
+const MAX_MEMORY_REPORT_CHARACTERS = 512 * 1024;
 
 export async function captureMemoryReport(): Promise<string> {
   if (bridge === undefined || typeof bridge.captureMemoryReport !== "function") {
@@ -261,51 +278,61 @@ export function memoryReclamationExperimentAvailable(): boolean {
 }
 
 export async function captureMemoryCheckpoint(): Promise<MemoryCheckpoint> {
-  if (bridge?.captureMemoryCheckpoint === undefined)
+  if (bridge?.captureMemoryCheckpoint === undefined) {
     throw new Error("Memory experiment requires a newer Android APK");
+  }
   const encoded = await bridge.captureMemoryCheckpoint();
-  if (typeof encoded !== "string" || encoded.length === 0 || encoded.length > 64 * 1_024) {
+  if (typeof encoded !== "string" || encoded.length === 0 || encoded.length > 64 * 1024) {
     throw new Error("Android returned an invalid memory checkpoint");
   }
   const parsed: unknown = JSON.parse(encoded);
-  if (!isMemoryCheckpoint(parsed)) throw new Error("Android returned an invalid memory checkpoint");
+  if (!isMemoryCheckpoint(parsed)) {
+    throw new Error("Android returned an invalid memory checkpoint");
+  }
   return parsed;
 }
 
 export async function clearNativeCodeMemoryCache(): Promise<MemoryReclamationActionResult> {
-  if (bridge?.clearNativeCodeMemoryCache === undefined)
+  if (bridge?.clearNativeCodeMemoryCache === undefined) {
     throw new Error("Memory experiment requires a newer Android APK");
+  }
   return parseMemoryActionResult(await bridge.clearNativeCodeMemoryCache());
 }
 
 export async function clearImageMemoryCache(): Promise<MemoryReclamationActionResult> {
-  if (bridge?.clearImageMemoryCache === undefined)
+  if (bridge?.clearImageMemoryCache === undefined) {
     throw new Error("Memory experiment requires a newer Android APK");
+  }
   return parseMemoryActionResult(await bridge.clearImageMemoryCache());
 }
 
 export async function collectJavaGarbage(): Promise<MemoryReclamationActionResult> {
-  if (bridge?.collectJavaGarbage === undefined)
+  if (bridge?.collectJavaGarbage === undefined) {
     throw new Error("Memory experiment requires a newer Android APK");
+  }
   return parseMemoryActionResult(await bridge.collectJavaGarbage());
 }
 
 export async function collectHermesGarbage(): Promise<MemoryReclamationActionResult> {
-  if (bridge?.collectHermesGarbage === undefined)
+  if (bridge?.collectHermesGarbage === undefined) {
     throw new Error("Memory experiment requires a newer Android APK");
+  }
   return parseMemoryActionResult(await bridge.collectHermesGarbage());
 }
 
 export async function purgeNativeAllocator(
   exhaustive: boolean,
 ): Promise<MemoryReclamationActionResult> {
-  if (bridge?.purgeNativeAllocator === undefined)
+  if (bridge?.purgeNativeAllocator === undefined) {
     throw new Error("Memory experiment requires a newer Android APK");
+  }
   return parseMemoryActionResult(await bridge.purgeNativeAllocator(exhaustive));
 }
 
 function isMemoryCheckpoint(value: unknown): value is MemoryCheckpoint {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
   const requiredNumbers = [
     "version",
     "collectedAtMs",
@@ -324,7 +351,9 @@ function isMemoryCheckpoint(value: unknown): value is MemoryCheckpoint {
     "openFileDescriptors",
     "threads",
   ];
-  if (!requiredNumbers.every((key) => typeof Reflect.get(value, key) === "number")) return false;
+  if (!requiredNumbers.every((key) => typeof Reflect.get(value, key) === "number")) {
+    return false;
+  }
   const nullableNumbers = [
     "procRssBytes",
     "smapsPssBytes",
@@ -335,11 +364,12 @@ function isMemoryCheckpoint(value: unknown): value is MemoryCheckpoint {
   ];
   if (
     !nullableNumbers.every((key) => {
-      const field = Reflect.get(value, key);
+      const field: unknown = Reflect.get(value, key);
       return field === null || typeof field === "number";
     })
-  )
+  ) {
     return false;
+  }
   return Array.isArray(Reflect.get(value, "errors"));
 }
 
@@ -354,12 +384,14 @@ function parseMemoryActionResult(value: unknown): MemoryReclamationActionResult 
     throw new Error("Android returned an invalid memory action result");
   }
   return {
-    performed: Reflect.get(value, "performed") === true,
     durationMs: Number(Reflect.get(value, "durationMs")),
+    performed: Reflect.get(value, "performed") === true,
   };
 }
 
 export async function getWindowFrameReport(): Promise<WindowFrameReport | null> {
-  if (bridge?.getWindowFrameReport === undefined) return null;
+  if (bridge?.getWindowFrameReport === undefined) {
+    return null;
+  }
   return parseWindowFrameReport(await bridge.getWindowFrameReport());
 }

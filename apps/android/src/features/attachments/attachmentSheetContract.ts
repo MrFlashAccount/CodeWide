@@ -7,22 +7,25 @@ import type {
   ThreadChangeScope,
   ThreadResourcesValue,
 } from "../../data/workspace-resource-database";
-import type { CodeReviewComment } from "../../rendering/code-review";
+import type { CodeReviewComment } from "../review/comments/reviewComment";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 
 /** Complete display and action contract for the thread attachment sheet. */
 export type AttachmentSheetProps = {
-  visible: boolean;
   codePreviewMaxHeight: number;
+  cwd: string;
+  getTransferAccess: GetTransferAccess;
   model: ThreadResourcesModel | null;
+  onAttachReview: (comments: readonly CodeReviewComment[]) => Promise<boolean>;
+  onClose: () => void;
+  onLoadThreadChangeDiff?: (
+    path: string,
+    scope?: ThreadChangeScope,
+  ) => Promise<ThreadChangeDiffValue>;
+  onReload?: () => Promise<ThreadResourcesValue>;
   resourceId: string | null;
   revision: string;
-  cwd: string;
   thread: Thread | null;
+  visible: boolean;
   voiceRuntime: AppVoiceInputRuntime | null;
-  getTransferAccess: GetTransferAccess;
-  onLoadThreadChangeDiff?(path: string, scope?: ThreadChangeScope): Promise<ThreadChangeDiffValue>;
-  onAttachReview(comments: readonly CodeReviewComment[]): Promise<boolean>;
-  onReload?(): Promise<ThreadResourcesValue>;
-  onClose(): void;
 };

@@ -31,7 +31,7 @@ it("preserves voice runtime integration contracts", () => {
   expect(ownerVoiceTransport).toContain(
     'rpcAfterAttach(session, "companion/dictation/cancel", { sessionId })',
   );
-  expect(ownerVoiceTransport).toContain('listener({ type: "done", text })');
+  expect(ownerVoiceTransport).toMatch(/listener\(\{(?=[^}]*text)(?=[^}]*type: "done")[^}]*\}\)/u);
   expect(ownerVoiceTransport).toContain(
     "await raceAudioUploadAbort(uploader.finish(), cancellation.signal)",
   );
@@ -40,6 +40,8 @@ it("preserves voice runtime integration contracts", () => {
   expect(ownerVoiceTransport).toContain(
     "finishDictationWithTransportRetry(session, sessionId, cancellation.signal)",
   );
-  expect(voiceController).toContain('phase: "recording", backend: "android"');
+  expect(voiceController).toMatch(
+    /\{(?=[^}]*backend: "android")(?=[^}]*phase: "recording")[^}]*\}/u,
+  );
   expect(voiceController).toContain("private async startAndroidFallback");
 });

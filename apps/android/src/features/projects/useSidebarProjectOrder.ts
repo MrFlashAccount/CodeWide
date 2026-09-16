@@ -20,5 +20,5 @@ export function useSidebarProjectOrder() {
       JSON.stringify(moveSidebarProject(decodeProjectOrder(value), visibleKeys, key, direction)),
     );
   });
-  return { order, move };
+  return { move, order };
 }

@@ -15,16 +15,16 @@ export type QueueEditCapabilities = Pick<
   | "latestAttachmentsRef"
   | "uploadsBlockSend"
 > & {
-  queuedComposerEdit: QueuedComposerEdit | null;
-  setQueuedComposerEdit: Dispatch<SetStateAction<QueuedComposerEdit | null>>;
-  queuedComposerEditBusy: boolean;
-  setQueuedComposerEditBusy: Dispatch<SetStateAction<boolean>>;
-  setQueuedComposerEditError: Dispatch<SetStateAction<string | null>>;
-  voicePhase: VoiceInputRow["phase"];
-  closeInlineQueueOverlay(): void;
+  closeInlineQueueOverlay: () => void;
+  conversationOwner: ConversationOwner;
   onEditQueued:
     | ((commandId: string, text: string, attachments: StoredDraftAttachment[]) => Promise<void>)
     | undefined;
   onListQueue: (() => Promise<QueuedPrompt[]>) | undefined;
-  conversationOwner: ConversationOwner;
+  queuedComposerEdit: QueuedComposerEdit | null;
+  queuedComposerEditBusy: boolean;
+  setQueuedComposerEdit: Dispatch<SetStateAction<QueuedComposerEdit | null>>;
+  setQueuedComposerEditBusy: Dispatch<SetStateAction<boolean>>;
+  setQueuedComposerEditError: Dispatch<SetStateAction<string | null>>;
+  voicePhase: VoiceInputRow["phase"];
 };

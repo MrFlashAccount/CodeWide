@@ -1,3 +1,4 @@
+import { appLogger } from "../observability/logger";
 import { spacing, typeScale, typeWeight, radii, controlSize, layoutSize } from "../theme";
 import { Component, type ErrorInfo, type ReactNode, useState, useSyncExternalStore } from "react";
 import {
@@ -16,6 +17,7 @@ import {
   subscribeGlobalError,
 } from "./global-error-store";
 import { errorDiagnostic } from "./error-diagnostic";
+import { copyCrashReport, reloadPublishedApp } from "./crashRecovery";
 
 type Props = {
   children: ReactNode;
@@ -27,8 +29,12 @@ type State = {
 };
 
 function normalizeError(value: unknown): Error {
-  if (value instanceof Error) return value;
-  if (typeof value === "string") return new Error(value);
+  if (value instanceof Error) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return new Error(value);
+  }
   try {
     return new Error(JSON.stringify(value));
   } catch {
@@ -60,29 +66,41 @@ export class AppErrorBoundary extends Component<Props, State> {
     // Keep the complete stack in logcat/Metro and in the local recovery UI.
     // The boundary deliberately has no dependency on application databases:
     // a broken persistence layer must not be able to break crash recovery.
-    console.error("CodeWide root render failed", error, info.componentStack);
+    appLogger.error({
+      err: error,
+      event: "render.root.failed",
+      fields: { componentStack: info.componentStack ?? "" },
+    });
+    // WHY: React exposes the component stack only through componentDidCatch, after derived state.
+    // oxlint-disable-next-line react/no-set-state
     this.setState({ componentStack: info.componentStack ?? "" });
   }
 
-  private retry = (): void => {
+  private readonly retry = (): void => {
+    // WHY: a class error boundary must clear its captured error to retry the owned subtree.
+    // oxlint-disable-next-line react/no-set-state
     this.setState({ componentStack: "", error: null });
   };
 
   override render(): ReactNode {
-    const { error, componentStack } = this.state;
-    if (error === null) return this.props.children;
-    return <RootFailure error={error} componentStack={componentStack} onRetry={this.retry} />;
+    const { componentStack, error } = this.state;
+    if (error === null) {
+      return this.props.children;
+    }
+    return <RootFailure componentStack={componentStack} error={error} onRetry={this.retry} />;
   }
 }
 
-export function GlobalErrorBoundaryHost({ children }: Props) {
+export function GlobalErrorBoundaryHost({ children }: Props): ReactNode {
   const failure = useSyncExternalStore(
     subscribeGlobalError,
     getGlobalErrorSnapshot,
     getGlobalErrorSnapshot,
   );
 
-  if (failure === null) return children;
+  if (failure === null) {
+    return children;
+  }
 
   const context = [
     `Global JavaScript failure (${failure.source})`,
@@ -107,32 +125,33 @@ export function RootFailure({
   const report = errorReport(error, componentStack);
 
   const copy = async () => {
-    if (copying) return;
+    if (copying) {
+      return;
+    }
     setCopying(true);
     try {
-      const Clipboard = require("expo-clipboard") as typeof import("expo-clipboard");
-      await Clipboard.setStringAsync(report);
+      await copyCrashReport(report);
     } catch (copyError) {
-      console.error("Could not copy the UI crash report", copyError);
+      appLogger.warnCaught({ error: copyError, event: "render.crash_report_copy.failed" });
     }
     setCopying(false);
   };
 
   const restart = async () => {
-    if (restarting) return;
+    if (restarting) {
+      return;
+    }
     setRestarting(true);
     if (__DEV__) {
       DevSettings.reload();
       return;
     }
     try {
-      const Updates = require("expo-updates") as typeof import("expo-updates");
-      if (Updates.isEnabled) {
-        await Updates.reloadAsync();
+      if (await reloadPublishedApp()) {
         return;
       }
     } catch (reloadError) {
-      console.error("Expo update reload failed after a UI crash", reloadError);
+      appLogger.errorCaught({ error: reloadError, event: "render.crash_reload.failed" });
     }
     DevSettings.reload();
   };
@@ -143,7 +162,9 @@ export function RootFailure({
         <Text style={styles.badgeText}>!</Text>
       </View>
       <Text style={styles.title}>Interface crashed</Text>
-      <Text style={styles.message}>{error.message || "Unknown React render error"}</Text>
+      <Text style={styles.message}>
+        {error.message === "" ? "Unknown React render error" : error.message}
+      </Text>
       <View style={styles.actions}>
         <Pressable accessibilityRole="button" onPress={onRetry} style={styles.primaryButton}>
           <Text style={styles.primaryLabel}>Try again</Text>
@@ -179,24 +200,20 @@ export function RootFailure({
 }
 
 const styles = StyleSheet.create({
-  root: {
-    alignItems: "stretch",
-    backgroundColor: "#101011",
-    flex: 1,
-    justifyContent: "center",
-    paddingBottom: spacing.xl,
-    paddingHorizontal: spacing.lg,
-    paddingTop: layoutSize.header,
+  actions: {
+    flexDirection: "row",
+    gap: spacing.inputInset,
+    marginTop: spacing.lg,
   },
   badge: {
     alignItems: "center",
     alignSelf: "flex-start",
     backgroundColor: "#3b2024",
     borderRadius: radii.selected,
-    minHeight: controlSize.regular,
-    paddingVertical: spacing.compact,
     justifyContent: "center",
     marginBottom: spacing.md,
+    minHeight: controlSize.regular,
+    paddingVertical: spacing.compact,
     width: 36,
   },
   badgeText: {
@@ -204,54 +221,11 @@ const styles = StyleSheet.create({
     ...typeScale.heading,
     fontWeight: typeWeight.semibold,
   },
-  title: {
-    color: "#f4f4f5",
-    ...typeScale.heading,
-    fontWeight: typeWeight.semibold,
-  },
-  message: {
-    color: "#b7b7bc",
-    ...typeScale.body,
-    marginTop: spacing.xs,
-  },
-  actions: {
-    flexDirection: "row",
-    gap: spacing.inputInset,
-    marginTop: spacing.lg,
-  },
-  primaryButton: {
-    alignItems: "center",
-    backgroundColor: "#f4f4f5",
-    borderRadius: radii.selected,
-    flex: 1,
-    justifyContent: "center",
-    minHeight: controlSize.touch,
-    paddingHorizontal: spacing.md,
-  },
-  primaryLabel: {
-    color: "#111113",
-    ...typeScale.body,
-    fontWeight: typeWeight.semibold,
-  },
-  secondaryButton: {
-    alignItems: "center",
-    backgroundColor: "#27272a",
-    borderRadius: radii.selected,
-    flex: 1,
-    justifyContent: "center",
-    minHeight: controlSize.touch,
-    paddingHorizontal: spacing.md,
-  },
-  secondaryLabel: {
-    color: "#f4f4f5",
-    ...typeScale.body,
-    fontWeight: typeWeight.semibold,
-  },
   copyButton: {
     alignSelf: "flex-start",
-    minHeight: controlSize.touch,
     justifyContent: "center",
     marginTop: spacing.xxs,
+    minHeight: controlSize.touch,
   },
   copyLabel: {
     color: "#8bb8ff",
@@ -270,5 +244,52 @@ const styles = StyleSheet.create({
     color: "#8f8f96",
     ...typeScale.code,
     fontFamily: "monospace",
+  },
+  message: {
+    color: "#b7b7bc",
+    ...typeScale.body,
+    marginTop: spacing.xs,
+  },
+  primaryButton: {
+    alignItems: "center",
+    backgroundColor: "#f4f4f5",
+    borderRadius: radii.selected,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: controlSize.touch,
+    paddingHorizontal: spacing.md,
+  },
+  primaryLabel: {
+    color: "#111113",
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  root: {
+    alignItems: "stretch",
+    backgroundColor: "#101011",
+    flex: 1,
+    justifyContent: "center",
+    paddingBottom: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: layoutSize.header,
+  },
+  secondaryButton: {
+    alignItems: "center",
+    backgroundColor: "#27272a",
+    borderRadius: radii.selected,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: controlSize.touch,
+    paddingHorizontal: spacing.md,
+  },
+  secondaryLabel: {
+    color: "#f4f4f5",
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  title: {
+    color: "#f4f4f5",
+    ...typeScale.heading,
+    fontWeight: typeWeight.semibold,
   },
 });

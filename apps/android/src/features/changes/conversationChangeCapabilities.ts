@@ -8,19 +8,19 @@ import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 /** Qualified capabilities consumed by the changes owner in conversation composition. */
 export type ConversationChangeCapabilities = {
-  onLoadTurnChanges:
-    | ((target: TurnChangesTarget) => Promise<readonly TurnChangedFile[]>)
+  onLoadThreadChangeDiff:
+    | ((path: string, scope?: ThreadChangeScope) => Promise<ThreadChangeDiffValue>)
     | undefined;
-  threadResourcesModel: ThreadResourcesModel | null;
-  threadResourceId: string | null;
-  threadResourceRevision: string;
   onLoadThreadResources:
     | ((
         scope?: ThreadChangeScope,
         kind?: "all" | "changes" | "attachments",
       ) => Promise<ThreadResourcesValue>)
     | undefined;
-  onLoadThreadChangeDiff:
-    | ((path: string, scope?: ThreadChangeScope) => Promise<ThreadChangeDiffValue>)
+  onLoadTurnChanges:
+    | ((target: TurnChangesTarget) => Promise<readonly TurnChangedFile[]>)
     | undefined;
+  threadResourceId: string | null;
+  threadResourceRevision: string;
+  threadResourcesModel: ThreadResourcesModel | null;
 };

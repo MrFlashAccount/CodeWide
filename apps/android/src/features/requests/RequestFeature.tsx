@@ -13,27 +13,29 @@ import { isSafeHttpUrl } from "../../rendering/http-link";
 import { styles } from "./RequestFeature.styles";
 
 export function ApprovalPrompt({
-  request,
-  requestCount,
   embedded = false,
   onRespond,
+  request,
+  requestCount,
 }: {
+  embedded?: boolean;
+  onRespond?: (request: PendingServerRequest, result: unknown) => Promise<void>;
   request: PendingServerRequest;
   requestCount: number;
-  embedded?: boolean;
-  onRespond?(request: PendingServerRequest, result: unknown): Promise<void>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const respond = async (result: unknown) => {
-    if (onRespond === undefined) return;
+    if (onRespond === undefined) {
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       await onRespond(request, result);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not resolve request");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not resolve request");
     }
     setSubmitting(false);
   };
@@ -69,20 +71,24 @@ export function ApprovalPrompt({
       const content = Object.fromEntries(
         elicitationFields.map((field) => {
           const raw = answers[field.id] ?? field.defaultValue;
-          if (field.required && raw.trim() === "") throw new Error(`${field.label} is required`);
+          if (field.required && raw.trim() === "") {
+            throw new Error(`${field.label} is required`);
+          }
           return [field.id, parseElicitationValue(field.type, raw)];
         }),
       );
-      void respond({ action: "accept", content, _meta: null });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Invalid form value");
+      respond({ _meta: null, action: "accept", content }).catch((error: unknown) => {
+        setError(error instanceof Error ? error.message : "Could not resolve request");
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Invalid form value");
     }
   };
   return (
     <View style={[styles.approvalCard, embedded && styles.approvalInline]}>
       <View style={styles.approvalTitleRow}>
-        <Ionicons name="shield-checkmark-outline" size={iconSize.action} color={colors.amber} />
-        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.approvalTitle}>
+        <Ionicons color={colors.amber} name="shield-checkmark-outline" size={iconSize.action} />
+        <Text ellipsizeMode="tail" numberOfLines={1} style={styles.approvalTitle}>
           {approvalTitle(method)}
         </Text>
         {requestCount > 1 && <Text style={styles.approvalQueueCount}>1/{requestCount}</Text>}
@@ -99,19 +105,19 @@ export function ApprovalPrompt({
         </Text>
       )}
       {command !== null && (
-        <Text selectable numberOfLines={2} style={styles.approvalCommand}>
+        <Text numberOfLines={2} selectable style={styles.approvalCommand}>
           {command}
         </Text>
       )}
       {cwd !== null && (
-        <Text selectable numberOfLines={1} style={styles.approvalCwd}>
+        <Text numberOfLines={1} selectable style={styles.approvalCwd}>
           ⌁ {basename(cwd)}
         </Text>
       )}
       <RequestFields
-        questions={questions}
-        elicitationFields={elicitationFields}
         answers={answers}
+        elicitationFields={elicitationFields}
+        questions={questions}
         setAnswers={setAnswers}
       />
       {elicitationUrl !== null && (
@@ -123,25 +129,33 @@ export function ApprovalPrompt({
       )}
       {error !== null && <Text style={styles.errorText}>{error}</Text>}
       <RequestResponseActions
-        method={method}
-        params={params}
-        waiting={waiting}
-        questions={questions}
         answers={answers}
         elicitationFields={elicitationFields}
-        elicitationUrl={elicitationUrl}
         elicitationMode={elicitationMode}
+        elicitationUrl={elicitationUrl}
+        method={method}
+        params={params}
+        questions={questions}
         respond={respond}
         submitElicitation={submitElicitation}
+        waiting={waiting}
       />
     </View>
   );
 }
 
 function approvalTitle(method: string): string {
-  if (method === "item/commandExecution/requestApproval") return "Command approval";
-  if (method === "item/fileChange/requestApproval") return "File change approval";
-  if (method === "item/tool/requestUserInput") return "Codex needs input";
-  if (method === "item/permissions/requestApproval") return "Additional permissions";
+  if (method === "item/commandExecution/requestApproval") {
+    return "Command approval";
+  }
+  if (method === "item/fileChange/requestApproval") {
+    return "File change approval";
+  }
+  if (method === "item/tool/requestUserInput") {
+    return "Codex needs input";
+  }
+  if (method === "item/permissions/requestApproval") {
+    return "Additional permissions";
+  }
   return "External tool request";
 }

@@ -33,8 +33,6 @@ export default function V1NewServerRoute(): React.JSX.Element {
       initialCode={routeSession?.initialCode ?? null}
       localError={resources.runtime.error}
       localReady={resources.runtime.ready && resources.runtime.error === null}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={close}
       onRetryStartup={retryStartup}
       onSave={resources.connectionActions.saveConnection}

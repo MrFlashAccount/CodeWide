@@ -1,7 +1,7 @@
 export type ProjectionAcknowledgement = {
-  recovery: boolean;
+  acknowledge: () => void;
   checkpoint: Promise<void>;
-  acknowledge(): void;
+  recovery: boolean;
 };
 
 /**
@@ -20,14 +20,18 @@ export class OrderedProjectionAcknowledger {
 
   enqueue(work: ProjectionAcknowledgement): void {
     this.#tail = this.#tail.then(async () => {
-      if (this.#blocked && !work.recovery) return;
+      if (this.#blocked && !work.recovery) {
+        return;
+      }
       try {
         await work.checkpoint;
         work.acknowledge();
-        if (work.recovery) this.#blocked = false;
-      } catch (cause) {
+        if (work.recovery) {
+          this.#blocked = false;
+        }
+      } catch (error) {
         this.#blocked = true;
-        this.#onFailure(cause);
+        this.#onFailure(error);
       }
     });
   }

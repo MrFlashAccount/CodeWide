@@ -2,63 +2,61 @@ import type { Dispatch, SetStateAction } from "react";
 import { startTransition } from "react";
 import type { ThreadChatWindowRequest } from "../../data/thread-chat-model";
 import { recordThreadNavigationVisualEvent } from "../../data/thread-navigation-metrics";
-import { useThreadChatWindow } from "../../data/use-thread-chat-window";
-import { useThreadHistoryCursor } from "../../data/use-thread-history";
-import { useThreadUiState } from "../../data/use-thread-ui-state";
-import { threadHistoryResourceKey } from "../../data/workspace-resource-keys";
+import type { useThreadChatWindow } from "../../data/use-thread-chat-window";
+import type { useThreadHistoryCursor } from "../../data/use-thread-history";
+import type { useThreadUiState } from "../../data/use-thread-ui-state";
+import type { threadHistoryResourceKey } from "../../data/workspace-resource-keys";
 import { CommitOnChangeProbe } from "../../ui/CommitProbe";
-import { SearchConversationWindow } from "../search/search-conversation-window";
+import type { SearchConversationWindow } from "../search/search-conversation-window";
 import type {
   ConversationDestinationBaseProps,
   ConversationDetailResources,
 } from "./conversationCapabilities";
-import { useMainConversationHistory } from "./mainConversationHistory";
+import type { useMainConversationHistory } from "./mainConversationHistory";
 
 /** Publishes cached conversation content and commit markers while history hydrates progressively. */
 export function renderMainConversationPublication({
-  navigationKey,
-  connectionId,
-  threadId,
+  chatDatabase,
   chatSnapshot,
   chatWindow,
   chatWindowRequest,
-  historyResourceRaw,
-  chatDatabase,
-  conversation,
-  searchWindow,
-  history,
-  searchState,
   composerState,
-  isSelectedSearchWindow,
-  setHistoryAnchorTurnId,
+  connectionId,
+  conversation,
+  history,
   historyModel,
   historyResourceId,
+  historyResourceRaw,
+  isSelectedSearchWindow,
+  navigationKey,
   resources,
+  searchState,
+  searchWindow,
+  setHistoryAnchorTurnId,
+  threadId,
 }: {
-  navigationKey: ConversationDestinationBaseProps["navigationKey"];
-  connectionId: string;
-  threadId: string;
+  chatDatabase: NonNullable<ConversationDetailResources["threadDetails"]>;
   chatSnapshot: NonNullable<ReturnType<typeof useThreadChatWindow>>["snapshot"];
   chatWindow: NonNullable<ReturnType<typeof useThreadChatWindow>>;
   chatWindowRequest: ThreadChatWindowRequest;
-  historyResourceRaw: ReturnType<typeof useThreadHistoryCursor>;
-  chatDatabase: NonNullable<ConversationDetailResources["threadDetails"]>;
-  conversation: Omit<ConversationDestinationBaseProps, "navigationKey">;
-  searchWindow: SearchConversationWindow | null;
-  history: ReturnType<typeof useMainConversationHistory>;
-  searchState: ReturnType<SearchConversationWindow["state$"]["peek"]> | null;
   composerState: ReturnType<typeof useThreadUiState>;
-  isSelectedSearchWindow: (candidate: SearchConversationWindow) => boolean;
-  setHistoryAnchorTurnId: Dispatch<SetStateAction<string | null>>;
+  connectionId: string;
+  conversation: Omit<ConversationDestinationBaseProps, "navigationKey">;
+  history: ReturnType<typeof useMainConversationHistory>;
   historyModel: ConversationDetailResources["threadHistoryModel"];
   historyResourceId: ReturnType<typeof threadHistoryResourceKey>;
+  historyResourceRaw: ReturnType<typeof useThreadHistoryCursor>;
+  isSelectedSearchWindow: (candidate: SearchConversationWindow) => boolean;
+  navigationKey: ConversationDestinationBaseProps["navigationKey"];
   resources: ConversationDetailResources;
+  searchState: ReturnType<SearchConversationWindow["state$"]["peek"]> | null;
+  searchWindow: SearchConversationWindow | null;
+  setHistoryAnchorTurnId: Dispatch<SetStateAction<string | null>>;
+  threadId: string;
 }) {
   return (
     <>
       <CommitOnChangeProbe
-        scope={`main-conversation:${navigationKey}`}
-        revision={navigationKey}
         onCommit={() => {
           const navigationId = recordThreadNavigationVisualEvent(
             connectionId,
@@ -76,95 +74,106 @@ export function renderMainConversationPublication({
                   navigationId,
                 );
         }}
+        revision={navigationKey}
+        scope={`main-conversation:${navigationKey}`}
       />
       <CommitOnChangeProbe
-        scope={`main-window:${navigationKey}`}
-        revision={`${chatSnapshot.requestKey ?? "none"}:${chatSnapshot.status}:${chatSnapshot.layoutRevision}:${chatSnapshot.revision}:${chatWindow.turnRows.length}:${chatWindow.detailRows.length}:${chatWindow.liveRows.length}`}
         onCommit={() => {
           recordThreadNavigationVisualEvent(connectionId, threadId, "chat_window_committed", {
-            values: {
-              historyEpoch: chatSnapshot.historyEpoch,
-              residentTurnLimit: chatSnapshot.residentTurnLimit,
-              layoutRevision: chatSnapshot.layoutRevision,
-              contentRevision: chatSnapshot.revision,
-              turnRows: chatWindow.turnRows.length,
-              detailRows: chatWindow.detailRows.length,
-              liveRows: chatWindow.liveRows.length,
-            },
             tags: {
-              status: chatSnapshot.status,
-              request: chatWindowRequest.anchorTurnId === null ? "tail" : "anchor",
               history: historyResourceRaw === null ? "missing" : "resident",
+              request: chatWindowRequest.anchorTurnId === null ? "tail" : "anchor",
+              status: chatSnapshot.status,
+            },
+            values: {
+              contentRevision: chatSnapshot.revision,
+              detailRows: chatWindow.detailRows.length,
+              historyEpoch: chatSnapshot.historyEpoch,
+              layoutRevision: chatSnapshot.layoutRevision,
+              liveRows: chatWindow.liveRows.length,
+              residentTurnLimit: chatSnapshot.residentTurnLimit,
+              turnRows: chatWindow.turnRows.length,
             },
           });
         }}
+        revision={`${chatSnapshot.requestKey ?? "none"}:${chatSnapshot.status}:${String(chatSnapshot.layoutRevision)}:${String(chatSnapshot.revision)}:${String(chatWindow.turnRows.length)}:${String(chatWindow.detailRows.length)}:${String(chatWindow.liveRows.length)}`}
+        scope={`main-window:${navigationKey}`}
       />
       <CommitOnChangeProbe
-        scope={`main-presentation:${navigationKey}`}
+        onCommit={() => {
+          chatDatabase.chat.finishPresentation(connectionId, threadId);
+        }}
         revision={navigationKey}
-        onCommit={() => chatDatabase.chat.finishPresentation(connectionId, threadId)}
+        scope={`main-presentation:${navigationKey}`}
       />
       {conversation.renderContent({
-        searchWindow: searchWindow,
-        liveTextRecovery: chatSnapshot.backendRefreshing,
-        cwd: history.conversationCwd,
-        remoteThread: history.remoteThread,
-        currentUsage: history.projection.currentUsage,
-        currentOutcome: history.projection.currentOutcome,
-        remoteSealedTurns: history.projection.remoteSealedTurns,
-        remoteLiveTurns: history.projection.remoteLiveTurns,
-        timelineEntries:
-          searchState === null
-            ? history.projection.timeline
-            : (searchState.page?.turns ?? []).map((turn) => ({ kind: "turn", turn })),
-        queuedPrompts: history.projection.queuedPrompts,
         composerState: composerState,
+        currentOutcome: history.projection.currentOutcome,
+        currentUsage: history.projection.currentUsage,
+        cwd: history.conversationCwd,
+        historyActivityModel: historyModel,
+        historyActivityResourceId: historyResourceId,
         historyRestoreReady:
           searchState === null ? history.historyRestoreReady : searchState.page !== null,
-        messageListState:
-          searchState === null
-            ? history.messageListState
-            : searchState.status === "error"
-              ? {
-                  status: "error",
-                  message: searchState.message,
-                  retry: async () => await searchWindow?.retry(),
-                }
-              : searchState.page !== null
-                ? { status: "ready" }
-                : { status: "loading" },
         historyViewport:
           searchWindow === null
             ? history.historyViewport
             : {
-                readStatus: () =>
-                  searchWindow.state$.peek().status === "loading" ? "loading-history" : "ready",
                 completeTurnHeaders: false,
                 containsBeginning: false,
                 containsLatest: false,
-                loadOlder: async () => await searchWindow.loadRange("older"),
-                loadNewer: async () => await searchWindow.loadRange("newer"),
                 loadLatest: async () => {
                   searchWindow.cancelViewportFill();
                   await history.historyViewport.loadLatest();
-                  if (!isSelectedSearchWindow(searchWindow)) return;
+                  if (!isSelectedSearchWindow(searchWindow)) {
+                    return;
+                  }
                   startTransition(() => {
                     setHistoryAnchorTurnId(null);
                     conversation.onExitSearchHistory?.();
                   });
                 },
-                reportViewport: async (viewportHeight, contentHeight) =>
-                  await searchWindow.reportViewport(viewportHeight, contentHeight),
+                loadNewer: async () => {
+                  await searchWindow.loadRange("newer");
+                },
+                loadOlder: async () => {
+                  await searchWindow.loadRange("older");
+                },
+                readStatus: () =>
+                  searchWindow.state$.peek().status === "loading" ? "loading-history" : "ready",
+                reportViewport: async (viewportHeight, contentHeight) => {
+                  await searchWindow.reportViewport(viewportHeight, contentHeight);
+                },
                 trimAfterGesture: async () => {},
               },
-        historyActivityModel: historyModel,
-        historyActivityResourceId: historyResourceId,
-        threadChatModel: chatDatabase.chat,
+        liveTextRecovery: chatSnapshot.backendRefreshing,
+        messageListState:
+          searchState === null
+            ? history.messageListState
+            : searchState.status === "error"
+              ? {
+                  message: searchState.message,
+                  retry: async () => searchWindow?.retry(),
+                  status: "error",
+                }
+              : searchState.page !== null
+                ? { status: "ready" }
+                : { status: "loading" },
         onLoadTurnItems: async (turnId) => {
           const items = await resources.loadTurnItems(connectionId, threadId, turnId);
           searchWindow?.replaceItems(turnId, items);
         },
+        queuedPrompts: history.projection.queuedPrompts,
+        remoteLiveTurns: history.projection.remoteLiveTurns,
+        remoteSealedTurns: history.projection.remoteSealedTurns,
+        remoteThread: history.remoteThread,
+        searchWindow: searchWindow,
         subagentSummaryDatabase: resources.threadSummaryDatabase,
+        threadChatModel: chatDatabase.chat,
+        timelineEntries:
+          searchState === null
+            ? history.projection.timeline
+            : (searchState.page?.turns ?? []).map((turn) => ({ kind: "turn", turn })),
       })}
     </>
   );

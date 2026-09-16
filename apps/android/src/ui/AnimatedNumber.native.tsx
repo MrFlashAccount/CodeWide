@@ -14,51 +14,51 @@ import { AppText as Text, productFontStyle } from "./Typography";
 export { compactNumberFormat, integerNumberFormat, usdNumberFormat } from "./number-format";
 
 type NativeAnimatedNumberProps = {
-  value: number;
-  formatStyle: "decimal" | "compact" | "currency";
-  currency?: string;
-  minimumFractionDigits: number;
-  maximumFractionDigits: number;
-  prefix: string;
-  suffix: string;
-  color?: ColorValue;
-  fontSize: number;
-  lineHeight: number;
-  fontFamily?: string;
-  fontWeight?: string;
-  textAlign?: "auto" | "left" | "right" | "center" | "justify";
   animate: boolean;
+  color?: ColorValue;
+  currency?: string;
+  fontFamily?: string;
+  fontSize: number;
+  fontWeight?: string;
+  formatStyle: "decimal" | "compact" | "currency";
+  lineHeight: number;
+  maximumFractionDigits: number;
+  minimumFractionDigits: number;
   numberAccessibilityLabel?: string;
   pointerEvents?: "auto" | "none" | "box-none" | "box-only";
+  prefix: string;
   style: StyleProp<ViewStyle>;
+  suffix: string;
+  textAlign?: "auto" | "left" | "right" | "center" | "justify";
+  value: number;
 };
 
 const NativeAnimatedNumber =
   requireNativeComponent<NativeAnimatedNumberProps>("CodexAnimatedNumber");
 
 export function AnimatedNumber({
-  value,
+  accessibilityLabel,
+  animate = true,
+  containerStyle,
   format,
   prefix = "",
-  suffix = "",
   style,
-  containerStyle,
-  accessibilityLabel,
+  suffix = "",
   testID,
-  animate = true,
+  value,
 }: {
-  value: number;
+  accessibilityLabel?: string;
+  animate?: boolean;
+  containerStyle?: StyleProp<ViewStyle>;
   format?: Intl.NumberFormatOptions;
   prefix?: string;
-  suffix?: string;
   style?: StyleProp<TextStyle>;
-  containerStyle?: StyleProp<ViewStyle>;
-  accessibilityLabel?: string;
+  suffix?: string;
   testID?: string;
-  animate?: boolean;
+  value: number;
 }) {
   const safeValue = Number.isFinite(value) ? value : 0;
-  const resolvedTextStyle = StyleSheet.flatten([style, productFontStyle(style)]) ?? {};
+  const resolvedTextStyle = StyleSheet.flatten([style, productFontStyle(style)]);
   const renderedText = `${prefix}${formatNumber(safeValue, format)}${suffix}`;
   const fontSize = typeof resolvedTextStyle.fontSize === "number" ? resolvedTextStyle.fontSize : 14;
   const lineHeight =
@@ -79,11 +79,11 @@ export function AnimatedNumber({
 
   return (
     <View
-      accessible
-      accessibilityRole="text"
       accessibilityLabel={accessibilityLabel ?? renderedText}
-      testID={testID}
+      accessibilityRole="text"
+      accessible
       style={[styles.container, containerStyle]}
+      testID={testID}
     >
       <Text
         accessible={false}
@@ -93,11 +93,11 @@ export function AnimatedNumber({
         {renderedText}
       </Text>
       <NativeAnimatedNumber
-        value={safeValue}
         formatStyle={formatStyle}
+        value={safeValue}
         {...(format?.currency === undefined ? {} : { currency: format.currency })}
-        minimumFractionDigits={minimumFractionDigits}
         maximumFractionDigits={maximumFractionDigits}
+        minimumFractionDigits={minimumFractionDigits}
         prefix={prefix}
         suffix={suffix}
         {...(color === undefined ? {} : { color })}
@@ -123,8 +123,8 @@ export function AnimatedNumber({
 
 const styles = StyleSheet.create({
   container: {
-    flexShrink: 0,
     alignSelf: "flex-start",
+    flexShrink: 0,
     justifyContent: "center",
   },
   measure: { opacity: 0 },

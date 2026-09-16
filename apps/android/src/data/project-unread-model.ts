@@ -5,7 +5,7 @@ import type { StoredThreadSummary } from "./thread-summary-types";
 
 type SummaryChange =
   | { type: "insert" | "update"; value: StoredThreadSummary }
-  | { type: "delete"; key: string };
+  | { key: string; type: "delete" };
 
 /** A project belongs to a server and an exact directory, never just a display name. */
 export function projectScopeKey(connectionId: string, cwd: string): string {
@@ -33,7 +33,9 @@ export class ProjectUnreadModel {
       row.deleteCommandId === null
     ) {
       const project = projectScopeKey(row.connectionId, row.cwd);
-      if (this.#threads.get(key) === project) return false;
+      if (this.#threads.get(key) === project) {
+        return false;
+      }
       this.#threads.set(key, project);
       return true;
     }
@@ -43,31 +45,42 @@ export class ProjectUnreadModel {
   #publish(): void {
     const projects = [...new Set(this.#threads.values())].sort();
     const previous = this.projects$.peek();
-    if (projects.length !== previous.length || projects.some((key, i) => key !== previous[i]))
+    if (projects.length !== previous.length || projects.some((key, i) => key !== previous[i])) {
       this.projects$.set(projects);
+    }
   }
 
   /** Hydrates unread membership once; events received during the read take precedence. */
-  resource(loader: () => Promise<readonly StoredThreadSummary[]>): Promise<void> {
-    if (this.#load !== null) return this.#load;
+  async resource(loader: () => Promise<readonly StoredThreadSummary[]>): Promise<void> {
+    if (this.#load !== null) {
+      return this.#load;
+    }
     this.#load = loader()
       .then((rows) => {
-        if (this.#closed) return;
-        for (const row of rows) this.#apply({ type: "insert", value: row });
-        for (const change of this.#pending?.values() ?? []) this.#apply(change);
+        if (this.#closed) {
+          return;
+        }
+        for (const row of rows) {
+          this.#apply({ type: "insert", value: row });
+        }
+        for (const change of this.#pending?.values() ?? []) {
+          this.#apply(change);
+        }
         this.#pending = null;
         this.#publish();
       })
-      .catch((cause: unknown) => {
+      .catch((error: unknown) => {
         this.#load = null;
-        throw cause;
+        throw error;
       });
     return this.#load;
   }
 
   /** Maintains unread membership even for threads outside every resident list window. */
   publish(changes: readonly SummaryChange[]): void {
-    if (this.#closed) return;
+    if (this.#closed) {
+      return;
+    }
     let changed = false;
     for (const change of changes) {
       const key =
@@ -77,7 +90,9 @@ export class ProjectUnreadModel {
       this.#pending?.set(key, change);
       changed = this.#apply(change) || changed;
     }
-    if (changed) this.#publish();
+    if (changed) {
+      this.#publish();
+    }
   }
 
   close(): void {

@@ -5,25 +5,25 @@ import { projectedTurnMetadata } from "@codewide/sync-client";
 import { isThreadHistorySourceWitness } from "./thread-history-source-witness";
 
 type ThreadSyncHistory = {
-  kind: "current" | "delta" | "reset";
-  headTurnId: string | null;
-  turns: Turn[];
   hasMore: boolean;
+  headTurnId: string | null;
+  kind: "current" | "delta" | "reset";
   olderCursor: string | null;
   sourceWitness?: string;
+  turns: Turn[];
 };
 
 export type ThreadSyncResponse = {
-  readModelVersion: 3;
-  throughCursor: number;
-  thread: Thread;
-  history: ThreadSyncHistory;
   activeTurn: Turn | null;
+  history: ThreadSyncHistory;
+  readModelVersion: 3;
+  thread: Thread;
+  throughCursor: number;
 };
 
 export type MaterializedThreadSync = {
-  thread: Thread;
   historyCursor: string | null | undefined;
+  thread: Thread;
 };
 
 /** Carries source reset and cursor state across all pages of one catch-up. */
@@ -58,18 +58,18 @@ export class ThreadSyncCatchUp {
 }
 
 export type ThreadContentReference = {
-  readonly id: string;
   readonly byteLength: number;
   readonly contentType: string;
+  readonly id: string;
 };
 
 // Recovery and bounded projections can retain turn metadata after the item
 // payload was evicted. This compatibility shape is valid only inside
 // Conversation synchronization.
 type MetadataOnlyTurnEnvelope = Omit<Turn, "items" | "itemsView"> & {
+  codewideContent?: unknown;
   items?: undefined;
   itemsView?: Turn["itemsView"];
-  codewideContent?: unknown;
 };
 
 export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
@@ -83,7 +83,7 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
   const turns = parseHistoryTurns(history.turns);
   const activeTurn = parseActiveTurn(response.activeTurn);
   if (
-    response?.readModelVersion !== 3 ||
+    response.readModelVersion !== 3 ||
     typeof response.throughCursor !== "number" ||
     !Number.isSafeInteger(response.throughCursor) ||
     response.throughCursor < 0 ||
@@ -99,24 +99,24 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
     throw new Error("Companion thread sync returned an invalid response");
   }
   return {
-    readModelVersion: 3,
-    throughCursor: response.throughCursor,
-    thread,
+    activeTurn,
     history: {
-      kind,
-      headTurnId: history.headTurnId,
-      turns,
       hasMore: history.hasMore,
+      headTurnId: history.headTurnId,
+      kind,
       olderCursor: history.olderCursor,
+      turns,
       ...(history.sourceWitness === undefined ? {} : { sourceWitness: history.sourceWitness }),
     },
-    activeTurn,
+    readModelVersion: 3,
+    thread,
+    throughCursor: response.throughCursor,
   };
 }
 
 type ThreadSyncLaneState<Result> = {
-  readonly promise: Promise<Result>;
   followUp: Promise<Result> | null;
+  readonly promise: Promise<Result>;
 };
 
 /** Serializes per-thread snapshots without extending a reader's completion to later updates. */
@@ -124,6 +124,8 @@ export class ThreadSyncLane<Result> {
   readonly #states = new Map<string, ThreadSyncLaneState<Result>>();
 
   /** Invalidation/foreground callers need a new read; ordinary readers can share the current one. */
+  // WHY: Coalesced readers must receive the exact same Promise; async would wrap the lane Promise.
+  // oxlint-disable-next-line typescript/promise-function-async
   run(
     key: string,
     synchronize: () => Promise<Result>,
@@ -131,8 +133,12 @@ export class ThreadSyncLane<Result> {
   ): Promise<Result> {
     const existing = this.#states.get(key);
     if (existing !== undefined) {
-      if (freshness === "inFlight") return existing.promise;
+      if (freshness === "inFlight") {
+        return existing.promise;
+      }
       if (existing.followUp === null) {
+        // WHY: Both settlement branches must return the next lane Promise without wrapping it.
+        // oxlint-disable-next-line typescript/promise-function-async
         const startNext = (): Promise<Result> => this.run(key, synchronize);
         // Both outcomes release this lane. A failed old connection must not
         // suppress a fresh read requested after foregrounding/reconnection.
@@ -140,10 +146,12 @@ export class ThreadSyncLane<Result> {
       }
       return existing.followUp;
     }
-    const operation = (async (): Promise<Result> => await synchronize())().finally(() => {
-      if (this.#states.get(key) === state) this.#states.delete(key);
+    const operation = (async (): Promise<Result> => synchronize())().finally(() => {
+      if (this.#states.get(key) === state) {
+        this.#states.delete(key);
+      }
     });
-    const state: ThreadSyncLaneState<Result> = { promise: operation, followUp: null };
+    const state: ThreadSyncLaneState<Result> = { followUp: null, promise: operation };
     this.#states.set(key, state);
     return operation;
   }
@@ -154,31 +162,29 @@ export function materializeThreadSync(
   response: ThreadSyncResponse,
   currentHistoryCursor: string | null | undefined,
 ): MaterializedThreadSync {
-  if (response.readModelVersion !== 3) {
-    throw new Error(
-      `Unsupported companion thread read model: ${String(response.readModelVersion)}`,
-    );
-  }
-  if (!Array.isArray(response.thread.turns) || !Array.isArray(response.history.turns)) {
-    throw new Error("Companion thread sync returned an invalid turn collection");
-  }
   const sealed =
     response.history.kind === "reset"
       ? []
       : (cached?.turns ?? []).filter(({ status }) => status !== "inProgress");
   const byId = new Map<string, Turn>();
-  for (const turn of sealed) byId.set(turn.id, turn);
-  for (const turn of response.history.turns) byId.set(turn.id, turn);
+  for (const turn of sealed) {
+    byId.set(turn.id, turn);
+  }
+  for (const turn of response.history.turns) {
+    byId.set(turn.id, turn);
+  }
   const turns = [...byId.values()];
   const activeTurn = mergeActiveTurnCheckpoint(
     response.history.kind === "reset" ? null : cached,
     response.activeTurn,
   );
-  if (activeTurn !== null) turns.push(activeTurn);
+  if (activeTurn !== null) {
+    turns.push(activeTurn);
+  }
   return {
-    thread: { ...response.thread, turns },
     historyCursor:
       response.history.kind === "reset" ? response.history.olderCursor : currentHistoryCursor,
+    thread: { ...response.thread, turns },
   };
 }
 
@@ -188,18 +194,26 @@ export async function hydrateThreadSyncActiveText(
   read: (reference: ThreadContentReference) => Promise<string>,
 ): Promise<ThreadSyncResponse> {
   const activeTurn = response.activeTurn;
-  if (activeTurn === null) return response;
+  if (activeTurn === null) {
+    return response;
+  }
   let changed = false;
   const items = await Promise.all(
     activeTurn.items.map(async (item) => {
-      if (item.type !== "agentMessage") return item;
+      if (item.type !== "agentMessage") {
+        return item;
+      }
       const reference = projectedContentField(item, "/text");
-      if (reference === null) return item;
+      if (reference === null) {
+        return item;
+      }
       const text = await read(reference);
       changed = changed || text !== item.text;
       return text === item.text ? item : { ...item, text };
     }),
   );
+  // WHY: Each async item projection may flip this flag after an awaited content read; TypeScript keeps its pre-callback literal narrowing.
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   return changed ? { ...response, activeTurn: { ...activeTurn, items } } : response;
 }
 
@@ -208,7 +222,9 @@ export async function hydrateThreadSyncActiveText(
  * for richer item patches already committed from the durable live stream.
  */
 function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | null): Turn | null {
-  if (checkpoint === null) return null;
+  if (checkpoint === null) {
+    return null;
+  }
   const previous = cached?.turns.find(
     (turn) => turn.id === checkpoint.id && turn.status === "inProgress",
   );
@@ -223,7 +239,9 @@ function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | nul
   const checkpointItems = new Map(checkpoint.items.map((item) => [item.id, item]));
   const items = previous.items.map((item) => {
     const current = checkpointItems.get(item.id);
-    if (current === undefined) return item;
+    if (current === undefined) {
+      return item;
+    }
     checkpointItems.delete(item.id);
     if (
       item.type === "agentMessage" &&
@@ -234,7 +252,9 @@ function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | nul
     }
     return current;
   });
-  for (const item of checkpointItems.values()) items.push(item);
+  for (const item of checkpointItems.values()) {
+    items.push(item);
+  }
 
   const previousMetadata = projectedTurnMetadata(previous);
   const checkpointMetadata = projectedTurnMetadata(checkpoint);
@@ -243,8 +263,8 @@ function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | nul
       ? {}
       : {
           codewide: {
-            ...(previousMetadata ?? {}),
-            ...(checkpointMetadata ?? {}),
+            ...previousMetadata,
+            ...checkpointMetadata,
           },
         };
 
@@ -261,7 +281,9 @@ export function assertThreadSyncReachedHead(
   response: ThreadSyncResponse,
   requestedAfterTurnId: string | null,
 ): void {
-  if (response.history.hasMore) return;
+  if (response.history.hasMore) {
+    return;
+  }
   const lastTurnId = response.history.turns.at(-1)?.id;
   const reachedTurnId =
     response.history.kind === "reset" ? (lastTurnId ?? null) : (lastTurnId ?? requestedAfterTurnId);
@@ -273,7 +295,9 @@ export function assertThreadSyncReachedHead(
 export function latestSealedTurnId(turns: readonly Turn[]): string | null {
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
-    if (turn !== undefined && isStableThreadCursorTurn(turn)) return turn.id;
+    if (turn !== undefined && isStableThreadCursorTurn(turn)) {
+      return turn.id;
+    }
   }
   return null;
 }
@@ -286,8 +310,12 @@ export function latestSealedTurnId(turns: readonly Turn[]): string | null {
  * the storage boundary; an unwitnessed live completion must still be repaired.
  */
 function isStableThreadCursorTurn(turn: Turn): boolean {
-  if (turn.status === "inProgress") return false;
-  if (turn.status !== "completed") return true;
+  if (turn.status === "inProgress") {
+    return false;
+  }
+  if (turn.status !== "completed") {
+    return true;
+  }
   return turn.items.some(
     (item) =>
       item.type === "agentMessage" && item.phase === "final_answer" && item.text.trim() !== "",
@@ -310,14 +338,14 @@ function projectedContentField(value: unknown, pointer: string): ThreadContentRe
     reference.byteLength >= 0 &&
     typeof reference.contentType === "string"
     ? {
-        id: reference.id,
         byteLength: reference.byteLength,
         contentType: reference.contentType,
+        id: reference.id,
       }
     : null;
 }
 
-function isThread(value: unknown): value is Thread {
+export function isThread(value: unknown): value is Thread {
   const thread = isRecord(value) ? value : null;
   return (
     thread !== null &&
@@ -353,16 +381,18 @@ function isContentBackedMetadataOnlyTurnEnvelope(
   value: unknown,
 ): value is MetadataOnlyTurnEnvelope & {
   codewideContent: {
-    version: 1;
     fields: Record<string, unknown>;
+    version: 1;
     whole: {
-      id: string;
       byteLength: number;
       contentType: string;
+      id: string;
     };
   };
 } {
-  if (!isMetadataOnlyTurnEnvelope(value)) return false;
+  if (!isMetadataOnlyTurnEnvelope(value)) {
+    return false;
+  }
   const content = isRecord(value.codewideContent) ? value.codewideContent : null;
   const whole = isRecord(content?.whole) ? content.whole : null;
   return (
@@ -378,8 +408,12 @@ function isContentBackedMetadataOnlyTurnEnvelope(
 }
 
 function parseActiveTurn(value: unknown): Turn | null | undefined {
-  if (value === null) return null;
-  if (isTurn(value)) return value;
+  if (value === null) {
+    return null;
+  }
+  if (isTurn(value)) {
+    return value;
+  }
   if (isContentBackedMetadataOnlyTurnEnvelope(value)) {
     return { ...value, items: [], itemsView: "notLoaded" };
   }
@@ -388,7 +422,9 @@ function parseActiveTurn(value: unknown): Turn | null | undefined {
 
 /** Validates summary/full turn envelopes shared by cursor sync and historical search. */
 export function parseHistoryTurns(value: unknown): Turn[] | null {
-  if (!Array.isArray(value)) return null;
+  if (!Array.isArray(value)) {
+    return null;
+  }
   const turns: Turn[] = [];
   for (const turn of value) {
     if (isTurn(turn)) {

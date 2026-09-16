@@ -11,79 +11,17 @@ import {
 } from "../../theme";
 
 export const styles = StyleSheet.create({
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   flex: { flex: 1 },
   headerIcon: {
-    width: touchTarget,
-    height: touchTarget,
     alignItems: "center",
-    justifyContent: "center",
     borderRadius: radii.large,
-  },
-  sheetTitle: {
-    minWidth: 0,
-    flexShrink: 1,
-    color: colors.text,
-    ...typeScale.heading,
-  },
-  menuTitleRow: {
-    minHeight: touchTarget,
-    marginBottom: spacing.xs,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.compact,
-  },
-  queueRow: {
-    marginTop: spacing.xs,
-    padding: spacing.xs,
-    gap: spacing.compact,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.medium,
-  },
-  queueCompactRow: {
-    minHeight: layoutSize.row,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-  },
-  queueDragHandle: {
-    width: 34,
     height: touchTarget,
-    alignItems: "center",
     justifyContent: "center",
-  },
-  queueBody: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: spacing.xxs,
-  },
-  queueText: {
-    color: colors.text,
-    ...typeScale.body,
-  },
-  queueMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    minWidth: 0,
-  },
-  queueTime: {
-    color: colors.textDim,
-    ...typeScale.label,
-  },
-  queueSteerButton: {
-    minHeight: controlSize.compact,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-    paddingHorizontal: spacing.inputInset,
-    borderRadius: radii.medium,
-    backgroundColor: colors.accent,
-  },
-  queueSteerLabel: {
-    color: colors.onPrimary,
-    ...typeScale.body,
-    fontWeight: typeWeight.semibold,
+    width: touchTarget,
   },
   menuNotice: {
     color: colors.textMuted,
@@ -95,8 +33,70 @@ export const styles = StyleSheet.create({
     minHeight: 0,
   },
   menuScrollContent: { paddingBottom: spacing.sm },
-  errorText: {
-    color: colors.red,
+  menuTitleRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.compact,
+    marginBottom: spacing.xs,
+    minHeight: touchTarget,
+  },
+  queueBody: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: spacing.xxs,
+  },
+  queueCompactRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xxs,
+    minHeight: layoutSize.row,
+  },
+  queueDragHandle: {
+    alignItems: "center",
+    height: touchTarget,
+    justifyContent: "center",
+    width: 34,
+  },
+  queueMetaRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    minWidth: 0,
+  },
+  queueRow: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    gap: spacing.compact,
+    marginTop: spacing.xs,
+    padding: spacing.xs,
+  },
+  queueSteerButton: {
+    alignItems: "center",
+    backgroundColor: colors.accent,
+    borderRadius: radii.medium,
+    flexDirection: "row",
+    gap: spacing.xxs,
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.inputInset,
+  },
+  queueSteerLabel: {
+    color: colors.onPrimary,
     ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  queueText: {
+    color: colors.text,
+    ...typeScale.body,
+  },
+  queueTime: {
+    color: colors.textDim,
+    ...typeScale.label,
+  },
+  sheetTitle: {
+    color: colors.text,
+    flexShrink: 1,
+    minWidth: 0,
+    ...typeScale.heading,
   },
 });

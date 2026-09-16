@@ -52,8 +52,6 @@ export function ThreadAttachmentsRoute({
     <AppSheet
       contentProps={ATTACHMENTS_SHEET_PROPS}
       isOpen
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -112,15 +110,9 @@ function AttachmentRouteList({
       <LegendList
         contentContainerStyle={styles.threadResourcesContent}
         data={attachments}
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         getFixedItemSize={() => listRowHeight.double}
         keyboardShouldPersistTaps="handled"
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         keyExtractor={(attachment) => attachment.key}
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         renderItem={({ index, item }) => (
           <AttachmentRouteRow
             attachment={item}
@@ -151,8 +143,6 @@ function AttachmentRouteRow({
     <View style={styles.threadAttachmentCell}>
       <ThreadAttachmentResourceRow
         attachment={attachment}
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onPress={() => {
           onOpenAttachment(attachment);
         }}

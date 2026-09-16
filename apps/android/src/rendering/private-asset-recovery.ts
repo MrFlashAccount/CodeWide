@@ -1,24 +1,24 @@
 /** Retries expired authorization once and optionally restores missing immutable content once. */
 export async function recoverPrivateAsset(
-  materialize: (refresh: boolean) => Promise<{ uri: string; headers: Record<string, string> }>,
+  materialize: (refresh: boolean) => Promise<{ headers: Record<string, string>; uri: string }>,
   recoverMissing: (() => Promise<void>) | null,
-): Promise<{ uri: string; headers: Record<string, string> }> {
+): Promise<{ headers: Record<string, string>; uri: string }> {
   let refreshedAuthorization = false;
   let recoveredMissingContent = false;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await materialize(refreshedAuthorization);
-    } catch (cause) {
-      if (!refreshedAuthorization && isAuthorizationFailure(cause)) {
+    } catch (error) {
+      if (!refreshedAuthorization && isAuthorizationFailure(error)) {
         refreshedAuthorization = true;
         continue;
       }
-      if (!recoveredMissingContent && recoverMissing !== null && isMissingContent(cause)) {
+      if (!recoveredMissingContent && recoverMissing !== null && isMissingContent(error)) {
         recoveredMissingContent = true;
         await recoverMissing();
         continue;
       }
-      throw cause;
+      throw error;
     }
   }
   throw new Error("Private asset could not be materialized");

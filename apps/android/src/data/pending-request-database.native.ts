@@ -1,3 +1,4 @@
+import { appLogger } from "../observability/logger";
 import type { PendingRequestDatabase } from "./pending-request-database-contract";
 
 export type { PendingRequestDatabase } from "./pending-request-database-contract";
@@ -16,92 +17,102 @@ const USER_SERVER_REQUESTS = new Set([
 ]);
 
 export function createPendingRequestDatabase(): PendingRequestDatabase {
-  let source = new Map<string, PendingServerRequest>();
   let disposed = false;
   const model = createPersistentCollectionModel<PendingServerRequest, string>({
-    id: "pending-server-requests-v1",
-    tableName: "codewide_pending_requests",
-    schemaVersion: 1,
+    columns: [
+      { column: "connection_id", property: "connectionId", type: "TEXT" },
+      { column: "request_key", property: "requestKey", type: "TEXT" },
+      { column: "created_at", property: "createdAt", type: "REAL" },
+    ],
     database: getUiCacheSqliteDatabase(),
     getKey: (row) => rowKey(row.connectionId, row.requestKey),
-    columns: [
-      { property: "connectionId", column: "connection_id", type: "TEXT" },
-      { property: "requestKey", column: "request_key", type: "TEXT" },
-      { property: "createdAt", column: "created_at", type: "REAL" },
-    ],
+    id: "pending-server-requests-v1",
     indexes: [["connectionId"]],
     legacyCollectionId: "pending-server-requests-v1",
-    onResidentRows: (rows) => {
-      source = new Map(rows.map((row) => [rowKey(row.connectionId, row.requestKey), row]));
-    },
+    schemaVersion: 1,
+    tableName: "codewide_pending_requests",
   });
   const { collection, storage } = model;
 
   const publish = (row: PendingServerRequest): void => {
-    if (disposed) return;
+    if (disposed) {
+      return;
+    }
     const key = rowKey(row.connectionId, row.requestKey);
-    const previous = source.get(key);
-    if (previous !== undefined && sameRequest(previous, row)) return;
-    source.set(key, row);
+    const previous = collection.get(key);
+    if (previous !== undefined && sameRequest(previous, row)) {
+      return;
+    }
     storage.begin();
     storage.write({ type: previous === undefined ? "insert" : "update", value: row });
-    void storage
-      .commit()
-      .catch((cause: unknown) => console.warn("Could not persist pending request", cause));
+    void storage.commit().catch((error: unknown) => {
+      appLogger.warnCaught({ error: error, event: "pending_request.persist.failed" });
+    });
   };
 
   return {
+    claim(connectionId, requestKey) {
+      const current = collection.get(rowKey(connectionId, requestKey));
+      if (current === undefined || current.state !== "pending") {
+        return false;
+      }
+      publish({ ...current, state: "resolving" });
+      return true;
+    },
+    close() {
+      disposed = true;
+      model.close();
+    },
     collection,
+    release(connectionId, requestKey) {
+      const current = collection.get(rowKey(connectionId, requestKey));
+      if (current?.state === "resolving") {
+        publish({ ...current, state: "pending" });
+      }
+    },
     replace(connectionId, requests) {
-      if (disposed) return;
+      if (disposed) {
+        return;
+      }
       const now = Date.now();
       const incoming = new Map(
         requests.flatMap((request) => {
-          if (!USER_SERVER_REQUESTS.has(request.method)) return [];
+          if (!USER_SERVER_REQUESTS.has(request.method)) {
+            return [];
+          }
           const requestKey = remoteRequestKey(request.id);
           const key = rowKey(connectionId, requestKey);
-          const previous = source.get(key);
+          const previous = collection.get(key);
           const row: PendingServerRequest = {
             connectionId,
-            requestKey,
-            requestId: request.id,
+            createdAt: previous?.createdAt ?? now,
             method: request.method,
             params: cloneProtocolValue(request.params),
+            requestId: request.id,
+            requestKey,
             state: previous?.state ?? "pending",
-            createdAt: previous?.createdAt ?? now,
           };
           return [[key, row] as const];
         }),
       );
       storage.begin();
-      for (const [key, row] of source) {
-        if (row.connectionId !== connectionId || incoming.has(key)) continue;
-        source.delete(key);
-        storage.write({ type: "delete", key });
+      for (const row of collection.toArray) {
+        const key = rowKey(row.connectionId, row.requestKey);
+        if (row.connectionId !== connectionId || incoming.has(key)) {
+          continue;
+        }
+        storage.write({ key, type: "delete" });
       }
       for (const [key, row] of incoming) {
-        const previous = source.get(key);
-        if (previous !== undefined && sameRequest(previous, row)) continue;
-        source.set(key, row);
+        const previous = collection.get(key);
+        if (previous !== undefined && sameRequest(previous, row)) {
+          continue;
+        }
         storage.write({ type: previous === undefined ? "insert" : "update", value: row });
       }
-      void storage
-        .commit()
-        .catch((cause: unknown) => console.warn("Could not reconcile pending requests", cause));
-    },
-    claim(connectionId, requestKey) {
-      const current = source.get(rowKey(connectionId, requestKey));
-      if (current === undefined || current.state !== "pending") return false;
-      publish({ ...current, state: "resolving" });
-      return true;
-    },
-    release(connectionId, requestKey) {
-      const current = source.get(rowKey(connectionId, requestKey));
-      if (current?.state === "resolving") publish({ ...current, state: "pending" });
-    },
-    close() {
-      disposed = true;
-      model.close();
+      void storage.commit().catch((error: unknown) => {
+        appLogger.warnCaught({ error: error, event: "pending_request.reconcile.failed" });
+      });
     },
   };
 }

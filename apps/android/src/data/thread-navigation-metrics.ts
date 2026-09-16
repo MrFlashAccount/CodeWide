@@ -16,59 +16,59 @@ export type ThreadNavigationStage =
   | "superseded";
 
 export type ThreadNavigationFrameProfile = {
-  durationMs: number;
-  renderedFrames: number;
   averageFrameMs: number;
-  p95FrameMs: number;
-  maxFrameMs: number;
-  jankFrames: number;
   droppedFrameEstimate: number;
+  durationMs: number;
   hermesProfile: {
-    format: "hermes-sampling-profile";
-    sizeBytes: number;
     content: string | null;
     error: string | null;
+    format: "hermes-sampling-profile";
+    sizeBytes: number;
   } | null;
+  jankFrames: number;
+  maxFrameMs: number;
+  p95FrameMs: number;
+  renderedFrames: number;
 };
 
 export type ThreadNavigationProfile = {
-  id: string;
-  connectionId: string;
-  threadId: string;
-  trigger: string;
-  status: "active" | "completed" | "superseded";
-  startedAtMs: number;
-  totalMs: number;
-  currentStage: ThreadNavigationStage;
-  bottleneckStage: ThreadNavigationStage | null;
   bottleneckMs: number;
-  rowCommits: number;
-  uniqueRowsCommitted: number;
+  bottleneckStage: ThreadNavigationStage | null;
+  connectionId: string;
+  currentStage: ThreadNavigationStage;
+  frames: ThreadNavigationFrameProfile | null;
+  id: string;
   measures: readonly ThreadNavigationMeasure[];
-  visualEvents: readonly ThreadNavigationVisualEvent[];
+  rowCommits: number;
   stages: readonly {
-    stage: ThreadNavigationStage;
     elapsedMs: number;
     sincePreviousMs: number;
-    values: Readonly<Record<string, number>>;
+    stage: ThreadNavigationStage;
     tags: Readonly<Record<string, string>>;
+    values: Readonly<Record<string, number>>;
   }[];
-  frames: ThreadNavigationFrameProfile | null;
+  startedAtMs: number;
+  status: "active" | "completed" | "superseded";
+  threadId: string;
+  totalMs: number;
+  trigger: string;
+  uniqueRowsCommitted: number;
+  visualEvents: readonly ThreadNavigationVisualEvent[];
 };
 
 type ThreadNavigationVisualEvent = {
-  name: string;
   elapsedMs: number;
-  values: Readonly<Record<string, number>>;
+  name: string;
   tags: Readonly<Record<string, string>>;
+  values: Readonly<Record<string, number>>;
 };
 
 type ThreadNavigationMeasure = {
-  name: string;
   durationMs: number;
   elapsedMs: number;
-  values: Readonly<Record<string, number>>;
+  name: string;
   tags: Readonly<Record<string, string>>;
+  values: Readonly<Record<string, number>>;
 };
 
 export type ThreadNavigationProfileSnapshot = {
@@ -77,41 +77,41 @@ export type ThreadNavigationProfileSnapshot = {
 };
 
 type ThreadNavigation = {
-  id: string;
+  committedRowKeys: Set<string>;
   connectionId: string;
+  id: string;
+  lastStageAtMs: number;
+  measures: ThreadNavigationMeasure[];
+  rowCommits: number;
+  stageRecords: ThreadNavigationProfile["stages"];
+  stages: Set<ThreadNavigationStage>;
+  startedAtMs: number;
   threadId: string;
   trigger: string;
-  startedAtMs: number;
-  lastStageAtMs: number;
-  stages: Set<ThreadNavigationStage>;
-  stageRecords: ThreadNavigationProfile["stages"];
-  rowCommits: number;
-  committedRowKeys: Set<string>;
-  measures: ThreadNavigationMeasure[];
   visualEvents: ThreadNavigationVisualEvent[];
 };
 
 type StageDetails = {
-  values?: Record<string, number>;
   tags?: Record<string, string>;
+  values?: Record<string, number>;
 };
 
 const STAGE_TIMINGS: Partial<Record<ThreadNavigationStage, TimingMetric>> = {
-  selection_next_frame: "thread_navigation_selection_ms",
   hydration_result: "thread_navigation_hydration_result_ms",
+  next_frame: "thread_navigation_total_ms",
   scope_commit: "thread_navigation_scope_commit_ms",
-  timeline_model_ready: "thread_navigation_timeline_model_ms",
+  selection_next_frame: "thread_navigation_selection_ms",
   timeline_first_draw: "thread_navigation_first_draw_ms",
+  timeline_model_ready: "thread_navigation_timeline_model_ms",
   timeline_positioned: "thread_navigation_positioned_ms",
   visible_commit: "thread_navigation_visible_commit_ms",
-  next_frame: "thread_navigation_total_ms",
 };
 
 let activeNavigation: ThreadNavigation | null = null;
-let recentNavigation: { navigation: ThreadNavigation; expiresAtMs: number } | null = null;
+let recentNavigation: { expiresAtMs: number; navigation: ThreadNavigation } | null = null;
 let profileSnapshot: ThreadNavigationProfileSnapshot = { active: null, last: null };
 const profileListeners = new Set<() => void>();
-const POST_NAVIGATION_OBSERVATION_MS = 5_000;
+const POST_NAVIGATION_OBSERVATION_MS = 5000;
 const MAX_VISUAL_EVENTS = 256;
 
 export function beginThreadNavigation(
@@ -119,20 +119,22 @@ export function beginThreadNavigation(
   threadId: string,
   trigger = "thread_list",
 ): string {
-  if (activeNavigation !== null) emitStage(activeNavigation, "superseded", {}, true);
+  if (activeNavigation !== null) {
+    emitStage(activeNavigation, "superseded", {}, true);
+  }
   const startedAtMs = performance.now();
   activeNavigation = {
-    id: `thread-navigation-${createId()}`,
+    committedRowKeys: new Set(),
     connectionId,
+    id: `thread-navigation-${createId()}`,
+    lastStageAtMs: startedAtMs,
+    measures: [],
+    rowCommits: 0,
+    stageRecords: [],
+    stages: new Set(),
+    startedAtMs,
     threadId,
     trigger,
-    startedAtMs,
-    lastStageAtMs: startedAtMs,
-    stages: new Set(),
-    stageRecords: [],
-    rowCommits: 0,
-    committedRowKeys: new Set(),
-    measures: [],
     visualEvents: [],
   };
   recordFrameContext(connectionId, threadId, activeNavigation.id);
@@ -152,9 +154,12 @@ export function markThreadNavigationStage(
     navigation === null ||
     navigation.connectionId !== connectionId ||
     navigation.threadId !== threadId
-  )
+  ) {
     return null;
-  if (expectedNavigationId !== undefined && navigation.id !== expectedNavigationId) return null;
+  }
+  if (expectedNavigationId !== undefined && navigation.id !== expectedNavigationId) {
+    return null;
+  }
   return emitStage(navigation, stage, details, stage === "next_frame" || stage === "superseded");
 }
 
@@ -168,8 +173,9 @@ export function recordThreadNavigationRowCommit(
     navigation === null ||
     navigation.connectionId !== connectionId ||
     navigation.threadId !== threadId
-  )
+  ) {
     return;
+  }
   navigation.rowCommits += 1;
   navigation.committedRowKeys.add(rowKey);
 }
@@ -196,31 +202,32 @@ export function recordThreadNavigationMeasure(
     navigation === null ||
     navigation.connectionId !== connectionId ||
     navigation.threadId !== threadId
-  )
+  ) {
     return;
+  }
   const elapsedMs = Math.max(0, performance.now() - navigation.startedAtMs);
   const measure = {
-    name,
     durationMs: Math.max(0, durationMs),
     elapsedMs,
-    values: { ...details.values },
+    name,
     tags: { ...details.tags },
+    values: { ...details.values },
   };
   navigation.measures.push(measure);
   recordTelemetryEvent(navigation.connectionId, {
     name: "navigation.thread_measure",
-    sessionId: navigation.threadId,
     requestId: navigation.id,
+    sessionId: navigation.threadId,
+    tags: {
+      measure: name,
+      trigger: navigation.trigger,
+      ...details.tags,
+    },
     threadId: navigation.threadId,
     values: {
       durationMs: measure.durationMs,
       elapsedMs,
       ...details.values,
-    },
-    tags: {
-      measure: name,
-      trigger: navigation.trigger,
-      ...details.tags,
     },
   });
 }
@@ -248,23 +255,29 @@ export function recordThreadNavigationVisualEvent(
           recentNavigation.navigation.threadId === threadId
         ? recentNavigation.navigation
         : null;
-  if (navigation === null) return null;
-  if (expectedNavigationId !== undefined && navigation.id !== expectedNavigationId) return null;
+  if (navigation === null) {
+    return null;
+  }
+  if (expectedNavigationId !== undefined && navigation.id !== expectedNavigationId) {
+    return null;
+  }
   const event: ThreadNavigationVisualEvent = {
-    name,
     elapsedMs: Math.max(0, now - navigation.startedAtMs),
-    values: { ...details.values },
+    name,
     tags: { ...details.tags },
+    values: { ...details.values },
   };
   navigation.visualEvents.push(event);
-  if (navigation.visualEvents.length > MAX_VISUAL_EVENTS) navigation.visualEvents.shift();
+  if (navigation.visualEvents.length > MAX_VISUAL_EVENTS) {
+    navigation.visualEvents.shift();
+  }
   recordTelemetryEvent(navigation.connectionId, {
     name: "navigation.thread_visual_event",
-    sessionId: navigation.threadId,
     requestId: navigation.id,
+    sessionId: navigation.threadId,
+    tags: { event: name, trigger: navigation.trigger, ...event.tags },
     threadId: navigation.threadId,
     values: { elapsedMs: event.elapsedMs, ...event.values },
-    tags: { event: name, trigger: navigation.trigger, ...event.tags },
   });
   const status: ThreadNavigationProfile["status"] =
     activeNavigation?.id === navigation.id
@@ -290,7 +303,9 @@ export function recordActiveThreadNavigationMeasure(
   details: StageDetails = {},
 ): void {
   const navigation = activeNavigation;
-  if (navigation === null) return;
+  if (navigation === null) {
+    return;
+  }
   recordThreadNavigationMeasure(
     navigation.connectionId,
     navigation.threadId,
@@ -307,7 +322,9 @@ export function measureThreadNavigationWork<T>(
   work: () => T,
   details: StageDetails = {},
 ): T {
-  if (threadId === null) return work();
+  if (threadId === null) {
+    return work();
+  }
   const startedAtMs = performance.now();
   try {
     return work();
@@ -324,7 +341,9 @@ export function measureThreadNavigationWork<T>(
 
 export function subscribeThreadNavigationProfiles(listener: () => void): () => void {
   profileListeners.add(listener);
-  return () => profileListeners.delete(listener);
+  return () => {
+    profileListeners.delete(listener);
+  };
 }
 
 export function getThreadNavigationProfileSnapshot(): ThreadNavigationProfileSnapshot {
@@ -345,39 +364,40 @@ export function finalizeThreadNavigationProfile(
       slowest === null || measure.durationMs > slowest.durationMs ? measure : slowest,
     null,
   );
-  if (profileSnapshot.last?.id === profile.id)
+  if (profileSnapshot.last?.id === profile.id) {
     publishProfiles({ ...profileSnapshot, last: completed });
+  }
   recordTelemetryEvent(profile.connectionId, {
     name: "navigation.thread_profile",
-    sessionId: profile.threadId,
     requestId: profile.id,
+    sessionId: profile.threadId,
+    tags: {
+      bottleneckStage: profile.bottleneckStage ?? "none",
+      frameTrace: frames === null ? "unavailable" : "available",
+      measures: "overlapping",
+      slowestMeasure: slowestMeasure?.name ?? "none",
+      status: profile.status,
+      trigger: profile.trigger,
+    },
     threadId: profile.threadId,
     values: {
-      totalMs: completed.totalMs,
-      bottleneckMs: completed.bottleneckMs,
-      rowCommits: completed.rowCommits,
-      uniqueRowsCommitted: completed.uniqueRowsCommitted,
-      renderedFrames: frames?.renderedFrames ?? 0,
       averageFrameMs: frames?.averageFrameMs ?? 0,
-      p95FrameMs: frames?.p95FrameMs ?? 0,
-      maxFrameMs: frames?.maxFrameMs ?? 0,
-      jankFrames: frames?.jankFrames ?? 0,
+      bottleneckMs: completed.bottleneckMs,
       droppedFrameEstimate: frames?.droppedFrameEstimate ?? 0,
+      jankFrames: frames?.jankFrames ?? 0,
+      maxFrameMs: frames?.maxFrameMs ?? 0,
+      maxMeasureMs: slowestMeasure?.durationMs ?? 0,
       measureCount: completed.measures.length,
       measureDurationSumMs: completed.measures.reduce(
         (total, measure) => total + measure.durationMs,
         0,
       ),
+      p95FrameMs: frames?.p95FrameMs ?? 0,
+      renderedFrames: frames?.renderedFrames ?? 0,
+      rowCommits: completed.rowCommits,
+      totalMs: completed.totalMs,
+      uniqueRowsCommitted: completed.uniqueRowsCommitted,
       visualEventCount: completed.visualEvents.length,
-      maxMeasureMs: slowestMeasure?.durationMs ?? 0,
-    },
-    tags: {
-      status: profile.status,
-      bottleneckStage: profile.bottleneckStage ?? "none",
-      frameTrace: frames === null ? "unavailable" : "available",
-      trigger: profile.trigger,
-      slowestMeasure: slowestMeasure?.name ?? "none",
-      measures: "overlapping",
     },
   });
   return completed;
@@ -389,7 +409,9 @@ function emitStage(
   details: StageDetails = {},
   terminal = false,
 ): ThreadNavigationProfile | null {
-  if (navigation.stages.has(stage)) return null;
+  if (navigation.stages.has(stage)) {
+    return null;
+  }
   const now = performance.now();
   const elapsedMs = Math.max(0, now - navigation.startedAtMs);
   const sincePreviousMs = Math.max(0, now - navigation.lastStageAtMs);
@@ -398,33 +420,35 @@ function emitStage(
   navigation.stageRecords = [
     ...navigation.stageRecords,
     {
-      stage,
       elapsedMs,
       sincePreviousMs,
-      values: { ...details.values },
+      stage,
       tags: { ...details.tags },
+      values: { ...details.values },
     },
   ];
 
   recordOperationalTelemetryEvent(navigation.connectionId, {
     name: "navigation.thread_stage",
-    sessionId: navigation.threadId,
     requestId: navigation.id,
+    sessionId: navigation.threadId,
+    tags: {
+      stage,
+      trigger: navigation.trigger,
+      ...details.tags,
+    },
     threadId: navigation.threadId,
     values: {
       elapsedMs,
       sincePreviousMs,
       ...details.values,
     },
-    tags: {
-      stage,
-      trigger: navigation.trigger,
-      ...details.tags,
-    },
   });
 
   const timing = STAGE_TIMINGS[stage];
-  if (timing !== undefined) recordDiagnosticTiming(timing, elapsedMs);
+  if (timing !== undefined) {
+    recordDiagnosticTiming(timing, elapsedMs);
+  }
   const profile = projectProfile(
     navigation,
     terminal ? (stage === "superseded" ? "superseded" : "completed") : "active",
@@ -432,8 +456,8 @@ function emitStage(
   if (terminal && activeNavigation?.id === navigation.id) {
     activeNavigation = null;
     recentNavigation = {
-      navigation,
       expiresAtMs: performance.now() + POST_NAVIGATION_OBSERVATION_MS,
+      navigation,
     };
     publishProfiles({ active: null, last: profile });
     return profile;
@@ -458,31 +482,35 @@ function projectProfile(
   );
   const current = navigation.stageRecords.at(-1);
   return {
-    id: navigation.id,
-    connectionId: navigation.connectionId,
-    threadId: navigation.threadId,
-    trigger: navigation.trigger,
-    status,
-    startedAtMs: navigation.startedAtMs,
-    totalMs: current?.elapsedMs ?? 0,
-    currentStage: current?.stage ?? "selection_requested",
-    bottleneckStage: bottleneck?.stage ?? null,
     bottleneckMs: bottleneck?.sincePreviousMs ?? 0,
-    rowCommits: navigation.rowCommits,
-    uniqueRowsCommitted: navigation.committedRowKeys.size,
-    measures: navigation.measures,
-    visualEvents: navigation.visualEvents,
-    stages: navigation.stageRecords,
+    bottleneckStage: bottleneck?.stage ?? null,
+    connectionId: navigation.connectionId,
+    currentStage: current?.stage ?? "selection_requested",
     frames: null,
+    id: navigation.id,
+    measures: navigation.measures,
+    rowCommits: navigation.rowCommits,
+    stages: navigation.stageRecords,
+    startedAtMs: navigation.startedAtMs,
+    status,
+    threadId: navigation.threadId,
+    totalMs: current?.elapsedMs ?? 0,
+    trigger: navigation.trigger,
+    uniqueRowsCommitted: navigation.committedRowKeys.size,
+    visualEvents: navigation.visualEvents,
   };
 }
 
 function publishProfiles(next: ThreadNavigationProfileSnapshot): void {
   profileSnapshot = next;
-  profileListeners.forEach((listener) => listener());
+  profileListeners.forEach((listener) => {
+    listener();
+  });
 }
 
 function createId(): string {
+  // WHY: older Hermes runtimes may omit randomUUID even though the shared TypeScript DOM library
+  // declares it; navigation diagnostics retain the existing local fallback before polyfill startup.
   const runtimeCrypto = globalThis.crypto as { randomUUID?: () => string } | undefined;
   return (
     runtimeCrypto?.randomUUID?.() ??

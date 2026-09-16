@@ -9,11 +9,15 @@ export function useAndroidBackHandler(enabled: boolean, onBack: () => void): voi
   const handleBack = useEvent(onBack);
   const isFocused = useIsFocused();
   useEffect(() => {
-    if (Platform.OS !== "android" || !enabled || !isFocused) return;
+    if (Platform.OS !== "android" || !enabled || !isFocused) {
+      return undefined;
+    }
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       handleBack();
       return true;
     });
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+    };
   }, [enabled, handleBack, isFocused]);
 }

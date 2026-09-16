@@ -13,40 +13,47 @@ export function composerSkillSuggestions(
   query: string,
 ): ComposerMention[] {
   return skillPickerRows(skills, query, "all").flatMap((row) => {
-    if (row.kind === "header") return [];
+    if (row.kind === "header") {
+      return [];
+    }
     const link = row.skill.catalog?.pluginLink;
     const plugin = link?.status === "resolved" ? link.plugin : null;
     return [
       {
-        kind: "skill" as const,
-        id: `skill:${row.skill.path}`,
-        label: suggestionLabel(row.skill, row.title, plugin !== null),
-        insertText: `$${row.skill.name}`,
-        url: composerSkillUrl(row.skill.path),
         description: row.description,
         group:
           plugin?.label ?? (link?.status === "resolved" ? "Standalone skills" : "Other skills"),
+        id: `skill:${row.skill.path}`,
+        insertText: `$${row.skill.name}`,
+        kind: "skill" as const,
+        label: suggestionLabel(row.skill, row.title, plugin !== null),
         name: row.skill.name,
         path: row.skill.path,
         plugin,
+        url: composerSkillUrl(row.skill.path),
       },
     ];
   });
 }
 
 function suggestionLabel(skill: CatalogSkill, title: string, hasPlugin: boolean): string {
-  if (!hasPlugin) return title;
+  if (!hasPlugin) {
+    return title;
+  }
   const separator = skill.name.indexOf(":");
-  if (separator < 0) return title;
+  if (separator < 0) {
+    return title;
+  }
   const prefix = skill.name.slice(0, separator + 1);
   return title.startsWith(prefix) ? title.slice(prefix.length) : title;
 }
 
 /** Composer-only links carry atomic editing metadata; the app-server receives plain `$skill`. */
 export function markdownForComposerSubmission(markdown: string): string {
-  return markdown.replace(
+  return markdown.replaceAll(
     /\[([^\]\r\n]+)\]\(codewide-skill:\/\/[^)\r\n]*\)/gu,
-    (_match, label: string) => label.replaceAll("\\]", "]").replaceAll("\\\\", "\\"),
+    (_match, label: string) =>
+      label.replaceAll(String.raw`\]`, "]").replaceAll(String.raw`\\`, "\\"),
   );
 }
 
@@ -56,7 +63,9 @@ export function containsSkillInvocation(text: string, skillName: string): boolea
   while (offset >= 0) {
     const before = offset === 0 ? "" : (text[offset - 1] ?? "");
     const after = text[offset + token.length] ?? "";
-    if (!/[\p{L}\p{N}_-]/u.test(before) && !/[\p{L}\p{N}_-]/u.test(after)) return true;
+    if (!/[\p{L}\p{N}_-]/u.test(before) && !/[\p{L}\p{N}_-]/u.test(after)) {
+      return true;
+    }
     offset = text.indexOf(token, offset + token.length);
   }
   return false;

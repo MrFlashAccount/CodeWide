@@ -8,20 +8,24 @@ export function useQueueVisibility(composerScope: string, queuedPrompts: readonl
     () => false,
   );
 
-  const closeInlineQueueOverlay = useEvent(() => setInlineQueueExpanded(false));
+  const closeInlineQueueOverlay = useEvent(() => {
+    setInlineQueueExpanded(false);
+  });
 
   const toggleInlineQueueOverlay = useEvent(() => {
     if (inlineQueueExpanded) {
       closeInlineQueueOverlay();
       return;
     }
-    if (queuedPrompts.length === 0) return;
+    if (queuedPrompts.length === 0) {
+      return;
+    }
     setInlineQueueExpanded(true);
   });
   return {
+    closeInlineQueueOverlay,
     inlineQueueExpanded,
     setInlineQueueExpanded,
-    closeInlineQueueOverlay,
     toggleInlineQueueOverlay,
   };
 }

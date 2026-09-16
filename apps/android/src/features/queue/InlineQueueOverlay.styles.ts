@@ -26,16 +26,16 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.xxs,
     ...typeScale.caption,
   },
-  actionText: {
-    color: colors.textMuted,
-    ...typeScale.caption,
-    fontWeight: typeWeight.semibold,
-  },
   actions: {
     alignItems: "center",
     flexDirection: "row",
     flexShrink: 0,
     justifyContent: "flex-end",
+  },
+  actionText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    fontWeight: typeWeight.semibold,
   },
   backdrop: {
     bottom: 0,
@@ -96,6 +96,12 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.errorContainer,
     borderColor: colors.error,
   },
+  footerRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minWidth: 0,
+  },
   list: {
     flexGrow: 0,
     flexShrink: 1,
@@ -111,12 +117,6 @@ export const styles = StyleSheet.create({
     color: colors.textMuted,
     ...typeScale.caption,
     fontVariant: ["tabular-nums"],
-  },
-  footerRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.xs,
-    minWidth: 0,
   },
   metaRow: {
     flex: 1,
@@ -151,13 +151,13 @@ export const styles = StyleSheet.create({
     ...typeScale.caption,
     fontWeight: typeWeight.semibold,
   },
-  stackPreview: {
-    color: colors.textMuted,
-    ...typeScale.caption,
-  },
   stackLine: {
     flex: 1,
     minWidth: 0,
+  },
+  stackPreview: {
+    color: colors.textMuted,
+    ...typeScale.caption,
   },
   stackTitle: {
     color: colors.text,

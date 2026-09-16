@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Button } from "heroui-native/button";
+import { AppButton as Button } from "../../presentation/controls/AppButton";
 import { ScrollView, View } from "react-native";
 import { directoryCrumbs } from "../../data/remote-projects";
 import { colors, iconSize } from "../../theme";
@@ -16,62 +16,63 @@ export function ProjectPickerHeader({
   state: ProjectPickerSession;
 }) {
   const {
-    projects,
+    browseOnly = false,
     onAddProject,
+    onClose,
+    onManageProjects,
     onReadDirectory,
     onReadHomeDirectory,
-    onClose,
-    browseOnly = false,
-    onManageProjects,
+    projects,
   } = props;
   const {
-    mode,
-    setMode,
-    setQuery,
     adding,
     breadcrumbScroll,
-    scrollToCurrentFolder,
-    home,
     directoryPath,
-    unpinnedProjects,
-    parentPath,
+    home,
+    mode,
     navigate,
     openDirectoryPicker,
+    parentPath,
+    scrollToCurrentFolder,
+    setMode,
+    setQuery,
+    unpinnedProjects,
   } = state;
   return (
     <>
       <View style={styles.header}>
         {mode === "directory" ? (
           <Button
-            size="sm"
-            variant="ghost"
-            isIconOnly
             accessibilityLabel="Back to projects"
+            isIconOnly
             onPress={() => {
-              if (browseOnly) onClose();
-              else {
+              if (browseOnly) {
+                onClose();
+              } else {
                 setMode("projects");
                 setQuery("");
               }
             }}
+            size="sm"
+            variant="ghost"
           >
-            <Ionicons name="arrow-back" size={iconSize.action} color={colors.text} />
+            <Ionicons color={colors.text} name="arrow-back" size={iconSize.action} />
           </Button>
         ) : null}
         <View style={styles.titleBlock}>
           <Text style={styles.title}>{mode === "projects" ? "Choose project" : "Add project"}</Text>
           <Text numberOfLines={1} style={styles.subtitle}>
             {mode === "projects"
-              ? `${projects.length} pinned · ${unpinnedProjects.length} from history`
+              ? `${String(projects.length)} pinned · ${String(unpinnedProjects.length)} from history`
               : "Choose a folder on this server"}
           </Text>
         </View>
         {mode === "projects" && onManageProjects !== undefined ? (
           <Button
-            size="sm"
-            variant="ghost"
             accessibilityLabel="Manage Projects"
             onPress={onManageProjects}
+            size="sm"
+            variant="ghost"
           >
             Manage Projects
           </Button>
@@ -81,13 +82,13 @@ export function ProjectPickerHeader({
         onReadDirectory !== undefined &&
         onAddProject !== undefined ? (
           <Button
+            accessibilityLabel="Add project"
+            isIconOnly
+            onPress={openDirectoryPicker}
             size="sm"
             variant="secondary"
-            isIconOnly
-            accessibilityLabel="Add project"
-            onPress={openDirectoryPicker}
           >
-            <Ionicons name="add" size={iconSize.navigation} color={colors.text} />
+            <Ionicons color={colors.text} name="add" size={iconSize.navigation} />
           </Button>
         ) : null}
       </View>
@@ -97,56 +98,62 @@ export function ProjectPickerHeader({
           <View style={styles.pathActions}>
             {onReadHomeDirectory !== undefined ? (
               <Button
-                size="sm"
-                variant="ghost"
-                isIconOnly
                 accessibilityLabel="Home directory"
                 isDisabled={adding}
-                onPress={() => navigate(null)}
+                isIconOnly
+                onPress={() => {
+                  navigate(null);
+                }}
+                size="sm"
+                variant="ghost"
               >
-                <Ionicons name="home-outline" size={iconSize.action} color={colors.textMuted} />
+                <Ionicons color={colors.textMuted} name="home-outline" size={iconSize.action} />
               </Button>
             ) : null}
             <Button
-              size="sm"
-              variant="ghost"
-              isIconOnly
               accessibilityLabel="Parent directory"
               isDisabled={parentPath === null || adding}
+              isIconOnly
               onPress={() => {
-                if (parentPath !== null) navigate(parentPath);
+                if (parentPath !== null) {
+                  navigate(parentPath);
+                }
               }}
+              size="sm"
+              variant="ghost"
             >
               <Ionicons
+                color={parentPath === null ? colors.textDim : colors.text}
                 name="arrow-up"
                 size={iconSize.action}
-                color={parentPath === null ? colors.textDim : colors.text}
               />
             </Button>
             <ScrollView
-              ref={breadcrumbScroll}
-              onContentSizeChange={scrollToCurrentFolder}
+              contentContainerStyle={styles.breadcrumbs}
               horizontal
+              onContentSizeChange={scrollToCurrentFolder}
+              ref={breadcrumbScroll}
               showsHorizontalScrollIndicator={false}
               style={styles.breadcrumbViewport}
-              contentContainerStyle={styles.breadcrumbs}
             >
               {directoryCrumbs(directoryPath, home.value).map((crumb, index, crumbs) => (
                 <View key={crumb.path} style={styles.crumbGroup}>
                   {index > 0 ? (
                     <Ionicons
+                      color={colors.textDim}
                       name="chevron-forward"
                       size={iconSize.inline}
-                      color={colors.textDim}
                     />
                   ) : null}
                   <Button
-                    size="sm"
-                    variant="ghost"
                     accessibilityLabel={`Open directory ${crumb.path}`}
                     isDisabled={adding}
-                    onPress={() => navigate(crumb.path)}
+                    onPress={() => {
+                      navigate(crumb.path);
+                    }}
+                    size="sm"
                     style={styles.crumbButton}
+                    variant="ghost"
                   >
                     <Text
                       numberOfLines={1}

@@ -6,33 +6,33 @@ import { AppText as Text } from "./Typography";
 export { compactNumberFormat, integerNumberFormat, usdNumberFormat } from "./number-format";
 
 export function AnimatedNumber({
-  value,
+  accessibilityLabel,
+  containerStyle,
   format,
   prefix = "",
-  suffix = "",
   style,
-  containerStyle,
-  accessibilityLabel,
+  suffix = "",
   testID,
+  value,
 }: {
-  value: number;
+  accessibilityLabel?: string;
+  animate?: boolean;
+  containerStyle?: StyleProp<ViewStyle>;
   format?: Intl.NumberFormatOptions;
   prefix?: string;
-  suffix?: string;
   style?: StyleProp<TextStyle>;
-  containerStyle?: StyleProp<ViewStyle>;
-  accessibilityLabel?: string;
+  suffix?: string;
   testID?: string;
-  animate?: boolean;
+  value: number;
 }) {
   const renderedText = `${prefix}${formatNumber(value, format)}${suffix}`;
   return (
     <View
-      accessible
-      accessibilityRole="text"
       accessibilityLabel={accessibilityLabel ?? renderedText}
-      testID={testID}
+      accessibilityRole="text"
+      accessible
       style={containerStyle}
+      testID={testID}
     >
       <Text style={style}>{renderedText}</Text>
     </View>

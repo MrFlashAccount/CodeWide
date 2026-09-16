@@ -11,26 +11,33 @@ export function useReviewAttachmentIds(composerScope: string) {
 
   const setContentReviewAttachmentId = useEvent((scope: string, attachmentId: string | null) => {
     setContentReviewAttachmentIds((current) => {
-      if ((current.get(scope) ?? null) === attachmentId) return current;
+      if ((current.get(scope) ?? null) === attachmentId) {
+        return current;
+      }
       const next = new Map(current);
-      if (attachmentId === null) next.delete(scope);
-      else next.set(scope, attachmentId);
+      if (attachmentId === null) {
+        next.delete(scope);
+      } else {
+        next.set(scope, attachmentId);
+      }
       return next;
     });
   });
 
   const clearContentReviewAttachmentId = useEvent((scope: string, expectedAttachmentId: string) => {
     setContentReviewAttachmentIds((current) => {
-      if (current.get(scope) !== expectedAttachmentId) return current;
+      if (current.get(scope) !== expectedAttachmentId) {
+        return current;
+      }
       const next = new Map(current);
       next.delete(scope);
       return next;
     });
   });
   return {
+    clearContentReviewAttachmentId,
     contentReviewAttachmentId,
     setContentReviewAttachmentId,
-    clearContentReviewAttachmentId,
   };
 }
 
@@ -46,7 +53,9 @@ type ReviewUpload = (
 export function useReviewAdmission(
   composerScope: string,
   contentReviewAttachmentId: string | null,
-  captureDraftMutations: () => { updateAttachments(attachments: StoredDraftAttachment[]): void },
+  captureDraftMutations: () => {
+    updateAttachments: (attachments: StoredDraftAttachment[]) => void;
+  },
   captureUploadAttachment: () => ReviewUpload,
   setContentReviewAttachmentId: (scope: string, attachmentId: string | null) => void,
 ) {
@@ -62,7 +71,7 @@ export function useReviewAdmission(
       const uploadSelectedAttachment = captureUploadAttachment();
       const scope = composerScope;
       const previousAttachmentId = contentReviewAttachmentId;
-      return await uploadSelectedAttachment(selected, (attachment) => {
+      return uploadSelectedAttachment(selected, (attachment) => {
         const current = readLatestAttachments();
         updateAttachments([
           ...current.filter(

@@ -1,6 +1,5 @@
 import { useSelector } from "@legendapp/state/react";
 import { useRouter } from "expo-router";
-import { useMemo } from "react";
 
 import { workspaceRuntime } from "../../../src/data/workspace-runtime";
 import { ActiveWorkspaceConversation } from "../../../src/features/conversation/ConversationWorkspace";
@@ -82,34 +81,27 @@ export default function V1NewThreadRoute(): React.JSX.Element {
           : "/v1/new/controls/permissions";
     router.push({ params: { sessionId: session.id }, pathname });
   });
-  // WHY: Context consumers require one stable provider value around the stable useEvent capabilities.
-  // oxlint-disable-next-line react-doctor/react-compiler-no-manual-memoization
-  const routeNavigation = useMemo<ConversationRouteNavigation>(
-    () => ({
-      openAgents: ignoreRoute,
-      openAttachments: ignoreRoute,
-      openChanges: ignoreRoute,
-      openCodeDocument,
-      openContent,
-      openDocument,
-      openDrawing,
-      openTerminal: ignoreRoute,
-      openTool,
-      openTurnChanges: ignoreRoute,
-    }),
-    [openCodeDocument, openContent, openDocument, openDrawing, openTool],
-  );
+  const routeNavigation: ConversationRouteNavigation = {
+    openAgents: ignoreRoute,
+    openAttachments: ignoreRoute,
+    openChanges: ignoreRoute,
+    openCodeDocument,
+    openContent,
+    openDocument,
+    openDrawing,
+    openTerminal: ignoreRoute,
+    openTool,
+    openTurnChanges: ignoreRoute,
+  };
   const destination = draft === null ? null : { draft, generation: 0, kind: "draft" as const };
   if (draft === null) {
     return (
       <NewThreadServerSheet
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onClose={() => {
           router.dismissTo("/v1");
         }}
         // WHY: This render-local callback must return a Promise because the picker action contract is async.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop typescript/promise-function-async
+        // oxlint-disable-next-line typescript/promise-function-async
         onSelect={(connectionId) => {
           resources.openNewThread(
             connectionId,
@@ -141,40 +133,26 @@ export default function V1NewThreadRoute(): React.JSX.Element {
         <ActiveWorkspaceConversation
           connections={resources.connections}
           desktop={resources.desktop}
-          // WHY: This destination is render-derived; React Compiler owns its identity.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-object-as-prop
           destination={destination}
           features={features}
           fileTransferController={workspaceRuntime.fileTransferController}
           loadedThreadSummaries={resources.list.loadedThreadSummaries}
           native={workspaceRuntime.native}
-          // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
           onChangeDraftProject={(draftId, cwd) => {
             newThreadService.changeProject(draftId, cwd);
           }}
-          // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
           onChangeDraftWorkspaceMode={(draftId, mode) => {
             newThreadService.changeWorkspaceMode(draftId, mode);
           }}
-          // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
           onClose={close}
           onDraftAdmitted={closeDraft}
-          // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
           onExitSearchHistory={close}
           onFixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-          // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
           onManageProjects={() => {
             router.push("/v1/projects");
           }}
           onOpenBrowser={resources.openBrowser}
           onSelectThread={resources.list.selectThread}
-          // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-          // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
           onShowActiveThreads={() => {
             resources.list.listState.setThreadListMode("active");
           }}

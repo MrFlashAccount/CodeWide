@@ -8,23 +8,23 @@ import { VoiceAura } from "./VoiceAura";
 
 /** Recording updates belong to the aura, not to its workspace children. */
 export function WorkspaceVoiceAura({
-  resources,
-  controller,
   children,
+  controller,
+  resources,
 }: {
-  resources: Pick<WorkspaceResourceDatabase, "voiceInputs"> | null;
-  controller: VoiceInputController | null;
   children: ReactNode;
+  controller: VoiceInputController | null;
+  resources: Pick<WorkspaceResourceDatabase, "voiceInputs"> | null;
 }) {
   const query = useLiveQuery(() => resources?.voiceInputs, [resources]);
   const recording = query.data?.find((row) => row.phase === "recording") ?? null;
   const reducedMotion = useReducedMotionPreference();
   return (
     <VoiceAura
-      phase={recording === null ? "idle" : "recording"}
-      scope={recording?.scope ?? null}
       controller={controller}
+      phase={recording === null ? "idle" : "recording"}
       reducedMotion={reducedMotion}
+      scope={recording?.scope ?? null}
     >
       {children}
     </VoiceAura>

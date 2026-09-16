@@ -13,47 +13,47 @@ import { TimelineViewport } from "./timeline/TimelineViewport";
 /** Projects authoritative thread data into the read-only conversation surface. */
 export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
   const read = useReadConversationTimelineBindings({
+    overlayState: props.overlayState,
+    remoteThread: props.remoteThread,
     server: props.server,
     thread: props.thread,
-    remoteThread: props.remoteThread,
     viewport: props.viewport,
-    overlayState: props.overlayState,
   });
   useTimelineCleanup({
     composerScope: read.composerScope,
-    scrollSaveTimerRef: read.anchor.scrollSaveTimerRef,
-    mountedConversationScopeRef: read.anchor.mountedConversationScopeRef,
-    scrollOffsetRef: props.viewport.scrollOffsetRef,
-    paginationTrimTimerRef: props.viewport.paginationTrimTimerRef,
-    unreadVisibilityFrameRef: read.unread.unreadVisibilityFrameRef,
-    latestUnreadAgentRef: read.unread.latestUnreadAgentRef,
-    timelineIndexRetryTimerRef: read.search.timelineIndexRetryTimerRef,
     fullscreenOverlay: props.overlay.fullscreenOverlay,
+    latestUnreadAgentRef: read.unread.latestUnreadAgentRef,
+    mountedConversationScopeRef: read.anchor.mountedConversationScopeRef,
+    paginationTrimTimerRef: props.viewport.paginationTrimTimerRef,
+    scrollOffsetRef: props.viewport.scrollOffsetRef,
+    scrollSaveTimerRef: read.anchor.scrollSaveTimerRef,
+    timelineIndexRetryTimerRef: read.search.timelineIndexRetryTimerRef,
+    unreadVisibilityFrameRef: read.unread.unreadVisibilityFrameRef,
   });
   useConversationAndroidBack(false, () => undefined, props.compact, props.onBack);
   const rowActions = useThreadTimelineActions(props.onFixUnsupportedBlock, undefined, undefined);
   const rows = useThreadTimeline({
+    animateLiveUpdates: props.server?.status === "live",
+    composerScope: read.composerScope,
     fixUnsupportedBlock: rowActions.fixUnsupportedBlock,
+    focusSearchMessage: read.searchActions.focusSearchMessage,
     forkThroughTurn: rowActions.forkThroughTurn,
+    getStableTransferAccess: props.getStableTransferAccess,
+    getTransferAccess: props.getTransferAccess,
+    latestUnreadAgentTurnId: null,
     loadStableTurnItems: rowActions.loadStableTurnItems,
     onFixUnsupportedBlock: props.onFixUnsupportedBlock,
     onFork: undefined,
     onLoadTurnItems: undefined,
-    timelineDateLabels: projectTimelineDateLabels(read.timeline, true),
-    searchWindow: null,
-    focusSearchMessage: read.searchActions.focusSearchMessage,
-    openThreadDocumentLink: props.openThreadDocumentLink,
-    composerScope: read.composerScope,
-    getTransferAccess: props.getTransferAccess,
-    getStableTransferAccess: props.getStableTransferAccess,
-    timelineCompact: props.compact || read.narrow,
-    animateLiveUpdates: props.server?.status === "live",
-    threadSearchActive: read.searchProjection.threadSearchActive,
-    requestPrompt: null,
-    latestUnreadAgentTurnId: null,
-    setLatestUnreadAgentNode: read.unreadActions.setLatestUnreadAgentNode,
-    scheduleUnreadAgentVisibilityCheck: read.unreadActions.scheduleUnreadAgentVisibilityCheck,
     onRetryFailedMessage: undefined,
+    openThreadDocumentLink: props.openThreadDocumentLink,
+    requestPrompt: null,
+    scheduleUnreadAgentVisibilityCheck: read.unreadActions.scheduleUnreadAgentVisibilityCheck,
+    searchWindow: null,
+    setLatestUnreadAgentNode: read.unreadActions.setLatestUnreadAgentNode,
+    threadSearchActive: read.searchProjection.threadSearchActive,
+    timelineCompact: props.compact || read.narrow,
+    timelineDateLabels: projectTimelineDateLabels(read.timeline, true),
   });
   const timelinePositioned = read.timeline.length === 0 || props.viewport.timelineDidLoad;
   const liveStatusVisible =
@@ -68,56 +68,56 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       {...read.viewportActions}
       {...read.anchorActions}
       {...props.pagination}
-      composerScope={read.composerScope}
-      timelineInitialPosition={read.timelineInitialPosition}
-      windowLayout={read.windowLayout}
-      timelineCompact={props.compact || read.narrow}
-      liveStatusVisible={liveStatusVisible}
-      conversationInsets={read.conversationInsets}
-      fullscreenCovered={props.overlayState.fullscreenCovered}
-      historyViewport={read.historyViewport}
       awayFromLatest={read.anchor.awayFromLatest}
-      inlineQueueExpanded={false}
+      awayFromLatestRef={read.anchor.awayFromLatestRef}
+      composerScope={read.composerScope}
+      conversationInsets={read.conversationInsets}
       draftConnectionId={read.connectionId}
       draftThreadId={props.thread.id}
-      scheduleUnreadAgentVisibilityCheck={read.unreadActions.scheduleUnreadAgentVisibilityCheck}
-      fullscreenScrollOwnership={props.overlayState.fullscreenScrollOwnership}
-      firstVisibleHistoryAnchorRef={read.anchor.firstVisibleHistoryAnchorRef}
-      awayFromLatestRef={read.anchor.awayFromLatestRef}
-      setAwayFromLatest={read.anchor.setAwayFromLatest}
-      timelinePositioned={timelinePositioned}
-      renderTimelineItem={rows.renderTimelineItem}
       emptyContent={
         <ConversationEmptyState
+          cwd={props.remoteThread.cwd}
+          emptyRemoteThread={props.remoteThread.turns.length === 0}
           historyActivityModel={null}
           historyActivityResourceId={null}
-          threadSearchActive={read.searchProjection.threadSearchActive}
-          emptyRemoteThread={props.remoteThread.turns.length === 0}
-          cwd={props.remoteThread.cwd}
-          openProjectPicker={() => undefined}
-          workspaceSupport={null}
           onChangeWorkspaceMode={undefined}
+          openProjectPicker={() => undefined}
+          threadSearchActive={read.searchProjection.threadSearchActive}
           workspaceMode="current"
+          workspaceSupport={null}
         />
       }
+      firstVisibleHistoryAnchorRef={read.anchor.firstVisibleHistoryAnchorRef}
       footerContent={null}
+      fullscreenCovered={props.overlayState.fullscreenCovered}
+      fullscreenScrollOwnership={props.overlayState.fullscreenScrollOwnership}
+      historyViewport={read.historyViewport}
+      inlineQueueExpanded={false}
+      liveStatusVisible={liveStatusVisible}
+      renderTimelineItem={rows.renderTimelineItem}
+      scheduleUnreadAgentVisibilityCheck={read.unreadActions.scheduleUnreadAgentVisibilityCheck}
+      setAwayFromLatest={read.anchor.setAwayFromLatest}
+      timelineCompact={props.compact || read.narrow}
+      timelineInitialPosition={read.timelineInitialPosition}
+      timelinePositioned={timelinePositioned}
+      windowLayout={read.windowLayout}
     />
   );
   const headerContent = (
     <ReadSurfaceHeader
+      closeThreadSearch={read.searchActions.closeThreadSearch}
       compact={props.compact}
-      onBack={props.onBack}
-      thread={props.thread}
-      server={props.server}
       cwd={props.remoteThread.cwd}
-      remoteThread={props.remoteThread}
+      dismissComposerKeyboardForOverlay={props.overlay.dismissComposerKeyboardForOverlay}
       draftConnectionId={read.connectionId}
       draftThreadId={props.thread.id}
-      threadSearchVisible={read.search.threadSearchVisible}
-      closeThreadSearch={read.searchActions.closeThreadSearch}
-      setThreadSearchVisible={read.search.setThreadSearchVisible}
+      onBack={props.onBack}
+      remoteThread={props.remoteThread}
+      server={props.server}
       sessionCompactionCount={read.presentation.sessionCompactionCount}
-      dismissComposerKeyboardForOverlay={props.overlay.dismissComposerKeyboardForOverlay}
+      setThreadSearchVisible={read.search.setThreadSearchVisible}
+      thread={props.thread}
+      threadSearchVisible={read.search.threadSearchVisible}
     />
   );
   const timelineSurface = (
@@ -125,35 +125,35 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       {...props.viewport}
       {...read.anchorActions}
       {...read.searchProjection}
+      awayFromLatest={read.anchor.awayFromLatest}
+      commitUnreadReceipt={read.unreadActions.commitUnreadReceipt}
+      composerScope={read.composerScope}
       draftConnectionId={read.connectionId}
       draftThreadId={props.thread.id}
-      composerScope={read.composerScope}
-      timeline={read.timeline}
-      readOnly
-      historyViewport={read.historyViewport}
-      latestUnreadReceiptKey={null}
-      commitUnreadReceipt={read.unreadActions.commitUnreadReceipt}
-      messageListState={{ status: "ready" }}
-      positionSearchTurn={read.searchActions.positionSearchTurn}
-      timelineModelReady
-      timelinePositioned={timelinePositioned}
-      remoteThread={props.remoteThread}
-      initialRestoreAnchorTurnId={read.anchor.initialRestoreAnchorTurnId}
       fullscreenCovered={props.overlayState.fullscreenCovered}
-      awayFromLatest={read.anchor.awayFromLatest}
-      timelineContent={timelineContent}
+      goalContent={null}
       historyActivityModel={null}
       historyActivityResourceId={null}
+      historyViewport={read.historyViewport}
+      initialRestoreAnchorTurnId={read.anchor.initialRestoreAnchorTurnId}
+      latestUnreadReceiptKey={null}
       liveStatusVisible={liveStatusVisible}
       liveTurnPlan={read.presentation.liveTurnPlan}
-      goalContent={null}
+      messageListState={{ status: "ready" }}
+      positionSearchTurn={read.searchActions.positionSearchTurn}
+      readOnly
+      remoteThread={props.remoteThread}
+      timeline={read.timeline}
+      timelineContent={timelineContent}
+      timelineModelReady
+      timelinePositioned={timelinePositioned}
     />
   );
   return renderReadConversationLayout({
+    headerContent,
     props,
     read,
-    headerContent,
-    timelineSurface,
     timelinePositioned,
+    timelineSurface,
   });
 }

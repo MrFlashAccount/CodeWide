@@ -10,10 +10,10 @@ import type { useComposerSubmission } from "../submission";
 export type VoiceBindingCapabilities = {
   captureDraftMutations: ReturnType<typeof useComposerDraftCommands>["captureDraftMutations"];
   captureSend: ReturnType<typeof useComposerSubmission>["captureSend"];
-  voiceController: VoiceInputController | null;
   composerScope: string;
   draft: string;
   draftSelectionRef: { current: DraftSelection };
-  remoteThread: Thread | null | undefined;
   onStartVoiceTranscription: StartVoiceTranscription | undefined;
+  remoteThread: Thread | null | undefined;
+  voiceController: VoiceInputController | null;
 };

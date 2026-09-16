@@ -1,33 +1,33 @@
-import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
 import { useEvent } from "../../react/useEvent";
+import { useAppDialog } from "../../ui/AppDialog";
 import type { ComposerMenuPage, ComposerAccessoryAction } from "./composerTypes";
 
 export function useComposerFeatureActions(
   pickComposerAttachment: () => Promise<void>,
   openDrawing: () => void,
-  createAndOpenTerminal: () => void,
   openControls: (page: ComposerMenuPage) => void,
-  onGetGoal: (() => Promise<ThreadGoal | null>) | undefined,
+  openGoalAttachment: () => void,
 ) {
+  const dialog = useAppDialog();
+  const run = useEvent((operation: () => Promise<unknown>, fallback: string): void => {
+    operation().catch((error: unknown) => {
+      dialog.alert(fallback, error instanceof Error ? error.message : fallback);
+    });
+  });
   const openComposerFeature = useEvent((action: ComposerAccessoryAction) => {
     if (action === "files") {
-      void pickComposerAttachment();
+      run(pickComposerAttachment, "Could not attach file");
       return;
     }
     if (action === "drawing") {
       openDrawing();
       return;
     }
-    if (action === "terminal") {
-      createAndOpenTerminal();
-      return;
-    }
-    if (action === "ports") {
-      openControls("ports");
+    if (action === "goal") {
+      openGoalAttachment();
       return;
     }
     openControls(action);
-    if (action === "goal") void onGetGoal?.();
   });
   return { openComposerFeature };
 }

@@ -2,18 +2,18 @@ import { StyleSheet } from "react-native";
 import { spacing } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  timelineShell: { flex: 1 },
   livePlanFloat: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: spacing.sm,
-    zIndex: 10,
     alignItems: "center",
+    bottom: spacing.sm,
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "center",
     gap: spacing.xs,
+    justifyContent: "center",
+    left: 0,
     paddingHorizontal: spacing.sm,
+    position: "absolute",
+    right: 0,
+    zIndex: 10,
   },
+  timelineShell: { flex: 1 },
 });

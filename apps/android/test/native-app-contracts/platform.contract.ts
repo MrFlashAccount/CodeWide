@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { sourceHasJsxElement } from "../source-contract";
 import { sourceObjectDeclaration } from "../source-contract";
 import {
   screen,
@@ -71,18 +72,26 @@ it("preserves platform integration contracts — 1", () => {
   expect(richMarkdown).not.toContain("<Modal visible={open}");
   expect(screen).not.toContain("<Modal visible={open}");
   expect(richMarkdown).toContain("accessibilityLabel={`Copy ${language} code block`}");
-  expect(richMarkdown).toContain("<NativeCodeBlock value={value} language={language} />");
+  expect(
+    sourceHasJsxElement(richMarkdown, "NativeCodeBlock", ["value={value}", "language={language}"]),
+  ).toBe(true);
   expect(nativeCodeBlock).toContain(
     'import { NativeCodeBlockHost } from "../presentation/nativeCodeBlockHost";',
   );
   expect(nativeCodeBlockHost).toContain(
     'requireNativeComponent<NativeCodeBlockHostProps>("CodexNativeCodeBlock")',
   );
-  expect(richMarkdown).toContain("<CopyableInline key={index} value={node.value}");
-  expect(richMarkdown).toContain("<MarkdownLink key={index} url={node.url}>");
+  expect(
+    sourceHasJsxElement(richMarkdown, "CopyableInline", ["key={key}", "value={node.value}"]),
+  ).toBe(true);
+  expect(sourceHasJsxElement(richMarkdown, "MarkdownLink", ["key={key}", "url={node.url}"])).toBe(
+    true,
+  );
   expect(richMarkdown).toContain('accessibilityRole="link"');
-  expect(richMarkdown).toContain("if (external) void Linking.openURL(url);");
-  expect(richMarkdown).toContain("if (openLocalLink?.(url)) return;");
+  expect(richMarkdown).toContain("if (external)");
+  expect(richMarkdown).toContain("Linking.openURL(url).catch((error: unknown) => {");
+  expect(richMarkdown).toMatch(/dialog\.alert\(\s*"Could not open link"/u);
+  expect(richMarkdown).toContain("if (openLocalLink?.(url) === true)");
   expect(richMarkdown).toContain("markdownTableLayout(minimumWidth, columnCount)");
   expect(richMarkdown).toContain("const availableWidth = useRichContentWidth()");
   expect(richMarkdown).not.toContain("MARKDOWN_TABLE_MAX_HEIGHT");

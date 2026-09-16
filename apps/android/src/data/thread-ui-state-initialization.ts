@@ -16,18 +16,26 @@ export async function getOrCreateThreadUiState(
   threadId: string,
   database: ThreadUiStateSeedDatabase | null,
 ) {
-  if (database === null) throw new Error("Local thread UI state is not ready");
+  if (database === null) {
+    throw new Error("Local thread UI state is not ready");
+  }
   const uiState = database;
   const cached = uiState.get(connectionId, threadId);
-  if (cached !== null) return cached;
+  if (cached !== null) {
+    return cached;
+  }
   const key = `${connectionId}\u0000${threadId}`;
   const pending = threadUiStateSeedInFlight.get(key);
-  if (pending !== undefined) return await pending;
+  if (pending !== undefined) {
+    return pending;
+  }
   const operation = uiState.getOrCreate(connectionId, threadId);
   threadUiStateSeedInFlight.set(key, operation);
   try {
     return await operation;
   } finally {
-    if (threadUiStateSeedInFlight.get(key) === operation) threadUiStateSeedInFlight.delete(key);
+    if (threadUiStateSeedInFlight.get(key) === operation) {
+      threadUiStateSeedInFlight.delete(key);
+    }
   }
 }

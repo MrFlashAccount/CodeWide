@@ -5,16 +5,7 @@ import {
   RNHostView,
   type ModalBottomSheetRef,
 } from "@expo/ui/jetpack-compose";
-import { PortalHost } from "heroui-native/portal";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ComponentPropsWithRef,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -24,6 +15,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
+import { useEvent } from "../react/useEvent";
 import { spacing } from "../theme";
 import type { SheetPerformanceSurface } from "../presentation/diagnostics/sheetPerformanceSurface";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
@@ -33,28 +25,28 @@ type AppSheetContentProps = Omit<
   BottomSheetProps,
   "children" | "index" | "onChange" | "onClose" | "onDismiss" | "ref"
 > & {
-  index?: number;
-  performanceSurface?: SheetPerformanceSurface;
-  className?: string;
   backgroundClassName?: string;
+  bottomInset?: number;
+  className?: string;
   contentContainerClassName?: string;
+  detached?: boolean;
   /** Non-Android compatibility; Material owns the native handle semantics. */
   dismissLabel?: string;
-  detached?: boolean;
-  topInset?: number;
-  bottomInset?: number;
+  index?: number;
   maxDynamicContentSize?: number;
+  performanceSurface?: SheetPerformanceSurface;
   style?: StyleProp<ViewStyle>;
+  topInset?: number;
 };
 
 type AppSheetProps = {
-  isOpen: boolean;
-  onOpenChange(isOpen: boolean): void;
   children: ReactNode;
   contentProps: AppSheetContentProps;
+  isOpen: boolean;
+  onOpenChange: (isOpen: boolean) => void;
 };
 
-export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSheetProps) {
+export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSheetProps) {
   const { width } = useWindowDimensions();
   const sheetRef = useRef<ModalBottomSheetRef>(null);
   const [nativeSheetReady, setNativeSheetReady] = useState(false);
@@ -65,67 +57,79 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
   const hasMultipleSnapPoints = (contentProps.snapPoints?.length ?? 0) > 1;
   const maxIndex = Math.max(0, (contentProps.snapPoints?.length ?? 1) - 1);
   const initialFullyExpanded = hasMultipleSnapPoints && (contentProps.index ?? 0) === maxIndex;
-  const portalHostName = `app-sheet-${useId()}`;
-  const setSheetRef = useCallback((sheet: ModalBottomSheetRef | null) => {
+  const setSheetRef = useEvent((sheet: ModalBottomSheetRef | null) => {
     sheetRef.current = sheet;
     setNativeSheetReady(sheet !== null);
-  }, []);
+  });
 
   useEffect(() => {
-    if (isOpen || !nativeSheetReady) return;
+    if (isOpen || !nativeSheetReady) {
+      return undefined;
+    }
 
     let cancelled = false;
-    void sheetRef.current
-      ?.hide()
-      .catch(() => undefined)
-      .then(() => {
-        if (!cancelled) setNativeSheetReady(false);
-      });
+    const hide = sheetRef.current?.hide();
+    if (hide === undefined) {
+      return undefined;
+    }
+    hide.then(
+      () => {
+        if (!cancelled) {
+          setNativeSheetReady(false);
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setNativeSheetReady(false);
+        }
+      },
+    );
 
     return () => {
       cancelled = true;
     };
   }, [isOpen, nativeSheetReady]);
 
-  if (!isOpen && !nativeSheetReady) return null;
+  if (!isOpen && !nativeSheetReady) {
+    return null;
+  }
 
   return (
     <Host colorScheme="dark" pointerEvents="none" style={{ position: "absolute", width }}>
       <ModalBottomSheet
-        ref={setSheetRef}
+        initialFullyExpanded={initialFullyExpanded}
         onDismissRequest={() => {
           setNativeSheetReady(false);
           onOpenChange(false);
         }}
-        skipPartiallyExpanded={fitToContents || !hasMultipleSnapPoints}
-        initialFullyExpanded={initialFullyExpanded}
-        showDragHandle={contentProps.enablePanDownToClose ?? true}
-        sheetGesturesEnabled={contentProps.enablePanDownToClose ?? true}
         properties={{
           shouldDismissOnBackPress: contentProps.enablePanDownToClose ?? true,
           shouldDismissOnClickOutside: contentProps.enablePanDownToClose ?? true,
         }}
+        ref={setSheetRef}
+        sheetGesturesEnabled={contentProps.enablePanDownToClose ?? true}
+        showDragHandle={contentProps.enablePanDownToClose ?? true}
+        skipPartiallyExpanded={fitToContents || !hasMultipleSnapPoints}
       >
         <RNHostView matchContents={fitToContents}>
           <View
             collapsable={false}
-            testID={`performance-sheet:${contentProps.performanceSurface ?? "sheet"}`}
             style={[
               styles.content,
               expanded && styles.expandedContent,
               !fitToContents && styles.fixedHostContent,
               contentProps.style,
             ]}
+            testID={`performance-sheet:${contentProps.performanceSurface ?? "sheet"}`}
           >
-            <OverlaySurfaceProvider surface="native-sheet" portalHostName={portalHostName}>
+            <OverlaySurfaceProvider surface="native-sheet">
               <RecoverableRenderBoundary
-                scope="dialog"
                 label="Bottom sheet content"
                 resetKey={isOpen ? "open" : "closed"}
+                scope="dialog"
               >
                 {children}
               </RecoverableRenderBoundary>
-              <PortalHost name={portalHostName} />
             </OverlaySurfaceProvider>
           </View>
         </RNHostView>
@@ -141,10 +145,10 @@ export function AppSheetScrollView(props: ComponentPropsWithRef<typeof ScrollVie
 
 const styles = StyleSheet.create({
   content: {
-    width: "100%",
     minWidth: 0,
-    paddingHorizontal: spacing.md,
     paddingBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    width: "100%",
   },
   expandedContent: {
     flex: 1,

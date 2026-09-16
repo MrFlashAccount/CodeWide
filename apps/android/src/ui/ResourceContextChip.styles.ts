@@ -2,25 +2,25 @@ import { StyleSheet } from "react-native";
 import { colors, typeScale, typeWeight } from "../theme";
 
 export const styles = StyleSheet.create({
-  composerContextText: {
-    flexGrow: 0,
-    flexShrink: 0,
-    color: colors.textMuted,
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
   composerContextCount: {
+    alignSelf: "center",
     flexGrow: 0,
     flexShrink: 0,
-    alignSelf: "center",
     justifyContent: "center",
   },
   composerContextCountHidden: { opacity: 0 },
   composerContextRefreshOverlay: {
-    position: "absolute",
-    inset: 0,
     alignItems: "flex-start",
+    inset: 0,
     justifyContent: "center",
+    position: "absolute",
+  },
+  composerContextText: {
+    color: colors.textMuted,
+    flexGrow: 0,
+    flexShrink: 0,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
   },
   composerContextValue: {
     alignSelf: "center",

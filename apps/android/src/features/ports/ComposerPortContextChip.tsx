@@ -11,9 +11,11 @@ export function ComposerPortContextChip({
   onOpen,
 }: {
   connectionId: string | null;
-  onOpen(): void;
+  onOpen: () => void;
 }) {
-  if (connectionId === null) return null;
+  if (connectionId === null) {
+    return null;
+  }
   return <ComposerPortContextChipLoaded connectionId={connectionId} onOpen={onOpen} />;
 }
 
@@ -22,30 +24,32 @@ export function ComposerPortContextChipLoaded({
   onOpen,
 }: {
   connectionId: string;
-  onOpen(): void;
+  onOpen: () => void;
 }) {
   const snapshot = useNativePortForwarding(connectionId);
-  if (snapshot.profiles.length === 0) return null;
+  if (snapshot.profiles.length === 0) {
+    return null;
+  }
   return (
     <Pressable
+      accessibilityLabel={`Ports: ${String(snapshot.profiles.length)}`}
       accessibilityRole="button"
-      accessibilityLabel={`Ports: ${snapshot.profiles.length}`}
       onPress={onOpen}
       style={styles.composerContextChip}
     >
       <InlineIcon
-        name="git-network-outline"
-        role="label"
         color={
           snapshot.profiles.some(({ status }) => status === "live")
             ? colors.green
             : colors.textMuted
         }
+        name="git-network-outline"
+        role="label"
       />
       <ComposerContextCount
         label="Ports"
-        value={snapshot.profiles.length}
         testID="composer-ports-label"
+        value={snapshot.profiles.length}
       />
     </Pressable>
   );

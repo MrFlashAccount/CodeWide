@@ -3,7 +3,7 @@ import { useBackgroundTerminalActions } from "./backgroundTerminalActions";
 /** V1 backgroundTerminals owner, extracted without changing interaction or resource lifetime. */
 import { Ionicons } from "@expo/vector-icons";
 import { ActivityIndicator, Pressable, View } from "react-native";
-import { type BackgroundTerminalsRow } from "../../data/workspace-resource-database";
+import type { BackgroundTerminalsRow } from "../../data/workspace-resource-database";
 import { colors, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowStyles } from "../../ui/AppListRow.styles";
@@ -13,19 +13,19 @@ import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./backgroundTerminals.styles";
 
 export function BackgroundTerminalsSheet({
-  visible,
-  onClose,
   embedded = false,
-  resource,
+  onClose,
   onList,
   onTerminate,
+  resource,
+  visible,
 }: {
-  visible: boolean;
-  onClose(): void;
   embedded?: boolean;
+  onClose: () => void;
+  onList?: () => Promise<BackgroundTerminalValue[]>;
+  onTerminate?: (processId: string) => Promise<boolean>;
   resource: BackgroundTerminalsRow | null;
-  onList?(): Promise<BackgroundTerminalValue[]>;
-  onTerminate?(processId: string): Promise<boolean>;
+  visible: boolean;
 }) {
   const { busyId, error, reload, terminate } = useBackgroundTerminalActions(onList, onTerminate);
   const items = resource?.items ?? [];
@@ -41,7 +41,7 @@ export function BackgroundTerminalsSheet({
             onPress={() => void reload()}
             style={styles.headerIcon}
           >
-            <Ionicons name="refresh" size={iconSize.action} color={colors.text} />
+            <Ionicons color={colors.text} name="refresh" size={iconSize.action} />
           </Pressable>
         </View>
       )}
@@ -49,16 +49,16 @@ export function BackgroundTerminalsSheet({
         <Text style={styles.menuNotice}>No background processes in this thread.</Text>
       )}
       <AppSheetScrollView
-        style={styles.menuScroll}
         contentContainerStyle={styles.menuScrollContent}
+        style={styles.menuScroll}
       >
         {items.map((item) => (
           <View key={item.processId}>
             {/* Native ListItem text is not selectable; retain copying commands and paths. */}
             <View style={[listRowStyles.surface, listRowStyles.first, listRowStyles.row]}>
-              <Ionicons name="terminal-outline" size={iconSize.action} color={colors.textMuted} />
+              <Ionicons color={colors.textMuted} name="terminal-outline" size={iconSize.action} />
               <View style={listRowStyles.text}>
-                <Text selectable numberOfLines={3} style={listRowStyles.title}>
+                <Text numberOfLines={3} selectable style={listRowStyles.title}>
                   {item.command}
                 </Text>
                 <Text selectable style={listRowStyles.description}>
@@ -68,13 +68,13 @@ export function BackgroundTerminalsSheet({
               <View style={listRowStyles.separator} />
             </View>
             <AppListRow
-              title={`${item.cpuPercent === null ? "CPU —" : `CPU ${item.cpuPercent.toFixed(1)}%`} · ${item.rssKb === null ? "RAM —" : `RAM ${item.rssKb} KiB`}`}
               fixedHeight={listRowHeight.single}
               position="last"
+              title={`${item.cpuPercent === null ? "CPU —" : `CPU ${item.cpuPercent.toFixed(1)}%`} · ${item.rssKb === null ? "RAM —" : `RAM ${item.rssKb} KiB`}`}
               trailing={
                 <Pressable
-                  accessibilityRole="button"
                   accessibilityLabel={`Terminate ${item.processId}`}
+                  accessibilityRole="button"
                   disabled={busyId !== null || onTerminate === undefined}
                   onPress={() => void terminate(item.processId)}
                   style={styles.headerIcon}
@@ -83,9 +83,9 @@ export function BackgroundTerminalsSheet({
                     <ActivityIndicator color={colors.red} size="small" />
                   ) : (
                     <Ionicons
+                      color={colors.red}
                       name="stop-circle-outline"
                       size={iconSize.action}
-                      color={colors.red}
                     />
                   )}
                 </Pressable>
@@ -101,17 +101,19 @@ export function BackgroundTerminalsSheet({
     content
   ) : (
     <AppSheet
-      isOpen={visible}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
       contentProps={{
+        contentContainerClassName: "h-full",
         dismissLabel: "Close terminals",
-        index: 0,
-        snapPoints: ["55%", "90%"],
         enableDynamicSizing: false,
         enableOverDrag: false,
-        contentContainerClassName: "h-full",
+        index: 0,
+        snapPoints: ["55%", "90%"],
+      }}
+      isOpen={visible}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
       }}
     >
       {content}

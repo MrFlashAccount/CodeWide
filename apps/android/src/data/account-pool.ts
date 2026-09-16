@@ -1,34 +1,34 @@
 import type { GetAccountRateLimitsResponse } from "@codewide/codex-protocol/v0.147.0/v2";
 
 export type AccountPoolProfile = {
-  id: string;
+  active: boolean;
   email: string | null;
+  enabled: boolean;
+  exhaustedIndefinitely: boolean;
+  exhaustedUntil: number | null;
+  id: string;
+  lastUsedAt: number | null;
   planType: string | null;
   priority: number;
-  enabled: boolean;
-  active: boolean;
-  exhaustedUntil: number | null;
-  exhaustedIndefinitely: boolean;
   rateLimits: GetAccountRateLimitsResponse | null;
-  rateLimitsUpdatedAt: number | null;
   rateLimitsError: string | null;
-  lastUsedAt: number | null;
+  rateLimitsUpdatedAt: number | null;
 };
 
 export type AccountPoolSnapshot = {
   activeProfileId: string | null;
-  profiles: AccountPoolProfile[];
-  nextResetAt: number | null;
   allExhausted: boolean;
+  nextResetAt: number | null;
+  profiles: AccountPoolProfile[];
 };
 
 export type AccountLoginStart = {
-  type: "chatgptDeviceCode";
   loginId: string;
-  verificationUrl: string;
+  type: "chatgptDeviceCode";
   userCode: string;
+  verificationUrl: string;
 };
 
 export function accountProfileLabel(profile: AccountPoolProfile, index: number): string {
-  return profile.email ?? `Account ${index + 1}`;
+  return profile.email ?? `Account ${String(index + 1)}`;
 }

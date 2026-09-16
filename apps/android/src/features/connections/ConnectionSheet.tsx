@@ -14,44 +14,48 @@ import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ConnectionSheet.styles";
 
 export function ConnectionSheet({
-  visible,
-  localReady,
-  localError,
-  onRetryStartup,
-  onClose,
-  onSave,
   initialCode,
+  localError,
+  localReady,
+  onClose,
+  onRetryStartup,
+  onSave,
+  visible,
 }: ConnectionSheetProps) {
   const [saving, setSaving] = useState(false);
   const close = () => {
-    if (!saving) onClose();
+    if (!saving) {
+      onClose();
+    }
   };
   return (
     <AppSheet
-      isOpen={visible}
-      onOpenChange={(open) => {
-        if (!open) close();
-      }}
       contentProps={{
+        contentContainerClassName: "h-full",
         dismissLabel: "Close server pairing",
+        enableDynamicSizing: false,
+        enableOverDrag: false,
         enablePanDownToClose: !saving,
         index: 0,
         snapPoints: ["55%", "90%"],
-        enableDynamicSizing: false,
-        enableOverDrag: false,
-        contentContainerClassName: "h-full",
+      }}
+      isOpen={visible}
+      onOpenChange={(open) => {
+        if (!open) {
+          close();
+        }
       }}
     >
       <ConnectionSheetSession
-        visible={visible}
-        localReady={localReady}
-        localError={localError}
-        onRetryStartup={onRetryStartup}
-        onClose={close}
-        onSave={onSave}
         initialCode={initialCode}
+        localError={localError}
+        localReady={localReady}
+        onClose={close}
+        onRetryStartup={onRetryStartup}
+        onSave={onSave}
         saving={saving}
         setSaving={setSaving}
+        visible={visible}
       />
     </AppSheet>
   );
@@ -60,32 +64,32 @@ export function ConnectionSheet({
 export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
   const { localError, localReady, onRetryStartup, saving } = props;
   const {
-    mode,
-    setMode,
     displayName,
-    setDisplayName,
     emoji,
-    setEmoji,
     endpoint,
+    endpointLabel,
+    error,
+    minutesLeft,
+    mode,
+    openPairingScanner,
+    pasteCode,
+    save,
+    setDisplayName,
+    setEmoji,
     setEndpoint,
-    token,
+    setError,
+    setMode,
+    setTlsPinSha256,
     setToken,
     tlsPinSha256,
-    setTlsPinSha256,
-    error,
-    setError,
-    pasteCode,
-    openPairingScanner,
-    save,
-    endpointLabel,
-    minutesLeft,
+    token,
   } = usePairingSession(props);
   return (
     <AppSheetScrollView
-      style={styles.connectionSheetScroll}
       contentContainerStyle={styles.connectionSheetContent}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
+      style={styles.connectionSheetScroll}
     >
       <View style={styles.pairingHeader}>
         {mode !== "choose" && mode !== "success" ? (
@@ -98,10 +102,10 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
             }}
             style={styles.pairingBack}
           >
-            <Ionicons name="chevron-back" size={iconSize.action} color={colors.text} />
+            <Ionicons color={colors.text} name="chevron-back" size={iconSize.action} />
           </Pressable>
         ) : null}
-        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.pairingHeaderTitle}>
+        <Text ellipsizeMode="tail" numberOfLines={1} style={styles.pairingHeaderTitle}>
           {mode === "review"
             ? "Ready to connect"
             : mode === "manual"
@@ -117,51 +121,51 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
           error={error}
           openPairingScanner={openPairingScanner}
           pasteCode={pasteCode}
-          setMode={setMode}
           setError={setError}
+          setMode={setMode}
         />
       )}
 
       {mode === "review" && (
         <PairingReview
-          emoji={emoji}
           displayName={displayName}
-          setEmoji={setEmoji}
-          setDisplayName={setDisplayName}
+          emoji={emoji}
           endpointLabel={endpointLabel}
-          minutesLeft={minutesLeft}
           error={error}
           localError={localError}
-          onRetryStartup={onRetryStartup}
-          saving={saving}
           localReady={localReady}
+          minutesLeft={minutesLeft}
+          onRetryStartup={onRetryStartup}
           save={save}
+          saving={saving}
+          setDisplayName={setDisplayName}
+          setEmoji={setEmoji}
           setMode={setMode}
         />
       )}
 
       {mode === "manual" && (
         <PairingManual
-          emoji={emoji}
           displayName={displayName}
-          setEmoji={setEmoji}
-          setDisplayName={setDisplayName}
+          emoji={emoji}
           endpoint={endpoint}
-          setEndpoint={setEndpoint}
-          token={token}
-          setToken={setToken}
-          tlsPinSha256={tlsPinSha256}
-          setTlsPinSha256={setTlsPinSha256}
           error={error}
           localError={localError}
-          onRetryStartup={onRetryStartup}
-          saving={saving}
           localReady={localReady}
+          onRetryStartup={onRetryStartup}
           save={save}
+          saving={saving}
+          setDisplayName={setDisplayName}
+          setEmoji={setEmoji}
+          setEndpoint={setEndpoint}
+          setTlsPinSha256={setTlsPinSha256}
+          setToken={setToken}
+          tlsPinSha256={tlsPinSha256}
+          token={token}
         />
       )}
 
-      {mode === "success" && <PairingSuccess emoji={emoji} displayName={displayName} />}
+      {mode === "success" && <PairingSuccess displayName={displayName} emoji={emoji} />}
     </AppSheetScrollView>
   );
 }

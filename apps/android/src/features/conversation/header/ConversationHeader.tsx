@@ -5,8 +5,8 @@ import { colors, iconSize } from "../../../theme";
 import { InlineEmoji } from "../../../ui/InlineIcon";
 import { leadingEmoji } from "../../../ui/ThreadTitle";
 import { AppText as Text } from "../../../ui/Typography";
-import { ContextRing } from "../../accounts/UsagePopover";
-import { WorkspaceAccountUsagePopover } from "../../accounts/WorkspaceAccountUsagePopover";
+import { ContextRing } from "../../accounts/UsageMenu";
+import { WorkspaceAccountUsageMenu } from "../../accounts/WorkspaceAccountUsageMenu";
 import { ThreadHeaderMenu } from "../../turnActions/ThreadActions";
 import {
   ConversationBackendRefreshIndicator,
@@ -16,96 +16,99 @@ import { styles } from "./ConversationHeader.styles";
 import type { ConversationHeaderProps } from "./ConversationHeaderContract";
 
 export function ConversationHeader({
+  accountRateLimitsDatabase,
+  archived,
+  closeThreadSearch,
   compact,
-  onBack,
-  thread,
-  threadChatModel,
+  currentUsage,
+  cwd,
+  deleteThread,
+  dismissComposerKeyboardForOverlay,
   draftConnectionId,
   draftThreadId,
   historyActivityModel,
   historyActivityResourceId,
-  server,
-  cwd,
   newChat,
-  threadSearchVisible,
-  closeThreadSearch,
-  setThreadSearchVisible,
-  remoteThread,
-  currentUsage,
-  sessionCompactionCount,
-  accountRateLimitsDatabase,
-  onRefreshAccountRateLimits,
-  readOnly,
-  archived,
-  pinned,
-  dismissComposerKeyboardForOverlay,
-  openThreadRename,
-  onTogglePin,
-  onUnarchive,
   onArchive,
+  onBack,
   onCompact,
   onFork,
-  deleteThread,
+  onRefreshAccountRateLimits,
+  onTogglePin,
+  onUnarchive,
+  openThreadRename,
+  pinned,
+  readOnly,
+  remoteThread,
+  server,
+  sessionCompactionCount,
+  setThreadSearchVisible,
+  thread,
+  threadChatModel,
+  threadSearchVisible,
 }: ConversationHeaderProps) {
   return (
-    <View testID="conversation-header" style={styles.conversationHeader}>
+    <View style={styles.conversationHeader} testID="conversation-header">
       {compact && (
-        <Pressable onPress={onBack} style={styles.headerIcon} accessibilityLabel="Back to threads">
-          <Ionicons name="arrow-back" size={iconSize.navigation} color={colors.text} />
+        <Pressable accessibilityLabel="Back to threads" onPress={onBack} style={styles.headerIcon}>
+          <Ionicons color={colors.text} name="arrow-back" size={iconSize.navigation} />
         </Pressable>
       )}
       <View style={[styles.conversationIdentity, !compact && styles.conversationIdentityRaised]}>
         <View style={styles.conversationTitleRow}>
           {leadingEmoji(thread.title) !== null && (
-            <InlineEmoji value={leadingEmoji(thread.title) ?? ""} role="title" />
+            <InlineEmoji role="title" value={leadingEmoji(thread.title) ?? ""} />
           )}
           <Text
-            testID="conversation-title"
-            numberOfLines={1}
             ellipsizeMode="tail"
+            numberOfLines={1}
             style={[styles.conversationTitle, styles.conversationHeaderTitle]}
+            testID="conversation-title"
           >
             {thread.title.slice(leadingEmoji(thread.title)?.length ?? 0).trimStart()}
           </Text>
           <ConversationBackendRefreshIndicator
-            model={threadChatModel}
             connectionId={draftConnectionId}
+            model={threadChatModel}
             threadId={draftThreadId}
           />
         </View>
         <ConversationHistorySubtitle
+          cwd={cwd}
           model={historyActivityModel}
           resourceId={historyActivityResourceId}
           server={server}
-          cwd={cwd}
         />
       </View>
       {!newChat && (
         <Pressable
+          accessibilityLabel="Search in thread"
           onPress={() => {
-            if (threadSearchVisible) closeThreadSearch();
-            else setThreadSearchVisible(true);
+            if (threadSearchVisible) {
+              closeThreadSearch();
+            } else {
+              setThreadSearchVisible(true);
+            }
           }}
           style={styles.headerIcon}
-          accessibilityLabel="Search in thread"
         >
-          <Ionicons name="search" size={iconSize.action} color={colors.text} />
+          <Ionicons color={colors.text} name="search" size={iconSize.action} />
         </Pressable>
       )}
       {!newChat && (
-        <WorkspaceAccountUsagePopover
-          thread={remoteThread ?? null}
-          currentUsage={currentUsage}
+        <WorkspaceAccountUsageMenu
+          align="end"
           compactionCount={sessionCompactionCount}
+          currentUsage={currentUsage}
           database={accountRateLimitsDatabase}
+          placement="bottom"
           servers={[
             {
               id: server?.id ?? "active-server",
               name: server?.name ?? "Server",
             },
           ]}
-          placement="bottom"
-          align="end"
+          thread={remoteThread ?? null}
           {...(onRefreshAccountRateLimits === undefined
             ? {}
             : { onRefresh: onRefreshAccountRateLimits })}
@@ -119,16 +122,16 @@ export function ConversationHeader({
               size={iconSize.action}
             />
           </Pressable>
-        </WorkspaceAccountUsagePopover>
+        </WorkspaceAccountUsageMenu>
       )}
       {!readOnly && !newChat && (
         <ThreadHeaderMenu
-          key={thread.id}
-          threadId={thread.id}
           archived={archived}
-          pinned={pinned}
+          key={thread.id}
           onOpenMenu={dismissComposerKeyboardForOverlay}
           onRenameRequest={openThreadRename}
+          pinned={pinned}
+          threadId={thread.id}
           {...(onTogglePin === undefined ? {} : { onTogglePin })}
           {...(archived
             ? onUnarchive === undefined

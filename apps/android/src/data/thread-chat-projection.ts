@@ -28,13 +28,13 @@ export type {
 } from "./thread-chat-timeline";
 
 export type ProjectedThreadChatWindow = {
-  remoteThread: Thread | null;
-  currentUsage: TurnUsageProjection | null;
   currentOutcome: ThreadCurrentOutcome | null;
-  remoteSealedTurns: Thread["turns"];
-  remoteLiveTurns: Thread["turns"];
-  timeline: ProjectedThreadChatTimelineEntry[];
+  currentUsage: TurnUsageProjection | null;
   queuedPrompts: QueuedPrompt[];
+  remoteLiveTurns: Thread["turns"];
+  remoteSealedTurns: Thread["turns"];
+  remoteThread: Thread | null;
+  timeline: ProjectedThreadChatTimelineEntry[];
 };
 
 type CachedPendingDelivery = {
@@ -51,22 +51,24 @@ function projectPendingDelivery(
 ): ProjectedThreadChatDelivery {
   const scope = `${connectionId}\u0000${threadId ?? ""}`;
   const cached = pendingDeliveryCache.get(entry);
-  if (cached?.scope === scope) return cached.value;
+  if (cached?.scope === scope) {
+    return cached.value;
+  }
   const value: ProjectedThreadChatDelivery = {
-    connectionId,
+    attachments: entry.attachments,
     commandId: entry.commandId,
+    connectionId,
     method: entry.method,
-    threadId,
     targetCommandId: null,
     text: entry.text,
-    attachments: entry.attachments,
+    threadId,
     ...(entry.workspaceRequestId === undefined
       ? {}
       : { workspaceRequestId: entry.workspaceRequestId }),
-    state: entry.state,
     attempts: entry.attempts,
-    lastError: entry.lastError,
     createdAt: entry.createdAt,
+    lastError: entry.lastError,
+    state: entry.state,
     updatedAt: entry.updatedAt,
   };
   pendingDeliveryCache.set(entry, { scope, value });
@@ -97,13 +99,13 @@ export function projectThreadChatWindow(
     .map((entry) => projectPendingDelivery(entry, connectionId, threadId));
   const queuedPrompts: QueuedPrompt[] = pendingTimeline
     .filter(({ presentation, state }) => presentation === "queue" && state !== "delivered")
-    .map(({ commandId, text, attachments, createdAt, state, lastError }) => ({
-      commandId,
-      text,
+    .map(({ attachments, commandId, createdAt, lastError, state, text }) => ({
       attachments,
+      commandId,
       createdAt,
-      state: state === "uncertain" || state === "failed" ? state : "queued",
       lastError,
+      state: state === "uncertain" || state === "failed" ? state : "queued",
+      text,
     }));
   const sealedTurns = measure(
     "db_materialize_sealed_turns",
@@ -117,22 +119,22 @@ export function projectThreadChatWindow(
   );
   if (liveSnapshot?.connectionId !== connectionId || liveSnapshot.thread.id !== threadId) {
     return {
-      remoteThread: null,
-      currentUsage: null,
       currentOutcome: null,
-      remoteSealedTurns: [],
+      currentUsage: null,
+      queuedPrompts,
       remoteLiveTurns: [],
+      remoteSealedTurns: [],
+      remoteThread: null,
       timeline: projectResidentThreadTimeline([], pendingDeliveries, {
         includesEarliest: true,
         includesLatest: true,
       }),
-      queuedPrompts,
     };
   }
   const mergedTurns = measure(
     "merge_turn_partitions",
     () => mergeThreadPartitions(sealedTurns, liveSnapshot.thread.turns),
-    { sealedTurnCount: sealedTurns.length, liveTurnCount: liveSnapshot.thread.turns.length },
+    { liveTurnCount: liveSnapshot.thread.turns.length, sealedTurnCount: sealedTurns.length },
   );
   const projectedThread = applyThreadSummaryMetadata(
     { ...liveSnapshot.thread, turns: mergedTurns },
@@ -147,8 +149,8 @@ export function projectThreadChatWindow(
   const partitions = measure(
     "split_visible_turn_partitions",
     () => ({
-      sealed: projectedThread.turns.filter(({ id }) => !liveTurnIds.has(id)),
       live: projectedThread.turns.filter(({ id }) => liveTurnIds.has(id)),
+      sealed: projectedThread.turns.filter(({ id }) => !liveTurnIds.has(id)),
     }),
     { mergedTurnCount: projectedThread.turns.length },
   );
@@ -166,12 +168,12 @@ export function projectThreadChatWindow(
       (residentMaximum !== null && residentMaximum >= view.snapshot.latestSealedOrdinal),
   });
   return {
-    remoteThread: projectedThread,
-    currentUsage: view.liveRows.find((row) => row.kind === "thread")?.currentUsage?.usage ?? null,
     currentOutcome: view.liveRows.find((row) => row.kind === "thread")?.currentOutcome ?? null,
-    remoteSealedTurns: partitions.sealed,
-    remoteLiveTurns: partitions.live,
-    timeline,
+    currentUsage: view.liveRows.find((row) => row.kind === "thread")?.currentUsage?.usage ?? null,
     queuedPrompts,
+    remoteLiveTurns: partitions.live,
+    remoteSealedTurns: partitions.sealed,
+    remoteThread: projectedThread,
+    timeline,
   };
 }

@@ -8,29 +8,33 @@ import type { ComposerMention } from "./composer-mentions";
 import type { SuggestionState } from "./composer-suggestions";
 
 type PopupProps = {
-  readonly state: SuggestionState;
   readonly getTransferAccess?: GetTransferAccess;
   readonly onSelect: (mention: ComposerMention) => void;
+  readonly state: SuggestionState;
 };
 
 export function ComposerSuggestionsPopup(props: PopupProps) {
-  if (props.state.status === "closed") return null;
+  if (props.state.status === "closed") {
+    return null;
+  }
   const items =
     props.state.status === "ready" || props.state.status === "loading" ? props.state.items : [];
-  if (props.state.status === "loading" && items.length === 0) return null;
+  if (props.state.status === "loading" && items.length === 0) {
+    return null;
+  }
   const message = props.state.status === "error" ? "Could not load suggestions" : "No matches";
   return (
-    <View style={styles.popup} accessibilityLabel="Composer suggestions">
+    <View accessibilityLabel="Composer suggestions" style={styles.popup}>
       <View style={styles.header}>
         <AppText style={styles.heading}>
           {props.state.query.indicator === "/" ? "Skills" : "Context"}
         </AppText>
       </View>
       <ScrollView
-        testID="composer-suggestions-scroll"
         keyboardShouldPersistTaps="always"
         nestedScrollEnabled
         style={styles.list}
+        testID="composer-suggestions-scroll"
       >
         {items.length === 0 ? (
           <AppText style={styles.message}>{message}</AppText>
@@ -56,8 +60,8 @@ export function ComposerSuggestionsPopup(props: PopupProps) {
 }
 
 type RowProps = {
-  readonly mention: ComposerMention;
   readonly getTransferAccess?: GetTransferAccess;
+  readonly mention: ComposerMention;
   readonly onSelect: (mention: ComposerMention) => void;
 };
 
@@ -73,8 +77,8 @@ function SuggestionRow(props: RowProps) {
     <View>
       <View style={styles.row}>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel={`Insert ${props.mention.label}`}
+          accessibilityRole="button"
           onPress={select}
           style={styles.choice}
         >
@@ -92,8 +96,8 @@ function SuggestionRow(props: RowProps) {
         </Pressable>
         {props.mention.description !== "" ? (
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel={`About ${props.mention.label}`}
+            accessibilityRole="button"
             accessibilityState={{ expanded: showInfo }}
             onPress={toggleInfo}
             style={styles.info}
@@ -108,13 +112,24 @@ function SuggestionRow(props: RowProps) {
 }
 
 const styles = StyleSheet.create({
-  popup: {
-    width: "100%",
-    overflow: "hidden",
+  choice: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: controlSize.regular,
+    minWidth: 0,
+    paddingHorizontal: spacing.sm,
+  },
+  group: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
   },
   header: {
-    flexDirection: "row",
     alignItems: "center",
+    flexDirection: "row",
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
   },
@@ -122,40 +137,29 @@ const styles = StyleSheet.create({
     ...typeScale.body,
     color: colors.text,
   },
+  info: {
+    alignItems: "center",
+    height: controlSize.regular,
+    justifyContent: "center",
+    width: controlSize.regular,
+  },
   list: { maxHeight: controlSize.regular * 6 },
-  group: {
-    ...typeScale.caption,
+  message: {
+    ...typeScale.body,
     color: colors.textMuted,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  choice: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: controlSize.regular,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.sm,
   },
   name: {
     ...typeScale.body,
     color: colors.text,
   },
-  info: {
-    width: controlSize.regular,
-    height: controlSize.regular,
-    alignItems: "center",
-    justifyContent: "center",
+  popup: {
+    overflow: "hidden",
+    width: "100%",
   },
-  message: {
-    ...typeScale.body,
-    color: colors.textMuted,
-    paddingHorizontal: spacing.sm,
-    paddingBottom: spacing.sm,
+  row: {
+    alignItems: "center",
+    flexDirection: "row",
   },
 });

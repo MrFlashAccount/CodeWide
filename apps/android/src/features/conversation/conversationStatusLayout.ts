@@ -27,9 +27,7 @@ export function conversationStatusLayout(
     timelineRead.timelinePositioned &&
     !searchActive;
   const currentGoal = scoped.goalResource?.goal ?? null;
-  const threadGoalVisible =
-    currentGoal !== null && timelineRead.timelinePositioned && !searchActive;
-  const liveStatusVisible = liveTurnPlanVisible || threadGoalVisible;
+  const liveStatusVisible = liveTurnPlanVisible;
   const inlineQueueMaxHeight = Math.max(
     controlSize.touch * INLINE_QUEUE_MIN_ROWS,
     scoped.activation.conversationPaneGeometryBinding.conversationPaneHeight -

@@ -12,13 +12,13 @@ export function subagentThreadListItem(
   connectionId: string,
 ): ThreadListItem {
   return {
-    id: thread.id,
-    serverId: connectionId,
-    title: subagentDisplayName(summary),
-    preview: summary.preview,
-    timestamp: summary.recencyAt ?? summary.updatedAt,
-    pinned: false,
     archived: false,
+    id: thread.id,
+    pinned: false,
+    preview: summary.preview,
+    serverId: connectionId,
+    timestamp: summary.recencyAt ?? summary.updatedAt,
+    title: subagentDisplayName(summary),
     unread: summary.unread,
     ...(summary.status.type === "active"
       ? { state: "running" as const }
@@ -45,17 +45,18 @@ export function useAgentSelection(
     () => new SubagentListProjection(),
   );
   const currentSubagentSummaries = useEvent((): readonly StoredThreadSummary[] => {
-    if (subagentSummaryDatabase === null || draftConnectionId === null || draftThreadId === null)
+    if (subagentSummaryDatabase === null || draftConnectionId === null || draftThreadId === null) {
       return [];
+    }
     const resource = subagentSummaryDatabase.viewResource({
-      viewId: `subagents:${draftConnectionId}:${draftThreadId}`,
+      archivedLimit: 0,
       connectionId: null,
       recentLimit: 0,
-      archivedLimit: 0,
       selectedConnectionId: null,
       selectedThreadId: null,
       subagentConnectionId: draftConnectionId,
       subagentLimit: SUBAGENT_LIST_LIMIT,
+      viewId: `subagents:${draftConnectionId}:${draftThreadId}`,
     });
     return subagentEventProjection.project(resource.view$.peek().subagents);
   });

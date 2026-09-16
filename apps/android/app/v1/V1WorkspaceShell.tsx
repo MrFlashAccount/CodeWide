@@ -42,8 +42,6 @@ function V1WorkspaceChrome(props: V1WorkspaceShellProps): React.JSX.Element {
       resources={resources.runtime.resources}
     >
       <View
-        // WHY: This style is render-derived from safe-area state; React Compiler owns its identity.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-array-as-prop
         style={[
           styles.root,
           {

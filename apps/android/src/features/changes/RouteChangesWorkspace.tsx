@@ -7,7 +7,7 @@ import {
   recordedTurnChangeResources,
   recordedTurnResourcesValue,
 } from "./changePresentation";
-import { CodeReviewWorkspace } from "../review/CodeReviewWorkspace";
+import { CodeReviewWorkspace } from "../review/workspace/CodeReviewWorkspace";
 import type {
   CurrentChangesRouteRequest,
   TurnChangesRouteRequest,
@@ -140,8 +140,6 @@ export function TurnChangesRoute({
       initialWrapLines={request.wrapLines}
       onAttach={request.attachCodeReview}
       onClose={onClose}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onLoadDiff={async (path) => recordedTurnChangeDiff(request.target, await loadFiles(), path)}
       scopeLabel="This turn"
       thread={request.thread}

@@ -4,7 +4,10 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{DefaultBodyLimit, FromRequestParts, Path, Query, Request, State, WebSocketUpgrade},
-    http::{HeaderMap, HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
+    http::{
+        Extensions, HeaderMap, HeaderValue, Method, StatusCode, Version,
+        header::{self, CONTENT_TYPE},
+    },
     middleware::Next,
     response::{IntoResponse, Response},
     routing::{any, delete, get, post},
@@ -18,8 +21,9 @@ use crate::{
     catalog::{CatalogError, SessionCatalog},
     content::{ContentQuery, PrivateContentService},
     device_tls::DeviceTlsConnectInfo,
-    files::{FileQuery, FileService},
+    files::{FileQuery, FileService, FileTextQuery},
     identity::TransportIdentity,
+    image_previews::{ImagePreviewError, ImagePreviewQuery, ImagePreviewService, ImageVariant},
     media::MediaProxyService,
     ports,
     rollout::read_rollout_metadata,
@@ -32,6 +36,10 @@ use crate::{
     terminal::{self, TerminalQuery},
     tunnels::{LocalhostTunnelService, TunnelError},
     upstream,
+};
+use tower_http::compression::{
+    CompressionLayer, CompressionLevel,
+    predicate::{And, Predicate, SizeAbove},
 };
 
 #[derive(Clone)]
@@ -58,6 +66,7 @@ pub struct CompanionServices {
     pub build_shelf: Option<BuildShelfProxy>,
     pub files: Option<Arc<FileService>>,
     pub content: Option<Arc<PrivateContentService>>,
+    pub image_previews: Option<Arc<ImagePreviewService>>,
     pub media: Option<Arc<MediaProxyService>>,
     pub tunnels: Option<Arc<LocalhostTunnelService>>,
     pub telemetry: Option<Arc<TelemetryStore>>,
@@ -211,6 +220,7 @@ fn build_router(
         .route("/v1/devices", get(devices_list))
         .route("/v1/devices/{device_id}", delete(device_revoke))
         .layer(DefaultBodyLimit::max(8 * 1024))
+        .layer(v1_compression())
         .merge(crate::sync_v2::all_routes());
     let files = Router::new()
         .route("/v1/files/download", get(file_download).head(file_download))
@@ -223,10 +233,13 @@ fn build_router(
         )
         .route("/v1/content/{digest}", get(content_read).head(content_read))
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024));
+    let text = v1_text_routes().layer(v1_compression());
+    let images = v1_image_preview_routes();
     let media = Router::new()
         .route("/v1/media/materialize", post(media_materialize))
         .route("/v1/media/{id}", get(media_read).head(media_read))
-        .layer(DefaultBodyLimit::max(20 * 1024));
+        .layer(DefaultBodyLimit::max(20 * 1024))
+        .layer(v1_compression());
     let telemetry = Router::new()
         .route(
             "/v1/telemetry/events",
@@ -236,7 +249,8 @@ fn build_router(
             "/v1/telemetry/settings",
             get(telemetry_settings_read).patch(telemetry_settings_update),
         )
-        .layer(DefaultBodyLimit::max(256 * 1024));
+        .layer(DefaultBodyLimit::max(256 * 1024))
+        .layer(v1_compression());
     let build_shelf = Router::new()
         .route("/", any(build_shelf_proxy))
         .route("/api/builds", any(build_shelf_proxy))
@@ -248,6 +262,8 @@ fn build_router(
         .route("/download/", any(build_shelf_proxy))
         .route("/download/{*path}", any(build_shelf_proxy));
     core.merge(files)
+        .merge(text)
+        .merge(images)
         .merge(media)
         .merge(telemetry)
         .merge(build_shelf)
@@ -270,6 +286,74 @@ fn build_outer_router(state: AppState) -> Router {
         .route("/v1/e2ee-bootstrap-tunnel", get(e2ee_bootstrap_tunnel))
         .merge(build_shelf)
         .with_state(state)
+}
+
+type V1CompressionPredicate = fn(StatusCode, Version, &HeaderMap, &Extensions) -> bool;
+
+fn v1_compression() -> CompressionLayer<And<SizeAbove, V1CompressionPredicate>> {
+    CompressionLayer::new()
+        .quality(CompressionLevel::Fastest)
+        .compress_when(SizeAbove::new(256).and(v1_textual_response as V1CompressionPredicate))
+}
+
+fn v1_textual_response(
+    status: StatusCode,
+    _version: Version,
+    headers: &HeaderMap,
+    _extensions: &Extensions,
+) -> bool {
+    if status == StatusCode::NO_CONTENT
+        || status == StatusCode::NOT_MODIFIED
+        || status == StatusCode::SWITCHING_PROTOCOLS
+        || headers.contains_key(header::CONTENT_RANGE)
+        || headers.contains_key(header::CONTENT_ENCODING)
+    {
+        return false;
+    }
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value.starts_with("text/")
+                || value.starts_with("application/json")
+                || value.starts_with("application/javascript")
+                || value.starts_with("application/xml")
+                || value.contains("+json")
+                || value.contains("+xml")
+        })
+}
+
+fn v1_text_routes() -> Router<AppState> {
+    Router::new()
+        .route("/v1/files/text", get(file_text).head(file_text))
+        .route(
+            "/v1/files/preview-text",
+            get(file_preview_text).head(file_preview_text),
+        )
+        .route(
+            "/v1/content/{digest}/text",
+            get(content_text_read).head(content_text_read),
+        )
+}
+
+fn v1_image_preview_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/v1/image-previews/file",
+            get(file_image_preview).head(file_image_preview),
+        )
+        .route(
+            "/v1/image-previews/host-file",
+            get(host_file_image_preview).head(host_file_image_preview),
+        )
+        .route(
+            "/v1/image-previews/content/{digest}",
+            get(content_image_preview).head(content_image_preview),
+        )
+        .route(
+            "/v1/image-previews/media/{id}",
+            get(media_image_preview).head(media_image_preview),
+        )
 }
 
 fn build_bootstrap_router(state: AppState) -> Router {
@@ -298,6 +382,7 @@ fn build_secure_router(state: AppState) -> Router {
         .route("/v1/tunnels/{id}/", any(tunnel_proxy_root))
         .route("/v1/tunnels/{id}/{*path}", any(tunnel_proxy))
         .layer(DefaultBodyLimit::max(8 * 1024))
+        .layer(v1_compression())
         .merge(crate::sync_v2::data_routes());
     let files = Router::new()
         .route("/v1/files/download", get(file_download).head(file_download))
@@ -310,13 +395,17 @@ fn build_secure_router(state: AppState) -> Router {
         )
         .route("/v1/content/{digest}", get(content_read).head(content_read))
         .layer(DefaultBodyLimit::max(512 * 1024 * 1024));
+    let text = v1_text_routes().layer(v1_compression());
+    let images = v1_image_preview_routes();
     let media = Router::new()
         .route("/v1/media/materialize", post(media_materialize))
         .route("/v1/media/{id}", get(media_read).head(media_read))
-        .layer(DefaultBodyLimit::max(20 * 1024));
+        .layer(DefaultBodyLimit::max(20 * 1024))
+        .layer(v1_compression());
     let telemetry = Router::new()
         .route("/v1/telemetry/events", post(telemetry_ingest))
-        .layer(DefaultBodyLimit::max(256 * 1024));
+        .layer(DefaultBodyLimit::max(256 * 1024))
+        .layer(v1_compression());
     let build_shelf = Router::new()
         .route("/", any(build_shelf_proxy))
         .route("/api/builds", any(build_shelf_proxy))
@@ -329,6 +418,8 @@ fn build_secure_router(state: AppState) -> Router {
         .route("/download/{*path}", any(build_shelf_proxy));
     transport
         .merge(files)
+        .merge(text)
+        .merge(images)
         .merge(media)
         .merge(telemetry)
         .merge(build_shelf)

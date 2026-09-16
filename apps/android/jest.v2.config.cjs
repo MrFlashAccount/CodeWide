@@ -1,6 +1,6 @@
 module.exports = {
   preset: "@react-native/jest-preset",
-  // WHY: Worklets supplies a Node resolver for its non-native runtime; HeroUI imports it through animation helpers.
+  // WHY: Worklets supplies a Node resolver for its non-native runtime.
   resolver: "react-native-worklets/jest/resolver.js",
   rootDir: ".",
   setupFiles: ["react-native-gesture-handler/jestSetup.js"],
@@ -44,5 +44,5 @@ module.exports = {
     ],
   },
   // WHY: Private icons use ESM-only hashes; real TanStack collections depend on ESM-only fractional-indexing.
-  transformIgnorePatterns: ["node_modules/(?!.*(?:react-native|@react-native|expo|@expo|heroui-native|uniwind|@noble[+/]hashes|fractional-indexing))"],
+  transformIgnorePatterns: ["node_modules/(?!.*(?:react-native|@react-native|expo|@expo|@noble[+/]hashes|fractional-indexing))"],
 };

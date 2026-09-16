@@ -7,5 +7,6 @@ export async function sendBrowserFeedback(
   _submission: BrowserFeedbackSubmission,
   _signal: AbortSignal,
 ): Promise<void> {
+  await Promise.resolve();
   throw new Error("Browser feedback is available in the Android application");
 }

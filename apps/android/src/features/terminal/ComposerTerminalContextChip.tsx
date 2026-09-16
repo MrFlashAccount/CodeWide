@@ -8,33 +8,35 @@ import { styles } from "./ComposerTerminalContextChip.styles";
 
 export function ComposerTerminalContextChip({
   connectionId,
-  threadId,
   onOpen,
+  threadId,
 }: {
   connectionId: string | null;
+  onOpen: () => void;
   threadId: string | null;
-  onOpen(): void;
 }) {
   const workspace = useInteractiveTerminalWorkspace(connectionId, threadId);
-  if (workspace.tabs.length === 0) return null;
+  if (workspace.tabs.length === 0) {
+    return null;
+  }
   return (
     <Pressable
+      accessibilityLabel={`Terminals: ${String(workspace.tabs.length)}`}
       accessibilityRole="button"
-      accessibilityLabel={`Terminals: ${workspace.tabs.length}`}
       onPress={onOpen}
       style={styles.composerContextChip}
     >
       <InlineIcon
-        name="terminal-outline"
-        role="label"
         color={
           workspace.tabs.some(({ status }) => status === "open") ? colors.green : colors.textMuted
         }
+        name="terminal-outline"
+        role="label"
       />
       <ComposerContextCount
         label="Terminals"
-        value={workspace.tabs.length}
         testID="composer-terminals-label"
+        value={workspace.tabs.length}
       />
     </Pressable>
   );

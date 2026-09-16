@@ -10,7 +10,6 @@ import {
   nativeEngine,
   appPackage,
   rootLayout,
-  globalCss,
   nativeTransport,
   nativeProtocolEngine,
   preparedMicrophone,
@@ -95,14 +94,12 @@ it("preserves native integration contracts — 2", () => {
   expect(deviceKeyStore).toContain("KeyProperties.KEY_ALGORITHM_EC");
   expect(deviceKeyStore).toContain('Signature.getInstance("SHA256withECDSA")');
   expect(deviceKeyStore).not.toContain("private.encoded");
-  expect(appPackage.dependencies["heroui-native"]).toBe("1.0.8");
-  expect(appPackage.dependencies.uniwind).toBe("1.10.1");
-  expect(rootLayout).toContain("<HeroUIRoot>");
-  expect(globalCss).toContain(".menu__content {");
-  expect(globalCss).toContain("background-color: var(--color-overlay);");
+  expect(appPackage.dependencies["heroui-native"]).toBeUndefined();
+  expect(appPackage.dependencies.uniwind).toBeUndefined();
+  expect(rootLayout).toContain("<AppRootProviders>");
   expect(nativeTransport).toContain("pendingEvents.push(event)");
-  expect(nativeTransport).toContain(
-    'setTimeout(() => deliver({ type: "error", text: "timeout" }), 30_000)',
+  expect(nativeTransport).toMatch(
+    /watchdog = setTimeout\(\(\) => \{\s*deliver\(\{ text: "timeout", type: "error" \}\);\s*\}, 30_000\)/u,
   );
   expect(nativeTransport).toContain("export function cancelVoiceRecognition");
   expect(nativeModule).toContain("voiceGeneration");
@@ -145,7 +142,7 @@ it("preserves native integration contracts — 2", () => {
   expect(nativeTransport).toContain('emitter.addListener("CodeWideAudioEvent"');
   expect(nativeTransport).toContain("const info = isPcmCaptureInfo(capture) ? capture : null");
   expect(nativeTransport).toContain('info.source === "mic"');
-  expect(nativeTransport).toContain("legacy native capture bridge");
+  expect(nativeTransport).toContain('event: "microphone.legacy_capture_started"');
   expect(pairRoute).toContain('<Redirect href="/legacy" />');
   expect(threadRoute).toContain('<Redirect href="/legacy" />');
   expect(pairRoute).not.toContain("<CodeWideScreen />");

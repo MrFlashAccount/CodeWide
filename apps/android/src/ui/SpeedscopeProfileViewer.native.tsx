@@ -1,9 +1,10 @@
 import { fromByteArray } from "base64-js";
 import { Ionicons } from "@expo/vector-icons";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
+import { unknownRecord } from "../data/unknownRecord";
 import { colors, spacing, touchTarget, typeScale, iconSize, layoutSize } from "../theme";
 import { AppText as Text } from "./Typography";
 
@@ -11,18 +12,18 @@ const SPEEDSCOPE_URL =
   "file:///android_asset/speedscope/index.html#localProfilePath=android_asset%2Fspeedscope%2Fcodewide-loader.js&view=time-ordered";
 
 export function SpeedscopeProfileViewer({
-  title,
-  fileName,
   content,
+  fileName,
   onClose,
+  title,
 }: {
-  title: string;
-  fileName: string;
   content: string;
-  onClose(): void;
+  fileName: string;
+  onClose: () => void;
+  title: string;
 }) {
   const webView = useRef<WebView>(null);
-  const base64Profile = useMemo(() => utf8Base64(content), [content]);
+  const base64Profile = utf8Base64(content);
   const [status, setStatus] = useState<"waiting" | "loading" | "ready" | "error">("waiting");
   const [error, setError] = useState<string | null>(null);
 
@@ -102,17 +103,29 @@ export function SpeedscopeProfileViewer({
   };
 
   const handleMessage = ({ nativeEvent }: WebViewMessageEvent) => {
-    let message: { type?: string; message?: string };
+    let parsed: unknown;
     try {
-      message = JSON.parse(nativeEvent.data) as { type?: string; message?: string };
+      parsed = JSON.parse(nativeEvent.data);
     } catch {
       return;
     }
-    if (message.type === "speedscope-ready") loadProfile();
-    if (message.type === "speedscope-profile-loaded") setStatus("ready");
+    const message = unknownRecord(parsed);
+    if (message === null) {
+      return;
+    }
+    if (message.type === "speedscope-ready") {
+      loadProfile();
+    }
+    if (message.type === "speedscope-profile-loaded") {
+      setStatus("ready");
+    }
     if (message.type === "speedscope-error") {
       setStatus("error");
-      setError(message.message ?? "Speedscope failed to load the profile");
+      setError(
+        typeof message.message === "string"
+          ? message.message
+          : "Speedscope failed to load the profile",
+      );
     }
   };
 
@@ -120,12 +133,12 @@ export function SpeedscopeProfileViewer({
     <View style={styles.root}>
       <View style={styles.header}>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Close performance profile"
+          accessibilityRole="button"
           onPress={onClose}
           style={styles.closeButton}
         >
-          <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
+          <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
         </Pressable>
         <View style={styles.titleBlock}>
           <Text numberOfLines={1} style={styles.title}>
@@ -141,24 +154,28 @@ export function SpeedscopeProfileViewer({
       </View>
       {error !== null && <Text style={styles.error}>{error}</Text>}
       <WebView
-        ref={webView}
-        source={{ uri: SPEEDSCOPE_URL }}
-        originWhitelist={["file://*"]}
         allowFileAccess
         allowFileAccessFromFileURLs
         allowUniversalAccessFromFileURLs={false}
-        javaScriptEnabled
         domStorageEnabled
-        setSupportMultipleWindows={false}
-        onMessage={handleMessage}
+        javaScriptEnabled
         onError={({ nativeEvent }) => {
           setStatus("error");
-          setError(nativeEvent.description || "Speedscope WebView failed to load");
+          setError(
+            nativeEvent.description === ""
+              ? "Speedscope WebView failed to load"
+              : nativeEvent.description,
+          );
         }}
+        onMessage={handleMessage}
         onRenderProcessGone={() => {
           setStatus("error");
           setError("Android stopped the Speedscope renderer");
         }}
+        originWhitelist={["file://*"]}
+        ref={webView}
+        setSupportMultipleWindows={false}
+        source={{ uri: SPEEDSCOPE_URL }}
         style={styles.webView}
       />
     </View>
@@ -170,47 +187,47 @@ function utf8Base64(value: string): string {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 0,
-    backgroundColor: colors.background,
-  },
-  header: {
-    minHeight: layoutSize.header,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.xs,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.surface,
-  },
   closeButton: {
-    width: touchTarget,
-    height: touchTarget,
     alignItems: "center",
+    height: touchTarget,
     justifyContent: "center",
-  },
-  titleBlock: {
-    flex: 1,
-    minWidth: 0,
-  },
-  title: {
-    ...typeScale.title,
-    color: colors.text,
-  },
-  subtitle: {
-    ...typeScale.label,
-    color: colors.textMuted,
+    width: touchTarget,
   },
   error: {
     color: colors.red,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  webView: {
-    flex: 1,
+  header: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: layoutSize.header,
+    paddingHorizontal: spacing.xs,
+  },
+  root: {
     backgroundColor: colors.background,
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+  },
+  subtitle: {
+    ...typeScale.label,
+    color: colors.textMuted,
+  },
+  title: {
+    ...typeScale.title,
+    color: colors.text,
+  },
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  webView: {
+    backgroundColor: colors.background,
+    flex: 1,
   },
 });

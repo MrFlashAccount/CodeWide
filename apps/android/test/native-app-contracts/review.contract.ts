@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { compactSource } from "../source-contract";
-import { heroUIRoot } from "./presentation-sources";
+import { appRootProviders } from "./presentation-sources";
 import { ownerUserMessageContent } from "./conversation-turns-sources";
 import {
   documentPreviewHost,
@@ -29,6 +29,7 @@ import {
   codeReviewWorkspace,
   ownerReviewVoice,
   reviewVoiceOwner,
+  ownerCodeReviewMenu,
   ownerCodeReviewState,
 } from "./review-sources";
 import { codeReviewAsset, nativeEngine } from "./native-sources";
@@ -51,9 +52,9 @@ const ownerAttachmentDocumentResource = readFileSync(
 );
 
 it("renders attached Markdown and isolated HTML with the reusable document preview", () => {
-  expect(heroUIRoot).toContain("<ImagePreviewHost>");
-  expect(heroUIRoot).toContain("<DocumentPreviewHost>");
-  expect(heroUIRoot).toContain("<AppFullscreenOverlayHost />");
+  expect(appRootProviders).toContain("<ImagePreviewHost>");
+  expect(appRootProviders).toContain("<DocumentPreviewHost>");
+  expect(appRootProviders).toContain("<AppFullscreenOverlayHost />");
   expect(ownerUserMessageContent).toContain("<MessageAttachmentCard");
   expect(documentPreviewHost).toContain("readPrivateAssetText(");
   expect(documentPreviewHost).toContain('{ kind: "path", path: request.path }');
@@ -85,7 +86,8 @@ it("renders attached Markdown and isolated HTML with the reusable document previ
   expect(documentPreviewHost).toContain("source,");
   expect(documentPreviewHost).toMatch(/openImagePreview\(\s*\{/u);
   expect(documentPreviewHost).toContain("onDownload");
-  expect(imagePreviewHost).toContain('{ id: "download", label: "Download"');
+  expect(imagePreviewHost).toContain('id: "download"');
+  expect(imagePreviewHost).toContain('label: "Download"');
   expect(imagePreviewHost).toContain('accessibilityLabel="Image actions"');
   expect(documentPreviewHost).toContain('props.testID ?? "html-document-preview"');
   expect(documentPreviewHost).toContain("javaScriptEnabled\n");
@@ -108,8 +110,9 @@ it("renders attached Markdown and isolated HTML with the reusable document previ
   expect(screen).not.toContain('values={["Upload", "Download"]}');
   expect(screen).not.toContain('label="Server root id"');
   expect(migratedAttachmentDocumentPreview).toContain('accessibilityLabel="Back to attachments"');
+  expect(migratedAttachmentsFeature).toContain("if (!open)");
   expect(migratedAttachmentsFeature).toContain(
-    "if (!open) (document === null ? closeSheet : navigateBack)();",
+    "(document === null ? closeSheet : navigateBack)();",
   );
   expect(ownerAttachmentDocumentResource).toMatch(
     /useEphemeralAsyncResource<\s*Extract<DocumentPreviewResult/u,
@@ -132,8 +135,9 @@ it("keeps code review readonly, offline and attached as one structured artifact"
     /onInitialLoad:\s*async\s*\(\)\s*=>\s*loadResources\(scope,\s*"changes",?\s*\)/u,
   );
   expect(ownerCodeReviewResources).toContain("useAsyncResource<ThreadResourcesValue>(");
-  expect(ownerCodeReviewResources).toContain("async () =>\n      shouldLoadInitialScope");
-  expect(ownerCodeReviewResources).toContain("? await onInitialLoad!()");
+  expect(ownerCodeReviewResources).toContain("if (shouldLoadInitialScope)");
+  expect(ownerCodeReviewResources).toContain("return onInitialLoad()");
+  expect(ownerCodeReviewResources).toContain("return onLoadScope(requestedScope)");
   expect(codeReviewWorkspace).not.toContain("void onInitialLoad().then(");
   expect(migratedChangesFeature).toContain("onClose={onClose}");
   expect(codeReviewWorkspace).toContain("files={reviewFiles}");
@@ -157,16 +161,17 @@ it("keeps code review readonly, offline and attached as one structured artifact"
   );
   expect(codeReviewWorkspace).toContain('accessibilityLabel="Changes options"');
   expect(codeReviewWorkspace).toContain('name="ellipsis-vertical"');
-  expect(ownerCodeReviewState).toContain(
-    '{ id: "download", section: "File", label: "Download", icon: "download-outline" as const }',
+  expect(ownerCodeReviewState).toMatch(
+    /\{(?=[^}]*id: "download")(?=[^}]*section: "File")(?=[^}]*label: "Download")(?=[^}]*icon: "download-outline" as const)[^}]*\}/u,
   );
-  expect(ownerCodeReviewState).toContain('if (id === "download") onDownload?.();');
+  expect(ownerCodeReviewState).toContain('if (id === "download")');
+  expect(ownerCodeReviewState).toContain("onDownload?.();");
   expect(codeReviewWorkspace).not.toContain('accessibilityLabel="Download file"');
   expect(changeMenu).toContain('section: "Changes"');
-  expect(changeMenu).toContain('section: "Layout"');
-  expect(changeMenu).toContain('section: "Display"');
-  expect(changeMenu).toContain('label: "Wrap lines"');
-  expect(changeMenu).not.toContain('label: "Default"');
+  expect(ownerCodeReviewMenu).toContain('section: "Layout"');
+  expect(ownerCodeReviewMenu).toContain('section: "Display"');
+  expect(ownerCodeReviewMenu).toContain('label: "Wrap lines"');
+  expect(ownerCodeReviewMenu).not.toContain('label: "Default"');
   expect(migratedThreadResourceContextChips).toContain('trigger="long-press"');
   expect(migratedThreadResourceContextChips).toContain(
     "actions={changeScopeMenuActions(changeScopes, changeScope)}",
@@ -181,17 +186,18 @@ it("keeps code review readonly, offline and attached as one structured artifact"
   expect(codeReviewRuntime).toContain('density: "compact"');
   expect(codeReviewRuntime).not.toContain('"list.hoverBackground"');
   expect(codeReviewRuntime).toContain("stickyFolders: false");
-  expect(codeReviewRuntime).toContain("overscan: 4");
+  expect(codeReviewRuntime).toContain("const FILE_TREE_OVERSCAN = 4");
+  expect(codeReviewRuntime).toContain("overscan: FILE_TREE_OVERSCAN");
   expect(codeReviewRuntime).toContain("themeToTreeStyles(treeTheme)");
-  expect(codeReviewRuntime).toContain("treeContainer.style.setProperty(property, String(value))");
+  expect(codeReviewRuntime).toContain("treeContainer.style.setProperty(property, value)");
   expect(codeReviewRuntime).not.toContain("Object.assign(treeContainer.style, treeThemeStyles)");
   expect(codeReviewRuntime).toContain(
     "new Map(payload.files.map((file) => [file.treePath, file]))",
   );
-  expect(codeReviewRuntime).toContain("if (nextTreePath === selectedTreePath && !scroll) return;");
+  expect(codeReviewRuntime).toContain("if (nextTreePath === selectedTreePath && !scroll)");
   expect(codeReviewRuntime).toContain("if (currentWorkspace.files.length === 0)");
   expect(codeReviewRuntime).toContain("else if (currentWorkspace.selectedPath !== null)");
-  expect(codeReviewRuntime).toContain("codeReviewDocumentEmptyState(currentDocument, currentMode)");
+  expect(codeReviewRuntime).toContain("codeReviewDocumentEmptyState(document, currentMode)");
   expect(codeReviewRuntime).toContain("renderCurrentDocument(true)");
   expect(codeReviewRuntime).toContain("forceRender,");
   expect(codeReviewRuntime).toContain("unsafeCSS: TOUCH_FILE_TREE_CSS");
@@ -205,8 +211,8 @@ it("keeps code review readonly, offline and attached as one structured artifact"
   expect(codeReviewAsset).not.toContain("--trees-bg-override");
   expect(codeReviewAsset).not.toContain("--trees-level-gap-override");
   expect(codeReviewAsset).toContain("padding-top: 10px;");
-  expect(codeReviewAsset).toContain(
-    '#workspace[data-sidebar-open="false"] #preview-panel { border-radius: 16px; }',
+  expect(codeReviewAsset).toMatch(
+    /#workspace\[data-sidebar-open="false"\] #preview-panel\s*\{\s*border-radius: 16px;\s*\}/u,
   );
   expect(codeReviewAsset).toContain('id="tree-empty"');
   expect(codeReviewAsset).toContain('id="preview-empty"');
@@ -232,8 +238,8 @@ it("keeps async data ownership in resources and event-driven preview controllers
   );
   expect(ownerThreadSyncRuntime).toContain("threadObserverDesired.set(connectionId, threadId)");
   expect(threadDetailDatabase).toContain("remoteLoader?.observe?.({ connectionId, threadId })");
-  expect(ownerThreadSyncRemoteLoader).toContain("Could not attach retained thread observer");
-  expect(reconnectOwner).toContain("Thread sync failed after reconnect");
+  expect(ownerThreadSyncRemoteLoader).toContain('event: "thread.observer.attach_failed"');
+  expect(reconnectOwner).toContain('event: "thread.reconnect_sync.failed"');
   expect(ownerThreadSyncRuntime).toContain('"companion/thread/sync"');
   expect(nativeEngine).toContain("async reattachRuntime(): Promise<void>");
   expect(nativeEngine).toContain("await session.reattachRuntime()");
@@ -246,9 +252,7 @@ it("keeps async data ownership in resources and event-driven preview controllers
   );
   expect(screen).not.toContain("refreshIfSelected");
   expect(navigationActions).toContain("open({");
-  expect(navigationActions).toContain(
-    'mode: same ? "replace" : router.selectionMode',
-  );
+  expect(navigationActions).toContain('mode: same ? "replace" : router.selectionMode');
   expect(navigationActions).toContain("navigationId,");
   expect(navigationActions).toContain("params,");
   expect(navigationActions).toContain("setActiveConnection(params.connectionId.value)");
@@ -269,6 +273,6 @@ it("keeps async data ownership in resources and event-driven preview controllers
   expect(mermaidWeb).toContain("useAsyncResource");
   expect(imagePreviewHost).toContain("const handleAnnotation = useEvent(handler)");
   expect(imagePreviewHost).toContain(
-    "registerAnnotationHandler((item, onAttached) => handleAnnotation(item, onAttached))",
+    "registerAnnotationHandler(async (item, onAttached) => handleAnnotation(item, onAttached))",
   );
 });

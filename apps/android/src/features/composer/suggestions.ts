@@ -8,17 +8,17 @@ import {
 import type { ComposerSuggestionsCapabilities } from "./suggestionsCapabilities";
 
 export function useComposerSuggestions({
-  latestComposerPreferencesRef,
-  updateComposerPreferences,
   composerInputRef,
-  draftSelectionRef,
-  draft,
-  updateDraft,
-  voiceController,
   composerScope,
   currentControlsResource,
-  onLoadControls,
   cwd,
+  draft,
+  draftSelectionRef,
+  latestComposerPreferencesRef,
+  onLoadControls,
+  updateComposerPreferences,
+  updateDraft,
+  voiceController,
 }: ComposerSuggestionsCapabilities) {
   const insertSkillInvocation = useEvent((skill: { name: string; path: string }) => {
     const selected = latestComposerPreferencesRef.current.latest.skillPaths;
@@ -41,26 +41,31 @@ export function useComposerSuggestions({
     const next = `${current.slice(0, selection.start)}${invocation}${current.slice(selection.end)}`;
     const cursor = selection.start + invocation.length;
     updateDraft(next);
-    draftSelectionRef.current = { start: cursor, end: cursor };
-    voiceController?.setPendingSelection(composerScope, { start: cursor, end: cursor });
+    draftSelectionRef.current = { end: cursor, start: cursor };
+    voiceController?.setPendingSelection(composerScope, { end: cursor, start: cursor });
   });
 
   const handleComposerTextChange = useEvent((nextText: string) => {
     updateDraft(nextText);
     const currentSkills = currentControlsResource()?.value?.skills;
     const selected = latestComposerPreferencesRef.current.latest.skillPaths;
-    if (currentSkills === undefined || selected.length === 0) return;
+    if (currentSkills === undefined || selected.length === 0) {
+      return;
+    }
     const next = selected.filter((path) => {
       const skill = currentSkills.find((candidate) => candidate.path === path);
       return skill !== undefined && containsSkillInvocation(nextText, skill.name);
     });
-    if (next.length !== selected.length)
+    if (next.length !== selected.length) {
       updateComposerPreferences((current) => ({ ...current, skillPaths: next }));
+    }
   });
 
   const searchComposerSuggestions = useEvent(
     async (query: { readonly indicator: "/" | "@"; readonly text: string }) => {
-      if (query.indicator !== "/") return [];
+      if (query.indicator !== "/") {
+        return [];
+      }
       const current = currentControlsResource();
       const value =
         current?.value ?? (onLoadControls === undefined ? null : await onLoadControls(cwd));
@@ -69,7 +74,9 @@ export function useComposerSuggestions({
   );
 
   const selectComposerMention = useEvent((mention: ComposerMention) => {
-    if (mention.kind !== "skill") return;
+    if (mention.kind !== "skill") {
+      return;
+    }
     const selected = latestComposerPreferencesRef.current.latest.skillPaths;
     if (!selected.includes(mention.path)) {
       updateComposerPreferences((current) => ({
@@ -79,9 +86,9 @@ export function useComposerSuggestions({
     }
   });
   return {
+    handleComposerTextChange,
     insertSkillInvocation,
     searchComposerSuggestions,
     selectComposerMention,
-    handleComposerTextChange,
   };
 }

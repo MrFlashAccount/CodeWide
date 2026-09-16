@@ -14,9 +14,13 @@ export function commandActivityInput(raw: Record<string, unknown>, fallbackTitle
 }
 
 export function commandActivityTitle(command: string): string {
-  const singleLine = command.replace(/\s+/gu, " ").trim();
-  if (singleLine === "") return "Command";
-  if (singleLine.length <= COMMAND_ACTIVITY_TITLE_CHARS) return singleLine;
+  const singleLine = command.replaceAll(/\s+/gu, " ").trim();
+  if (singleLine === "") {
+    return "Command";
+  }
+  if (singleLine.length <= COMMAND_ACTIVITY_TITLE_CHARS) {
+    return singleLine;
+  }
   return `${singleLine.slice(0, COMMAND_ACTIVITY_TITLE_CHARS - 1)}…`;
 }
 
@@ -25,15 +29,17 @@ export function commandOutputFootprint(
   visibleOutput = "",
 ): OutputFootprintProjection | null {
   const projected = projectedOutputFootprint(raw.codewideOutputFootprint);
-  if (projected !== null) return projected;
+  if (projected !== null) {
+    return projected;
+  }
   const bytes = utf8ByteLength(visibleOutput);
   return bytes === 0
     ? null
     : {
-        version: 1,
         basis: "approxBytesPerToken",
         bytes,
         estimatedTokens: Math.ceil(bytes / APPROX_BYTES_PER_TOKEN),
+        version: 1,
       };
 }
 
@@ -50,7 +56,9 @@ export function estimatedOutputInputCostUsd(
   usage: TurnUsageProjection | null,
 ): number | null {
   const inputPrice = usage?.turn.cost?.price.input;
-  if (footprint === null || inputPrice === undefined || !Number.isFinite(inputPrice)) return null;
+  if (footprint === null || inputPrice === undefined || !Number.isFinite(inputPrice)) {
+    return null;
+  }
   return (footprint.estimatedTokens * inputPrice) / 1_000_000;
 }
 
@@ -58,7 +66,7 @@ function utf8ByteLength(value: string): number {
   let bytes = 0;
   for (const character of value) {
     const codePoint = character.codePointAt(0) ?? 0;
-    bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+    bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7_ff ? 2 : codePoint <= 0xff_ff ? 3 : 4;
   }
   return bytes;
 }

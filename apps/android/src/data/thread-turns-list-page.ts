@@ -3,8 +3,8 @@ import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { parseHistoryTurns } from "./thread-cursor-sync";
 
 export type ThreadTurnsListPage = {
-  turns: Turn[];
   nextCursor: string | null;
+  turns: Turn[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -28,5 +28,5 @@ export function parseThreadTurnsListPage(
   ) {
     throw new Error("thread/turns/list returned an invalid history page");
   }
-  return { turns, nextCursor };
+  return { nextCursor, turns };
 }

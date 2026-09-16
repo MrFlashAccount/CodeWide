@@ -17,8 +17,8 @@ import {
   typeWeight,
   layoutSize,
 } from "../../theme";
-import type { UsageAccountViewModel } from "../usage/UsagePopoverView";
-import { UsagePopoverView } from "../usage/UsagePopoverView";
+import type { UsageAccountViewModel } from "../usage/UsageMenuView";
+import { UsageMenuView } from "../usage/UsageMenuView";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { PresentationText as Text } from "../text/ProductText";
 import { ThreadListView, type ThreadListRow, type ThreadListVoiceControl } from "./ThreadListView";
@@ -92,7 +92,7 @@ export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Elem
               <ActivityIndicator color={colors.amber} size={14} />
             ) : null}
             <HeaderAction label="New thread" name="create" onPress={onNewThread} />
-            <UsagePopoverView
+            <UsageMenuView
               {...(usageAccounts === undefined ? {} : { accounts: usageAccounts })}
               actions={[
                 {
@@ -109,7 +109,7 @@ export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Elem
               triggerStyle={headerActionStyle}
             >
               <PresentationIcon color={colors.text} name="more" size={iconSize.action} />
-            </UsagePopoverView>
+            </UsageMenuView>
           </>
         )}
       </View>

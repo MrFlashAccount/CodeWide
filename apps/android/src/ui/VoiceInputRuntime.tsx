@@ -8,18 +8,18 @@ export type AppVoiceInputRuntime = {
   controller: VoiceInputController | null;
   resources: WorkspaceResourceDatabase | null;
   scopePrefix: string;
-  thread: Thread | null;
   startRemote?: StartVoiceTranscription;
+  thread: Thread | null;
 };
 
 const VoiceInputRuntimeContext = createContext<AppVoiceInputRuntime | null>(null);
 
 export function AppVoiceInputProvider({
-  runtime,
   children,
+  runtime,
 }: {
-  runtime: AppVoiceInputRuntime;
   children: ReactNode;
+  runtime: AppVoiceInputRuntime;
 }) {
   return (
     <VoiceInputRuntimeContext.Provider value={runtime}>
@@ -46,14 +46,20 @@ export function useScopedVoiceInputResource(
 ): VoiceInputRow | null {
   return useSyncExternalStore(
     (notify) => {
-      if (resources === null || scope === null) return () => {};
+      if (resources === null || scope === null) {
+        return () => {};
+      }
       const subscription = resources.voiceInputs.subscribeChanges(
         (changes) => {
-          if (changes.some((change) => String(change.key) === scope)) notify();
+          if (changes.some((change) => String(change.key) === scope)) {
+            notify();
+          }
         },
         { includeInitialState: false },
       );
-      return () => subscription.unsubscribe();
+      return () => {
+        subscription.unsubscribe();
+      };
     },
     () => resources?.voiceInputs.get(scope ?? "") ?? null,
     () => null,

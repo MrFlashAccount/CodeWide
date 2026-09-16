@@ -5,41 +5,43 @@ import { useReducedMotionPreference } from "./reduced-motion-store";
 import { StreamingRevealContext } from "./streaming-reveal-context";
 
 interface StreamingRevealProps extends ViewProps {
-  streamKey: string;
-  reduceMotion: boolean;
   animateNew: boolean;
+  reduceMotion: boolean;
+  streamKey: string;
 }
 
 // An older APK may receive this JS bundle before it has the native paint adapter.
 const NativeSurface =
-  Platform.OS === "android" && UIManager.getViewManagerConfig("CodeWideStreamingReveal") != null
+  // WHY: OTA JavaScript can run on an older native shell where the typed view manager is absent at runtime.
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
+  Platform.OS === "android" && UIManager.getViewManagerConfig("CodeWideStreamingReveal") !== null
     ? requireNativeComponent<StreamingRevealProps>("CodeWideStreamingReveal")
     : null;
 
 /** Animation changes native glyph paint, never the published Markdown or its layout. */
 export function StreamingRevealSurface({
+  animateNew = true,
   children,
   streamKey,
-  animateNew = true,
 }: {
+  animateNew?: boolean;
   children: ReactNode;
   streamKey: string;
-  animateNew?: boolean;
 }) {
   const reduceMotion = useReducedMotionPreference();
   const shouldAnimate = NativeSurface !== null && animateNew && !reduceMotion;
   return (
     <StreamingRevealContext.Provider value={streamKey}>
       {!shouldAnimate ? (
-        <View testID="streaming-reveal-fallback" pointerEvents="box-none">
+        <View pointerEvents="box-none" testID="streaming-reveal-fallback">
           {children}
         </View>
       ) : (
         <NativeSurface
-          streamKey={streamKey}
-          reduceMotion={false}
           animateNew
           pointerEvents="box-none"
+          reduceMotion={false}
+          streamKey={streamKey}
         >
           {children}
         </NativeSurface>

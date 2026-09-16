@@ -10,8 +10,10 @@ function subscribe(listener: () => void): () => void {
     now = Date.now();
     timer = setInterval(() => {
       now = Date.now();
-      for (const notify of listeners) notify();
-    }, 1_000);
+      for (const notify of listeners) {
+        notify();
+      }
+    }, 1000);
   }
   return () => {
     listeners.delete(listener);

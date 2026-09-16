@@ -6,18 +6,18 @@ import { useUnreadReceiptState } from "./unreadReceipt";
 
 export function useConversationTimelineState({
   composerScope,
-  searchWindow,
   composerState,
   draftConnectionId,
   draftThreadId,
   readInputs,
+  searchWindow,
 }: {
   composerScope: string;
-  searchWindow: Exclude<MainThreadReadCapabilities["searchWindow"], undefined>;
   composerState: Exclude<MainThreadReadCapabilities["composerState"], undefined>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
   readInputs: MainThreadReadCapabilities;
+  searchWindow: Exclude<MainThreadReadCapabilities["searchWindow"], undefined>;
 }) {
   const timelineSearchStateBinding = useTimelineSearchState(composerScope, searchWindow);
   const timelineViewportStateBinding = useTimelineViewportState(composerScope);
@@ -31,9 +31,9 @@ export function useConversationTimelineState({
     readInputs.saveScrollOffset,
   );
   return {
-    timelineViewportStateBinding,
     historyAnchorStateBinding,
-    unreadReceiptStateBinding,
     timelineSearchStateBinding,
+    timelineViewportStateBinding,
+    unreadReceiptStateBinding,
   };
 }

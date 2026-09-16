@@ -8,14 +8,16 @@ import type { RequestsWorkspaceCapabilities } from "./workspaceCapabilities";
 export function createRequestsWorkspaceAdapter({
   getPendingRequests,
 }: {
-  getPendingRequests(): PendingRequestDatabase | null;
+  getPendingRequests: () => PendingRequestDatabase | null;
 }): RequestsWorkspaceCapabilities {
   const respondToServerRequest = async (
     request: PendingServerRequest,
     result: unknown,
   ): Promise<void> => {
     const pending = getPendingRequests();
-    if (pending === null || !pending.claim(request.connectionId, request.requestKey)) return;
+    if (pending === null || !pending.claim(request.connectionId, request.requestKey)) {
+      return;
+    }
     try {
       const requestHash = await digestStringAsync(CryptoDigestAlgorithm.SHA256, request.requestKey);
       await enqueueNativeCommand(
@@ -24,9 +26,9 @@ export function createRequestsWorkspaceAdapter({
         "serverRequest/respond",
         { requestId: request.requestId, result },
       );
-    } catch (cause) {
+    } catch (error) {
       pending.release(request.connectionId, request.requestKey);
-      throw cause;
+      throw error;
     }
   };
   return { respondToServerRequest };

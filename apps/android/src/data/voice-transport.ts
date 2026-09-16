@@ -15,8 +15,8 @@ export type VoiceTranscriptionListener = (event: VoiceTranscriptionEvent) => voi
 
 /** Qualified authenticated session access; transport never owns the workspace lifecycle. */
 export type VoiceTransportAuthority = {
-  getEnabledSession(connectionId: string): RpcClient | undefined;
-  rpcAfterAttach(session: RpcClient, method: string, params: unknown): Promise<unknown>;
+  getEnabledSession: (connectionId: string) => RpcClient | undefined;
+  rpcAfterAttach: (session: RpcClient, method: string, params: unknown) => Promise<unknown>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -39,7 +39,9 @@ export function createVoiceTransport({
     options: VoiceTranscriptionOptions = {},
   ): Promise<VoiceTranscriptionSession> => {
     const session = getEnabledSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const voiceStartAt = performance.now();
     let start: unknown;
     try {
@@ -48,15 +50,15 @@ export function createVoiceTransport({
         ...(options.capture === undefined
           ? {}
           : {
+              automaticGainControl: options.capture.automaticGainControl,
               captureSource: options.capture.source,
               noiseSuppressor: options.capture.noiseSuppressor,
-              automaticGainControl: options.capture.automaticGainControl,
             }),
       });
       recordTiming("voice_start_ms", performance.now() - voiceStartAt);
-    } catch (cause) {
+    } catch (error) {
       incrementMetric("voice_failures");
-      throw cause;
+      throw error;
     }
     const sessionId = asRecord(start)?.sessionId;
     if (typeof sessionId !== "string" || sessionId.length === 0) {
@@ -70,29 +72,36 @@ export function createVoiceTransport({
     let finishInFlight: Promise<void> | null = null;
     let uploadError: string | null = null;
     const uploader = new RealtimeAudioUploader({
-      send: async (batchId, chunks, signal) =>
-        await sendDictationBatchUntilAccepted(
-          session,
-          {
-            sessionId,
-            batchId: String(batchId),
-            chunks,
-          },
-          signal,
-        ),
       onError: (message) => {
         uploadError = message;
         incrementMetric("voice_failures");
-        if (!disposed) listener({ type: "error", message });
+        if (!disposed) {
+          listener({ message, type: "error" });
+        }
+      },
+      send: async (batchId, chunks, signal) => {
+        await sendDictationBatchUntilAccepted(
+          session,
+          {
+            batchId: String(batchId),
+            chunks,
+            sessionId,
+          },
+          signal,
+        );
       },
     });
 
     const append = (chunk: VoiceAudioChunk) => {
-      if (!acceptingAudio || disposed) return;
+      if (!acceptingAudio || disposed) {
+        return;
+      }
       uploader.append(chunk);
     };
     const close = async (flush: boolean) => {
-      if (disposed) return;
+      if (disposed) {
+        return;
+      }
       if (!flush) {
         acceptingAudio = false;
         disposed = true;
@@ -104,7 +113,10 @@ export function createVoiceTransport({
         return;
       }
       acceptingAudio = false;
-      if (finishInFlight !== null) return await finishInFlight;
+      if (finishInFlight !== null) {
+        await finishInFlight;
+        return;
+      }
       const finishing = (async () => {
         if (!audioDrained) {
           const voiceDrainAt = performance.now();
@@ -130,7 +142,7 @@ export function createVoiceTransport({
           const retryAfterMs =
             typeof response.retryAfterMs === "number" && Number.isFinite(response.retryAfterMs)
               ? Math.max(0, response.retryAfterMs)
-              : 1_000;
+              : 1000;
           throw new RetryableVoiceTranscriptionError(
             typeof response.message === "string"
               ? response.message
@@ -139,26 +151,34 @@ export function createVoiceTransport({
           );
         }
         const text = response?.text;
-        if (typeof text !== "string") throw new Error("Companion returned an invalid transcript");
+        if (typeof text !== "string") {
+          throw new Error("Companion returned an invalid transcript");
+        }
         disposed = true;
-        listener({ type: "done", text });
+        listener({ text, type: "done" });
       })();
       finishInFlight = finishing;
       try {
         await finishing;
       } finally {
-        if (finishInFlight === finishing) finishInFlight = null;
+        if (finishInFlight === finishing) {
+          finishInFlight = null;
+        }
       }
     };
     return {
       appendAudio: append,
-      finish: async () => await close(true),
-      cancel: async () => await close(false),
+      cancel: async () => {
+        await close(false);
+      },
+      finish: async () => {
+        await close(true);
+      },
     };
   };
 
   const AUDIO_UPLOAD_RETRY_BASE_MS = 250;
-  const AUDIO_UPLOAD_RETRY_MAX_MS = 5_000;
+  const AUDIO_UPLOAD_RETRY_MAX_MS = 5000;
   const DICTATION_FINISH_TRANSPORT_RETRIES = 3;
 
   async function finishDictationWithTransportRetry(
@@ -169,24 +189,26 @@ export function createVoiceTransport({
     for (let attempt = 0; ; attempt += 1) {
       throwIfAudioUploadAborted(signal);
       try {
-        if (session.waitUntilLive !== undefined)
+        if (session.waitUntilLive !== undefined) {
           await raceAudioUploadAbort(session.waitUntilLive(30_000), signal);
+        }
         throwIfAudioUploadAborted(signal);
         return await raceAudioUploadAbort(
           rpcAfterAttach(session, "companion/dictation/finish", { sessionId }),
           signal,
         );
-      } catch (cause) {
+      } catch (error) {
         throwIfAudioUploadAborted(signal);
         const transientRpc =
-          cause instanceof RpcResponseError && (cause.code === -32003 || cause.code === -32004);
+          error instanceof RpcResponseError && (error.code === -32_003 || error.code === -32_004);
         if (
-          (cause instanceof RpcResponseError && !transientRpc) ||
+          (error instanceof RpcResponseError && !transientRpc) ||
           attempt >= DICTATION_FINISH_TRANSPORT_RETRIES
-        )
-          throw cause;
+        ) {
+          throw error;
+        }
         await waitForAudioUploadRetry(
-          Math.min(2_000, AUDIO_UPLOAD_RETRY_BASE_MS * 2 ** attempt),
+          Math.min(2000, AUDIO_UPLOAD_RETRY_BASE_MS * 2 ** attempt),
           signal,
         );
       }
@@ -199,7 +221,7 @@ export function createVoiceTransport({
     signal: AbortSignal,
   ): Promise<void> {
     let attempt = 0;
-    while (true) {
+    for (;;) {
       throwIfAudioUploadAborted(signal);
       try {
         if (session.waitUntilLive !== undefined) {
@@ -210,13 +232,14 @@ export function createVoiceTransport({
           signal,
         );
         return;
-      } catch (cause) {
+      } catch (error) {
         throwIfAudioUploadAborted(signal);
         // Companion validation/auth failures are deterministic. Transport loss,
         // reconnect windows and host backpressure are not: keep the same
         // idempotent batch queued and retry until the host acknowledges it.
-        if (cause instanceof RpcResponseError && cause.code !== -32003 && cause.code !== -32004)
-          throw cause;
+        if (error instanceof RpcResponseError && error.code !== -32_003 && error.code !== -32_004) {
+          throw error;
+        }
         const delayMs = Math.min(
           AUDIO_UPLOAD_RETRY_MAX_MS,
           AUDIO_UPLOAD_RETRY_BASE_MS * 2 ** Math.min(attempt, 5),
@@ -228,7 +251,9 @@ export function createVoiceTransport({
   }
 
   function throwIfAudioUploadAborted(signal: AbortSignal): void {
-    if (!signal.aborted) return;
+    if (!signal.aborted) {
+      return;
+    }
     const error = new Error("Audio upload cancelled");
     error.name = "AbortError";
     throw error;
@@ -236,7 +261,7 @@ export function createVoiceTransport({
 
   async function raceAudioUploadAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
     throwIfAudioUploadAborted(signal);
-    return await new Promise<T>((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       const abort = () => {
         signal.removeEventListener("abort", abort);
         const error = new Error("Audio upload cancelled");
@@ -249,9 +274,9 @@ export function createVoiceTransport({
           signal.removeEventListener("abort", abort);
           resolve(value);
         },
-        (cause: unknown) => {
+        (error: unknown) => {
           signal.removeEventListener("abort", abort);
-          reject(cause);
+          reject(error instanceof Error ? error : new Error("Audio upload failed"));
         },
       );
     });
@@ -259,7 +284,9 @@ export function createVoiceTransport({
 
   async function waitForAudioUploadRetry(delayMs: number, signal: AbortSignal): Promise<void> {
     await raceAudioUploadAbort(
-      new Promise<void>((resolve) => setTimeout(resolve, delayMs)),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, delayMs);
+      }),
       signal,
     );
   }

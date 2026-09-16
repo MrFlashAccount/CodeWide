@@ -31,11 +31,11 @@ export const TOOL_RESULT_MAX_HEIGHT = 400;
 export function ToolCallProtocolBlock({ block, getTransferAccess }: ToolCallProtocolBlockInput) {
   return (
     <Card
-      title={block.title}
       icon="extension-puzzle-outline"
+      title={block.title}
       {...(block.status === null ? {} : { status: block.status })}
-      copyText={() => protocolCopyText(block)}
       collapsible
+      copyText={() => protocolCopyText(block)}
       initiallyExpanded={false}
     >
       <ToolCallProtocolDetails
@@ -73,7 +73,7 @@ export function ToolCallResultContent(props: ToolCallResultContentInput) {
   if (props.block.kind === "dynamicToolCall") {
     const items = Array.isArray(props.block.raw.contentItems) ? props.block.raw.contentItems : [];
     return items.length === 0 ? (
-      <LazyJsonProtocolBody value={{ success: props.block.raw.success }} section={props.section} />
+      <LazyJsonProtocolBody section={props.section} value={{ success: props.block.raw.success }} />
     ) : (
       <ToolRichContent
         items={items}
@@ -84,8 +84,9 @@ export function ToolCallResultContent(props: ToolCallResultContentInput) {
       />
     );
   }
-  if (props.block.raw.error !== null && props.block.raw.error !== undefined)
-    return <LazyJsonProtocolBody value={props.block.raw.error} section={props.section} />;
+  if (props.block.raw.error !== null && props.block.raw.error !== undefined) {
+    return <LazyJsonProtocolBody section={props.section} value={props.block.raw.error} />;
+  }
   const result = recordValue(props.block.raw.result);
   const items = Array.isArray(result.content) ? result.content : [];
   const appContext = recordValue(props.block.raw.appContext);
@@ -94,8 +95,8 @@ export function ToolCallResultContent(props: ToolCallResultContentInput) {
     <>
       {resourceUri !== null && (
         <ToolResourceLink
-          uri={resourceUri}
           label={typeof appContext.appName === "string" ? appContext.appName : "MCP App resource"}
+          uri={resourceUri}
         />
       )}
       {items.length > 0 ? (
@@ -107,7 +108,7 @@ export function ToolCallResultContent(props: ToolCallResultContentInput) {
             : { getTransferAccess: props.getTransferAccess })}
         />
       ) : result.structuredContent === undefined ? (
-        <LazyJsonProtocolBody value={props.block.raw.result ?? null} section={props.section} />
+        <LazyJsonProtocolBody section={props.section} value={props.block.raw.result ?? null} />
       ) : null}
       {result.structuredContent !== null && result.structuredContent !== undefined && (
         <>
@@ -125,34 +126,35 @@ export function ToolCallResultContent(props: ToolCallResultContentInput) {
   );
 }
 
-export function ToolRichContent({ items, section, getTransferAccess }: ToolRichContentInput) {
+export function ToolRichContent({ getTransferAccess, items, section }: ToolRichContentInput) {
   return renderToolRichItems(items, section, getTransferAccess, {
-    ProtocolBody,
+    containsTerminalControlSequences,
     LazyJsonProtocolBody,
+    maxHeight: TOOL_RESULT_MAX_HEIGHT,
+    ProtocolBody,
     ToolResourceLink,
     toolTextNeedsCodeViewport,
-    containsTerminalControlSequences,
-    maxHeight: TOOL_RESULT_MAX_HEIGHT,
   });
 }
 
 export function toolTextNeedsCodeViewport(value: string): boolean {
   const lines = value.split("\n");
-  if (lines.some((line) => line.length > 96 || line.includes("\t"))) return true;
-  if (
-    /^(?:\s*[\[{]|\s*(?:diff --git|@@ |Traceback |Exception\b|Error:|stdout:|stderr:))/mu.test(
-      value,
-    )
-  )
+  if (lines.some((line) => line.length > 96 || line.includes("\t"))) {
     return true;
+  }
+  if (
+    /^(?:\s*[[{]|\s*(?:diff --git|@@ |Traceback |Exception\b|Error:|stdout:|stderr:))/mu.test(value)
+  ) {
+    return true;
+  }
   return false;
 }
 
 export function containsTerminalControlSequences(value: string): boolean {
-  return value.includes("\u001b[") || value.includes("\u009b") || value.includes("\u001b]");
+  return value.includes("\u001B[") || value.includes("\u009B") || value.includes("\u001B]");
 }
 
-export function ToolResourceLink({ uri, label }: ToolResourceLinkInput) {
+export function ToolResourceLink({ label, uri }: ToolResourceLinkInput) {
   const canOpen = isSafeHttpUrl(uri);
   return (
     <Pressable
@@ -163,25 +165,25 @@ export function ToolResourceLink({ uri, label }: ToolResourceLinkInput) {
       <Text numberOfLines={1} style={styles.menuActionTitle}>
         {label}
       </Text>
-      <Text selectable numberOfLines={2} style={styles.rawLink}>
+      <Text numberOfLines={2} selectable style={styles.rawLink}>
         {uri}
       </Text>
     </Pressable>
   );
 }
 
-export function LazyJsonProtocolBody({ value, section = "body" }: LazyJsonProtocolBodyInput) {
+export function LazyJsonProtocolBody({ section = "body", value }: LazyJsonProtocolBodyInput) {
   return <ProtocolBody body={boundedJsonStringify(value)} code collapsible section={section} />;
 }
 
 export function ProtocolBody({
   body,
   code,
+  codeVariant = "code",
   collapsible,
   expandedMaxHeight,
-  section = "body",
   language = "text",
-  codeVariant = "code",
+  section = "body",
   showCopyAction = true,
 }: ProtocolBodyInput) {
   const itemKey = useContext(ExpansionItemKeyContext);
@@ -203,21 +205,21 @@ export function ProtocolBody({
       ? collapsedCodePreview(bounded, collapsedLines, activeToolCall)
       : bounded;
   return renderProtocolBodyView({
-    body,
-    code,
-    expandedMaxHeight,
-    section,
-    language,
-    codeVariant,
-    showCopyAction,
-    rendered,
-    expanded,
-    canCollapse,
-    collapsedLines,
     activeToolCall,
-    itemKey,
+    body,
     bodyLines,
-    setExpanded,
+    canCollapse,
+    code,
+    codeVariant,
+    collapsedLines,
+    expanded,
+    expandedMaxHeight,
+    itemKey,
+    language,
     maxHeight: TOOL_RESULT_MAX_HEIGHT,
+    rendered,
+    section,
+    setExpanded,
+    showCopyAction,
   });
 }

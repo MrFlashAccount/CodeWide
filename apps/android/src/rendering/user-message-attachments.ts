@@ -1,5 +1,6 @@
 import type { RemoteFileAttachment } from "@codewide/sync-client";
 import { fileMediaKind } from "@codewide/file-types";
+import { unknownRecord } from "../data/unknownRecord";
 
 import {
   privateImageAssetProjection,
@@ -10,10 +11,10 @@ import {
 import { normalizeUserMessage } from "./user-message-normalizer";
 
 export type UserMessageAttachmentSource =
-  | { type: "path"; path: string }
-  | { type: "content"; asset: PrivateImageAssetProjection }
+  | { path: string; type: "path" }
+  | { asset: PrivateImageAssetProjection; type: "content" }
   | { type: "url"; url: string }
-  | { type: "scoped"; rootId: string; path: string };
+  | { path: string; rootId: string; type: "scoped" };
 
 export type UserMessageAttachment = {
   kind: "image" | "audio" | "file";
@@ -36,34 +37,42 @@ export function projectUserMessageAttachments(
   const result: UserMessageAttachment[] = [];
   const seen = new Set<string>();
   const push = (attachment: UserMessageAttachment | null): void => {
-    if (attachment === null) return;
+    if (attachment === null) {
+      return;
+    }
     const key = attachmentSourceKey(attachment.source);
-    if (seen.has(key)) return;
+    if (seen.has(key)) {
+      return;
+    }
     seen.add(key);
     result.push(attachment);
   };
 
-  for (const attachment of parseProjectedAttachments(codewideAttachments)) push(attachment);
+  for (const attachment of parseProjectedAttachments(codewideAttachments)) {
+    push(attachment);
+  }
   for (const raw of content) {
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
-    const part = raw as Record<string, unknown>;
+    const part = unknownRecord(raw);
+    if (part === null) {
+      continue;
+    }
     const image = userImageSourceProjection(part);
     if (image !== null) {
       const source: UserMessageAttachmentSource =
         image.kind === "content"
-          ? { type: "content", asset: image.asset }
+          ? { asset: image.asset, type: "content" }
           : image.kind === "path"
-            ? { type: "path", path: image.path }
+            ? { path: image.path, type: "path" }
             : { type: "url", url: image.uri };
       push({
         kind: "image",
-        name: image.kind === "path" ? basename(image.path) : `Image ${result.length + 1}`,
+        name: image.kind === "path" ? basename(image.path) : `Image ${String(result.length + 1)}`,
         source,
       });
       continue;
     }
     if (part.type === "localAudio" && typeof part.path === "string" && part.path.length > 0) {
-      push({ kind: "audio", name: basename(part.path), source: { type: "path", path: part.path } });
+      push({ kind: "audio", name: basename(part.path), source: { path: part.path, type: "path" } });
       continue;
     }
     if (part.type === "mention" && typeof part.path === "string" && part.path.length > 0) {
@@ -71,7 +80,7 @@ export function projectUserMessageAttachments(
         kind: fileMediaKind(part.path) ?? "file",
         name:
           typeof part.name === "string" && part.name.length > 0 ? part.name : basename(part.path),
-        source: { type: "path", path: part.path },
+        source: { path: part.path, type: "path" },
       });
       continue;
     }
@@ -80,7 +89,7 @@ export function projectUserMessageAttachments(
         push({
           kind: fileMediaKind(file.name) ?? "file",
           name: file.name,
-          source: { type: "path", path: file.path },
+          source: { path: file.path, type: "path" },
         });
       }
     }
@@ -89,40 +98,52 @@ export function projectUserMessageAttachments(
     push({
       kind: attachment.kind,
       name: attachment.name,
-      source: { type: "scoped", rootId: attachment.rootId, path: attachment.path },
+      source: { path: attachment.path, rootId: attachment.rootId, type: "scoped" },
     });
   }
   return result;
 }
 
 function parseProjectedAttachments(value: unknown): UserMessageAttachment[] {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
-  const projection = value as Record<string, unknown>;
-  if (projection.version !== 1 || !Array.isArray(projection.items)) return [];
+  const projection = unknownRecord(value);
+  if (projection === null) {
+    return [];
+  }
+  if (projection.version !== 1 || !Array.isArray(projection.items)) {
+    return [];
+  }
   return projection.items.flatMap((raw) => {
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return [];
-    const item = raw as Record<string, unknown>;
-    if (item.kind !== "image" && item.kind !== "audio" && item.kind !== "file") return [];
-    if (typeof item.name !== "string" || item.name.length === 0) return [];
+    const item = unknownRecord(raw);
+    if (item === null) {
+      return [];
+    }
+    if (item.kind !== "image" && item.kind !== "audio" && item.kind !== "file") {
+      return [];
+    }
+    if (typeof item.name !== "string" || item.name.length === 0) {
+      return [];
+    }
     const source = parseProjectedSource(item.source);
     return source === null ? [] : [{ kind: item.kind, name: item.name, source }];
   });
 }
 
 function parseProjectedSource(value: unknown): UserMessageAttachmentSource | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const source = value as Record<string, unknown>;
+  const source = unknownRecord(value);
+  if (source === null) {
+    return null;
+  }
   if (
     source.type === "path" &&
     typeof source.path === "string" &&
     source.path.startsWith("/") &&
     !source.path.includes("\0")
   ) {
-    return { type: "path", path: source.path };
+    return { path: source.path, type: "path" };
   }
   if (source.type === "content") {
     const asset = privateImageAssetProjection(source.asset);
-    return asset === null ? null : { type: "content", asset };
+    return asset === null ? null : { asset, type: "content" };
   }
   if (source.type === "url") {
     const url = safeImageUri(source.url);
@@ -132,9 +153,15 @@ function parseProjectedSource(value: unknown): UserMessageAttachmentSource | nul
 }
 
 export function attachmentSourceKey(source: UserMessageAttachmentSource): string {
-  if (source.type === "path") return `path:${source.path}`;
-  if (source.type === "content") return `content:${source.asset.id}`;
-  if (source.type === "url") return `url:${source.url}`;
+  if (source.type === "path") {
+    return `path:${source.path}`;
+  }
+  if (source.type === "content") {
+    return `content:${source.asset.id}`;
+  }
+  if (source.type === "url") {
+    return `url:${source.url}`;
+  }
   return `scoped:${source.rootId}:${source.path}`;
 }
 

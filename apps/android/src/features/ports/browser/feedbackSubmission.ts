@@ -20,8 +20,9 @@ export function useBrowserFeedbackSubmission(
       if (
         target === null ||
         !connections.some((connection) => connection.id === target.connectionId.value)
-      )
+      ) {
         throw new Error("Choose an available destination chat");
+      }
       await sendBrowserFeedback(
         delivery,
         {

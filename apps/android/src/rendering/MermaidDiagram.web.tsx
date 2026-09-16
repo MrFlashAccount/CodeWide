@@ -15,33 +15,39 @@ const mermaidModule = import("mermaid");
 const svgbobModule = import("@codewide/rendering-core/ascii");
 
 export function MermaidDiagram({
-  source,
-  reviewTarget: _reviewTarget,
   diagramId: _diagramId,
   reveal: _reveal = false,
+  reviewTarget: _reviewTarget,
+  source,
 }: {
-  source: string;
-  reviewTarget?: ContentReviewTarget;
   diagramId?: string;
   reveal?: boolean;
+  reviewTarget?: ContentReviewTarget;
+  source: string;
 }) {
-  const reactId = useId().replace(/[^a-zA-Z0-9_-]/gu, "");
+  const reactId = useId().replaceAll(/[^a-zA-Z0-9_-]/gu, "");
   const tooLarge = source.length > MAX_SOURCE_CHARS;
-  const resource = useAsyncResource<{ uri: string; aspectRatio: number }>(
+  const resource = useAsyncResource<{ aspectRatio: number; uri: string }>(
     tooLarge ? null : `mermaid-web:${source}`,
     source,
     async (_publish, signal) => {
       const { default: mermaid } = await mermaidModule;
-      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      if (signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       mermaid.initialize({
-        startOnLoad: false,
+        flowchart: { htmlLabels: false },
         securityLevel: "strict",
+        startOnLoad: false,
         suppressErrorRendering: true,
         theme: "dark",
-        flowchart: { htmlLabels: false },
       });
       const result = await mermaid.render(`mermaid-${reactId}`, source);
-      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      // WHY: The AbortSignal can change while Mermaid's asynchronous render is pending.
+      // oxlint-disable-next-line typescript/no-unnecessary-condition
+      if (signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       const viewBox = /viewBox=["']\s*([\d.-]+)\s+([\d.-]+)\s+([\d.]+)\s+([\d.]+)\s*["']/u.exec(
         result.svg,
       );
@@ -50,38 +56,41 @@ export function MermaidDiagram({
           ? 1.6
           : Math.max(0.35, Math.min(5, Number(viewBox[3]) / Number(viewBox[4])));
       return {
-        uri: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg)}`,
         aspectRatio,
+        uri: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg)}`,
       };
     },
     (value) => value.uri.length,
   );
 
-  if (tooLarge)
+  if (tooLarge) {
     return (
       <View style={styles.fallback}>
         <Text selectable style={styles.error}>
           Diagram is too large to preview safely
         </Text>
-        <NativeCodeBlock value={source} language="text" />
+        <NativeCodeBlock language="text" value={source} />
       </View>
     );
+  }
   const rendered = resource.value;
-  if (resource.error !== null)
+  if (resource.error !== null) {
     return (
       <View style={styles.fallback}>
         <Text selectable style={styles.error}>
           Could not render diagram · showing source
         </Text>
-        <NativeCodeBlock value={source} language="text" />
+        <NativeCodeBlock language="text" value={source} />
       </View>
     );
-  if (rendered === null)
+  }
+  if (rendered === null) {
     return (
       <View style={styles.loading}>
         <Text style={styles.secondary}>Rendering diagram…</Text>
       </View>
     );
+  }
   return (
     <Image
       accessibilityLabel="Mermaid diagram"
@@ -94,12 +103,14 @@ export function MermaidDiagram({
 
 export function AsciiDiagram({ source }: { source: string }) {
   const tooLarge = source.length > MAX_SOURCE_CHARS;
-  const resource = useAsyncResource<{ uri: string; aspectRatio: number }>(
+  const resource = useAsyncResource<{ aspectRatio: number; uri: string }>(
     tooLarge ? null : `ascii-diagram-web:${source}`,
     source,
     async (_publish, signal) => {
       const { renderSvgbob } = await svgbobModule;
-      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      if (signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       const svg = themedAsciiDiagramSvg(await renderSvgbob(source));
       const dimensions = /<svg[^>]*\bwidth=["']([\d.]+)["'][^>]*\bheight=["']([\d.]+)["']/u.exec(
         svg,
@@ -108,12 +119,12 @@ export function AsciiDiagram({ source }: { source: string }) {
         dimensions === null
           ? 1.6
           : Math.max(0.35, Math.min(5, Number(dimensions[1]) / Number(dimensions[2])));
-      return { uri: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, aspectRatio };
+      return { aspectRatio, uri: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` };
     },
     (value) => value.uri.length,
   );
 
-  if (tooLarge)
+  if (tooLarge) {
     return (
       <View style={styles.fallback}>
         <Text selectable style={styles.error}>
@@ -121,8 +132,9 @@ export function AsciiDiagram({ source }: { source: string }) {
         </Text>
       </View>
     );
+  }
   const rendered = resource.value;
-  if (resource.error !== null)
+  if (resource.error !== null) {
     return (
       <View style={styles.fallback}>
         <Text selectable style={styles.error}>
@@ -130,12 +142,14 @@ export function AsciiDiagram({ source }: { source: string }) {
         </Text>
       </View>
     );
-  if (rendered === null)
+  }
+  if (rendered === null) {
     return (
       <View style={styles.loading}>
         <Text style={styles.secondary}>Rendering diagram…</Text>
       </View>
     );
+  }
   return (
     <Image
       accessibilityLabel="Diagram"
@@ -147,42 +161,42 @@ export function AsciiDiagram({ source }: { source: string }) {
 }
 
 const styles = StyleSheet.create({
-  image: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    alignSelf: "stretch",
-    maxHeight: 440,
-    borderRadius: radii.medium,
-    backgroundColor: colors.surfaceRaised,
-  },
-  loading: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    alignSelf: "stretch",
-    minHeight: 96,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radii.medium,
-    backgroundColor: colors.surfaceRaised,
-  },
-  fallback: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    alignSelf: "stretch",
-    borderRadius: radii.medium,
-    backgroundColor: colors.surfaceRaised,
-    padding: spacing.xs,
-  },
-  secondary: {
-    color: colors.textMuted,
-    ...typeScale.label,
-  },
   error: {
     color: colors.textMuted,
     ...typeScale.code,
     fontFamily: "monospace",
+  },
+  fallback: {
+    alignSelf: "stretch",
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.medium,
+    maxWidth: "100%",
+    minWidth: 0,
+    padding: spacing.xs,
+    width: "100%",
+  },
+  image: {
+    alignSelf: "stretch",
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.medium,
+    maxHeight: 440,
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
+  },
+  loading: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.medium,
+    justifyContent: "center",
+    maxWidth: "100%",
+    minHeight: 96,
+    minWidth: 0,
+    width: "100%",
+  },
+  secondary: {
+    color: colors.textMuted,
+    ...typeScale.label,
   },
 });

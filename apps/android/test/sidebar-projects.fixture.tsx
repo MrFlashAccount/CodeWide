@@ -1,5 +1,4 @@
 import { render as renderNative } from "@testing-library/react-native";
-import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
 import type { ReactElement, ReactNode } from "react";
 import type { SidebarProject } from "../src/features/projects/sidebarProjects";
 
@@ -22,13 +21,7 @@ export const management = {
 };
 
 function TestProvider({ children }: { children: ReactNode }) {
-  return (
-    <HeroUINativeProviderRaw
-      config={{ animation: "disable-all", devInfo: { stylingPrinciples: false } }}
-    >
-      {children}
-    </HeroUINativeProviderRaw>
-  );
+  return <>{children}</>;
 }
 
 export function render(element: ReactElement) {

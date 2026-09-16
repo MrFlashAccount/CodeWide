@@ -4,14 +4,14 @@ import type { ModelThinkingMenuProps, PermissionsMenuProps } from "./TurnControl
 
 export function ModelThinkingMenu({
   accessibilityLabel,
+  onFallbackPress,
   triggerChildren,
   triggerStyle,
-  onFallbackPress,
 }: ModelThinkingMenuProps) {
   return (
     <Pressable
-      accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
       onPress={onFallbackPress}
       style={triggerStyle}
     >
@@ -22,14 +22,14 @@ export function ModelThinkingMenu({
 
 export function PermissionsMenu({
   accessibilityLabel,
+  onFallbackPress,
   triggerChildren,
   triggerStyle,
-  onFallbackPress,
 }: PermissionsMenuProps) {
   return (
     <Pressable
-      accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
       onPress={onFallbackPress}
       style={triggerStyle}
     >

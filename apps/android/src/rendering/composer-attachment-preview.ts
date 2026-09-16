@@ -12,12 +12,14 @@ import { remoteFileKind, type DocumentPreviewKind } from "./document-preview";
 export function composerAttachmentSource(
   attachment: RemoteFileAttachment,
 ): Extract<PrivateAssetSource, { kind: "scoped" }> {
-  return { kind: "scoped", rootId: attachment.rootId, path: attachment.path };
+  return { kind: "scoped", path: attachment.path, rootId: attachment.rootId };
 }
 
 export function composerAttachmentPreviewKind(
   attachment: RemoteFileAttachment,
 ): DocumentPreviewKind {
-  if (attachment.kind === "image") return "image";
+  if (attachment.kind === "image") {
+    return "image";
+  }
   return remoteFileKind(attachment.name, attachment.path);
 }

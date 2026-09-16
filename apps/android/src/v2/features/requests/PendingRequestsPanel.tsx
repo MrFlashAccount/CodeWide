@@ -108,8 +108,6 @@ function ActivePendingRequest(props: ActivePendingRequestProps): React.JSX.Eleme
       onResolve={resolve}
       pending={pending || !enabled}
       position={position}
-      // WHY: This is a render prop; repository callback policy delegates its identity to React Compiler instead of stabilizing it with useEvent/useCallback.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       renderElicitationInput={(field, inputProps) =>
         field.type !== "array" && field.type !== "text" ? undefined : (
           <VoiceTextInput
@@ -121,8 +119,6 @@ function ActivePendingRequest(props: ActivePendingRequestProps): React.JSX.Eleme
           />
         )
       }
-      // WHY: This is a render prop; repository callback policy delegates its identity to React Compiler instead of stabilizing it with useEvent/useCallback.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       renderUserInput={(question, inputProps) =>
         question.isSecret ? undefined : (
           <VoiceTextInput

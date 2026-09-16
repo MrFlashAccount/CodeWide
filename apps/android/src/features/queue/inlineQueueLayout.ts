@@ -19,7 +19,7 @@ export const ENTRY_OFFSET = 16;
 export const CARD_BORDER_WIDTH = 1;
 
 export function formatQueueTime(createdAtMilliseconds: number): string {
-  return formatDeviceTime(createdAtMilliseconds / 1_000);
+  return formatDeviceTime(createdAtMilliseconds / 1000);
 }
 
 export function calculateQueueLayouts(

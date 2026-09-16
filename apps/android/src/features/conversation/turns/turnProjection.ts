@@ -9,12 +9,12 @@ import { isToolActivityKind } from "../protocol/protocolKind";
 import type { TimelineItem } from "../timeline/timelineTypes";
 
 export type CachedTurnProjection = {
-  renderWindow: ReturnType<typeof selectTurnRenderWindow>;
-  userBlocks: RenderBlock[];
-  preTurnBlocks: RenderBlock[];
   compactionBlocks: RenderBlock[];
   latestAgentBlock: RenderBlock | null;
   liveActivityBlocks: RenderBlock[];
+  preTurnBlocks: RenderBlock[];
+  renderWindow: ReturnType<typeof selectTurnRenderWindow>;
+  userBlocks: RenderBlock[];
 };
 
 export function projectTurnProjection(
@@ -45,12 +45,12 @@ export function projectTurnProjection(
     return item === undefined ? [] : [projectThreadItem(turn, item, index)];
   });
   return {
-    renderWindow,
-    userBlocks,
-    preTurnBlocks,
     compactionBlocks,
     latestAgentBlock,
     liveActivityBlocks,
+    preTurnBlocks,
+    renderWindow,
+    userBlocks,
   };
 }
 
@@ -90,7 +90,9 @@ export function completedActivityItemCount(turn: Thread["turns"][number]): numbe
 
 export function turnMetadataKinds(turn: Thread["turns"][number]): string[] {
   const metadata = projectedTurnMetadata(turn);
-  if (metadata === null) return [];
+  if (metadata === null) {
+    return [];
+  }
   return [
     ...(metadata.plan === undefined ? [] : ["turnPlan"]),
     ...(metadata.diff === undefined ? [] : ["turnDiff"]),
@@ -99,29 +101,40 @@ export function turnMetadataKinds(turn: Thread["turns"][number]): string[] {
 
 export function turnActivityLabel(kinds: string[], compact = false): string {
   const labels: string[] = [];
-  if (kinds.some((kind) => kind === "fileChange" || kind === "turnDiff" || kind === "diff"))
+  if (kinds.some((kind) => kind === "fileChange" || kind === "turnDiff" || kind === "diff")) {
     labels.push("Edited files");
-  if (kinds.some((kind) => kind === "commandExecution" || kind === "terminal"))
+  }
+  if (kinds.some((kind) => kind === "commandExecution" || kind === "terminal")) {
     labels.push("ran commands");
-  if (kinds.some((kind) => kind === "webSearch")) labels.push("searched web");
-  if (kinds.some((kind) => kind === "mcpToolCall" || kind === "dynamicToolCall" || kind === "tool"))
+  }
+  if (kinds.some((kind) => kind === "webSearch")) {
+    labels.push("searched web");
+  }
+  if (
+    kinds.some((kind) => kind === "mcpToolCall" || kind === "dynamicToolCall" || kind === "tool")
+  ) {
     labels.push("used tools");
-  if (kinds.some((kind) => kind === "collabAgentToolCall" || kind === "subAgentActivity"))
+  }
+  if (kinds.some((kind) => kind === "collabAgentToolCall" || kind === "subAgentActivity")) {
     labels.push("coordinated agents");
+  }
   if (compact) {
     const shortLabels = labels
       .slice(0, 2)
       .map((label) => (label === "coordinated agents" ? "agents" : label));
-    return `${shortLabels.length === 0 ? "Activity" : shortLabels.join(", ")} · ${kinds.length}`;
+    return `${shortLabels.length === 0 ? "Activity" : shortLabels.join(", ")} · ${String(kinds.length)}`;
   }
-  if (labels.length === 0)
-    return `${kinds.length} ${kinds.length === 1 ? "activity" : "activities"}`;
+  if (labels.length === 0) {
+    return `${String(kinds.length)} ${kinds.length === 1 ? "activity" : "activities"}`;
+  }
   return labels.join(", ");
 }
 
 export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number]): RenderBlock[] {
   const metadata = projectedTurnMetadata(turn);
-  if (metadata === null) return [];
+  if (metadata === null) {
+    return [];
+  }
   const blocks: RenderBlock[] = [];
   if (metadata.plan !== undefined) {
     const completed = metadata.plan.steps.filter((step) => step.status === "completed").length;
@@ -129,32 +142,32 @@ export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number])
       .map((step) => `${step.status === "completed" ? "- [x]" : "- [ ]"} ${step.step}`)
       .join("\n");
     blocks.push({
-      key: `${scope}/${turn.id}/live-plan`,
-      kind: "turnPlan",
-      title: "Plan",
       body: [metadata.plan.explanation, checklist]
         .filter((part): part is string => typeof part === "string" && part.length > 0)
         .join("\n\n"),
-      status: `${completed}/${metadata.plan.steps.length}`,
-      durationMs: null,
-      tone: "info",
       collapsible: true,
-      raw: { explanation: metadata.plan.explanation, plan: metadata.plan.steps },
       content: null,
+      durationMs: null,
+      key: `${scope}/${turn.id}/live-plan`,
+      kind: "turnPlan",
+      raw: { explanation: metadata.plan.explanation, plan: metadata.plan.steps },
+      status: `${String(completed)}/${String(metadata.plan.steps.length)}`,
+      title: "Plan",
+      tone: "info",
     });
   }
   if (metadata.diff !== undefined) {
     blocks.push({
+      body: metadata.diff,
+      collapsible: true,
+      content: null,
+      durationMs: null,
       key: `${scope}/${turn.id}/live-diff`,
       kind: "turnDiff",
-      title: "Turn diff",
-      body: metadata.diff,
-      status: null,
-      durationMs: null,
-      tone: "neutral",
-      collapsible: true,
       raw: { diff: metadata.diff },
-      content: null,
+      status: null,
+      title: "Turn diff",
+      tone: "neutral",
     });
   }
   return blocks;
@@ -179,12 +192,12 @@ export function projectTurnPresentation(
   const rawTurn = turn.turn;
   const artifacts = projectAgentArtifacts(rawTurn);
   const {
-    renderWindow,
-    userBlocks,
-    preTurnBlocks,
     compactionBlocks,
     latestAgentBlock,
     liveActivityBlocks,
+    preTurnBlocks,
+    renderWindow,
+    userBlocks,
   } = projectTurnProjection(turn);
   const searchMessageIndex =
     searchFocus === null
@@ -203,7 +216,7 @@ export function projectTurnPresentation(
   const liveActivityEntries = renderWindow.liveActivityIndexes.flatMap(
     (itemIndex, projectionIndex) => {
       const block = liveActivityBlocks[projectionIndex];
-      return block === undefined ? [] : [{ index: itemIndex, block }];
+      return block === undefined ? [] : [{ block, index: itemIndex }];
     },
   );
   const liveActivitySequence =
@@ -212,7 +225,9 @@ export function projectTurnPresentation(
       : [];
   const liveMarkdownProjections = new Map<string, LiveMarkdownProjection>();
   const visibleLiveActivitySequence = liveActivitySequence.map((part) => {
-    if (part.kind !== "agent") return part;
+    if (part.kind !== "agent") {
+      return part;
+    }
     const itemId = typeof part.block.raw.id === "string" ? part.block.raw.id : null;
     const projection = projectCachedLiveMarkdown(
       part.block.key,
@@ -276,23 +291,23 @@ export function projectTurnPresentation(
     showEmptyResponsePlaceholder ||
     artifacts.length > 0;
   return {
-    rawTurn,
-    artifacts,
-    userBlocks,
-    preTurnBlocks,
-    compactionBlocks,
-    latestAgentBlock,
-    searchedAgentBlock,
-    liveMarkdownProjections,
-    visibleLiveActivitySequence,
-    hasGeneratedAgentResponse,
-    copyText,
-    canForkThrough,
-    agentReviewTarget,
-    canReviewResponse,
-    showMessageActions,
-    showEmptyResponsePlaceholder,
     agentBubbleFill,
+    agentReviewTarget,
+    artifacts,
+    canForkThrough,
+    canReviewResponse,
+    compactionBlocks,
+    copyText,
     hasAgentContent,
+    hasGeneratedAgentResponse,
+    latestAgentBlock,
+    liveMarkdownProjections,
+    preTurnBlocks,
+    rawTurn,
+    searchedAgentBlock,
+    showEmptyResponsePlaceholder,
+    showMessageActions,
+    userBlocks,
+    visibleLiveActivitySequence,
   };
 }

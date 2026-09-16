@@ -7,23 +7,23 @@ import { AppText as Text } from "./Typography";
 import { WaveText } from "./WaveText";
 
 export function ComposerContextLabel({
-  text,
   loading = false,
   testID,
+  text,
 }: {
-  text: string;
   loading?: boolean;
   testID?: string;
+  text: string;
 }) {
   return loading ? (
     <WaveText
       {...(testID === undefined ? {} : { testID })}
-      text={text}
-      style={styles.composerContextText}
       containerStyle={styles.composerContextWave}
+      style={styles.composerContextText}
+      text={text}
     />
   ) : (
-    <Text testID={testID} numberOfLines={1} style={styles.composerContextText}>
+    <Text numberOfLines={1} style={styles.composerContextText} testID={testID}>
       {text}
     </Text>
   );
@@ -31,32 +31,32 @@ export function ComposerContextLabel({
 
 export function ComposerContextCount({
   label,
-  value,
   refreshing = false,
   testID,
+  value,
 }: {
   label: string;
-  value: number;
   refreshing?: boolean;
   testID?: string;
+  value: number;
 }) {
   return (
-    <View testID={testID} style={styles.composerContextCount}>
+    <View style={styles.composerContextCount} testID={testID}>
       <AnimatedNumber
-        value={value}
-        format={integerNumberFormat}
-        prefix={`${label} · `}
-        style={styles.composerContextText}
         containerStyle={[
           styles.composerContextValue,
           refreshing && styles.composerContextCountHidden,
         ]}
+        format={integerNumberFormat}
+        prefix={`${label} · `}
+        style={styles.composerContextText}
+        value={value}
       />
       {refreshing && (
         <WaveText
-          text={`${label} · ${formatNumber(value, integerNumberFormat)}`}
-          style={styles.composerContextText}
           containerStyle={styles.composerContextRefreshOverlay}
+          style={styles.composerContextText}
+          text={`${label} · ${formatNumber(value, integerNumberFormat)}`}
         />
       )}
     </View>

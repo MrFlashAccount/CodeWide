@@ -8,21 +8,26 @@ export type InlineImagePayload = {
 };
 
 export type PrivateImageAssetProjection = {
-  id: string;
   byteLength: number;
   contentType: string;
+  id: string;
 };
 
 export type UserImageSourceProjection =
-  | { kind: "content"; asset: PrivateImageAssetProjection }
+  | { asset: PrivateImageAssetProjection; kind: "content" }
   | { kind: "uri"; uri: string }
   | { kind: "path"; path: string };
 
 export function safeImageUri(value: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_INLINE_IMAGE_CHARS)
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_INLINE_IMAGE_CHARS) {
     return null;
-  if (isSafeHttpImageUrl(value)) return value;
-  if (DATA_IMAGE_PATTERN.test(value)) return value;
+  }
+  if (isSafeHttpImageUrl(value)) {
+    return value;
+  }
+  if (DATA_IMAGE_PATTERN.test(value)) {
+    return value;
+  }
   const mimeType = rawImageMimeType(value);
   return mimeType === null ? null : `data:${mimeType};base64,${value}`;
 }
@@ -32,28 +37,27 @@ export function inlineImagePayload(value: string): InlineImagePayload | null {
   if (dataMatch !== null) {
     const mime = dataMatch[1];
     const base64 = dataMatch[2];
-    if (mime === undefined || base64 === undefined) return null;
-    return {
-      base64,
-      extension: (mime === "jpeg" ? "jpg" : mime) as InlineImagePayload["extension"],
-    };
+    if (mime === undefined || base64 === undefined) {
+      return null;
+    }
+    const extension = imageExtension(`image/${mime}`);
+    return extension === null ? null : { base64, extension };
   }
   const mimeType = rawImageMimeType(value);
-  if (mimeType === null) return null;
-  return {
-    base64: value,
-    extension:
-      mimeType === "image/jpeg"
-        ? "jpg"
-        : (mimeType.slice("image/".length) as InlineImagePayload["extension"]),
-  };
+  if (mimeType === null) {
+    return null;
+  }
+  const extension = imageExtension(mimeType);
+  return extension === null ? null : { base64: value, extension };
 }
 
 /** Validate the private content marker used when inline image bytes are
  * removed from the sync lane. */
 export function privateImageAssetProjection(value: unknown): PrivateImageAssetProjection | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const asset = value as Record<string, unknown>;
+  const asset = unknownRecord(value);
+  if (asset === null) {
+    return null;
+  }
   return asset.version === 1 &&
     typeof asset.id === "string" &&
     /^[a-f0-9]{64}$/u.test(asset.id) &&
@@ -62,22 +66,43 @@ export function privateImageAssetProjection(value: unknown): PrivateImageAssetPr
     asset.byteLength > 0 &&
     typeof asset.contentType === "string" &&
     asset.contentType.startsWith("image/")
-    ? { id: asset.id, byteLength: asset.byteLength, contentType: asset.contentType }
+    ? { byteLength: asset.byteLength, contentType: asset.contentType, id: asset.id }
     : null;
 }
 
 export function userImageSourceProjection(value: unknown): UserImageSourceProjection | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const part = value as Record<string, unknown>;
+  const part = unknownRecord(value);
+  if (part === null) {
+    return null;
+  }
   if (part.type === "image") {
     const asset = privateImageAssetProjection(part.codewideAsset);
-    if (asset !== null) return { kind: "content", asset };
+    if (asset !== null) {
+      return { asset, kind: "content" };
+    }
     const uri = safeImageUri(part.url);
     return uri === null ? null : { kind: "uri", uri };
   }
   return part.type === "localImage" && typeof part.path === "string" && part.path.length > 0
     ? { kind: "path", path: part.path }
     : null;
+}
+
+function imageExtension(mimeType: string): InlineImagePayload["extension"] | null {
+  switch (mimeType) {
+    case "image/avif":
+      return "avif";
+    case "image/gif":
+      return "gif";
+    case "image/jpeg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/webp":
+      return "webp";
+    default:
+      return null;
+  }
 }
 
 function isSafeHttpImageUrl(value: string): boolean {
@@ -90,10 +115,21 @@ function isSafeHttpImageUrl(value: string): boolean {
 }
 
 function rawImageMimeType(value: string): string | null {
-  if (!RAW_BASE64_PATTERN.test(value)) return null;
-  if (value.startsWith("iVBORw0KGgo")) return "image/png";
-  if (value.startsWith("/9j/")) return "image/jpeg";
-  if (value.startsWith("R0lGOD")) return "image/gif";
-  if (value.startsWith("UklGR")) return "image/webp";
+  if (!RAW_BASE64_PATTERN.test(value)) {
+    return null;
+  }
+  if (value.startsWith("iVBORw0KGgo")) {
+    return "image/png";
+  }
+  if (value.startsWith("/9j/")) {
+    return "image/jpeg";
+  }
+  if (value.startsWith("R0lGOD")) {
+    return "image/gif";
+  }
+  if (value.startsWith("UklGR")) {
+    return "image/webp";
+  }
   return null;
 }
+import { unknownRecord } from "../data/unknownRecord";

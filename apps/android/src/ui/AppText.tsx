@@ -5,10 +5,11 @@ import { productFonts } from "./product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "./typography-policy";
 
 export function productFontStyle(style: StyleProp<TextStyle>): TextStyle | null {
-  const flattened = StyleSheet.flatten(style);
-  if (flattened?.fontFamily !== undefined) return null;
-
-  const rawWeight = flattened?.fontWeight;
+  const flattened = StyleSheet.flatten([emptyTextStyle, style]);
+  if (flattened.fontFamily !== undefined) {
+    return null;
+  }
+  const rawWeight = flattened.fontWeight;
   const weight = rawWeight === "bold" ? 700 : Number.parseInt(String(rawWeight ?? 400), 10);
   const fontFamily =
     weight <= 400
@@ -20,10 +21,12 @@ export function productFontStyle(style: StyleProp<TextStyle>): TextStyle | null 
   return { fontFamily, fontWeight: "400" };
 }
 
+const emptyTextStyle: TextStyle = {};
+
 export function AppText({
-  style,
   allowFontScaling = true,
   maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
+  style,
   ...props
 }: ComponentProps<typeof NativeText>) {
   return (

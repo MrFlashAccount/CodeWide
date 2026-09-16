@@ -2,24 +2,24 @@ import type { SidebarProject } from "./sidebarProjects";
 
 /** Project, server, and action contract for the project manager. */
 export type ProjectManagementProps = {
+  errors: readonly string[];
+  onBrowse: (connectionId: string) => void;
+  onClose: () => void;
+  onMove: (project: SidebarProject, direction: -1 | 1) => Promise<void>;
+  onToggle: (project: SidebarProject) => Promise<void>;
   projects: readonly SidebarProject[];
   servers: readonly { id: string; name: string }[];
-  errors: readonly string[];
-  onToggle(project: SidebarProject): Promise<void>;
-  onMove(project: SidebarProject, direction: -1 | 1): Promise<void>;
-  onBrowse(connectionId: string): void;
-  onClose(): void;
 };
 /** Collapsible project group owned by one project-manager section. */
 export type ProjectManagerSection = {
-  title: string;
-  projects: readonly SidebarProject[];
   expanded: boolean;
   onToggle: (() => void) | undefined;
+  projects: readonly SidebarProject[];
+  title: string;
 };
 /** Renderable row in the flattened project-management list. */
 export type ProjectManagerItem =
-  | { kind: "section"; key: string; section: ProjectManagerSection }
-  | { kind: "project"; key: string; project: SidebarProject }
-  | { kind: "server"; key: string; server: { id: string; name: string } }
-  | { kind: "message"; key: string; message: string; error: boolean };
+  | { key: string; kind: "section"; section: ProjectManagerSection }
+  | { key: string; kind: "project"; project: SidebarProject }
+  | { key: string; kind: "server"; server: { id: string; name: string } }
+  | { error: boolean; key: string; kind: "message"; message: string };

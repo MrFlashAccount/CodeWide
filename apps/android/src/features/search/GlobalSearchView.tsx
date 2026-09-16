@@ -3,7 +3,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import { lazy, Suspense } from "react";
 import { Pressable, View } from "react-native";
 import { colors, controlSize, iconSize, spacing } from "../../theme";
-import { AppPopover } from "../../ui/AppPopover";
+import { ContentMenu } from "../../ui/ContentMenu";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { WaveText } from "../../ui/WaveText";
@@ -12,58 +12,58 @@ import type { renderGlobalSearchViewInput } from "./GlobalSearchView.inputs";
 import { SearchFilters } from "./SearchFilters";
 import { resultKey, SearchResultRow, SearchServerNotice } from "./SearchResultRows";
 
-const SearchCalendar = lazy(() => import("./SearchCalendar"));
+const SearchCalendar = lazy(async () => import("./SearchCalendar"));
 
 /** Search presentation consumes the session and resource snapshots without loading data. */
 export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
   return (
-    <View testID="sidebar-search" style={styles.root}>
-      <View testID="search-top-input" style={styles.header}>
-        <View testID="expanded-thread-search-field" style={styles.searchBar}>
-          <InlineIcon name="search" color={colors.textMuted} role="body" />
+    <View style={styles.root} testID="sidebar-search">
+      <View style={styles.header} testID="search-top-input">
+        <View style={styles.searchBar} testID="expanded-thread-search-field">
+          <InlineIcon color={colors.textMuted} name="search" role="body" />
           <TextInput
-            compact
             accessibilityLabel="Search all messages"
-            value={props.text}
-            onChangeText={props.setText}
-            onSubmitEditing={props.search}
-            returnKeyType="search"
-            placeholder="Search messages"
             autoFocus={props.autoFocus}
+            compact
+            onChangeText={props.setText}
             onFocus={props.didFocus}
+            onSubmitEditing={props.search}
+            placeholder="Search messages"
+            returnKeyType="search"
             style={styles.input}
+            value={props.text}
           />
           <Pressable
-            onPress={props.close}
-            accessibilityRole="button"
             accessibilityLabel="Close search"
+            accessibilityRole="button"
+            onPress={props.close}
             style={styles.icon}
           >
-            <Ionicons name="close" size={iconSize.action} color={colors.textMuted} />
+            <Ionicons color={colors.textMuted} name="close" size={iconSize.action} />
           </Pressable>
         </View>
-        <AppPopover
-          open={props.filters}
-          onOpenChange={props.setFilters}
-          width={Math.min(320, props.window.width - spacing.lg * 2)}
-          placement="bottom"
+        <ContentMenu
           align="end"
+          onOpenChange={props.setFilters}
+          open={props.filters}
+          placement="bottom"
           trigger={
             <Pressable
-              onPress={props.toggleFilters}
-              accessibilityRole="button"
               accessibilityLabel="Search filters"
+              accessibilityRole="button"
               accessibilityState={{ expanded: props.filters }}
+              onPress={props.toggleFilters}
               style={styles.filterButton}
             >
               <Ionicons
+                color={props.filterCount > 0 ? colors.text : colors.textMuted}
                 name="options-outline"
                 size={iconSize.action}
-                color={props.filterCount > 0 ? colors.text : colors.textMuted}
               />
               {props.filterCount > 0 && <View style={styles.filterDot} />}
             </Pressable>
           }
+          width={Math.min(320, props.window.width - spacing.lg * 2)}
         >
           <View
             style={{ maxHeight: Math.max(controlSize.regular * 3, props.window.height * 0.65) }}
@@ -71,8 +71,8 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
             <View style={styles.filterHeader}>
               <Text style={styles.title}>Filters</Text>
               <Pressable
-                onPress={props.resetFilters}
                 accessibilityLabel="Reset search filters"
+                onPress={props.resetFilters}
                 style={styles.reset}
               >
                 <Text style={styles.label}>Reset</Text>
@@ -84,35 +84,35 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
               </Text>
             )}
             <SearchFilters
-              value={props.filterValue}
               onChange={props.setFilterValue}
+              onPickDate={props.pickDate}
+              projects={props.props.projects}
               servers={props.props.servers}
               threads={props.props.threads}
-              projects={props.props.projects}
-              onPickDate={props.pickDate}
+              value={props.filterValue}
             />
             <Pressable
-              onPress={props.search}
-              accessibilityRole="button"
               accessibilityLabel="Apply search filters"
+              accessibilityRole="button"
+              onPress={props.search}
               style={styles.apply}
             >
               <Text style={styles.title}>Apply</Text>
             </Pressable>
           </View>
-        </AppPopover>
+        </ContentMenu>
       </View>
       {props.calendar !== null && (
         <Suspense fallback={null}>
           <SearchCalendar
-            value={props.filterValue[props.calendar]}
-            onSelect={props.selectCalendarDay}
             onDismiss={props.dismissCalendar}
+            onSelect={props.selectCalendarDay}
+            value={props.filterValue[props.calendar]}
           />
         </Suspense>
       )}
       {props.resource.status === "loading" && (
-        <WaveText text="Searching messages" style={styles.notice} />
+        <WaveText style={styles.notice} text="Searching messages" />
       )}
       {props.resource.error !== null && (
         <Text accessibilityRole="alert" style={styles.error}>
@@ -122,33 +122,16 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
       {(props.resource.value ?? []).map((server) => (
         <SearchServerNotice
           key={server.connectionId}
+          name={serverName(props.props.servers, server.connectionId)}
           result={server}
-          name={
-            props.props.servers.find((candidate) => candidate.id === server.connectionId)?.name ||
-            "Server"
-          }
         />
       ))}
       <LegendList
-        key={`${props.request?.revision ?? 0}:${props.request?.page ?? 0}`}
         data={props.results}
-        renderItem={(entry) => (
-          <SearchResultRow
-            target={entry.item}
-            query={props.request?.text ?? ""}
-            onSelect={props.selectResult}
-          />
-        )}
-        keyExtractor={resultKey}
-        recycleItems
-        style={styles.list}
-        keyboardShouldPersistTaps="handled"
         initialScrollOffset={props.session.scrollOffset}
-        onScroll={props.saveOffset}
-        scrollEventThrottle={100}
-        ListHeaderComponent={
-          props.results.length > 0 ? <Text style={styles.notice}>Threads & messages</Text> : null
-        }
+        key={`${String(props.request?.revision ?? 0)}:${String(props.request?.page ?? 0)}`}
+        keyboardShouldPersistTaps="handled"
+        keyExtractor={resultKey}
         ListEmptyComponent={
           props.resource.status !== "loading" && !props.failed ? (
             <View style={styles.empty}>
@@ -163,6 +146,20 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
             </View>
           ) : null
         }
+        ListHeaderComponent={
+          props.results.length > 0 ? <Text style={styles.notice}>Threads & messages</Text> : null
+        }
+        onScroll={props.saveOffset}
+        recycleItems
+        renderItem={(entry) => (
+          <SearchResultRow
+            onSelect={props.selectResult}
+            query={props.request?.text ?? ""}
+            target={entry.item}
+          />
+        )}
+        scrollEventThrottle={100}
+        style={styles.list}
       />
       <View style={styles.pagination}>
         {(props.request?.page ?? 0) > 0 && (
@@ -180,4 +177,12 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
       </View>
     </View>
   );
+}
+
+function serverName(
+  servers: readonly { readonly id: string; readonly name: string }[],
+  connectionId: string,
+): string {
+  const name = servers.find((candidate) => candidate.id === connectionId)?.name;
+  return name === undefined || name === "" ? "Server" : name;
 }

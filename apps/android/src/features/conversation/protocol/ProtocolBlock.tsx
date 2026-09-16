@@ -1,6 +1,6 @@
 import { renderProtocolFallback } from "./ProtocolFallback";
 /** V1 ProtocolBlock owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 import { useContext } from "react";
 import { View } from "react-native";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
@@ -31,15 +31,15 @@ export function ProtocolBlock({
   onFixUnsupportedBlock,
 }: {
   block: RenderBlock;
-  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
-  onFixUnsupportedBlock?(block: RenderBlock): Promise<void>;
+  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 }) {
   const activeToolCall = useContext(ActiveToolCallContext);
   const insideTurnActivity = useContext(TurnActivityContentContext);
   if (block.kind === "userMessage") {
     const content = Array.isArray(block.raw.content) ? block.raw.content : [];
     return (
-      <View testID="user-bubble" style={styles.userBubble}>
+      <View style={styles.userBubble} testID="user-bubble">
         <UserMessageContent
           content={content}
           projectedAttachments={block.raw.codewideAttachments}
@@ -62,8 +62,8 @@ export function ProtocolBlock({
       <View style={styles.agentMessage}>
         <SearchMessage itemId={block.raw.id}>
           <CompleteAgentMarkdown
-            source={block.body ?? ""}
             reviewTarget={reviewTarget}
+            source={block.body ?? ""}
             streamKey={block.key}
           />
         </SearchMessage>
@@ -75,15 +75,18 @@ export function ProtocolBlock({
       </View>
     );
   }
-  if (block.kind === "tokenUsage") return <TokenUsageProtocolBlock block={block} />;
-  if (block.kind === "commandExecution")
+  if (block.kind === "tokenUsage") {
+    return <TokenUsageProtocolBlock block={block} />;
+  }
+  if (block.kind === "commandExecution") {
     return (
       <CommandExecutionProtocolBlock
         block={block}
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
     );
-  if (block.kind === "fileChange")
+  }
+  if (block.kind === "fileChange") {
     return (
       <>
         <FileChangeProtocolBlock block={block} />
@@ -93,7 +96,8 @@ export function ProtocolBlock({
         />
       </>
     );
-  if (block.kind === "mcpToolCall" || block.kind === "dynamicToolCall")
+  }
+  if (block.kind === "mcpToolCall" || block.kind === "dynamicToolCall") {
     return (
       <>
         <ToolCallProtocolBlock
@@ -106,7 +110,8 @@ export function ProtocolBlock({
         />
       </>
     );
-  if (block.kind === "webSearch")
+  }
+  if (block.kind === "webSearch") {
     return (
       <>
         <WebSearchProtocolBlock block={block} />
@@ -116,7 +121,8 @@ export function ProtocolBlock({
         />
       </>
     );
-  if (block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity")
+  }
+  if (block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity") {
     return (
       <>
         <AgentActivityProtocolBlock block={block} />
@@ -126,6 +132,7 @@ export function ProtocolBlock({
         />
       </>
     );
+  }
   if (block.kind === "imageView" || block.kind === "imageGeneration") {
     return (
       <>
@@ -140,7 +147,7 @@ export function ProtocolBlock({
       </>
     );
   }
-  if (block.kind === "unknown")
+  if (block.kind === "unknown") {
     return (
       <>
         <UnknownProtocolBlock
@@ -153,6 +160,7 @@ export function ProtocolBlock({
         />
       </>
     );
+  }
   const displayTitle =
     block.kind === "reasoning"
       ? reasoningActivityTitle(block.body, activeToolCall ? "inProgress" : block.status)
@@ -161,17 +169,17 @@ export function ProtocolBlock({
     const running = activeToolCall || block.status === "inProgress" || block.status === "running";
     return (
       <View
-        testID="thinking-status"
         style={[styles.thinkingStatus, insideTurnActivity && styles.thinkingStatusInActivity]}
+        testID="thinking-status"
       >
         <View style={styles.cardIconSlot}>
-          <InlineIcon name="bulb-outline" role="label" color={colors.textMuted} />
+          <InlineIcon color={colors.textMuted} name="bulb-outline" role="label" />
         </View>
         {running ? (
           <WaveText
-            text={displayTitle}
-            style={styles.cardTitle}
             containerStyle={styles.cardTitleWave}
+            style={styles.cardTitle}
+            text={displayTitle}
           />
         ) : (
           <Text numberOfLines={1} style={styles.cardTitle}>

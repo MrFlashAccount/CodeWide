@@ -26,17 +26,17 @@ const DIRECTION_LOCK_DISTANCE = 8;
 type SwipeDiscardActionProps = {
   accessibilityLabel: string;
   disabled: boolean;
+  disabledStyle?: StyleProp<ViewStyle>;
   discardEnabled: boolean;
-  steerEnabled: boolean;
   icon: ComponentProps<typeof Ionicons>["name"];
   iconColor: string;
-  style: StyleProp<ViewStyle>;
+  onDiscard: () => void;
+  onLongPress?: (event: GestureResponderEvent) => void;
+  onPress: () => void;
+  onSteer: () => void;
   pressedStyle?: StyleProp<ViewStyle>;
-  disabledStyle?: StyleProp<ViewStyle>;
-  onPress(): void;
-  onLongPress?(event: GestureResponderEvent): void;
-  onDiscard(): void;
-  onSteer(): void;
+  steerEnabled: boolean;
+  style: StyleProp<ViewStyle>;
 };
 
 function playSwipeTargetHaptic(): void {
@@ -47,17 +47,17 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
   const {
     accessibilityLabel,
     disabled,
+    disabledStyle,
     discardEnabled,
-    steerEnabled,
     icon,
     iconColor,
-    style,
-    pressedStyle,
-    disabledStyle,
-    onPress,
-    onLongPress,
     onDiscard,
+    onLongPress,
+    onPress,
     onSteer,
+    pressedStyle,
+    steerEnabled,
+    style,
   } = props;
   const translationX = useSharedValue(0);
   const translationY = useSharedValue(0);
@@ -73,8 +73,8 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
     const reveal =
       direction.get() === "discard" ? Math.min(1, -translationX.get() / COMPOSER_SWIPE_TARGET) : 0;
     return {
-      opacity: reveal,
       backgroundColor: armed.get() ? colors.red : colors.surfaceContainerHigh,
+      opacity: reveal,
       transform: [
         { translateX: -COMPOSER_SWIPE_TARGET },
         { scale: 0.78 + reveal * 0.22 + (armed.get() ? 0.1 : 0) },
@@ -82,9 +82,9 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
     };
   });
   const steerTargetStyle = useAnimatedStyle(() => ({
+    backgroundColor: armed.get() ? colors.primary : colors.surfaceContainerHigh,
     opacity:
       direction.get() === "steer" ? Math.min(1, -translationY.get() / COMPOSER_SWIPE_TARGET) : 0,
-    backgroundColor: armed.get() ? colors.primary : colors.surfaceContainerHigh,
     transform: [{ translateY: -COMPOSER_SWIPE_TARGET }],
   }));
   const pan = Gesture.Pan()
@@ -100,7 +100,9 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
       translationY.set(0);
     })
     .onUpdate((event) => {
-      if (event.numberOfPointers !== 1) direction.set("none");
+      if (event.numberOfPointers !== 1) {
+        direction.set("none");
+      }
       // Android resets translation when the pan activates, so onStart cannot
       // determine direction. Lock after deliberate movement, including rejected
       // directions; a cancelled/multitouch gesture must not become eligible again.
@@ -108,12 +110,17 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
         if (
           Math.max(Math.abs(event.translationX), Math.abs(event.translationY)) <
           DIRECTION_LOCK_DISTANCE
-        )
+        ) {
           return;
+        }
         const intent = composerSwipeDirection(event.translationX, event.translationY);
-        if (intent === "discard" && discardEnabled) direction.set("discard");
-        else if (intent === "steer" && steerEnabled && !disabled) direction.set("steer");
-        else direction.set("none");
+        if (intent === "discard" && discardEnabled) {
+          direction.set("discard");
+        } else if (intent === "steer" && steerEnabled && !disabled) {
+          direction.set("steer");
+        } else {
+          direction.set("none");
+        }
       }
       const intent = direction.get();
       const distance =
@@ -129,13 +136,19 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
       }
     })
     .onEnd((_event, success) => {
-      if (!success || !armed.get()) return;
-      if (direction.get() === "discard" && discardEnabled) runOnJS(discard)();
-      if (direction.get() === "steer" && steerEnabled && !disabled) runOnJS(steer)();
+      if (!success || !armed.get()) {
+        return;
+      }
+      if (direction.get() === "discard" && discardEnabled) {
+        runOnJS(discard)();
+      }
+      if (direction.get() === "steer" && steerEnabled && !disabled) {
+        runOnJS(steer)();
+      }
     })
     .onFinalize(() => {
-      translationX.set(withSpring(0, { damping: 18, stiffness: 260, mass: 0.6 }));
-      translationY.set(withSpring(0, { damping: 18, stiffness: 260, mass: 0.6 }));
+      translationX.set(withSpring(0, { damping: 18, mass: 0.6, stiffness: 260 }));
+      translationY.set(withSpring(0, { damping: 18, mass: 0.6, stiffness: 260 }));
       armed.set(false);
       hapticPlayed.set(false);
       direction.set("none");
@@ -144,16 +157,18 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
   return (
     <Reanimated.View pointerEvents="box-none" style={styles.root}>
       <Reanimated.View pointerEvents="none" style={[styles.target, targetStyle]}>
-        <Ionicons name="trash-outline" size={iconSize.action} color={colors.text} />
+        <Ionicons color={colors.text} name="trash-outline" size={iconSize.action} />
       </Reanimated.View>
       <Reanimated.View pointerEvents="none" style={[styles.target, steerTargetStyle]}>
-        <Ionicons name="navigate-outline" size={iconSize.action} color={colors.text} />
+        <Ionicons color={colors.text} name="navigate-outline" size={iconSize.action} />
       </Reanimated.View>
       <GestureDetector gesture={pan}>
         <Reanimated.View style={[styles.dragLayer, dragStyle]}>
           <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={accessibilityLabel}
+            accessibilityActions={[
+              ...(discardEnabled ? [{ label: "Discard composer contents", name: "discard" }] : []),
+              ...(steerEnabled && !disabled ? [{ label: "Steer active turn", name: "steer" }] : []),
+            ]}
             accessibilityHint={
               steerEnabled
                 ? "Swipe left to discard, swipe up to steer"
@@ -161,22 +176,24 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
                   ? "Swipe left to discard"
                   : undefined
             }
+            accessibilityLabel={accessibilityLabel}
+            accessibilityRole="button"
             accessibilityState={{ disabled }}
-            accessibilityActions={[
-              ...(discardEnabled ? [{ name: "discard", label: "Discard composer contents" }] : []),
-              ...(steerEnabled && !disabled ? [{ name: "steer", label: "Steer active turn" }] : []),
-            ]}
             disabled={disabled}
             hitSlop={6}
             onAccessibilityAction={(event) => {
-              if (event.nativeEvent.actionName === "discard" && discardEnabled) discard();
-              if (event.nativeEvent.actionName === "steer" && steerEnabled && !disabled) steer();
+              if (event.nativeEvent.actionName === "discard" && discardEnabled) {
+                discard();
+              }
+              if (event.nativeEvent.actionName === "steer" && steerEnabled && !disabled) {
+                steer();
+              }
             }}
             onLongPress={onLongPress}
             onPress={onPress}
             style={({ pressed }) => [style, pressed && pressedStyle, disabled && disabledStyle]}
           >
-            <Ionicons name={icon} size={iconSize.action} color={iconColor} />
+            <Ionicons color={iconColor} name={icon} size={iconSize.action} />
           </Pressable>
         </Reanimated.View>
       </GestureDetector>
@@ -185,25 +202,25 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    width: touchTarget,
-    height: touchTarget,
-    flexShrink: 0,
-    overflow: "visible",
-    position: "relative",
-    zIndex: 4,
-  },
   dragLayer: {
-    width: touchTarget,
     height: touchTarget,
+    width: touchTarget,
     zIndex: 2,
   },
+  root: {
+    flexShrink: 0,
+    height: touchTarget,
+    overflow: "visible",
+    position: "relative",
+    width: touchTarget,
+    zIndex: 4,
+  },
   target: {
+    alignItems: "center",
+    borderRadius: radii.composer,
+    height: touchTarget,
+    justifyContent: "center",
     position: "absolute",
     width: touchTarget,
-    height: touchTarget,
-    borderRadius: radii.composer,
-    alignItems: "center",
-    justifyContent: "center",
   },
 });

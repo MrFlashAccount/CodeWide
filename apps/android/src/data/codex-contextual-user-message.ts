@@ -12,7 +12,9 @@ const visibleTurnCache = new WeakMap<Turn, Turn>();
  */
 export function projectCodexVisibleTurn(turn: Turn): Turn {
   const cached = visibleTurnCache.get(turn);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    return cached;
+  }
 
   const items = turn.items.filter(
     (item) =>

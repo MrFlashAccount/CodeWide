@@ -1,5 +1,5 @@
 export const productFonts = {
-  regular: "RobotoFlex-Regular",
   medium: "RobotoFlex-Medium",
+  regular: "RobotoFlex-Regular",
   semibold: "RobotoFlex-SemiBold",
 } as const;

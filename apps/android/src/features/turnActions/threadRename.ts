@@ -14,5 +14,5 @@ export function useThreadRename(composerScope: string) {
   const closeThreadRename = useEvent(() => {
     setThreadRenameVisible(false);
   });
-  return { threadRenameVisible, openThreadRename, closeThreadRename };
+  return { closeThreadRename, openThreadRename, threadRenameVisible };
 }

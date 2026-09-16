@@ -17,64 +17,18 @@ import type {
 
 /** Owns one thread's durable detail model and windowed timeline mutations. */
 export type ThreadDetailDatabase = {
-  readonly sessionId: string;
-  readonly chat: ThreadChatModel;
-  prepare(): Promise<void>;
-  setRemoteLoader(loader: ThreadRemoteLoader): void;
-  windowResource(request: ThreadChatWindowRequest): ThreadChatWindowResource;
-  preloadWindow(request: ThreadChatWindowRequest): () => void;
-  retainWindow(connectionId: string, threadId: string): () => void;
-  adoptPreloadedWindow(connectionId: string, threadId: string): void;
-  loadWindow(request: ThreadChatWindowRequest): Promise<void>;
-  pullRange(
-    connectionId: string,
-    threadId: string,
-    direction: "older" | "newer" | "latest",
-  ): Promise<boolean>;
-  trimRange(connectionId: string, threadId: string, direction: "older" | "newer"): Promise<boolean>;
-  readWindowRows(snapshot: ThreadChatWindowSnapshot): {
-    turnRows: ThreadDetailRow[];
-    detailRows: ThreadDetailRow[];
-    liveRows: ThreadDetailRow[];
-  };
-  windowCoverage(
-    request: ThreadChatWindowRequest,
-    snapshot: ThreadChatWindowSnapshot,
-  ): ThreadWindowCoverage;
-  applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
-  applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
-  liveRevision(connectionId: string, threadId: string): number;
-  historyCursor(connectionId: string, threadId: string): string | null | undefined;
-  historySourceWitness(connectionId: string, threadId: string): string | undefined;
-  latestSealedTurnId(connectionId: string, threadId: string): Promise<string | null>;
-  beginProjectionSnapshot(connectionId: string, threadId: string): () => void;
-  synchronizeThread(input: ThreadSynchronization): Promise<void>;
-  importThreadSnapshot(
-    connectionId: string,
-    thread: Thread,
-    reason: ThreadSnapshotImportReason,
-    historyCursor?: string | null,
-  ): Promise<void>;
-  replaceThreadSnapshot(
-    connectionId: string,
-    thread: Thread,
-    reason: ThreadSnapshotImportReason,
-    historyCursor: string | null,
-  ): Promise<void>;
-  mergeTailTurns(
-    connectionId: string,
-    threadId: string,
-    turns: Turn[],
-    historyCursor: string | null,
-    isCurrent?: () => boolean,
-  ): Promise<void>;
-  appendTurns(
+  adoptPreloadedWindow: (connectionId: string, threadId: string) => void;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  appendTurns: (
     connectionId: string,
     threadId: string,
     turns: Turn[],
     historyCursor?: string | null,
-  ): Promise<ThreadHistoryAppendResult>;
-  appendTurnsAfter(
+  ) => Promise<ThreadHistoryAppendResult>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  appendTurnsAfter: (
     connectionId: string,
     threadId: string,
     expectedHistoryEpoch: number,
@@ -83,8 +37,81 @@ export type ThreadDetailDatabase = {
     sourceWitness: string,
     isCurrent: () => boolean,
     requestedSourceWitness: string | undefined,
-  ): Promise<ThreadHistoryAppendResult>;
-  prependTurnsBefore(
+  ) => Promise<ThreadHistoryAppendResult>;
+  applyCommandDelivery: (delivery: NativeCommandDelivery) => Promise<void>;
+  applyEvents: (connectionId: string, events: SyncEvent[]) => Promise<ThreadEventProjection>;
+  applySnapshot: (
+    connectionId: string,
+    threads: SyncSnapshotThread[],
+    cursor: number,
+  ) => Promise<void>;
+  beginProjectionSnapshot: (connectionId: string, threadId: string) => () => void;
+  readonly chat: ThreadChatModel;
+  close: () => Promise<void>;
+  commitPending: (row: ThreadDetailRow, options?: { durable?: boolean }) => Promise<boolean>;
+  commitPendingMutation: (
+    mutation: PendingTimelineMutation,
+    options?: { durable?: boolean },
+  ) => Promise<boolean>;
+  createPending: (input: PendingTimelineInput) => ThreadDetailRow;
+  getThread: (connectionId: string, threadId: string) => Thread | null;
+  hasPendingDelivery: (connectionId: string, threadId: string, commandId: string) => boolean;
+  historyCursor: (connectionId: string, threadId: string) => string | null | undefined;
+  historySourceWitness: (connectionId: string, threadId: string) => string | undefined;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  importThreadSnapshot: (
+    connectionId: string,
+    thread: Thread,
+    reason: ThreadSnapshotImportReason,
+    historyCursor?: string | null,
+  ) => Promise<void>;
+  invalidateHistoryExhaustion: (connectionId: string, threadId?: string) => void;
+  latestSealedTurnId: (connectionId: string, threadId: string) => Promise<string | null>;
+  listQueued: (connectionId: string, threadId: string) => PendingTimelineEntry[];
+  liveRevision: (connectionId: string, threadId: string) => number;
+  loadWindow: (request: ThreadChatWindowRequest) => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  mergeTailTurns: (
+    connectionId: string,
+    threadId: string,
+    turns: Turn[],
+    historyCursor: string | null,
+    isCurrent?: () => boolean,
+  ) => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  planQueuedEdit: (
+    connectionId: string,
+    commandId: string,
+    text: string,
+    attachments: PendingTimelineEntry["attachments"],
+  ) => PendingTimelineMutation | null;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  planQueuedMove: (
+    connectionId: string,
+    threadId: string,
+    commandId: string,
+    direction: -1 | 1,
+  ) => PendingTimelineMutation | null;
+  planQueuedRemoval: (connectionId: string, commandId: string) => PendingTimelineMutation | null;
+  preloadWindow: (request: ThreadChatWindowRequest) => () => void;
+  prepare: () => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  prependTurns: (
+    connectionId: string,
+    threadId: string,
+    expectedHistoryEpoch: number,
+    turns: Turn[],
+    nextCursor: string | null,
+    isCurrent?: () => boolean,
+  ) => Promise<ThreadHistoryPrependResult>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  prependTurnsBefore: (
     connectionId: string,
     threadId: string,
     expectedHistoryEpoch: number,
@@ -94,59 +121,65 @@ export type ThreadDetailDatabase = {
     sourceWitness: string,
     isCurrent: () => boolean,
     requestedSourceWitness: string | undefined,
-  ): Promise<ThreadHistoryAppendResult>;
-  invalidateHistoryExhaustion(connectionId: string, threadId?: string): void;
-  replaceActiveThread(connectionId: string, thread: Thread): Promise<void>;
-  prependTurns(
+  ) => Promise<ThreadHistoryAppendResult>;
+  pullRange: (
     connectionId: string,
     threadId: string,
-    expectedHistoryEpoch: number,
-    turns: Turn[],
-    nextCursor: string | null,
-    isCurrent?: () => boolean,
-  ): Promise<ThreadHistoryPrependResult>;
-  replaceTurnItems(
-    connectionId: string,
-    threadId: string,
-    turnId: string,
-    items: Turn["items"],
-  ): Promise<void>;
-  createPending(input: PendingTimelineInput): ThreadDetailRow;
-  stagePendingMutation(mutation: PendingTimelineMutation): { rollback(): void; complete(): void };
-  commitPending(row: ThreadDetailRow, options?: { durable?: boolean }): Promise<boolean>;
-  commitPendingMutation(
-    mutation: PendingTimelineMutation,
-    options?: { durable?: boolean },
-  ): Promise<boolean>;
-  applyCommandDelivery(delivery: NativeCommandDelivery): Promise<void>;
-  reconcileNativeCommands(
+    direction: "older" | "newer" | "latest",
+  ) => Promise<boolean>;
+  readWindowRows: (snapshot: ThreadChatWindowSnapshot) => {
+    detailRows: ThreadDetailRow[];
+    liveRows: ThreadDetailRow[];
+    turnRows: ThreadDetailRow[];
+  };
+  reconcileNativeCommands: (
     connectionId: string,
     threadId: string,
     deliveries: readonly NativeCommandDelivery[],
-  ): Promise<void>;
-  replaceQueued(
+  ) => Promise<void>;
+  replaceActiveThread: (connectionId: string, thread: Thread) => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  replaceQueued: (
     connectionId: string,
     threadId: string,
     commands: HostQueuedPrompt[],
     preserveCommandIds?: Set<string>,
-  ): Promise<void>;
-  hasPendingDelivery(connectionId: string, threadId: string, commandId: string): boolean;
-  listQueued(connectionId: string, threadId: string): PendingTimelineEntry[];
-  planQueuedEdit(
+  ) => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  replaceThreadSnapshot: (
     connectionId: string,
-    commandId: string,
-    text: string,
-    attachments: PendingTimelineEntry["attachments"],
-  ): PendingTimelineMutation | null;
-  planQueuedRemoval(connectionId: string, commandId: string): PendingTimelineMutation | null;
-  planQueuedMove(
+    thread: Thread,
+    reason: ThreadSnapshotImportReason,
+    historyCursor: string | null,
+  ) => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  replaceTurnItems: (
     connectionId: string,
     threadId: string,
-    commandId: string,
-    direction: -1 | 1,
-  ): PendingTimelineMutation | null;
-  getThread(connectionId: string, threadId: string): Thread | null;
-  close(): Promise<void>;
+    turnId: string,
+    items: Turn["items"],
+  ) => Promise<void>;
+  retainWindow: (connectionId: string, threadId: string) => () => void;
+  readonly sessionId: string;
+  setRemoteLoader: (loader: ThreadRemoteLoader) => void;
+  stagePendingMutation: (mutation: PendingTimelineMutation) => {
+    complete: () => void;
+    rollback: () => void;
+  };
+  synchronizeThread: (input: ThreadSynchronization) => Promise<void>;
+  trimRange: (
+    connectionId: string,
+    threadId: string,
+    direction: "older" | "newer",
+  ) => Promise<boolean>;
+  windowCoverage: (
+    request: ThreadChatWindowRequest,
+    snapshot: ThreadChatWindowSnapshot,
+  ) => ThreadWindowCoverage;
+  windowResource: (request: ThreadChatWindowRequest) => ThreadChatWindowResource;
 };
 
 /** Explains whether a loaded timeline window proves complete thread coverage. */
@@ -164,51 +197,51 @@ export type ThreadWindowCoverage = {
 
 /** Loads and observes authoritative thread ranges from the remote server. */
 export type ThreadRemoteLoader = {
-  observe?(input: { connectionId: string; threadId: string }): void;
-  reconcilePending(input: { connectionId: string; threadId: string }): Promise<void>;
-  hydrateWindow(input: {
-    request: ThreadChatWindowRequest;
+  hydrateWindow: (input: {
     cachedThread: Thread | null;
-    requireAuthoritative: boolean;
     reason: ThreadWindowCoverage["reason"] | "activation";
-  }): Promise<void>;
-  shouldRepairProjection?(input: { connectionId: string; threadId: string }): boolean;
-  repairProjection(input: { connectionId: string; threadId: string }): Promise<void>;
-  loadOlder(input: {
+    request: ThreadChatWindowRequest;
+    requireAuthoritative: boolean;
+  }) => Promise<void>;
+  loadBefore?: (input: {
+    beforeTurnId: string;
     connectionId: string;
+    historyEpoch: number;
     threadId: string;
+  }) => Promise<ThreadRemoteOlderResult>;
+  loadNewer: (input: {
+    afterTurnId: string;
+    connectionId: string;
+    historyEpoch: number;
+    threadId: string;
+  }) => Promise<ThreadRemoteNewerResult>;
+  loadOlder: (input: {
+    connectionId: string;
     cursor: string;
     historyEpoch: number;
-  }): Promise<void>;
-  loadNewer(input: {
-    connectionId: string;
     threadId: string;
-    afterTurnId: string;
-    historyEpoch: number;
-  }): Promise<ThreadRemoteNewerResult>;
-  loadBefore?(input: {
-    connectionId: string;
-    threadId: string;
-    beforeTurnId: string;
-    historyEpoch: number;
-  }): Promise<ThreadRemoteOlderResult>;
+  }) => Promise<void>;
+  observe?: (input: { connectionId: string; threadId: string }) => void;
+  reconcilePending: (input: { connectionId: string; threadId: string }) => Promise<void>;
+  repairProjection: (input: { connectionId: string; threadId: string }) => Promise<void>;
+  shouldRepairProjection?: (input: { connectionId: string; threadId: string }) => boolean;
 };
 
 /** Result of attempting to persist a newer remote timeline page. */
 export type ThreadRemoteNewerResult =
-  | { status: "persisted"; lastTurnId: string; hasMore: boolean }
+  | { hasMore: boolean; lastTurnId: string; status: "persisted" }
   | { status: "superseded" };
 
 /** Result of attempting to persist an older remote timeline page. */
 export type ThreadRemoteOlderResult =
-  | { status: "persisted"; oldestTurnId: string; hasMore: boolean }
+  | { hasMore: boolean; oldestTurnId: string; status: "persisted" }
   | { status: "superseded" };
 
 /** Describes whether prepending history extended the accepted local window. */
 export type ThreadHistoryPrependResult = {
   accepted: boolean;
-  historyEpoch: number;
   extendedMinimum: boolean;
+  historyEpoch: number;
 };
 
 /** Describes whether appending newer history was accepted for the active epoch. */
@@ -226,13 +259,13 @@ export type ThreadSnapshotSyncMode = "merge" | "reset";
 /** Complete input required to synchronize one authoritative thread snapshot. */
 export type ThreadSynchronization = {
   readonly connectionId: string;
-  readonly thread: Thread;
-  readonly mode: ThreadSnapshotSyncMode;
-  readonly historyCursor: string | null | undefined;
-  readonly throughCursor: number;
   readonly expectedLiveRevision: number;
-  readonly sourceWitness?: string;
+  readonly historyCursor: string | null | undefined;
   readonly isCurrent?: () => boolean;
+  readonly mode: ThreadSnapshotSyncMode;
+  readonly sourceWitness?: string;
+  readonly thread: Thread;
+  readonly throughCursor: number;
 };
 
 /** Content-free correlation input for a locally pending timeline entry. */

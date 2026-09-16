@@ -5,7 +5,7 @@ const expoModulesCoreRoot = path.dirname(require.resolve("expo-modules-core/pack
 module.exports = {
   preset: "@react-native/jest-preset",
   haste: { defaultPlatform: "android", platforms: ["android", "ios", "native"] },
-  // WHY: Worklets supplies a Node resolver for its non-native runtime; HeroUI imports it through animation helpers.
+  // WHY: Worklets supplies a Node resolver for its non-native runtime.
   resolver: "<rootDir>/test/android-jest-resolver.cjs",
   rootDir: ".",
   setupFiles: [
@@ -14,6 +14,7 @@ module.exports = {
   ],
   setupFilesAfterEnv: ["<rootDir>/test/setup-v2-render-console.cjs"],
   testMatch: [
+    "<rootDir>/test/app-popover.native.test.tsx",
     "<rootDir>/test/v1-*.render.test.tsx",
     "<rootDir>/test/root-generation-gate.render.test.tsx",
     "<rootDir>/test/workspace-navigation.render.test.tsx",
@@ -57,6 +58,6 @@ module.exports = {
   },
   // WHY: Private icons use ESM-only hashes; real TanStack collections depend on ESM-only fractional-indexing.
   transformIgnorePatterns: [
-    "node_modules/(?!.*(?:react-native|@react-native|expo|@expo|@op-engineering[+/]op-sqlite|heroui-native|uniwind|@noble[+/]hashes|character-entities|decode-named-character-reference|fractional-indexing|marked))",
+    "node_modules/(?!.*(?:react-native|@react-native|expo|@expo|@op-engineering[+/]op-sqlite|@noble[+/]hashes|character-entities|decode-named-character-reference|fractional-indexing|marked))",
   ],
 };

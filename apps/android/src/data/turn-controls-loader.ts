@@ -6,6 +6,7 @@ import type {
 import type { RpcClient } from "@codewide/sync-client";
 import { loadSkillCatalog } from "./load-skill-catalog";
 import type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
+import { unknownRecord } from "./unknownRecord";
 import type { WorkspaceResourceDatabase } from "./workspace-resource-database";
 import { turnControlsResourceKey } from "./workspace-resource-keys";
 import type { createWorkspaceSession } from "./workspace-session";
@@ -16,9 +17,9 @@ export type TurnControlsLoaders = {
 };
 
 export type TurnControlsLoadResult = {
-  value: TurnControlsValue;
   errors: Error[];
   loadedSections: number;
+  value: TurnControlsValue;
 };
 
 export function isTurnControlsCacheFresh(
@@ -30,11 +31,15 @@ export function isTurnControlsCacheFresh(
     cached?.status === "ready" &&
     cached.error === null &&
     cached.value !== null &&
-    cached.value.defaults !== undefined &&
+    persistedDefaultsPresent(cached.value) &&
     cached.value.models.every((model) => typeof model.isDefault === "boolean") &&
     cached.value.skills.every((skill) => skill.catalog !== undefined) &&
     now - cached.updatedAt < maxAgeMs
   );
+}
+
+function persistedDefaultsPresent(value: TurnControlsValue): boolean {
+  return unknownRecord(value)?.defaults !== undefined;
 }
 
 /**
@@ -56,8 +61,8 @@ export async function loadTurnControlsIncrementally(
       assignSection(current, section, value);
       onPartial(cloneTurnControls(current), section);
       return null;
-    } catch (cause) {
-      return cause instanceof Error ? cause : new Error(`Could not load ${section}`);
+    } catch (error) {
+      return error instanceof Error ? error : new Error(`Could not load ${section}`);
     }
   };
   const results = await Promise.all([
@@ -67,22 +72,24 @@ export async function loadTurnControlsIncrementally(
     loadSection("defaults"),
   ]);
   const errors = results.filter((error): error is Error => error !== null);
-  return { value: current, errors, loadedSections: 4 - errors.length };
+  return { errors, loadedSections: 4 - errors.length, value: current };
 }
 
 export function cloneTurnControls(value: TurnControlsValue): TurnControlsValue {
   return {
+    defaults:
+      // WHY: Persisted rows from an older schema may omit defaults even though current writes always include it.
+      // oxlint-disable-next-line typescript/no-unnecessary-condition
+      value.defaults === undefined
+        ? { effort: null, model: null, permissions: null }
+        : { ...value.defaults },
     models: value.models.map((model) => ({
       ...model,
-      isDefault: model.isDefault === true,
       efforts: [...model.efforts],
+      isDefault: model.isDefault,
     })),
-    skills: value.skills.map((skill) => ({ ...skill })),
     permissions: value.permissions.map((permission) => ({ ...permission })),
-    defaults:
-      value.defaults === undefined
-        ? { model: null, effort: null, permissions: null }
-        : { ...value.defaults },
+    skills: value.skills.map((skill) => ({ ...skill })),
   };
 }
 
@@ -96,31 +103,32 @@ function assignSection<Section extends TurnControlsSection>(
   Object.assign(target, { [section]: value });
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`${label} catalog timed out after ${timeoutMs} ms`)),
-      timeoutMs,
-    );
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} catalog timed out after ${String(timeoutMs)} ms`));
+    }, timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => {
-    if (timer !== null) clearTimeout(timer);
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
   });
 }
 
-const TURN_CONTROLS_FRESH_MS = 6 * 60 * 60 * 1_000;
+const TURN_CONTROLS_FRESH_MS = 6 * 60 * 60 * 1000;
 const EMPTY_TURN_CONTROLS: TurnControlsValue = {
+  defaults: { effort: null, model: null, permissions: null },
   models: [],
-  skills: [],
   permissions: [],
-  defaults: { model: null, effort: null, permissions: null },
+  skills: [],
 };
 
 /** Existing resource projection and qualified session access for catalog loading. */
 export type TurnControlsAuthority = {
-  getResources(): Pick<WorkspaceResourceDatabase, "turnControls" | "putTurnControls"> | null;
-  getSession(connectionId: string): RpcClient | undefined;
+  getResources: () => Pick<WorkspaceResourceDatabase, "turnControls" | "putTurnControls"> | null;
+  getSession: (connectionId: string) => RpcClient | undefined;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 };
 
@@ -139,70 +147,37 @@ export function createTurnControlsLoader({
     const resources = getResources();
     const cached = resources?.turnControls.get(cacheKey);
     const pending = turnControlsInFlight.get(cacheKey);
-    if (pending !== undefined) return await pending;
+    if (pending !== undefined) {
+      return pending;
+    }
     const session = getSession(connectionId);
     const cachedValue =
       cached?.value === null || cached?.value === undefined
         ? null
         : cloneTurnControls(cached.value);
     const cacheFresh = isTurnControlsCacheFresh(cached, Date.now(), TURN_CONTROLS_FRESH_MS);
-    if (cacheFresh && cachedValue !== null) return cachedValue;
+    if (cacheFresh && cachedValue !== null) {
+      return cachedValue;
+    }
     if (session === undefined) {
-      if (cachedValue !== null) return cachedValue;
+      if (cachedValue !== null) {
+        return cachedValue;
+      }
       throw new Error("Connection is not enabled");
     }
     const operation = (async (): Promise<TurnControlsValue> => {
       try {
         resources?.putTurnControls({
-          id: cacheKey,
           connectionId,
           cwd,
+          error: null,
+          id: cacheKey,
           status: cachedValue === null ? "loading" : "refreshing",
           value: cachedValue,
-          error: null,
         });
         const result = await loadTurnControlsIncrementally(
           cachedValue ?? EMPTY_TURN_CONTROLS,
           {
-            models: async () => {
-              const response = await rpcAfterAttach<ModelListResponse>(session, "model/list", {
-                cursor: null,
-                limit: 100,
-                includeHidden: false,
-              });
-              return response.data.map((model) => ({
-                id: model.model,
-                label: model.displayName,
-                defaultEffort: model.defaultReasoningEffort,
-                efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
-                supportsPersonality: model.supportsPersonality,
-                isDefault: model.isDefault,
-              }));
-            },
-            skills: () =>
-              loadSkillCatalog({
-                skills: () =>
-                  rpcAfterAttach<unknown>(session, "skills/list", {
-                    cwds: [cwd],
-                    forceReload: false,
-                  }),
-                installedPlugins: () =>
-                  rpcAfterAttach<unknown>(session, "plugin/installed", { cwds: [cwd] }),
-                plugin: ({ pluginName, marketplacePath, remoteMarketplaceName }) =>
-                  rpcAfterAttach<unknown>(session, "plugin/read", {
-                    pluginName,
-                    marketplacePath,
-                    remoteMarketplaceName,
-                  }),
-              }),
-            permissions: async () => {
-              const response = await rpcAfterAttach<PermissionProfileListResponse>(
-                session,
-                "permissionProfile/list",
-                { cursor: null, limit: 100, cwd },
-              );
-              return response.data;
-            },
             defaults: async () => {
               const response = await rpcAfterAttach<ConfigReadResponse>(session, "config/read", {
                 cwd,
@@ -219,20 +194,59 @@ export function createTurnControlsLoader({
                         ? ":read-only"
                         : null;
               return {
-                model: response.config.model,
                 effort: response.config.model_reasoning_effort,
+                model: response.config.model,
                 permissions: configuredPermissions,
               };
             },
+            models: async () => {
+              const response = await rpcAfterAttach<ModelListResponse>(session, "model/list", {
+                cursor: null,
+                includeHidden: false,
+                limit: 100,
+              });
+              return response.data.map((model) => ({
+                defaultEffort: model.defaultReasoningEffort,
+                efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
+                id: model.model,
+                isDefault: model.isDefault,
+                label: model.displayName,
+                supportsPersonality: model.supportsPersonality,
+              }));
+            },
+            permissions: async () => {
+              const response = await rpcAfterAttach<PermissionProfileListResponse>(
+                session,
+                "permissionProfile/list",
+                { cursor: null, cwd, limit: 100 },
+              );
+              return response.data;
+            },
+            skills: async () =>
+              loadSkillCatalog({
+                installedPlugins: async () =>
+                  rpcAfterAttach<unknown>(session, "plugin/installed", { cwds: [cwd] }),
+                plugin: async ({ marketplacePath, pluginName, remoteMarketplaceName }) =>
+                  rpcAfterAttach<unknown>(session, "plugin/read", {
+                    marketplacePath,
+                    pluginName,
+                    remoteMarketplaceName,
+                  }),
+                skills: async () =>
+                  rpcAfterAttach<unknown>(session, "skills/list", {
+                    cwds: [cwd],
+                    forceReload: false,
+                  }),
+              }),
           },
           (value) =>
             resources?.putTurnControls({
-              id: cacheKey,
               connectionId,
               cwd,
+              error: null,
+              id: cacheKey,
               status: "refreshing",
               value,
-              error: null,
             }),
         );
         if (result.loadedSections === 0 && cachedValue === null) {
@@ -246,24 +260,24 @@ export function createTurnControlsLoader({
             ? null
             : `Some controls are unavailable: ${result.errors.map((cause) => cause.message).join(" · ")}`;
         resources?.putTurnControls({
-          id: cacheKey,
           connectionId,
           cwd,
+          error: partialError,
+          id: cacheKey,
           status: "ready",
           value: result.value,
-          error: partialError,
         });
         return result.value;
-      } catch (cause) {
+      } catch (error) {
         resources?.putTurnControls({
-          id: cacheKey,
           connectionId,
           cwd,
+          error: error instanceof Error ? error.message : "Could not load turn controls",
+          id: cacheKey,
           status: "error",
           value: cachedValue,
-          error: cause instanceof Error ? cause.message : "Could not load turn controls",
         });
-        throw cause;
+        throw error;
       }
     })();
     turnControlsInFlight.set(cacheKey, operation);
@@ -279,7 +293,7 @@ export function createTurnControlsLoader({
       void operation.catch(() => undefined);
       return cachedValue;
     }
-    return await operation;
+    return operation;
   };
 
   return loadTurnControls;

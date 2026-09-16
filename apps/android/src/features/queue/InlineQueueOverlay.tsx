@@ -15,7 +15,6 @@ export function InlineQueueOverlay(props: InlineQueueOverlayProps): React.JSX.El
   return (
     <View
       pointerEvents="box-none"
-      testID="inline-queue-tail"
       style={[
         styles.tail,
         props.expanded && styles.expandedTail,
@@ -24,27 +23,28 @@ export function InlineQueueOverlay(props: InlineQueueOverlayProps): React.JSX.El
           marginTop: STACK_VIEWPORT_HEIGHT - props.maxHeight,
         },
       ]}
+      testID="inline-queue-tail"
     >
       <Pressable
-        accessible={props.expanded}
         accessibilityLabel="Close queue"
-        pointerEvents={props.expanded ? "auto" : "none"}
+        accessible={props.expanded}
         onPress={props.onClose}
+        pointerEvents={props.expanded ? "auto" : "none"}
         style={styles.backdrop}
       />
-      <View pointerEvents="box-none" testID="inline-queue-overlay" style={styles.overlay}>
+      <View pointerEvents="box-none" style={styles.overlay} testID="inline-queue-overlay">
         <ScrollView
-          ref={listRef}
-          testID="inline-queue-list"
+          contentContainerStyle={[styles.listContent, { height: overlay.contentHeight }]}
           keyboardShouldPersistTaps="handled"
           nestedScrollEnabled
+          ref={listRef}
           scrollEnabled={props.expanded && overlay.contentHeight > overlay.listMaxHeight}
           showsVerticalScrollIndicator={false}
           style={[
             styles.list,
             props.expanded ? { maxHeight: overlay.listMaxHeight } : styles.collapsedList,
           ]}
-          contentContainerStyle={[styles.listContent, { height: overlay.contentHeight }]}
+          testID="inline-queue-list"
         >
           {overlay.layouts.map((layout, index) =>
             renderInlineQueueItem(layout, index, props, overlay),

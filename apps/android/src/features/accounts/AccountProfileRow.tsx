@@ -13,82 +13,83 @@ import { styles } from "./AccountPoolFeature.styles";
 import type { AccountPoolProps } from "./accountCapabilities";
 
 export function AccountProfileRow({
-  profile,
-  index,
-  count,
   busy,
   connectionId,
+  count,
+  index,
   onActivate,
-  onUpdate,
   onRemove,
+  onUpdate,
+  profile,
   run,
 }: Pick<AccountPoolProps, "connectionId" | "onActivate" | "onUpdate" | "onRemove"> & {
-  profile: AccountPoolSnapshot["profiles"][number];
-  index: number;
-  count: number;
   busy: boolean;
-  run(operation: () => Promise<unknown>): Promise<void>;
+  count: number;
+  index: number;
+  profile: AccountPoolSnapshot["profiles"][number];
+  run: (operation: () => Promise<unknown>) => void;
 }) {
   const label = accountProfileLabel(profile, index);
   const weekly = selectWeeklyRateLimit(profile.rateLimits);
   const limitLabel =
     weekly !== null
-      ? `${Math.round(weekly.remainingPercent)}% left`
+      ? `${String(Math.round(weekly.remainingPercent))}% left`
       : profile.exhaustedIndefinitely
         ? "Limit reached"
         : "Usage pending";
   const actions: ActionMenuItem[] = [
     {
+      disabled: profile.active || !profile.enabled,
+      icon: "person-circle-outline",
       id: "activate",
       label: profile.active ? "Active account" : "Switch to account",
-      icon: "person-circle-outline",
       selected: profile.active,
-      disabled: profile.active || !profile.enabled,
     },
     ...(index === 0
       ? []
-      : [{ id: "make-primary", label: "Make primary", icon: "star-outline" as const }]),
+      : [{ icon: "star-outline" as const, id: "make-primary", label: "Make primary" }]),
     ...(count > 2 && index > 0
-      ? [{ id: "move-up", label: "Move earlier", icon: "arrow-up" as const }]
+      ? [{ icon: "arrow-up" as const, id: "move-up", label: "Move earlier" }]
       : []),
     ...(count > 2 && index < count - 1
-      ? [{ id: "move-down", label: "Move later", icon: "arrow-down" as const }]
+      ? [{ icon: "arrow-down" as const, id: "move-down", label: "Move later" }]
       : []),
     {
+      icon: profile.enabled ? "pause-circle-outline" : "play-circle-outline",
       id: "toggle-enabled",
       label: profile.enabled ? "Disable fallback" : "Enable fallback",
-      icon: profile.enabled ? "pause-circle-outline" : "play-circle-outline",
       selected: profile.enabled,
     },
     ...(!profile.active
       ? [
           {
+            destructive: true,
+            icon: "trash-outline" as const,
             id: "remove",
             label: "Remove account",
-            icon: "trash-outline" as const,
-            destructive: true,
           },
         ]
       : []),
   ];
   const handleAction = (id: string) => {
-    if (id === "activate") void run(async () => await onActivate(connectionId, profile.id));
-    else if (id === "make-primary")
-      void run(async () => await onUpdate(connectionId, profile.id, { priority: 0 }));
-    else if (id === "move-up")
-      void run(async () => await onUpdate(connectionId, profile.id, { priority: index - 1 }));
-    else if (id === "move-down")
-      void run(async () => await onUpdate(connectionId, profile.id, { priority: index + 1 }));
-    else if (id === "toggle-enabled")
-      void run(async () => await onUpdate(connectionId, profile.id, { enabled: !profile.enabled }));
-    else if (id === "remove") void run(async () => await onRemove(connectionId, profile.id));
+    if (id === "activate") {
+      run(async () => onActivate(connectionId, profile.id));
+    } else if (id === "make-primary") {
+      run(async () => onUpdate(connectionId, profile.id, { priority: 0 }));
+    } else if (id === "move-up") {
+      run(async () => onUpdate(connectionId, profile.id, { priority: index - 1 }));
+    } else if (id === "move-down") {
+      run(async () => onUpdate(connectionId, profile.id, { priority: index + 1 }));
+    } else if (id === "toggle-enabled") {
+      run(async () => onUpdate(connectionId, profile.id, { enabled: !profile.enabled }));
+    } else if (id === "remove") {
+      run(async () => onRemove(connectionId, profile.id));
+    }
   };
   return (
     <AppListRow
-      title={label}
-      position={listRowPosition(index, count)}
+      description={`${profile.planType ?? "Plan pending"} · ${index === 0 ? "Primary" : `Backup ${String(index)}`}${profile.active ? " · Active" : ""}${profile.enabled ? "" : " · disabled"}`}
       fixedHeight={listRowHeight.double}
-      description={`${profile.planType ?? "Plan pending"} · ${index === 0 ? "Primary" : `Backup ${index}`}${profile.active ? " · Active" : ""}${profile.enabled ? "" : " · disabled"}`}
       leading={
         <View
           style={[
@@ -103,6 +104,8 @@ export function AccountProfileRow({
           ]}
         />
       }
+      position={listRowPosition(index, count)}
+      title={label}
       trailing={
         <>
           <Text
@@ -123,9 +126,9 @@ export function AccountProfileRow({
               style={[styles.connectionMiniButton, busy && styles.disabled]}
             >
               <Ionicons
+                color={colors.textMuted}
                 name="ellipsis-horizontal"
                 size={iconSize.action}
-                color={colors.textMuted}
               />
             </Pressable>
           </ActionMenu>

@@ -15,24 +15,42 @@ import type { ConnectionSettingsProps } from "./connectionSettingsContract";
 
 /** Presents qualified server status and editors through the public settings capability. */
 export function connectionSettingsSections({
-  connections,
   accountRateLimits,
-  onToggle,
-  onReconnect,
-  onDelete,
-  onUpdate,
-  onMove,
-  onRefreshAccountPool,
-  onStartAccountLogin,
-  onCancelAccountLogin,
+  connections,
   onActivateAccountProfile,
-  onUpdateAccountProfile,
+  onCancelAccountLogin,
+  onDelete,
+  onMove,
+  onReconnect,
+  onRefreshAccountPool,
   onRemoveAccountProfile,
+  onStartAccountLogin,
+  onToggle,
+  onUpdate,
+  onUpdateAccountProfile,
 }: ConnectionSettingsProps) {
   return connections.map((connection) => ({
-    id: connection.id,
-    title: connection.displayName,
+    content: (
+      <ConnectionRowEditor
+        accountPool={
+          accountRateLimits.find((row) => row.connectionId === connection.id)?.accountPool ?? null
+        }
+        connection={connection}
+        onDelete={onDelete}
+        onMove={onMove}
+        onReconnect={onReconnect}
+        onToggle={onToggle}
+        onUpdate={onUpdate}
+        {...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool })}
+        {...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin })}
+        {...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin })}
+        {...(onActivateAccountProfile === undefined ? {} : { onActivateAccountProfile })}
+        {...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile })}
+        {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}
+      />
+    ),
     description: connectionStateLabel(connection.state, connection.enabled),
+    id: connection.id,
     leading: (
       <Text style={styles.serverEmoji}>
         {Platform.OS === "web"
@@ -42,7 +60,7 @@ export function connectionSettingsSections({
     ),
     statusIcon:
       connection.enabled && connectionActivity(connection.state) !== null ? (
-        <ConnectionActivityIndicator status={connection.state} size={iconSize.indicator} />
+        <ConnectionActivityIndicator size={iconSize.indicator} status={connection.state} />
       ) : (
         <View
           style={[
@@ -55,24 +73,6 @@ export function connectionSettingsSections({
           ]}
         />
       ),
-    content: (
-      <ConnectionRowEditor
-        connection={connection}
-        onToggle={onToggle}
-        onReconnect={onReconnect}
-        onDelete={onDelete}
-        onUpdate={onUpdate}
-        onMove={onMove}
-        accountPool={
-          accountRateLimits.find((row) => row.connectionId === connection.id)?.accountPool ?? null
-        }
-        {...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool })}
-        {...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin })}
-        {...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin })}
-        {...(onActivateAccountProfile === undefined ? {} : { onActivateAccountProfile })}
-        {...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile })}
-        {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}
-      />
-    ),
+    title: connection.displayName,
   }));
 }

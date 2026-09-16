@@ -11,14 +11,16 @@ import {
 } from "./connectionPresentation";
 
 export function ConnectionActivityIndicator({
-  status,
   size = 14,
+  status,
 }: {
-  status: ServerStatus;
   size?: number;
+  status: ServerStatus;
 }) {
   const activity = connectionActivity(status);
-  if (status === "live") return null;
+  if (status === "live") {
+    return null;
+  }
   if (activity === null) {
     const icon =
       status === "offline"
@@ -28,21 +30,21 @@ export function ConnectionActivityIndicator({
           : "alert-circle-outline";
     return (
       <View
-        accessible
         accessibilityLabel={connectionStateLabel(status)}
+        accessible
         style={styles.connectionActivityIndicator}
       >
-        <Ionicons name={icon} size={size} color={connectionStateColor(status)} />
+        <Ionicons color={connectionStateColor(status)} name={icon} size={size} />
       </View>
     );
   }
   return (
     <View
-      accessible
       accessibilityLabel={activity === "connecting" ? "Connecting" : "Updating"}
+      accessible
       style={styles.connectionActivityIndicator}
     >
-      <ActivityIndicator size={size} color={connectionActivityColor(activity)} />
+      <ActivityIndicator color={connectionActivityColor(activity)} size={size} />
     </View>
   );
 }

@@ -2,26 +2,28 @@ import { useId, useLayoutEffect } from "react";
 
 import { useConversationRef, useConversationState } from "./use-conversation-scope";
 
-export type ConversationOwnerToken = { scope: string; ownerId: string; generation: number };
+export type ConversationOwnerToken = { generation: number; ownerId: string; scope: string };
 
 export function createConversationOwnerRegistry() {
   const mountedOwners = new Map<string, ConversationOwnerToken>();
   const latestOwnerGeneration = new Map<string, number>();
   return {
     acquire(scope: string, ownerId: string): ConversationOwnerToken {
-      const token = { scope, ownerId, generation: (latestOwnerGeneration.get(scope) ?? 0) + 1 };
+      const token = { generation: (latestOwnerGeneration.get(scope) ?? 0) + 1, ownerId, scope };
       latestOwnerGeneration.set(scope, token.generation);
       mountedOwners.set(scope, token);
       return token;
     },
-    release(token: ConversationOwnerToken): void {
-      if (mountedOwners.get(token.scope) === token) mountedOwners.delete(token.scope);
+    hasReplacement(token: ConversationOwnerToken): boolean {
+      return (latestOwnerGeneration.get(token.scope) ?? 0) > token.generation;
     },
     isCurrent(token: ConversationOwnerToken): boolean {
       return mountedOwners.get(token.scope) === token;
     },
-    hasReplacement(token: ConversationOwnerToken): boolean {
-      return (latestOwnerGeneration.get(token.scope) ?? 0) > token.generation;
+    release(token: ConversationOwnerToken): void {
+      if (mountedOwners.get(token.scope) === token) {
+        mountedOwners.delete(token.scope);
+      }
     },
   };
 }
@@ -29,8 +31,8 @@ export function createConversationOwnerRegistry() {
 const ownerRegistry = createConversationOwnerRegistry();
 
 export type ConversationOwner = {
-  isCurrent(): boolean;
-  hasReplacement(): boolean;
+  hasReplacement: () => boolean;
+  isCurrent: () => boolean;
 };
 
 /**
@@ -51,9 +53,9 @@ export function useConversationOwner(scope: string): ConversationOwner {
   // These capabilities retain this activation's token. Reading the latest
   // token through useEvent would let an old request mutate a different chat.
   const [owner] = useConversationState(scope, () => ({
-    isCurrent: () => tokenRef.current !== null && ownerRegistry.isCurrent(tokenRef.current),
     hasReplacement: () =>
       tokenRef.current !== null && ownerRegistry.hasReplacement(tokenRef.current),
+    isCurrent: () => tokenRef.current !== null && ownerRegistry.isCurrent(tokenRef.current),
   }));
   return owner;
 }

@@ -1,13 +1,13 @@
 export type TelemetryEventInput = {
-  name: string;
-  sessionId?: string;
-  requestId?: string;
   connectionId?: string;
+  itemId?: string;
+  name: string;
+  requestId?: string;
+  sessionId?: string;
+  tags?: Record<string, string>;
   threadId?: string;
   turnId?: string;
-  itemId?: string;
   values?: Record<string, number>;
-  tags?: Record<string, string>;
 };
 
 type TelemetryEvent = TelemetryEventInput & {
@@ -21,19 +21,19 @@ type QueuedTelemetryEvent = {
 };
 
 export type TelemetryBatch = {
-  version: 1;
-  batchId: string;
-  sentAtUnixMs: number;
-  clientSessionId: string;
   appVersion?: string;
+  batchId: string;
+  clientSessionId: string;
   events: TelemetryEvent[];
+  sentAtUnixMs: number;
+  version: 1;
 };
 
 type TelemetryTransport = (connectionId: string, batch: TelemetryBatch) => Promise<void>;
 
-const MAX_QUEUE_EVENTS = 2_048;
+const MAX_QUEUE_EVENTS = 2048;
 const MAX_BATCH_EVENTS = 64;
-const FLUSH_INTERVAL_MS = 1_000;
+const FLUSH_INTERVAL_MS = 1000;
 const MAX_RETRY_MS = 30_000;
 const clientSessionId = `client-${createId()}`;
 const queues = new Map<string, QueuedTelemetryEvent[]>();
@@ -46,7 +46,9 @@ let flushTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function configureTelemetryTransport(next: TelemetryTransport | null): void {
   transport = next;
-  if (next !== null && queues.size > 0) scheduleFlush(0);
+  if (next !== null && queues.size > 0) {
+    scheduleFlush(0);
+  }
 }
 
 export function configureTelemetryAppVersion(next: string | null | undefined): void {
@@ -58,19 +60,26 @@ export function setTelemetryEnabled(next: boolean): void {
   if (!next) {
     for (const [connectionId, queue] of queues) {
       const retained = queue.filter((queued) => queued.operational);
-      if (retained.length === 0) queues.delete(connectionId);
-      else queues.set(connectionId, retained);
+      if (retained.length === 0) {
+        queues.delete(connectionId);
+      } else {
+        queues.set(connectionId, retained);
+      }
     }
     retryAttempts.clear();
     if (queues.size === 0) {
-      if (flushTimer !== undefined) clearTimeout(flushTimer);
+      if (flushTimer !== undefined) {
+        clearTimeout(flushTimer);
+      }
       flushTimer = undefined;
     }
   }
 }
 
 export function recordTelemetryEvent(connectionId: string, input: TelemetryEventInput): void {
-  if (!enabled) return;
+  if (!enabled) {
+    return;
+  }
   enqueueTelemetryEvent(connectionId, input, false);
 }
 
@@ -87,41 +96,55 @@ function enqueueTelemetryEvent(
   input: TelemetryEventInput,
   operational: boolean,
 ): void {
-  if (!validIdentifier(connectionId) || !validName(input.name)) return;
+  if (!validIdentifier(connectionId) || !validName(input.name)) {
+    return;
+  }
   const event = sanitizeEvent(input);
-  if (event === null) return;
+  if (event === null) {
+    return;
+  }
   const queue = queues.get(connectionId) ?? [];
   queue.push({
-    operational,
     event: {
       ...event,
       connectionId,
       eventId: `event-${createId()}`,
       occurredAtUnixMs: Date.now(),
     },
+    operational,
   });
-  if (queue.length > MAX_QUEUE_EVENTS) queue.splice(0, queue.length - MAX_QUEUE_EVENTS);
+  if (queue.length > MAX_QUEUE_EVENTS) {
+    queue.splice(0, queue.length - MAX_QUEUE_EVENTS);
+  }
   queues.set(connectionId, queue);
   scheduleFlush(queue.length >= MAX_BATCH_EVENTS ? 0 : FLUSH_INTERVAL_MS);
 }
 
 export async function flushTelemetry(): Promise<void> {
-  if (transport === null) return;
+  if (transport === null) {
+    return;
+  }
   const connections = [...queues.keys()].filter((connectionId) => !inFlight.has(connectionId));
   await Promise.all(connections.map(flushConnection));
 }
 
 async function flushConnection(connectionId: string): Promise<void> {
-  if (transport === null || inFlight.has(connectionId)) return;
+  if (transport === null || inFlight.has(connectionId)) {
+    return;
+  }
   const queue = queues.get(connectionId);
-  if (queue === undefined || queue.length === 0) return;
+  if (queue === undefined || queue.length === 0) {
+    return;
+  }
   const queuedEvents = queue.splice(0, MAX_BATCH_EVENTS);
-  if (queue.length === 0) queues.delete(connectionId);
+  if (queue.length === 0) {
+    queues.delete(connectionId);
+  }
   const batch: TelemetryBatch = {
-    version: 1,
     batchId: `batch-${createId()}`,
-    sentAtUnixMs: Date.now(),
     clientSessionId,
+    sentAtUnixMs: Date.now(),
+    version: 1,
     ...(appVersion === undefined ? {} : { appVersion }),
     events: queuedEvents.map((queued) => queued.event),
   };
@@ -129,11 +152,15 @@ async function flushConnection(connectionId: string): Promise<void> {
   try {
     await transport(connectionId, batch);
     retryAttempts.delete(connectionId);
-    if ((queues.get(connectionId)?.length ?? 0) > 0) scheduleFlush(0);
+    if ((queues.get(connectionId)?.length ?? 0) > 0) {
+      scheduleFlush(0);
+    }
   } catch {
     const current = queues.get(connectionId) ?? [];
     current.unshift(...queuedEvents);
-    if (current.length > MAX_QUEUE_EVENTS) current.splice(MAX_QUEUE_EVENTS);
+    if (current.length > MAX_QUEUE_EVENTS) {
+      current.splice(MAX_QUEUE_EVENTS);
+    }
     queues.set(connectionId, current);
     const attempt = (retryAttempts.get(connectionId) ?? 0) + 1;
     retryAttempts.set(connectionId, attempt);
@@ -144,14 +171,18 @@ async function flushConnection(connectionId: string): Promise<void> {
 }
 
 function scheduleFlush(delayMs: number): void {
-  if (transport === null) return;
+  if (transport === null) {
+    return;
+  }
   if (flushTimer !== undefined) {
-    if (delayMs !== 0) return;
+    if (delayMs !== 0) {
+      return;
+    }
     clearTimeout(flushTimer);
   }
   flushTimer = setTimeout(() => {
     flushTimer = undefined;
-    void flushTelemetry();
+    flushTelemetry().catch(() => undefined);
   }, delayMs);
 }
 
@@ -170,18 +201,23 @@ function sanitizeEvent(input: TelemetryEventInput): TelemetryEventInput | null {
   ] as const) {
     const value = input[key];
     if (value !== undefined) {
-      if (!validIdentifier(value)) return null;
+      if (!validIdentifier(value)) {
+        return null;
+      }
       dimensions[key] = value;
     }
   }
   const values: Record<string, number> = {};
   for (const [name, value] of Object.entries(input.values ?? {}).slice(0, 32)) {
-    if (safeAttributeName(name) && Number.isFinite(value))
+    if (safeAttributeName(name) && Number.isFinite(value)) {
       values[name] = Math.max(-Number.MAX_SAFE_INTEGER, Math.min(Number.MAX_SAFE_INTEGER, value));
+    }
   }
   const tags: Record<string, string> = {};
   for (const [name, value] of Object.entries(input.tags ?? {}).slice(0, 32)) {
-    if (safeAttributeName(name) && validIdentifier(value)) tags[name] = value;
+    if (safeAttributeName(name) && validIdentifier(value)) {
+      tags[name] = value;
+    }
   }
   return {
     name: input.name,
@@ -192,7 +228,7 @@ function sanitizeEvent(input: TelemetryEventInput): TelemetryEventInput | null {
 }
 
 function validIdentifier(value: string): boolean {
-  return value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(value);
+  return value.length > 0 && value.length <= 256 && !/[\u0000-\u001F\u007F]/u.test(value);
 }
 
 function validName(value: string): boolean {
@@ -209,6 +245,8 @@ function safeAttributeName(value: string): boolean {
 }
 
 function createId(): string {
+  // WHY: older Hermes runtimes may omit randomUUID even though the shared TypeScript DOM library
+  // declares it; the fallback preserves telemetry before the crypto polyfill is installed.
   const runtimeCrypto = globalThis.crypto as { randomUUID?: () => string } | undefined;
   return (
     runtimeCrypto?.randomUUID?.() ??

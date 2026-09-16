@@ -62,6 +62,12 @@ The following is a field-level inventory of **all 31 property declarations** in 
 
 The `snapshot` field retains all ten slots: `ready`, `error`, `connectionProfiles`, `connectionState`, `threadSummaries`, `threadDetails`, `pendingRequests`, `threadUiState`, `resources`, `accountRateLimits`. They are readiness/error or references to existing physical database owners, not feature-local replicas. The accessor `resourceDatabase`, publication method `update`, and enabled-profile read `enabledConnectionIds` remain with `data/workspace-runtime.ts`; narrow readers replace facade consumers without changing storage authority. `getOrCreateThreadUiState` remains backed by the current ThreadUiState database, with no schema or seed-content change (source 797–837, 2621–2640).
 
+Thread UI state is query-driven rather than part of eager workspace hydration. Startup prepares its
+SQLite schema without materializing every persisted draft. A qualified connection/thread row becomes
+resident on demand, remains resident while a mounted consumer retains it, and is unloaded when the
+last consumer releases it. An uncommitted Suspense read receives a short grace period before the same
+cleanup, so abandoned navigation cannot turn the resource cache into an unbounded draft snapshot.
+
 ## Migration and checks
 
 The [migration ledger](../../../../docs/android-v1-feature-migration.md) defines action consumers, lifetimes, compatibility removal and M7 closure. Extract state, mutation and cleanup together; preserve module/controller identity and retained aliases rather than cloning graphs. The completed M7 extraction changes source ownership only; no disposal redesign or new runtime instance is introduced.

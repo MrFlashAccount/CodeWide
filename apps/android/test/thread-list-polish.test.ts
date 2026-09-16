@@ -4,15 +4,33 @@ import { describe, expect, it } from "vitest";
 
 import { sourceObjectDeclaration } from "./source-contract";
 
-const sidebarStyles = readFileSync(new URL("../src/features/threadList/ThreadSidebar.styles.ts", import.meta.url), "utf8");
-const mobileStyles = readFileSync(new URL("../src/features/threadList/MobileThreads.styles.ts", import.meta.url), "utf8");
-const rowStyles = readFileSync(new URL("../src/features/threadList/ThreadRow.styles.ts", import.meta.url), "utf8");
-const menuStyles = readFileSync(new URL("../src/features/threadList/ThreadListMenus.styles.ts", import.meta.url), "utf8");
-const menus = readFileSync(new URL("../src/features/threadList/ThreadListMenus.tsx", import.meta.url), "utf8");
-const rowContent = readFileSync(new URL("../src/features/threadList/ThreadRowContent.tsx", import.meta.url), "utf8");
+const sidebarStyles = readFileSync(
+  new URL("../src/features/threadList/ThreadSidebar.styles.ts", import.meta.url),
+  "utf8",
+);
+const mobileStyles = readFileSync(
+  new URL("../src/features/threadList/MobileThreads.styles.ts", import.meta.url),
+  "utf8",
+);
+const rowStyles = readFileSync(
+  new URL("../src/features/threadList/ThreadRow.styles.ts", import.meta.url),
+  "utf8",
+);
+const menuStyles = readFileSync(
+  new URL("../src/features/threadList/ThreadListMenus.styles.ts", import.meta.url),
+  "utf8",
+);
+const menus = readFileSync(
+  new URL("../src/features/threadList/ThreadListMenus.tsx", import.meta.url),
+  "utf8",
+);
+const rowContent = readFileSync(
+  new URL("../src/features/threadList/ThreadRowContent.tsx", import.meta.url),
+  "utf8",
+);
 
-const costPopover = readFileSync(
-  new URL("../src/features/accounts/CostBreakdownPopover.tsx", import.meta.url),
+const costMenu = readFileSync(
+  new URL("../src/features/accounts/CostBreakdownMenu.tsx", import.meta.url),
   "utf8",
 );
 
@@ -29,12 +47,19 @@ describe("thread list visual contract", () => {
     );
     // The search controls and thread cards must share their outer right edge.
     expect(rowStyles).toMatch(/threadRow: \{[^}]*marginHorizontal: threadListLayout\.edgeInset/u);
-    expect(sidebarStyles).toMatch(
-      /threadSearchRow: \{[^}]*width: "100%"[^}]*minWidth: 0[^}]*flexDirection: "row"[^}]*alignItems: "center"[^}]*gap: spacing\.optical[^}]*\}/u,
-    );
-    expect(menuStyles).toMatch(
-      /threadFilterButton: \{[^}]*width: controlSize\.touch[^}]*minHeight: controlSize\.touch/u,
-    );
+    const searchRowStyle = sourceObjectDeclaration(sidebarStyles, "threadSearchRow");
+    for (const declaration of [
+      'width: "100%"',
+      "minWidth: 0",
+      'flexDirection: "row"',
+      'alignItems: "center"',
+      "gap: spacing.optical",
+    ]) {
+      expect(searchRowStyle).toContain(declaration);
+    }
+    const filterButtonStyle = sourceObjectDeclaration(menuStyles, "threadFilterButton");
+    expect(filterButtonStyle).toContain("width: controlSize.touch");
+    expect(filterButtonStyle).toContain("minHeight: controlSize.touch");
     expect(menuStyles).not.toContain("threadFilterButtonActive:");
     expect(menuStyles).not.toContain("thread-filter-active-count");
     expect(menus).toContain('testID="thread-filter-active-dot"');
@@ -61,7 +86,6 @@ describe("thread list visual contract", () => {
   });
 
   it("shows the interactive cost without link-like underlining", () => {
-    const triggerStyle = costPopover.match(/trigger: \{([^}]+)\}/u)?.[1] ?? "";
-    expect(triggerStyle).not.toContain("textDecoration");
+    expect(costMenu).not.toContain("textDecoration");
   });
 });

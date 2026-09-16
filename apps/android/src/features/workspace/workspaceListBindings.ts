@@ -1,5 +1,5 @@
-import { useMemo } from "react";
 import type { StoredConnection } from "../../data/connection-profile-types";
+import { useConstant } from "../../react/useConstant";
 import { workspaceRuntime } from "../../data/workspace-runtime";
 import { useServerScope } from "../../services/servers/serverScope";
 import {
@@ -40,9 +40,7 @@ export function useWorkspaceListBindings({
   const projectSelection = useProjectSelection(listState.setMobileThreadQuery, () => {
     projectListState.setProjectListMode("active");
   });
-  // WHY: The projection cache must retain source identity across renders.
-  // oxlint-disable-next-line react-doctor/react-compiler-no-manual-memoization
-  const serverProjection = useMemo(() => new ThreadServerProjection(), []);
+  const serverProjection = useConstant(() => new ThreadServerProjection());
   const servers = serverProjection.project(connections);
   const server = useServerScope(connections, () => {
     listState.setThreadListLimit(THREAD_LIST_PAGE_SIZE);

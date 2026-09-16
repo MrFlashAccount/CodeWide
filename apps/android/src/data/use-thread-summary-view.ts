@@ -26,15 +26,17 @@ export function useThreadSummaryView(
           ...(viewId === undefined ? {} : { viewId }),
           connectionId,
           ...(projectCwd === undefined ? {} : { projectCwd }),
-          recentLimit,
           archivedLimit,
+          recentLimit,
           selectedConnectionId,
           selectedThreadId,
           subagentConnectionId,
           subagentLimit,
         });
   useEffect(() => {
-    if (database === null || !enabled) return;
+    if (database === null || !enabled) {
+      return undefined;
+    }
     return database.model.retainView({
       ...(viewId === undefined ? {} : { viewId }),
       connectionId,
@@ -43,7 +45,9 @@ export function useThreadSummaryView(
 
   return useSelector(
     () => {
-      if (resource === null) return null;
+      if (resource === null) {
+        return null;
+      }
       resource.ready$.get();
       return resource.view$.get();
     },

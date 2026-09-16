@@ -11,20 +11,23 @@ use axum::{
     http::{HeaderMap, HeaderValue, Response, StatusCode, header},
     response::IntoResponse,
 };
+use bytes::Bytes;
 use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use rand::{TryRngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncWriteExt},
 };
 use tokio_util::io::ReaderStream;
 
+use crate::file_revisions::{FileRevisionCache, sha256_file};
+
 const DEFAULT_MAX_TRANSFER_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_OBSERVED_PREVIEW_FILES: usize = 4_096;
+const MAX_TEXT_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const MANAGED_ATTACHMENT_RETENTION: Duration = Duration::from_hours(168);
 
 #[derive(Clone)]
@@ -35,6 +38,7 @@ pub struct FileService {
     preview_registry_path: Option<PathBuf>,
     managed_attachments: Option<ManagedAttachmentRoot>,
     managed_manifest_lock: Arc<tokio::sync::Mutex<()>>,
+    revisions: FileRevisionCache,
     max_transfer_bytes: u64,
 }
 
@@ -132,6 +136,20 @@ struct AttachmentManifestEntry {
 pub struct FileQuery {
     pub root_id: Option<String>,
     pub path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileTextQuery {
+    pub root_id: Option<String>,
+    pub path: Option<String>,
+    pub offset: Option<u64>,
+    pub limit: Option<usize>,
+}
+
+pub(crate) struct ImageFileSource {
+    pub(crate) path: PathBuf,
+    pub(crate) source_key: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -298,6 +316,7 @@ impl FileService {
             preview_registry_path,
             managed_attachments,
             managed_manifest_lock: Arc::new(tokio::sync::Mutex::new(())),
+            revisions: FileRevisionCache::new(),
             max_transfer_bytes: max_transfer_bytes.unwrap_or(DEFAULT_MAX_TRANSFER_BYTES),
         })
     }
@@ -511,21 +530,119 @@ impl FileService {
         head_only: bool,
         preview: bool,
     ) -> Result<Response<Body>, FileError> {
-        let path = if preview {
-            let path = query
-                .path
-                .ok_or_else(|| client(StatusCode::BAD_REQUEST, "path_required"))?;
-            self.resolve_host_preview(&path).await?
-        } else {
-            let root_id = query
-                .root_id
-                .ok_or_else(|| client(StatusCode::BAD_REQUEST, "rootId_and_path_required"))?;
-            let path = query
-                .path
-                .ok_or_else(|| client(StatusCode::BAD_REQUEST, "rootId_and_path_required"))?;
-            self.resolve_existing(&root_id, &path).await?
-        };
+        let path = self.resolve_read_path(query, preview).await?;
         self.serve_file(&path, headers, head_only, preview).await
+    }
+
+    /// Resolves one file and returns a metadata-bound image source key.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable client error for an invalid or inaccessible source.
+    pub(crate) async fn image_source(
+        &self,
+        query: FileQuery,
+        preview: bool,
+    ) -> Result<ImageFileSource, FileError> {
+        let path = self.resolve_read_path(query, preview).await?;
+        let metadata = tokio::fs::metadata(&path).await?;
+        if !metadata.is_file() {
+            return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
+        }
+        let revision = FileRevisionCache::source_revision(&path, &metadata);
+        Ok(ImageFileSource {
+            path,
+            source_key: format!("file:{revision}"),
+        })
+    }
+
+    /// Reads one bounded UTF-8 page without HTTP Range semantics so transport
+    /// compression can be applied safely.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable client error for invalid paths, ranges, or non-text content.
+    pub async fn read_text(
+        &self,
+        query: FileTextQuery,
+        headers: &HeaderMap,
+        head_only: bool,
+        preview: bool,
+    ) -> Result<Response<Body>, FileError> {
+        if headers.contains_key(header::RANGE) {
+            return Err(client(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range"));
+        }
+        let path = self
+            .resolve_read_path(
+                FileQuery {
+                    root_id: query.root_id,
+                    path: query.path,
+                },
+                preview,
+            )
+            .await?;
+        let metadata = tokio::fs::metadata(&path).await?;
+        let total = metadata.len();
+        let offset = query.offset.unwrap_or(0);
+        let limit = query.limit.unwrap_or(MAX_TEXT_PAGE_BYTES);
+        if offset > total || limit == 0 || limit > MAX_TEXT_PAGE_BYTES {
+            return Err(client(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range"));
+        }
+        let content_type = content_type(&path);
+        if !textual_content_type(content_type) {
+            return Err(client(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "text_file_required",
+            ));
+        }
+        let revision = FileRevisionCache::source_revision(&path, &metadata);
+        let etag = format!("W/\"file-{revision}\"");
+        if header_matches(headers, header::IF_NONE_MATCH, &etag) {
+            return Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header(header::ETAG, etag)
+                .header(header::CACHE_CONTROL, "private, no-store")
+                .body(Body::empty())
+                .map_err(|_| client(StatusCode::INTERNAL_SERVER_ERROR, "response_failed"));
+        }
+        let read_limit = u64::try_from(limit)
+            .unwrap_or(u64::MAX)
+            .saturating_add(4)
+            .min(total.saturating_sub(offset));
+        let mut file = File::open(&path).await?;
+        tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(offset)).await?;
+        let mut bytes =
+            Vec::with_capacity(usize::try_from(read_limit).unwrap_or(MAX_TEXT_PAGE_BYTES));
+        file.take(read_limit).read_to_end(&mut bytes).await?;
+        let (start_delta, end_delta) = utf8_page_bounds(&bytes, offset, limit)?;
+        let body = Bytes::from(bytes).slice(start_delta..end_delta);
+        let start = offset.saturating_add(u64::try_from(start_delta).unwrap_or(u64::MAX));
+        let next = offset.saturating_add(u64::try_from(end_delta).unwrap_or(u64::MAX));
+        let mut response = Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::CONTENT_LENGTH, body.len())
+            .header(header::CACHE_CONTROL, "private, no-store")
+            .header(header::ETAG, etag)
+            .header("x-content-offset", start)
+            .header("x-content-total-bytes", total)
+            .header(
+                "x-content-complete",
+                if next >= total { "true" } else { "false" },
+            )
+            .header("content-security-policy", "default-src 'none'; sandbox")
+            .header("x-content-type-options", "nosniff")
+            .header("referrer-policy", "no-referrer");
+        if next < total {
+            response = response.header("x-content-next-offset", next);
+        }
+        response
+            .body(if head_only {
+                Body::empty()
+            } else {
+                Body::from(body)
+            })
+            .map_err(|_| client(StatusCode::INTERNAL_SERVER_ERROR, "response_failed"))
     }
 
     /// Returns resumable-upload state for any host path addressable through a
@@ -559,7 +676,7 @@ impl FileService {
         ) && metadata.is_file()
             && valid_sha256(expected_hash)
             && metadata.len() <= self.max_transfer_bytes
-            && hash_file(&target).await? == expected_hash
+            && sha256_file(&target).await? == expected_hash
         {
             self.record_managed_attachment(&root, &path, expected_hash, metadata.len())
                 .await?;
@@ -722,7 +839,17 @@ impl FileService {
         if inline {
             response = response.header("content-security-policy", "default-src 'none'; sandbox");
         }
-        response = response.header("x-content-sha256", hash_file(path).await?);
+        let sha256 = self.revisions.sha256(path).await?;
+        let etag = format!("\"sha256-{sha256}\"");
+        response = response
+            .header("x-content-sha256", &sha256)
+            .header(header::ETAG, &etag);
+        if range.is_none() && header_matches(headers, header::IF_NONE_MATCH, &etag) {
+            return response
+                .status(StatusCode::NOT_MODIFIED)
+                .body(Body::empty())
+                .map_err(|_| client(StatusCode::INTERNAL_SERVER_ERROR, "response_failed"));
+        }
         let (start, length) = range.as_ref().map_or((0, metadata.len()), |range| {
             (range.start, range.end - range.start + 1)
         });
@@ -769,7 +896,7 @@ impl FileService {
                 .open(&temporary)
                 .await?;
             stream_body(body, file, upload.content_length).await?;
-            let actual_hash = hash_file(&temporary).await?;
+            let actual_hash = sha256_file(&temporary).await?;
             if actual_hash != upload.expected_hash {
                 return Err(client(StatusCode::UNPROCESSABLE_ENTITY, "sha256_mismatch"));
             }
@@ -867,7 +994,7 @@ impl FileService {
         if next_offset != range.total {
             return Err(client(StatusCode::BAD_REQUEST, "invalid_content_range"));
         }
-        let actual_hash = hash_file(&temporary).await?;
+        let actual_hash = sha256_file(&temporary).await?;
         if actual_hash != expected_hash {
             let _ = tokio::fs::remove_file(&temporary).await;
             return Err(client(StatusCode::UNPROCESSABLE_ENTITY, "sha256_mismatch"));
@@ -921,6 +1048,27 @@ impl FileService {
             return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
         }
         Ok(canonical)
+    }
+
+    async fn resolve_read_path(
+        &self,
+        query: FileQuery,
+        preview: bool,
+    ) -> Result<PathBuf, FileError> {
+        if preview {
+            let path = query
+                .path
+                .ok_or_else(|| client(StatusCode::BAD_REQUEST, "path_required"))?;
+            self.resolve_host_preview(&path).await
+        } else {
+            let root_id = query
+                .root_id
+                .ok_or_else(|| client(StatusCode::BAD_REQUEST, "rootId_and_path_required"))?;
+            let path = query
+                .path
+                .ok_or_else(|| client(StatusCode::BAD_REQUEST, "rootId_and_path_required"))?;
+            self.resolve_existing(&root_id, &path).await
+        }
     }
 
     async fn resolve_host_preview(&self, path: &str) -> Result<PathBuf, FileError> {
@@ -1017,7 +1165,7 @@ impl FileService {
                 let metadata = tokio::fs::metadata(&blob).await?;
                 if !metadata.is_file()
                     || metadata.len() != upload.bytes
-                    || hash_file(&blob).await? != upload.sha256
+                    || sha256_file(&blob).await? != upload.sha256
                 {
                     return Err(client(StatusCode::CONFLICT, "content_address_collision"));
                 }
@@ -1214,20 +1362,6 @@ async fn publish_upload(temporary: &Path, target: &Path, overwrite: bool) -> Res
         })?;
     tokio::fs::remove_file(temporary).await?;
     Ok(())
-}
-
-async fn hash_file(path: &Path) -> Result<String, FileError> {
-    let mut file = File::open(path).await?;
-    let mut hash = Sha256::new();
-    let mut buffer = vec![0_u8; 128 * 1024];
-    loop {
-        let read = file.read(&mut buffer).await?;
-        if read == 0 {
-            break;
-        }
-        hash.update(&buffer[..read]);
-    }
-    Ok(hex::encode(hash.finalize()))
 }
 
 fn parse_range(value: Option<&HeaderValue>, total: u64) -> Result<Option<ByteRange>, FileError> {
@@ -1427,6 +1561,50 @@ fn content_type(path: &Path) -> &'static str {
             .first_raw()
             .unwrap_or("application/octet-stream"),
     }
+}
+
+fn textual_content_type(value: &str) -> bool {
+    value.starts_with("text/")
+        || value.starts_with("application/json")
+        || value.starts_with("application/javascript")
+        || value.starts_with("application/xml")
+        || value.contains("+json")
+        || value.contains("+xml")
+}
+
+fn header_matches(headers: &HeaderMap, name: header::HeaderName, expected: &str) -> bool {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value == "*"
+                || value
+                    .split(',')
+                    .any(|candidate| candidate.trim() == expected)
+        })
+}
+
+fn utf8_page_bounds(
+    bytes: &[u8],
+    absolute_offset: u64,
+    limit: usize,
+) -> Result<(usize, usize), FileError> {
+    if bytes.is_empty() {
+        return Ok((0, 0));
+    }
+    let mut start = 0;
+    if absolute_offset > 0 {
+        while start < bytes.len() && bytes[start] & 0b1100_0000 == 0b1000_0000 {
+            start += 1;
+        }
+    }
+    let mut end = start.saturating_add(limit).min(bytes.len());
+    while end < bytes.len() && bytes[end] & 0b1100_0000 == 0b1000_0000 {
+        end += 1;
+    }
+    std::str::from_utf8(&bytes[start..end])
+        .map_err(|_| client(StatusCode::UNSUPPORTED_MEDIA_TYPE, "valid_utf8_required"))?;
+    Ok((start, end))
 }
 
 async fn set_private_directory(path: &Path) -> Result<(), FileError> {

@@ -29,7 +29,9 @@ const MessageActionMenuContext = createContext<OpenMessageActionMenu | null>(nul
 
 export function useMessageActionMenu(): OpenMessageActionMenu {
   const open = useContext(MessageActionMenuContext);
-  if (open === null) throw new Error("Message actions require MessageActionMenuProvider");
+  if (open === null) {
+    throw new Error("Message actions require MessageActionMenuProvider");
+  }
   return open;
 }
 
@@ -61,41 +63,51 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
 
     const setOpen = (openState: boolean) => {
       setIsOpen(openState);
-      if (!openState) setRequest(null);
+      if (!openState) {
+        setRequest(null);
+      }
     };
     const copy = () => {
-      if (request?.copyText === undefined || request.copyText === "") return;
+      if (request?.copyText === undefined || request.copyText === "") {
+        return;
+      }
       setOpen(false);
-      void Clipboard.setStringAsync(request.copyText);
+      Clipboard.setStringAsync(request.copyText).catch((error: unknown) => {
+        dialog.alert("Copy failed", error instanceof Error ? error.message : "Could not copy");
+      });
     };
     const fork = () => {
       const onFork = request?.onFork;
-      if (onFork === undefined) return;
+      if (onFork === undefined) {
+        return;
+      }
       setOpen(false);
-      void onFork().catch((cause) => {
+      void onFork().catch((error: unknown) => {
         dialog.alert(
           "Fork failed",
-          cause instanceof Error ? cause.message : "Could not fork thread",
+          error instanceof Error ? error.message : "Could not fork thread",
         );
       });
     };
     const review = () => {
       const onReview = request?.onReview;
-      if (onReview === undefined) return;
+      if (onReview === undefined) {
+        return;
+      }
       setOpen(false);
-      void Promise.resolve(onReview()).catch((cause) => {
+      void Promise.resolve(onReview()).catch((error: unknown) => {
         dialog.alert(
           "Review failed",
-          cause instanceof Error ? cause.message : "Could not review response",
+          error instanceof Error ? error.message : "Could not review response",
         );
       });
     };
 
     return (
       <AppSheet
+        contentProps={{ enableDynamicSizing: true, index: 0 }}
         isOpen={isOpen}
         onOpenChange={setOpen}
-        contentProps={{ index: 0, enableDynamicSizing: true }}
       >
         <View style={styles.content}>
           <Pressable
@@ -108,7 +120,7 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
               request?.copyText === "" && styles.disabled,
             ]}
           >
-            <Ionicons name="copy-outline" size={iconSize.action} color={colors.textMuted} />
+            <Ionicons color={colors.textMuted} name="copy-outline" size={iconSize.action} />
             <Text style={styles.label}>Copy</Text>
           </Pressable>
           <Pressable
@@ -121,7 +133,7 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
               request?.onFork === undefined && styles.disabled,
             ]}
           >
-            <Ionicons name="git-branch-outline" size={iconSize.action} color={colors.textMuted} />
+            <Ionicons color={colors.textMuted} name="git-branch-outline" size={iconSize.action} />
             <Text style={styles.label}>Fork</Text>
           </Pressable>
           <Pressable
@@ -135,9 +147,9 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
             ]}
           >
             <Ionicons
+              color={colors.textMuted}
               name="chatbubble-ellipses-outline"
               size={iconSize.action}
-              color={colors.textMuted}
             />
             <Text style={styles.label}>Review response</Text>
           </Pressable>
@@ -149,20 +161,20 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
 
 const styles = StyleSheet.create({
   content: { gap: spacing.optical },
-  item: {
-    minHeight: layoutSize.header,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radii.medium,
-  },
-  pressed: { backgroundColor: colors.surfaceContainerHigh },
   disabled: { opacity: 0.42 },
+  item: {
+    alignItems: "center",
+    borderRadius: radii.medium,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: layoutSize.header,
+    paddingHorizontal: spacing.sm,
+  },
   label: {
-    flex: 1,
     color: colors.text,
+    flex: 1,
     ...typeScale.body,
     fontFamily: "RobotoFlex-Medium",
   },
+  pressed: { backgroundColor: colors.surfaceContainerHigh },
 });

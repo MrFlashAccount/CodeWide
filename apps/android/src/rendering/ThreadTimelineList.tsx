@@ -1,9 +1,5 @@
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
-import {
-  type Insets,
-  type LegendListProps,
-  type LegendListRef,
-} from "@legendapp/list/react-native";
+import type { Insets, LegendListProps, LegendListRef } from "@legendapp/list/react-native";
 import {
   forwardRef,
   type ForwardedRef,
@@ -30,6 +26,7 @@ export type { TimelineInitialPosition } from "./timeline-initial-position";
 // sizes take over immediately.
 const TIMELINE_ESTIMATED_ITEM_SIZE = 480;
 const TIMELINE_TAIL_FOLLOW_THRESHOLD = 0.02;
+const TIMELINE_TAIL_INITIAL_POSITION: TimelineInitialPosition = { kind: "tail" };
 const TIMELINE_TAIL_FOLLOW_CONFIG = {
   animated: false,
   on: {
@@ -39,16 +36,16 @@ const TIMELINE_TAIL_FOLLOW_CONFIG = {
 } as const;
 
 export interface ThreadTimelineListRef {
-  getItemViewportOffset(itemKey: string): number | null;
-  scrollToEnd(options?: { animated?: boolean }): Promise<void>;
-  scrollToIndex(options: {
-    index: number;
+  getItemViewportOffset: (itemKey: string) => number | null;
+  reportContentInset: (inset?: Partial<Insets> | null) => void;
+  scrollToEnd: (options?: { animated?: boolean }) => Promise<void>;
+  scrollToIndex: (options: {
     animated?: boolean;
+    index: number;
     viewOffset?: number;
     viewPosition?: number;
-  }): void | Promise<void>;
-  scrollToOffset(options: { offset: number; animated?: boolean }): void | Promise<void>;
-  reportContentInset(inset?: Partial<Insets> | null): void;
+  }) => Promise<void>;
+  scrollToOffset: (options: { animated?: boolean; offset: number }) => Promise<void>;
 }
 
 export type ThreadTimelineListProps<ItemT> = Omit<
@@ -65,25 +62,25 @@ export type ThreadTimelineListProps<ItemT> = Omit<
   | "maintainVisibleContentPosition"
   | "recycleItems"
 > & {
-  renderRevision: string;
-  measurementRevision: string;
+  contentInsetEndAdjustment?: SharedValue<number>;
+  followTail?: boolean;
   initialPosition?: TimelineInitialPosition;
   keyboardLiftBehavior?: "always" | "whenAtEnd" | "persistent" | "never";
   keyboardOffset?: number;
-  contentInsetEndAdjustment?: SharedValue<number>;
-  followTail?: boolean;
+  measurementRevision: string;
+  renderRevision: string;
 };
 
 function ThreadTimelineListInner<ItemT>(
   {
-    renderRevision,
-    measurementRevision,
-    initialPosition = { kind: "tail" },
-    keyboardLiftBehavior = "whenAtEnd",
-    keyboardOffset = 0,
     contentInsetEndAdjustment,
     followTail = false,
+    initialPosition = TIMELINE_TAIL_INITIAL_POSITION,
     itemsAreEqual,
+    keyboardLiftBehavior = "whenAtEnd",
+    keyboardOffset = 0,
+    measurementRevision,
+    renderRevision,
     ...props
   }: ThreadTimelineListProps<ItemT>,
   ref: ForwardedRef<ThreadTimelineListRef>,
@@ -98,21 +95,28 @@ function ThreadTimelineListInner<ItemT>(
   }, [measurementRevision]);
   const getItemViewportOffset = useEvent((itemKey: string): number | null => {
     const state = internalRef.current?.getState();
-    if (state === undefined) return null;
+    if (state === undefined) {
+      return null;
+    }
     const position = state.positionByKey(itemKey);
-    if (position === undefined) return null;
+    if (position === undefined) {
+      return null;
+    }
     const offset = position - state.scroll;
     return Number.isFinite(offset) ? offset : null;
   });
   const scrollToEnd = useEvent(async (options?: { animated?: boolean }): Promise<void> => {
     await internalRef.current?.scrollToEnd(options);
   });
-  const scrollToIndex = useEvent((options: Parameters<ThreadTimelineListRef["scrollToIndex"]>[0]) =>
-    internalRef.current?.scrollToIndex(options),
+  const scrollToIndex = useEvent(
+    async (options: Parameters<ThreadTimelineListRef["scrollToIndex"]>[0]): Promise<void> => {
+      await internalRef.current?.scrollToIndex(options);
+    },
   );
   const scrollToOffset = useEvent(
-    (options: Parameters<ThreadTimelineListRef["scrollToOffset"]>[0]) =>
-      internalRef.current?.scrollToOffset(options),
+    async (options: Parameters<ThreadTimelineListRef["scrollToOffset"]>[0]): Promise<void> => {
+      await internalRef.current?.scrollToOffset(options);
+    },
   );
   const reportContentInset = useEvent((inset?: Partial<Insets> | null) =>
     internalRef.current?.reportContentInset(inset),
@@ -121,15 +125,19 @@ function ThreadTimelineListInner<ItemT>(
     ref,
     () => ({
       getItemViewportOffset,
+      reportContentInset,
       scrollToEnd,
       scrollToIndex,
       scrollToOffset,
-      reportContentInset,
     }),
     [getItemViewportOffset, reportContentInset, scrollToEnd, scrollToIndex, scrollToOffset],
   );
 
-  const KeyboardAwareTimelineList = KeyboardAwareLegendList as unknown as (
+  const keyboardAwareLegendList: unknown = KeyboardAwareLegendList;
+  // WHY: LegendList's forwardRef declaration erases the generic item parameter. This local adapter
+  // restores the same public props while adding the keyboard wrapper's documented native props.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const KeyboardAwareTimelineList = keyboardAwareLegendList as (
     props: LegendListProps<ItemT> & {
       contentInsetEndAdjustment?: SharedValue<number>;
       keyboardLiftBehavior: "always" | "whenAtEnd" | "persistent" | "never";
@@ -140,23 +148,23 @@ function ThreadTimelineListInner<ItemT>(
 
   return (
     <KeyboardAwareTimelineList
-      ref={internalRef}
       keyboardLiftBehavior={keyboardLiftBehavior}
       keyboardOffset={keyboardOffset}
+      ref={internalRef}
       {...(contentInsetEndAdjustment === undefined ? {} : { contentInsetEndAdjustment })}
       {...props}
       showsHorizontalScrollIndicator={false}
       showsVerticalScrollIndicator={false}
       {...legendInitialPositionProps(initialPosition)}
-      dataKey={renderRevision}
       alignItemsAtEnd
+      dataKey={renderRevision}
+      drawDistance={250}
+      estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}
+      itemsAreEqual={itemsAreEqual ?? referenceEqual}
       maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}
       maintainScrollAtEndThreshold={TIMELINE_TAIL_FOLLOW_THRESHOLD}
       maintainVisibleContentPosition={{ data: true, size: true }}
-      itemsAreEqual={itemsAreEqual ?? referenceEqual}
       recycleItems={false}
-      estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}
-      drawDistance={250}
     />
   );
 }
@@ -170,6 +178,9 @@ const ForwardedThreadTimelineList = forwardRef(ThreadTimelineListInner);
 // LegendList owns timeline virtualization, but rows are deliberately not
 // recycled. Stateful markdown and activity trees must unmount instead of being
 // rebound to another turn after a long scroll.
+// WHY: React.forwardRef cannot preserve a generic component signature, while this adapter forwards
+// every ItemT-dependent prop and the ref unchanged to ThreadTimelineListInner.
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion
 export const ThreadTimelineList = ForwardedThreadTimelineList as <ItemT>(
   props: ThreadTimelineListProps<ItemT> & RefAttributes<ThreadTimelineListRef>,
 ) => ReactElement;

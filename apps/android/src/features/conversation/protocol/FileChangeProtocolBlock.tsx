@@ -1,10 +1,11 @@
 /** V1 FileChangeProtocolBlock owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 import { useContext } from "react";
 import { Pressable, View } from "react-native";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
 import { projectFileChange } from "../../../rendering/file-change-rendering";
 import { nativeCodeLanguageForPath } from "../../../rendering/native-code-block";
+import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
 import { NativeCodeBlock } from "../../../rendering/NativeCodeBlock";
 import { colors } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
@@ -20,11 +21,11 @@ export function FileChangeProtocolBlock({ block }: { block: RenderBlock }) {
   const changeCount = Array.isArray(block.raw.changes) ? block.raw.changes.length : 0;
   return (
     <Card
-      title={`File changes · ${changeCount}`}
       icon="git-compare-outline"
+      title={`File changes · ${String(changeCount)}`}
       {...(block.status === null ? {} : { status: block.status })}
-      copyText={() => protocolCopyText(block)}
       collapsible
+      copyText={() => protocolCopyText(block)}
       initiallyExpanded={false}
     >
       <FileChangeProtocolDetails block={block} />
@@ -39,25 +40,24 @@ export function FileChangeProtocolDetails({ block }: { block: RenderBlock }) {
           change !== null && typeof change === "object" && !Array.isArray(change),
       )
     : [];
+  const occurrences = new Map<string, number>();
   return (
     <>
       {changes.length === 0 ? (
         <Text style={styles.menuNotice}>No structured file changes were returned.</Text>
       ) : (
-        changes.map((change, index) => (
-          <DiffFile
-            key={`${String(change.path ?? "file")}-${index}`}
-            path={typeof change.path === "string" ? change.path : `File ${index + 1}`}
-            kind={change.kind}
-            diff={typeof change.diff === "string" ? change.diff : ""}
-          />
-        ))
+        changes.map((change, index) => {
+          const diff = typeof change.diff === "string" ? change.diff : "";
+          const path = typeof change.path === "string" ? change.path : `File ${String(index + 1)}`;
+          const key = occurrenceKey(occurrences, `${path}\u0000${textFingerprint(diff)}`);
+          return <DiffFile diff={diff} key={key} kind={change.kind} path={path} />;
+        })
       )}
     </>
   );
 }
 
-export function DiffFile({ path, kind, diff }: { path: string; kind: unknown; diff: string }) {
+export function DiffFile({ diff, kind, path }: { diff: string; kind: unknown; path: string }) {
   const cwd = useContext(ThreadCwdContext);
   const [expanded, setExpanded] = usePersistentExpansion(`diff:${path}`, false);
   const projection = projectFileChange(diff, kind);
@@ -66,17 +66,19 @@ export function DiffFile({ path, kind, diff }: { path: string; kind: unknown; di
   return (
     <View style={styles.diffFile}>
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={`${expanded ? "Collapse" : "Expand"} diff ${path}`}
-        onPress={() => setExpanded((value) => !value)}
+        accessibilityRole="button"
+        onPress={() => {
+          setExpanded((value) => !value);
+        }}
         style={styles.diffFileHeader}
       >
         <InlineIcon
+          color={colors.textMuted}
           name={expanded ? "chevron-down" : "chevron-forward"}
           role="label"
-          color={colors.textMuted}
         />
-        <Text numberOfLines={1} ellipsizeMode="middle" style={styles.diffFilePath}>
+        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.diffFilePath}>
           {displayPath}
         </Text>
         <Text numberOfLines={1} style={styles.diffKind}>
@@ -84,16 +86,16 @@ export function DiffFile({ path, kind, diff }: { path: string; kind: unknown; di
         </Text>
         <Text style={[styles.diffStat, styles.diffStatAdd]}>+{additions}</Text>
         <Text style={[styles.diffStat, styles.diffStatDelete]}>−{deletions}</Text>
-        <CopyButton text={diff} compact />
+        <CopyButton compact text={diff} />
       </Pressable>
       {expanded && (
         <View style={styles.diffLines}>
           <NativeCodeBlock
-            value={projection.renderSource}
-            language={nativeCodeLanguageForPath(path)}
-            variant="diff"
-            maxHeight={TOOL_RESULT_MAX_HEIGHT}
             fillAvailableWidth
+            language={nativeCodeLanguageForPath(path)}
+            maxHeight={TOOL_RESULT_MAX_HEIGHT}
+            value={projection.renderSource}
+            variant="diff"
           />
         </View>
       )}

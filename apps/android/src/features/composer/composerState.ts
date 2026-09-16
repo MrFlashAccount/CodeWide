@@ -1,4 +1,4 @@
-import { useConversationOwner } from "../../ui/use-conversation-owner";
+import type { useConversationOwner } from "../../ui/use-conversation-owner";
 import { useLargePasteState } from "./attachments/largePaste";
 import { useReviewAttachmentIds } from "./attachments/reviewAdmission";
 import { useComposerEditing } from "./composerEditing";
@@ -8,29 +8,29 @@ import { useQueueEditState } from "./queueEdit";
 import { useComposerVoiceState } from "./voice";
 
 export function useComposerState({
+  composerInputs,
   composerScope,
-  workspaceResources,
-  draftConnectionId,
-  draftThreadId,
   composerState,
-  newChat,
-  cwd,
   controlsResourceId,
   conversationOwner,
-  composerInputs,
+  cwd,
+  draftConnectionId,
+  draftThreadId,
+  newChat,
   voiceController,
+  workspaceResources,
 }: {
+  composerInputs: ComposerWorkspaceCapabilities;
   composerScope: string;
-  workspaceResources: Parameters<typeof useComposerEditing>[0]["workspaceResources"];
-  draftConnectionId: string | null;
-  draftThreadId: string | null;
   composerState: Parameters<typeof useComposerEditing>[0]["composerState"];
-  newChat: boolean;
-  cwd: string;
   controlsResourceId: Parameters<typeof useComposerEditing>[0]["controlsResourceId"];
   conversationOwner: ReturnType<typeof useConversationOwner>;
-  composerInputs: ComposerWorkspaceCapabilities;
+  cwd: string;
+  draftConnectionId: string | null;
+  draftThreadId: string | null;
+  newChat: boolean;
   voiceController: ComposerWorkspaceCapabilities["voiceController"];
+  workspaceResources: Parameters<typeof useComposerEditing>[0]["workspaceResources"];
 }) {
   const composerVoiceStateBinding = useComposerVoiceState(
     composerScope,
@@ -44,30 +44,30 @@ export function useComposerState({
   const composerEditingBinding = useComposerEditing({
     composerScope,
     composerState,
-    queuedComposerEdit: queueEditStateBinding.queuedComposerEdit,
-    newChat,
+    controlsResourceId,
+    conversationOwner,
     cwd,
     draftConnectionId,
     draftThreadId,
-    workspaceResources,
-    controlsResourceId,
-    conversationOwner,
+    loadDraft: composerInputs.loadDraft,
+    newChat,
     onLoadControls: composerInputs.onLoadControls,
     onUpdateSettings: composerInputs.onUpdateSettings,
+    queuedComposerEdit: queueEditStateBinding.queuedComposerEdit,
     saveComposerPreferences: composerInputs.saveComposerPreferences,
-    loadDraft: composerInputs.loadDraft,
-    setQueuedComposerEdit: queueEditStateBinding.setQueuedComposerEdit,
     saveDraft: composerInputs.saveDraft,
     saveDraftAttachments: composerInputs.saveDraftAttachments,
+    setQueuedComposerEdit: queueEditStateBinding.setQueuedComposerEdit,
     voiceController,
+    workspaceResources,
   });
   const reviewAttachmentIdsBinding = useReviewAttachmentIds(composerScope);
   return {
-    composerMenuStateBinding,
-    queueEditStateBinding,
     composerEditingBinding,
+    composerMenuStateBinding,
     composerVoiceStateBinding,
-    reviewAttachmentIdsBinding,
     largePasteStateBinding,
+    queueEditStateBinding,
+    reviewAttachmentIdsBinding,
   };
 }

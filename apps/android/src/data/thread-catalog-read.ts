@@ -2,7 +2,7 @@
  * is an in-process read boundary, not a persisted or wire event cursor. */
 export interface ThreadCatalogRead {
   readonly changed: ReadonlySet<string>;
-  release(): void;
+  release: () => void;
 }
 
 export class ThreadCatalogReads {
@@ -17,13 +17,16 @@ export class ThreadCatalogReads {
       changed,
       release: () => {
         active.delete(changed);
-        if (active.size === 0 && this.#reads.get(connectionId) === active)
+        if (active.size === 0 && this.#reads.get(connectionId) === active) {
           this.#reads.delete(connectionId);
+        }
       },
     };
   }
 
   changed(connectionId: string, threadId: string): void {
-    for (const read of this.#reads.get(connectionId) ?? []) read.add(threadId);
+    for (const read of this.#reads.get(connectionId) ?? []) {
+      read.add(threadId);
+    }
   }
 }

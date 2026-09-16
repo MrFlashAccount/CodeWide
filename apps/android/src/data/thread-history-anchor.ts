@@ -14,15 +14,15 @@ export function sanitizeHistoryAnchorOffset(offset: number | null): number | nul
  * window, and never while the anchor turn itself is still mutable.
  */
 export function isPersistableHistoryAnchor({
-  atEnd,
+  activeTurnId,
   anchorTurnId,
   anchorTurnStatus,
-  activeTurnId,
+  atEnd,
 }: {
-  atEnd: boolean;
+  activeTurnId: string | null;
   anchorTurnId: string | null;
   anchorTurnStatus: string | null;
-  activeTurnId: string | null;
+  atEnd: boolean;
 }): boolean {
   return (
     !atEnd &&

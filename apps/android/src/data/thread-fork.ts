@@ -17,9 +17,9 @@ export function buildThreadForkParams(
   const normalizedThreadId = requiredId(threadId, "Thread id");
   const boundary = options.boundary;
   return {
-    threadId: normalizedThreadId,
-    excludeTurns: false,
     ephemeral: options.ephemeral,
+    excludeTurns: false,
+    threadId: normalizedThreadId,
     ...(boundary.kind === "through"
       ? { lastTurnId: requiredId(boundary.turnId, "Last turn id") }
       : boundary.kind === "before"
@@ -30,6 +30,8 @@ export function buildThreadForkParams(
 
 function requiredId(value: string, label: string): string {
   const normalized = value.trim();
-  if (normalized === "") throw new Error(`${label} is required`);
+  if (normalized === "") {
+    throw new Error(`${label} is required`);
+  }
   return normalized;
 }

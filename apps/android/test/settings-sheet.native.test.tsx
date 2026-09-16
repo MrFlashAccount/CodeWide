@@ -15,7 +15,6 @@ jest.mock("@expo/ui/community/bottom-sheet", () => {
   };
 });
 // WHY: The portal's native overlay host cannot be installed in the Node renderer.
-jest.mock("heroui-native/portal", () => ({ PortalHost: () => null }));
 
 function server(id: string, title: string, account: string) {
   return { id, title, description: "Connected", leading: <Text>{`${title} avatar`}</Text>, statusIcon: <Text>{`${title} status`}</Text>, content: <Text>{account}</Text> };

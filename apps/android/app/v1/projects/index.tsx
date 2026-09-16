@@ -10,13 +10,9 @@ export default function V1ProjectsRoute(): React.JSX.Element {
   return (
     <SidebarProjectsSheet
       errors={project.projectWorkspace.sidebarProjectErrors}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onBrowse={(connectionId) => {
         router.push({ params: { connectionId }, pathname: "/v1/projects/add/[connectionId]" });
       }}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={() => {
         router.dismissTo("/v1");
       }}

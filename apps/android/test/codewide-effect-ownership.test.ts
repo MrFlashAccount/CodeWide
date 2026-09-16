@@ -22,17 +22,44 @@ const allRoute = compactSource(
 const screen = [runtimeShell, workspaceComposition, workspaceRouteModel, workspaceVisualShell].join(
   " ",
 );
-const timelineList = readFileSync(new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url), "utf8");
+const timelineList = readFileSync(
+  new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url),
+  "utf8",
+);
 const commitProbe = readFileSync(new URL("../src/ui/CommitProbe.tsx", import.meta.url), "utf8");
-const projectCatalog = readFileSync(new URL("../src/features/projects/useRemoteProjectCatalog.ts", import.meta.url), "utf8");
-const historyController = readFileSync(new URL("../src/data/use-thread-history-controller.ts", import.meta.url), "utf8");
-const subagentSheet = readFileSync(new URL("../src/features/agents/RouteSubagentWorkspace.tsx", import.meta.url), "utf8");
-const documentPreview = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
-const codeReview = readFileSync(new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
+const projectCatalog = readFileSync(
+  new URL("../src/features/projects/useRemoteProjectCatalog.ts", import.meta.url),
+  "utf8",
+);
+const historyController = readFileSync(
+  new URL("../src/data/use-thread-history-controller.ts", import.meta.url),
+  "utf8",
+);
+const subagentSheet = readFileSync(
+  new URL("../src/features/agents/RouteSubagentWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const documentPreview = readFileSync(
+  new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url),
+  "utf8",
+);
+const codeReview = readFileSync(
+  new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
+  "utf8",
+);
 
-const projectWorkspace = compactSource(readFileSync(new URL("../src/features/projects/projectWorkspace.ts", import.meta.url), "utf8"));
-const threadSidebar = compactSource(readFileSync(new URL("../src/features/threadList/ThreadSidebar.tsx", import.meta.url), "utf8"));
-const selectableThread = compactSource(readFileSync(new URL("../src/features/threadList/SelectableThreadRow.tsx", import.meta.url), "utf8"));
+const projectWorkspace = compactSource(
+  readFileSync(new URL("../src/features/projects/projectWorkspace.ts", import.meta.url), "utf8"),
+);
+const threadSidebar = compactSource(
+  readFileSync(new URL("../src/features/threadList/ThreadSidebar.tsx", import.meta.url), "utf8"),
+);
+const selectableThread = compactSource(
+  readFileSync(
+    new URL("../src/features/threadList/SelectableThreadRow.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 const workspaceDeepLinks = compactSource(
   readFileSync(
@@ -47,45 +74,156 @@ const pairingRouteSessions = compactSource(
   ),
 );
 const newServerRoute = compactSource(
+  readFileSync(new URL("../app/v1/settings/servers/new/index.tsx", import.meta.url), "utf8"),
+);
+
+const reviewVoiceOwner = readFileSync(
+  new URL("../src/features/review/comments/reviewVoice.ts", import.meta.url),
+  "utf8",
+);
+
+const ownerComposerPortContextChip = compactSource(
   readFileSync(
-    new URL("../app/v1/settings/servers/new/index.tsx", import.meta.url),
+    new URL("../src/features/ports/ComposerPortContextChip.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerComposerSubagentContextChip = compactSource(
+  readFileSync(
+    new URL("../src/features/agents/ComposerSubagentContextChip.tsx", import.meta.url),
     "utf8",
   ),
 );
 
-const reviewVoiceOwner = readFileSync(new URL("../src/features/review/reviewVoice.ts", import.meta.url), "utf8");
+const ownerComposerTerminalContextChip = readFileSync(
+  new URL("../src/features/terminal/ComposerTerminalContextChip.tsx", import.meta.url),
+  "utf8",
+);
 
-const ownerComposerPortContextChip = compactSource(readFileSync(new URL("../src/features/ports/ComposerPortContextChip.tsx", import.meta.url), "utf8"));
-const ownerComposerSubagentContextChip = compactSource(readFileSync(new URL("../src/features/agents/ComposerSubagentContextChip.tsx", import.meta.url), "utf8"));
+const ownerDraft = compactSource(
+  readFileSync(new URL("../src/features/composer/draft.ts", import.meta.url), "utf8"),
+);
+const ownerOverlayScrollOwnership = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/overlayScrollOwnership.ts", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerVoiceCaptureStatus = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/voice/VoiceCaptureStatus.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerConversationDetail = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationDetail.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerConversationDestination = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationDestination.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerConversationTimelineSurface = compactSource(
+  readFileSync(
+    new URL(
+      "../src/features/conversation/timeline/ConversationTimelineSurface.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+const ownerUnreadReceipt = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/unreadReceipt.ts", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerThreadTimelineNavigationCommit = compactSource(
+  readFileSync(
+    new URL(
+      "../src/features/conversation/timeline/ThreadTimelineNavigationCommit.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+const ownerTimelineViewport = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerComposerControlChips = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/settings/ComposerControlChips.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerComposerMenuComposition = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/ComposerRuntimeRoutes.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerConversationWorkspace = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationWorkspace.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
-const ownerComposerTerminalContextChip = readFileSync(new URL("../src/features/terminal/ComposerTerminalContextChip.tsx", import.meta.url), "utf8");
+const anchor = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/historyAnchor.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const ownerDraft = compactSource(readFileSync(new URL("../src/features/composer/draft.ts", import.meta.url), "utf8"));
-const ownerOverlayScrollOwnership = compactSource(readFileSync(new URL("../src/features/conversation/timeline/overlayScrollOwnership.ts", import.meta.url), "utf8"));
-const ownerVoiceCaptureStatus = compactSource(readFileSync(new URL("../src/features/composer/voice/VoiceCaptureStatus.tsx", import.meta.url), "utf8"));
-const ownerConversationDetail = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDetail.tsx", import.meta.url), "utf8"));
-const ownerConversationDestination = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDestination.tsx", import.meta.url), "utf8"));
-const ownerConversationTimelineSurface = compactSource(readFileSync(new URL("../src/features/conversation/timeline/ConversationTimelineSurface.tsx", import.meta.url), "utf8"));
-const ownerUnreadReceipt = compactSource(readFileSync(new URL("../src/features/conversation/timeline/unreadReceipt.ts", import.meta.url), "utf8"));
-const ownerThreadTimelineNavigationCommit = compactSource(readFileSync(new URL("../src/features/conversation/timeline/ThreadTimelineNavigationCommit.tsx", import.meta.url), "utf8"));
-const ownerTimelineViewport = compactSource(readFileSync(new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url), "utf8"));
-const ownerComposerControlChips = compactSource(readFileSync(new URL("../src/features/composer/settings/ComposerControlChips.tsx", import.meta.url), "utf8"));
-const ownerComposerMenuComposition = compactSource(readFileSync(new URL("../src/features/composer/ComposerRuntimeRoutes.tsx", import.meta.url), "utf8"));
-const ownerConversationWorkspace = compactSource(readFileSync(new URL("../src/features/conversation/ConversationWorkspace.tsx", import.meta.url), "utf8"));
+const search = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/timelineSearch.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const anchor = compactSource(readFileSync(new URL("../src/features/conversation/timeline/historyAnchor.ts", import.meta.url), "utf8"));
+const activation = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/conversationActivation.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const search = compactSource(readFileSync(new URL("../src/features/conversation/timeline/timelineSearch.ts", import.meta.url), "utf8"));
-
-const activation = compactSource(readFileSync(new URL("../src/features/conversation/conversationActivation.ts", import.meta.url), "utf8"));
-
-const composition = compactSource(readFileSync(new URL("../src/features/conversation/ConversationComposition.tsx", import.meta.url), "utf8"));
+const composition = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationComposition.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 const workspaceShell = screen;
-const activeProjectSelection = compactSource(readFileSync(new URL("../src/features/projects/activeProjectSelection.ts", import.meta.url), "utf8"));
+const activeProjectSelection = compactSource(
+  readFileSync(
+    new URL("../src/features/projects/activeProjectSelection.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const ownerMainConversationPublication = compactSource(readFileSync(new URL("../src/features/conversation/MainConversationPublication.tsx", import.meta.url), "utf8"));
-const ownerConversationDestinationSurface = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url), "utf8"));
+const ownerMainConversationPublication = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/MainConversationPublication.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerConversationDestinationSurface = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 const workspaceView = workspaceVisualShell;
 const threadNavigation = compactSource(
@@ -108,7 +246,9 @@ describe("CodeWide effect ownership", () => {
     expect(workspaceDeepLinks).toContain("selectThread(threadSelectionKey({");
     expect(workspaceDeepLinks).toContain("id: parsed.threadId");
     expect(workspaceDeepLinks).toContain("serverId: parsed.connectionId");
-    expect(workspaceComposition).toContain("const session = pairingRouteSessions.open(initialCode)");
+    expect(workspaceComposition).toContain(
+      "const session = pairingRouteSessions.open(initialCode)",
+    );
     expect(workspaceComposition).toContain("params: { sessionId: session.id }");
     expect(workspaceComposition).not.toContain("params: { initialCode }");
     expect(pairingRouteSessions).toContain(
@@ -129,36 +269,53 @@ describe("CodeWide effect ownership", () => {
     expect(screen).not.toContain("<ConversationPane\n        key={navigationKey}");
     expect(anchor).toContain("useConversationCleanup(composerScope,");
     expect(search).toContain("useConversationState(composerScope,");
-    expect(ownerConversationDetail).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
+    expect(ownerConversationDetail).toContain(
+      "const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)",
+    );
     expect(ownerConversationDetail).toContain("function MainConversationDetail(");
     expect(ownerConversationDestination).toContain("function ConversationDestination(");
     expect(screen).not.toContain("advanceConversationPresentation(");
     expect(screen).not.toContain("AtomicConversationSurface");
     expect(screen).not.toContain("ReactiveConversationSurface");
-    expect(screen).not.toContain('`${requestedThreadId ?? activeThreadKey ?? "none"}\\u0001${threadOpenGeneration}`');
+    expect(screen).not.toContain(
+      '`${requestedThreadId ?? activeThreadKey ?? "none"}\\u0001${threadOpenGeneration}`',
+    );
     expect(activation).toContain("useConversationOwner(composerScope)");
   });
 
   it("synchronizes unread acknowledgement and release telemetry at commit boundaries", () => {
     expect(ownerConversationTimelineSurface).toContain("revision={latestUnreadReceiptKey}");
     expect(ownerUnreadReceipt).toContain("acknowledgedUnreadReceiptKeyRef.current = null");
-    expect(ownerMainConversationPublication).toContain("scope={`main-presentation:${navigationKey}`}");
-    expect(ownerMainConversationPublication).toContain("onCommit={() => chatDatabase.chat.finishPresentation(connectionId, threadId)}");
+    expect(ownerMainConversationPublication).toContain(
+      "scope={`main-presentation:${navigationKey}`}",
+    );
+    expect(ownerMainConversationPublication).toMatch(
+      /onCommit=\{\(\) => \{\s*chatDatabase\.chat\.finishPresentation\(connectionId, threadId\);\s*\}\}/u,
+    );
     expect(screen).not.toContain("onTimelineFirstDraw");
-    expect(ownerThreadTimelineNavigationCommit).toContain("activeThreadNavigationIdFor(connectionId, threadId)");
-    expect(ownerThreadTimelineNavigationCommit).toContain("cancelAnimationFrame(nextFrameRef.current)");
-    expect(ownerMainConversationPublication).toContain("\"conversation_destination_hidden_or_unmounted\", {}, navigationId");
+    expect(ownerThreadTimelineNavigationCommit).toContain(
+      "activeThreadNavigationIdFor(connectionId, threadId)",
+    );
+    expect(ownerThreadTimelineNavigationCommit).toContain(
+      "cancelAnimationFrame(nextFrameRef.current)",
+    );
+    expect(ownerMainConversationPublication).toContain(
+      '"conversation_destination_hidden_or_unmounted", {}, navigationId',
+    );
   });
 
   it("keeps the one layout synchronization at the LegendList cache boundary", () => {
     expect(timelineList).toContain("useLayoutEffect(() => {");
     expect(timelineList).toContain('clearCaches({ mode: "sizes" })');
-    expect(ownerTimelineViewport).toContain("measurementRevision={props.windowLayout.measurementRevision}");
-    expect(screen).not.toContain('key={`timeline-layout:${windowLayout.measurementRevision}`}');
+    expect(ownerTimelineViewport).toContain(
+      "measurementRevision={props.windowLayout.measurementRevision}",
+    );
+    expect(screen).not.toContain("key={`timeline-layout:${windowLayout.measurementRevision}`}");
   });
 
   it("never starts data loading from a React effect", () => {
-    const projectCatalogEffects = projectCatalog.match(/useEffect\s*\([\s\S]*?\s*\},\s*\[[^\]]*\],?\s*\);/gu) ?? [];
+    const projectCatalogEffects =
+      projectCatalog.match(/useEffect\s*\([\s\S]*?\s*\},\s*\[[^\]]*\],?\s*\);/gu) ?? [];
     expect(projectCatalogEffects).toHaveLength(1);
     expect(projectCatalogEffects[0]).toContain("remoteProjectCatalogModel.retain(connectionId)");
     expect(projectCatalogEffects[0]).not.toMatch(/\b(?:load|resource|listProjects)\s*\(/u);
@@ -166,7 +323,8 @@ describe("CodeWide effect ownership", () => {
     expect(subagentSheet).not.toMatch(/\buse(?:Layout)?Effect\s*\(/u);
     expect(documentPreview).not.toMatch(/\buse(?:Layout)?Effect\s*\(/u);
     expect(codeReview).not.toMatch(/\buse(?:Layout)?Effect\s*\(/u);
-    const codeReviewEffects = reviewVoiceOwner.match(/useEffect\s*\([\s\S]*?\s*\},\s*\[[^\]]*\],?\s*\);/gu) ?? [];
+    const codeReviewEffects =
+      reviewVoiceOwner.match(/useEffect\s*\([\s\S]*?\s*\},\s*\[[^\]]*\],?\s*\);/gu) ?? [];
     expect(codeReviewEffects).toHaveLength(1);
     expect(codeReviewEffects[0]).toContain("voiceController?.unbind(scope)");
     expect(codeReviewEffects[0]).not.toMatch(/\b(?:load|read|fetch|refresh)[A-Z_a-z]*\s*\(/u);
@@ -174,10 +332,12 @@ describe("CodeWide effect ownership", () => {
 
   it("does not fetch every server project catalog while painting the all-servers thread list", () => {
     expect(projectWorkspace).toContain(
-      'const projectCatalogConnections = newThreadVisible || searchVisible || serverScope.kind === "all"',
+      'const projectCatalogConnections = searchVisible || serverScope.kind === "all"',
     );
     expect(activeProjectSelection).toContain('activeConnectionId === ""');
-    expect(projectWorkspace).toContain("useRemoteProjectCatalog( remote.native, projectCatalogConnections, remote.listProjects,");
+    expect(projectWorkspace).toContain(
+      "useRemoteProjectCatalog( remote.native, projectCatalogConnections, remote.listProjects,",
+    );
   });
 
   it("keeps chat-adjacent resources in granular owners while voice capture stays global", () => {
@@ -192,11 +352,19 @@ describe("CodeWide effect ownership", () => {
     expect(reviewVoiceOwner).toContain("useVoiceInputResource(voiceRuntime, voiceScope)");
     expect(workspaceView).toContain("<WorkspaceVoiceAura");
     expect(ownerComposerControlChips).toContain("function ComposerControlChips(");
-    expect(ownerComposerControlChips).toContain("const resource = useTurnControlsRow(resources, resourceId);");
+    expect(ownerComposerControlChips).toContain(
+      "const resource = useTurnControlsRow(resources, resourceId);",
+    );
     expect(ownerComposerPortContextChip).toContain("function ComposerPortContextChipLoaded(");
-    expect(ownerComposerPortContextChip).toContain("const snapshot = useNativePortForwarding(connectionId);");
-    expect(ownerComposerTerminalContextChip).toContain("const workspace = useInteractiveTerminalWorkspace(connectionId, threadId);");
-    expect(ownerComposerSubagentContextChip).toContain("function ComposerSubagentContextChipLoaded(");
+    expect(ownerComposerPortContextChip).toContain(
+      "const snapshot = useNativePortForwarding(connectionId);",
+    );
+    expect(ownerComposerTerminalContextChip).toContain(
+      "const workspace = useInteractiveTerminalWorkspace(connectionId, threadId);",
+    );
+    expect(ownerComposerSubagentContextChip).toContain(
+      "function ComposerSubagentContextChipLoaded(",
+    );
     expect(ownerComposerMenuComposition).toContain(
       "const terminals = useBackgroundTerminalsRow( request.resources, request.backgroundTerminalsResourceId, );",
     );

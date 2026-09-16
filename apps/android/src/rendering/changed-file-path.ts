@@ -19,7 +19,7 @@ export function changedFileDisplayPath(
 }
 
 function normalizePath(value: string): string {
-  const normalized = value.replaceAll("\\", "/").replace(/\/{2,}/gu, "/");
+  const normalized = value.replaceAll("\\", "/").replaceAll(/\/{2,}/gu, "/");
   return normalized.length > 1 ? normalized.replace(/\/$/u, "") : normalized;
 }
 
@@ -35,20 +35,47 @@ function pathStartsWith(value: string, prefix: string): boolean {
 }
 
 function collapsePathMiddle(value: string, maxChars: number): string {
-  if (value.length <= maxChars || maxChars <= 0) return value;
+  if (value.length <= maxChars || maxChars <= 0) {
+    return value;
+  }
   const leadingSlash = value.startsWith("/") ? "/" : "";
   const segments = value.split("/").filter(Boolean);
-  if (segments.length < 3) return value;
-  const first = `${leadingSlash}${segments[0]!}`;
-  const filename = segments.at(-1)!;
+  if (segments.length < 3) {
+    return value;
+  }
+  const firstSegment = segments[0];
+  const filename = segments.at(-1);
+  if (firstSegment === undefined || filename === undefined) {
+    return value;
+  }
+  const first = `${leadingSlash}${firstSegment}`;
   const separator = "/…/";
+  const suffix = collapsedPathSuffix(
+    segments,
+    filename,
+    maxChars - first.length - separator.length,
+  );
+  return `${first}${separator}${suffix}`;
+}
+
+function collapsedPathSuffix(
+  segments: readonly string[],
+  filename: string,
+  maxSuffixChars: number,
+): string {
   let suffix = filename;
   for (let index = segments.length - 2; index > 0; index -= 1) {
-    const candidate = `${segments[index]!}/${suffix}`;
-    if (first.length + separator.length + candidate.length > maxChars) break;
+    const segment = segments[index];
+    if (segment === undefined) {
+      continue;
+    }
+    const candidate = `${segment}/${suffix}`;
+    if (candidate.length > maxSuffixChars) {
+      break;
+    }
     suffix = candidate;
   }
-  return `${first}${separator}${suffix}`;
+  return suffix;
 }
 
 /** V1 changed-file-path owner, extracted without changing interaction or resource lifetime. */

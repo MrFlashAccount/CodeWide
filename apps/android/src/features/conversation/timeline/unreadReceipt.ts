@@ -1,5 +1,5 @@
 import type { TimelineItem } from "./timelineTypes";
-import { View } from "react-native";
+import type { View } from "react-native";
 import { useConversationRef } from "../../../ui/use-conversation-scope";
 
 export function useUnreadReceiptState(composerScope: string) {
@@ -19,11 +19,11 @@ export function useUnreadReceiptState(composerScope: string) {
     () => null,
   );
   return {
+    acknowledgedUnreadReceiptKeyRef,
     latestUnreadAgentRef,
+    latestUnreadReceiptKeyRef,
     unreadVisibilityFrameRef,
     unreadVisibilityScheduledKeyRef,
-    latestUnreadReceiptKeyRef,
-    acknowledgedUnreadReceiptKeyRef,
   };
 }
 
@@ -34,18 +34,18 @@ import {
 } from "../../../rendering/unread-visibility";
 
 export function useUnreadReceiptActions({
+  acknowledgedUnreadReceiptKeyRef,
   latestUnreadAgentRef,
+  latestUnreadReceiptKey,
+  latestUnreadReceiptKeyRef,
+  onViewedLatest,
+  timelineViewportRef,
   unreadVisibilityFrameRef,
   unreadVisibilityScheduledKeyRef,
-  latestUnreadReceiptKeyRef,
-  acknowledgedUnreadReceiptKeyRef,
-  timelineViewportRef,
-  latestUnreadReceiptKey,
-  onViewedLatest,
 }: ReturnType<typeof useUnreadReceiptState> & {
-  timelineViewportRef: import("react").RefObject<View | null>;
   latestUnreadReceiptKey: string | null;
   onViewedLatest: (() => void) | undefined;
+  timelineViewportRef: import("react").RefObject<View | null>;
 }) {
   const acknowledgeUnreadReceipt = useEvent((receiptKey: string) => {
     const claimed = claimUnreadReceipt(
@@ -53,7 +53,9 @@ export function useUnreadReceiptActions({
       acknowledgedUnreadReceiptKeyRef.current,
       receiptKey,
     );
-    if (claimed === null) return;
+    if (claimed === null) {
+      return;
+    }
     acknowledgedUnreadReceiptKeyRef.current = claimed;
     onViewedLatest?.();
   });
@@ -61,12 +63,20 @@ export function useUnreadReceiptActions({
   const checkUnreadAgentVisibility = useEvent((receiptKey: string) => {
     const viewport = timelineViewportRef.current;
     const agent = latestUnreadAgentRef.current;
-    if (viewport === null || agent === null) return;
-    if (acknowledgedUnreadReceiptKeyRef.current === receiptKey) return;
+    if (viewport === null || agent === null) {
+      return;
+    }
+    if (acknowledgedUnreadReceiptKeyRef.current === receiptKey) {
+      return;
+    }
     viewport.measureInWindow((_viewportX, viewportY, _viewportWidth, viewportHeight) => {
       agent.measureInWindow((_agentX, agentY, _agentWidth, agentHeight) => {
-        if (latestUnreadReceiptKeyRef.current !== receiptKey) return;
-        if (!shouldMarkAgentResponseRead(agentY, agentHeight, viewportY, viewportHeight)) return;
+        if (latestUnreadReceiptKeyRef.current !== receiptKey) {
+          return;
+        }
+        if (!shouldMarkAgentResponseRead(agentY, agentHeight, viewportY, viewportHeight)) {
+          return;
+        }
         acknowledgeUnreadReceipt(receiptKey);
       });
     });
@@ -76,14 +86,17 @@ export function useUnreadReceiptActions({
     const receiptKey = latestUnreadReceiptKey;
     latestUnreadReceiptKeyRef.current = receiptKey;
     if (receiptKey === null) {
-      if (unreadVisibilityFrameRef.current !== null)
+      if (unreadVisibilityFrameRef.current !== null) {
         cancelAnimationFrame(unreadVisibilityFrameRef.current);
+      }
       unreadVisibilityFrameRef.current = null;
       unreadVisibilityScheduledKeyRef.current = null;
       return;
     }
     if (unreadVisibilityFrameRef.current !== null) {
-      if (unreadVisibilityScheduledKeyRef.current === receiptKey) return;
+      if (unreadVisibilityScheduledKeyRef.current === receiptKey) {
+        return;
+      }
       cancelAnimationFrame(unreadVisibilityFrameRef.current);
     }
     unreadVisibilityScheduledKeyRef.current = receiptKey;
@@ -96,11 +109,14 @@ export function useUnreadReceiptActions({
 
   const commitUnreadReceipt = useEvent(() => {
     latestUnreadReceiptKeyRef.current = latestUnreadReceiptKey;
-    if (latestUnreadReceiptKey === null) acknowledgedUnreadReceiptKeyRef.current = null;
+    if (latestUnreadReceiptKey === null) {
+      acknowledgedUnreadReceiptKeyRef.current = null;
+    }
     scheduleUnreadAgentVisibilityCheck();
     return () => {
-      if (unreadVisibilityFrameRef.current !== null)
+      if (unreadVisibilityFrameRef.current !== null) {
         cancelAnimationFrame(unreadVisibilityFrameRef.current);
+      }
       unreadVisibilityFrameRef.current = null;
       unreadVisibilityScheduledKeyRef.current = null;
     };
@@ -108,12 +124,14 @@ export function useUnreadReceiptActions({
 
   const setLatestUnreadAgentNode = useEvent((node: View | null) => {
     latestUnreadAgentRef.current = node;
-    if (node !== null) scheduleUnreadAgentVisibilityCheck();
+    if (node !== null) {
+      scheduleUnreadAgentVisibilityCheck();
+    }
   });
   return {
     acknowledgeUnreadReceipt,
-    scheduleUnreadAgentVisibilityCheck,
     commitUnreadReceipt,
+    scheduleUnreadAgentVisibilityCheck,
     setLatestUnreadAgentNode,
   };
 }
@@ -133,11 +151,17 @@ export function projectUnreadReceipt(
     draftThreadId,
     "scan_unread_agent_turn",
     () => {
-      if (unread <= 0) return null;
+      if (unread <= 0) {
+        return null;
+      }
       for (let index = timeline.length - 1; index >= 0; index -= 1) {
         const item = timeline[index];
-        if (item?.kind !== "turn" || item.turn.status === "inProgress") continue;
-        if (selectTurnRenderWindow(item.turn).latestAgentIndex >= 0) return item.id;
+        if (item?.kind !== "turn" || item.turn.status === "inProgress") {
+          continue;
+        }
+        if (selectTurnRenderWindow(item.turn).latestAgentIndex >= 0) {
+          return item.id;
+        }
       }
       return null;
     },

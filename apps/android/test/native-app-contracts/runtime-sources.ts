@@ -1,9 +1,5 @@
 import { readFileSync } from "node:fs";
 
-export const legacyRemoteStore = readFileSync(
-  new URL("../../src/data/legacy-remote-store.native.ts", import.meta.url),
-  "utf8",
-);
 export const privateAsset = readFileSync(
   new URL("../../src/data/private-transfer.ts", import.meta.url),
   "utf8",

@@ -17,21 +17,21 @@ export function ThreadSidebarHeader({
   setQuery: (query: string) => void;
 }) {
   const {
-    remote,
-    project,
-    onBackToProjects,
-    onManageProjects,
-    servers,
-    serverScope,
-    mode,
     filter,
-    onOpenSearch,
-    searchContent,
-    onModeChange,
+    mode,
+    onBackToProjects,
     onFilterChange,
+    onManageProjects,
+    onModeChange,
+    onOpenSearch,
+    onRefreshAccountRateLimits,
     onSelectServer,
     onSettings,
-    onRefreshAccountRateLimits,
+    project,
+    remote,
+    searchContent,
+    servers,
+    serverScope,
   } = props;
   return (
     <View style={searchContent === null ? styles.threadListHeaderChrome : undefined}>
@@ -39,57 +39,62 @@ export function ThreadSidebarHeader({
         <View style={styles.serverTitleRow}>
           {mode === "archived" && project === null && (
             <Pressable
-              onPress={() => onModeChange("active")}
-              style={styles.headerIcon}
               accessibilityLabel="Back to threads"
+              onPress={() => {
+                onModeChange("active");
+              }}
+              style={styles.headerIcon}
             >
-              <Ionicons name="arrow-back" size={iconSize.navigation} color={colors.text} />
+              <Ionicons color={colors.text} name="arrow-back" size={iconSize.navigation} />
             </Pressable>
           )}
           {project !== null ? (
             <SidebarProjectHeader
+              archived={mode === "archived"}
+              onBack={() => {
+                setQuery("");
+                if (mode === "archived") {
+                  onModeChange("active");
+                } else {
+                  onBackToProjects();
+                }
+              }}
+              onRoot={onBackToProjects}
               project={project}
               serverName={
                 servers.find((entry) => entry.id === project.connectionId)?.name ?? "Server"
               }
-              archived={mode === "archived"}
-              onRoot={onBackToProjects}
-              onBack={() => {
-                setQuery("");
-                if (mode === "archived") onModeChange("active");
-                else onBackToProjects();
-              }}
             />
           ) : mode === "archived" ? (
             <Text
-              testID="server-title"
-              numberOfLines={1}
               ellipsizeMode="tail"
+              numberOfLines={1}
               style={styles.serverTitle}
+              testID="server-title"
             >
               Archived threads
             </Text>
           ) : (
-            <Text testID="server-title" numberOfLines={1} style={styles.serverTitle}>
+            <Text numberOfLines={1} style={styles.serverTitle} testID="server-title">
               Threads
             </Text>
           )}
           <ThreadListMenu
-            onManageProjects={onManageProjects}
-            onSettings={onSettings}
+            accountDatabase={remote.accountRateLimitsDatabase}
+            accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}
+            archived={mode === "archived"}
             catalogConnectionIds={
               serverScope.kind === "all"
                 ? servers.map((entry) => entry.id)
                 : [serverScope.connectionId]
             }
+            includeArchiveCount={project === null}
+            onManageProjects={onManageProjects}
+            onSettings={onSettings}
             onToggleArchive={() => {
               setQuery("");
               onModeChange(mode === "archived" ? "active" : "archived");
             }}
-            archived={mode === "archived"}
-            includeArchiveCount={project === null}
-            accountDatabase={remote.accountRateLimitsDatabase}
-            accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}
             {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
           />
         </View>
@@ -98,22 +103,22 @@ export function ThreadSidebarHeader({
         <View style={styles.mobileSearchWrap}>
           <View style={styles.threadSearchRow}>
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Search threads and messages"
+              accessibilityRole="button"
               onPress={onOpenSearch}
               style={[styles.searchBox, styles.threadSearchBox]}
             >
-              <InlineIcon name="search" color={colors.textMuted} role="body" />
+              <InlineIcon color={colors.textMuted} name="search" role="body" />
               <Text style={styles.searchInput}>Search</Text>
             </Pressable>
             <ThreadFilterMenu
               mode={mode}
-              projectScoped={project !== null}
-              servers={servers}
-              serverScope={serverScope}
-              selected={filter}
               onSelect={onFilterChange}
               onSelectServer={onSelectServer}
+              projectScoped={project !== null}
+              selected={filter}
+              servers={servers}
+              serverScope={serverScope}
             />
           </View>
         </View>

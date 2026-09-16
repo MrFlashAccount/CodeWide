@@ -7,8 +7,8 @@ type GoalEditorValue = {
 };
 
 export type GoalEditorValidation =
-  | { value: GoalEditorValue; error: null }
-  | { value: null; error: string };
+  | { error: null; value: GoalEditorValue }
+  | { error: string; value: null };
 
 export function validateGoalEditorDraft(
   objective: string,
@@ -16,17 +16,19 @@ export function validateGoalEditorDraft(
   status: ThreadGoalStatus = "active",
 ): GoalEditorValidation {
   const normalizedObjective = objective.trim();
-  if (normalizedObjective === "") return { value: null, error: "Goal objective is required" };
+  if (normalizedObjective === "") {
+    return { error: "Goal objective is required", value: null };
+  }
 
   const normalizedBudget = tokenBudget.trim();
   if (normalizedBudget === "") {
-    return { value: { objective: normalizedObjective, status, tokenBudget: null }, error: null };
+    return { error: null, value: { objective: normalizedObjective, status, tokenBudget: null } };
   }
 
   const budget = Number(normalizedBudget);
   if (!Number.isSafeInteger(budget) || budget < 1) {
-    return { value: null, error: "Token budget must be a positive integer" };
+    return { error: "Token budget must be a positive integer", value: null };
   }
 
-  return { value: { objective: normalizedObjective, status, tokenBudget: budget }, error: null };
+  return { error: null, value: { objective: normalizedObjective, status, tokenBudget: budget } };
 }

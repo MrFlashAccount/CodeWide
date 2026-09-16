@@ -2,33 +2,33 @@
 import { Pressable, View } from "react-native";
 import type { PendingServerRequest } from "../../data/pending-request-types";
 import { AppText as Text } from "../../ui/Typography";
-import { mcpElicitationFields } from "./elicitationForm";
+import type { mcpElicitationFields } from "./elicitationForm";
 import { styles } from "./RequestFeature.styles";
 
 type RequestResponseActionsProps = {
-  method: string;
-  params: PendingServerRequest["params"];
-  waiting: boolean;
-  questions: Record<string, unknown>[];
   answers: Record<string, string>;
   elicitationFields: ReturnType<typeof mcpElicitationFields>;
-  elicitationUrl: string | null;
   elicitationMode: string | null;
-  respond(result: unknown): Promise<void>;
-  submitElicitation(): void;
+  elicitationUrl: string | null;
+  method: string;
+  params: PendingServerRequest["params"];
+  questions: Record<string, unknown>[];
+  respond: (result: unknown) => Promise<void>;
+  submitElicitation: () => void;
+  waiting: boolean;
 };
 
 export function RequestResponseActions({
-  method,
-  params,
-  waiting,
-  questions,
   answers,
   elicitationFields,
-  elicitationUrl,
   elicitationMode,
+  elicitationUrl,
+  method,
+  params,
+  questions,
   respond,
   submitElicitation,
+  waiting,
 }: RequestResponseActionsProps) {
   return (
     <View style={styles.approvalActions}>
@@ -89,7 +89,7 @@ export function RequestResponseActions({
             accessibilityRole="button"
             disabled={waiting}
             hitSlop={4}
-            onPress={() => void respond({ action: "decline", content: null, _meta: null })}
+            onPress={() => void respond({ _meta: null, action: "decline", content: null })}
             style={[styles.approvalDeclineButton, styles.approvalButton]}
           >
             <Text style={styles.approvalDeclineText}>Decline</Text>
@@ -101,7 +101,7 @@ export function RequestResponseActions({
               hitSlop={4}
               onPress={
                 elicitationMode === "url"
-                  ? () => void respond({ action: "accept", content: null, _meta: null })
+                  ? () => void respond({ _meta: null, action: "accept", content: null })
                   : submitElicitation
               }
               style={[styles.primaryButton, styles.approvalButton]}

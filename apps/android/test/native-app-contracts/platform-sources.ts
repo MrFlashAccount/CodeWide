@@ -12,10 +12,7 @@ export const nativeCodeBlockHost = readFileSync(
   new URL("../../src/presentation/nativeCodeBlockHost.tsx", import.meta.url),
   "utf8",
 );
-export const screen = readFileSync(
-  new URL("../../app/v1/_layout.tsx", import.meta.url),
-  "utf8",
-);
+export const screen = readFileSync(new URL("../../app/v1/_layout.tsx", import.meta.url), "utf8");
 export const nativeShimmerTextHost = readFileSync(
   new URL("../../src/presentation/text/nativeShimmerText.tsx", import.meta.url),
   "utf8",
@@ -69,11 +66,11 @@ export const changeMenu = readFileSync(
   "utf8",
 );
 export const codeReviewEditor = readFileSync(
-  new URL("../../src/rendering/CodeReviewEditor.native.tsx", import.meta.url),
+  new URL("../../src/features/review/editor/CodeReviewEditor.native.tsx", import.meta.url),
   "utf8",
 );
 export const codeReviewRuntime = readFileSync(
-  new URL("../../code-review-editor/entry.ts", import.meta.url),
+  new URL("../../src/features/review/editor/webview/entry.web.ts", import.meta.url),
   "utf8",
 );
 export const wirelessDev = readFileSync(

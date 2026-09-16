@@ -6,7 +6,7 @@ import { AppText as Text } from "../../ui/Typography";
 import { ExperimentResultCard, OperationalMetrics } from "./OperationalMetrics";
 import { Legend, MetricTile, PerformanceSparkline } from "./PerformanceCharts";
 import { styles } from "./PerformanceDiagnostics.styles";
-import { usePerformanceDiagnosticsState } from "./performanceDiagnosticsState";
+import type { usePerformanceDiagnosticsState } from "./performanceDiagnosticsState";
 import { EXPERIMENTS } from "./performanceExperiment";
 import {
   bytes,
@@ -27,44 +27,44 @@ export function renderPerformanceSampleDetails(
     <>
       <View style={styles.grid}>
         <MetricTile
+          detail={`peak ${percent(state.metrics.peakCpuPercent)}`}
           label="Process CPU"
           value={percent(current.cpuPercent)}
-          detail={`peak ${percent(state.metrics.peakCpuPercent)}`}
         />
         <MetricTile
+          detail={`peak ${bytes(state.metrics.peakPssBytes)}`}
           label="Memory PSS"
           value={bytes(current.pssBytes)}
-          detail={`peak ${bytes(state.metrics.peakPssBytes)}`}
         />
         <MetricTile
+          detail={`${String(current.renderedFrames)} frames / sample`}
           label="Rendered FPS"
           value={decimal(current.renderedFps)}
-          detail={`${current.renderedFrames} frames / sample`}
         />
         <MetricTile
+          detail={`avg ${decimal(current.averageFrameMs)} ms`}
           label="Frame p95"
           value={`${decimal(current.p95FrameMs)} ms`}
-          detail={`avg ${decimal(current.averageFrameMs)} ms`}
         />
         <MetricTile
+          detail={`session ${percent(state.metrics.sessionJankPercent)}`}
           label="Jank"
           value={percent(current.jankPercent)}
-          detail={`session ${percent(state.metrics.sessionJankPercent)}`}
         />
         <MetricTile
+          detail={`session ${integer(state.metrics.totalDroppedFrameEstimate)}`}
           label="Missed estimate"
           value={integer(current.droppedFrameEstimate)}
-          detail={`session ${integer(state.metrics.totalDroppedFrameEstimate)}`}
         />
         <MetricTile
+          detail={`session ${bytesOrUnavailable(current.rxSessionBytes)}`}
           label="Download"
           value={rate(current.rxBytesPerSecond)}
-          detail={`session ${bytesOrUnavailable(current.rxSessionBytes)}`}
         />
         <MetricTile
+          detail={`session ${bytesOrUnavailable(current.txSessionBytes)}`}
           label="Upload"
           value={rate(current.txBytesPerSecond)}
-          detail={`session ${bytesOrUnavailable(current.txSessionBytes)}`}
         />
       </View>
 
@@ -115,8 +115,8 @@ export function renderPerformanceSampleDetails(
           <View style={styles.diagnosticActionRow}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => void state.copySnapshot()}
               disabled={state.copyPending}
+              onPress={() => void state.copySnapshot()}
               style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
             >
               <Text style={styles.smallButtonText}>
@@ -153,7 +153,7 @@ export function renderPerformanceSampleDetails(
               ]}
             >
               {state.runningExperiment === experiment.id ? (
-                <ActivityIndicator size="small" color={colors.text} />
+                <ActivityIndicator color={colors.text} size="small" />
               ) : (
                 <Text style={styles.abButtonText}>A/B 16s</Text>
               )}
@@ -161,8 +161,10 @@ export function renderPerformanceSampleDetails(
             <Switch
               accessibilityLabel={experiment.title}
               disabled={state.runningExperiment !== null}
+              onValueChange={(enabled) => {
+                setPerformanceExperiment(experiment.id, enabled);
+              }}
               value={state.experiments[experiment.id]}
-              onValueChange={(enabled) => setPerformanceExperiment(experiment.id, enabled)}
             />
           </View>
         ))}

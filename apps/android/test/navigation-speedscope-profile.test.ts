@@ -32,10 +32,15 @@ describe("navigation Speedscope projection", () => {
       weights: [16.5],
       endValue: 16.5,
     });
-    expect(result.shared.frames[2]).toEqual({
-      name: "db_materialize_sealed_turns",
-      file: "durationMs=16.5 · completedAtMs=210 · rowCount=258 · cache=miss",
-    });
+    expect(result.shared.frames[2]?.name).toBe("db_materialize_sealed_turns");
+    expect(result.shared.frames[2]?.file?.split(" · ")).toEqual(
+      expect.arrayContaining([
+        "durationMs=16.5",
+        "completedAtMs=210",
+        "rowCount=258",
+        "cache=miss",
+      ]),
+    );
     expect(result.profiles[2]).toMatchObject({
       type: "evented",
       name: "Visible UI states",
@@ -66,7 +71,9 @@ describe("navigation Speedscope projection", () => {
     };
     const events = result.profiles.find(({ name }) => name === "Visible UI states")?.events ?? [];
     expect(events).toHaveLength(6);
-    expect(events.every((event, index) => index === 0 || event.at >= events[index - 1]!.at)).toBe(true);
+    expect(events.every((event, index) => index === 0 || event.at >= events[index - 1]!.at)).toBe(
+      true,
+    );
     expect(events.map(({ type }) => type)).toEqual(["O", "C", "O", "C", "O", "C"]);
   });
 });
@@ -89,19 +96,23 @@ function profile(): ThreadNavigationProfile {
       { stage: "scope_commit", elapsedMs: 100, sincePreviousMs: 100, values: {}, tags: {} },
       { stage: "timeline_model_ready", elapsedMs: 900, sincePreviousMs: 800, values: {}, tags: {} },
     ],
-    measures: [{
-      name: "db_materialize_sealed_turns",
-      durationMs: 16.5,
-      elapsedMs: 210,
-      values: { rowCount: 258 },
-      tags: { cache: "miss" },
-    }],
-    visualEvents: [{
-      name: "suspense_fallback_visible",
-      elapsedMs: 950,
-      values: {},
-      tags: { status: "loading-history" },
-    }],
+    measures: [
+      {
+        name: "db_materialize_sealed_turns",
+        durationMs: 16.5,
+        elapsedMs: 210,
+        values: { rowCount: 258 },
+        tags: { cache: "miss" },
+      },
+    ],
+    visualEvents: [
+      {
+        name: "suspense_fallback_visible",
+        elapsedMs: 950,
+        values: {},
+        tags: { status: "loading-history" },
+      },
+    ],
     frames: null,
   };
 }

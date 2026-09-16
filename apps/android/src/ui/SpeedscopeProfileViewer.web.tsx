@@ -6,10 +6,10 @@ import { AppText as Text } from "./Typography";
 export function SpeedscopeProfileViewer({
   onClose,
 }: {
-  title: string;
-  fileName: string;
   content: string;
-  onClose(): void;
+  fileName: string;
+  onClose: () => void;
+  title: string;
 }) {
   return (
     <View style={styles.root}>
@@ -24,26 +24,26 @@ export function SpeedscopeProfileViewer({
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.md,
-    backgroundColor: colors.background,
+  button: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.medium,
+    minHeight: controlSize.regular,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xxs,
+  },
+  buttonText: {
+    ...typeScale.body,
+    color: colors.text,
   },
   message: {
     ...typeScale.body,
     color: colors.textMuted,
   },
-  button: {
-    minHeight: controlSize.regular,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xxs,
-    borderRadius: radii.medium,
-    backgroundColor: colors.surfaceRaised,
-  },
-  buttonText: {
-    ...typeScale.body,
-    color: colors.text,
+  root: {
+    alignItems: "center",
+    backgroundColor: colors.background,
+    flex: 1,
+    gap: spacing.md,
+    justifyContent: "center",
   },
 });

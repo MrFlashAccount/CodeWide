@@ -22,7 +22,9 @@ function rows(result: unknown): readonly Record<string, unknown>[] {
     : typeof result === "object" && result !== null && "rows" in result
       ? result.rows
       : [];
-  if (!Array.isArray(value)) throw new Error("Invalid history SQL result");
+  if (!Array.isArray(value)) {
+    throw new Error("Invalid history SQL result");
+  }
   return value.filter(
     (entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null,
   );
@@ -163,7 +165,9 @@ export async function prepareHistoryRelations(executor: HistoryExecutor): Promis
     "table";
   if (version !== VERSION) {
     await createTables(executor);
-    if (legacy) await migrateRows(executor);
+    if (legacy) {
+      await migrateRows(executor);
+    }
     await migrateHistoryV6(executor);
   }
   await createReadProjection(executor);
@@ -207,11 +211,11 @@ export async function persistHistoryRow(
   );
   if (row.kind === "thread") {
     const {
-      historyEpoch,
-      historyCursor,
-      historyHadTurns,
-      historyCoverageMinOrdinal,
       historyCoverageMaxOrdinal,
+      historyCoverageMinOrdinal,
+      historyCursor,
+      historyEpoch,
+      historyHadTurns,
       ...content
     } = row;
     await executor.execute(
@@ -280,15 +284,18 @@ export async function persistHistoryRow(
         ],
       ),
     )[0]?.content_id;
-    if (typeof contentId !== "number")
+    if (typeof contentId !== "number") {
       throw new Error("History revision insert returned no identity");
+    }
     await executor.execute(
       `INSERT INTO codewide_history_items
       SELECT ?, j.key, json_extract(j.value, '$.id'), json_extract(j.value, '$.type'), j.value FROM json_each(?) j`,
       [contentId, items],
     );
   }
-  if (typeof contentId !== "number") throw new Error("Invalid history revision identity");
+  if (typeof contentId !== "number") {
+    throw new Error("Invalid history revision identity");
+  }
   await executor.execute(
     `INSERT INTO codewide_history_turns VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(connection_id, thread_id, history_epoch, turn_id) DO UPDATE SET ordinal=excluded.ordinal

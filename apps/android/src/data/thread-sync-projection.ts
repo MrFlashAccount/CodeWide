@@ -3,6 +3,7 @@ import type {
   Thread,
 } from "@codewide/codex-protocol/v0.147.0/v2";
 import { threadIdFromEvent, threadProjectionPatchFromEvent } from "@codewide/sync-client";
+import { appLogger } from "../observability/logger";
 import type { AccountPoolSnapshot } from "./account-pool";
 import type { AccountRateLimitsDatabase } from "./account-rate-limits-database";
 import type { createCatalogRuntime } from "./catalog-runtime";
@@ -21,30 +22,22 @@ import type { WorkspaceResourceDatabase } from "./workspace-resource-database";
 import { threadResourceKey } from "./workspace-resource-keys";
 /** Applies native projection effects without awaiting fallback network repair in the ordered lane. */
 export function createThreadSyncProjection({
-  details,
-  summaries,
-  resources,
   accountRateLimits,
-  sync,
   catalog,
+  details,
+  resources,
+  summaries,
+  sync,
 }: {
-  details: ThreadDetailDatabase;
-  summaries: ThreadSummaryDatabase;
-  resources: WorkspaceResourceDatabase;
   accountRateLimits: AccountRateLimitsDatabase;
-  sync: ReturnType<typeof createThreadSyncRuntime>;
   catalog: ReturnType<typeof createCatalogRuntime>;
+  details: ThreadDetailDatabase;
+  resources: WorkspaceResourceDatabase;
+  summaries: ThreadSummaryDatabase;
+  sync: ReturnType<typeof createThreadSyncRuntime>;
 }): ThreadProjectionStore {
-  const projection = createThreadProjectionStore({ summaries, details });
+  const projection = createThreadProjectionStore({ details, summaries });
   return {
-    async applySnapshot(connectionId, snapshots, cursor) {
-      sync.invalidateHistoryReads(connectionId);
-      details.invalidateHistoryExhaustion(connectionId);
-      await projection.applySnapshot(connectionId, snapshots, cursor);
-      catalog.markRefreshed(connectionId);
-      // Catalog snapshots persist receipt evidence, but not canonical turn
-      // content. Retain the native receipt until detail persistence takes over.
-    },
     async applyEvents(connectionId, events) {
       const projected = await projection.applyEvents(connectionId, events);
       const projectedThreads = projected.threads;
@@ -64,16 +57,17 @@ export function createThreadSyncProjection({
           // WHY: The pre-migration V1 contract forwarded every non-null method-qualified payload.
           // The generic event envelope cannot narrow params statically, and validating here would
           // reject updates previously accepted by the account database.
-          accountRateLimits.mergeUpdate(
-            connectionId,
-            params as AccountRateLimitsUpdatedNotification,
-          );
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+          const update = params as AccountRateLimitsUpdatedNotification;
+          accountRateLimits.mergeUpdate(connectionId, update);
         }
         if (event.payload.method === "companion/accountPool/updated" && params !== null) {
           // WHY: The pre-migration V1 contract forwarded every non-null method-qualified payload.
           // This companion event is outside the generated union, so no safe static narrowing is
           // available without adding runtime rejection or normalization that changes behavior.
-          accountRateLimits.putAccountPool(connectionId, params as AccountPoolSnapshot);
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+          const accountPool = params as AccountPoolSnapshot;
+          accountRateLimits.putAccountPool(connectionId, accountPool);
         }
         if (
           event.payload.method === "companion/queue/changed" &&
@@ -93,7 +87,9 @@ export function createThreadSyncProjection({
               commands,
               (commandId) => details.hasPendingDelivery(connectionId, queueThreadId, commandId),
             );
-            if (appServerAcceptedPendingDelivery) deliveredReceiptThreads.add(queueThreadId);
+            if (appServerAcceptedPendingDelivery) {
+              deliveredReceiptThreads.add(queueThreadId);
+            }
           }
         }
         if (patch !== null && threadPatchRequiresAuthoritativeRefresh(patch.operation.kind)) {
@@ -104,24 +100,30 @@ export function createThreadSyncProjection({
           );
         }
         const subagentRoot = subagentActivityRootThreadId(event.payload);
-        if (subagentRoot !== null) subagentRoots.add(subagentRoot);
+        if (subagentRoot !== null) {
+          subagentRoots.add(subagentRoot);
+        }
         const threadId = threadIdFromEvent(event.payload);
-        if (threadId === null) continue;
+        if (threadId === null) {
+          continue;
+        }
         if (patch !== null) {
-          if (operationConfirmsDeliveredCommand(patch.operation)) receiptThreadIds.add(threadId);
+          if (operationConfirmsDeliveredCommand(patch.operation)) {
+            receiptThreadIds.add(threadId);
+          }
           const key = threadResourceKey(connectionId, threadId);
           const current = resources.threadResources.get(key);
           const cwd = projectedThreads.get(threadId)?.after.cwd;
           if (current?.value !== null && current?.value !== undefined && typeof cwd === "string") {
             const value = projectThreadResourcePatch(current.value, cwd, patch, event.cursor);
-            if (value !== current.value)
+            if (value !== current.value) {
               resources.putThreadResources({
-                id: key,
                 connectionId,
-                threadId,
-                status: current.status,
-                value,
                 error: current.error,
+                id: key,
+                status: current.status,
+                threadId,
+                value,
                 ...(current.pendingKinds === undefined
                   ? {}
                   : { pendingKinds: current.pendingKinds }),
@@ -130,13 +132,16 @@ export function createThreadSyncProjection({
                   ? {}
                   : { resourceErrors: current.resourceErrors }),
               });
+            }
           }
         }
       }
       const receiptThreads: Thread[] = [];
       for (const threadId of receiptThreadIds) {
         const thread = projectedThreads.get(threadId)?.after;
-        if (thread !== undefined) receiptThreads.push(thread);
+        if (thread !== undefined) {
+          receiptThreads.push(thread);
+        }
       }
       await reconcileDeliveredCommandReceipts(connectionId, receiptThreads);
       for (const threadId of deliveredReceiptThreads) {
@@ -149,26 +154,35 @@ export function createThreadSyncProjection({
         void sync
           .repairThreadProjection(connectionId, threadId)
           .then(async (repaired) => {
-            if (repaired === null)
+            if (repaired === null) {
               throw new Error(`Accepted message receipt repair returned no thread for ${threadId}`);
+            }
             await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread]);
           })
-          .catch((cause: unknown) => {
-            console.warn(
-              "Accepted message receipt background repair failed:",
-              cause instanceof Error ? cause.message : "unknown error",
-            );
+          .catch(() => {
+            appLogger.warn({
+              event: "command_receipt.background_repair.failed",
+              fields: { connectionId, threadId },
+            });
           });
       }
       for (const rootThreadId of subagentRoots) {
-        void catalog.refreshSubagents(connectionId, rootThreadId, true).catch((cause: unknown) => {
-          console.warn(
-            "CodeWide subagent event refresh failed:",
-            cause instanceof Error ? cause.message : "unknown error",
-          );
+        void catalog.refreshSubagents(connectionId, rootThreadId, true).catch(() => {
+          appLogger.warn({
+            event: "subagent.event_refresh.failed",
+            fields: { connectionId, threadId: rootThreadId },
+          });
         });
       }
       return projected;
+    },
+    async applySnapshot(connectionId, snapshots, cursor) {
+      sync.invalidateHistoryReads(connectionId);
+      details.invalidateHistoryExhaustion(connectionId);
+      await projection.applySnapshot(connectionId, snapshots, cursor);
+      catalog.markRefreshed(connectionId);
+      // Catalog snapshots persist receipt evidence, but not canonical turn
+      // content. Retain the native receipt until detail persistence takes over.
     },
   };
 }

@@ -11,11 +11,11 @@ import type { ComposerMentionInputProps } from "./ComposerMentionInput.types";
 
 const indicators = ["/", "@"] as const;
 const insertActions = [
-  { id: "codeBlock", label: "Code block", icon: "code-slash-outline" },
-  { id: "list", label: "Bulleted list", icon: "list-outline" },
-  { id: "orderedList", label: "Numbered list", icon: "list-outline" },
-  { id: "skills", label: "Skills", icon: "sparkles-outline" },
-  { id: "context", label: "Context", icon: "at-outline" },
+  { icon: "code-slash-outline", id: "codeBlock", label: "Code block" },
+  { icon: "list-outline", id: "list", label: "Bulleted list" },
+  { icon: "list-outline", id: "orderedList", label: "Numbered list" },
+  { icon: "sparkles-outline", id: "skills", label: "Skills" },
+  { icon: "at-outline", id: "context", label: "Context" },
 ] satisfies readonly CodeWideMenuAction[];
 // Match V1's 48–132 dp envelope without mirroring native text measurements in JS.
 const maximumInputHeight = touchTarget + typeScale.composerInput.lineHeight * 4;
@@ -35,7 +35,9 @@ export function ComposerMentionInput(props: ComposerMentionInputProps) {
       mounted.current = false;
     };
   }, []);
-  const dismissTools = () => setToolsOpen(false);
+  const dismissTools = () => {
+    setToolsOpen(false);
+  };
   const insert = (id: string) => {
     setToolsOpen(false);
     input.current?.focus();
@@ -61,16 +63,24 @@ export function ComposerMentionInput(props: ComposerMentionInputProps) {
     setToolsOpen(!toolsOpen);
   }
   function preview() {
-    if (reading) return;
+    if (reading) {
+      return;
+    }
     startReading(async () => {
       setReadError(false);
       try {
         const editor = input.current;
-        if (editor === null) return;
+        if (editor === null) {
+          return;
+        }
         const markdown = await editor.getMarkdown();
-        if (mounted.current) props.onPreviewMarkdown(markdown);
+        if (mounted.current) {
+          props.onPreviewMarkdown(markdown);
+        }
       } catch {
-        if (mounted.current) setReadError(true);
+        if (mounted.current) {
+          setReadError(true);
+        }
       }
     });
   }
@@ -91,31 +101,31 @@ export function ComposerMentionInput(props: ComposerMentionInputProps) {
             onSelect={insert}
           >
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Composer tools"
+              accessibilityRole="button"
               accessibilityState={{ expanded: toolsOpen }}
               onPress={toggleTools}
               style={styles.menu}
             >
-              <Ionicons name="add" size={iconSize.navigation} color={colors.text} />
+              <Ionicons color={colors.text} name="add" size={iconSize.navigation} />
             </Pressable>
           </CodeWideMenu>
           <ComposerMarkdownInput
-            ref={input}
             accessibilityLabel="Message Codex"
-            value={value}
-            placeholder="Message Codex…"
-            style={styles.input}
             mentionIndicators={indicators}
-            search={props.search}
             onChangeText={setValue}
+            placeholder="Message Codex…"
+            ref={input}
+            search={props.search}
+            style={styles.input}
+            value={value}
           />
         </View>
         <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Preview Markdown"
           accessibilityHint="Shows Markdown locally. Does not send a message."
-          accessibilityState={{ disabled: reading, busy: reading }}
+          accessibilityLabel="Preview Markdown"
+          accessibilityRole="button"
+          accessibilityState={{ busy: reading, disabled: reading }}
           disabled={reading}
           onPress={preview}
           style={styles.previewButton}
@@ -123,7 +133,7 @@ export function ComposerMentionInput(props: ComposerMentionInputProps) {
           {reading ? (
             <AppText style={styles.previewPending}>…</AppText>
           ) : (
-            <Ionicons name="arrow-up" size={iconSize.navigation} color={colors.onPrimary} />
+            <Ionicons color={colors.onPrimary} name="arrow-up" size={iconSize.navigation} />
           )}
         </Pressable>
       </View>
@@ -133,63 +143,63 @@ export function ComposerMentionInput(props: ComposerMentionInputProps) {
 
 const styles = StyleSheet.create({
   container: {
+    alignSelf: "stretch",
+    backgroundColor: colors.surface,
     flexShrink: 1,
     minHeight: 0,
     minWidth: 0,
-    alignSelf: "stretch",
+    paddingBottom: spacing.compact,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.xxs,
-    paddingBottom: spacing.compact,
-    backgroundColor: colors.surface,
   },
-  row: {
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: spacing.xs,
-  },
-  inputShell: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    borderRadius: radii.composer,
-    backgroundColor: colors.surfaceContainer,
-    overflow: "hidden",
-  },
-  menu: {
-    width: touchTarget,
-    height: touchTarget,
-    flexShrink: 0,
-    alignItems: "center",
-    justifyContent: "center",
+  error: {
+    ...typeScale.body,
+    color: colors.error,
   },
   input: {
-    minHeight: touchTarget,
     maxHeight: maximumInputHeight,
+    minHeight: touchTarget,
     ...typeScale.composerInput,
-    fontFamily: productFonts.regular,
     color: colors.text,
+    fontFamily: productFonts.regular,
+    paddingBottom: spacing.inputInset,
     paddingLeft: spacing.xxs,
     paddingRight: spacing.sm,
     paddingTop: spacing.sm,
-    paddingBottom: spacing.inputInset,
+  },
+  inputShell: {
+    alignItems: "flex-end",
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radii.composer,
+    flex: 1,
+    flexDirection: "row",
+    minWidth: 0,
+    overflow: "hidden",
+  },
+  menu: {
+    alignItems: "center",
+    flexShrink: 0,
+    height: touchTarget,
+    justifyContent: "center",
+    width: touchTarget,
   },
   previewButton: {
-    width: touchTarget,
-    height: touchTarget,
-    flexShrink: 0,
-    borderRadius: radii.composer,
-    backgroundColor: colors.primary,
     alignItems: "center",
+    backgroundColor: colors.primary,
+    borderRadius: radii.composer,
+    flexShrink: 0,
+    height: touchTarget,
     justifyContent: "center",
+    width: touchTarget,
   },
   previewPending: {
     ...typeScale.body,
     color: colors.onPrimary,
   },
-  error: {
-    ...typeScale.body,
-    color: colors.error,
+  row: {
+    alignItems: "flex-end",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minWidth: 0,
   },
 });

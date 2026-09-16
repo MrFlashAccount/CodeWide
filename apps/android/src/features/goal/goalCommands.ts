@@ -4,13 +4,13 @@ import { useEvent } from "../../react/useEvent";
 
 /** Remote commands available to the thread-goal feature. */
 export type GoalCommands = {
-  getThreadGoal(connectionId: string, threadId: string): Promise<ThreadGoal | null>;
-  setThreadGoal(
+  clearThreadGoal: (connectionId: string, threadId: string) => Promise<boolean>;
+  getThreadGoal: (connectionId: string, threadId: string) => Promise<ThreadGoal | null>;
+  setThreadGoal: (
     connectionId: string,
     threadId: string,
     input: ThreadGoalInput,
-  ): Promise<ThreadGoal>;
-  clearThreadGoal(connectionId: string, threadId: string): Promise<boolean>;
+  ) => Promise<ThreadGoal>;
 };
 export function useGoalCommands(
   remote: GoalCommands,
@@ -18,18 +18,19 @@ export function useGoalCommands(
   activeRemoteThreadId: string | null,
 ) {
   const requireThreadId = useEvent(() => {
-    if (activeRemoteThreadId === null) throw new Error("No thread selected");
+    if (activeRemoteThreadId === null) {
+      throw new Error("No thread selected");
+    }
     return activeRemoteThreadId;
   });
-  const onGetGoal = useEvent(
-    async () => await remote.getThreadGoal(activeConnectionId, requireThreadId()),
+  const onGetGoal = useEvent(async () =>
+    remote.getThreadGoal(activeConnectionId, requireThreadId()),
   );
-  const onSetGoal = useEvent(
-    async (input: ThreadGoalInput) =>
-      await remote.setThreadGoal(activeConnectionId, requireThreadId(), input),
+  const onSetGoal = useEvent(async (input: ThreadGoalInput) =>
+    remote.setThreadGoal(activeConnectionId, requireThreadId(), input),
   );
-  const onClearGoal = useEvent(
-    async () => await remote.clearThreadGoal(activeConnectionId, requireThreadId()),
+  const onClearGoal = useEvent(async () =>
+    remote.clearThreadGoal(activeConnectionId, requireThreadId()),
   );
-  return { onGetGoal, onSetGoal, onClearGoal };
+  return { onClearGoal, onGetGoal, onSetGoal };
 }

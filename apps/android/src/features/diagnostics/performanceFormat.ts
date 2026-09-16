@@ -23,9 +23,15 @@ export function ratio(numerator: number, denominator: number): string {
 }
 
 export function bytes(value: number): string {
-  if (value < 1_024) return `${integer(value)} B`;
-  if (value < 1_048_576) return `${decimal(value / 1_024)} KB`;
-  if (value < 1_073_741_824) return `${decimal(value / 1_048_576)} MB`;
+  if (value < 1024) {
+    return `${integer(value)} B`;
+  }
+  if (value < 1_048_576) {
+    return `${decimal(value / 1024)} KB`;
+  }
+  if (value < 1_073_741_824) {
+    return `${decimal(value / 1_048_576)} MB`;
+  }
   return `${decimal(value / 1_073_741_824)} GB`;
 }
 
@@ -38,11 +44,15 @@ export function rate(value: number): string {
 }
 
 export function duration(valueMs: number): string {
-  const totalSeconds = Math.floor(valueMs / 1_000);
-  const hours = Math.floor(totalSeconds / 3_600);
-  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const totalSeconds = Math.floor(valueMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
+  if (hours > 0) {
+    return `${String(hours)}h ${String(minutes)}m`;
+  }
+  if (minutes > 0) {
+    return `${String(minutes)}m ${String(seconds)}s`;
+  }
+  return `${String(seconds)}s`;
 }

@@ -2,67 +2,67 @@ import { StyleSheet } from "react-native";
 import { colors, radii, spacing, typeScale } from "../theme";
 
 export const listRowStyles = StyleSheet.create({
-  surface: {
-    width: "100%",
-    minWidth: 0,
-    overflow: "hidden",
-    backgroundColor: colors.surfaceContainer,
-  },
-  only: { borderRadius: radii.medium },
-  first: {
-    borderTopLeftRadius: radii.medium,
-    borderTopRightRadius: radii.medium,
-  },
-  middle: {},
-  last: {
-    borderBottomLeftRadius: radii.medium,
-    borderBottomRightRadius: radii.medium,
-  },
-  disabled: { opacity: 0.4 },
-  selected: { backgroundColor: colors.surfaceContainerHigh },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    gap: spacing.md,
-  },
-  text: {
-    flex: 1,
-    minWidth: 0,
-    gap: spacing.xxs,
-  },
-  title: {
-    ...typeScale.body,
-    color: colors.text,
-  },
+  danger: { color: colors.red },
   description: {
     ...typeScale.label,
     color: colors.textMuted,
   },
-  supporting: {
-    flexDirection: "row",
+  disabled: { opacity: 0.4 },
+  first: {
+    borderTopLeftRadius: radii.medium,
+    borderTopRightRadius: radii.medium,
+  },
+  last: {
+    borderBottomLeftRadius: radii.medium,
+    borderBottomRightRadius: radii.medium,
+  },
+  middle: {},
+  only: { borderRadius: radii.medium },
+  pressed: { opacity: 0.7 },
+  row: {
     alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  selected: { backgroundColor: colors.surfaceContainerHigh },
+  separator: {
+    backgroundColor: colors.border,
+    bottom: 0,
+    height: StyleSheet.hairlineWidth,
+    left: spacing.sm,
+    position: "absolute",
+    right: spacing.sm,
+  },
+  slot: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: spacing.xs,
+  },
+  supporting: {
+    alignItems: "center",
+    flexDirection: "row",
     gap: spacing.xxs,
   },
   supportingText: {
     flex: 1,
     minWidth: 0,
   },
-  danger: { color: colors.red },
-  slot: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    flexShrink: 0,
+  surface: {
+    backgroundColor: colors.surfaceContainer,
+    minWidth: 0,
+    overflow: "hidden",
+    width: "100%",
   },
-  separator: {
-    position: "absolute",
-    bottom: 0,
-    left: spacing.sm,
-    right: spacing.sm,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
+  text: {
+    flex: 1,
+    gap: spacing.xxs,
+    minWidth: 0,
   },
-  pressed: { opacity: 0.7 },
+  title: {
+    ...typeScale.body,
+    color: colors.text,
+  },
 });

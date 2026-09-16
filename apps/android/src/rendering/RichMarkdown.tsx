@@ -17,12 +17,24 @@ import {
   useRef,
   useState,
 } from "react";
-import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import {
+  Image,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type TextStyle,
+} from "react-native";
 import { ScrollView as GestureScrollView } from "react-native-gesture-handler";
 
 import { colors, radii, typeScale, spacing, typeWeight, iconSize } from "../theme";
 import { usePerformanceExperiment } from "../data/performance-experiments";
+import { useEvent } from "../react/useEvent";
 import { AppText } from "../ui/Typography";
+import { useAppDialog } from "../ui/AppDialog";
 import { isRemoteFileHref, remoteFileKind } from "./document-preview";
 import { parseDiagnosticRichMarkdown } from "./diagnostic-markdown";
 import { safeImageUri } from "./image-source";
@@ -33,7 +45,8 @@ import {
 } from "./ImagePreviewHost";
 import { useMarkdownLocalLinkHandler } from "./MarkdownLinkHandler";
 import { markdownTableLayout } from "./markdown-table-layout";
-import { collectMarkdownImageOrder } from "./markdown-image-order";
+import { textFingerprint } from "./listKey";
+import { collectMarkdownImageOrder, type MarkdownImageNode } from "./markdown-image-order";
 import type { MarkdownDocumentBlock } from "./markdown-document-blocks";
 import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
 import { NativeCodeBlock } from "./NativeCodeBlock";
@@ -53,17 +66,18 @@ import { HighlightSearchText } from "./SearchMessageFocus";
 const HorizontalScrollView = Platform.OS === "android" ? GestureScrollView : ScrollView;
 const RichMarkdownTextScaleContext = createContext(1);
 const RichMarkdownReviewContext = createContext<{
-  target: ContentReviewTarget;
   pathPrefix: string;
+  target: ContentReviewTarget;
 } | null>(null);
 const RichMarkdownRevealContext = createContext(false);
+const EMPTY_RICH_EXTENSIONS: Record<string, RichExtensionRenderer> = {};
 
 export function RichMarkdownTextScaleProvider({
-  scale,
   children,
+  scale,
 }: {
-  scale: number;
   children: ReactNode;
+  scale: number;
 }) {
   return (
     <RichMarkdownTextScaleContext.Provider value={Math.max(0.8, Math.min(1.4, scale))}>
@@ -73,10 +87,12 @@ export function RichMarkdownTextScaleProvider({
 }
 
 /** Applies viewer-local typography without mutating global chat Markdown. */
+// WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
+// oxlint-disable-next-line eslint/complexity
 function Text({
-  style,
   reviewBlockPath,
   reviewOffset = 0,
+  style,
   ...props
 }: ComponentProps<typeof AppText> & {
   reviewBlockPath?: string;
@@ -95,9 +111,9 @@ function Text({
     reviewOffset,
   );
   const flattened = StyleSheet.flatten(style);
-  const fontSize = typeof flattened?.fontSize === "number" ? flattened.fontSize * scale : undefined;
+  const fontSize = typeof flattened.fontSize === "number" ? flattened.fontSize * scale : undefined;
   const lineHeight =
-    typeof flattened?.lineHeight === "number" ? flattened.lineHeight * scale : undefined;
+    typeof flattened.lineHeight === "number" ? flattened.lineHeight * scale : undefined;
   const resolvedStyle =
     scale === 1
       ? style
@@ -108,29 +124,29 @@ function Text({
             ...(lineHeight === undefined ? {} : { lineHeight }),
           },
         ];
-  if (review !== null && reviewBlockPath !== undefined) {
+  if (review !== null && blockPath !== null) {
     return (
       <ReviewableText
         {...props}
-        style={resolvedStyle}
-        reviewHighlights={reviewHighlights}
         onReviewSelection={(selection) => {
-          void beginReview({
+          beginReview({
+            blockPath,
+            end: reviewOffset + selection.end,
             kind: "text",
-            target: review.target,
-            blockPath: blockPath as string,
             quote: selection.text,
             start: reviewOffset + selection.start,
-            end: reviewOffset + selection.end,
+            target: review.target,
           });
         }}
+        reviewHighlights={reviewHighlights}
+        style={resolvedStyle}
       />
     );
   }
   return <AppText {...props} style={resolvedStyle} />;
 }
 
-function InsetRichContentWidth({ inset, children }: { inset: number; children: ReactNode }) {
+function InsetRichContentWidth({ children, inset }: { children: ReactNode; inset: number }) {
   const availableWidth = useRichContentWidth();
   const nestedWidth = availableWidth === null ? null : Math.max(1, availableWidth - inset);
   return <RichContentWidthProvider width={nestedWidth}>{children}</RichContentWidthProvider>;
@@ -138,41 +154,43 @@ function InsetRichContentWidth({ inset, children }: { inset: number; children: R
 
 export type RichExtensionRenderer = (value: string, meta: string | null) => ReactNode;
 
+// WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
+// oxlint-disable-next-line eslint/complexity
 export function RichMarkdown({
-  source,
-  extensions = {},
-  maxLines,
-  targetLine,
-  onTargetLayout,
-  reviewTarget,
-  reviewPathPrefix = "segment-0",
   streaming = false,
   animateStreaming = streaming,
+  extensions = EMPTY_RICH_EXTENSIONS,
+  maxLines,
+  onTargetLayout,
+  reviewPathPrefix = "segment-0",
+  reviewTarget,
+  source,
+  targetLine,
 }: {
-  source: string;
+  animateStreaming?: boolean;
   extensions?: Record<string, RichExtensionRenderer>;
   maxLines?: number;
-  targetLine?: number;
-  onTargetLayout?(y: number): void;
-  reviewTarget?: ContentReviewTarget;
+  onTargetLayout?: (y: number) => void;
   reviewPathPrefix?: string;
+  reviewTarget?: ContentReviewTarget;
+  source: string;
   streaming?: boolean;
-  animateStreaming?: boolean;
+  targetLine?: number;
 }) {
   const plainText = usePerformanceExperiment("plainTextMarkdown");
   if (plainText) {
     return (
       <RichMarkdownReviewContext.Provider
         value={
-          reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: reviewPathPrefix }
+          reviewTarget === undefined ? null : { pathPrefix: reviewPathPrefix, target: reviewTarget }
         }
       >
         <Text
-          selectable
           reviewBlockPath="plain"
+          selectable
           {...(maxLines === undefined
             ? {}
-            : { numberOfLines: maxLines, ellipsizeMode: "tail" as const })}
+            : { ellipsizeMode: "tail" as const, numberOfLines: maxLines })}
           style={styles.paragraph}
         >
           {source}
@@ -187,14 +205,14 @@ export function RichMarkdown({
     return (
       <RichMarkdownReviewContext.Provider
         value={
-          reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: reviewPathPrefix }
+          reviewTarget === undefined ? null : { pathPrefix: reviewPathPrefix, target: reviewTarget }
         }
       >
         <Text
-          selectable
-          reviewBlockPath="truncated"
-          numberOfLines={maxLines}
           ellipsizeMode="tail"
+          numberOfLines={maxLines}
+          reviewBlockPath="truncated"
+          selectable
           style={styles.paragraph}
         >
           {plainRichMarkdownRootText(parsed.root)}
@@ -208,30 +226,33 @@ export function RichMarkdown({
     <RichMarkdownRevealContext.Provider value={animateStreaming}>
       <RichMarkdownReviewContext.Provider
         value={
-          reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: reviewPathPrefix }
+          reviewTarget === undefined ? null : { pathPrefix: reviewPathPrefix, target: reviewTarget }
         }
       >
         <View style={styles.document}>
           {parsed.root.children.map((node, index) => {
-            const path = `${node.type}-${index}`;
+            const path = `${node.type}-${String(index)}`;
+            const key = markdownNodeKey(node);
             const block = (
-              <BlockNode node={node} path={path} extensions={extensions} imageOrder={imageOrder} />
+              <BlockNode extensions={extensions} imageOrder={imageOrder} node={node} path={path} />
             );
             return index === targetBlockIndex && onTargetLayout !== undefined ? (
               <View
-                key={path}
                 collapsable={false}
-                onLayout={({ nativeEvent }) => onTargetLayout(nativeEvent.layout.y)}
+                key={key}
+                onLayout={({ nativeEvent }) => {
+                  onTargetLayout(nativeEvent.layout.y);
+                }}
               >
                 {block}
               </View>
             ) : (
               <BlockNode
-                key={path}
-                node={node}
-                path={path}
                 extensions={extensions}
                 imageOrder={imageOrder}
+                key={key}
+                node={node}
+                path={path}
               />
             );
           })}
@@ -263,19 +284,19 @@ export function RichMarkdownDocumentBlockView({
         value={
           reviewTarget === undefined
             ? null
-            : { target: reviewTarget, pathPrefix: block.reviewPathPrefix }
+            : { pathPrefix: block.reviewPathPrefix, target: reviewTarget }
         }
       >
         {plainText ? (
-          <Text selectable reviewBlockPath={block.path} style={styles.paragraph}>
+          <Text reviewBlockPath={block.path} selectable style={styles.paragraph}>
             {plainRichMarkdownRootText(block.node)}
           </Text>
         ) : (
           <BlockNode
-            node={block.node}
-            path={block.path}
             extensions={{}}
             imageOrder={block.imageOrder}
+            node={block.node}
+            path={block.path}
           />
         )}
       </RichMarkdownReviewContext.Provider>
@@ -283,16 +304,18 @@ export function RichMarkdownDocumentBlockView({
   );
 }
 
+// WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
+// oxlint-disable-next-line eslint/complexity
 function BlockNode({
-  node,
-  path,
   extensions,
   imageOrder,
+  node,
+  path,
 }: {
+  extensions: Record<string, RichExtensionRenderer>;
+  imageOrder: WeakMap<MarkdownImageNode, number>;
   node: RootContent;
   path: string;
-  extensions: Record<string, RichExtensionRenderer>;
-  imageOrder: WeakMap<object, number>;
 }) {
   const review = useContext(RichMarkdownReviewContext);
   const animateStreaming = useContext(RichMarkdownRevealContext);
@@ -302,9 +325,9 @@ function BlockNode({
         const order = imageOrder.get(node.children[0]);
         return (
           <MarkdownImage
-            url={node.children[0].url}
             alt={node.children[0].alt ?? "Image"}
             reveal={animateStreaming}
+            url={node.children[0].url}
             {...(order === undefined ? {} : { order })}
           />
         );
@@ -319,23 +342,23 @@ function BlockNode({
         const order = imageOrder.get(image);
         return (
           <MarkdownImage
-            url={image.url}
             alt={image.alt ?? "Image"}
-            target={node.children[0].url}
             reveal={animateStreaming}
+            target={node.children[0].url}
+            url={image.url}
             {...(order === undefined ? {} : { order })}
           />
         );
       }
       return (
-        <Text selectable reviewBlockPath={path} style={styles.paragraph}>
+        <Text reviewBlockPath={path} selectable style={styles.paragraph}>
           {inline(node.children)}
         </Text>
       );
     case "heading": {
       const style = [styles.heading, headingStyle(node.depth)];
       return (
-        <Text selectable reviewBlockPath={path} style={style}>
+        <Text reviewBlockPath={path} selectable style={style}>
           {inline(node.children)}
         </Text>
       );
@@ -346,18 +369,18 @@ function BlockNode({
         return (
           <View style={styles.alert}>
             <View style={styles.alertHeader}>
-              <Ionicons name={alert.icon} size={iconSize.inline} color={alert.color} />
+              <Ionicons color={alert.color} name={alert.icon} size={iconSize.inline} />
               <Text style={[styles.alertTitle, { color: alert.color }]}>{alert.label}</Text>
             </View>
             <View style={styles.alertBody}>
               <InsetRichContentWidth inset={18}>
                 {alert.children.map((child, index) => (
                   <BlockNode
-                    key={index}
-                    node={child}
-                    path={`${path}/alert-${index}`}
                     extensions={extensions}
                     imageOrder={imageOrder}
+                    key={markdownNodeKey(child)}
+                    node={child}
+                    path={`${path}/alert-${String(index)}`}
                   />
                 ))}
               </InsetRichContentWidth>
@@ -370,11 +393,11 @@ function BlockNode({
           <InsetRichContentWidth inset={10}>
             {node.children.map((child, index) => (
               <BlockNode
-                key={index}
-                node={child}
-                path={`${path}/quote-${index}`}
                 extensions={extensions}
                 imageOrder={imageOrder}
+                key={markdownNodeKey(child)}
+                node={child}
+                path={`${path}/quote-${String(index)}`}
               />
             ))}
           </InsetRichContentWidth>
@@ -385,32 +408,32 @@ function BlockNode({
       return (
         <View style={styles.list}>
           {node.children.map((item, index) => (
-            <View key={index} style={styles.listRow}>
+            <View key={markdownNodeKey(item)} style={styles.listRow}>
               {typeof item.checked === "boolean" ? (
                 <View
                   accessibilityLabel={item.checked ? "Completed task" : "Open task"}
                   style={styles.taskMarker}
                 >
                   <Ionicons
+                    color={item.checked ? colors.green : colors.textMuted}
                     name={item.checked ? "checkbox" : "square-outline"}
                     size={iconSize.inline}
-                    color={item.checked ? colors.green : colors.textMuted}
                   />
                 </View>
               ) : (
                 <Text style={styles.listMarker}>
-                  {node.ordered ? `${(node.start ?? 1) + index}.` : "•"}
+                  {node.ordered === true ? `${String((node.start ?? 1) + index)}.` : "•"}
                 </Text>
               )}
               <View style={styles.listBody}>
                 <InsetRichContentWidth inset={25}>
                   {item.children.map((child, childIndex) => (
                     <BlockNode
-                      key={childIndex}
-                      node={child}
-                      path={`${path}/item-${index}-${childIndex}`}
                       extensions={extensions}
                       imageOrder={imageOrder}
+                      key={markdownNodeKey(child)}
+                      node={child}
+                      path={`${path}/item-${String(index)}-${String(childIndex)}`}
                     />
                   ))}
                 </InsetRichContentWidth>
@@ -421,37 +444,41 @@ function BlockNode({
       );
     case "code": {
       const language = node.lang ?? "text";
-      if (language.toLocaleLowerCase() === "mermaid")
+      if (language.toLocaleLowerCase() === "mermaid") {
         return (
           <View style={styles.wideBlock}>
             <MermaidDiagram
-              source={node.value}
               reveal={animateStreaming}
+              source={node.value}
               {...(review === null
                 ? {}
-                : { reviewTarget: review.target, diagramId: `${review.pathPrefix}/${path}` })}
+                : { diagramId: `${review.pathPrefix}/${path}`, reviewTarget: review.target })}
             />
           </View>
         );
-      if (looksLikeAsciiDiagram(node.value, node.lang))
+      }
+      if (looksLikeAsciiDiagram(node.value, node.lang)) {
         return (
           <View style={styles.wideBlock}>
             <AsciiDiagram source={node.value} />
           </View>
         );
+      }
       if (language.startsWith("codex-")) {
         const extension = extensions[language.slice("codex-".length)];
-        if (extension !== undefined) return <>{extension(node.value, node.meta ?? null)}</>;
+        if (extension !== undefined) {
+          return <>{extension(node.value, node.meta ?? null)}</>;
+        }
       }
-      return <CopyableCodeBlock value={node.value} language={language} />;
+      return <CopyableCodeBlock language={language} value={node.value} />;
     }
     case "table":
-      return <MarkdownTable table={node} path={path} />;
+      return <MarkdownTable path={path} table={node} />;
     case "thematicBreak":
       return <View style={styles.rule} />;
     case "html":
       return (
-        <MarkupBlock node={node} path={path} extensions={extensions} imageOrder={imageOrder} />
+        <MarkupBlock extensions={extensions} imageOrder={imageOrder} node={node} path={path} />
       );
     case "footnoteDefinition":
       return (
@@ -462,11 +489,11 @@ function BlockNode({
           <View style={styles.footnoteBody}>
             {node.children.map((child, index) => (
               <BlockNode
-                key={index}
-                node={child}
-                path={`${path}/footnote-${index}`}
                 extensions={extensions}
                 imageOrder={imageOrder}
+                key={markdownNodeKey(child)}
+                node={child}
+                path={`${path}/footnote-${String(index)}`}
               />
             ))}
           </View>
@@ -475,94 +502,108 @@ function BlockNode({
     case "definition":
     case "yaml":
       return null;
-    default:
+    case "break":
+    case "delete":
+    case "emphasis":
+    case "footnoteReference":
+    case "image":
+    case "imageReference":
+    case "inlineCode":
+    case "link":
+    case "linkReference":
+    case "listItem":
+    case "strong":
+    case "tableCell":
+    case "tableRow":
+    case "text":
       return (
-        <Text selectable reviewBlockPath={path} style={styles.secondary}>
+        <Text reviewBlockPath={path} selectable style={styles.secondary}>
           {fallbackText(node)}
         </Text>
       );
+    default:
+      return null;
   }
 }
 
 function MarkupBlock({
-  node,
-  path,
   extensions,
   imageOrder,
+  node,
+  path,
 }: {
+  extensions: Record<string, RichExtensionRenderer>;
+  imageOrder: WeakMap<MarkdownImageNode, number>;
   node: Extract<RootContent, { type: "html" }>;
   path: string;
-  extensions: Record<string, RichExtensionRenderer>;
-  imageOrder: WeakMap<object, number>;
 }) {
   const animateStreaming = useContext(RichMarkdownRevealContext);
   const html = messageMarkupNodeHtml(node);
-  if (html === null)
+  const renderCode = useEvent((value: string, language: string, childPath: string) => (
+    <BlockNode
+      extensions={extensions}
+      imageOrder={imageOrder}
+      node={{ lang: language, type: "code", value }}
+      path={`${path}/${childPath}`}
+    />
+  ));
+  const renderImage = useEvent((url: string, alt: string, dimensions?: MarkupImageDimensions) => (
+    <MarkdownImage
+      alt={alt}
+      reveal={animateStreaming}
+      url={url}
+      {...(dimensions === undefined ? {} : { dimensions })}
+    />
+  ));
+  const renderLink = useEvent((url: string, children: ReactNode) => (
+    <MarkdownLink url={url}>{children}</MarkdownLink>
+  ));
+  if (html === null) {
     return (
-      <CopyableInline value={node.value} style={styles.rawHtml}>
+      <CopyableInline style={styles.rawHtml} value={node.value}>
         {node.value}
       </CopyableInline>
     );
-  return (
-    <NativeMarkup
-      html={html}
-      code={(value, language, childPath) => (
-        <BlockNode
-          node={{ type: "code", value, lang: language }}
-          path={`${path}/${childPath}`}
-          extensions={extensions}
-          imageOrder={imageOrder}
-        />
-      )}
-      image={(url, alt, dimensions) => (
-        <MarkdownImage
-          url={url}
-          alt={alt}
-          reveal={animateStreaming}
-          {...(dimensions === undefined ? {} : { dimensions })}
-        />
-      )}
-      link={(url, children) => <MarkdownLink url={url}>{children}</MarkdownLink>}
-    />
-  );
+  }
+  return <NativeMarkup code={renderCode} html={html} image={renderImage} link={renderLink} />;
 }
 
-function CopyableCodeBlock({ value, language }: { value: string; language: string }) {
+function CopyableCodeBlock({ language, value }: { language: string; value: string }) {
   const [copied, copy] = useCopyFeedback(value);
   const scale = useContext(RichMarkdownTextScaleContext);
   return (
     <Pressable
-      accessibilityRole="button"
       accessibilityLabel={`Copy ${language} code block`}
+      accessibilityRole="button"
       onPress={copy}
       style={({ pressed }) => [styles.codeContainer, pressed && styles.copyPressed]}
     >
-      <CodeBlockHeader language={language} copied={copied} scale={scale} />
-      <NativeCodeBlock value={value} language={language} />
+      <CodeBlockHeader copied={copied} language={language} scale={scale} />
+      <NativeCodeBlock language={language} value={value} />
     </Pressable>
   );
 }
 
 function CopyableInline({
-  value,
   children,
-  style,
   onLongPress,
+  style,
+  value,
 }: {
-  value: string;
   children: ReactNode;
-  style?: object;
-  onLongPress?(): void;
+  onLongPress?: () => void;
+  style?: StyleProp<TextStyle>;
+  value: string;
 }) {
   const [copied, copy] = useCopyFeedback(value);
   return (
     <Text
-      accessibilityRole="button"
       accessibilityHint={
         onLongPress === undefined
           ? "Copies to clipboard"
           : "Copies to clipboard; long press opens the link"
       }
+      accessibilityRole="button"
       onPress={copy}
       {...(onLongPress === undefined ? {} : { onLongPress })}
       style={[style, copied && styles.copyHintDone]}
@@ -572,40 +613,63 @@ function CopyableInline({
   );
 }
 
-function MarkdownLink({ url, children }: { url: string; children: ReactNode }) {
+// WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
+// oxlint-disable-next-line eslint/complexity
+function MarkdownLink({ children, url }: { children: ReactNode; url: string }) {
+  const dialog = useAppDialog();
   const openLocalLink = useMarkdownLocalLinkHandler();
   const external = isSafeLink(url);
   const localKind =
     !external && openLocalLink !== null && isRemoteFileHref(url) ? remoteFileKind(url, url) : null;
   const local = localKind !== null;
-  if (!external && !local) return <Text style={styles.secondary}>{children}</Text>;
+  if (!external && !local) {
+    return <Text style={styles.secondary}>{children}</Text>;
+  }
   return (
     <Text
-      accessibilityRole="link"
       accessibilityHint="Opens the link"
+      accessibilityRole="link"
       onPress={() => {
-        if (openLocalLink?.(url)) return;
-        if (external) void Linking.openURL(url);
+        if (openLocalLink?.(url) === true) {
+          return;
+        }
+        if (external) {
+          Linking.openURL(url).catch((error: unknown) => {
+            dialog.alert(
+              "Could not open link",
+              error instanceof Error ? error.message : "Could not open link",
+            );
+          });
+        }
       }}
       style={styles.link}
     >
       {children}
       {(external || localKind === "download") && " "}
-      {external && <Ionicons name="open-outline" size={iconSize.indicator} color={colors.accent} />}
+      {external && <Ionicons color={colors.accent} name="open-outline" size={iconSize.indicator} />}
       {localKind === "download" && (
-        <Ionicons name="download-outline" size={iconSize.indicator} color={colors.accent} />
+        <Ionicons color={colors.accent} name="download-outline" size={iconSize.indicator} />
       )}
     </Text>
   );
 }
 
 function useCopyFeedback(value: string): [boolean, () => void] {
+  const dialog = useAppDialog();
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copy = () => {
-    void Clipboard.setStringAsync(value);
-    setCopied(true);
-    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    Clipboard.setStringAsync(value).then(
+      () => {
+        setCopied(true);
+      },
+      (error: unknown) => {
+        dialog.alert("Copy failed", error instanceof Error ? error.message : "Could not copy");
+      },
+    );
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+    }
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
       setCopied(false);
@@ -614,20 +678,22 @@ function useCopyFeedback(value: string): [boolean, () => void] {
   return [copied, copy];
 }
 
+// WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
+// oxlint-disable-next-line eslint/complexity
 function MarkdownImage({
-  url,
   alt,
-  target = url,
+  dimensions,
   order,
   reveal = false,
-  dimensions,
+  url,
+  target = url,
 }: {
-  url: string;
   alt: string;
-  target?: string;
+  dimensions?: MarkupImageDimensions;
   order?: number;
   reveal?: boolean;
-  dimensions?: MarkupImageDimensions;
+  target?: string;
+  url: string;
 }) {
   const inGallery = useContext(ArtifactImageReferences)?.has(url) === true;
   const openImagePreview = useImagePreview();
@@ -648,13 +714,15 @@ function MarkdownImage({
   const previewItem = {
     id: groupId === null ? previewId : `${groupId}:${url}:${alt}`,
     label: alt,
-    source: privateImage.source ?? { uri: imageUri ?? "" },
     link: safeTarget,
     reference: url,
+    source: privateImage.source ?? { uri: imageUri ?? "" },
     ...(order === undefined ? {} : { order }),
   };
   useRegisterImagePreviewItem(inGallery ? null : groupId, previewItem);
-  if (inGallery) return null;
+  if (inGallery) {
+    return null;
+  }
   if (
     imageUri === null &&
     openLocalLink !== null &&
@@ -663,40 +731,45 @@ function MarkdownImage({
   ) {
     return (
       <Pressable
-        accessibilityRole="imagebutton"
         accessibilityLabel={`Open ${alt}`}
-        onPress={() => openLocalLink(url)}
+        accessibilityRole="imagebutton"
+        onPress={() => {
+          openLocalLink(url);
+        }}
         style={styles.localImageLink}
       >
-        <Ionicons name="image-outline" size={iconSize.inline} color={colors.accent} />
-        <Text numberOfLines={1} ellipsizeMode="middle" style={styles.link}>
+        <Ionicons color={colors.accent} name="image-outline" size={iconSize.inline} />
+        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.link}>
           {alt}
         </Text>
       </Pressable>
     );
   }
-  if (imageUri === null)
+  if (imageUri === null) {
     return (
       <Text selectable style={styles.secondary}>
         [Image: {alt}]
       </Text>
     );
-  if (privateImage.failed || (privateImage.uri !== null && failedUri === privateImage.uri))
+  }
+  if (privateImage.failed || (privateImage.uri !== null && failedUri === privateImage.uri)) {
     return (
       <InlineMediaFrame height={imageHeight}>
         <View style={imageStyle}>
-          <Text selectable numberOfLines={3} style={styles.secondary}>
+          <Text numberOfLines={3} selectable style={styles.secondary}>
             [Image: {alt}]
           </Text>
         </View>
       </InlineMediaFrame>
     );
-  if (privateImage.uri === null)
+  }
+  if (privateImage.uri === null) {
     return (
       <InlineMediaFrame height={imageHeight}>
         <View style={imageStyle} />
       </InlineMediaFrame>
     );
+  }
   return (
     <InlineMediaFrame height={imageHeight}>
       <NativeRevealSurface
@@ -705,19 +778,25 @@ function MarkdownImage({
         revealKey={`image:${privateImage.uri}`}
       >
         <Pressable
-          accessibilityRole="imagebutton"
           accessibilityLabel={`Open ${alt}`}
-          onPress={() => openImagePreview({ ...previewItem, groupId })}
+          accessibilityRole="imagebutton"
+          onPress={() => {
+            openImagePreview({ ...previewItem, groupId });
+          }}
           {...(safeTarget === null ? {} : { onLongPress: () => void Linking.openURL(safeTarget) })}
         >
           <Image
             accessibilityLabel={alt}
-            source={privateImage.source ?? { uri: privateImage.uri }}
-            resizeMode="contain"
+            onError={() => {
+              setFailedUri(privateImage.uri);
+            }}
+            onLoad={() => {
+              setLoadedUri(privateImage.uri);
+            }}
             resizeMethod="resize"
+            resizeMode="contain"
+            source={privateImage.source ?? { uri: privateImage.uri }}
             style={imageStyle}
-            onLoad={() => setLoadedUri(privateImage.uri)}
-            onError={() => setFailedUri(privateImage.uri)}
           />
         </Pressable>
       </NativeRevealSurface>
@@ -725,7 +804,7 @@ function MarkdownImage({
   );
 }
 
-function MarkdownTable({ table, path }: { table: Table; path: string }) {
+function MarkdownTable({ path, table }: { path: string; table: Table }) {
   const animateStreaming = useContext(RichMarkdownRevealContext);
   const availableWidth = useRichContentWidth();
   const [viewportWidth, setViewportWidth] = useState(0);
@@ -737,39 +816,47 @@ function MarkdownTable({ table, path }: { table: Table; path: string }) {
   // standalone renderers without a provider.
   const minimumWidth =
     availableWidth !== null && availableWidth > 0 ? availableWidth : viewportWidth;
-  const { tableWidth, cellWidth } = markdownTableLayout(minimumWidth, columnCount);
+  const { cellWidth, tableWidth } = markdownTableLayout(minimumWidth, columnCount);
   return (
     <View
+      onLayout={({ nativeEvent }) => {
+        setViewportWidth(Math.ceil(nativeEvent.layout.width));
+      }}
       style={[styles.tableViewport, minimumWidth > 0 ? { width: minimumWidth } : null]}
-      onLayout={({ nativeEvent }) => setViewportWidth(Math.ceil(nativeEvent.layout.width))}
     >
       <HorizontalScrollView
-        horizontal
-        nestedScrollEnabled
-        showsHorizontalScrollIndicator
-        style={styles.tableHorizontalScroller}
         contentContainerStyle={[
           styles.tableHorizontalContent,
           minimumWidth > 0 ? { minWidth: minimumWidth } : null,
         ]}
+        horizontal
+        nestedScrollEnabled
+        showsHorizontalScrollIndicator
+        style={styles.tableHorizontalScroller}
       >
         <View style={[styles.table, { width: tableWidth }]}>
           {table.children.map((row, rowIndex) => {
             const content = (
-              <View key={rowIndex} style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}>
+              <View
+                key={markdownNodeKey(row)}
+                style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}
+              >
                 {row.children.map((cell, cellIndex) => (
                   <TableCellView
-                    key={cellIndex}
-                    cell={cell}
-                    width={cellWidth}
-                    header={rowIndex === 0}
                     align={table.align?.[cellIndex] ?? null}
+                    cell={cell}
+                    header={rowIndex === 0}
+                    key={markdownNodeKey(cell)}
+                    width={cellWidth}
                   />
                 ))}
               </View>
             );
             return animateStreaming ? (
-              <NativeRevealSurface key={rowIndex} revealKey={`${path}:row:${rowIndex}`}>
+              <NativeRevealSurface
+                key={markdownNodeKey(row)}
+                revealKey={`${path}:row:${String(rowIndex)}`}
+              >
                 {content}
               </NativeRevealSurface>
             ) : (
@@ -783,22 +870,22 @@ function MarkdownTable({ table, path }: { table: Table; path: string }) {
 }
 
 function TableCellView({
-  cell,
-  width,
-  header,
   align,
+  cell,
+  header,
+  width,
 }: {
-  cell: TableCell;
-  width: number;
-  header: boolean;
   align: "left" | "right" | "center" | null;
+  cell: TableCell;
+  header: boolean;
+  width: number;
 }) {
   return (
     <Text
       style={[
         styles.tableCell,
         header && styles.tableCellHeader,
-        { width, textAlign: align ?? "left" },
+        { textAlign: align ?? "left", width },
       ]}
     >
       {inline(cell.children)}
@@ -807,35 +894,36 @@ function TableCellView({
 }
 
 function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
-  return nodes.map((node, index) => {
+  return nodes.map((node) => {
+    const key = markdownNodeKey(node);
     switch (node.type) {
       case "text":
-        return <HighlightSearchText key={index} text={node.value} />;
+        return <HighlightSearchText key={key} text={node.value} />;
       case "strong":
         return (
-          <Text key={index} style={styles.strong}>
+          <Text key={key} style={styles.strong}>
             {inline(node.children, insideLink)}
           </Text>
         );
       case "emphasis":
         return (
-          <Text key={index} style={styles.emphasis}>
+          <Text key={key} style={styles.emphasis}>
             {inline(node.children, insideLink)}
           </Text>
         );
       case "delete":
         return (
-          <Text key={index} style={styles.deleted}>
+          <Text key={key} style={styles.deleted}>
             {inline(node.children, insideLink)}
           </Text>
         );
       case "inlineCode":
         return insideLink ? (
-          <Text key={index} style={styles.inlineCode}>
+          <Text key={key} style={styles.inlineCode}>
             <HighlightSearchText text={node.value} />
           </Text>
         ) : (
-          <CopyableInline key={index} value={node.value} style={styles.inlineCode}>
+          <CopyableInline key={key} style={styles.inlineCode} value={node.value}>
             <HighlightSearchText text={node.value} />
           </CopyableInline>
         );
@@ -843,66 +931,92 @@ function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
         return "\n";
       case "link": {
         return (
-          <MarkdownLink key={index} url={node.url}>
+          <MarkdownLink key={key} url={node.url}>
             {inline(node.children, true)}
           </MarkdownLink>
         );
       }
       case "image":
         return (
-          <Text key={index} style={styles.secondary}>
+          <Text key={key} style={styles.secondary}>
             [Image: {node.alt ?? node.url}]
           </Text>
         );
       case "footnoteReference":
         return (
-          <Text key={index} style={styles.secondary}>
+          <Text key={key} style={styles.secondary}>
             [{node.identifier}]
           </Text>
         );
       case "linkReference":
-        return <Text key={index}>{inline(node.children)}</Text>;
+        return <Text key={key}>{inline(node.children)}</Text>;
       case "imageReference":
         return (
-          <Text key={index} style={styles.secondary}>
+          <Text key={key} style={styles.secondary}>
             [Image: {node.alt ?? node.identifier}]
           </Text>
         );
       case "html":
         return (
-          <Text key={index} style={styles.rawHtml}>
+          <Text key={key} style={styles.rawHtml}>
             {node.value}
           </Text>
         );
       default:
-        return <Text key={index}>{fallbackText(node)}</Text>;
+        return <Text key={key}>{fallbackText(node)}</Text>;
     }
   });
 }
 
+function markdownNodeKey(node: Nodes): string {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (start !== undefined && end !== undefined) {
+    return `${node.type}:${String(start)}:${String(end)}`;
+  }
+  return `${node.type}:${textFingerprint(fallbackText(node))}`;
+}
+
 function headingStyle(depth: 1 | 2 | 3 | 4 | 5 | 6) {
-  if (depth === 1) return styles.headingOne;
-  if (depth === 2) return styles.headingTwo;
-  if (depth === 3) return styles.headingThree;
+  if (depth === 1) {
+    return styles.headingOne;
+  }
+  if (depth === 2) {
+    return styles.headingTwo;
+  }
+  if (depth === 3) {
+    return styles.headingThree;
+  }
   return styles.headingMinor;
 }
 
 const ALERT_CONFIG = {
-  NOTE: { label: "Note", icon: "information-circle-outline", color: "#70a7ff" },
-  TIP: { label: "Tip", icon: "bulb-outline", color: colors.green },
-  IMPORTANT: { label: "Important", icon: "sparkles-outline", color: "#b59cff" },
-  WARNING: { label: "Warning", icon: "warning-outline", color: colors.amber },
-  CAUTION: { label: "Caution", icon: "alert-circle-outline", color: colors.red },
+  CAUTION: { color: colors.red, icon: "alert-circle-outline", label: "Caution" },
+  IMPORTANT: { color: "#b59cff", icon: "sparkles-outline", label: "Important" },
+  NOTE: { color: "#70a7ff", icon: "information-circle-outline", label: "Note" },
+  TIP: { color: colors.green, icon: "bulb-outline", label: "Tip" },
+  WARNING: { color: colors.amber, icon: "warning-outline", label: "Warning" },
 } as const;
 
+// WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
+// oxlint-disable-next-line eslint/complexity
 function githubAlert(node: Extract<RootContent, { type: "blockquote" }>) {
   const first = node.children[0];
-  if (first?.type !== "paragraph") return null;
+  if (first?.type !== "paragraph") {
+    return null;
+  }
   const firstInline = first.children[0];
-  if (firstInline?.type !== "text") return null;
+  if (firstInline?.type !== "text") {
+    return null;
+  }
   const match = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s+|$)/iu.exec(firstInline.value);
-  if (match === null) return null;
-  const kind = match[1]!.toUpperCase() as keyof typeof ALERT_CONFIG;
+  if (match === null) {
+    return null;
+  }
+  const kind = alertKind(match[1]);
+  if (kind === null) {
+    return null;
+  }
   const remainingText = firstInline.value.slice(match[0].length);
   const firstChildren =
     remainingText === ""
@@ -915,26 +1029,99 @@ function githubAlert(node: Extract<RootContent, { type: "blockquote" }>) {
   return { ...ALERT_CONFIG[kind], children };
 }
 
+function alertKind(value: string | undefined): keyof typeof ALERT_CONFIG | null {
+  const normalized = value?.toUpperCase();
+  switch (normalized) {
+    case undefined:
+      return null;
+    case "CAUTION":
+    case "IMPORTANT":
+    case "NOTE":
+    case "TIP":
+    case "WARNING":
+      return normalized;
+    default:
+      return null;
+  }
+}
+
 function fallbackText(node: Nodes): string {
-  if ("value" in node && typeof node.value === "string") return node.value;
+  if ("value" in node && typeof node.value === "string") {
+    return node.value;
+  }
   return `[${node.type}]`;
 }
 
 const styles = StyleSheet.create({
-  document: {
+  alert: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.small,
+    gap: spacing.xxs,
     minWidth: 0,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
+    width: "100%",
+  },
+  alertBody: {
+    gap: spacing.xxs,
+    minWidth: 0,
+  },
+  alertHeader: {
+    alignItems: "center",
+    flexDirection: "row",
     gap: spacing.xxs,
   },
-  wideBlock: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    alignSelf: "stretch",
+  alertTitle: {
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
   },
-  paragraph: {
+  blockquote: {
+    borderLeftColor: colors.accent,
+    borderLeftWidth: 2,
+    gap: spacing.xxs,
+    paddingLeft: spacing.xs,
+  },
+  codeContainer: {
+    alignSelf: "stretch",
+    backgroundColor: colors.code,
+    borderColor: colors.border,
+    borderRadius: radii.small,
+    borderWidth: 1,
+    gap: spacing.xxs,
+    maxWidth: "100%",
     minWidth: 0,
-    color: colors.text,
-    ...typeScale.body,
+    padding: spacing.xs,
+    width: "100%",
+  },
+  copyHintDone: { color: colors.green },
+  copyPressed: { opacity: 0.76 },
+  deleted: {
+    color: colors.textMuted,
+    textDecorationLine: "line-through",
+  },
+  document: {
+    gap: spacing.xxs,
+    minWidth: 0,
+  },
+  emphasis: { fontStyle: "italic" },
+  footnote: {
+    alignItems: "flex-start",
+    borderTopColor: colors.borderSoft,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: spacing.compact,
+    minWidth: 0,
+    paddingTop: spacing.xxs,
+    width: "100%",
+  },
+  footnoteBody: {
+    flex: 1,
+    gap: spacing.xxs,
+    minWidth: 0,
+  },
+  footnoteMarker: {
+    color: colors.accent,
+    ...typeScale.caption,
   },
   heading: {
     color: colors.text,
@@ -942,182 +1129,127 @@ const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
     marginTop: spacing.xxs,
   },
-  headingOne: { ...typeScale.heading },
-  headingTwo: { ...typeScale.title },
-  headingThree: {
-    ...typeScale.body,
-    fontWeight: typeWeight.semibold,
-  },
   headingMinor: {
     ...typeScale.body,
     fontWeight: typeWeight.semibold,
   },
-  strong: { fontWeight: typeWeight.semibold },
-  emphasis: { fontStyle: "italic" },
-  deleted: {
-    textDecorationLine: "line-through",
-    color: colors.textMuted,
+  headingOne: { ...typeScale.heading },
+  headingThree: {
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
   },
+  headingTwo: { ...typeScale.title },
   inlineCode: {
-    color: colors.text,
     backgroundColor: colors.code,
+    color: colors.text,
     fontFamily: "monospace",
   },
   link: {
     color: colors.accent,
     textDecorationLine: "underline",
   },
-  secondary: { color: colors.textMuted },
-  blockquote: {
-    borderLeftWidth: 2,
-    borderLeftColor: colors.accent,
-    paddingLeft: spacing.xs,
-    gap: spacing.xxs,
-  },
-  alert: {
-    width: "100%",
-    minWidth: 0,
-    borderRadius: radii.small,
-    backgroundColor: colors.surfaceRaised,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
-    gap: spacing.xxs,
-  },
-  alertHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-  },
-  alertTitle: {
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
-  alertBody: {
-    minWidth: 0,
-    gap: spacing.xxs,
-  },
   list: {
-    minWidth: 0,
     alignSelf: "flex-start",
     gap: spacing.xxs,
-  },
-  listRow: {
     minWidth: 0,
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.compact,
+  },
+  listBody: {
+    flexShrink: 1,
+    gap: spacing.optical,
+    minWidth: 0,
   },
   listMarker: {
     color: colors.textMuted,
-    width: typeScale.body.lineHeight,
     textAlign: "right",
+    width: typeScale.body.lineHeight,
     ...typeScale.body,
   },
-  taskMarker: {
-    width: typeScale.body.lineHeight,
-    minHeight: typeScale.body.lineHeight,
-    alignItems: "flex-end",
-    justifyContent: "center",
-  },
-  listBody: {
-    minWidth: 0,
-    flexShrink: 1,
-    gap: spacing.optical,
-  },
-  footnote: {
-    width: "100%",
-    minWidth: 0,
-    flexDirection: "row",
+  listRow: {
     alignItems: "flex-start",
+    alignSelf: "flex-start",
+    flexDirection: "row",
     gap: spacing.compact,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderSoft,
-    paddingTop: spacing.xxs,
-  },
-  footnoteMarker: {
-    color: colors.accent,
-    ...typeScale.caption,
-  },
-  footnoteBody: {
     minWidth: 0,
-    flex: 1,
+  },
+  localImageLink: {
+    alignItems: "center",
+    flexDirection: "row",
     gap: spacing.xxs,
-  },
-  codeContainer: {
-    width: "100%",
-    minWidth: 0,
     maxWidth: "100%",
-    alignSelf: "stretch",
-    backgroundColor: colors.code,
-    borderRadius: radii.small,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.xs,
-    gap: spacing.xxs,
+    minWidth: 0,
+    paddingVertical: spacing.xxs,
   },
-  copyHintDone: { color: colors.green },
-  copyPressed: { opacity: 0.76 },
+  markdownImage: {
+    backgroundColor: colors.code,
+    borderRadius: radii.medium,
+    height: 220,
+    width: "100%",
+  },
+  paragraph: {
+    color: colors.text,
+    minWidth: 0,
+    ...typeScale.body,
+  },
   rawHtml: {
     color: colors.textMuted,
     ...typeScale.code,
     fontFamily: "monospace",
   },
   rule: { height: 8 },
-  tableViewport: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    alignSelf: "stretch",
-  },
-  tableHorizontalScroller: {
-    flexGrow: 0,
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-  },
-  tableHorizontalContent: { flexGrow: 0 },
+  secondary: { color: colors.textMuted },
+  strong: { fontWeight: typeWeight.semibold },
   table: {
     alignSelf: "flex-start",
-    borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radii.small,
+    borderWidth: 1,
     overflow: "hidden",
   },
-  tableRow: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft,
-  },
-  tableHeader: { backgroundColor: colors.surfaceHover },
   tableCell: {
-    flexShrink: 0,
+    borderRightColor: colors.borderSoft,
+    borderRightWidth: 1,
     color: colors.text,
+    flexShrink: 0,
     minWidth: 144,
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xxs,
-    borderRightWidth: 1,
-    borderRightColor: colors.borderSoft,
     ...typeScale.label,
   },
   tableCellHeader: { fontWeight: typeWeight.semibold },
+  tableHeader: { backgroundColor: colors.surfaceHover },
+  tableHorizontalContent: { flexGrow: 0 },
+  tableHorizontalScroller: {
+    flexGrow: 0,
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
+  },
+  tableRow: {
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+  },
+  tableViewport: {
+    alignSelf: "stretch",
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
+  },
+  taskMarker: {
+    alignItems: "flex-end",
+    justifyContent: "center",
+    minHeight: typeScale.body.lineHeight,
+    width: typeScale.body.lineHeight,
+  },
   truncated: {
-    borderTopWidth: 1,
     borderTopColor: colors.borderSoft,
+    borderTopWidth: 1,
     paddingTop: spacing.xxs,
   },
-  markdownImage: {
-    width: "100%",
-    height: 220,
-    borderRadius: radii.medium,
-    backgroundColor: colors.code,
-  },
-  localImageLink: {
-    minWidth: 0,
+  wideBlock: {
+    alignSelf: "stretch",
     maxWidth: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-    paddingVertical: spacing.xxs,
+    minWidth: 0,
+    width: "100%",
   },
 });

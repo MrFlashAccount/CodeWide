@@ -117,8 +117,6 @@ function RuntimeSectionSelector({
   return (
     <SegmentedControl
       appearance="dark"
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onValueChange={(value) => {
         const next = value === "Ports" ? "ports" : "terminals";
         setSection(next);
@@ -185,8 +183,6 @@ function ToolSheet({
     <AppSheet
       contentProps={TOOL_SHEET_PROPS}
       isOpen
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onOpenChange={(open) => {
         if (!open) {
           onClose();

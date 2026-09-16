@@ -1,39 +1,39 @@
 type RealtimePcmAudioChunk = {
-  encoding?: "pcm_s16le";
   data: string;
-  sampleRate: number;
+  encoding?: "pcm_s16le";
   numChannels: number;
+  sampleRate: number;
   samplesPerChannel: number;
 };
 
 type RealtimeOpusAudioChunk = {
-  encoding: "opus";
   data: string;
-  sampleRate: number;
+  encoding: "opus";
   numChannels: number;
+  sampleRate: number;
   samplesPerChannel: number;
 };
 
 export type RealtimeAudioChunk = RealtimePcmAudioChunk | RealtimeOpusAudioChunk;
 
 type QueuedBatch = {
-  id: number;
   chunks: RealtimeAudioChunk[];
+  id: number;
 };
 
 type RealtimeAudioFormat = {
   encoding: "pcm_s16le" | "opus";
-  sampleRate: number;
   numChannels: number;
+  sampleRate: number;
 };
 
 export type RealtimeAudioUploaderOptions = {
-  send(batchId: number, chunks: RealtimeAudioChunk[], signal: AbortSignal): Promise<void>;
-  onError(message: string): void;
   batchDurationMs?: number;
+  onError: (message: string) => void;
+  send: (batchId: number, chunks: RealtimeAudioChunk[], signal: AbortSignal) => Promise<void>;
 };
 
-const REALTIME_AUDIO_BATCH_DURATION_MS = 1_000;
+const REALTIME_AUDIO_BATCH_DURATION_MS = 1000;
 
 /**
  * Ordered bridge between native audio callbacks and the remote host.
@@ -68,7 +68,9 @@ export class RealtimeAudioUploader {
   }
 
   append(chunk: RealtimeAudioChunk): void {
-    if (!this.#accepting || this.#failed) return;
+    if (!this.#accepting || this.#failed) {
+      return;
+    }
     const durationMs = chunkDurationMs(chunk);
     if (durationMs === null) {
       this.#fail("Invalid microphone audio chunk");
@@ -76,7 +78,7 @@ export class RealtimeAudioUploader {
     }
     const encoding = chunk.encoding ?? "pcm_s16le";
     if (this.#format === null) {
-      this.#format = { encoding, sampleRate: chunk.sampleRate, numChannels: chunk.numChannels };
+      this.#format = { encoding, numChannels: chunk.numChannels, sampleRate: chunk.sampleRate };
     } else if (
       this.#format.encoding !== encoding ||
       this.#format.sampleRate !== chunk.sampleRate ||
@@ -90,7 +92,9 @@ export class RealtimeAudioUploader {
 
   async finish(): Promise<void> {
     this.#accepting = false;
-    if (this.#failed || this.#format === null) return;
+    if (this.#failed || this.#format === null) {
+      return;
+    }
     this.#flushPending();
     await this.#waitForDrain();
   }
@@ -107,12 +111,16 @@ export class RealtimeAudioUploader {
   #appendPending(chunk: RealtimeAudioChunk, durationMs: number): void {
     this.#pendingChunks.push(chunk);
     this.#pendingDurationMs += durationMs;
-    if (this.#pendingDurationMs >= this.#batchDurationMs) this.#flushPending();
+    if (this.#pendingDurationMs >= this.#batchDurationMs) {
+      this.#flushPending();
+    }
   }
 
   #flushPending(): void {
-    if (this.#pendingChunks.length === 0) return;
-    this.#queue.push({ id: this.#nextBatchId, chunks: this.#pendingChunks });
+    if (this.#pendingChunks.length === 0) {
+      return;
+    }
+    this.#queue.push({ chunks: this.#pendingChunks, id: this.#nextBatchId });
     this.#nextBatchId += 1;
     this.#pendingChunks = [];
     this.#pendingDurationMs = 0;
@@ -120,16 +128,22 @@ export class RealtimeAudioUploader {
   }
 
   #pump(): void {
-    if (this.#failed || this.#cancelled || this.#inFlight !== null) return;
+    if (this.#failed || this.#cancelled || this.#inFlight !== null) {
+      return;
+    }
     const entry = this.#queue.shift();
     if (entry !== undefined) {
       const request = this.#send(entry.id, entry.chunks, this.#abortController.signal)
-        .catch((cause: unknown) => {
-          if (this.#cancelled) return;
-          this.#fail(cause instanceof Error ? cause.message : "Audio upload failed");
+        .catch((error: unknown) => {
+          if (this.#cancelled) {
+            return;
+          }
+          this.#fail(error instanceof Error ? error.message : "Audio upload failed");
         })
         .finally(() => {
-          if (this.#inFlight === request) this.#inFlight = null;
+          if (this.#inFlight === request) {
+            this.#inFlight = null;
+          }
           this.#pump();
           this.#resolveDrainIfIdle();
         });
@@ -139,7 +153,9 @@ export class RealtimeAudioUploader {
   }
 
   #fail(message: string): void {
-    if (this.#failed) return;
+    if (this.#failed) {
+      return;
+    }
     this.#failed = true;
     this.#accepting = false;
     this.#abortController.abort();
@@ -160,13 +176,21 @@ export class RealtimeAudioUploader {
   }
 
   async #waitForDrain(): Promise<void> {
-    if (this.#queue.length === 0 && this.#inFlight === null) return;
-    await new Promise<void>((resolve) => this.#drainWaiters.add(resolve));
+    if (this.#queue.length === 0 && this.#inFlight === null) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.#drainWaiters.add(resolve);
+    });
   }
 
   #resolveDrainIfIdle(): void {
-    if (this.#queue.length !== 0 || this.#inFlight !== null) return;
-    for (const resolve of this.#drainWaiters) resolve();
+    if (this.#queue.length !== 0 || this.#inFlight !== null) {
+      return;
+    }
+    for (const resolve of this.#drainWaiters) {
+      resolve();
+    }
     this.#drainWaiters.clear();
   }
 }
@@ -180,13 +204,15 @@ function chunkDurationMs(chunk: RealtimeAudioChunk): number | null {
     chunk.numChannels <= 0 ||
     !Number.isSafeInteger(chunk.samplesPerChannel) ||
     chunk.samplesPerChannel <= 0
-  )
+  ) {
     return null;
-  return (chunk.samplesPerChannel * 1_000) / chunk.sampleRate;
+  }
+  return (chunk.samplesPerChannel * 1000) / chunk.sampleRate;
 }
 
 function positiveInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0)
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${name} must be a positive integer`);
+  }
   return value;
 }

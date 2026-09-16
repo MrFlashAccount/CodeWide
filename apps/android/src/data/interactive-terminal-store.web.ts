@@ -8,7 +8,7 @@ export type {
   InteractiveTerminalWorkspace,
 } from "./interactive-terminal-store.native";
 
-const EMPTY_WORKSPACE: InteractiveTerminalWorkspace = { tabs: [], activeId: null };
+const EMPTY_WORKSPACE: InteractiveTerminalWorkspace = { activeId: null, tabs: [] };
 const subscribe = () => () => undefined;
 
 export function useInteractiveTerminalWorkspace(
@@ -30,8 +30,8 @@ export function readInteractiveTerminalWorkspace(
 
 export function createInteractiveTerminalTab(_input: {
   connectionId: string;
-  threadId: string;
   cwd: string | null;
+  threadId: string;
 }): string {
   throw new Error("Terminal is available on Android only");
 }

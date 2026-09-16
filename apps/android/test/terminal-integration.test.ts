@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { compactSource } from "./source-contract";
+import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
 const screen = compactSource(
   readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
@@ -28,7 +28,10 @@ const nativeManager = readFileSync(
 );
 
 const ownerTerminalFeature = compactSource(
-  readFileSync(new URL("../app/v1/threads/[connectionId]/[threadId]/terminal.tsx", import.meta.url), "utf8"),
+  readFileSync(
+    new URL("../app/v1/threads/[connectionId]/[threadId]/terminal.tsx", import.meta.url),
+    "utf8",
+  ),
 );
 const ownerComposerTerminalContextChip = compactSource(
   readFileSync(
@@ -86,17 +89,19 @@ const historyBinding = compactSource(
 
 describe("native terminal integration", () => {
   it("opens a thread-bound workspace through a retained route session", () => {
-    expect(ownerComposerAccessoryTray).toContain('{ id: "terminal", label: "Terminal"');
-    expect(ownerComposerAccessoryTray).toContain('{ id: "ports", label: "Port forward"');
+    expect(ownerComposerAccessoryTray).not.toContain('id: "terminal"');
+    expect(ownerComposerAccessoryTray).not.toContain('id: "ports"');
     expect(screen).not.toContain('label: "Open terminal"');
     expect(ownerTerminalActions).toContain("const createAndOpenTerminal = useEvent(() => {");
-    expect(ownerComposerFeatureActions).toContain("createAndOpenTerminal();");
+    expect(ownerComposerFeatureActions).not.toContain("createAndOpenTerminal");
     expect(ownerTerminalFeature).toContain("terminalRouteSessions.get");
     expect(ownerTerminalFeature).toMatch(
       /<TerminalWorkspace(?=[^>]*connectionId=\{session\.request\.connectionId\})(?=[^>]*threadId=\{session\.request\.threadId\})[^>]*>/u,
     );
     expect(ownerTerminalFeature).toContain("terminalRouteSessions.close(session.id)");
-    expect(ownerTerminalFeature).toContain("recoverUnavailableRoute(router, v1ThreadDestination(params.value))");
+    expect(ownerTerminalFeature).toContain(
+      "recoverUnavailableRoute(router, v1ThreadDestination(params.value))",
+    );
     expect(ownerComposerTerminalContextChip).toContain('ComposerContextCount label="Terminals"');
     expect(ownerComposerTerminalContextChip).toContain("workspace.tabs.length");
   });
@@ -124,7 +129,8 @@ describe("native terminal integration", () => {
       new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url),
       "utf8",
     );
-    expect(modal).toContain("if (!isOpen) return null;");
+    expect(modal).toContain("!isOpen");
+    expect(modal).toContain("return null;");
     expect(compactSource(modal)).toContain("return ( <VisibleFullscreenModal");
     expect(modal).toContain("const [windowReady, setWindowReady] = useState(false);");
   });
@@ -153,11 +159,12 @@ describe("native terminal integration", () => {
 
   it("puts tabs in the terminal title row to recover vertical grid space", () => {
     expect(terminal).toContain("<View style={styles.header}>");
-    expect(terminal).toContain(
-      "contentContainerStyle={styles.tabList}\n          style={styles.tabScroll}",
-    );
+    expect(terminal).toContain("contentContainerStyle={styles.tabList}");
+    expect(terminal).toContain("style={styles.tabScroll}");
     expect(terminal).not.toContain("styles.tabBar");
-    expect(terminalStyles).toContain("header: {\n    minHeight: layoutSize.header");
+    expect(sourceObjectDeclaration(terminalStyles, "header")).toContain(
+      "minHeight: layoutSize.header",
+    );
   });
 
   it("ships one full monospaced Nerd Font for terminal text and symbols", () => {

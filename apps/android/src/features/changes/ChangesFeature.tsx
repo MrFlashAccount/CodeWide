@@ -4,7 +4,7 @@ import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 import { useConversationRouteNavigation } from "../conversation/conversationRouteNavigation";
 import type { ChangePresentationCapabilities } from "./changeCapabilities";
-import { codeReviewFilesForDocument } from "../review/code-review-files";
+import { codeReviewFilesForDocument } from "../review/resources/reviewFiles";
 
 /** Maps change and document activations to Router-owned destinations. */
 export function useChangesFeature(capabilities: ChangePresentationCapabilities) {

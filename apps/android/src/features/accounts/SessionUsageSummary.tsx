@@ -9,20 +9,20 @@ import { AppText as Text } from "../../ui/Typography";
 import { TOKEN_SYMBOL } from "../../ui/token-display";
 import { SessionUsageDetails } from "./SessionUsageDetails";
 
-import { styles } from "./UsagePopover.styles";
+import { styles } from "./UsageMenu.styles";
 
 export function SessionUsageSummary({
-  sessionUsage,
-  sessionCost,
   compactionCount,
+  sessionCost,
   sessionExpanded,
+  sessionUsage,
   setSessionExpanded,
 }: {
-  sessionUsage: TurnUsageProjection["thread"]["tokens"] | null;
-  sessionCost: TurnUsageProjection["thread"]["cost"] | null;
   compactionCount: number | null | undefined;
+  sessionCost: TurnUsageProjection["thread"]["cost"] | null;
   sessionExpanded: boolean;
-  setSessionExpanded(update: (expanded: boolean) => boolean): void;
+  sessionUsage: TurnUsageProjection["thread"]["tokens"] | null;
+  setSessionExpanded: (update: (expanded: boolean) => boolean) => void;
 }) {
   const sessionAccessibilityLabel = [
     sessionUsage === null
@@ -33,31 +33,33 @@ export function SessionUsageSummary({
       : `estimated cost ${formatEstimatedTurnCost(sessionCost.totalCostUsd)}`,
   ].join(", ");
   return (
-    <View testID="usage-session-section" style={[styles.section, styles.dividedSection]}>
+    <View style={[styles.section, styles.dividedSection]} testID="usage-session-section">
       <Pressable
-        testID="usage-session-summary"
-        accessibilityRole="button"
-        accessibilityLabel={`Session usage, ${sessionAccessibilityLabel}`}
         accessibilityHint={
           sessionExpanded
             ? "Hides the token and cost breakdown"
             : "Shows the token and cost breakdown"
         }
+        accessibilityLabel={`Session usage, ${sessionAccessibilityLabel}`}
+        accessibilityRole="button"
         accessibilityState={{ expanded: sessionExpanded }}
         hitSlop={4}
-        onPress={() => setSessionExpanded((expanded) => !expanded)}
+        onPress={() => {
+          setSessionExpanded((expanded) => !expanded);
+        }}
         style={({ pressed }) => [styles.sessionSummaryRow, pressed && styles.pressed]}
+        testID="usage-session-summary"
       >
-        <Ionicons name="analytics-outline" size={iconSize.inline} color={colors.textMuted} />
+        <Ionicons color={colors.textMuted} name="analytics-outline" size={iconSize.inline} />
         <Text style={styles.title}>Session</Text>
         <View style={styles.sessionSummaryValues}>
           {sessionUsage !== null && (
             <AnimatedNumber
-              value={sessionUsage.totalTokens}
               format={compactNumberFormat}
               prefix={TOKEN_SYMBOL}
               style={styles.sessionSummaryText}
               testID="usage-session-tokens"
+              value={sessionUsage.totalTokens}
             />
           )}
           {sessionUsage !== null && sessionCost !== null && (
@@ -65,11 +67,11 @@ export function SessionUsageSummary({
           )}
           {sessionCost !== null && (
             <AnimatedNumber
-              value={sessionCost.totalCostUsd}
               format={usdNumberFormat(sessionCost.totalCostUsd)}
               prefix="≈"
               style={styles.sessionCostText}
               testID="usage-session-cost"
+              value={sessionCost.totalCostUsd}
             />
           )}
           {sessionUsage === null && sessionCost === null && (
@@ -79,37 +81,37 @@ export function SessionUsageSummary({
           )}
         </View>
         <Ionicons
+          color={colors.textDim}
           name={sessionExpanded ? "chevron-up" : "chevron-down"}
           size={iconSize.inline}
-          color={colors.textDim}
         />
       </Pressable>
       {sessionExpanded && (
         <SessionUsageDetails
-          tokens={
-            sessionUsage === null
-              ? null
-              : {
-                  input: sessionUsage.inputTokens,
-                  cached: sessionUsage.cachedInputTokens,
-                  output: sessionUsage.outputTokens,
-                  total: sessionUsage.totalTokens,
-                }
-          }
+          compactionCount={compactionCount ?? null}
           cost={
             sessionCost === null
               ? null
               : {
+                  cached: sessionCost.cachedInputCostUsd,
                   input:
                     sessionCost.uncachedInputCostUsd +
                     sessionCost.cachedInputCostUsd +
                     sessionCost.cacheWriteInputCostUsd,
-                  cached: sessionCost.cachedInputCostUsd,
                   output: sessionCost.outputCostUsd,
                   total: sessionCost.totalCostUsd,
                 }
           }
-          compactionCount={compactionCount ?? null}
+          tokens={
+            sessionUsage === null
+              ? null
+              : {
+                  cached: sessionUsage.cachedInputTokens,
+                  input: sessionUsage.inputTokens,
+                  output: sessionUsage.outputTokens,
+                  total: sessionUsage.totalTokens,
+                }
+          }
         />
       )}
     </View>

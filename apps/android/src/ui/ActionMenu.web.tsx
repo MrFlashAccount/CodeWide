@@ -13,10 +13,10 @@ export function ActionMenu({
   accessibilityLabel,
   actions,
   children,
-  trigger = "press",
-  style,
   onOpenChange,
   onSelect,
+  style,
+  trigger = "press",
 }: ActionMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const setOpen = (open: boolean) => {
@@ -27,17 +27,27 @@ export function ActionMenu({
   const triggerElement = cloneElement(
     children,
     trigger === "long-press"
-      ? { onLongPress: () => setOpen(true), accessibilityLabel: triggerAccessibilityLabel }
-      : { onPress: () => setOpen(true), accessibilityLabel: triggerAccessibilityLabel },
+      ? {
+          accessibilityLabel: triggerAccessibilityLabel,
+          onLongPress: () => {
+            setOpen(true);
+          },
+        }
+      : {
+          accessibilityLabel: triggerAccessibilityLabel,
+          onPress: () => {
+            setOpen(true);
+          },
+        },
   );
 
   return (
     <View style={style}>
       {triggerElement}
       <AppSheet
+        contentProps={{ enableDynamicSizing: true, index: 0 }}
         isOpen={isOpen}
         onOpenChange={setOpen}
-        contentProps={{ index: 0, enableDynamicSizing: true }}
       >
         <View style={styles.content}>
           {actions.map((action, index) => (
@@ -56,24 +66,24 @@ export function ActionMenu({
                 style={({ pressed }) => [
                   styles.item,
                   pressed && styles.pressed,
-                  action.disabled && styles.disabled,
+                  action.disabled === true && styles.disabled,
                 ]}
               >
                 {typeof action.icon === "string" && (
                   <Ionicons
+                    color={action.destructive === true ? colors.red : colors.textMuted}
                     name={action.icon}
                     size={iconSize.action}
-                    color={action.destructive ? colors.red : colors.textMuted}
                   />
                 )}
                 {action.icon !== undefined && typeof action.icon !== "string" && (
                   <Image
                     source={action.icon}
-                    style={[styles.icon, action.destructive && styles.dangerIcon]}
+                    style={[styles.icon, action.destructive === true && styles.dangerIcon]}
                   />
                 )}
                 <View style={styles.text}>
-                  <Text style={[styles.label, action.destructive && styles.danger]}>
+                  <Text style={[styles.label, action.destructive === true && styles.danger]}>
                     {action.label}
                   </Text>
                   {action.description !== undefined && (
@@ -81,7 +91,7 @@ export function ActionMenu({
                   )}
                 </View>
                 {action.selected === true && (
-                  <Ionicons name="checkmark" size={iconSize.action} color={colors.accent} />
+                  <Ionicons color={colors.accent} name="checkmark" size={iconSize.action} />
                 )}
               </Pressable>
             </View>
@@ -94,41 +104,41 @@ export function ActionMenu({
 
 const styles = StyleSheet.create({
   content: { gap: spacing.optical },
-  section: {
-    color: colors.textDim,
+  danger: { color: colors.red },
+  dangerIcon: { tintColor: colors.red },
+  description: {
+    color: colors.textMuted,
     ...typeScale.label,
-    paddingHorizontal: spacing.sm,
-    paddingBottom: spacing.xxs,
-    paddingTop: spacing.sm,
+  },
+  disabled: { opacity: 0.42 },
+  icon: {
+    height: 19,
+    tintColor: colors.textMuted,
+    width: 19,
   },
   item: {
-    minHeight: layoutSize.header,
-    flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.sm,
     borderRadius: radii.medium,
-  },
-  pressed: { backgroundColor: colors.surfaceContainerHigh },
-  disabled: { opacity: 0.42 },
-  text: {
-    flex: 1,
-    minWidth: 0,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: layoutSize.header,
+    paddingHorizontal: spacing.sm,
   },
   label: {
     color: colors.text,
     ...typeScale.body,
     fontFamily: "RobotoFlex-Medium",
   },
-  description: {
-    color: colors.textMuted,
+  pressed: { backgroundColor: colors.surfaceContainerHigh },
+  section: {
+    color: colors.textDim,
     ...typeScale.label,
+    paddingBottom: spacing.xxs,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.sm,
   },
-  danger: { color: colors.red },
-  icon: {
-    width: 19,
-    height: 19,
-    tintColor: colors.textMuted,
+  text: {
+    flex: 1,
+    minWidth: 0,
   },
-  dangerIcon: { tintColor: colors.red },
 });

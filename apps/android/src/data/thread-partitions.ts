@@ -11,11 +11,12 @@ export function mergeThreadPartitions(sealed: readonly Turn[], live: readonly Tu
   const liveIds = new Set(live.map(({ id }) => id));
   const partitioned = [...sealed.filter(({ id }) => !liveIds.has(id)), ...live];
   const originalIndex = new Map(partitioned.map((turn, index) => [turn, index] as const));
-  partitioned.sort(
-    (left, right) =>
-      compareProtocolTurnOrder(left, right) ||
-      (originalIndex.get(left) ?? 0) - (originalIndex.get(right) ?? 0),
-  );
+  partitioned.sort((left, right) => {
+    const protocolOrder = compareProtocolTurnOrder(left, right);
+    return protocolOrder !== 0
+      ? protocolOrder
+      : (originalIndex.get(left) ?? 0) - (originalIndex.get(right) ?? 0);
+  });
   return deduplicateThreadTurns(partitioned);
 }
 
@@ -29,8 +30,12 @@ export function mergeProjectedThreadPartitions<T extends { id: string }>(
   live: readonly T[],
 ): T[] {
   const values = new Map<string, T>();
-  for (const value of sealed) values.set(value.id, value);
-  for (const value of live) values.set(value.id, value);
+  for (const value of sealed) {
+    values.set(value.id, value);
+  }
+  for (const value of live) {
+    values.set(value.id, value);
+  }
   return orderedTurns.flatMap(({ id }) => {
     const value = values.get(id);
     return value === undefined ? [] : [value];
@@ -57,15 +62,20 @@ export function deduplicateThreadTurns(turns: readonly Turn[]): Turn[] {
       result.push(turn);
       continue;
     }
-    const previous = result[previousIndex]!;
-    if (previous.status === "inProgress" && turn.status !== "inProgress")
+    const previous = result[previousIndex];
+    if (previous === undefined) {
+      continue;
+    }
+    if (previous.status === "inProgress" && turn.status !== "inProgress") {
       result[previousIndex] = turn;
+    }
   }
   return result;
 }
 
 function compareProtocolTurnOrder(left: Turn, right: Turn): number {
-  if (left.startedAt === null || right.startedAt === null || left.startedAt === right.startedAt)
+  if (left.startedAt === null || right.startedAt === null || left.startedAt === right.startedAt) {
     return 0;
+  }
   return left.startedAt - right.startedAt;
 }

@@ -1,7 +1,8 @@
 /** V1 WebSearchProtocolBlock owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 import { Linking, Pressable } from "react-native";
 import { isSafeHttpUrl } from "../../../rendering/http-link";
+import { occurrenceKey } from "../../../rendering/listKey";
 import { AppText as Text } from "../../../ui/Typography";
 import { Card } from "../turns/Card";
 import { protocolCopyText } from "./protocolCopyText";
@@ -12,11 +13,11 @@ export function WebSearchProtocolBlock({ block }: { block: RenderBlock }) {
   const query = typeof block.raw.query === "string" ? block.raw.query : "Search";
   return (
     <Card
-      title={`Web search · ${query}`}
-      icon="search-outline"
-      copyText={() => protocolCopyText(block)}
       collapsible
+      copyText={() => protocolCopyText(block)}
+      icon="search-outline"
       initiallyExpanded={false}
+      title={`Web search · ${query}`}
     >
       <WebSearchProtocolDetails block={block} />
     </Card>
@@ -30,6 +31,7 @@ function WebSearchProtocolDetails({ block }: { block: RenderBlock }) {
           result !== null && typeof result === "object" && !Array.isArray(result),
       )
     : [];
+  const occurrences = new Map<string, number>();
   return (
     <>
       {results.length === 0 ? (
@@ -39,21 +41,24 @@ function WebSearchProtocolDetails({ block }: { block: RenderBlock }) {
           const url =
             typeof result.url === "string" && isSafeHttpUrl(result.url) ? result.url : null;
           const title =
-            typeof result.title === "string" ? result.title : (url ?? `Result ${index + 1}`);
+            typeof result.title === "string"
+              ? result.title
+              : (url ?? `Result ${String(index + 1)}`);
           const snippet =
             typeof result.snippet === "string"
               ? result.snippet
               : typeof result.text === "string"
                 ? result.text
                 : null;
+          const key = occurrenceKey(occurrences, url ?? `${title}\u0000${snippet ?? ""}`);
           return (
             <Pressable
-              key={`${url ?? title}-${index}`}
               disabled={url === null}
+              key={key}
               onPress={url === null ? undefined : () => void Linking.openURL(url)}
               style={styles.searchResult}
             >
-              <Text numberOfLines={2} ellipsizeMode="tail" style={styles.menuActionTitle}>
+              <Text ellipsizeMode="tail" numberOfLines={2} style={styles.menuActionTitle}>
                 {title}
               </Text>
               {snippet !== null && (

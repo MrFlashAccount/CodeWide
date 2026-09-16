@@ -1,4 +1,3 @@
-import { Popover } from "heroui-native/popover";
 import { useState, type ComponentProps, type ReactNode } from "react";
 import {
   Pressable,
@@ -10,6 +9,7 @@ import {
 } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
+import { AppPopover } from "../../../presentation/overlay/AppPopover";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import { productFonts } from "../../ui/productFonts";
 import { ContextRingView } from "../conversation/ContextRingActionView";
@@ -116,220 +116,205 @@ export function UsagePopoverView(props: UsagePopoverViewProps): React.JSX.Elemen
     if (!next) setSessionExpanded(false);
   });
   const toggleSession = useEvent(() => setSessionExpanded((current) => !current));
+  const toggleOpen = (): void => {
+    changeOpen(!open);
+  };
   return (
-    <Popover isOpen={open} onOpenChange={changeOpen} presentation="popover">
-      <Popover.Trigger asChild>
+    <AppPopover
+      align={align}
+      onOpenChange={changeOpen}
+      open={open}
+      placement={placement}
+      trigger={
         <Pressable
           accessibilityLabel={triggerAccessibilityLabel}
           accessibilityRole="button"
+          onPress={toggleOpen}
           style={triggerStyle}
         >
           {children}
         </Pressable>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <PresentationIconProvider renderIcon={portalIconRenderer}>
-          <Popover.Overlay className="bg-backdrop" />
-          <Popover.Content
-            align={align}
-            className="border border-border"
-            offset={8}
-            placement={placement}
-            presentation="popover"
-            style={StyleSheet.flatten([styles.popover, { maxHeight: contentMaxHeight }])}
-            width={contentWidth}
+      }
+      width={contentWidth}
+    >
+      <PresentationIconProvider renderIcon={portalIconRenderer}>
+        <View style={StyleSheet.flatten([styles.popover, { maxHeight: contentMaxHeight }])}>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+            style={{ maxHeight: contentMaxHeight }}
+            testID="usage-popover"
           >
-            <ScrollView
-              contentContainerStyle={styles.content}
-              showsVerticalScrollIndicator={false}
-              style={{ maxHeight: contentMaxHeight }}
-              testID="usage-popover"
-            >
-              {context === undefined ? null : (
-                <View style={styles.section} testID="usage-context-section">
+            {context === undefined ? null : (
+              <View style={styles.section} testID="usage-context-section">
+                <Text accessibilityRole="header" style={styles.title}>
+                  Context
+                </Text>
+                <View style={styles.contextSummary}>
+                  <ContextRingView
+                    percent={context?.percent ?? 0}
+                    showValue={context !== null}
+                    size={46}
+                  />
+                  <View style={styles.grow}>
+                    {context === null ? (
+                      <Text numberOfLines={1} style={[styles.primaryValue, styles.unavailable]}>
+                        Usage unavailable
+                      </Text>
+                    ) : (
+                      <Text numberOfLines={1} style={styles.primaryValue}>
+                        ◇{compactNumber(context.usedTokens)} / {compactNumber(context.totalTokens)}
+                      </Text>
+                    )}
+                    {context === null ? (
+                      <Text numberOfLines={1} style={styles.secondaryValue}>
+                        No token data for this thread
+                      </Text>
+                    ) : (
+                      <Text numberOfLines={1} style={styles.secondaryValue}>
+                        ◇{compactNumber(context.availableTokens)} available
+                      </Text>
+                    )}
+                    {context?.model === null || context?.model === undefined ? null : (
+                      <Text numberOfLines={1} style={styles.meta}>
+                        {context.model}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {accounts.length === 0 ? null : (
+              <View
+                style={[styles.section, context === undefined ? undefined : styles.dividedSection]}
+                testID="usage-accounts-section"
+              >
+                <View style={styles.sectionTitleRow}>
+                  <PresentationIcon color={colors.textMuted} name="people" size={17} />
                   <Text accessibilityRole="header" style={styles.title}>
-                    Context
+                    Accounts
                   </Text>
-                  <View style={styles.contextSummary}>
-                    <ContextRingView
-                      percent={context?.percent ?? 0}
-                      showValue={context !== null}
-                      size={46}
-                    />
-                    <View style={styles.grow}>
-                      {context === null ? (
-                        <Text numberOfLines={1} style={[styles.primaryValue, styles.unavailable]}>
-                          Usage unavailable
-                        </Text>
-                      ) : (
-                        <Text numberOfLines={1} style={styles.primaryValue}>
-                          ◇{compactNumber(context.usedTokens)} /{" "}
-                          {compactNumber(context.totalTokens)}
-                        </Text>
-                      )}
-                      {context === null ? (
-                        <Text numberOfLines={1} style={styles.secondaryValue}>
-                          No token data for this thread
-                        </Text>
-                      ) : (
-                        <Text numberOfLines={1} style={styles.secondaryValue}>
-                          ◇{compactNumber(context.availableTokens)} available
-                        </Text>
-                      )}
-                      {context?.model === null || context?.model === undefined ? null : (
-                        <Text numberOfLines={1} style={styles.meta}>
-                          {context.model}
-                        </Text>
-                      )}
-                    </View>
-                  </View>
                 </View>
-              )}
-
-              {accounts.length === 0 ? null : (
-                <View
-                  style={[
-                    styles.section,
-                    context === undefined ? undefined : styles.dividedSection,
-                  ]}
-                  testID="usage-accounts-section"
-                >
-                  <View style={styles.sectionTitleRow}>
-                    <PresentationIcon color={colors.textMuted} name="people" size={17} />
-                    <Text accessibilityRole="header" style={styles.title}>
-                      Accounts
-                    </Text>
-                  </View>
-                  {accounts.map((account, index) => (
-                    <View
-                      key={account.id}
-                      style={[styles.accountRow, index === 0 ? undefined : styles.accountDivider]}
-                    >
-                      <View style={styles.accountTitleRow}>
-                        <View
-                          style={[
-                            styles.accountStateDot,
-                            { backgroundColor: ACCOUNT_STATE_COLORS[account.state] },
-                          ]}
-                        />
-                        <View style={styles.grow}>
-                          <Text numberOfLines={1} style={styles.accountName}>
-                            {account.label}
-                          </Text>
-                          <View style={styles.accountMetaRow}>
-                            <Text numberOfLines={1} style={styles.accountPlan}>
-                              {account.detail}
-                            </Text>
-                            {account.resetAt === null ? null : (
-                              <>
-                                <Text style={styles.accountMetaSeparator}>·</Text>
-                                <PresentationIcon color={colors.textDim} name="refresh" size={11} />
-                                <Text numberOfLines={1} style={styles.accountResetMeta}>
-                                  {account.resetAt}
-                                  {account.resetIn === null ? "" : ` · ${account.resetIn}`}
-                                </Text>
-                              </>
-                            )}
-                          </View>
-                        </View>
-                        <Text
-                          style={[
-                            styles.accountValue,
-                            account.remainingPercent === null ? styles.unavailable : undefined,
-                          ]}
-                        >
-                          {account.limitState === "ready" && account.remainingPercent !== null
-                            ? `${Math.round(account.remainingPercent)}% left`
-                            : accountLimitLabel(account.limitState)}
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {session === undefined ? null : (
-                <View
-                  style={[styles.section, styles.dividedSection]}
-                  testID="usage-session-section"
-                >
-                  <Pressable
-                    accessibilityLabel="Session usage"
-                    accessibilityRole="button"
-                    accessibilityState={{ expanded: sessionExpanded }}
-                    onPress={toggleSession}
-                    style={styles.sessionSummaryRow}
-                    testID="usage-session-summary"
+                {accounts.map((account, index) => (
+                  <View
+                    key={account.id}
+                    style={[styles.accountRow, index === 0 ? undefined : styles.accountDivider]}
                   >
-                    <PresentationIcon color={colors.textMuted} name="analytics" size={17} />
-                    <Text style={styles.title}>Session</Text>
-                    <View style={styles.sessionSummaryValues}>
-                      {session === null ? (
-                        <Text style={styles.sessionSummaryText}>Unavailable</Text>
-                      ) : (
-                        <>
-                          <Text style={styles.sessionSummaryText}>
-                            ◇{compactNumber(session.totalTokens)}
+                    <View style={styles.accountTitleRow}>
+                      <View
+                        style={[
+                          styles.accountStateDot,
+                          { backgroundColor: ACCOUNT_STATE_COLORS[account.state] },
+                        ]}
+                      />
+                      <View style={styles.grow}>
+                        <Text numberOfLines={1} style={styles.accountName}>
+                          {account.label}
+                        </Text>
+                        <View style={styles.accountMetaRow}>
+                          <Text numberOfLines={1} style={styles.accountPlan}>
+                            {account.detail}
                           </Text>
-                          {session.costUsd === null ? null : (
+                          {account.resetAt === null ? null : (
                             <>
-                              <Text style={styles.sessionSummarySeparator}>·</Text>
-                              <Text style={styles.sessionCostText}>
-                                ≈${session.costUsd.toFixed(3)}
+                              <Text style={styles.accountMetaSeparator}>·</Text>
+                              <PresentationIcon color={colors.textDim} name="refresh" size={11} />
+                              <Text numberOfLines={1} style={styles.accountResetMeta}>
+                                {account.resetAt}
+                                {account.resetIn === null ? "" : ` · ${account.resetIn}`}
                               </Text>
                             </>
                           )}
-                        </>
-                      )}
+                        </View>
+                      </View>
+                      <Text
+                        style={[
+                          styles.accountValue,
+                          account.remainingPercent === null ? styles.unavailable : undefined,
+                        ]}
+                      >
+                        {account.limitState === "ready" && account.remainingPercent !== null
+                          ? `${Math.round(account.remainingPercent)}% left`
+                          : accountLimitLabel(account.limitState)}
+                      </Text>
                     </View>
-                    <PresentationIcon
-                      color={colors.textDim}
-                      name={sessionExpanded ? "chevronUp" : "chevronDown"}
-                      size={15}
-                    />
-                  </Pressable>
-                  {sessionExpanded && session !== null ? (
-                    <View style={styles.sessionDetails}>
-                      <SessionRow
-                        label="Input"
-                        value={`◇${session.inputTokens.toLocaleString()}`}
-                      />
-                      <SessionRow
-                        label="Output"
-                        value={`◇${session.outputTokens.toLocaleString()}`}
-                      />
-                      <SessionRow
-                        emphasized
-                        label="Total"
-                        value={`◇${session.totalTokens.toLocaleString()}`}
-                      />
-                      {session.compactions === null ? null : (
-                        <SessionRow label="Compactions" value={String(session.compactions)} />
-                      )}
-                    </View>
-                  ) : null}
-                </View>
-              )}
+                  </View>
+                ))}
+              </View>
+            )}
 
-              {actions.map((action, index) => (
-                <UsageActionRow
-                  action={action}
-                  divided={
-                    context !== undefined ||
-                    accounts.length > 0 ||
-                    session !== undefined ||
-                    index > 0
-                  }
-                  key={action.id}
-                  onDismiss={close}
-                />
-              ))}
-            </ScrollView>
-            <Popover.Arrow />
-          </Popover.Content>
-        </PresentationIconProvider>
-      </Popover.Portal>
-    </Popover>
+            {session === undefined ? null : (
+              <View style={[styles.section, styles.dividedSection]} testID="usage-session-section">
+                <Pressable
+                  accessibilityLabel="Session usage"
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: sessionExpanded }}
+                  onPress={toggleSession}
+                  style={styles.sessionSummaryRow}
+                  testID="usage-session-summary"
+                >
+                  <PresentationIcon color={colors.textMuted} name="analytics" size={17} />
+                  <Text style={styles.title}>Session</Text>
+                  <View style={styles.sessionSummaryValues}>
+                    {session === null ? (
+                      <Text style={styles.sessionSummaryText}>Unavailable</Text>
+                    ) : (
+                      <>
+                        <Text style={styles.sessionSummaryText}>
+                          ◇{compactNumber(session.totalTokens)}
+                        </Text>
+                        {session.costUsd === null ? null : (
+                          <>
+                            <Text style={styles.sessionSummarySeparator}>·</Text>
+                            <Text style={styles.sessionCostText}>
+                              ≈${session.costUsd.toFixed(3)}
+                            </Text>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </View>
+                  <PresentationIcon
+                    color={colors.textDim}
+                    name={sessionExpanded ? "chevronUp" : "chevronDown"}
+                    size={15}
+                  />
+                </Pressable>
+                {sessionExpanded && session !== null ? (
+                  <View style={styles.sessionDetails}>
+                    <SessionRow label="Input" value={`◇${session.inputTokens.toLocaleString()}`} />
+                    <SessionRow
+                      label="Output"
+                      value={`◇${session.outputTokens.toLocaleString()}`}
+                    />
+                    <SessionRow
+                      emphasized
+                      label="Total"
+                      value={`◇${session.totalTokens.toLocaleString()}`}
+                    />
+                    {session.compactions === null ? null : (
+                      <SessionRow label="Compactions" value={String(session.compactions)} />
+                    )}
+                  </View>
+                ) : null}
+              </View>
+            )}
+
+            {actions.map((action, index) => (
+              <UsageActionRow
+                action={action}
+                divided={
+                  context !== undefined || accounts.length > 0 || session !== undefined || index > 0
+                }
+                key={action.id}
+                onDismiss={close}
+              />
+            ))}
+          </ScrollView>
+        </View>
+      </PresentationIconProvider>
+    </AppPopover>
   );
 }
 

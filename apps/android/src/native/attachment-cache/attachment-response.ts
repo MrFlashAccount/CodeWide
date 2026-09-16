@@ -13,11 +13,13 @@ export class AttachmentResponse extends Response {
   }
 
   override clone(): AttachmentResponse {
-    if (this.bodyUsed) throw new TypeError("Body already consumed");
+    if (this.bodyUsed) {
+      throw new TypeError("Body already consumed");
+    }
     return new AttachmentResponse(this.payload, {
+      headers: this.headers,
       status: this.status,
       statusText: this.statusText,
-      headers: this.headers,
     });
   }
 }

@@ -15,11 +15,11 @@ import { InlineIcon } from "./InlineIcon";
 
 /** Plugin artwork uses the same scoped private transfer pipeline as message images. */
 export function SkillPluginIcon({
-  plugin,
   getTransferAccess,
+  plugin,
 }: {
-  plugin: SkillPlugin | null;
   getTransferAccess?: GetTransferAccess;
+  plugin: SkillPlugin | null;
 }) {
   const icon = plugin?.icon ?? null;
   const path = icon?.kind === "path" ? icon.path : icon?.kind === "remote" ? icon.url : "";
@@ -35,11 +35,11 @@ export function SkillPluginIcon({
 }
 
 function SvgPluginIcon({
-  source,
   getTransferAccess,
+  source,
 }: {
-  source: PrivateAssetSource;
   getTransferAccess?: GetTransferAccess;
+  source: PrivateAssetSource;
 }) {
   const scope = usePrivateFileAccessScope();
   const key = `plugin-icon:${scope}:${privateImageResourceKey(source)}`;
@@ -49,15 +49,24 @@ function SvgPluginIcon({
       limit: 128 * 1024,
       signal,
     });
-    if (result.truncated) throw new Error("Plugin icon exceeds preview size");
+    if (result.truncated) {
+      throw new Error("Plugin icon exceeds preview size");
+    }
     return result.text;
   });
   return (
     <View accessible={false} style={styles.frame}>
       {svg.value !== null && !failed ? (
-        <SvgXml xml={svg.value} width="100%" height="100%" onError={() => setFailed(true)} />
+        <SvgXml
+          height="100%"
+          onError={() => {
+            setFailed(true);
+          }}
+          width="100%"
+          xml={svg.value}
+        />
       ) : (
-        <InlineIcon name="extension-puzzle-outline" role="label" color={colors.textMuted} />
+        <InlineIcon color={colors.textMuted} name="extension-puzzle-outline" role="label" />
       )}
     </View>
   );
@@ -70,16 +79,18 @@ function RasterPluginIcon({ plugin }: { plugin: SkillPlugin | null }) {
     <View accessible={false} style={styles.frame}>
       {source.uri !== null && source.uri !== failedUri ? (
         <Image
-          source={{ uri: source.uri }}
+          onError={() => {
+            setFailedUri(source.uri);
+          }}
           resizeMode="contain"
+          source={{ uri: source.uri }}
           style={styles.image}
-          onError={() => setFailedUri(source.uri)}
         />
       ) : (
         <InlineIcon
+          color={colors.textMuted}
           name={plugin === null ? "sparkles-outline" : "extension-puzzle-outline"}
           role="label"
-          color={colors.textMuted}
         />
       )}
     </View>
@@ -88,15 +99,15 @@ function RasterPluginIcon({ plugin }: { plugin: SkillPlugin | null }) {
 
 const styles = StyleSheet.create({
   frame: {
-    width: iconSize.navigation,
-    height: iconSize.navigation,
-    borderRadius: radii.compact,
     alignItems: "center",
+    borderRadius: radii.compact,
+    height: iconSize.navigation,
     justifyContent: "center",
     overflow: "hidden",
+    width: iconSize.navigation,
   },
   image: {
-    width: "100%",
     height: "100%",
+    width: "100%",
   },
 });

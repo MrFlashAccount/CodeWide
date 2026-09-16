@@ -2,18 +2,18 @@ import { StyleSheet } from "react-native";
 import { colors, radii, spacing } from "../../theme";
 
 export const styles = StyleSheet.create({
-  pressed: { opacity: 0.68 },
   newThreadFab: {
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    borderRadius: radii.large,
+    bottom: spacing.md,
+    elevation: 3,
+    height: 56,
+    justifyContent: "center",
     position: "absolute",
     right: spacing.md,
-    bottom: spacing.md,
     width: 56,
-    height: 56,
-    borderRadius: radii.large,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.primary,
     zIndex: 10,
-    elevation: 3,
   },
+  pressed: { opacity: 0.68 },
 });

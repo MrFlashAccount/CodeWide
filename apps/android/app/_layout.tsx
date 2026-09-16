@@ -12,16 +12,9 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { startOtaPrefetchRuntime } from "../src/data/use-ota-prefetch";
 import { PerformanceExperimentProvider } from "../src/data/performance-experiments";
-import {
-  AppErrorBoundary,
-  GlobalErrorBoundaryHost,
-  RootFailure,
-} from "../src/ui/AppErrorBoundary";
-import {
-  installGlobalErrorHandler,
-  reportGlobalError,
-} from "../src/ui/global-error-store";
-import { HeroUIRoot } from "../src/ui/HeroUIRoot";
+import { AppErrorBoundary, GlobalErrorBoundaryHost, RootFailure } from "../src/ui/AppErrorBoundary";
+import { installGlobalErrorHandler, reportGlobalError } from "../src/ui/global-error-store";
+import { AppRootProviders } from "../src/ui/AppRootProviders";
 import { AppLockGate } from "../src/ui/AppLockGate";
 import {
   retryUiGeneration,
@@ -56,11 +49,7 @@ export const unstable_settings = { anchor: "(workspace)" };
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   return (
-    <RootFailure
-      componentStack="Expo Router root layout boundary"
-      error={error}
-      onRetry={retry}
-    />
+    <RootFailure componentStack="Expo Router root layout boundary" error={error} onRetry={retry} />
   );
 }
 
@@ -144,7 +133,7 @@ function RootApplication() {
     <GestureHandlerRootView style={styles.application}>
       <KeyboardProvider>
         <SafeAreaProvider>
-          <HeroUIRoot>
+          <AppRootProviders>
             <PerformanceExperimentProvider>
               <AppLockGate>
                 <StatusBar style="light" />
@@ -153,12 +142,10 @@ function RootApplication() {
                 ) : (
                   navigation
                 )}
-                <UiGenerationDiagnosticsHost
-                  generation={generation.generation}
-                />
+                <UiGenerationDiagnosticsHost generation={generation.generation} />
               </AppLockGate>
             </PerformanceExperimentProvider>
-          </HeroUIRoot>
+          </AppRootProviders>
         </SafeAreaProvider>
       </KeyboardProvider>
     </GestureHandlerRootView>

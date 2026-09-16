@@ -6,5 +6,13 @@
  */
 export function cloneProtocolValue<T>(value: T): T {
   const serialized = JSON.stringify(value);
-  return serialized === undefined ? value : (JSON.parse(serialized) as T);
+  // WHY: JSON.stringify returns undefined for top-level undefined, functions and symbols at runtime despite the generic library overload.
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
+  if (serialized === undefined) {
+    return value;
+  }
+  const parsed: unknown = JSON.parse(serialized);
+  // WHY: this owner accepts only protocol JSON values, and a JSON round trip preserves their generic runtime shape.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return parsed as T;
 }

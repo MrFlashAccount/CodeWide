@@ -8,8 +8,8 @@ export function SidebarSectionHeader({ title }: { title: string }) {
   return (
     <View
       style={{
-        flexDirection: "row",
         alignItems: "center",
+        flexDirection: "row",
         height: THREAD_LIST_SECTION_HEIGHT,
         paddingRight: threadListLayout.edgeInset,
       }}

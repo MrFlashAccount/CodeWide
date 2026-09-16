@@ -22,7 +22,7 @@ describe("Hermes retained heap capture", () => {
     expect(nativeModule).toContain("GZIPOutputStream(buffered)");
     expect(nativeModule).toContain("MediaStore.Downloads.EXTERNAL_CONTENT_URI");
     expect(nativeModule).toContain('putString("location", "Downloads/$HEAP_SNAPSHOT_DIRECTORY")');
-    expect(bridge).toContain("captureHermesHeapSnapshot?(): Promise<HermesHeapSnapshot>");
+    expect(bridge).toContain("captureHermesHeapSnapshot?: () => Promise<HermesHeapSnapshot>");
     expect(bridge).not.toContain("heapsnapshot: string");
   });
 

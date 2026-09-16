@@ -11,54 +11,54 @@ import type { Dispatch, SetStateAction } from "react";
 import type { ProtocolBodyProps } from "./ToolContent.types";
 /** Bounded protocol presentation keeps expansion state and projection with ProtocolBody. */
 export function renderProtocolBodyView({
-  body,
-  code,
-  expandedMaxHeight,
-  section,
-  language,
-  codeVariant,
-  showCopyAction,
-  rendered,
-  expanded,
-  canCollapse,
-  collapsedLines,
   activeToolCall,
-  itemKey,
+  body,
   bodyLines,
-  setExpanded,
+  canCollapse,
+  code,
+  codeVariant,
+  collapsedLines,
+  expanded,
+  expandedMaxHeight,
+  itemKey,
+  language,
   maxHeight,
+  rendered,
+  section,
+  setExpanded,
+  showCopyAction,
 }: Required<
   Pick<
     ProtocolBodyProps,
     "body" | "code" | "section" | "language" | "codeVariant" | "showCopyAction"
   >
 > & {
-  expandedMaxHeight: number | undefined;
-  rendered: string;
-  expanded: boolean;
+  activeToolCall: boolean;
+  bodyLines: number;
   canCollapse: boolean;
   collapsedLines: number;
-  activeToolCall: boolean;
+  expanded: boolean;
+  expandedMaxHeight: number | undefined;
   itemKey: string;
-  bodyLines: number;
-  setExpanded: Dispatch<SetStateAction<boolean>>;
   maxHeight: number;
+  rendered: string;
+  setExpanded: Dispatch<SetStateAction<boolean>>;
 }) {
   const content = code ? (
     <NativeCodeBlock
-      value={rendered}
-      language={language}
-      variant={codeVariant}
-      maxHeight={expandedMaxHeight ?? maxHeight}
       fillAvailableWidth
+      language={language}
+      maxHeight={expandedMaxHeight ?? maxHeight}
+      value={rendered}
+      variant={codeVariant}
       {...(!expanded && canCollapse ? { maxVisibleLines: collapsedLines } : {})}
     />
   ) : activeToolCall && (expanded || !canCollapse) ? (
-    <AppendOnlyLiveContent cacheKey={`${itemKey}:${section}`} source={rendered} mode="markdown" />
+    <AppendOnlyLiveContent cacheKey={`${itemKey}:${section}`} mode="markdown" source={rendered} />
   ) : (
     <Text
-      selectable
       numberOfLines={!expanded && canCollapse ? collapsedLines : undefined}
+      selectable
       style={styles.agentText}
     >
       {rendered}
@@ -68,10 +68,10 @@ export function renderProtocolBodyView({
     <View style={styles.protocolBody}>
       {!code && expanded && expandedMaxHeight !== undefined ? (
         <ScrollView
+          contentContainerStyle={{ flexGrow: 0 }}
           nestedScrollEnabled
           showsVerticalScrollIndicator
-          style={{ maxHeight: expandedMaxHeight, flexGrow: 0, flexShrink: 1 }}
-          contentContainerStyle={{ flexGrow: 0 }}
+          style={{ flexGrow: 0, flexShrink: 1, maxHeight: expandedMaxHeight }}
         >
           {content}
         </ScrollView>
@@ -80,7 +80,12 @@ export function renderProtocolBodyView({
       )}
       {canCollapse && (
         <View style={styles.protocolBodyActions}>
-          <Pressable accessibilityRole="button" onPress={() => setExpanded((value) => !value)}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setExpanded((value) => !value);
+            }}
+          >
             <Text style={styles.rawLink}>
               {expanded
                 ? "Show less"

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { compactSource, sourceObjectDeclaration } from "./source-contract";
+import { compactSource, sourceHasJsxElement, sourceObjectDeclaration } from "./source-contract";
 
 const bubble = readFileSync(new URL("../src/rendering/Bubble.tsx", import.meta.url), "utf8");
 const markdown = readFileSync(
@@ -119,13 +119,20 @@ describe("Yoga-owned bubble layout", () => {
     expect(markdown).not.toContain("expo-pretext");
     expect(markdown).not.toContain("PretextTextBlock");
     expect(markdown).not.toContain("materializePretextLines");
-    expect(compactSource(markdown)).toContain(
-      "<Text selectable reviewBlockPath={path} style={styles.paragraph}> {inline(node.children)} </Text>",
-    );
+    expect(
+      sourceHasJsxElement(markdown, "Text", [
+        "selectable",
+        "reviewBlockPath={path}",
+        "style={styles.paragraph}",
+      ]),
+    ).toBe(true);
+    expect(compactSource(markdown)).toContain("{inline(node.children)} </Text>");
   });
 
   it("keeps the intrinsic plain-text chain free of percentage width caps", () => {
-    expect(bubble).toContain("surface: {\n    minWidth: 0,\n    borderRadius:");
+    const surfaceStyle = sourceObjectDeclaration(bubble, "surface");
+    expect(surfaceStyle).toContain("minWidth: 0");
+    expect(surfaceStyle).toContain("borderRadius:");
     expect(bubble).toContain("content: { minWidth: 0 }");
     const documentStyle = sourceObjectDeclaration(markdown, "document");
     expect(documentStyle).toContain("minWidth: 0");
@@ -183,7 +190,7 @@ describe("Yoga-owned bubble layout", () => {
 
     expect(beforeAgentBubble).toContain("blocks={presentation.compactionBlocks}");
     expect(beforeAgentBubble).not.toContain("blocks={presentation.preTurnBlocks}");
-    expect(agentBubble).toContain("renderAgentTurnBody(turn, presentation,");
+    expect(ownerTurnTimelineItem).toContain("renderAgentTurnBody(turn, presentation,");
     expect(ownerAgentTurnBody).toContain("blocks={presentation.preTurnBlocks}");
   });
 
@@ -209,7 +216,7 @@ describe("Yoga-owned bubble layout", () => {
 
   it("stretches copyable code through completed and streaming Markdown wrappers", () => {
     expect(ownerAgentTurnBody).toContain(
-      'fill={richMarkdownLayout(part.block.body ?? "") === "fill"}',
+      'fill={richMarkdownLayout(part.block.body) === "fill"}',
     );
     expect(ownerAgentResponseMarkdown).toContain(
       "const documentStyle = [styles.agentMarkdownDocument, fill && styles.agentMarkdownDocumentFill]",

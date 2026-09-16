@@ -11,7 +11,9 @@ it("opens image annotations in QuickDraw and keeps the source image immutable", 
   expect(quickdrawPatch).toContain("installLockedShapeSupport");
   expect(quickdrawPatch).toContain("record.props?.locked === true");
   expect(drawingWorkspace).toContain('boardRef.current?.setTool("draw")');
-  expect(drawingWorkspace).toContain("{ background: false, scale: 1, margin: 0 }");
+  expect(drawingWorkspace).toMatch(
+    /\{(?=[^}]*background: false)(?=[^}]*margin: 0)(?=[^}]*scale: 1)[^}]*\}/u,
+  );
   expect(drawingWorkspace).not.toContain("useSafeAreaInsets");
   expect(drawingWorkspace).toContain("<View style={styles.header}>");
   expect(drawingWorkspace).toContain("<View style={styles.board}>");

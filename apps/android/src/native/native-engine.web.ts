@@ -7,9 +7,11 @@ class WebNativeEngineSession implements RpcClient {
     this.connectionId = connectionId;
   }
   async rpc<T>(_method: string, _params: unknown): Promise<T> {
+    await Promise.resolve();
     throw new Error("Native remote engine is available on Android only");
   }
   async respondToServerRequest(_id: string | number, _result: unknown): Promise<void> {
+    await Promise.resolve();
     throw new Error("Native remote engine is available on Android only");
   }
   stop(): void {}
@@ -21,6 +23,8 @@ export class NativeEngineSupervisor {
   session(_connectionId: string): WebNativeEngineSession | undefined {
     return undefined;
   }
-  async reattachRuntime(_connectionId: string): Promise<void> {}
+  async reattachRuntime(_connectionId: string): Promise<void> {
+    await Promise.resolve();
+  }
   stop(): void {}
 }

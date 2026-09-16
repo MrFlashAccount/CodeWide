@@ -11,7 +11,9 @@ export const GROUP_HEIGHT = 36;
 export const PROFILE_ERROR_HEIGHT = 52;
 
 export function serviceRowKey(entry: ServiceListRow): string {
-  if (entry.type === "group") return `group:${entry.group}`;
+  if (entry.type === "group") {
+    return `group:${entry.group}`;
+  }
   return entry.type === "candidate"
     ? `candidate:${entry.candidate.forwardingKey}`
     : `profile:${entry.profile.id}`;
@@ -23,12 +25,16 @@ export function hasProfileError(profile: PortForwardingProfile): boolean {
 
 export function groupEntries(entries: readonly ServiceEntry[]): Array<[string, ServiceEntry[]]> {
   const groups = new Map<string, ServiceEntry[]>();
-  for (const entry of entries) groups.set(entry.group, [...(groups.get(entry.group) ?? []), entry]);
+  for (const entry of entries) {
+    groups.set(entry.group, [...(groups.get(entry.group) ?? []), entry]);
+  }
   return [...groups].sort(([left], [right]) => left.localeCompare(right));
 }
 
 export function serviceEntryMatches(entry: ServiceEntry, needle: string): boolean {
-  if (needle === "") return true;
+  if (needle === "") {
+    return true;
+  }
   if (entry.type === "candidate") {
     const { candidate } = entry;
     return [
@@ -49,14 +55,20 @@ export function serviceRowPosition(
   index: number,
 ): NonNullable<AppListRowProps["position"]> {
   const current = rows[index];
-  if (current === undefined || current.type === "group") return "only";
+  if (current === undefined || current.type === "group") {
+    return "only";
+  }
   const previous = rows[index - 1];
   const next = rows[index + 1];
   const first =
     previous === undefined || previous.type === "group" || previous.group !== current.group;
   const last = next === undefined || next.type === "group" || next.group !== current.group;
-  if (first && last) return "only";
-  if (first) return "first";
+  if (first && last) {
+    return "only";
+  }
+  if (first) {
+    return "first";
+  }
   return last ? "last" : "middle";
 }
 

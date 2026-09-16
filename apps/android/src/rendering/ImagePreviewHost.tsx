@@ -12,6 +12,7 @@ import { ActivityIndicator, Image, Linking, Pressable, StyleSheet, View } from "
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { retainCachedAttachment } from "../native/attachment-cache/cached-transfer";
+import { useConstant } from "../react/useConstant";
 import { useEvent } from "../react/useEvent";
 import Animated, {
   Easing,
@@ -38,6 +39,7 @@ import {
   type AppFullscreenOverlayController,
 } from "../ui/AppFullscreenOverlay";
 import { AppText as Text } from "../ui/Typography";
+import { percentageDimension } from "../ui/percentageDimension";
 import {
   ContentReviewComments,
   ContentReviewComposer,
@@ -54,7 +56,7 @@ import type {
 
 export type { ImagePreviewItem, ImagePreviewRequest } from "./imagePreviewTypes";
 
-type PreviewSession = { items: ImagePreviewItem[]; index: number };
+type PreviewSession = { index: number; items: ImagePreviewItem[] };
 type RegisteredPreviewItem = ImagePreviewItem & { sequence: number };
 const ImagePreviewGroupContext = createContext<string | null>(null);
 
@@ -75,28 +77,13 @@ export function ImagePreviewHost({ children }: { children: ReactNode }) {
   const registryRef = useRef(new Map<string, Map<string, RegisteredPreviewItem>>());
   const annotationRegistrationRef = useRef<ImageAnnotationHandler | null>(null);
   const sequenceRef = useRef(0);
-  const [controller] = useState<ImagePreviewController>(() => ({
+  const controller = useConstant<ImagePreviewController>(() => ({
     createSession(request, onClose) {
       return createImagePreviewSessionNode(
         request,
         onClose,
         () => annotationRegistrationRef.current,
       );
-    },
-    register(groupId, item) {
-      let group = registryRef.current.get(groupId);
-      if (group === undefined) {
-        group = new Map();
-        registryRef.current.set(groupId, group);
-      }
-      const sequence = sequenceRef.current;
-      sequenceRef.current += 1;
-      group.set(item.id, { ...item, sequence });
-      return () => {
-        const current = registryRef.current.get(groupId);
-        current?.delete(item.id);
-        if (current?.size === 0) registryRef.current.delete(groupId);
-      };
     },
     open(request, fullscreen) {
       const registered =
@@ -115,11 +102,26 @@ export function ImagePreviewHost({ children }: { children: ReactNode }) {
       );
       fullscreen.present(({ close }) => (
         <ImagePreviewSession
-          initialSession={{ items, index }}
           getAnnotationHandler={() => annotationRegistrationRef.current}
+          initialSession={{ index, items }}
           onClose={close}
         />
       ));
+    },
+    register(groupId, item) {
+      let group = registryRef.current.get(groupId);
+      if (group === undefined) {
+        group = new Map();
+        registryRef.current.set(groupId, group);
+      }
+      const sequence = sequenceRef.current;
+      sequenceRef.current += 1;
+      group.set(item.id, { ...item, sequence });
+      return () => {
+        const current = registryRef.current.get(groupId);
+        current?.delete(item.id);
+        if (current?.size === 0) registryRef.current.delete(groupId);
+      };
     },
     registerAnnotationHandler(handler) {
       const registration = handler;
@@ -139,13 +141,13 @@ export function ImagePreviewHost({ children }: { children: ReactNode }) {
 }
 
 function ImagePreviewSession({
-  initialSession,
   getAnnotationHandler,
+  initialSession,
   onClose,
 }: {
+  getAnnotationHandler: () => ImageAnnotationHandler | null;
   initialSession: PreviewSession;
-  getAnnotationHandler(): ImageAnnotationHandler | null;
-  onClose(): void;
+  onClose: () => void;
 }) {
   const dialog = useAppDialog();
   const [session, setSession] = useState(initialSession);
@@ -161,10 +163,10 @@ function ImagePreviewSession({
     const item = session.items[session.index];
     if (annotationHandler === null || item === undefined || preparingAnnotation) return;
     setPreparingAnnotation(true);
-    await annotationHandler(item, onClose).catch((cause: unknown) => {
+    await annotationHandler(item, onClose).catch((error: unknown) => {
       dialog.alert(
         "Could not annotate image",
-        cause instanceof Error ? cause.message : "Image could not be opened in QuickDraw",
+        error instanceof Error ? error.message : "Image could not be opened in QuickDraw",
       );
     });
     setPreparingAnnotation(false);
@@ -172,17 +174,19 @@ function ImagePreviewSession({
   return (
     <GestureHandlerRootView style={styles.overlay}>
       <ImageViewer
-        session={session}
         annotationPreparing={preparingAnnotation}
-        onChangeIndex={(index) => setSession((current) => ({ ...current, index }))}
+        onChangeIndex={(index) => {
+          setSession((current) => ({ ...current, index }));
+        }}
         onClose={onClose}
+        session={session}
         {...(getAnnotationHandler() === null ? {} : { onAnnotate: () => void annotate() })}
       />
     </GestureHandlerRootView>
   );
 }
 
-export function ImagePreviewGroup({ id, children }: { id: string; children: ReactNode }) {
+export function ImagePreviewGroup({ children, id }: { children: ReactNode; id: string }) {
   return (
     <ImagePreviewGroupContext.Provider value={id}>{children}</ImagePreviewGroupContext.Provider>
   );
@@ -209,7 +213,7 @@ export function useImagePreviewAnnotationHandler(handler: ImageAnnotationHandler
   const { registerAnnotationHandler } = useContext(ImagePreviewContext);
   const handleAnnotation = useEvent(handler);
   useEffect(
-    () => registerAnnotationHandler((item, onAttached) => handleAnnotation(item, onAttached)),
+    () => registerAnnotationHandler(async (item, onAttached) => handleAnnotation(item, onAttached)),
     [handleAnnotation, registerAnnotationHandler],
   );
 }
@@ -218,40 +222,42 @@ export function useRegisterImagePreviewItem(groupId: string | null, item: ImageP
   const { register } = useContext(ImagePreviewContext);
   const headersKey = JSON.stringify(item.source.headers ?? {});
   const registerCurrentItem = useEvent(() => {
-    if (groupId === null) return;
+    if (groupId === null) return undefined;
     return register(groupId, item);
   });
-  useEffect(() => {
-    return registerCurrentItem();
-  }, [
-    groupId,
-    headersKey,
-    item.id,
-    item.label,
-    item.link,
-    item.order,
-    item.reference,
-    item.source.uri,
-    item.draft?.scope,
-    item.draft?.attachmentId,
-    register,
-    registerCurrentItem,
-  ]);
+  useEffect(
+    () => registerCurrentItem(),
+    [
+      groupId,
+      headersKey,
+      item.id,
+      item.label,
+      item.link,
+      item.order,
+      item.reference,
+      item.source.uri,
+      item.draft?.scope,
+      item.draft?.attachmentId,
+      register,
+      registerCurrentItem,
+    ],
+  );
 }
 
 function ImageViewer({
-  session,
   annotationPreparing,
+  onAnnotate,
   onChangeIndex,
   onClose,
-  onAnnotate,
+  session,
 }: {
-  session: PreviewSession;
   annotationPreparing: boolean;
-  onChangeIndex(index: number): void;
-  onClose(): void;
-  onAnnotate?(): void;
+  onAnnotate?: () => void;
+  onChangeIndex: (index: number) => void;
+  onClose: () => void;
+  session: PreviewSession;
 }) {
+  const dialog = useAppDialog();
   const insets = useSafeAreaInsets();
   const [pinMode, setPinMode] = useState(false);
   const item = session.items[session.index];
@@ -259,31 +265,35 @@ function ImageViewer({
   const imageActions: ActionMenuItem[] = [
     ...(item.download === null || item.download === undefined
       ? []
-      : [{ id: "download", label: "Download", icon: "download-outline" as const }]),
+      : [{ icon: "download-outline" as const, id: "download", label: "Download" }]),
     ...(item.link === null || item.link === undefined || item.link === item.source.uri
       ? []
-      : [{ id: "open", label: "Open link", icon: "open-outline" as const }]),
+      : [{ icon: "open-outline" as const, id: "open", label: "Open link" }]),
   ];
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.root, { paddingBottom: insets.bottom, paddingTop: insets.top }]}>
       <ZoomableImage
-        key={item.id}
-        item={item}
-        pinMode={pinMode}
-        canGoPrevious={session.index > 0}
         canGoNext={session.index < session.items.length - 1}
-        onPrevious={() => onChangeIndex(session.index - 1)}
-        onNext={() => onChangeIndex(session.index + 1)}
+        canGoPrevious={session.index > 0}
+        item={item}
+        key={item.id}
         onClose={onClose}
+        onNext={() => {
+          onChangeIndex(session.index + 1);
+        }}
+        onPrevious={() => {
+          onChangeIndex(session.index - 1);
+        }}
+        pinMode={pinMode}
       />
       <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top + spacing.xs }]}>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Close image"
+          accessibilityRole="button"
           onPress={onClose}
           style={styles.roundButton}
         >
-          <Ionicons name="close" size={iconSize.navigation} color="#ffffff" />
+          <Ionicons color="#ffffff" name="close" size={iconSize.navigation} />
         </Pressable>
         <View style={styles.counterPill}>
           <Text style={styles.counterText}>
@@ -292,16 +302,18 @@ function ImageViewer({
         </View>
         <View style={styles.topBarActions}>
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Pin a comment on image"
+            accessibilityRole="button"
             accessibilityState={{ selected: pinMode }}
-            onPress={() => setPinMode(!pinMode)}
+            onPress={() => {
+              setPinMode(!pinMode);
+            }}
             style={styles.roundButton}
           >
             <Ionicons
+              color={pinMode ? "#B794F6" : "#ffffff"}
               name={pinMode ? "pin" : "pin-outline"}
               size={iconSize.action}
-              color={pinMode ? "#B794F6" : "#ffffff"}
             />
           </Pressable>
           {imageActions.length > 0 && (
@@ -309,29 +321,41 @@ function ImageViewer({
               accessibilityLabel="Image actions"
               actions={imageActions}
               onSelect={(id) => {
-                if (id === "download") void item.download?.();
-                else if (id === "open" && item.link !== null && item.link !== undefined)
-                  void Linking.openURL(item.link);
+                if (id === "download") {
+                  item.download?.().catch((error: unknown) => {
+                    dialog.alert(
+                      "Download failed",
+                      error instanceof Error ? error.message : "Could not download image",
+                    );
+                  });
+                } else if (id === "open" && item.link !== null && item.link !== undefined) {
+                  Linking.openURL(item.link).catch((error: unknown) => {
+                    dialog.alert(
+                      "Could not open link",
+                      error instanceof Error ? error.message : "Could not open link",
+                    );
+                  });
+                }
               }}
               style={styles.imageMenuAnchor}
             >
               <Pressable style={styles.roundButton}>
-                <Ionicons name="ellipsis-horizontal" size={iconSize.action} color="#ffffff" />
+                <Ionicons color="#ffffff" name="ellipsis-horizontal" size={iconSize.action} />
               </Pressable>
             </ActionMenu>
           )}
           {onAnnotate !== undefined && (
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Annotate image in QuickDraw"
+              accessibilityRole="button"
               disabled={annotationPreparing}
               onPress={onAnnotate}
               style={[styles.roundButton, annotationPreparing && styles.disabled]}
             >
               {annotationPreparing ? (
-                <ActivityIndicator size="small" color="#ffffff" />
+                <ActivityIndicator color="#ffffff" size="small" />
               ) : (
-                <Ionicons name="brush-outline" size={iconSize.action} color="#ffffff" />
+                <Ionicons color="#ffffff" name="brush-outline" size={iconSize.action} />
               )}
             </Pressable>
           )}
@@ -342,35 +366,35 @@ function ImageViewer({
 }
 
 function ZoomableImage({
-  item,
-  pinMode,
-  canGoPrevious,
   canGoNext,
-  onPrevious,
-  onNext,
+  canGoPrevious,
+  item,
   onClose,
+  onNext,
+  onPrevious,
+  pinMode,
 }: {
-  item: ImagePreviewItem;
-  pinMode: boolean;
-  canGoPrevious: boolean;
   canGoNext: boolean;
-  onPrevious(): void;
-  onNext(): void;
-  onClose(): void;
+  canGoPrevious: boolean;
+  item: ImagePreviewItem;
+  onClose: () => void;
+  onNext: () => void;
+  onPrevious: () => void;
+  pinMode: boolean;
 }) {
   const reviewTargetId = `image:${item.draft?.scope ?? ""}:${item.id}`;
   const review = useContentReview();
   const points = useImageReviewPoints(reviewTargetId);
   const placePin = useEvent((x: number, y: number) => {
-    void review({
+    review({
       kind: "image",
       target: { id: reviewTargetId, label: item.label, reference: item.reference ?? null },
       x,
       y,
     });
   });
-  const [viewport, setViewport] = useState({ width: 1, height: 1 });
-  const [intrinsic, setIntrinsic] = useState({ width: 1, height: 1 });
+  const [viewport, setViewport] = useState({ height: 1, width: 1 });
+  const [intrinsic, setIntrinsic] = useState({ height: 1, width: 1 });
   const [decodeState, setDecodeState] = useState<"loading" | "ready" | "error">("loading");
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -440,7 +464,7 @@ function ZoomableImage({
               direction > 0 ? -viewport.width : viewport.width,
               { duration: 120, easing: Easing.out(Easing.cubic) },
               (finished) => {
-                if (finished) runOnJS(navigate)(direction);
+                if (finished === true) runOnJS(navigate)(direction);
               },
             ),
           );
@@ -460,7 +484,7 @@ function ZoomableImage({
             event.translationY < 0 ? -viewport.height : viewport.height,
             { duration: 130, easing: Easing.out(Easing.cubic) },
             (finished) => {
-              if (finished) runOnJS(onClose)();
+              if (finished === true) runOnJS(onClose)();
             },
           ),
         );
@@ -539,13 +563,13 @@ function ZoomableImage({
     .onEnd((event, success) => {
       if (!success) return;
       const point = imageReviewPoint(event, {
-        width: fit.width,
         height: fit.height,
-        viewportWidth: viewport.width,
-        viewportHeight: viewport.height,
         scale: scale.get(),
         translateX: translateX.get() + pageOffset.get(),
         translateY: translateY.get(),
+        viewportHeight: viewport.height,
+        viewportWidth: viewport.width,
+        width: fit.width,
       });
       if (point !== null) runOnJS(placePin)(point.x, point.y);
     });
@@ -561,14 +585,14 @@ function ZoomableImage({
 
   return (
     <Animated.View
-      testID="image-preview-viewport"
-      style={[styles.viewer, backdropStyle]}
-      onLayout={({ nativeEvent }) =>
+      onLayout={({ nativeEvent }) => {
         setViewport({
-          width: Math.max(1, nativeEvent.layout.width),
           height: Math.max(1, nativeEvent.layout.height),
-        })
-      }
+          width: Math.max(1, nativeEvent.layout.width),
+        });
+      }}
+      style={[styles.viewer, backdropStyle]}
+      testID="image-preview-viewport"
     >
       <GestureDetector gesture={gestures}>
         <View style={styles.gestureSurface}>
@@ -579,31 +603,37 @@ function ZoomableImage({
           )}
           {decodeState === "error" && (
             <View pointerEvents="none" style={styles.imageStatus}>
-              <Ionicons name="image-outline" size={iconSize.illustration} color="#ffffff" />
+              <Ionicons color="#ffffff" name="image-outline" size={iconSize.illustration} />
               <Text style={styles.imageError}>Image decode failed</Text>
             </View>
           )}
           <Animated.View
-            style={[styles.imageLayer, { width: fit.width, height: fit.height }, imageStyle]}
+            style={[styles.imageLayer, { height: fit.height, width: fit.width }, imageStyle]}
           >
             <Image
               accessibilityLabel={`${item.label} full screen`}
-              source={item.source}
-              resizeMode="contain"
-              resizeMethod="resize"
-              style={styles.image}
-              onLoadStart={() => setDecodeState("loading")}
+              onError={() => {
+                setDecodeState("error");
+              }}
               onLoad={({ nativeEvent }) => {
                 setDecodeState("ready");
                 // React Native Web omits `source` from this event. Native
                 // Android includes it, which is where intrinsic sizing matters.
                 const loadedSource = nativeEvent.source;
+                // WHY: React Native Web omits this runtime field although the shared event type marks it as required.
+                // oxlint-disable-next-line typescript/no-unnecessary-condition
                 if (loadedSource === undefined) return;
                 const width = loadedSource.width;
                 const height = loadedSource.height;
-                if (width > 0 && height > 0) setIntrinsic({ width, height });
+                if (width > 0 && height > 0) setIntrinsic({ height, width });
               }}
-              onError={() => setDecodeState("error")}
+              onLoadStart={() => {
+                setDecodeState("loading");
+              }}
+              resizeMethod="resize"
+              resizeMode="contain"
+              source={item.source}
+              style={styles.image}
             />
             {points.map((point, index) => (
               <View
@@ -612,9 +642,9 @@ function ZoomableImage({
                 style={[
                   styles.pin,
                   {
-                    left: `${point.x * 100}%`,
-                    top: `${point.y * 100}%`,
+                    left: percentageDimension(point.x * 100),
                     opacity: point.pending ? 0.6 : 1,
+                    top: percentageDimension(point.y * 100),
                   },
                 ]}
               >
@@ -624,8 +654,8 @@ function ZoomableImage({
           </Animated.View>
         </View>
       </GestureDetector>
-      <ContentReviewComments targetId={reviewTargetId} presentation="overlay" />
-      <ContentReviewComposer targetId={reviewTargetId} anchorKind="image" />
+      <ContentReviewComments presentation="overlay" targetId={reviewTargetId} />
+      <ContentReviewComposer anchorKind="image" targetId={reviewTargetId} />
     </Animated.View>
   );
 }
@@ -635,53 +665,48 @@ function containSize(
   imageHeight: number,
   viewportWidth: number,
   viewportHeight: number,
-): { width: number; height: number } {
+): { height: number; width: number } {
   const ratio = Math.min(
     viewportWidth / Math.max(1, imageWidth),
     viewportHeight / Math.max(1, imageHeight),
   );
   return {
-    width: Math.max(1, imageWidth * ratio),
     height: Math.max(1, imageHeight * ratio),
+    width: Math.max(1, imageWidth * ratio),
   };
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1 },
-  host: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 0,
-    position: "relative",
-  },
-  overlay: {
-    flex: 1,
-    backgroundColor: "#000000",
-  },
-  root: {
-    flex: 1,
-    backgroundColor: "#000000",
-  },
-  viewer: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#000000",
-  },
-  gestureSurface: {
-    flex: 1,
+  counterPill: {
     alignItems: "center",
+    backgroundColor: "rgba(36,36,36,0.82)",
+    borderRadius: radii.medium,
+    justifyContent: "center",
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.sm,
+  },
+  counterText: {
+    color: "#ffffff",
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  disabled: { opacity: 0.4 },
+  fill: { flex: 1 },
+  gestureSurface: {
+    alignItems: "center",
+    flex: 1,
     justifyContent: "center",
     overflow: "hidden",
   },
-  imageStatus: {
-    position: "absolute",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    zIndex: 2,
+  host: {
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    position: "relative",
+  },
+  image: {
+    height: "100%",
+    width: "100%",
   },
   imageError: {
     color: "#ffffff",
@@ -692,62 +717,67 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  image: {
-    width: "100%",
-    height: "100%",
+  imageMenuAnchor: {
+    height: touchTarget,
+    width: touchTarget,
+  },
+  imageStatus: {
+    alignItems: "center",
+    gap: spacing.sm,
+    justifyContent: "center",
+    position: "absolute",
+    zIndex: 2,
+  },
+  overlay: {
+    backgroundColor: "#000000",
+    flex: 1,
   },
   pin: {
-    position: "absolute",
-    width: controlSize.compact,
+    alignItems: "center",
+    backgroundColor: "#B794F6",
+    borderRadius: radii.pill,
     height: controlSize.compact,
+    justifyContent: "center",
     marginLeft: -controlSize.compact / 2,
     marginTop: -controlSize.compact / 2,
-    borderRadius: radii.pill,
-    backgroundColor: "#B794F6",
-    alignItems: "center",
-    justifyContent: "center",
+    position: "absolute",
+    width: controlSize.compact,
   },
   pinText: {
     color: "#000000",
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  topBar: {
-    position: "absolute",
-    left: spacing.sm,
-    right: spacing.sm,
-    flexDirection: "row",
+  root: {
+    backgroundColor: "#000000",
+    flex: 1,
+  },
+  roundButton: {
     alignItems: "center",
+    backgroundColor: "rgba(36,36,36,0.9)",
+    borderRadius: radii.pill,
+    height: touchTarget,
+    justifyContent: "center",
+    width: touchTarget,
+  },
+  topBar: {
+    alignItems: "center",
+    flexDirection: "row",
     justifyContent: "space-between",
+    left: spacing.sm,
+    position: "absolute",
+    right: spacing.sm,
   },
   topBarActions: {
     flexDirection: "row",
     gap: spacing.xs,
   },
-  roundButton: {
-    width: touchTarget,
-    height: touchTarget,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(36,36,36,0.9)",
-    alignItems: "center",
-    justifyContent: "center",
+  viewer: {
+    backgroundColor: "#000000",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
   },
-  imageMenuAnchor: {
-    width: touchTarget,
-    height: touchTarget,
-  },
-  counterPill: {
-    minHeight: controlSize.compact,
-    borderRadius: radii.medium,
-    backgroundColor: "rgba(36,36,36,0.82)",
-    paddingHorizontal: spacing.sm,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  counterText: {
-    color: "#ffffff",
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
-  disabled: { opacity: 0.4 },
 });

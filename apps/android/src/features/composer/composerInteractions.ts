@@ -1,115 +1,105 @@
-import { useConversationOwner } from "../../ui/use-conversation-owner";
+import type { useConversationOwner } from "../../ui/use-conversation-owner";
 import { useGoalDetails } from "../goal/GoalFeature";
 import type { QueueWorkspaceCapabilities } from "../queue/queueWorkspaceCapabilities";
 import { useComposerAccessoryActions } from "./ComposerAccessoryTray";
-import { useComposerCommands } from "./composerCommands";
+import type { useComposerCommands } from "./composerCommands";
 import { useComposerDelivery } from "./composerDelivery";
 import { useComposerFeatureActions } from "./composerFeatureActions";
-import { useComposerState } from "./composerState";
+import type { useComposerState } from "./composerState";
 import type { ComposerWorkspaceCapabilities } from "./composerWorkspaceCapabilities";
 
 export function useComposerInteractions({
   composerCommands,
-  openDrawing,
-  createAndOpenTerminal,
-  onGetGoal,
-  newChat,
+  composerInputs,
+  composerScope,
+  composerStateBinding,
+  conversationOwner,
+  currentTurnId,
   draftConnectionId,
   draftThreadId,
-  portForwardingConnectionId,
-  composerStateBinding,
-  composerScope,
-  threadLifecycleActive,
-  currentTurnId,
-  conversationOwner,
-  composerInputs,
+  goalEnabled,
+  openDrawing,
   queueInputs,
-  voiceController,
   remoteThread,
+  threadLifecycleActive,
+  voiceController,
 }: {
   composerCommands: ReturnType<typeof useComposerCommands>;
-  openDrawing: Parameters<typeof useComposerFeatureActions>[1];
-  createAndOpenTerminal: Parameters<typeof useComposerFeatureActions>[2];
-  onGetGoal: Parameters<typeof useComposerFeatureActions>[4];
-  newChat: boolean;
+  composerInputs: ComposerWorkspaceCapabilities;
+  composerScope: string;
+  composerStateBinding: ReturnType<typeof useComposerState>;
+  conversationOwner: ReturnType<typeof useConversationOwner>;
+  currentTurnId: string | null;
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  portForwardingConnectionId: string | null;
-  composerStateBinding: ReturnType<typeof useComposerState>;
-  composerScope: string;
-  threadLifecycleActive: boolean;
-  currentTurnId: string | null;
-  conversationOwner: ReturnType<typeof useConversationOwner>;
-  composerInputs: ComposerWorkspaceCapabilities;
+  goalEnabled: boolean;
+  openDrawing: Parameters<typeof useComposerFeatureActions>[1];
   queueInputs: QueueWorkspaceCapabilities;
-  voiceController: ComposerWorkspaceCapabilities["voiceController"];
   remoteThread: Parameters<typeof useComposerDelivery>[0]["remoteThread"];
+  threadLifecycleActive: boolean;
+  voiceController: ComposerWorkspaceCapabilities["voiceController"];
 }) {
   const composerFeatureActionsBinding = useComposerFeatureActions(
     composerCommands.composerAttachmentsBinding.pickComposerAttachment,
     openDrawing,
-    createAndOpenTerminal,
     composerCommands.composerControlActionsBinding.openControls,
-    onGetGoal,
+    composerStateBinding.composerMenuStateBinding.openGoalAttachment,
   );
   const composerAccessoryActionsBinding = useComposerAccessoryActions({
     fileAttachmentEnabled: composerCommands.composerAttachmentsBinding.fileAttachmentEnabled,
-    newChat,
-    draftConnectionId,
-    draftThreadId,
-    portForwardingConnectionId,
-    setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
+    goalEnabled,
     openComposerFeature: composerFeatureActionsBinding.openComposerFeature,
+    setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
   });
   const openGoalDetails = useGoalDetails(composerAccessoryActionsBinding.openAccessoryAction);
   const composerDeliveryBinding = useComposerDelivery({
-    composerScope,
-    composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
-    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
-    latestDraftRef: composerStateBinding.composerEditingBinding.latestDraftRef,
-    latestComposerPreferencesRef:
-      composerStateBinding.composerEditingBinding.latestComposerPreferencesRef,
-    composerMarkdownRef: composerStateBinding.composerEditingBinding.composerMarkdownRef,
-    selectedModel: composerStateBinding.composerEditingBinding.selectedModel,
-    selectedEffort: composerStateBinding.composerEditingBinding.selectedEffort,
-    selectedPersonality: composerStateBinding.composerEditingBinding.selectedPersonality,
-    selectedPermissions: composerStateBinding.composerEditingBinding.selectedPermissions,
-    capturePreferenceUpdate: composerStateBinding.composerEditingBinding.capturePreferenceUpdate,
+    attachments: composerStateBinding.composerEditingBinding.attachments,
+    cancelQueuedComposerEdit: composerCommands.queueEditActionsBinding.cancelQueuedComposerEdit,
     captureControlsResource: composerStateBinding.composerEditingBinding.captureControlsResource,
-    queuedComposerEdit: composerStateBinding.queueEditStateBinding.queuedComposerEdit,
-    pastedAttachmentPendingRef:
-      composerStateBinding.largePasteStateBinding.pastedAttachmentPendingRef,
     captureDraftMutations: composerStateBinding.composerEditingBinding.captureDraftMutations,
-    threadLifecycleActive: threadLifecycleActive,
-    currentTurnId: currentTurnId,
-    contentReviewAttachmentId:
-      composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
+    capturePreferenceUpdate: composerStateBinding.composerEditingBinding.capturePreferenceUpdate,
+    clearComposerText: composerStateBinding.composerEditingBinding.clearComposerText,
     clearContentReviewAttachmentId:
       composerStateBinding.reviewAttachmentIdsBinding.clearContentReviewAttachmentId,
+    composerMarkdownRef: composerStateBinding.composerEditingBinding.composerMarkdownRef,
+    composerScope,
+    composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
+    contentReviewAttachmentId:
+      composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
     conversationOwner,
+    currentTurnId: currentTurnId,
+    draft: composerStateBinding.composerEditingBinding.draft,
     draftConnectionId,
+    draftSelectionRef: composerStateBinding.composerEditingBinding.draftSelectionRef,
     draftThreadId,
-    onSend: composerInputs.onSend,
+    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
+    latestComposerPreferencesRef:
+      composerStateBinding.composerEditingBinding.latestComposerPreferencesRef,
+    latestDraftRef: composerStateBinding.composerEditingBinding.latestDraftRef,
+    onEditQueued: queueInputs.onEditQueued,
+    onInterrupt: composerInputs.onInterrupt,
     onListQueue: queueInputs.onListQueue,
+    onSend: composerInputs.onSend,
+    onStartVoiceTranscription: composerInputs.onStartVoiceTranscription,
+    pastedAttachmentPending: composerStateBinding.largePasteStateBinding.pastedAttachmentPending,
+    pastedAttachmentPendingRef:
+      composerStateBinding.largePasteStateBinding.pastedAttachmentPendingRef,
+    queuedComposerEdit: composerStateBinding.queueEditStateBinding.queuedComposerEdit,
+    queuedComposerEditBusy: composerStateBinding.queueEditStateBinding.queuedComposerEditBusy,
+    remoteThread: remoteThread,
     saveDraft: composerInputs.saveDraft,
     saveDraftAttachments: composerInputs.saveDraftAttachments,
-    voiceController,
-    draft: composerStateBinding.composerEditingBinding.draft,
-    draftSelectionRef: composerStateBinding.composerEditingBinding.draftSelectionRef,
-    remoteThread: remoteThread,
-    onStartVoiceTranscription: composerInputs.onStartVoiceTranscription,
-    queuedComposerEditBusy: composerStateBinding.queueEditStateBinding.queuedComposerEditBusy,
-    voicePhase: composerStateBinding.composerVoiceStateBinding.voicePhase,
-    attachments: composerStateBinding.composerEditingBinding.attachments,
-    onEditQueued: queueInputs.onEditQueued,
-    pastedAttachmentPending: composerStateBinding.largePasteStateBinding.pastedAttachmentPending,
-    uploadsBlockSend: composerStateBinding.composerEditingBinding.uploadsBlockSend,
-    voiceRetryAvailable: composerStateBinding.composerVoiceStateBinding.voiceRetryAvailable,
-    voiceError: composerStateBinding.composerVoiceStateBinding.voiceError,
-    cancelQueuedComposerEdit: composerCommands.queueEditActionsBinding.cancelQueuedComposerEdit,
-    clearComposerText: composerStateBinding.composerEditingBinding.clearComposerText,
     saveQueuedComposerEdit: composerCommands.queueEditActionsBinding.saveQueuedComposerEdit,
-    onInterrupt: composerInputs.onInterrupt,
+    selectedEffort: composerStateBinding.composerEditingBinding.selectedEffort,
+    selectedModel: composerStateBinding.composerEditingBinding.selectedModel,
+    selectedPermissions: composerStateBinding.composerEditingBinding.selectedPermissions,
+    selectedPersonality: composerStateBinding.composerEditingBinding.selectedPersonality,
+    threadLifecycleActive: threadLifecycleActive,
+    uploadsBlockSend: composerStateBinding.composerEditingBinding.uploadsBlockSend,
+    voiceController,
+    voiceError: composerStateBinding.composerVoiceStateBinding.voiceError,
+    voicePhase: composerStateBinding.composerVoiceStateBinding.voicePhase,
+    voiceRetryAvailable: composerStateBinding.composerVoiceStateBinding.voiceRetryAvailable,
   });
-  return { openGoalDetails, composerAccessoryActionsBinding, composerDeliveryBinding };
+  return { composerAccessoryActionsBinding, composerDeliveryBinding, openGoalDetails };
 }

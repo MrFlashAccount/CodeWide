@@ -29,17 +29,21 @@ export function useDocumentNavigation(
   const openDocumentLinkFromCwd = useEvent((href: string, sourceCwd: string) => {
     const loopback = parseLoopbackLink(href);
     if (loopback !== null && onOpenLoopbackLink !== undefined) {
-      void onOpenLoopbackLink(loopback).catch((cause: unknown) => {
+      void onOpenLoopbackLink(loopback).catch((error: unknown) => {
         dialog.alert(
           "Could not open localhost",
-          cause instanceof Error ? cause.message : "The forwarded URL could not be opened.",
+          error instanceof Error ? error.message : "The forwarded URL could not be opened.",
         );
       });
       return true;
     }
-    if (getTransferAccess === undefined) return false;
+    if (getTransferAccess === undefined) {
+      return false;
+    }
     const target = resolvePreviewableDocumentLink(href, sourceCwd);
-    if (target === null) return false;
+    if (target === null) {
+      return false;
+    }
     const request = { ...target, getTransferAccess: getStableTransferAccess };
     if (target.kind === "download" && !isAttachmentVideo(target.name)) {
       void downloadDocument(request).catch(() => {
@@ -57,8 +61,10 @@ export function useDocumentNavigation(
 
 export function useDocumentTransferAccess(getTransferAccess: GetTransferAccess | undefined) {
   const getStableTransferAccess = useEvent(async (forceRefresh = false) => {
-    if (getTransferAccess === undefined) throw new Error("File access is unavailable");
-    return await getTransferAccess(forceRefresh);
+    if (getTransferAccess === undefined) {
+      throw new Error("File access is unavailable");
+    }
+    return getTransferAccess(forceRefresh);
   });
   return getStableTransferAccess;
 }

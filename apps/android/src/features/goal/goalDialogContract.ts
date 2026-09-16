@@ -4,11 +4,11 @@ import type { ThreadGoalInput } from "../../data/workspace-resource-database";
 
 /** Goal editor state and actions supplied by its owning feature. */
 export type GoalDialogProps = {
-  visible: boolean;
-  onClose(): void;
   goal: ThreadGoal | null;
+  onClear: () => Promise<boolean>;
+  onClose: () => void;
+  onSet: (input: ThreadGoalInput) => Promise<ThreadGoal>;
   resourceError: string | null;
-  onSet(input: ThreadGoalInput): Promise<ThreadGoal>;
-  onClear(): Promise<boolean>;
+  visible: boolean;
   voiceScope: string;
 };

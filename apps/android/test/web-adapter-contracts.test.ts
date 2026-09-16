@@ -10,13 +10,17 @@ describe("browser database adapter contracts", () => {
     const profiles = createConnectionProfileDatabase();
     const ui = createThreadUiStateDatabase();
     try {
-      await Promise.all([profiles.collection.preload(), ui.collection.preload()]);
+      await Promise.all([profiles.collection.preload(), ui.ready]);
       expect(profiles.collection.toArray).toEqual([]);
-      expect(ui.collection.toArray).toEqual([]);
       const pending = ui.read("server", "thread");
       expect(ui.read("server", "thread")).toBe(pending);
       const row = await pending;
-      expect(row).toMatchObject({ connectionId: "server", threadId: "thread", draftText: "", attachments: [] });
+      expect(row).toMatchObject({
+        connectionId: "server",
+        threadId: "thread",
+        draftText: "",
+        attachments: [],
+      });
       expect(ui.row$("server", "thread").peek()).toEqual(row);
     } finally {
       profiles.close();

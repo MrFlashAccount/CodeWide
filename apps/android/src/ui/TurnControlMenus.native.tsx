@@ -10,19 +10,19 @@ const SERVER_DEFAULT_PERMISSIONS = "permissions:server-default";
 
 export function ModelThinkingMenu({
   accessibilityLabel,
+  error,
+  loading,
+  models,
+  onClose,
+  onOpen,
+  onSelectEffort,
+  onSelectModel,
+  onSelectPersonality,
+  selectedEffort,
+  selectedModel,
+  selectedPersonality,
   triggerChildren,
   triggerStyle,
-  models,
-  loading,
-  error,
-  selectedModel,
-  selectedEffort,
-  selectedPersonality,
-  onOpen,
-  onClose,
-  onSelectModel,
-  onSelectEffort,
-  onSelectPersonality,
 }: ModelThinkingMenuProps) {
   const model = models.find((candidate) => candidate.id === selectedModel);
   const effectiveModel = selectedModel;
@@ -33,50 +33,50 @@ export function ModelThinkingMenu({
     ...(loading && models.length === 0
       ? [
           {
-            id: "model:loading",
-            section: "Model",
-            label: "Loading from remote server…",
             disabled: true,
+            id: "model:loading",
+            label: "Loading from remote server…",
+            section: "Model",
           },
         ]
       : []),
     ...(error === null
       ? []
-      : [{ id: "model:error", section: "Error", label: error, disabled: true, destructive: true }]),
+      : [{ destructive: true, disabled: true, id: "model:error", label: error, section: "Error" }]),
     ...(models.length === 0 && !loading
       ? [
           {
-            id: "model:empty",
-            section: "Model",
-            label: "No models returned by the server",
             disabled: true,
+            id: "model:empty",
+            label: "No models returned by the server",
+            section: "Model",
           },
         ]
       : models.map((candidate) => ({
           id: `model:${candidate.id}`,
-          section: "Model",
-          label: candidate.label,
-          selected: candidate.id === effectiveModel,
           keepOpen: true,
+          label: candidate.label,
+          section: "Model",
+          selected: candidate.id === effectiveModel,
         }))),
     ...efforts.map((effort) => ({
       id: `effort:${effort}`,
-      section: "Thinking level",
       label: thinkingEffortLabel(effort),
+      section: "Thinking level",
       selected: effort === effectiveEffort,
     })),
     ...(model?.supportsPersonality === true
       ? [
           {
             id: SERVER_DEFAULT_PERSONALITY,
-            section: "Personality",
             label: "Server default",
+            section: "Personality",
             selected: selectedPersonality === null,
           },
           ...PERSONALITIES.map((personality) => ({
             id: `personality:${personality}`,
-            section: "Personality",
             label: personality,
+            section: "Personality",
             selected: selectedPersonality === personality,
           })),
         ]
@@ -85,7 +85,9 @@ export function ModelThinkingMenu({
   const select = (id: string) => {
     if (id.startsWith("model:")) {
       const candidate = models.find((item) => item.id === id.slice("model:".length));
-      if (candidate === undefined) return;
+      if (candidate === undefined) {
+        return;
+      }
       const nextEffort = candidate.efforts.includes(effectiveEffort ?? "")
         ? (effectiveEffort ?? candidate.defaultEffort)
         : candidate.defaultEffort;
@@ -100,26 +102,33 @@ export function ModelThinkingMenu({
       onSelectPersonality(null);
       return;
     }
-    if (id.startsWith("personality:"))
-      onSelectPersonality(id.slice("personality:".length) as Personality);
+    if (id.startsWith("personality:")) {
+      const personality = id.slice("personality:".length);
+      if (isPersonality(personality)) {
+        onSelectPersonality(personality);
+      }
+    }
   };
 
   return (
     <ActionMenu
       accessibilityLabel={accessibilityLabel}
       actions={actions}
-      menuWidth={344}
-      placement="top"
       align="start"
+      menuWidth={344}
       onOpenChange={(open) => {
-        if (open) onOpen();
-        else onClose();
+        if (open) {
+          onOpen();
+        } else {
+          onClose();
+        }
       }}
       onSelect={select}
+      placement="top"
     >
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
         style={triggerStyle}
       >
         {triggerChildren}
@@ -128,26 +137,30 @@ export function ModelThinkingMenu({
   );
 }
 
+function isPersonality(value: string): value is Personality {
+  return value === "friendly" || value === "pragmatic" || value === "none";
+}
+
 export function PermissionsMenu({
   accessibilityLabel,
+  error,
+  loading,
+  onClose,
+  onOpen,
+  onSelectPermissions,
+  permissions,
+  selectedPermissions,
   triggerChildren,
   triggerStyle,
-  permissions,
-  loading,
-  error,
-  selectedPermissions,
-  onOpen,
-  onClose,
-  onSelectPermissions,
 }: PermissionsMenuProps) {
   const actions: ActionMenuItem[] = [
     ...(loading && permissions.length === 0
       ? [
           {
-            id: "permissions:loading",
-            section: "Security permissions",
-            label: "Loading from remote server…",
             disabled: true,
+            id: "permissions:loading",
+            label: "Loading from remote server…",
+            section: "Security permissions",
           },
         ]
       : []),
@@ -155,24 +168,24 @@ export function PermissionsMenu({
       ? []
       : [
           {
-            id: "permissions:error",
-            section: "Error",
-            label: error,
-            disabled: true,
             destructive: true,
+            disabled: true,
+            id: "permissions:error",
+            label: error,
+            section: "Error",
           },
         ]),
     {
-      id: SERVER_DEFAULT_PERMISSIONS,
-      section: "Security permissions",
-      label: "Server default",
       description: "Use the server's configured access level",
+      id: SERVER_DEFAULT_PERMISSIONS,
+      label: "Server default",
+      section: "Security permissions",
       selected: selectedPermissions === null,
     },
     ...permissions.map((permission) => ({
       id: `permissions:${permission.id}`,
-      section: "Security permissions",
       label: permissionLabel(permission.id),
+      section: "Security permissions",
       ...(permission.description === null ? {} : { description: permission.description }),
       disabled: !permission.allowed,
       selected: permission.id === selectedPermissions,
@@ -183,22 +196,27 @@ export function PermissionsMenu({
     <ActionMenu
       accessibilityLabel={accessibilityLabel}
       actions={actions}
-      menuWidth={344}
-      placement="top"
       align="start"
+      menuWidth={344}
       onOpenChange={(open) => {
-        if (open) onOpen();
-        else onClose();
+        if (open) {
+          onOpen();
+        } else {
+          onClose();
+        }
       }}
       onSelect={(id) => {
-        if (id === SERVER_DEFAULT_PERMISSIONS) onSelectPermissions(null);
-        else if (id.startsWith("permissions:"))
+        if (id === SERVER_DEFAULT_PERMISSIONS) {
+          onSelectPermissions(null);
+        } else if (id.startsWith("permissions:")) {
           onSelectPermissions(id.slice("permissions:".length));
+        }
       }}
+      placement="top"
     >
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
         style={triggerStyle}
       >
         {triggerChildren}
@@ -208,13 +226,21 @@ export function PermissionsMenu({
 }
 
 function permissionLabel(id: string): string {
-  if (id === ":workspace") return "Workspace";
-  if (id === ":read-only") return "Read only";
-  if (id === ":full-access" || id === ":danger-full-access") return "Full access";
+  if (id === ":workspace") {
+    return "Workspace";
+  }
+  if (id === ":read-only") {
+    return "Read only";
+  }
+  if (id === ":full-access" || id === ":danger-full-access") {
+    return "Full access";
+  }
   return id.startsWith(":") ? id.slice(1).replaceAll("-", " ") : id;
 }
 
 function thinkingEffortLabel(effort: string): string {
-  if (effort === "xhigh") return "Extra high";
-  return effort.length === 0 ? effort : `${effort[0]!.toUpperCase()}${effort.slice(1)}`;
+  if (effort === "xhigh") {
+    return "Extra high";
+  }
+  return effort.length === 0 ? effort : `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`;
 }

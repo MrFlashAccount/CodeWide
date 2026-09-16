@@ -1,8 +1,9 @@
 import * as Updates from "expo-updates";
 import { AppState } from "react-native";
+import { appLogger } from "../observability/logger";
 
-const CHECK_INTERVAL_MS = 30 * 60 * 1_000;
-const RETRY_INTERVAL_MS = 30 * 1_000;
+const CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const RETRY_INTERVAL_MS = 30 * 1000;
 
 /**
  * Keeps the release APK on the latest signed JS bundle while it is open.
@@ -13,7 +14,9 @@ const RETRY_INTERVAL_MS = 30 * 1_000;
 let started = false;
 
 export function startOtaPrefetchRuntime(): void {
-  if (started || __DEV__ || !Updates.isEnabled) return;
+  if (started || __DEV__ || !Updates.isEnabled) {
+    return;
+  }
   started = true;
 
   let checking = false;
@@ -23,11 +26,15 @@ export function startOtaPrefetchRuntime(): void {
   let nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
 
   const prefetch = async (force = false) => {
-    if (checking || AppState.currentState !== "active") return;
+    if (checking || AppState.currentState !== "active") {
+      return;
+    }
     // A downloaded update waiting for activation must bypass network
     // throttling. Otherwise one failed/inactive reload can strand the app on
     // the old bundle until the next 30-minute check.
-    if (!updateReady && !force && Date.now() < nextCheckAt) return;
+    if (!updateReady && !force && Date.now() < nextCheckAt) {
+      return;
+    }
     checking = true;
 
     try {
@@ -40,24 +47,35 @@ export function startOtaPrefetchRuntime(): void {
         nextCheckAt = Date.now() + CHECK_INTERVAL_MS;
       }
 
+      // WHY: AppState may change while the awaited native update checks run; TypeScript retains the earlier foreground narrowing across those awaits.
+      // oxlint-disable-next-line typescript/no-unnecessary-condition
       if (updateReady && AppState.currentState === "active") {
         // reloadAsync selects the freshly downloaded bundle and recreates
         // the JS runtime; it does not require killing the Android process.
         await Updates.reloadAsync();
       }
-    } catch (error) {
+    } catch {
       // Keep the pending activation flag and retry quickly after a transient
       // native/network failure. Successful no-update checks remain limited
       // to once per 30 minutes.
       nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
       // A broken update edge must never make the installed app unusable.
-      console.warn("[CodeWide] OTA live reload failed", error);
+      appLogger.warn({ event: "ota.live_reload.failed" });
     }
     checking = false;
   };
 
-  setInterval(() => void prefetch(), RETRY_INTERVAL_MS);
+  const startPrefetch = (force = false): void => {
+    prefetch(force).catch(() => {
+      checking = false;
+      nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
+    });
+  };
+
+  setInterval(startPrefetch, RETRY_INTERVAL_MS);
   AppState.addEventListener("change", (state) => {
-    if (state === "active") void prefetch(true);
+    if (state === "active") {
+      startPrefetch(true);
+    }
   });
 }

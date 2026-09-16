@@ -4,7 +4,7 @@ import { renderUserImageTile } from "./UserImageTile";
 import { Ionicons } from "@expo/vector-icons";
 import { useContext } from "react";
 import { Pressable, View } from "react-native";
-import { type StoredDraftAttachment } from "../../../data/thread-ui-state-types";
+import type { StoredDraftAttachment } from "../../../data/thread-ui-state-types";
 import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard";
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
@@ -14,23 +14,23 @@ import {
   type UserMessageAttachment,
 } from "../../../rendering/user-message-attachments";
 import { normalizeUserMessage } from "../../../rendering/user-message-normalizer";
+import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
 import { colors, iconSize } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
 import { usePersistentExpansion } from "./Card";
-import { textFingerprint } from "./disclosureState";
 import { styles } from "./UserMessageContent.styles";
 
 export const USER_MESSAGE_COLLAPSED_LINES = 25;
 
-export const USER_MESSAGE_COLLAPSED_CHARS = 1_800;
+export const USER_MESSAGE_COLLAPSED_CHARS = 1800;
 
 export interface UserMessageContentProps {
   content: unknown[];
-  projectedAttachments?: unknown;
+  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
   localAttachments?: readonly StoredDraftAttachment[];
   pendingText?: boolean;
-  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
+  projectedAttachments?: unknown;
 }
 
 export function UserMessageContent(props: UserMessageContentProps) {
@@ -51,8 +51,11 @@ export function UserMessageContent(props: UserMessageContentProps) {
   const otherAttachments = attachments.filter((attachment) => attachment.kind !== "image");
   const bodyParts = parts.filter(
     (part) =>
-      !["image", "localImage", "audio", "localAudio", "mention"].includes(String(part.type ?? "")),
+      !["image", "localImage", "audio", "localAudio", "mention"].includes(
+        typeof part.type === "string" ? part.type : "",
+      ),
   );
+  const bodyPartOccurrences = new Map<string, number>();
   return (
     <View
       style={[
@@ -68,14 +71,15 @@ export function UserMessageContent(props: UserMessageContentProps) {
       )}
       {bodyParts.map((part, index) => {
         const type = typeof part.type === "string" ? part.type : "unknown";
+        const key = occurrenceKey(bodyPartOccurrences, userMessagePartIdentity(part, type));
         if (type === "text" && typeof part.text === "string") {
           const normalized = normalizeUserMessage(part.text);
           return normalized.text === "" ? null : (
             <CollapsibleUserMessage
-              key={index}
-              text={normalized.text}
+              key={key}
               partIndex={index}
               pending={pendingText}
+              text={normalized.text}
             />
           );
         }
@@ -84,8 +88,8 @@ export function UserMessageContent(props: UserMessageContentProps) {
             ? `Skill · ${part.name}`
             : `Attachment · ${type}`;
         return (
-          <View key={index} style={styles.attachmentChip}>
-            <Ionicons name="attach-outline" size={iconSize.inline} color={colors.textMuted} />
+          <View key={key} style={styles.attachmentChip}>
+            <Ionicons color={colors.textMuted} name="attach-outline" size={iconSize.inline} />
             <Text numberOfLines={1} style={styles.attachmentText}>
               {label}
             </Text>
@@ -96,8 +100,8 @@ export function UserMessageContent(props: UserMessageContentProps) {
         <MessageAttachmentGrid>
           {otherAttachments.map((attachment) => (
             <MessageAttachmentCard
-              key={`${attachment.kind}:${attachment.name}:${userMessageAttachmentReference(attachment)}`}
               attachment={attachment}
+              key={`${attachment.kind}:${attachment.name}:${userMessageAttachmentReference(attachment)}`}
               {...(getTransferAccess === undefined ? {} : { getAccess: getTransferAccess })}
             />
           ))}
@@ -105,6 +109,19 @@ export function UserMessageContent(props: UserMessageContentProps) {
       )}
     </View>
   );
+}
+
+function userMessagePartIdentity(part: Record<string, unknown>, type: string): string {
+  if (typeof part.id === "string") {
+    return `${type}:id:${part.id}`;
+  }
+  for (const field of ["text", "name", "path", "url"] as const) {
+    const value = part[field];
+    if (typeof value === "string") {
+      return `${type}:${field}:${textFingerprint(value)}`;
+    }
+  }
+  return type;
 }
 
 export interface CollapsibleUserMessageProps {
@@ -121,7 +138,7 @@ export function CollapsibleUserMessage(props: CollapsibleUserMessageProps) {
     (text.length > USER_MESSAGE_COLLAPSED_CHARS ||
       text.split("\n").length > USER_MESSAGE_COLLAPSED_LINES);
   const [expanded, setExpanded] = usePersistentExpansion(
-    `user-message:${partIndex}:${textFingerprint(text)}`,
+    `user-message:${String(partIndex)}:${textFingerprint(text)}`,
     false,
   );
   const maxLines = !expanded && canCollapse ? USER_MESSAGE_COLLAPSED_LINES : 0;
@@ -144,16 +161,18 @@ export function CollapsibleUserMessage(props: CollapsibleUserMessageProps) {
       {canCollapse && (
         <Pressable
           accessibilityRole="button"
-          onPress={() => setExpanded((current) => !current)}
+          onPress={() => {
+            setExpanded((current) => !current);
+          }}
           style={styles.userMessageExpandButton}
         >
           <Text style={styles.userMessageExpandText}>
             {expanded ? "Collapse" : "Show full message"}
           </Text>
           <Ionicons
+            color={colors.textMuted}
             name={expanded ? "chevron-up" : "chevron-down"}
             size={iconSize.inline}
-            color={colors.textMuted}
           />
         </Pressable>
       )}
@@ -163,9 +182,15 @@ export function CollapsibleUserMessage(props: CollapsibleUserMessageProps) {
 
 export function userMessageAttachmentReference(attachment: UserMessageAttachment): string {
   const source = attachment.source;
-  if (source.type === "path") return source.path;
-  if (source.type === "content") return source.asset.id;
-  if (source.type === "url") return source.url;
+  if (source.type === "path") {
+    return source.path;
+  }
+  if (source.type === "content") {
+    return source.asset.id;
+  }
+  if (source.type === "url") {
+    return source.url;
+  }
   return `${source.rootId}:${source.path}`;
 }
 
@@ -174,10 +199,10 @@ export function UserImageGallery({
   getTransferAccess,
 }: {
   attachments: UserMessageAttachment[];
-  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
+  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
 }) {
   return (
-    <View testID="user-image-gallery" style={styles.userImageGallery}>
+    <View style={styles.userImageGallery} testID="user-image-gallery">
       {attachments.map((attachment, index) =>
         renderUserImageTile(attachment, index, attachments.length, getTransferAccess),
       )}

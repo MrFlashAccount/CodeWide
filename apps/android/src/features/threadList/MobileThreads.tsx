@@ -22,31 +22,31 @@ import { ThreadRow } from "./ThreadRow";
 
 export function MobileThreads(props: MobileThreadsProps) {
   const {
+    archivedThreads,
     catalogState,
-    remote,
-    project,
-    projects,
-    onOpenProject,
-    projectLimit,
+    filter,
+    initialOffset,
+    mode,
+    onArchive,
+    onLoadMore,
     onLoadMoreProject,
+    onMarkRead,
+    onNewThread,
+    onOffsetChange,
+    onOpenProject,
+    onPreloadThread,
+    onSelectThread,
+    onTogglePin,
+    onUnarchive,
+    project,
+    projectLimit,
+    projects,
+    query,
+    remote,
+    searchContent,
     servers,
     serverScope,
     threads,
-    archivedThreads,
-    mode,
-    filter,
-    query,
-    searchContent,
-    onLoadMore,
-    initialOffset,
-    onOffsetChange,
-    onSelectThread,
-    onPreloadThread,
-    onNewThread,
-    onTogglePin,
-    onArchive,
-    onUnarchive,
-    onMarkRead,
   } = props;
 
   const projectSource = useProjectSidebarThreads(
@@ -75,7 +75,7 @@ export function MobileThreads(props: MobileThreadsProps) {
 
   return (
     <View style={styles.mobileList}>
-      <MobileThreadsHeader props={props} archivedCount={filteredArchived.length} />
+      <MobileThreadsHeader archivedCount={filteredArchived.length} props={props} />
       <View style={styles.threadListContentSurface}>
         {searchContent ??
           (hideThreadLists ? (
@@ -85,66 +85,72 @@ export function MobileThreads(props: MobileThreadsProps) {
           ) : (
             <LegendList
               data={mobileRows}
-              key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
               dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
-              initialScrollOffset={initialOffset}
-              getFixedItemSize={threadListRowHeight}
               drawDistance={320}
-              recycleItems
+              getFixedItemSize={threadListRowHeight}
               getItemType={(item) => item.kind}
+              initialScrollOffset={initialOffset}
               itemsAreEqual={threadListRowsEqual}
-              onScroll={({ nativeEvent }) => onOffsetChange(nativeEvent.contentOffset.y)}
-              onEndReached={project === null ? onLoadMore : projectSource.loadMore}
-              onEndReachedThreshold={0.4}
-              scrollEventThrottle={100}
+              key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
               keyExtractor={sidebarRowKey}
               ListEmptyComponent={
                 <SidebarListFeedback
+                  archived={mode === "archived"}
                   key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                   state={project === null ? catalogState : projectSource.state}
-                  archived={mode === "archived"}
                 />
               }
               ListFooterComponent={
                 mobileRows.length > 0 && mode === "active" && filteredThreads.length === 0 ? (
                   <SidebarListFeedback
+                    archived={false}
                     key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                     state={project === null ? catalogState : projectSource.state}
-                    archived={false}
                   />
                 ) : null
               }
+              onEndReached={project === null ? onLoadMore : projectSource.loadMore}
+              onEndReachedThreshold={0.4}
+              onScroll={({ nativeEvent }) => {
+                onOffsetChange(nativeEvent.contentOffset.y);
+              }}
+              recycleItems
               renderItem={({ item }) =>
                 item.kind === "header" ? (
                   <SidebarSectionHeader title={item.title} />
                 ) : item.kind === "project" ? (
                   <SidebarProjectRow
+                    onPress={() => {
+                      onOpenProject(item.project);
+                    }}
                     project={item.project}
-                    onPress={() => onOpenProject(item.project)}
                   />
                 ) : (
                   <ThreadRow
-                    thread={item.thread}
+                    onArchive={async () => onArchive(item.thread)}
+                    onMarkRead={async () => onMarkRead(item.thread)}
+                    onPress={() => {
+                      onSelectThread(threadSelectionKey(item.thread));
+                    }}
+                    onPressIn={() => onPreloadThread(threadSelectionKey(item.thread))}
+                    onTogglePin={async () => onTogglePin(item.thread)}
+                    onUnarchive={async () => onUnarchive(item.thread)}
+                    selected={false}
                     server={
                       serverScope.kind === "all" && servers.length > 1
                         ? servers.find((entry) => entry.id === item.thread.serverId)
                         : undefined
                     }
-                    selected={false}
-                    onPressIn={() => onPreloadThread(threadSelectionKey(item.thread))}
-                    onPress={() => onSelectThread(threadSelectionKey(item.thread))}
-                    onTogglePin={() => onTogglePin(item.thread)}
-                    onArchive={() => onArchive(item.thread)}
-                    onUnarchive={() => onUnarchive(item.thread)}
-                    onMarkRead={() => onMarkRead(item.thread)}
+                    thread={item.thread}
                   />
                 )
               }
+              scrollEventThrottle={100}
             />
           ))}
       </View>
       {searchContent === null && mode === "active" && (
-        <NewThreadFloatingButton projectName={project?.name ?? null} onPress={onNewThread} />
+        <NewThreadFloatingButton onPress={onNewThread} projectName={project?.name ?? null} />
       )}
     </View>
   );

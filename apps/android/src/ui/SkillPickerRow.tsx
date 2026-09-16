@@ -4,12 +4,12 @@ import { AppText } from "./Typography";
 import type { SkillPickerRowProps } from "./SkillPickerRow.types";
 import { listRowHeight } from "./AppListRow.types";
 
-export function SkillPickerRow({ title, description, onPress }: SkillPickerRowProps) {
+export function SkillPickerRow({ description, onPress, title }: SkillPickerRowProps) {
   return (
     <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={title}
       accessibilityHint="Insert skill into message"
+      accessibilityLabel={title}
+      accessibilityRole="button"
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
@@ -26,20 +26,20 @@ export function SkillPickerRow({ title, description, onPress }: SkillPickerRowPr
 }
 
 const styles = StyleSheet.create({
-  row: {
-    paddingHorizontal: spacing.sm,
-    justifyContent: "center",
-    gap: spacing.xxs,
-    height: listRowHeight.double,
-    backgroundColor: colors.surfaceContainer,
-  },
-  title: {
-    ...typeScale.body,
-    color: colors.text,
-  },
   description: {
     ...typeScale.label,
     color: colors.textMuted,
   },
   pressed: { opacity: 0.7 },
+  row: {
+    backgroundColor: colors.surfaceContainer,
+    gap: spacing.xxs,
+    height: listRowHeight.double,
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm,
+  },
+  title: {
+    ...typeScale.body,
+    color: colors.text,
+  },
 });

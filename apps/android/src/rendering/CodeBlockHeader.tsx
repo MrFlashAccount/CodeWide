@@ -3,8 +3,8 @@ import { colors, spacing, typeScale } from "../theme";
 import { productFonts } from "../ui/product-fonts";
 
 interface CodeBlockHeaderProps {
-  readonly language: string;
   readonly copied: boolean;
+  readonly language: string;
   readonly scale: number;
 }
 
@@ -17,17 +17,17 @@ export function CodeBlockHeader(props: CodeBlockHeaderProps) {
   return (
     <View style={styles.header}>
       <Text
-        numberOfLines={1}
         ellipsizeMode="tail"
         maxFontSizeMultiplier={1.3}
+        numberOfLines={1}
         style={[styles.text, styles.language, typography]}
       >
         {props.language}
       </Text>
       <Text
-        numberOfLines={1}
         accessibilityLiveRegion="polite"
         maxFontSizeMultiplier={1.3}
+        numberOfLines={1}
         style={[styles.text, styles.action, typography, props.copied && styles.copied]}
       >
         {props.copied ? "Copied" : "Copy"}
@@ -37,20 +37,20 @@ export function CodeBlockHeader(props: CodeBlockHeaderProps) {
 }
 
 const styles = StyleSheet.create({
+  action: { flexShrink: 0 },
+  copied: { color: colors.green },
   header: {
-    flexDirection: "row",
     alignItems: "center",
+    flexDirection: "row",
     gap: spacing.xs,
-  },
-  text: {
-    color: colors.textDim,
-    fontFamily: productFonts.regular,
   },
   language: {
     flex: 1,
     minWidth: 0,
     textTransform: "uppercase",
   },
-  action: { flexShrink: 0 },
-  copied: { color: colors.green },
+  text: {
+    color: colors.textDim,
+    fontFamily: productFonts.regular,
+  },
 });

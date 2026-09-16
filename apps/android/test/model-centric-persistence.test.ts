@@ -29,32 +29,58 @@ describe("model-centric persistence boundary", () => {
   });
 
   it("does not rebuild domain indexes by rescanning the hot collection", () => {
-    const details = readFileSync(new URL("thread-detail-database.native.ts", dataDirectory), "utf8");
+    const details = readFileSync(
+      new URL("thread-detail-database.native.ts", dataDirectory),
+      "utf8",
+    );
     const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
     expect(details).not.toContain("source.replaceLoaded(collection.toArray)");
     expect(screen).not.toContain("useRetainedReadyRows");
   });
 
   it("publishes composer state through a key-scoped Legend resource", () => {
-    const database = readFileSync(new URL("thread-ui-state-database.native.ts", dataDirectory), "utf8");
+    const database = readFileSync(
+      new URL("thread-ui-state-database.native.ts", dataDirectory),
+      "utf8",
+    );
     const hook = readFileSync(new URL("use-thread-ui-state.ts", dataDirectory), "utf8");
-    const contract = readFileSync(new URL("thread-ui-state-database-contract.ts", dataDirectory), "utf8");
-    expect(contract).toContain("row$(connectionId: string, threadId: string)");
+    const contract = readFileSync(
+      new URL("thread-ui-state-database-contract.ts", dataDirectory),
+      "utf8",
+    );
+    expect(contract).toContain("row$: (connectionId: string, threadId: string)");
     expect(database).toContain("collection.subscribeChanges");
     expect(hook).toContain("database.row$(connectionId, threadId).get()");
     expect(hook).not.toContain("useLiveQuery");
     expect(hook).not.toContain("createLiveQueryCollection");
   });
 
-  it("keeps old stores behind one-shot read-only migration boundaries", () => {
-    const legacyStore = readFileSync(new URL("legacy-remote-store.native.ts", dataDirectory), "utf8");
-    const uiState = readFileSync(new URL("thread-ui-state-database.native.ts", dataDirectory), "utf8");
+  it("hydrates composer state only for demanded threads", () => {
+    const database = readFileSync(
+      new URL("thread-ui-state-database.native.ts", dataDirectory),
+      "utf8",
+    );
+    const contract = readFileSync(
+      new URL("thread-ui-state-database-contract.ts", dataDirectory),
+      "utf8",
+    );
+    const workspace = readFileSync(new URL("workspace-runtime.ts", dataDirectory), "utf8");
+    expect(database).toContain("createOnDemandPersistentCollectionModel");
+    expect(database).toContain("collection._sync.loadSubset");
+    expect(database).toContain("collection._sync.unloadSubset");
+    expect(contract).toContain("ready: Promise<void>");
+    expect(workspace).toContain("threadUiState.ready");
+    expect(workspace).not.toContain("threadUiState.collection.preload()");
+  });
+
+  it("removes the obsolete Expo SQLite store and keeps UI state model-owned", () => {
+    const uiState = readFileSync(
+      new URL("thread-ui-state-database.native.ts", dataDirectory),
+      "utf8",
+    );
     const uiStateTypes = readFileSync(new URL("thread-ui-state-types.ts", dataDirectory), "utf8");
-    expect(legacyStore).toContain("Read-only adapter for the pre-TanStack Expo-SQLite database");
-    expect(legacyStore).toContain("listConnections");
-    expect(legacyStore).not.toContain("loadDraft(");
-    expect(legacyStore).not.toContain("loadScrollOffset(");
-    expect(legacyStore).not.toContain("loadComposerPreferences(");
+    expect(existsSync(new URL("legacy-remote-store.native.ts", dataDirectory))).toBe(false);
+    expect(existsSync(new URL("legacy-remote-store.web.ts", dataDirectory))).toBe(false);
     expect(uiState).toContain("getOrCreate(connectionId, threadId)");
     expect(uiState).not.toContain("seedLegacy");
     expect(uiStateTypes).not.toContain("migratedFromLegacy");

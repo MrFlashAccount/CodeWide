@@ -20,6 +20,8 @@ function projectManagerItemHeight(item: ProjectManagerItem): number | undefined 
       return listRowHeight.single;
     case "message":
       return undefined;
+    default:
+      throw new Error("Unsupported project manager item");
   }
 }
 function projectLocation(project: SidebarProject, serverName: string | undefined): string {
@@ -33,25 +35,25 @@ function projectActions(
 ): ActionMenuItem[] {
   const actions: ActionMenuItem[] = [
     {
+      disabled,
+      icon: project.pinned ? "pin" : "pin-outline",
       id: "pin",
       label: project.pinned ? "Unpin project" : "Pin project",
-      icon: project.pinned ? "pin" : "pin-outline",
-      disabled,
     },
   ];
   if (project.pinned) {
     actions.push(
       {
+        disabled: disabled || pinned[0]?.key === project.key,
+        icon: "arrow-up",
         id: "up",
         label: "Move up",
-        icon: "arrow-up",
-        disabled: disabled || pinned[0]?.key === project.key,
       },
       {
+        disabled: disabled || pinned.at(-1)?.key === project.key,
+        icon: "arrow-down",
         id: "down",
         label: "Move down",
-        icon: "arrow-down",
-        disabled: disabled || pinned.at(-1)?.key === project.key,
       },
     );
   }
@@ -59,18 +61,18 @@ function projectActions(
 }
 export { projectManagerItemHeight };
 export function ProjectManagementRow({
+  index,
+  item,
   props,
   state,
-  item,
-  index,
 }: {
+  index: number;
+  item: ProjectManagerItem;
   props: ProjectManagementProps;
   state: ProjectManagementState;
-  item: ProjectManagerItem;
-  index: number;
 }) {
-  const { servers, onToggle, onMove, onBrowse } = props;
-  const { pending, rowIconSize, setChoosingServer, pinned, rows, change } = state;
+  const { onBrowse, onMove, onToggle, servers } = props;
+  const { change, pending, pinned, rowIconSize, rows, setChoosingServer } = state;
 
   const previousSameKind = rows[index - 1]?.kind === item.kind;
   const nextSameKind = rows[index + 1]?.kind === item.kind;
@@ -81,7 +83,7 @@ export function ProjectManagementRow({
     : nextSameKind
       ? "first"
       : "only";
-  if (item.kind === "message")
+  if (item.kind === "message") {
     return (
       <Text
         accessibilityRole={item.error ? "alert" : undefined}
@@ -90,29 +92,30 @@ export function ProjectManagementRow({
         {item.message}
       </Text>
     );
+  }
   if (item.kind === "server") {
     const { server } = item;
     return (
       <AppListRow
-        title={server.name}
-        position={position}
-        fixedHeight={listRowHeight.single}
         accessibilityLabel={`Add project on ${server.name}`}
+        fixedHeight={listRowHeight.single}
+        leadingIcon={{ color: colors.textMuted, name: "server-outline", size: rowIconSize }}
         onPress={() => {
           setChoosingServer(false);
           onBrowse(server.id);
         }}
-        leadingIcon={{ name: "server-outline", size: rowIconSize, color: colors.textMuted }}
+        position={position}
+        title={server.name}
       />
     );
   }
   if (item.kind === "section") {
     const { section } = item;
     return (
-      <View testID={`project-section:${section.title}`} style={styles.section}>
+      <View style={styles.section} testID={`project-section:${section.title}`}>
         {section.onToggle === undefined ? (
           <View style={styles.sectionHeading}>
-            <Text numberOfLines={1} accessibilityRole="header" style={styles.sectionTitle}>
+            <Text accessibilityRole="header" numberOfLines={1} style={styles.sectionTitle}>
               {section.title}
             </Text>
             {section.projects.length > 0 && (
@@ -121,8 +124,8 @@ export function ProjectManagementRow({
           </View>
         ) : (
           <Pressable
+            accessibilityLabel={`${section.title} projects, ${String(section.projects.length)}`}
             accessibilityRole="button"
-            accessibilityLabel={`${section.title} projects, ${section.projects.length}`}
             accessibilityState={{ expanded: section.expanded }}
             onPress={section.onToggle}
             style={styles.sectionToggle}
@@ -135,9 +138,9 @@ export function ProjectManagementRow({
             </View>
             <View style={styles.menuSlot}>
               <InlineIcon
+                color={colors.textMuted}
                 name={section.expanded ? "chevron-down" : "chevron-forward"}
                 role="caption"
-                color={colors.textMuted}
               />
             </View>
           </Pressable>
@@ -148,36 +151,38 @@ export function ProjectManagementRow({
   const { project } = item;
   return (
     <ActionMenu
-      key={project.key}
       accessibilityLabel={`Actions for ${project.name}, ${project.subtitle}`}
       actions={projectActions(project, pinned, pending !== null)}
+      key={project.key}
       onSelect={(id) => {
-        if (id === "pin") void change(project, () => onToggle(project));
-        else if (id === "up" || id === "down")
-          void change(project, () => onMove(project, id === "up" ? -1 : 1));
+        if (id === "pin") {
+          change(project, async () => onToggle(project));
+        } else if (id === "up" || id === "down") {
+          change(project, async () => onMove(project, id === "up" ? -1 : 1));
+        }
       }}
     >
       <AppListRow
-        title={project.name}
-        position={position}
-        fixedHeight={listRowHeight.double}
+        accessibilityHint="Pin or arrange this project"
+        accessibilityLabel={`Actions for ${project.name}, ${project.subtitle}`}
         description={projectLocation(
           project,
           servers.length > 1
             ? servers.find((server) => server.id === project.connectionId)?.name
             : undefined,
         )}
-        accessibilityLabel={`Actions for ${project.name}, ${project.subtitle}`}
-        accessibilityHint="Pin or arrange this project"
         disabled={pending !== null}
-        leadingIcon={{ name: "folder-outline", size: rowIconSize, color: colors.textMuted }}
+        fixedHeight={listRowHeight.double}
+        leadingIcon={{ color: colors.textMuted, name: "folder-outline", size: rowIconSize }}
+        position={position}
+        title={project.name}
         {...(pending === project.key
           ? { trailingBusy: true }
           : {
               trailingIcon: {
+                color: colors.textMuted,
                 name: "ellipsis-horizontal",
                 size: rowIconSize,
-                color: colors.textMuted,
               },
             })}
       />

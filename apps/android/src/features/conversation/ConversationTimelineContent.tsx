@@ -7,143 +7,143 @@ import { TimelineViewport } from "./timeline/TimelineViewport";
 export function createConversationTimelineContent(props: CreateConversationTimelineContentProps) {
   const timelineContent = (
     <TimelineViewport
-      composerScope={props.composerScope}
-      timelineRef={props.timelineState.timelineViewportStateBinding.timelineRef}
-      displayedTimeline={props.timelineRead.timelineSearchProjectionBinding.displayedTimeline}
-      timelineInitialPosition={props.timelineRead.timelineInitialPosition}
-      threadSearch={props.timelineState.timelineSearchStateBinding.threadSearch}
-      threadSearchMatch={props.timelineState.timelineSearchStateBinding.threadSearchMatch}
-      windowLayout={props.windowLayout}
-      timelineCompact={props.timelineCompact}
-      bottomChromeHeight={props.timelineState.timelineViewportStateBinding.bottomChromeHeight}
-      liveStatusVisible={props.liveStatusVisible}
-      threadSearchVisible={props.timelineState.timelineSearchStateBinding.threadSearchVisible}
-      conversationInsets={props.conversationInsets}
-      fullscreenCovered={props.overlayScrollStateBinding.fullscreenCovered}
-      historyViewport={props.historyViewport}
       awayFromLatest={props.timelineState.historyAnchorStateBinding.awayFromLatest}
-      threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
-      inlineQueueExpanded={props.queueVisibilityBinding.inlineQueueExpanded}
-      draftConnectionId={props.draftConnectionId}
-      draftThreadId={props.draftThreadId}
+      awayFromLatestRef={props.timelineState.historyAnchorStateBinding.awayFromLatestRef}
+      bottomChromeHeight={props.timelineState.timelineViewportStateBinding.bottomChromeHeight}
+      cancelScheduledPaginationTrim={props.paginationTrimBinding.cancelScheduledPaginationTrim}
       commitInitialTimelineLoad={
         props.timelineRead.historyAnchorActionsBinding.commitInitialTimelineLoad
       }
-      timelineViewportHeightRef={
-        props.timelineState.timelineViewportStateBinding.timelineViewportHeightRef
-      }
-      reportHistoryViewport={
-        props.timelineRead.timelineViewportActionsBinding.reportHistoryViewport
-      }
-      scheduleUnreadAgentVisibilityCheck={
-        props.timelineRead.unreadReceiptActionsBinding.scheduleUnreadAgentVisibilityCheck
-      }
-      setTimelineGestureActive={
-        props.timelineState.timelineViewportStateBinding.setTimelineGestureActive
-      }
-      fullscreenScrollOwnership={props.overlayScrollStateBinding.fullscreenScrollOwnership}
-      cancelScheduledPaginationTrim={props.paginationTrimBinding.cancelScheduledPaginationTrim}
-      paginationEdgeLockRef={props.timelineState.timelineViewportStateBinding.paginationEdgeLockRef}
-      scrollGestureStartedAtRef={
-        props.timelineState.timelineViewportStateBinding.scrollGestureStartedAtRef
-      }
-      lastTimelineOffsetYRef={
-        props.timelineState.timelineViewportStateBinding.lastTimelineOffsetYRef
+      composerScope={props.composerScope}
+      conversationInsets={props.conversationInsets}
+      displayedTimeline={props.timelineRead.timelineSearchProjectionBinding.displayedTimeline}
+      draftConnectionId={props.draftConnectionId}
+      draftThreadId={props.draftThreadId}
+      emptyContent={
+        <ConversationEmptyState
+          cwd={props.cwd}
+          emptyRemoteThread={props.timelineRead.emptyRemoteThread}
+          historyActivityModel={props.historyActivityModel}
+          historyActivityResourceId={props.historyActivityResourceId}
+          onChangeWorkspaceMode={props.projectsInputs.onChangeWorkspaceMode}
+          openProjectPicker={props.composerProjectSelectionBinding.openProjectPicker}
+          threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
+          workspaceMode={props.workspaceMode}
+          workspaceSupport={props.workspaceSupport}
+        />
       }
       firstVisibleHistoryAnchorRef={
         props.timelineState.historyAnchorStateBinding.firstVisibleHistoryAnchorRef
       }
-      timelineContentHeightRef={
-        props.timelineState.timelineViewportStateBinding.timelineContentHeightRef
+      footerContent={
+        <ConversationQueueFooter
+          beginQueuedComposerEdit={props.queueEditActionsBinding.beginQueuedComposerEdit}
+          closeInlineQueueOverlay={props.queueVisibilityBinding.closeInlineQueueOverlay}
+          currentTurnId={props.timelineRead.conversationPresentationBinding.currentTurnId}
+          inlineQueueExpanded={props.queueVisibilityBinding.inlineQueueExpanded}
+          inlineQueueMaxHeight={props.inlineQueueMaxHeight}
+          inlineQueueOverlayItems={props.inlineQueueBinding.inlineQueueOverlayItems}
+          onCancelQueued={props.queueInputs.onCancelQueued}
+          onEditQueued={props.queueInputs.onEditQueued}
+          onListQueue={props.queueInputs.onListQueue}
+          onMoveQueued={props.queueInputs.onMoveQueued}
+          onRetryFailedMessage={props.composerInputs.onRetryFailedMessage}
+          onSteerQueued={props.queueInputs.onSteerQueued}
+          queuedPromptEditing={
+            props.composerStateBinding.queueEditStateBinding.queuedComposerEdit !== null
+          }
+          threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
+          toggleInlineQueueOverlay={props.queueVisibilityBinding.toggleInlineQueueOverlay}
+          visibleQueuedPrompts={props.visibleQueuedPrompts}
+          voicePhase={props.composerStateBinding.composerVoiceStateBinding.voicePhase}
+        />
       }
-      scrollOffsetRef={props.timelineState.timelineViewportStateBinding.scrollOffsetRef}
-      awayFromLatestRef={props.timelineState.historyAnchorStateBinding.awayFromLatestRef}
-      setAwayFromLatest={props.timelineState.historyAnchorStateBinding.setAwayFromLatest}
-      persistTimelineAtEnd={props.timelineRead.historyAnchorActionsBinding.persistTimelineAtEnd}
-      schedulePaginationWindowTrim={props.paginationTrimBinding.schedulePaginationWindowTrim}
-      persistTimelineOffset={props.timelineRead.historyAnchorActionsBinding.persistTimelineOffset}
-      trimPaginationWindow={props.paginationTrimBinding.trimPaginationWindow}
-      timelinePositioned={props.timelineRead.timelinePositioned}
-      loadOlderAtTimelineStart={
-        props.timelineRead.timelineViewportActionsBinding.loadOlderAtTimelineStart
+      fullscreenCovered={props.overlayScrollStateBinding.fullscreenCovered}
+      fullscreenScrollOwnership={props.overlayScrollStateBinding.fullscreenScrollOwnership}
+      historyViewport={props.historyViewport}
+      inlineQueueExpanded={props.queueVisibilityBinding.inlineQueueExpanded}
+      lastTimelineOffsetYRef={
+        props.timelineState.timelineViewportStateBinding.lastTimelineOffsetYRef
       }
+      liveStatusVisible={props.liveStatusVisible}
       loadNewerAtTimelineEnd={
         props.timelineRead.timelineViewportActionsBinding.loadNewerAtTimelineEnd
+      }
+      loadOlderAtTimelineStart={
+        props.timelineRead.timelineViewportActionsBinding.loadOlderAtTimelineStart
       }
       onTimelineFirstVisibleItemChanged={
         props.timelineRead.timelineViewportActionsBinding.onTimelineFirstVisibleItemChanged
       }
+      paginationEdgeLockRef={props.timelineState.timelineViewportStateBinding.paginationEdgeLockRef}
+      persistTimelineAtEnd={props.timelineRead.historyAnchorActionsBinding.persistTimelineAtEnd}
+      persistTimelineOffset={props.timelineRead.historyAnchorActionsBinding.persistTimelineOffset}
       renderTimelineItem={props.threadTimelineBinding.renderTimelineItem}
-      emptyContent={
-        <ConversationEmptyState
-          threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
-          emptyRemoteThread={props.timelineRead.emptyRemoteThread}
-          cwd={props.cwd}
-          openProjectPicker={props.composerProjectSelectionBinding.openProjectPicker}
-          workspaceSupport={props.workspaceSupport}
-          onChangeWorkspaceMode={props.projectsInputs.onChangeWorkspaceMode}
-          workspaceMode={props.workspaceMode}
-          historyActivityModel={props.historyActivityModel}
-          historyActivityResourceId={props.historyActivityResourceId}
-        />
+      reportHistoryViewport={
+        props.timelineRead.timelineViewportActionsBinding.reportHistoryViewport
       }
-      footerContent={
-        <ConversationQueueFooter
-          threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
-          inlineQueueExpanded={props.queueVisibilityBinding.inlineQueueExpanded}
-          queuedPromptEditing={
-            props.composerStateBinding.queueEditStateBinding.queuedComposerEdit !== null
-          }
-          inlineQueueOverlayItems={props.inlineQueueBinding.inlineQueueOverlayItems}
-          inlineQueueMaxHeight={props.inlineQueueMaxHeight}
-          currentTurnId={props.timelineRead.conversationPresentationBinding.currentTurnId}
-          toggleInlineQueueOverlay={props.queueVisibilityBinding.toggleInlineQueueOverlay}
-          closeInlineQueueOverlay={props.queueVisibilityBinding.closeInlineQueueOverlay}
-          onEditQueued={props.queueInputs.onEditQueued}
-          voicePhase={props.composerStateBinding.composerVoiceStateBinding.voicePhase}
-          visibleQueuedPrompts={props.visibleQueuedPrompts}
-          beginQueuedComposerEdit={props.queueEditActionsBinding.beginQueuedComposerEdit}
-          onCancelQueued={props.queueInputs.onCancelQueued}
-          onMoveQueued={props.queueInputs.onMoveQueued}
-          onRetryFailedMessage={props.composerInputs.onRetryFailedMessage}
-          onSteerQueued={props.queueInputs.onSteerQueued}
-          onListQueue={props.queueInputs.onListQueue}
-        />
+      schedulePaginationWindowTrim={props.paginationTrimBinding.schedulePaginationWindowTrim}
+      scheduleUnreadAgentVisibilityCheck={
+        props.timelineRead.unreadReceiptActionsBinding.scheduleUnreadAgentVisibilityCheck
       }
+      scrollGestureStartedAtRef={
+        props.timelineState.timelineViewportStateBinding.scrollGestureStartedAtRef
+      }
+      scrollOffsetRef={props.timelineState.timelineViewportStateBinding.scrollOffsetRef}
+      setAwayFromLatest={props.timelineState.historyAnchorStateBinding.setAwayFromLatest}
+      setTimelineGestureActive={
+        props.timelineState.timelineViewportStateBinding.setTimelineGestureActive
+      }
+      threadSearch={props.timelineState.timelineSearchStateBinding.threadSearch}
+      threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
+      threadSearchMatch={props.timelineState.timelineSearchStateBinding.threadSearchMatch}
+      threadSearchVisible={props.timelineState.timelineSearchStateBinding.threadSearchVisible}
+      timelineCompact={props.timelineCompact}
+      timelineContentHeightRef={
+        props.timelineState.timelineViewportStateBinding.timelineContentHeightRef
+      }
+      timelineInitialPosition={props.timelineRead.timelineInitialPosition}
+      timelinePositioned={props.timelineRead.timelinePositioned}
+      timelineRef={props.timelineState.timelineViewportStateBinding.timelineRef}
+      timelineViewportHeightRef={
+        props.timelineState.timelineViewportStateBinding.timelineViewportHeightRef
+      }
+      trimPaginationWindow={props.paginationTrimBinding.trimPaginationWindow}
+      windowLayout={props.windowLayout}
     />
   );
   const timelineSurface = (
     <ConversationTimelineSurface
-      timelineViewportRef={props.timelineState.timelineViewportStateBinding.timelineViewportRef}
+      awayFromLatest={props.timelineState.historyAnchorStateBinding.awayFromLatest}
+      bottomChromeHeight={props.timelineState.timelineViewportStateBinding.bottomChromeHeight}
+      commitUnreadReceipt={props.timelineRead.unreadReceiptActionsBinding.commitUnreadReceipt}
+      completeLatestJump={props.timelineRead.historyAnchorActionsBinding.completeLatestJump}
+      composerScope={props.composerScope}
       draftConnectionId={props.draftConnectionId}
       draftThreadId={props.draftThreadId}
-      composerScope={props.composerScope}
-      timeline={props.timelineRead.conversationTimelineBinding.timeline}
-      readOnly={props.readOnly}
+      fullscreenCovered={props.overlayScrollStateBinding.fullscreenCovered}
+      goalContent={props.goalContent}
+      historyActivityModel={props.historyActivityModel}
+      historyActivityResourceId={props.historyActivityResourceId}
       historyViewport={props.historyViewport}
-      latestUnreadReceiptKey={props.timelineRead.unreadReceiptBinding.latestUnreadReceiptKey}
-      commitUnreadReceipt={props.timelineRead.unreadReceiptActionsBinding.commitUnreadReceipt}
-      messageListState={props.messageListState}
-      positionSearchTurn={props.timelineRead.timelineSearchActionsBinding.positionSearchTurn}
-      completeLatestJump={props.timelineRead.historyAnchorActionsBinding.completeLatestJump}
-      timelineModelReady={props.timelineRead.timelineModelReady}
-      timelinePositioned={props.timelineRead.timelinePositioned}
-      remoteThread={props.readInputs.remoteThread}
       initialRestoreAnchorTurnId={
         props.timelineState.historyAnchorStateBinding.initialRestoreAnchorTurnId
       }
+      latestUnreadReceiptKey={props.timelineRead.unreadReceiptBinding.latestUnreadReceiptKey}
+      liveStatusVisible={props.liveStatusVisible}
+      liveTurnPlan={props.timelineRead.conversationPresentationBinding.liveTurnPlan}
+      messageListState={props.messageListState}
+      positionSearchTurn={props.timelineRead.timelineSearchActionsBinding.positionSearchTurn}
+      readOnly={props.readOnly}
+      remoteThread={props.readInputs.remoteThread}
+      threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
+      timeline={props.timelineRead.conversationTimelineBinding.timeline}
+      timelineContent={timelineContent}
       timelineDidLoad={props.timelineState.timelineViewportStateBinding.timelineDidLoad}
       timelineGestureActive={props.timelineState.timelineViewportStateBinding.timelineGestureActive}
-      fullscreenCovered={props.overlayScrollStateBinding.fullscreenCovered}
-      awayFromLatest={props.timelineState.historyAnchorStateBinding.awayFromLatest}
-      threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
-      timelineContent={timelineContent}
-      historyActivityModel={props.historyActivityModel}
-      historyActivityResourceId={props.historyActivityResourceId}
-      liveStatusVisible={props.liveStatusVisible}
-      bottomChromeHeight={props.timelineState.timelineViewportStateBinding.bottomChromeHeight}
-      liveTurnPlan={props.timelineRead.conversationPresentationBinding.liveTurnPlan}
-      goalContent={props.goalContent}
+      timelineModelReady={props.timelineRead.timelineModelReady}
+      timelinePositioned={props.timelineRead.timelinePositioned}
+      timelineViewportRef={props.timelineState.timelineViewportStateBinding.timelineViewportRef}
     />
   );
   return { timelineSurface };

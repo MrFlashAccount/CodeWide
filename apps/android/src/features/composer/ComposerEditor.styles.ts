@@ -4,9 +4,9 @@ import { COMPOSER_MAX_HEIGHT, COMPOSER_MIN_HEIGHT } from "./composerLayout";
 
 export const styles = StyleSheet.create({
   composerInput: {
-    minHeight: COMPOSER_MIN_HEIGHT,
-    maxHeight: COMPOSER_MAX_HEIGHT,
     color: colors.text,
+    maxHeight: COMPOSER_MAX_HEIGHT,
+    minHeight: COMPOSER_MIN_HEIGHT,
     paddingLeft: spacing.xxs,
     paddingRight: spacing.xxs,
     paddingVertical: spacing.inputInset,

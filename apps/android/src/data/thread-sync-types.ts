@@ -6,12 +6,12 @@ import type { ThreadSummaryDatabase } from "./thread-summary-database";
 import type { TurnControlsValue } from "./turn-controls-types";
 import type { createWorkspaceSession } from "./workspace-session";
 
-export type ThreadWindow = { thread: Thread; nextCursor: string | null | undefined };
+export type ThreadWindow = { nextCursor: string | null | undefined; thread: Thread };
 export type ThreadTurnPage = {
-  turns: Turn[];
-  nextCursor: string | null;
   acceptedHistory: boolean;
   extendedHistory: boolean;
+  nextCursor: string | null;
+  turns: Turn[];
 };
 export type ThreadReadOperation = (
   connectionId: string,
@@ -27,14 +27,14 @@ export type CaptureThreadHistoryRead = (
 ) => () => boolean;
 /** Existing lower read, projection and related resource authorities. */
 export type ThreadSyncAuthority = {
-  getDetails(): ThreadDetailDatabase | null;
-  getSummaries(): ThreadSummaryDatabase | null;
-  getSession(connectionId: string): RpcClient | undefined;
+  clearInvalidationArchived: (key: string) => void;
+  getDetails: () => ThreadDetailDatabase | null;
+  getSession: (connectionId: string) => RpcClient | undefined;
+  getSummaries: () => ThreadSummaryDatabase | null;
+  loadTurnControls: (connectionId: string, cwd: string) => Promise<TurnControlsValue>;
+  readInvalidationArchived: (key: string) => boolean | undefined;
+  refreshSubagents: (connectionId: string, threadId: string) => Promise<void>;
+  refreshThreadCatalog: (connectionId: string, force: boolean) => Promise<void>;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
-  refreshSubagents(connectionId: string, threadId: string): Promise<void>;
-  loadTurnControls(connectionId: string, cwd: string): Promise<TurnControlsValue>;
-  transferAccess(connectionId: string, forceRefresh?: boolean): Promise<TransferAccess>;
-  readInvalidationArchived(key: string): boolean | undefined;
-  clearInvalidationArchived(key: string): void;
-  refreshThreadCatalog(connectionId: string, force: boolean): Promise<void>;
+  transferAccess: (connectionId: string, forceRefresh?: boolean) => Promise<TransferAccess>;
 };

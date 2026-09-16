@@ -27,15 +27,16 @@ export async function sendBrowserFeedback(
     uploads.push(
       createTextUpload("browser-feedback.md", "text/markdown", browserFeedbackMarkdown(submission)),
     );
-    if (submission.screenshot !== null)
+    if (submission.screenshot !== null) {
       uploads.push(
         createBinaryUpload("browser-element.png", "image/png", toByteArray(submission.screenshot)),
       );
+    }
     for (const upload of uploads) {
       const path = attachmentUploadPath(target.threadId, upload.name);
       checkAborted(signal);
       const transfer = startUpload(
-        () => remote.transferAccess(target.connectionId),
+        async () => remote.transferAccess(target.connectionId),
         upload,
         ATTACHMENT_ROOT_ID,
         path,
@@ -50,10 +51,10 @@ export async function sendBrowserFeedback(
       }
       attachments.push({
         id: randomUUID(),
-        rootId: ATTACHMENT_ROOT_ID,
-        path,
-        name: upload.name,
         kind: upload.mimeType === "image/png" ? "image" : "file",
+        name: upload.name,
+        path,
+        rootId: ATTACHMENT_ROOT_ID,
       });
     }
     checkAborted(signal);
@@ -68,7 +69,9 @@ export async function sendBrowserFeedback(
     // These cache files were created by this send attempt, never selected user files.
     for (const upload of uploads) {
       try {
-        if (upload.native.exists) upload.native.delete();
+        if (upload.native.exists) {
+          upload.native.delete();
+        }
       } catch {
         /* A cache cleanup failure must not turn accepted delivery into a retry. */
       }

@@ -7,6 +7,7 @@ import {
   retryNativeCommand,
   type NativeCommandDelivery,
 } from "../native/native-transport";
+import { appLogger } from "../observability/logger";
 import { commitNativeThenProject } from "./durable-command-boundary";
 import { hasUnresolvedDeliveredCommand } from "./queue-event";
 import type { SendMode, TurnSendOptions } from "./thread-delivery-state";
@@ -18,12 +19,14 @@ export async function reconcileDeliveredCommandReceipts(
   connectionId: string,
   threads: readonly Thread[],
 ): Promise<void> {
-  if (threads.length === 0) return;
+  if (threads.length === 0) {
+    return;
+  }
   let nativeCommands: NativeCommandDelivery[];
   try {
     nativeCommands = await listNativeCommands();
-  } catch (cause) {
-    console.warn("Could not inspect native receipts after authoritative projection", cause);
+  } catch (error) {
+    appLogger.warnCaught({ error: error, event: "command_receipt.inspect.failed" });
     return;
   }
   const rowsByThread = new Map<string, NativeCommandDelivery[]>();
@@ -34,18 +37,26 @@ export async function reconcileDeliveredCommandReceipts(
       delivery.state !== "delivered" ||
       (delivery.method !== "turn/start" && delivery.method !== "turn/steer") ||
       threadId === null
-    )
+    ) {
       continue;
+    }
     const current = rowsByThread.get(threadId);
-    if (current === undefined) rowsByThread.set(threadId, [delivery]);
-    else current.push(delivery);
+    if (current === undefined) {
+      rowsByThread.set(threadId, [delivery]);
+    } else {
+      current.push(delivery);
+    }
   }
 
-  if (rowsByThread.size === 0) return;
+  if (rowsByThread.size === 0) {
+    return;
+  }
   const accepted = new Set<string>();
   for (const thread of threads) {
     const receipts = rowsByThread.get(thread.id);
-    if (receipts === undefined) continue;
+    if (receipts === undefined) {
+      continue;
+    }
     const clientIds = new Set<string>();
     for (const turn of thread.turns) {
       for (const item of turn.items) {
@@ -53,29 +64,33 @@ export async function reconcileDeliveredCommandReceipts(
           item.type === "userMessage" &&
           typeof item.clientId === "string" &&
           item.clientId.length > 0
-        )
+        ) {
           clientIds.add(item.clientId);
+        }
       }
     }
     for (const delivery of receipts) {
-      if (clientIds.has(delivery.commandId)) accepted.add(delivery.commandId);
+      if (clientIds.has(delivery.commandId)) {
+        accepted.add(delivery.commandId);
+      }
     }
   }
 
   const acknowledgements: Promise<void>[] = [];
-  for (const commandId of accepted)
+  for (const commandId of accepted) {
     acknowledgements.push(
       (async () => {
         try {
           await acknowledgeNativeCommandReceipt(connectionId, commandId);
-        } catch (cause) {
+        } catch (error) {
           // The authoritative projection already contains the prompt, so a native
           // receipt cleanup failure must not block frame acknowledgement or render
           // the duplicate again. The bounded native receipt can be retried later.
-          console.warn("Native command receipt acknowledgement failed", cause);
+          appLogger.warnCaught({ error: error, event: "command_receipt.acknowledge.failed" });
         }
       })(),
     );
+  }
   await Promise.all(acknowledgements);
 }
 
@@ -84,21 +99,25 @@ export async function reconcileActiveThreadCommands(
   connectionId: string,
   threadId: string,
 ): Promise<boolean> {
-  if (details === null) return false;
+  if (details === null) {
+    return false;
+  }
   try {
     const deliveries = await listNativeCommands();
     await details.reconcileNativeCommands(connectionId, threadId, deliveries);
     // A reopened/hydrated detail window can finish the handoff without another
     // live user-item event (for example, the turn completed while offline).
     const thread = details.getThread(connectionId, threadId);
-    if (thread !== null) await reconcileDeliveredCommandReceipts(connectionId, [thread]);
+    if (thread !== null) {
+      await reconcileDeliveredCommandReceipts(connectionId, [thread]);
+    }
     return hasUnresolvedDeliveredCommand(deliveries, connectionId, threadId, (commandId) =>
       details.hasPendingDelivery(connectionId, threadId, commandId),
     );
-  } catch (cause) {
+  } catch (error) {
     // The native ledger is authoritative and remains available for the next
     // active-thread refresh. A read-model repair must not make history fail.
-    console.warn("Could not reconcile the active thread from the native outbox", cause);
+    appLogger.warnCaught({ error: error, event: "command_outbox.active_thread_reconcile.failed" });
     return false;
   }
 }
@@ -114,13 +133,14 @@ export async function runOptimisticPendingMutation(
     // accepted the command. After that point the native outbox owns recovery.
     await commitNativeThenProject(persistNative, async () => {
       const projected = await details.commitPendingMutation(mutation);
-      if (!projected)
-        console.warn("Accepted queue mutation will be reconciled from the native outbox");
+      if (!projected) {
+        appLogger.warn({ event: "queue_mutation.projection.deferred" });
+      }
     });
     optimistic.complete();
-  } catch (cause) {
+  } catch (error) {
     optimistic.rollback();
-    throw cause;
+    throw error;
   }
 }
 
@@ -137,7 +157,9 @@ export function createCommandDelivery(
     options: TurnSendOptions = {},
   ): Promise<string> => {
     const details = getDetails();
-    if (details === null) throw new Error("Local timeline database is not ready");
+    if (details === null) {
+      throw new Error("Local timeline database is not ready");
+    }
     const command = createTextOutboxCommand(
       connectionId,
       threadId,
@@ -148,21 +170,21 @@ export function createCommandDelivery(
     );
     const presentation = mode.type === "queue" ? ("queue" as const) : ("delivery" as const);
     const pending = details.createPending({
-      connectionId,
-      threadId,
+      attachments: options.attachments ?? [],
+      attempts: 0,
       commandId: command.commandId,
+      connectionId,
+      createdAt: command.createdAt,
+      lastError: null,
       method: command.method,
       presentation,
-      workspaceRequestId: options.workspaceRequestId ?? null,
-      text,
-      attachments: options.attachments ?? [],
       state: "queued",
-      attempts: 0,
-      lastError: null,
-      createdAt: command.createdAt,
+      text,
+      threadId,
       updatedAt: command.createdAt,
+      workspaceRequestId: options.workspaceRequestId ?? null,
     });
-    const optimistic = details.stagePendingMutation({ upserts: [pending], deletes: [] });
+    const optimistic = details.stagePendingMutation({ deletes: [], upserts: [pending] });
     try {
       await commitNativeThenProject(
         async () => {
@@ -203,16 +225,17 @@ export function createCommandDelivery(
             },
             { durable: true },
           );
-          if (!projected)
-            console.warn(
-              "Accepted command will be reconciled from the native outbox when the thread becomes active",
-            );
+          if (!projected) {
+            appLogger.warn({
+              event: "command.projection.deferred_until_thread_active",
+            });
+          }
         },
       );
       optimistic.complete();
-    } catch (cause) {
+    } catch (error) {
       optimistic.rollback();
-      throw cause;
+      throw error;
     }
     return command.commandId;
   };
@@ -224,29 +247,30 @@ export function createCommandDelivery(
     if (original?.method === "turn/start" && original.state === "failed") {
       const retrying = {
         ...original,
-        state: "sending" as const,
         lastError: null,
+        state: "sending" as const,
         updatedAt: Date.now(),
       };
       await commitNativeThenProject(
-        async () =>
+        async () => {
           await enqueueNativeCommand(
             connectionId,
             `queue-retry-${randomUUID()}`,
             "companion/queue/retry",
             { commandId },
-          ),
-        async () => await details?.applyCommandDelivery(retrying),
+          );
+        },
+        async () => details?.applyCommandDelivery(retrying),
       );
       return;
     }
     await commitNativeThenProject(
-      async () => await retryNativeCommand(connectionId, commandId),
-      async (delivery) => await details?.applyCommandDelivery(delivery),
+      async () => retryNativeCommand(connectionId, commandId),
+      async (delivery) => details?.applyCommandDelivery(delivery),
     );
   };
 
-  return { sendText, retryFailedMessage };
+  return { retryFailedMessage, sendText };
 }
 
 /** Projects native delivery notifications independently into their existing view owners. */
@@ -255,11 +279,11 @@ export function createCommandDeliveryProjection(
   summaries: Pick<ThreadSummaryDatabase, "applyCommandDelivery">,
 ): (delivery: NativeCommandDelivery) => void {
   return (delivery) => {
-    void details.applyCommandDelivery(delivery).catch((cause: unknown) => {
-      console.error("Timeline delivery projection failed", { err: cause });
+    void details.applyCommandDelivery(delivery).catch((error: unknown) => {
+      appLogger.errorCaught({ error: error, event: "timeline.delivery_projection.failed" });
     });
-    void summaries.applyCommandDelivery(delivery).catch((cause: unknown) => {
-      console.error("Thread delete projection failed", { err: cause });
+    void summaries.applyCommandDelivery(delivery).catch((error: unknown) => {
+      appLogger.errorCaught({ error: error, event: "thread_delete.delivery_projection.failed" });
     });
   };
 }

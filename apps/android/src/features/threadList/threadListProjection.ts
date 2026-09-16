@@ -50,8 +50,8 @@ export class ThreadListScopeProjection {
     this.#scope = scope;
     const scoped = source.filter((thread) => serverScopeIncludes(scope, thread.serverId));
     this.#value = {
-      active: scoped.filter((thread) => !thread.archived),
-      archived: scoped.filter((thread) => thread.archived),
+      active: scoped.filter((thread) => thread.archived !== true),
+      archived: scoped.filter((thread) => thread.archived === true),
       scoped,
     };
     return this.#value;

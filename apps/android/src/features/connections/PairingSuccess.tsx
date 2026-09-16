@@ -8,15 +8,15 @@ import { styles } from "./ConnectionSheet.styles";
 import type { PairingSession } from "./pairingSession";
 
 export function PairingSuccess({
-  emoji,
   displayName,
+  emoji,
 }: Pick<PairingSession, "emoji" | "displayName">) {
   return (
     <View style={styles.pairingSuccess}>
       <View style={styles.pairingSuccessIcon}>
-        <Ionicons name="checkmark" size={iconSize.illustration} color={colors.onPrimary} />
+        <Ionicons color={colors.onPrimary} name="checkmark" size={iconSize.illustration} />
       </View>
-      <Text numberOfLines={2} ellipsizeMode="tail" style={styles.pairingSuccessTitle}>
+      <Text ellipsizeMode="tail" numberOfLines={2} style={styles.pairingSuccessTitle}>
         {emoji} {displayName}
       </Text>
       <Text style={styles.pairingHint}>Connected. Syncing your threads now.</Text>

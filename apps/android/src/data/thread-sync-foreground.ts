@@ -9,16 +9,16 @@ export function createThreadSyncForeground({
   readThread,
   refreshThreadCatalog,
 }: {
-  desiredThreadId(connectionId: string): string | undefined;
+  desiredThreadId: (connectionId: string) => string | undefined;
   readThread: ThreadReadOperation;
   refreshThreadCatalog: ThreadSyncAuthority["refreshThreadCatalog"];
 }) {
   const foregroundRepairLane = new ThreadSyncLane<void>();
   return (supervisor: Pick<WorkspaceSyncSupervisor, "reattachRuntime">) => {
-    const repairForegroundConnection = (connectionId: string): Promise<void> => {
+    const repairForegroundConnection = async (connectionId: string): Promise<void> =>
       // Each foreground transition waits for its fresh pass, not for every
       // later transition that may arrive while that pass is running.
-      return foregroundRepairLane.run(
+      foregroundRepairLane.run(
         connectionId,
         async (): Promise<void> => {
           try {
@@ -28,7 +28,7 @@ export function createThreadSyncForeground({
             await supervisor.reattachRuntime(connectionId);
             await refreshForegroundReadModels(connectionId, {
               desiredThreadId: desiredThreadId,
-              refreshCatalog: (id) => refreshThreadCatalog(id, true),
+              refreshCatalog: async (id) => refreshThreadCatalog(id, true),
               async refreshThread(id, threadId) {
                 // A read begun before backgrounding is not proof of current state.
                 // An authoritative read queues a fresh pass after an older read.
@@ -55,7 +55,6 @@ export function createThreadSyncForeground({
         },
         "afterCurrent",
       );
-    };
     return repairForegroundConnection;
   };
 }

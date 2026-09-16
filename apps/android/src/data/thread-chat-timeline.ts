@@ -16,7 +16,7 @@ export type ProjectedThreadChatDelivery = Omit<NativeCommandDelivery, "state"> &
  * replaces the same client-id row with its authoritative turn. */
 export type ProjectedThreadChatTimelineEntry =
   | { kind: "turn"; turn: Thread["turns"][number] }
-  | { kind: "delivery"; delivery: ProjectedThreadChatDelivery };
+  | { delivery: ProjectedThreadChatDelivery; kind: "delivery" };
 
 const turnTimelineEntryCache = new WeakMap<
   Thread["turns"][number],
@@ -39,13 +39,30 @@ function hasPresentableTurnItem(item: Thread["turns"][number]["items"][number]):
       );
     case "hookPrompt":
       return item.fragments.length > 0;
+    case "collabAgentToolCall":
+    case "commandExecution":
+    case "contextCompaction":
+    case "dynamicToolCall":
+    case "enteredReviewMode":
+    case "exitedReviewMode":
+    case "fileChange":
+    case "imageGeneration":
+    case "imageView":
+    case "mcpToolCall":
+    case "sleep":
+    case "subAgentActivity":
+    case "userMessage":
+    case "webSearch":
+      return true;
     default:
       return true;
   }
 }
 
 function hasPresentableTurnContent(turn: Thread["turns"][number]): boolean {
-  if (turn.items.some(hasPresentableTurnItem)) return true;
+  if (turn.items.some(hasPresentableTurnItem)) {
+    return true;
+  }
   const metadata = projectedTurnMetadata(turn);
   return (metadata?.activity?.count ?? 0) > 0 || compactTurnArtifactReferences(turn).length > 0;
 }
@@ -54,7 +71,9 @@ function turnTimelineEntry(
   turn: Thread["turns"][number],
 ): Extract<ProjectedThreadChatTimelineEntry, { kind: "turn" }> {
   const cached = turnTimelineEntryCache.get(turn);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    return cached;
+  }
   const entry = { kind: "turn" as const, turn };
   turnTimelineEntryCache.set(turn, entry);
   return entry;
@@ -64,15 +83,19 @@ function deliveryTimelineEntry(
   delivery: ProjectedThreadChatDelivery,
 ): Extract<ProjectedThreadChatTimelineEntry, { kind: "delivery" }> {
   const cached = deliveryTimelineEntryCache.get(delivery);
-  if (cached !== undefined) return cached;
-  const entry = { kind: "delivery" as const, delivery };
+  if (cached !== undefined) {
+    return cached;
+  }
+  const entry = { delivery, kind: "delivery" as const };
   deliveryTimelineEntryCache.set(delivery, entry);
   return entry;
 }
 
 export function protocolTimestampMs(timestamp: number | null): number | null {
-  if (timestamp === null || !Number.isFinite(timestamp)) return null;
-  return timestamp < 10_000_000_000 ? timestamp * 1_000 : timestamp;
+  if (timestamp === null || !Number.isFinite(timestamp)) {
+    return null;
+  }
+  return timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
 }
 
 /**
@@ -116,8 +139,9 @@ export function projectResidentThreadTimeline(
       projected.status === "inProgress" &&
       !hasPresentableTurnContent(projected) &&
       (projected.itemsView !== "notLoaded" || pendingStart)
-    )
+    ) {
       return [];
+    }
     return projected !== turn && projected.items.length === 0 && turn.status !== "inProgress"
       ? []
       : [projected];
@@ -129,29 +153,40 @@ export function projectResidentThreadTimeline(
   const oldestTurnAt = turnTimestamps.length === 0 ? null : Math.min(...turnTimestamps);
   const newestTurnAt = turnTimestamps.length === 0 ? null : Math.max(...turnTimestamps);
   const visibleDeliveries = deliveries.filter((delivery) => {
-    if (authoritativeClientIds.has(delivery.commandId)) return false;
+    if (authoritativeClientIds.has(delivery.commandId)) {
+      return false;
+    }
     // Local enqueue happens before a server turn exists. Neither an incomplete
     // history window nor another machine's clock may hide that immediate
     // feedback. Keep it until canonical client-id handoff or terminal failure.
-    if (delivery.state !== "failed") return true;
-    if (oldestTurnAt === null || newestTurnAt === null) return range.includesLatest;
+    if (delivery.state !== "failed") {
+      return true;
+    }
+    if (oldestTurnAt === null || newestTurnAt === null) {
+      return range.includesLatest;
+    }
     return (
       (range.includesEarliest || delivery.createdAt >= oldestTurnAt) &&
       (range.includesLatest || delivery.createdAt <= newestTurnAt)
     );
   });
-  const ordered = [
+  const ordered: Array<{
+    entry: ProjectedThreadChatTimelineEntry;
+    sourceOrder: number;
+    tieBreaker: string;
+    timestampMs: number | null;
+  }> = [
     ...visibleTurns.map((turn, index) => ({
-      entry: turnTimelineEntry(turn) as ProjectedThreadChatTimelineEntry,
-      timestampMs: protocolTimestampMs(turn.startedAt),
+      entry: turnTimelineEntry(turn),
       sourceOrder: index,
       tieBreaker: turn.id,
+      timestampMs: protocolTimestampMs(turn.startedAt),
     })),
     ...visibleDeliveries.map((delivery, index) => ({
-      entry: deliveryTimelineEntry(delivery) as ProjectedThreadChatTimelineEntry,
-      timestampMs: delivery.createdAt,
+      entry: deliveryTimelineEntry(delivery),
       sourceOrder: visibleTurns.length + index,
       tieBreaker: delivery.commandId,
+      timestampMs: delivery.createdAt,
     })),
   ];
   ordered.sort((left, right) => {
@@ -162,9 +197,14 @@ export function projectResidentThreadTimeline(
     ) {
       return left.timestampMs - right.timestampMs;
     }
-    if (left.timestampMs === null && right.timestampMs !== null) return -1;
-    if (left.timestampMs !== null && right.timestampMs === null) return 1;
-    return left.sourceOrder - right.sourceOrder || left.tieBreaker.localeCompare(right.tieBreaker);
+    if (left.timestampMs === null && right.timestampMs !== null) {
+      return -1;
+    }
+    if (left.timestampMs !== null && right.timestampMs === null) {
+      return 1;
+    }
+    const sourceOrder = left.sourceOrder - right.sourceOrder;
+    return sourceOrder !== 0 ? sourceOrder : left.tieBreaker.localeCompare(right.tieBreaker);
   });
   return ordered.map(({ entry }) => entry);
 }

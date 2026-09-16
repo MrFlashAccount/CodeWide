@@ -19,9 +19,9 @@ export function usePerformanceDiagnosticsState() {
   const metrics = usePerformanceMetrics();
   const experiments = usePerformanceExperiments();
   const [error, setError] = useState<string | null>(null);
-  const { memoryReportCopyState, memoryExperimentState, copyMemoryReport, runMemoryExperiment } =
+  const { copyMemoryReport, memoryExperimentState, memoryReportCopyState, runMemoryExperiment } =
     useMemoryDiagnosticActions(setError);
-  const { snapshotCopied, copyPending, copySnapshot } = useSnapshotDiagnosticAction(
+  const { copyPending, copySnapshot, snapshotCopied } = useSnapshotDiagnosticAction(
     metrics,
     setError,
   );
@@ -29,18 +29,26 @@ export function usePerformanceDiagnosticsState() {
   const [runningExperiment, setRunningExperiment] = useState<PerformanceExperimentId | null>(null);
   const [experimentResult, setExperimentResult] = useState<ExperimentResult | null>(null);
   const runGeneration = useRef(0);
-  const runningRestore = useRef<{ id: PerformanceExperimentId; enabled: boolean } | null>(null);
+  const runningRestore = useRef<{ enabled: boolean; id: PerformanceExperimentId } | null>(null);
   const current = metrics.current;
   useEffect(() => {
-    if (!metrics.enabled) return;
-    const timer = setInterval(() => setDiagnosticRevision((value) => value + 1), 1_000);
-    return () => clearInterval(timer);
+    if (!metrics.enabled) {
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      setDiagnosticRevision((value) => value + 1);
+    }, 1000);
+    return () => {
+      clearInterval(timer);
+    };
   }, [metrics.enabled]);
   useEffect(
     () => () => {
       runGeneration.current += 1;
       const restore = runningRestore.current;
-      if (restore !== null) setPerformanceExperiment(restore.id, restore.enabled);
+      if (restore !== null) {
+        setPerformanceExperiment(restore.id, restore.enabled);
+      }
     },
     [],
   );
@@ -55,29 +63,36 @@ export function usePerformanceDiagnosticsState() {
     }
     try {
       await setPerformanceMonitoringEnabled(enabled);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not change performance monitoring");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not change performance monitoring");
     }
   });
   const runExperiment = useEvent(async (id: PerformanceExperimentId) => {
-    if (runningExperiment !== null) return;
+    if (runningExperiment !== null) {
+      return;
+    }
     const generation = runGeneration.current + 1;
     runGeneration.current = generation;
     const previous = performanceExperimentSnapshot()[id];
-    runningRestore.current = { id, enabled: previous };
+    runningRestore.current = { enabled: previous, id };
     setRunningExperiment(id);
     setExperimentResult(null);
     setError(null);
     const outcome = await collectExperiment(id, () => runGeneration.current === generation).then(
-      (result) => ({ status: "ok" as const, result }),
-      (cause: unknown) => ({
+      (result) => ({ result, status: "ok" as const }),
+      (error: unknown) => ({
+        error: error instanceof Error ? error.message : "Performance experiment failed",
         status: "error" as const,
-        error: cause instanceof Error ? cause.message : "Performance experiment failed",
       }),
     );
-    if (runGeneration.current !== generation) return;
-    if (outcome.status === "error") setError(outcome.error);
-    else if (outcome.result !== null) setExperimentResult(outcome.result);
+    if (runGeneration.current !== generation) {
+      return;
+    }
+    if (outcome.status === "error") {
+      setError(outcome.error);
+    } else if (outcome.result !== null) {
+      setExperimentResult(outcome.result);
+    }
     if (runGeneration.current === generation) {
       setPerformanceExperiment(id, previous);
       runningRestore.current = null;
@@ -85,23 +100,23 @@ export function usePerformanceDiagnosticsState() {
     }
   });
   return {
-    metrics,
-    toggle,
+    copyMemoryReport,
     copyPending,
     copySnapshot,
-    snapshotCopied,
-    memoryReportCopyState,
-    copyMemoryReport,
-    memoryExperimentState,
-    runMemoryExperiment,
-    error,
     current,
-    setExperimentResult,
-    setDiagnosticRevision,
-    runningExperiment,
-    runExperiment,
-    experiments,
-    operational,
+    error,
     experimentResult,
+    experiments,
+    memoryExperimentState,
+    memoryReportCopyState,
+    metrics,
+    operational,
+    runExperiment,
+    runMemoryExperiment,
+    runningExperiment,
+    setDiagnosticRevision,
+    setExperimentResult,
+    snapshotCopied,
+    toggle,
   };
 }

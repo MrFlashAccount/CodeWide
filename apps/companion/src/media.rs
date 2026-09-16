@@ -81,6 +81,12 @@ pub struct MaterializedImage {
     pub reused: bool,
 }
 
+pub(crate) struct MediaImageSource {
+    pub(crate) bytes: Bytes,
+    pub(crate) content_type: &'static str,
+    pub(crate) source_key: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
     #[error("valid_url_required")]
@@ -246,6 +252,29 @@ impl MediaProxyService {
                 cached_body(bytes, permit.ok_or(MediaError::Capacity)?, cancellation)
             })
             .map_err(|_| MediaError::Upstream)
+    }
+
+    pub(crate) fn image_source_for_owner(
+        &self,
+        owner: &str,
+        id: &str,
+    ) -> Result<MediaImageSource, MediaError> {
+        if !valid_media_id(id) {
+            return Err(MediaError::NotFound);
+        }
+        let now = unix_time_ms();
+        let mut cache = lock_cache(&self.cache);
+        purge_expired(&mut cache, now);
+        let image = cache.by_id.get_mut(id).ok_or(MediaError::NotFound)?;
+        if image.owner != owner {
+            return Err(MediaError::NotFound);
+        }
+        image.last_access_at = now;
+        Ok(MediaImageSource {
+            bytes: image.bytes.clone(),
+            content_type: image.content_type,
+            source_key: format!("media:{owner}:{id}"),
+        })
     }
 
     /// Removes every cached image and stream owned by one revoked device.

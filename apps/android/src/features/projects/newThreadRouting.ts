@@ -19,7 +19,8 @@ export function resolveNewThreadRoute({
     return { serverId: serverScope.connectionId, type: "create" };
   }
   if (serverIds.length === 1) {
-    return { type: "create", serverId: serverIds[0]! };
+    const serverId = serverIds[0];
+    return serverId === undefined ? { type: "choose-server" } : { serverId, type: "create" };
   }
   return { type: "choose-server" };
 }

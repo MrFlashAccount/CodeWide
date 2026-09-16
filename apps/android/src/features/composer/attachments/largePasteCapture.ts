@@ -11,10 +11,12 @@ export type ClipboardLargePasteCapture = {
 export function captureClipboardLargePaste(
   previousText: string,
   pastedText: string,
-  replacedRange: { start: number; end: number } | null,
+  replacedRange: { end: number; start: number } | null,
   minimumChars = AUTO_ATTACH_PASTE_MIN_CHARS,
 ): ClipboardLargePasteCapture | null {
-  if (pastedText.length <= minimumChars) return null;
+  if (pastedText.length <= minimumChars) {
+    return null;
+  }
   const start = Math.max(
     0,
     Math.min(replacedRange?.start ?? previousText.length, previousText.length),

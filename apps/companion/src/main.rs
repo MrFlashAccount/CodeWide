@@ -20,6 +20,7 @@ use codewide_companion::{
     history::digest_turn,
     history_service::HistoryService,
     identity::{CompanionIdentity, rotate as rotate_identity},
+    image_previews::ImagePreviewService,
     media::MediaProxyService,
     pairing_qr,
     resources::ResourceService,
@@ -1013,12 +1014,22 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             }
         }
     });
-    let content_directory = state_directory.join("content-cache");
-    let content_fallbacks = legacy_content_directory
-        .filter(|directory| directory != &content_directory && directory.is_dir())
-        .into_iter()
-        .collect();
-    let content = PrivateContentService::open_with_fallbacks(content_directory, content_fallbacks);
+    let historical_content_directory = state_directory.join("content-cache");
+    let content_directory = state_directory.join("content-fallback");
+    let mut content_fallbacks = Vec::new();
+    if historical_content_directory.is_dir() {
+        content_fallbacks.push(historical_content_directory);
+    }
+    if let Some(directory) = legacy_content_directory
+        && directory != content_directory
+        && !content_fallbacks.contains(&directory)
+        && directory.is_dir()
+    {
+        content_fallbacks.push(directory);
+    }
+    let content =
+        PrivateContentService::open_indexed(content_directory, content_fallbacks, store.clone());
+    let image_previews = Arc::new(ImagePreviewService::new());
     let media = Arc::new(MediaProxyService::new());
     let tunnels = Arc::new(LocalhostTunnelService::new()?);
     tunnels.start_periodic_cleanup();
@@ -1137,6 +1148,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         build_shelf: configured_build_shelf()?,
         files: Some(files),
         content: Some(content),
+        image_previews: Some(image_previews),
         media: Some(media),
         tunnels: Some(tunnels),
         telemetry: Some(telemetry),

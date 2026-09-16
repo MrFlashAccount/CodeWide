@@ -1,12 +1,12 @@
 import type { RenderBlock } from "@codewide/renderers";
 
 export type TurnSequencePart =
-  | { kind: "agent"; key: string; block: RenderBlock }
-  | { kind: "activity"; key: string; blocks: RenderBlock[]; followedByAgent: boolean };
+  | { block: RenderBlock; key: string; kind: "agent" }
+  | { blocks: RenderBlock[]; followedByAgent: boolean; key: string; kind: "activity" };
 
 export type ActiveTurnSequencePart =
   | TurnSequencePart
-  | { kind: "collapsedActivity"; key: string; indexes: number[] };
+  | { indexes: number[]; key: string; kind: "collapsedActivity" };
 
 export type CompletedTurnContent = {
   finalAnswer: RenderBlock | null;
@@ -19,24 +19,30 @@ export function chronologicalTurnSequence(blocks: RenderBlock[]): TurnSequencePa
 
   const flushActivity = (followedByAgent: boolean) => {
     const first = activity[0];
-    if (first === undefined) return;
+    if (first === undefined) {
+      return;
+    }
     parts.push({
-      kind: "activity",
-      key: `activity:${first.key}`,
       blocks: activity,
       followedByAgent,
+      key: `activity:${first.key}`,
+      kind: "activity",
     });
     activity = [];
   };
 
   for (const block of blocks) {
-    if (block.kind === "userMessage") continue;
-    if (block.kind === "agentMessage" && (block.body ?? "").trim() !== "") {
-      flushActivity(true);
-      parts.push({ kind: "agent", key: `agent:${block.key}`, block });
+    if (block.kind === "userMessage") {
       continue;
     }
-    if (block.kind !== "agentMessage") activity.push(block);
+    if (block.kind === "agentMessage" && (block.body ?? "").trim() !== "") {
+      flushActivity(true);
+      parts.push({ block, key: `agent:${block.key}`, kind: "agent" });
+      continue;
+    }
+    if (block.kind !== "agentMessage") {
+      activity.push(block);
+    }
   }
   flushActivity(false);
   return parts;
@@ -48,7 +54,7 @@ export function chronologicalTurnSequence(blocks: RenderBlock[]): TurnSequencePa
  * visible and continue to separate the activity that happened around them.
  */
 export function activeTurnSequence(
-  liveEntries: Array<{ index: number; block: RenderBlock }>,
+  liveEntries: Array<{ block: RenderBlock; index: number }>,
   collapsedIndexes: number[],
 ): ActiveTurnSequencePart[] {
   const parts: ActiveTurnSequencePart[] = [];
@@ -60,14 +66,22 @@ export function activeTurnSequence(
   let collapsed: number[] = [];
 
   const flushLive = () => {
-    if (liveBlocks.length === 0) return;
+    if (liveBlocks.length === 0) {
+      return;
+    }
     parts.push(...chronologicalTurnSequence(liveBlocks));
     liveBlocks = [];
   };
   const flushCollapsed = () => {
     const first = collapsed[0];
-    if (first === undefined) return;
-    parts.push({ kind: "collapsedActivity", key: `collapsed:${first}`, indexes: collapsed });
+    if (first === undefined) {
+      return;
+    }
+    parts.push({
+      indexes: collapsed,
+      key: `collapsed:${String(first)}`,
+      kind: "collapsedActivity",
+    });
     collapsed = [];
   };
 
@@ -91,13 +105,17 @@ export function completedTurnContent(blocks: RenderBlock[]): CompletedTurnConten
   let finalIndex = -1;
   for (let index = content.length - 1; index >= 0; index -= 1) {
     const block = content[index];
-    if (block?.kind !== "agentMessage" || (block.body ?? "").trim() === "") continue;
+    if (block?.kind !== "agentMessage" || (block.body ?? "").trim() === "") {
+      continue;
+    }
     const phase = typeof block.raw.phase === "string" ? block.raw.phase : block.status;
     if (phase === "final_answer") {
       finalIndex = index;
       break;
     }
-    if (finalIndex === -1) finalIndex = index;
+    if (finalIndex === -1) {
+      finalIndex = index;
+    }
   }
   const finalAnswer = finalIndex === -1 ? null : (content[finalIndex] ?? null);
   return {

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { compactSource, sourceObjectDeclaration } from "./source-contract";
+import { compactSource, sourceHasJsxElement, sourceObjectDeclaration } from "./source-contract";
 
 const readSource = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -71,9 +71,15 @@ describe("inline queue overlay", () => {
     expect(overlay).not.toContain("rotateX");
     expect(overlay).not.toContain("perspective");
     expect(ownerInlineQueueItem).toContain("!props.expanded && index === 0");
-    expect(ownerInlineQueueItem).toMatch(
-      /<Text numberOfLines=\{1\} ellipsizeMode="tail" style=\{styles\.stackLine\}>[\s\S]*styles\.stackTitle[\s\S]*styles\.stackPreview[\s\S]*<\/Text>/u,
-    );
+    expect(
+      sourceHasJsxElement(ownerInlineQueueItem, "Text", [
+        "numberOfLines={1}",
+        'ellipsizeMode="tail"',
+        "style={styles.stackLine}",
+      ]),
+    ).toBe(true);
+    expect(ownerInlineQueueItem).toContain("styles.stackTitle");
+    expect(ownerInlineQueueItem).toContain("styles.stackPreview");
     expect(sourceObjectDeclaration(styles, "contentRow")).toContain('alignItems: "center"');
     expect(overlay).not.toContain("styles.headerBubble");
     expect(overlay).not.toContain('name="close"');
@@ -95,8 +101,8 @@ describe("inline queue overlay", () => {
     expect(ownerInlineQueueItem).toContain(
       "raised={props.expanded && overlay.openMenuId === item.id}",
     );
-    expect(ownerInlineQueueItem).toContain(
-      "onOpenChange={(open) =>\n                overlay.setOpenMenuId",
+    expect(ownerInlineQueueItem).toMatch(
+      /onOpenChange=\{\(open\) => \{\s*overlay\.setOpenMenuId/u,
     );
     expect(bubble).toContain("<Text style={styles.swipeActionText}>Delete</Text>");
     expect(bubble).toContain(
@@ -104,7 +110,13 @@ describe("inline queue overlay", () => {
     );
     expect(queueItem).toContain('name="ellipsis-vertical"');
     expect(overlay).not.toContain('name="ellipsis-horizontal"');
-    expect(bubble).toContain('name="navigate-outline" role="label" color={colors.onPrimary}');
+    expect(
+      sourceHasJsxElement(bubble, "InlineIcon", [
+        'name="navigate-outline"',
+        'role="label"',
+        "color={colors.onPrimary}",
+      ]),
+    ).toBe(true);
     expect(motion).toContain("rawTranslation >= 8 && steerEnabled");
     expect(ownerInlineQueueItem).toContain(
       "swipeDismissDistance={overlay.viewportWidth + spacing.md}",
@@ -126,7 +138,7 @@ describe("inline queue overlay", () => {
 
   it("matches message-bubble geometry and formats time from device preferences", () => {
     expect(layout).toContain('import { formatDeviceTime } from "../../data/device-time"');
-    expect(layout).toContain("formatDeviceTime(createdAtMilliseconds / 1_000)");
+    expect(layout).toMatch(/formatDeviceTime\(createdAtMilliseconds \/ 1_?000\)/u);
     expect(overlay).not.toContain("toLocaleTimeString");
     expect(styles).toContain("borderRadius: radii.selected");
     expect(styles).toContain("paddingHorizontal: spacing.sm");

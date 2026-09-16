@@ -6,38 +6,38 @@ import { InternalBrowser } from "./browser/InternalBrowser";
 import { styles } from "./ForwardedLoopbackBrowser.styles";
 
 export function ForwardedLoopbackBrowser({
-  title,
-  url,
-  topInset,
   bottomInset,
   onClose,
+  title,
+  topInset,
+  url,
 }: {
-  title: string;
-  url: string;
-  topInset: number;
   bottomInset: number;
-  onClose(): void;
+  onClose: () => void;
+  title: string;
+  topInset: number;
+  url: string;
 }) {
   const [error, setError] = useState<string | null>(null);
   return (
     <View
+      style={[styles.root, { paddingBottom: bottomInset, paddingTop: topInset }]}
       testID="forwarded-loopback-browser"
-      style={[styles.root, { paddingTop: topInset, paddingBottom: bottomInset }]}
     >
       {error !== null && <Text style={styles.previewError}>{error}</Text>}
       <View style={styles.flex}>
         <InternalBrowser
-          url={url}
-          header={{ title, closeLabel: "Close browser", onClose }}
-          originWhitelist={[new URL(url).origin]}
-          onHttpError={(statusCode) =>
+          header={{ closeLabel: "Close browser", onClose, title }}
+          onError={setError}
+          onHttpError={(statusCode) => {
             setError(
               statusCode === 502
                 ? "This port is currently unavailable"
-                : `Preview returned HTTP ${statusCode}`,
-            )
-          }
-          onError={setError}
+                : `Preview returned HTTP ${String(statusCode)}`,
+            );
+          }}
+          originWhitelist={[new URL(url).origin]}
+          url={url}
         />
       </View>
     </View>

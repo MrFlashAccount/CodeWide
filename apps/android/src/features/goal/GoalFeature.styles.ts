@@ -1,50 +1,89 @@
 import { StyleSheet } from "react-native";
-import { colors, controlSize, radii, spacing, touchTarget, typeScale } from "../../theme";
+import {
+  colors,
+  controlSize,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+} from "../../theme";
 
 export const styles = StyleSheet.create({
+  advancedToggle: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: controlSize.regular,
+  },
   errorText: {
     color: colors.red,
     ...typeScale.body,
   },
-  flex: { flex: 1 },
-  goalDialogContent: { gap: spacing.md },
-  goalDialogIntro: {
+  fieldGroup: {
     gap: spacing.xxs,
-    paddingRight: spacing.xl,
   },
-  goalObjectiveInput: {
-    minHeight: 112,
-    color: colors.text,
+  fieldInput: {
     backgroundColor: colors.surfaceContainerLow,
+    borderColor: colors.outline,
     borderRadius: radii.medium,
     borderWidth: 1,
-    borderColor: colors.outline,
+    color: colors.text,
+    minHeight: touchTarget,
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
-    textAlignVertical: "top",
     ...typeScale.body,
+  },
+  fieldLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  flex: {
+    flex: 1,
   },
   goalClearPrompt: {
     color: colors.red,
     ...typeScale.label,
   },
   goalDialogActions: {
-    minHeight: controlSize.regular,
-    flexDirection: "row",
     alignItems: "center",
+    flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.xs,
     marginTop: spacing.xxs,
+    minHeight: controlSize.regular,
   },
-  fieldInput: {
+  goalDialogClose: {
+    alignItems: "center",
+    justifyContent: "center",
     minHeight: touchTarget,
+    minWidth: touchTarget,
+  },
+  goalDialogContent: { padding: 0 },
+  goalDialogForm: {
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  goalDialogIntro: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  goalDialogTitle: {
     color: colors.text,
+    ...typeScale.title,
+    fontWeight: typeWeight.semibold,
+  },
+  goalObjectiveInput: {
     backgroundColor: colors.surfaceContainerLow,
+    borderColor: colors.outline,
     borderRadius: radii.medium,
     borderWidth: 1,
-    borderColor: colors.outline,
+    color: colors.text,
+    minHeight: 112,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    textAlignVertical: "top",
     ...typeScale.body,
   },
 });

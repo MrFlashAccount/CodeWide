@@ -11,7 +11,9 @@ export function parseDiagnosticRichMarkdown(
   source: string,
   retain = true,
 ): ReturnType<typeof parseRichMarkdown> {
-  if (!operationalDiagnosticsEnabled()) return parseRichMarkdown(source, retain);
+  if (!operationalDiagnosticsEnabled()) {
+    return parseRichMarkdown(source, retain);
+  }
   const startedAt = performance.now();
   const parsed = parseRichMarkdown(source, retain);
   const durationMs = performance.now() - startedAt;

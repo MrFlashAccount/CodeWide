@@ -12,7 +12,6 @@ import { AppDialogProvider } from "../src/ui/AppDialog.tsx";
 // WHY: Insets are provided by a native view, unavailable in the Node renderer.
 jest.mock("react-native-safe-area-context", () => require("react-native-safe-area-context/jest/mock").default);
 // WHY: The native portal host is unused by the in-process fullscreen adapter.
-jest.mock("heroui-native/portal", () => ({ PortalHost: () => null }));
 
 const annotate = jest.fn(async () => undefined);
 const attach = jest.fn(async (_markdown: string) => "review-attachment");

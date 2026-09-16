@@ -1,8 +1,8 @@
 import { processFile } from "@pierre/diffs";
 import { describe, expect, it } from "vitest";
 
-import { canonicalPatch } from "../code-review-editor/canonicalPatch";
-import type { CodeReviewPatch } from "../src/rendering/code-review-bridge";
+import { canonicalPatch } from "../src/features/review/editor/webview/canonicalPatch.web";
+import type { CodeReviewPatch } from "../src/features/review/editor/editorBridge";
 
 function parse(patch: CodeReviewPatch) {
   const metadata = processFile(canonicalPatch("file.ts", patch), { throwOnError: true });
@@ -11,17 +11,44 @@ function parse(patch: CodeReviewPatch) {
 }
 
 describe("recorded patch compatibility", () => {
-  it.each(["\n", "\r\n"])("restores suppressed blank context within multiple hunks (%j)", (ending) => {
-    const diff = [
-      "--- a/file.ts", "+++ b/file.ts", "@@ -10,4 +10,4 @@",
-      "", "-oldFirst", "+newFirst", "", " context",
-      "@@ -30,2 +30,2 @@", "-oldSecond", "+newSecond", "", "",
-    ].join(ending);
-    const parsed = parse({ kind: "update", diff });
-    expect(parsed.deletionLines.join("")).toBe(["", "oldFirst", "", "context", "oldSecond", "", ""].join(ending));
-    expect(parsed.additionLines.join("")).toBe(["", "newFirst", "", "context", "newSecond", "", ""].join(ending));
-    expect(parsed.hunks.map((hunk) => [hunk.deletionStart, hunk.additionStart, hunk.deletionCount, hunk.additionCount])).toEqual([[10, 10, 4, 4], [30, 30, 2, 2]]);
-  });
+  it.each(["\n", "\r\n"])(
+    "restores suppressed blank context within multiple hunks (%j)",
+    (ending) => {
+      const diff = [
+        "--- a/file.ts",
+        "+++ b/file.ts",
+        "@@ -10,4 +10,4 @@",
+        "",
+        "-oldFirst",
+        "+newFirst",
+        "",
+        " context",
+        "@@ -30,2 +30,2 @@",
+        "-oldSecond",
+        "+newSecond",
+        "",
+        "",
+      ].join(ending);
+      const parsed = parse({ kind: "update", diff });
+      expect(parsed.deletionLines.join("")).toBe(
+        ["", "oldFirst", "", "context", "oldSecond", "", ""].join(ending),
+      );
+      expect(parsed.additionLines.join("")).toBe(
+        ["", "newFirst", "", "context", "newSecond", "", ""].join(ending),
+      );
+      expect(
+        parsed.hunks.map((hunk) => [
+          hunk.deletionStart,
+          hunk.additionStart,
+          hunk.deletionCount,
+          hunk.additionCount,
+        ]),
+      ).toEqual([
+        [10, 10, 4, 4],
+        [30, 30, 2, 2],
+      ]);
+    },
+  );
 
   it("preserves prefixed blank context and trailing whitespace in changed content", () => {
     const parsed = parse({ kind: "update", diff: "@@ -1,3 +1,3 @@\n-old  \n+new \t\n \n \n" });
@@ -36,7 +63,10 @@ describe("recorded patch compatibility", () => {
   });
 
   it("preserves explicit no-newline metadata", () => {
-    const parsed = parse({ kind: "update", diff: "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new  \n\\ No newline at end of file\n" });
+    const parsed = parse({
+      kind: "update",
+      diff: "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new  \n\\ No newline at end of file\n",
+    });
     expect(parsed.deletionLines).toEqual(["old"]);
     expect(parsed.additionLines).toEqual(["new  "]);
   });

@@ -11,15 +11,15 @@ import { checkAborted } from "../native/check-aborted";
 export const COMMAND_OUTPUT_PAGE_BYTES = 64 * 1024;
 
 export interface CommandOutputRequest {
-  readonly scope: string;
-  readonly references: readonly CommandOutputReference[];
   readonly byteLimit: number;
   readonly getTransferAccess: GetTransferAccess;
+  readonly references: readonly CommandOutputReference[];
+  readonly scope: string;
 }
 
 export interface CommandOutputPage {
-  readonly text: string;
   readonly hasMore: boolean;
+  readonly text: string;
 }
 
 /** Output beyond the requested prefix must not invalidate the visible page. */
@@ -30,10 +30,12 @@ export function commandOutputRevision(
   let bytes = 0;
   let revision = `${byteLimit}`;
   for (const reference of references) {
-    if (bytes < byteLimit) revision += `:${reference.id}`;
+    if (bytes < byteLimit) {
+      revision += `:${reference.id}`;
+    }
     bytes += reference.byteLength;
   }
-  return `${revision}:${bytes > byteLimit}`;
+  return `${revision}:${String(bytes > byteLimit)}`;
 }
 
 /** Reads a bounded prefix on expansion. Immutable chunks reuse the resource
@@ -56,14 +58,15 @@ export async function readCommandOutput(
         request.byteLimit - bytes,
       );
       const chunk = getAsyncResource<PrivateAssetTextResult>(
-        `command-content:${request.scope}:${reference.id}:${chunkOffset}:${limit}`,
+        `command-content:${request.scope}:${reference.id}:${String(chunkOffset)}:${String(limit)}`,
         0,
         async (_publish, chunkSignal) =>
-          await readPrivateAssetText(
-            { kind: "content", id: reference.id },
-            request.getTransferAccess,
-            { offset: chunkOffset, limit, accept: reference.contentType, signal: chunkSignal },
-          ),
+          readPrivateAssetText({ id: reference.id, kind: "content" }, request.getTransferAccess, {
+            accept: reference.contentType,
+            limit,
+            offset: chunkOffset,
+            signal: chunkSignal,
+          }),
         (value) => value.text.length * 2,
         false,
       );
@@ -71,8 +74,9 @@ export async function readCommandOutput(
       try {
         const loaded = await chunk.read();
         checkAborted(signal);
-        if (loaded.nextOffset <= offset)
+        if (loaded.nextOffset <= offset) {
           throw new Error("Command output returned an invalid range");
+        }
         text += loaded.text;
         bytes += loaded.nextOffset - offset;
         offset = loaded.nextOffset;
@@ -80,7 +84,9 @@ export async function readCommandOutput(
         release();
       }
     }
-    if (bytes >= request.byteLimit) break;
+    if (bytes >= request.byteLimit) {
+      break;
+    }
   }
-  return { text, hasMore: bytes < total };
+  return { hasMore: bytes < total, text };
 }

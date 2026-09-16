@@ -8,12 +8,14 @@ export interface FeedbackTarget {
 
 /** Feedback uses qualified upload access and the existing durable queue admission. */
 export interface FeedbackDelivery {
-  transferAccess(connectionId: string): Promise<TransferAccess>;
-  sendText(
+  // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+  // oxlint-disable-next-line eslint/max-params
+  sendText: (
     connectionId: string,
     threadId: string,
     text: string,
     mode: { type: "queue" },
     options: { attachments: RemoteFileAttachment[] },
-  ): Promise<string>;
+  ) => Promise<string>;
+  transferAccess: (connectionId: string) => Promise<TransferAccess>;
 }

@@ -6,27 +6,27 @@ import { colors, iconSize, radii, spacing, typeScale } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 
 interface AccountUsageRowProps {
-  readonly testID?: string;
+  readonly children: ReactNode;
   readonly label: string;
   readonly plan: string;
-  readonly status: "active" | "exhausted" | "inactive" | "disabled";
   readonly reset: { readonly absolute: string; readonly relative: string | null } | null;
-  readonly children: ReactNode;
+  readonly status: "active" | "exhausted" | "inactive" | "disabled";
+  readonly testID?: string;
 }
 
 export function AccountUsageRow({
-  testID,
+  children,
   label,
   plan,
-  status,
   reset,
-  children,
+  status,
+  testID,
 }: AccountUsageRowProps) {
   return (
-    <View testID={testID} style={styles.row}>
+    <View style={styles.row} testID={testID}>
       <View
-        accessible
         accessibilityLabel={`Account ${status}`}
+        accessible
         style={[
           styles.dot,
           {
@@ -47,9 +47,9 @@ export function AccountUsageRow({
           {children}
         </View>
         <View
+          accessibilityLabel={`${plan}${reset === null ? "" : ` · Resets ${reset.absolute}${reset.relative === null ? "" : ` · ${reset.relative}`}`}`}
           accessible
           style={styles.metadataRow}
-          accessibilityLabel={`${plan}${reset === null ? "" : ` · Resets ${reset.absolute}${reset.relative === null ? "" : ` · ${reset.relative}`}`}`}
         >
           <Text numberOfLines={1} style={styles.metadata}>
             {plan}
@@ -57,7 +57,7 @@ export function AccountUsageRow({
           {reset !== null && (
             <>
               <Text style={styles.metadata}>·</Text>
-              <Ionicons name="refresh-outline" size={iconSize.indicator} color={colors.textDim} />
+              <Ionicons color={colors.textDim} name="refresh-outline" size={iconSize.indicator} />
               <Text numberOfLines={1} style={[styles.metadata, styles.date]}>
                 {reset.absolute}
               </Text>
@@ -75,27 +75,31 @@ export function AccountUsageRow({
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.xs,
-    paddingVertical: spacing.xs,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: radii.pill,
-    marginTop: spacing.compact,
-  },
   content: {
     flex: 1,
-    minWidth: 0,
     gap: spacing.xxs,
+    minWidth: 0,
   },
-  titleRow: {
-    flexDirection: "row",
+  date: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  dot: {
+    borderRadius: radii.pill,
+    height: 8,
+    marginTop: spacing.compact,
+    width: 8,
+  },
+  metadata: {
+    ...typeScale.caption,
+    color: colors.textDim,
+    flexShrink: 0,
+  },
+  metadataRow: {
     alignItems: "center",
-    gap: spacing.xs,
+    flexDirection: "row",
+    gap: spacing.optical,
+    minWidth: 0,
   },
   name: {
     flex: 1,
@@ -103,19 +107,15 @@ const styles = StyleSheet.create({
     ...typeScale.body,
     color: colors.text,
   },
-  metadataRow: {
+  row: {
+    alignItems: "flex-start",
     flexDirection: "row",
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  titleRow: {
     alignItems: "center",
-    gap: spacing.optical,
-    minWidth: 0,
-  },
-  metadata: {
-    ...typeScale.caption,
-    color: colors.textDim,
-    flexShrink: 0,
-  },
-  date: {
-    flexShrink: 1,
-    minWidth: 0,
+    flexDirection: "row",
+    gap: spacing.xs,
   },
 });

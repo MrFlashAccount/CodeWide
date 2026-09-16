@@ -22,18 +22,18 @@ export function useProjectThreadList(
 ) {
   const sidebarMode = sidebarProject === null ? threadListMode : projectListMode;
 
-  const changeSidebarMode = useEvent((mode: ThreadListMode) =>
-    (sidebarProject === null ? setThreadListMode : setProjectListMode)(mode),
-  );
+  const changeSidebarMode = useEvent((mode: ThreadListMode) => {
+    (sidebarProject === null ? setThreadListMode : setProjectListMode)(mode);
+  });
 
   const sidebarFilter = effectiveThreadListFilter(
     sidebarMode,
     sidebarProject === null ? threadListFilter : projectListFilter,
   );
 
-  const changeSidebarFilter = useEvent((filter: ThreadListFilter) =>
-    (sidebarProject === null ? setThreadListFilter : setProjectListFilter)(filter),
-  );
+  const changeSidebarFilter = useEvent((filter: ThreadListFilter) => {
+    (sidebarProject === null ? setThreadListFilter : setProjectListFilter)(filter);
+  });
 
   const sidebarScopeKey = `${serverScopeKey}:${sidebarMode}${sidebarProject === null ? "" : `:${sidebarProject.key}`}`;
 
@@ -41,19 +41,19 @@ export function useProjectThreadList(
 
   const projectLimit = projectListLimits[projectLimitKey] ?? THREAD_LIST_PAGE_SIZE;
 
-  const loadMoreProjectThreads = useEvent(() =>
+  const loadMoreProjectThreads = useEvent(() => {
     setProjectListLimits((limits) => ({
       ...limits,
       [projectLimitKey]: (limits[projectLimitKey] ?? THREAD_LIST_PAGE_SIZE) + THREAD_LIST_PAGE_SIZE,
-    })),
-  );
+    }));
+  });
   return {
-    sidebarMode,
-    changeSidebarMode,
-    sidebarFilter,
     changeSidebarFilter,
-    sidebarScopeKey,
-    projectLimit,
+    changeSidebarMode,
     loadMoreProjectThreads,
+    projectLimit,
+    sidebarFilter,
+    sidebarMode,
+    sidebarScopeKey,
   };
 }

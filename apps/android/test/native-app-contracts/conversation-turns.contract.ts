@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { sourceHasJsxElement } from "../source-contract";
 import { sourceObjectDeclaration } from "../source-contract";
 import {
   ownerOptimisticTurn,
@@ -37,9 +38,14 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerOptimisticTurn).toContain(
     "accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}",
   );
-  expect(ownerTurnActivity).toMatch(
-    /<View\s+testID="turn-activity"\s+style=\{\[\s*styles\.turnActivity,\s*compactHeader && styles\.turnActivityCompact,\s*expanded && styles\.turnActivityExpanded,?\s*\]\}\s*>/u,
-  );
+  expect(
+    sourceHasJsxElement(ownerTurnActivity, "View", [
+      'testID="turn-activity"',
+      "styles.turnActivity",
+      "compactHeader && styles.turnActivityCompact",
+      "expanded && styles.turnActivityExpanded",
+    ]),
+  ).toBe(true);
   expect(ownerTurnActivity).toContain("showToggle={!shouldAutoExpand}");
   expect(ownerTurnActivity).toContain("{showToggle && (");
   expect(ownerTurnActivity).toMatch(
@@ -72,9 +78,17 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerTurnTimelineItem).toContain('rawTurn.status === "inProgress"');
   expect(ownerMessageActionRail).toContain('accessibilityLabel="Message actions"');
   expect(ownerTurnTimelineItem).toMatch(/<MessageActionRail\s+request=\{\{/);
-  expect(ownerLiveAgentResponse).toMatch(
-    /<AppendOnlyLiveContent\s+cacheKey=\{cacheKey\}\s+source=\{projection\.source\}\s+mode="markdown"\s+streamMetricKey=\{streamMetricKey\}\s+markdownProjection=\{projection\}\s+fill=\{fill\}\s+animateNew=\{animateNew\}\s*\/>/,
-  );
+  expect(
+    sourceHasJsxElement(ownerLiveAgentResponse, "AppendOnlyLiveContent", [
+      "animateNew={animateNew}",
+      "cacheKey={cacheKey}",
+      "fill={fill}",
+      'mode="markdown"',
+      "markdownProjection={projection}",
+      "source={projection.source}",
+      "streamMetricKey={streamMetricKey}",
+    ]),
+  ).toBe(true);
   expect(ownerLiveAgentResponse).toContain(
     'mode === "markdown" ? "live-agent-response" : "live-tool-output"',
   );
@@ -83,30 +97,46 @@ it("preserves conversation turns integration contracts", () => {
     /const visibleLiveActivitySequence =\s*liveActivitySequence\.map\(\(part\) => \{/,
   );
   expect(ownerAgentTurnBody).toContain(
-    "projection={presentation.liveMarkdownProjections.get(part.block.key)!}",
+    "projection={liveMarkdownProjection(presentation, part.block.key)}",
   );
+  expect(ownerAgentTurnBody).toContain("if (projection === undefined)");
   expect(ownerDisclosureState).toContain(
     "const persistentExpansionStates = new Map<string, boolean>()",
   );
-  expect(ownerDisclosureState).toContain("const PERSISTENT_EXPANSION_STATE_LIMIT = 4_096");
+  expect(ownerDisclosureState).toMatch(/const PERSISTENT_EXPANSION_STATE_LIMIT = 4_?096/u);
   expect(ownerCard).toContain("writePersistentExpansionState(localKey, resolved)");
   expect(ownerTurnTimelineItem).toContain("function TurnTimelineItem({");
   expect(ownerTurnActivity).toMatch(/const thinkingOnly =\s*part\.blocks\.length > 0/);
   expect(ownerTurnActivity).toContain('testID="thinking-status-section"');
   expect(ownerTurnContexts).toContain("const TurnActivityContentContext = createContext(false);");
   expect(ownerTurnActivity).toContain("<TurnActivityContentContext.Provider value>");
-  expect(ownerTurnActivityStyles).toMatch(
-    /thinkingStatusSection: \{\s*minWidth: 0,\s*maxWidth: "100%",\s*alignSelf: "flex-start",\s*alignItems: "flex-start",?\s*\}/,
+  const thinkingStatusSection = sourceObjectDeclaration(
+    ownerTurnActivityStyles,
+    "thinkingStatusSection",
   );
-  expect(ownerTurnTimelineItem).toMatch(/variant="agent"\s+fill=\{presentation\.agentBubbleFill\}/);
-  expect(ownerTurnTimelineItem).toMatch(
-    /testID="codex-bubble"\s+errorContext=\{`Thread: \$\{turn\.threadId\}\\nTurn: \$\{turn\.id\}`\}/,
-  );
-  expect(ownerUserTurnBody).toMatch(/variant="user"\s+testID="user-bubble"/);
+  expect(thinkingStatusSection).toContain('alignItems: "flex-start"');
+  expect(thinkingStatusSection).toContain('alignSelf: "flex-start"');
+  expect(thinkingStatusSection).toContain('maxWidth: "100%"');
+  expect(thinkingStatusSection).toContain("minWidth: 0");
+  expect(
+    sourceHasJsxElement(ownerTurnTimelineItem, "Bubble", [
+      "fill={presentation.agentBubbleFill}",
+      'variant="agent"',
+      'testID="codex-bubble"',
+      "errorContext={`Thread: ${turn.threadId}\\nTurn: ${turn.id}`}",
+    ]),
+  ).toBe(true);
+  expect(
+    sourceHasJsxElement(ownerUserTurnBody, "Bubble", ['testID="user-bubble"', 'variant="user"']),
+  ).toBe(true);
   expect(ownerUserTurnBody).toContain("errorResetKey={`${turn.key}:user`}");
-  expect(ownerUserTurnBody).toMatch(
-    /<SearchMessage\s+key=\{`\$\{block\.key\}:\$\{index\}`\}\s+itemId=\{block\.raw\.id\}\s*>\s*<View style=\{styles\.userMessageBlock\}>/,
-  );
+  expect(
+    sourceHasJsxElement(ownerUserTurnBody, "SearchMessage", [
+      "itemId={block.raw.id}",
+      "key={block.key}",
+    ]),
+  ).toBe(true);
+  expect(ownerUserTurnBody).toContain("<View style={styles.userMessageBlock}>");
   expect(ownerTurnProjection).toMatch(
     /richMarkdownLayout\(latestAgentBlock\??\.body \?\? ""\) === "fill"/u,
   );

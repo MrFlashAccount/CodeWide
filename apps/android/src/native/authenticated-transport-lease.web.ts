@@ -10,5 +10,6 @@ import type { AuthenticatedTransportLease } from "./authenticated-transport-leas
 export async function acquireAuthenticatedTransportLease(
   _savedServerId: string,
 ): Promise<AuthenticatedTransportLease> {
+  await Promise.resolve();
   throw new Error("The web host did not provide an authenticated transport lease");
 }

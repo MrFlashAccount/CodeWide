@@ -13,47 +13,54 @@ import { contentReviewNativeModule } from "./content-review-native-module";
 import type { ContentReviewHighlight } from "./ContentReviewHost";
 
 export type ReviewSelection = {
-  text: string;
-  start: number;
   end: number;
+  start: number;
+  text: string;
 };
 
 type NativeSelectionEvent = ReviewSelection & { token?: string };
 
 const callbacks = new Map<string, (selection: ReviewSelection) => void>();
-let nativeSubscription: { remove(): void } | null = null;
+const EMPTY_REVIEW_HIGHLIGHTS: readonly ContentReviewHighlight[] = [];
+let nativeSubscription: { remove: () => void } | null = null;
 
 function ensureNativeSubscription(): void {
-  if (nativeSubscription !== null) return;
+  if (nativeSubscription !== null) {
+    return;
+  }
   nativeSubscription = DeviceEventEmitter.addListener(
     "codewideContentReviewSelection",
     (event: NativeSelectionEvent) => {
-      if (typeof event.token !== "string" || typeof event.text !== "string") return;
+      if (typeof event.token !== "string" || typeof event.text !== "string") {
+        return;
+      }
       callbacks.get(event.token)?.({
-        text: event.text,
-        start: Number.isFinite(event.start) ? event.start : 0,
         end: Number.isFinite(event.end) ? event.end : event.text.length,
+        start: Number.isFinite(event.start) ? event.start : 0,
+        text: event.text,
       });
     },
   );
 }
 
 export function ReviewableText({
-  style,
   allowFontScaling = true,
   maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
   onReviewSelection,
-  reviewHighlights = [],
+  reviewHighlights = EMPTY_REVIEW_HIGHLIGHTS,
+  style,
   ...props
 }: ComponentProps<typeof NativeText> & {
-  onReviewSelection(selection: ReviewSelection): void;
+  onReviewSelection: (selection: ReviewSelection) => void;
   reviewHighlights?: readonly ContentReviewHighlight[];
 }) {
   const textRef = useRef<ComponentRef<typeof NativeText> | null>(null);
   const generatedId = useId();
   const token = `review-text-${generatedId}`;
   const handleReviewSelection = useEvent(onReviewSelection);
-  const highlightKey = reviewHighlights.map(({ start, end }) => `${start}:${end}`).join(",");
+  const highlightKey = reviewHighlights
+    .map(({ end, start }) => `${String(start)}:${String(end)}`)
+    .join(",");
   const applyReviewHighlights = useEvent(
     (nativeModule: ReturnType<typeof contentReviewNativeModule>, reactTag: number) => {
       nativeModule?.setHighlights?.(reactTag, token, reviewHighlights);
@@ -62,11 +69,17 @@ export function ReviewableText({
 
   useLayoutEffect(() => {
     const nativeModule = contentReviewNativeModule(NativeModules.CodeWideContentReview);
-    if (nativeModule === null) return;
+    if (nativeModule === null) {
+      return undefined;
+    }
     const reactTag = findNodeHandle(textRef.current);
-    if (reactTag === null) return;
+    if (reactTag === null) {
+      return undefined;
+    }
     ensureNativeSubscription();
-    callbacks.set(token, (selection) => handleReviewSelection(selection));
+    callbacks.set(token, (selection) => {
+      handleReviewSelection(selection);
+    });
     nativeModule.install(reactTag, token);
     return () => {
       callbacks.delete(token);
@@ -80,9 +93,13 @@ export function ReviewableText({
 
   useLayoutEffect(() => {
     const nativeModule = contentReviewNativeModule(NativeModules.CodeWideContentReview);
-    if (nativeModule?.setHighlights === undefined) return;
+    if (nativeModule?.setHighlights === undefined) {
+      return;
+    }
     const reactTag = findNodeHandle(textRef.current);
-    if (reactTag === null) return;
+    if (reactTag === null) {
+      return;
+    }
     applyReviewHighlights(nativeModule, reactTag);
   }, [applyReviewHighlights, highlightKey, token]);
 
@@ -90,9 +107,9 @@ export function ReviewableText({
     <NativeText
       ref={textRef}
       {...props}
-      selectable
       allowFontScaling={allowFontScaling}
       maxFontSizeMultiplier={maxFontSizeMultiplier}
+      selectable
       style={[style, productFontStyle(style)]}
     />
   );

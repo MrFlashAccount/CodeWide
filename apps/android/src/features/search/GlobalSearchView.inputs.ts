@@ -1,43 +1,39 @@
-import { type Dispatch, type SetStateAction } from "react";
-import {
-  useWindowDimensions,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-} from "react-native";
+import type { Dispatch, SetStateAction } from "react";
+import type { NativeScrollEvent, NativeSyntheticEvent, useWindowDimensions } from "react-native";
 import type { AsyncResourceSnapshot } from "../../rendering/async-resource-store";
 import type { SearchScreenProps } from "./globalSearchContract";
 import type { SearchRequest, SearchSession } from "./search-session";
-import { type SearchDateField, type SearchFilterValue } from "./SearchFilters";
+import type { SearchDateField, SearchFilterValue } from "./SearchFilters";
 import type { SearchResultTarget, ServerSearchResult } from "./searchResultTypes";
 
 export type renderGlobalSearchViewInput = {
-  text: string;
-  setText: (value: string) => void;
-  search: () => void;
   autoFocus: boolean;
-  didFocus: () => void;
-  close: () => void;
-  filters: boolean;
-  setFilters: Dispatch<SetStateAction<boolean>>;
-  window: ReturnType<typeof useWindowDimensions>;
-  toggleFilters: () => void;
-  filterCount: number;
-  resetFilters: () => void;
-  filterError: string | null;
-  filterValue: SearchFilterValue;
-  setFilterValue: (value: SearchFilterValue) => void;
-  props: SearchScreenProps;
-  pickDate: (field: SearchDateField) => void;
   calendar: SearchDateField | null;
-  selectCalendarDay: (day: string) => void;
+  close: () => void;
+  didFocus: () => void;
   dismissCalendar: () => void;
-  resource: AsyncResourceSnapshot<readonly ServerSearchResult[]>;
+  failed: boolean;
+  filterCount: number;
+  filterError: string | null;
+  filters: boolean;
+  filterValue: SearchFilterValue;
+  nextPage: () => void;
+  pickDate: (field: SearchDateField) => void;
+  previousPage: () => void;
+  props: SearchScreenProps;
   request: SearchRequest | null;
+  resetFilters: () => void;
+  resource: AsyncResourceSnapshot<readonly ServerSearchResult[]>;
   results: SearchResultTarget[];
+  saveOffset: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  search: () => void;
+  selectCalendarDay: (day: string) => void;
   selectResult: (target: SearchResultTarget) => void;
   session: SearchSession;
-  saveOffset: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  failed: boolean;
-  previousPage: () => void;
-  nextPage: () => void;
+  setFilters: Dispatch<SetStateAction<boolean>>;
+  setFilterValue: (value: SearchFilterValue) => void;
+  setText: (value: string) => void;
+  text: string;
+  toggleFilters: () => void;
+  window: ReturnType<typeof useWindowDimensions>;
 };

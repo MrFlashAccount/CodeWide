@@ -1,8 +1,14 @@
 import { expect, it } from "vitest";
+import { sourceHasJsxElement } from "../source-contract";
 import { settingsSheet } from "./settings-sources";
 
 it("preserves settings integration contracts", () => {
-  expect(settingsSheet).toContain(
-    "snapPoints: [\"65%\", \"90%\"],\n        enableDynamicSizing: false,\n        enableOverDrag: false,\n        contentContainerClassName: \"h-full\"",
-  );
+  expect(
+    sourceHasJsxElement(settingsSheet, "AppSheet", [
+      'contentContainerClassName: "h-full"',
+      "enableDynamicSizing: false",
+      "enableOverDrag: false",
+      'snapPoints: ["65%", "90%"]',
+    ]),
+  ).toBe(true);
 });

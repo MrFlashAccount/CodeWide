@@ -1,11 +1,11 @@
 export type ThreadWindowIntentLease = {
-  token: number;
-  scope: string;
   identity: string;
+  scope: string;
+  token: number;
 };
 
 type ActiveIntent = ThreadWindowIntentLease & {
-  release(): void;
+  release: () => void;
 };
 
 /**
@@ -20,10 +20,12 @@ export class ThreadWindowIntentController {
   #intent: ActiveIntent | null = null;
 
   begin(scope: string, identity: string, retain: () => () => void): ThreadWindowIntentLease {
-    if (this.#intent?.identity === identity) return this.#intent;
+    if (this.#intent?.identity === identity) {
+      return this.#intent;
+    }
     const release = retain();
     const previous = this.#intent;
-    const lease = { token: ++this.#nextToken, scope, identity, release };
+    const lease = { identity, release, scope, token: ++this.#nextToken };
     this.#currentToken = lease.token;
     this.#intent = lease;
     previous?.release();
@@ -32,14 +34,18 @@ export class ThreadWindowIntentController {
 
   /** The token remains current after adoption while its SQLite read settles. */
   adopt(scope: string): void {
-    if (this.#intent?.scope !== scope) return;
+    if (this.#intent?.scope !== scope) {
+      return;
+    }
     const adopted = this.#intent;
     this.#intent = null;
     adopted.release();
   }
 
   cancel(lease: ThreadWindowIntentLease): void {
-    if (this.#intent?.token !== lease.token) return;
+    if (this.#intent?.token !== lease.token) {
+      return;
+    }
     const cancelled = this.#intent;
     this.#intent = null;
     this.#currentToken = ++this.#nextToken;

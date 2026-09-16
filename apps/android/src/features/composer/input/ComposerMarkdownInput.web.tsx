@@ -13,7 +13,7 @@ export function ComposerMarkdownInput({
   ...props
 }: ComposerMarkdownInputProps & { readonly ref?: React.Ref<ComposerMarkdownInputHandle> }) {
   const input = useRef<ComponentRef<typeof AppTextInput>>(null);
-  const selection = useRef({ start: props.value.length, end: props.value.length });
+  const selection = useRef({ end: props.value.length, start: props.value.length });
   const insertText = useEvent((text: string) => {
     const start = Math.min(selection.current.start, selection.current.end);
     const end = Math.max(selection.current.start, selection.current.end);
@@ -23,9 +23,14 @@ export function ComposerMarkdownInput({
     ref,
     () => ({
       focus: () => input.current?.focus(),
-      getMarkdown: async () => props.value,
+      getMarkdown: async () => {
+        await Promise.resolve();
+        return props.value;
+      },
       insertCode: () => undefined,
-      insertLinkedText: (text) => insertText(text),
+      insertLinkedText: (text) => {
+        insertText(text);
+      },
       insertText,
       startMention: () => undefined,
       toggleOrderedList: () => undefined,
@@ -35,21 +40,21 @@ export function ComposerMarkdownInput({
   );
   return (
     <AppTextInput
-      ref={input}
-      voiceInput={false}
       accessibilityLabel={props.accessibilityLabel}
-      value={props.value}
+      multiline
       onChangeText={props.onChangeText}
       onSelectionChange={(event) => {
         selection.current = event.nativeEvent.selection;
         props.onSelectionChange?.(event.nativeEvent.selection);
       }}
-      selection={props.selection}
       placeholder={props.placeholder}
       placeholderTextColor="#777"
-      multiline
+      ref={input}
       scrollEnabled={props.scrollEnabled}
+      selection={props.selection}
       style={props.style}
+      value={props.value}
+      voiceInput={false}
       {...(props.largePasteThreshold === undefined || props.onLargePaste === undefined
         ? {}
         : {

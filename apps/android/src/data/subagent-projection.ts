@@ -1,3 +1,4 @@
+import { unknownRecord } from "./unknownRecord";
 import { threadSummaryDescendants } from "./thread-summary-descendants";
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 
@@ -5,9 +6,9 @@ import { projectCodexVisibleTurn } from "./codex-contextual-user-message";
 import type { StoredThreadSummary } from "./thread-summary-types";
 
 export type SubagentConversationProjection = {
-  thread: Thread;
   delegationPrompt: string | null;
   taskName: string | null;
+  thread: Thread;
 };
 
 export class SubagentListProjection {
@@ -16,7 +17,7 @@ export class SubagentListProjection {
 
   project(summaries: readonly StoredThreadSummary[]): StoredThreadSummary[] {
     const candidates = summaries
-      .filter((thread) => thread.deleteCommandId == null && thread.parentThreadId != null)
+      .filter((thread) => thread.deleteCommandId === null && thread.parentThreadId !== null)
       .sort(compareSubagentRecency);
     const fingerprint = candidates
       .map((thread) =>
@@ -34,7 +35,9 @@ export class SubagentListProjection {
         ].join("\u0001"),
       )
       .join("\u0002");
-    if (fingerprint === this.fingerprint) return this.value;
+    if (fingerprint === this.fingerprint) {
+      return this.value;
+    }
     this.fingerprint = fingerprint;
     this.value = candidates;
     return this.value;
@@ -49,22 +52,43 @@ export function subagentsForThread(
   return result.sort(compareSubagentRecency);
 }
 
+// WHY: This presenter owns the established nickname, name and role fallback order; changing that
+// precedence would rename existing subagents.
+// oxlint-disable-next-line eslint/complexity
 export function subagentDisplayName(summary: StoredThreadSummary): string {
-  return (
-    summary.agentNickname?.trim() || summary.name?.trim() || summary.agentRole?.trim() || "Subagent"
-  );
+  const nickname = summary.agentNickname?.trim();
+  if (nickname !== undefined && nickname !== "") {
+    return nickname;
+  }
+  const name = summary.name?.trim();
+  if (name !== undefined && name !== "") {
+    return name;
+  }
+  const role = summary.agentRole?.trim();
+  return role === undefined || role === "" ? "Subagent" : role;
 }
 
 export function subagentIsActive(summary: StoredThreadSummary): boolean {
   return summary.status.type === "active";
 }
 
-export function subagentActivityTargetThreadId(item: Turn["items"][number]): string | null {
-  if (item.type === "subAgentActivity") return nonEmpty(item.agentThreadId);
-  if (item.type !== "collabAgentToolCall") return null;
+// WHY: This adapter resolves two protocol item variants into one navigation target; their
+// ambiguity and single-receiver rules must be evaluated together.
+// oxlint-disable-next-line eslint/complexity
+export function subagentActivityTargetThreadId(item: unknown): string | null {
+  const record = unknownRecord(item);
+  if (record?.type === "subAgentActivity") {
+    return typeof record.agentThreadId === "string" ? nonEmpty(record.agentThreadId) : null;
+  }
+  if (record?.type !== "collabAgentToolCall" || !Array.isArray(record.receiverThreadIds)) {
+    return null;
+  }
   const receiverIds = [
     ...new Set(
-      item.receiverThreadIds.map(nonEmpty).filter((value): value is string => value !== null),
+      record.receiverThreadIds
+        .filter((value): value is string => typeof value === "string")
+        .map(nonEmpty)
+        .filter((value): value is string => value !== null),
     ),
   ];
   return receiverIds.length === 1 ? (receiverIds[0] ?? null) : null;
@@ -76,11 +100,13 @@ export function subagentActivityTargetThreadId(item: Turn["items"][number]): str
  * the stable protocol boundary between those two histories.
  */
 export function subagentOwnTurns(thread: Thread): Turn[] {
-  if (thread.parentThreadId == null) return thread.turns;
-  const childBoundaryMs = uuidV7TimestampMs(thread.id) ?? thread.createdAt * 1_000;
+  if (thread.parentThreadId === null) {
+    return thread.turns;
+  }
+  const childBoundaryMs = uuidV7TimestampMs(thread.id) ?? thread.createdAt * 1000;
   return thread.turns.filter((turn) => {
     const turnTimestampMs =
-      uuidV7TimestampMs(turn.id) ?? (turn.startedAt === null ? null : turn.startedAt * 1_000);
+      uuidV7TimestampMs(turn.id) ?? (turn.startedAt === null ? null : turn.startedAt * 1000);
     return turnTimestampMs !== null && turnTimestampMs >= childBoundaryMs;
   });
 }
@@ -105,9 +131,9 @@ export function projectSubagentConversation(
   const taskName = subagentTaskName(thread);
   const turns = materializeParentHandoff(ownTurns, delegationPrompt, thread);
   return {
-    thread: { ...thread, preview: "", turns },
     delegationPrompt,
     taskName,
+    thread: { ...thread, preview: "", turns },
   };
 }
 
@@ -116,22 +142,31 @@ function subagentTaskName(thread: Thread): string | null {
   const subagent = record(source?.subAgent);
   const spawn = record(subagent?.thread_spawn);
   const path = typeof spawn?.agent_path === "string" ? spawn.agent_path.trim() : "";
-  if (path === "") return null;
+  if (path === "") {
+    return null;
+  }
   const segment = path.split("/").filter(Boolean).at(-1) ?? "";
   return segment === "" ? null : segment.replaceAll("_", " ");
 }
 
+// WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+// oxlint-disable-next-line eslint/complexity
 function delegationPromptFromParent(
   parentThread: Thread | null,
   childThreadId: string,
 ): string | null {
-  if (parentThread === null) return null;
+  if (parentThread === null) {
+    return null;
+  }
   for (const turn of parentThread.turns) {
     for (const item of turn.items) {
-      if (item.type !== "collabAgentToolCall" || !item.receiverThreadIds.includes(childThreadId))
+      if (item.type !== "collabAgentToolCall" || !item.receiverThreadIds.includes(childThreadId)) {
         continue;
+      }
       const prompt = item.prompt?.trim() ?? "";
-      if (prompt !== "") return prompt;
+      if (prompt !== "") {
+        return prompt;
+      }
     }
   }
   return null;
@@ -140,9 +175,13 @@ function delegationPromptFromParent(
 function stripInjectedInput(turn: Turn): Turn {
   let changed = false;
   const items = turn.items.flatMap((item): Turn["items"] => {
-    if (item.type !== "userMessage") return [item];
+    if (item.type !== "userMessage") {
+      return [item];
+    }
     const content = item.content.filter((part) => {
-      if (part.type !== "text" || !isInjectedBootstrapText(part.text)) return true;
+      if (part.type !== "text" || !isInjectedBootstrapText(part.text)) {
+        return true;
+      }
       changed = true;
       return false;
     });
@@ -152,6 +191,8 @@ function stripInjectedInput(turn: Turn): Turn {
     }
     return content.length === item.content.length ? [item] : [{ ...item, content }];
   });
+  // WHY: The flatMap callback records whether it removed injected content; TypeScript does not propagate callback mutation to this scope.
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   return changed ? { ...turn, items } : turn;
 }
 
@@ -161,32 +202,37 @@ function stripInjectedInput(turn: Turn): Turn {
  * ordinary conversation renderer can own messages, activities, progress, and
  * final answers exactly as it does for a root thread.
  */
+// WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+// oxlint-disable-next-line eslint/complexity
 function materializeParentHandoff(turns: Turn[], prompt: string | null, thread: Thread): Turn[] {
   const text = prompt?.trim() ?? "";
-  if (text === "" || turns.some((turn) => turn.items.some((item) => item.type === "userMessage")))
+  if (text === "" || turns.some((turn) => turn.items.some((item) => item.type === "userMessage"))) {
     return turns;
+  }
   const message: Turn["items"][number] = {
-    type: "userMessage",
-    id: `${thread.id}:delegated-task`,
     clientId: null,
-    content: [{ type: "text", text, text_elements: [] }],
+    content: [{ text, text_elements: [], type: "text" }],
+    id: `${thread.id}:delegated-task`,
+    type: "userMessage",
   };
   if (turns.length === 0) {
     return [
       {
+        completedAt: thread.status.type === "active" ? null : thread.updatedAt,
+        durationMs: null,
+        error: null,
         id: `${thread.id}:delegated-turn`,
         items: [message],
         itemsView: "full",
-        status: thread.status.type === "active" ? "inProgress" : "completed",
-        error: null,
         startedAt: thread.createdAt,
-        completedAt: thread.status.type === "active" ? null : thread.updatedAt,
-        durationMs: null,
+        status: thread.status.type === "active" ? "inProgress" : "completed",
       },
     ];
   }
   const [first, ...rest] = turns;
-  if (first === undefined) return turns;
+  if (first === undefined) {
+    return turns;
+  }
   return [{ ...first, items: [message, ...first.items] }, ...rest];
 }
 
@@ -206,7 +252,9 @@ function isInjectedBootstrapText(value: string): boolean {
 
 function uuidV7TimestampMs(value: string): number | null {
   const compact = value.replaceAll("-", "");
-  if (!/^[0-9a-f]{12}7[0-9a-f]{19}$/i.test(compact)) return null;
+  if (!/^[0-9a-f]{12}7[0-9a-f]{19}$/i.test(compact)) {
+    return null;
+  }
   const timestamp = Number.parseInt(compact.slice(0, 12), 16);
   return Number.isSafeInteger(timestamp) ? timestamp : null;
 }
@@ -217,9 +265,7 @@ function compareSubagentRecency(left: StoredThreadSummary, right: StoredThreadSu
 }
 
 function record(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return unknownRecord(value);
 }
 
 function nonEmpty(value: string): string | null {

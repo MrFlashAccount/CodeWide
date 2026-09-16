@@ -7,11 +7,11 @@ import type { createWorkspaceSession } from "./workspace-session";
 
 /** Existing limits projection and authenticated session readers. */
 export type AccountRateLimitsAuthority = {
-  getDatabase(): Pick<
+  getDatabase: () => Pick<
     AccountRateLimitsDatabase,
     "get" | "markLoading" | "putAccountPool" | "markError"
   > | null;
-  getSession(connectionId: string): RpcClient | undefined;
+  getSession: (connectionId: string) => RpcClient | undefined;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 };
 
@@ -27,16 +27,23 @@ export function createAccountRateLimitsLoader({
     force = false,
   ): Promise<GetAccountRateLimitsResponse> => {
     const database = getDatabase();
-    if (database === null) throw new Error("Account limits are not ready");
+    if (database === null) {
+      throw new Error("Account limits are not ready");
+    }
     const cached = database.get(connectionId);
-    if (!force && cached != null && cached.snapshot !== null && !accountRateLimitsStale(cached))
+    if (!force && cached !== null && cached.snapshot !== null && !accountRateLimitsStale(cached)) {
       return cached.snapshot;
+    }
     const existing = accountRateLimitsInFlight.get(connectionId);
-    if (existing !== undefined) return await existing;
+    if (existing !== undefined) {
+      return existing;
+    }
     database.markLoading(connectionId);
     const operation = (async () => {
       const session = getSession(connectionId);
-      if (session === undefined) throw new Error("Connection is not enabled");
+      if (session === undefined) {
+        throw new Error("Connection is not enabled");
+      }
       const accountPool = await rpcAfterAttach<AccountPoolSnapshot>(
         session,
         "companion/accountPool/refresh",
@@ -57,12 +64,12 @@ export function createAccountRateLimitsLoader({
     accountRateLimitsInFlight.set(connectionId, operation);
     try {
       return await operation;
-    } catch (cause) {
+    } catch (error) {
       database.markError(
         connectionId,
-        cause instanceof Error ? cause.message : "Remote operation failed",
+        error instanceof Error ? error.message : "Remote operation failed",
       );
-      throw cause;
+      throw error;
     } finally {
       if (accountRateLimitsInFlight.get(connectionId) === operation) {
         accountRateLimitsInFlight.delete(connectionId);

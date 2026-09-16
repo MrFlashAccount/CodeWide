@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Platform, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { ComposerAttachmentTray } from "../../rendering/ComposerAttachmentTray";
 import { colors, controlHitSlop, iconSize } from "../../theme";
 import { ActionMenu } from "../../ui/ActionMenu";
@@ -12,38 +12,39 @@ import { styles } from "./ComposerFeature.styles";
 import type { ComposerFeatureProps } from "./ComposerFeatureContract";
 import { ComposerMicrophone } from "./ComposerMicrophone";
 import { ComposerSubmitAction } from "./ComposerSubmitAction";
+import { ComposerGoalAttachment } from "../goal/ComposerGoalAttachment";
 
 /** Composes the V1 message editor, context controls, and submission actions. */
 export function ComposerFeature(props: ComposerFeatureProps) {
   return (
-    <View testID="composer-dock" style={styles.composerDock}>
+    <View style={styles.composerDock} testID="composer-dock">
       <ComposerContextStrip
-        newChat={props.newChat}
-        workspaceResources={props.workspaceResources}
+        closeQuickControlMenu={props.closeQuickControlMenu}
+        controlError={props.controlError}
         controlsResourceId={props.controlsResourceId}
         cwd={props.cwd}
-        remoteThread={props.remoteThread}
-        readOnly={props.readOnly}
-        selectedModel={props.selectedModel}
-        selectedEffort={props.selectedEffort}
-        selectedPersonality={props.selectedPersonality}
-        selectedPermissions={props.selectedPermissions}
-        controlError={props.controlError}
+        newChat={props.newChat}
         onLoadControls={props.onLoadControls}
-        openQuickControlMenu={props.openQuickControlMenu}
-        closeQuickControlMenu={props.closeQuickControlMenu}
         openControls={props.openControls}
-        selectModel={props.selectModel}
+        openQuickControlMenu={props.openQuickControlMenu}
+        readOnly={props.readOnly}
+        remoteThread={props.remoteThread}
+        selectedEffort={props.selectedEffort}
+        selectedModel={props.selectedModel}
+        selectedPermissions={props.selectedPermissions}
+        selectedPersonality={props.selectedPersonality}
         selectEffort={props.selectEffort}
-        setSelectedPersonality={props.setSelectedPersonality}
+        selectModel={props.selectModel}
         selectPermissions={props.selectPermissions}
+        setSelectedPersonality={props.setSelectedPersonality}
         toolContextChips={props.toolContextChips}
+        workspaceResources={props.workspaceResources}
       />
       {!props.readOnly && (
         <>
           {props.queuedComposerEdit !== null && (
-            <View testID="queued-composer-edit-bar" style={styles.queuedComposerEditBar}>
-              <InlineIcon name="create-outline" role="label" color={colors.accent} />
+            <View style={styles.queuedComposerEditBar} testID="queued-composer-edit-bar">
+              <InlineIcon color={colors.accent} name="create-outline" role="label" />
               <Text numberOfLines={1} style={styles.queuedComposerEditTitle}>
                 Editing queue
               </Text>
@@ -57,7 +58,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 onPress={props.cancelQueuedComposerEdit}
                 style={styles.queuedComposerEditClose}
               >
-                <InlineIcon name="close" role="label" color={colors.textMuted} />
+                <InlineIcon color={colors.textMuted} name="close" role="label" />
               </Pressable>
             </View>
           )}
@@ -68,52 +69,63 @@ export function ComposerFeature(props: ComposerFeatureProps) {
               </Text>
             </View>
           )}
+          {props.goalAttachmentVisible &&
+            props.onSetGoal !== undefined &&
+            props.onClearGoal !== undefined && (
+              <ComposerGoalAttachment
+                goalResource={props.goalResource}
+                key={props.goalResource?.goal?.updatedAt ?? "empty"}
+                onClear={props.onClearGoal}
+                onClose={props.closeGoalAttachment}
+                onSet={props.onSetGoal}
+                voiceScope={props.composerScope}
+              />
+            )}
           {props.getTransferAccess !== undefined && (
             <ComposerAttachmentTray
-              scope={props.composerUploadScope}
               attachments={props.attachments}
               getAccess={props.getStableTransferAccess}
               onRemove={props.removeComposerAttachment}
+              scope={props.composerUploadScope}
             />
           )}
           {props.composerTrayVisible && !props.useAnchoredComposerMenu && (
             <ComposerAccessoryTray
               fileEnabled={props.fileAttachmentEnabled}
-              terminalEnabled={
-                Platform.OS === "android" &&
-                props.draftConnectionId !== null &&
-                props.draftThreadId !== null
-              }
-              portForwardEnabled={props.portForwardingConnectionId !== null}
+              goalEnabled={props.onSetGoal !== undefined && props.onClearGoal !== undefined}
               onSelect={props.openAccessoryAction}
             />
           )}
-          <View testID="composer-row" style={styles.composer}>
-            <View testID="composer-input-shell" style={styles.composerInputShell}>
+          <View style={styles.composer} testID="composer-row">
+            <View style={styles.composerInputShell} testID="composer-input-shell">
               {props.useAnchoredComposerMenu ? (
                 <ActionMenu
                   accessibilityLabel="Composer menu"
                   actions={props.anchoredComposerActions}
-                  placement="top"
                   align="start"
                   onOpenChange={(open) => {
-                    if (open) props.dismissComposerKeyboardForOverlay();
+                    if (open) {
+                      props.dismissComposerKeyboardForOverlay();
+                    }
                   }}
                   onSelect={props.handleAnchoredComposerAction}
+                  placement="top"
                   style={styles.composerMenuAnchor}
                 >
                   <Pressable accessibilityLabel="Composer menu" style={styles.composerMenu}>
-                    <Ionicons name="add" size={iconSize.navigation} color={colors.text} />
+                    <Ionicons color={colors.text} name="add" size={iconSize.navigation} />
                   </Pressable>
                 </ActionMenu>
               ) : (
                 <Pressable
-                  accessibilityRole="button"
                   accessibilityLabel={
                     props.composerTrayVisible ? "Close composer menu" : "Composer menu"
                   }
+                  accessibilityRole="button"
                   accessibilityState={{ expanded: props.composerTrayVisible }}
-                  onPress={() => props.setComposerTrayVisible((current) => !current)}
+                  onPress={() => {
+                    props.setComposerTrayVisible((current) => !current);
+                  }}
                   style={({ pressed }) => [
                     styles.composerMenu,
                     props.composerTrayVisible && styles.composerMenuActive,
@@ -121,59 +133,59 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                   ]}
                 >
                   <Ionicons
+                    color={colors.text}
                     name={props.composerTrayVisible ? "close" : "add"}
                     size={iconSize.navigation}
-                    color={colors.text}
                   />
                 </Pressable>
               )}
               <ComposerEditor
-                voicePhase={props.voicePhase}
-                composerScope={props.composerScope}
-                getTransferAccess={props.getTransferAccess}
-                getStableTransferAccess={props.getStableTransferAccess}
-                composerInputRef={props.composerInputRef}
-                fileAttachmentEnabled={props.fileAttachmentEnabled}
-                pastedAttachmentPending={props.pastedAttachmentPending}
                 attachments={props.attachments}
-                handleComposerLargePaste={props.handleComposerLargePaste}
+                composerInputRef={props.composerInputRef}
+                composerScope={props.composerScope}
                 draft={props.draft}
-                handleComposerTextChange={props.handleComposerTextChange}
-                handleComposerMarkdownChange={props.handleComposerMarkdownChange}
                 draftSelectionRef={props.draftSelectionRef}
+                editingQueuedMessage={props.editingQueuedMessage}
+                fileAttachmentEnabled={props.fileAttachmentEnabled}
+                getStableTransferAccess={props.getStableTransferAccess}
+                getTransferAccess={props.getTransferAccess}
+                handleComposerLargePaste={props.handleComposerLargePaste}
+                handleComposerMarkdownChange={props.handleComposerMarkdownChange}
+                handleComposerTextChange={props.handleComposerTextChange}
+                pastedAttachmentPending={props.pastedAttachmentPending}
                 pendingVoiceSelection={props.pendingVoiceSelection}
-                voiceController={props.voiceController}
                 searchComposerSuggestions={props.searchComposerSuggestions}
                 selectComposerMention={props.selectComposerMention}
-                editingQueuedMessage={props.editingQueuedMessage}
                 voiceBackend={props.voiceBackend}
+                voiceController={props.voiceController}
+                voicePhase={props.voicePhase}
                 voiceResource={props.voiceResource}
               />
               <ComposerMicrophone
-                microphoneButtonRef={props.microphoneButtonRef}
                 editingQueuedMessage={props.editingQueuedMessage}
-                voicePhase={props.voicePhase}
-                voiceRetryAvailable={props.voiceRetryAvailable}
-                retryVoice={props.retryVoice}
-                toggleVoice={props.toggleVoice}
                 finishVoice={props.finishVoice}
                 microphoneAccess={props.microphoneAccess}
+                microphoneButtonRef={props.microphoneButtonRef}
+                retryVoice={props.retryVoice}
+                toggleVoice={props.toggleVoice}
+                voicePhase={props.voicePhase}
+                voiceRetryAvailable={props.voiceRetryAvailable}
               />
               <ComposerSubmitAction
-                editingQueuedMessage={props.editingQueuedMessage}
-                sendDisabled={props.sendDisabled}
-                composerDiscardEnabled={props.composerDiscardEnabled}
-                queuedComposerEditBusy={props.queuedComposerEditBusy}
-                discardComposer={props.discardComposer}
-                steerComposer={props.steerComposer}
                 activatePrimaryAction={props.activatePrimaryAction}
+                composerDiscardEnabled={props.composerDiscardEnabled}
+                currentTurnId={props.currentTurnId}
                 deliveryActions={props.deliveryActions}
+                discardComposer={props.discardComposer}
                 dismissComposerKeyboardForOverlay={props.dismissComposerKeyboardForOverlay}
+                editingQueuedMessage={props.editingQueuedMessage}
                 handleDeliveryAction={props.handleDeliveryAction}
-                voicePhase={props.voicePhase}
+                queuedComposerEditBusy={props.queuedComposerEditBusy}
+                sendDisabled={props.sendDisabled}
+                steerComposer={props.steerComposer}
                 stoppingResponse={props.stoppingResponse}
                 threadLifecycleActive={props.threadLifecycleActive}
-                currentTurnId={props.currentTurnId}
+                voicePhase={props.voicePhase}
               />
             </View>
           </View>

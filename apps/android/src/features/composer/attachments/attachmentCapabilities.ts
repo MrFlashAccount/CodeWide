@@ -7,13 +7,19 @@ import type { useComposerDraftCommands } from "../draft";
 
 /** Uploads capture draft mutation and qualified transfer capabilities per activation. */
 export type AttachmentAdmissionCapabilities = {
+  attachmentCount: number;
+  captureDraftMutations: ReturnType<typeof useComposerDraftCommands>["captureDraftMutations"];
   composerScope: string;
   composerUploadScope: string;
+  dismissComposerKeyboardForOverlay: () => void;
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  getTransferAccess: GetTransferAccess | undefined;
+  fileTransferController: FileTransferController | null;
   getStableTransferAccess: GetTransferAccess;
+  getTransferAccess: GetTransferAccess | undefined;
+  latestAttachmentsRef: { current: { latest: StoredDraftAttachment[] } };
   queuedComposerEdit: QueuedComposerEdit | null;
+  setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
   upsertDraftAttachment:
     | ((
         connectionId: string,
@@ -22,10 +28,4 @@ export type AttachmentAdmissionCapabilities = {
         isCurrent: () => boolean,
       ) => Promise<void>)
     | undefined;
-  latestAttachmentsRef: { current: { latest: StoredDraftAttachment[] } };
-  captureDraftMutations: ReturnType<typeof useComposerDraftCommands>["captureDraftMutations"];
-  fileTransferController: FileTransferController | null;
-  attachmentCount: number;
-  setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
-  dismissComposerKeyboardForOverlay(): void;
 };

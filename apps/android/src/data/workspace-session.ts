@@ -4,9 +4,9 @@ import { recordTelemetryEvent } from "./telemetry";
 
 /** Existing profile, native mint and identifier authorities supplied by module startup. */
 export type WorkspaceSessionAuthority = {
-  projectConnections(): StoredConnection[];
-  mintNativeSession(connectionId: string): Promise<{ sessionToken: string; expiresAt: number }>;
-  randomUUID(): string;
+  mintNativeSession: (connectionId: string) => Promise<{ expiresAt: number; sessionToken: string }>;
+  projectConnections: () => StoredConnection[];
+  randomUUID: () => string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -19,17 +19,17 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 /** One credential cache and pending-mint owner for the existing JS singleton. */
 export function createWorkspaceSession({
-  projectConnections,
   mintNativeSession,
+  projectConnections,
   randomUUID,
 }: WorkspaceSessionAuthority) {
   const httpSessions = new Map<
     string,
-    { credentialKey: string; sessionToken: string; expiresAt: number }
+    { credentialKey: string; expiresAt: number; sessionToken: string }
   >();
   const httpSessionMintInFlight = new Map<
     string,
-    { credentialKey: string; promise: Promise<{ sessionToken: string; expiresAt: number }> }
+    { credentialKey: string; promise: Promise<{ expiresAt: number; sessionToken: string }> }
   >();
 
   function currentConnections(): StoredConnection[] {
@@ -62,7 +62,9 @@ export function createWorkspaceSession({
     ) {
       return `Bearer ${(await existingMint.promise).sessionToken}`;
     }
-    if (forceRefresh) httpSessions.delete(connection.id);
+    if (forceRefresh) {
+      httpSessions.delete(connection.id);
+    }
     const promise = mintNativeSession(connection.id);
     const pending = { credentialKey, promise };
     httpSessionMintInFlight.set(connection.id, pending);
@@ -83,7 +85,9 @@ export function createWorkspaceSession({
     params: unknown,
   ): Promise<T> {
     const connectionId = session.connectionId;
-    if (connectionId === undefined) return await session.rpc<T>(method, params);
+    if (connectionId === undefined) {
+      return session.rpc<T>(method, params);
+    }
     const paramsRecord = asRecord(params);
     const requestId =
       typeof paramsRecord?.requestId === "string" && paramsRecord.requestId.length > 0
@@ -103,40 +107,40 @@ export function createWorkspaceSession({
         name: "rpc.lifecycle",
         requestId,
         ...(threadId === undefined ? {} : { sessionId: threadId, threadId }),
-        values: { durationMs: performance.now() - startedAt },
         tags: { method, phase: "completed" },
+        values: { durationMs: performance.now() - startedAt },
       });
       return result;
-    } catch (cause) {
+    } catch (error) {
       recordTelemetryEvent(connectionId, {
         name: "rpc.lifecycle",
         requestId,
         ...(threadId === undefined ? {} : { sessionId: threadId, threadId }),
-        values: {
-          durationMs: performance.now() - startedAt,
-          ...(cause instanceof RpcResponseError ? { errorCode: cause.code } : {}),
-        },
         tags: {
+          errorKind: error instanceof RpcResponseError ? "rpc" : "transport",
           method,
           phase: "failed",
-          errorKind: cause instanceof RpcResponseError ? "rpc" : "transport",
+        },
+        values: {
+          durationMs: performance.now() - startedAt,
+          ...(error instanceof RpcResponseError ? { errorCode: error.code } : {}),
         },
       });
-      throw cause;
+      throw error;
     }
   }
 
-  return { currentConnections, scopedHttpAuthorization, forgetHttpAuthorization, rpcAfterAttach };
+  return { currentConnections, forgetHttpAuthorization, rpcAfterAttach, scopedHttpAuthorization };
 }
 
 export type WorkspaceSyncSession = RpcClient & {
-  stop(): void;
-  respondToServerRequest?(id: string | number, result: unknown): Promise<void>;
+  respondToServerRequest?: (id: string | number, result: unknown) => Promise<void>;
+  stop: () => void;
 };
 
 export type WorkspaceSyncSupervisor = {
-  replaceConnections(connections: RemoteConnection[]): void;
-  session(connectionId: string): WorkspaceSyncSession | undefined;
-  reattachRuntime(connectionId: string): Promise<void>;
-  stop(): void;
+  reattachRuntime: (connectionId: string) => Promise<void>;
+  replaceConnections: (connections: RemoteConnection[]) => void;
+  session: (connectionId: string) => WorkspaceSyncSession | undefined;
+  stop: () => void;
 };

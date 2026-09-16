@@ -8,7 +8,6 @@ export const quickdrawPatch = readFileSync(
   "utf8",
 );
 export const appEntry = readFileSync(new URL("../../index.js", import.meta.url), "utf8");
-export const globalCss = readFileSync(new URL("../../global.css", import.meta.url), "utf8");
 export const rootLayout = readFileSync(new URL("../../app/_layout.tsx", import.meta.url), "utf8");
 export const manifest = readFileSync(
   new URL("../../android/app/src/main/AndroidManifest.xml", import.meta.url),

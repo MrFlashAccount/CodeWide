@@ -29,6 +29,7 @@ import {
   type ThreadProjectionPatchV1,
   type ProjectedTurnMetadata,
 } from "@codewide/sync-client";
+import { appLogger } from "../observability/logger";
 import { registerUiCacheCollectionFlusher } from "./ui-cache-persistence.native";
 import {
   commandReceiptsFromOperation,
@@ -63,6 +64,7 @@ import {
 } from "./thread-detail-projection";
 import { cloneProtocolValue } from "./clone-protocol-value";
 import { residentThreadWindow } from "./resident-thread-window";
+import { unknownRecord } from "./unknownRecord";
 
 import type { NativeCommandDelivery } from "../native/native-transport";
 import {
@@ -127,7 +129,7 @@ export type {
 type SyncControls = ThreadDetailSqliteControls;
 type SyncWriteControls = Pick<SyncControls, "write">;
 
-type OrdinalBounds = { min: number; max: number; dirty: boolean };
+type OrdinalBounds = { dirty: boolean; max: number; min: number };
 
 /**
  * Incremental index over the rows the active Legend chat windows hydrate. History can
@@ -145,7 +147,9 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
 
   override set(key: string, row: ThreadDetailRow): this {
     const previous = super.get(key);
-    if (previous !== undefined) this.detach(previous);
+    if (previous !== undefined) {
+      this.detach(previous);
+    }
     super.set(key, row);
     this.attach(row);
     return this;
@@ -153,7 +157,9 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
 
   override delete(key: string): boolean {
     const previous = super.get(key);
-    if (previous === undefined) return false;
+    if (previous === undefined) {
+      return false;
+    }
     this.detach(previous);
     return super.delete(key);
   }
@@ -176,22 +182,32 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
   ): void {
     const retained = new Set(rows.map(({ id }) => id));
     for (const row of this.rowsForThread(connectionId, threadId)) {
-      if (!retained.has(row.id)) this.delete(row.id);
+      if (!retained.has(row.id)) {
+        this.delete(row.id);
+      }
     }
-    for (const row of rows) this.set(row.id, row);
+    for (const row of rows) {
+      this.set(row.id, row);
+    }
   }
 
   removeThreadLoaded(connectionId: string, threadId: string): void {
-    for (const row of this.rowsForThread(connectionId, threadId)) this.delete(row.id);
+    for (const row of this.rowsForThread(connectionId, threadId)) {
+      this.delete(row.id);
+    }
   }
 
   rowsForThread(connectionId: string, threadId: string): ThreadDetailRow[] {
     const keys = this.rowKeysByThread.get(threadScope(connectionId, threadId));
-    if (keys === undefined) return [];
+    if (keys === undefined) {
+      return [];
+    }
     const rows: ThreadDetailRow[] = [];
     for (const key of keys) {
       const row = super.get(key);
-      if (row !== undefined) rows.push(row);
+      if (row !== undefined) {
+        rows.push(row);
+      }
     }
     return rows;
   }
@@ -210,7 +226,9 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
     const rows: ThreadDetailRow[] = [];
     for (const key of this.threadMetaKeysByConnection.get(connectionId) ?? []) {
       const row = super.get(key);
-      if (row !== undefined) rows.push(row);
+      if (row !== undefined) {
+        rows.push(row);
+      }
     }
     return rows;
   }
@@ -228,20 +246,19 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
     );
     for (const patch of patches) {
       const operation = patch.operation;
-      if (typeof operation.turnId === "string") selectedTurnIds.add(operation.turnId);
-      const turn = operation.turn;
-      if (
-        turn !== null &&
-        typeof turn === "object" &&
-        !Array.isArray(turn) &&
-        typeof (turn as Record<string, unknown>).id === "string"
-      ) {
-        selectedTurnIds.add((turn as Record<string, unknown>).id as string);
+      if (typeof operation.turnId === "string") {
+        selectedTurnIds.add(operation.turnId);
+      }
+      const turn = unknownRecord(operation.turn);
+      if (typeof turn?.id === "string") {
+        selectedTurnIds.add(turn.id);
       }
     }
     const rows: ThreadDetailRow[] = [];
     const meta = super.get(threadMetaKey(connectionId, threadId));
-    if (meta !== undefined) rows.push(meta);
+    if (meta !== undefined) {
+      rows.push(meta);
+    }
     for (const turnId of selectedTurnIds) {
       const contentKey = this.turnRowKey(connectionId, threadId, turnId);
       for (const key of [
@@ -249,13 +266,16 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
         turnMetaKey(connectionId, threadId, turnId),
         activityKey(connectionId, threadId, turnId),
       ]) {
-        if (key === null) continue;
+        if (key === null) {
+          continue;
+        }
         const row = super.get(key);
         if (
           row !== undefined &&
           (row.kind === "thread" || row.kind === "pending" || row.historyEpoch === historyEpoch)
-        )
+        ) {
           rows.push(row);
+        }
       }
     }
     return rows;
@@ -274,10 +294,12 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
     connectionId: string,
     threadId: string,
     historyEpoch = this.historyEpoch(connectionId, threadId),
-  ): { min: number; max: number } | null {
+  ): { max: number; min: number } | null {
     const scope = threadEpochScope(connectionId, threadId, historyEpoch);
     const ordinals = this.turnOrdinalsByThreadEpoch.get(scope);
-    if (ordinals === undefined || ordinals.size === 0) return null;
+    if (ordinals === undefined || ordinals.size === 0) {
+      return null;
+    }
     let bounds = this.ordinalBoundsByThreadEpoch.get(scope);
     if (bounds === undefined || bounds.dirty) {
       let min = Number.POSITIVE_INFINITY;
@@ -286,10 +308,10 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
         min = Math.min(min, ordinal);
         max = Math.max(max, ordinal);
       }
-      bounds = { min, max, dirty: false };
+      bounds = { dirty: false, max, min };
       this.ordinalBoundsByThreadEpoch.set(scope, bounds);
     }
-    return { min: bounds.min, max: bounds.max };
+    return { max: bounds.max, min: bounds.min };
   }
 
   private attach(row: ThreadDetailRow): void {
@@ -309,7 +331,9 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
       );
       return;
     }
-    if (row.kind !== "turn" || row.remoteTurnId === null) return;
+    if (row.kind !== "turn" || row.remoteTurnId === null) {
+      return;
+    }
     const turnKeys = this.turnRowKeysByRemoteId.get(scope) ?? new Map<string, string>();
     turnKeys.set(row.remoteTurnId, row.id);
     this.turnRowKeysByRemoteId.set(scope, turnKeys);
@@ -318,59 +342,79 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
     ordinals.set(row.remoteTurnId, row.ordinal);
     this.turnOrdinalsByThreadEpoch.set(epochScope, ordinals);
     const bounds = this.ordinalBoundsByThreadEpoch.get(epochScope);
-    if (bounds === undefined)
+    if (bounds === undefined) {
       this.ordinalBoundsByThreadEpoch.set(epochScope, {
-        min: row.ordinal,
-        max: row.ordinal,
         dirty: false,
+        max: row.ordinal,
+        min: row.ordinal,
       });
-    else if (!bounds.dirty) {
+    } else if (!bounds.dirty) {
       bounds.min = Math.min(bounds.min, row.ordinal);
       bounds.max = Math.max(bounds.max, row.ordinal);
     }
     const mutable = this.mutableTurnIdsByThreadEpoch.get(epochScope) ?? new Set<string>();
-    if (row.sealed) mutable.delete(row.remoteTurnId);
-    else mutable.add(row.remoteTurnId);
-    if (mutable.size === 0) this.mutableTurnIdsByThreadEpoch.delete(epochScope);
-    else this.mutableTurnIdsByThreadEpoch.set(epochScope, mutable);
+    if (row.sealed) {
+      mutable.delete(row.remoteTurnId);
+    } else {
+      mutable.add(row.remoteTurnId);
+    }
+    if (mutable.size === 0) {
+      this.mutableTurnIdsByThreadEpoch.delete(epochScope);
+    } else {
+      this.mutableTurnIdsByThreadEpoch.set(epochScope, mutable);
+    }
   }
 
   private detach(row: ThreadDetailRow): void {
     const scope = threadScope(row.connectionId, row.remoteThreadId);
     const keys = this.rowKeysByThread.get(scope);
     keys?.delete(row.id);
-    if (keys?.size === 0) this.rowKeysByThread.delete(scope);
+    if (keys?.size === 0) {
+      this.rowKeysByThread.delete(scope);
+    }
     if (row.kind === "thread") {
       const metaKeys = this.threadMetaKeysByConnection.get(row.connectionId);
       metaKeys?.delete(row.id);
-      if (metaKeys?.size === 0) this.threadMetaKeysByConnection.delete(row.connectionId);
+      if (metaKeys?.size === 0) {
+        this.threadMetaKeysByConnection.delete(row.connectionId);
+      }
     }
     if (row.kind === "pending" && row.pending !== null && row.pending !== undefined) {
       const commandScope = pendingCommandScope(row.connectionId, row.pending.commandId);
-      if (this.pendingRowKeysByCommandId.get(commandScope) === row.id)
+      if (this.pendingRowKeysByCommandId.get(commandScope) === row.id) {
         this.pendingRowKeysByCommandId.delete(commandScope);
+      }
       return;
     }
-    if (row.kind !== "turn" || row.remoteTurnId === null) return;
+    if (row.kind !== "turn" || row.remoteTurnId === null) {
+      return;
+    }
     const turnKeys = this.turnRowKeysByRemoteId.get(scope);
     turnKeys?.delete(row.remoteTurnId);
-    if (turnKeys?.size === 0) this.turnRowKeysByRemoteId.delete(scope);
+    if (turnKeys?.size === 0) {
+      this.turnRowKeysByRemoteId.delete(scope);
+    }
     const epochScope = threadEpochScope(row.connectionId, row.remoteThreadId, row.historyEpoch);
     const ordinals = this.turnOrdinalsByThreadEpoch.get(epochScope);
     ordinals?.delete(row.remoteTurnId);
-    if (ordinals?.size === 0) this.turnOrdinalsByThreadEpoch.delete(epochScope);
+    if (ordinals?.size === 0) {
+      this.turnOrdinalsByThreadEpoch.delete(epochScope);
+    }
     const bounds = this.ordinalBoundsByThreadEpoch.get(epochScope);
-    if (bounds !== undefined && (row.ordinal === bounds.min || row.ordinal === bounds.max))
+    if (bounds !== undefined && (row.ordinal === bounds.min || row.ordinal === bounds.max)) {
       bounds.dirty = true;
+    }
     const mutable = this.mutableTurnIdsByThreadEpoch.get(epochScope);
     mutable?.delete(row.remoteTurnId);
-    if (mutable?.size === 0) this.mutableTurnIdsByThreadEpoch.delete(epochScope);
+    if (mutable?.size === 0) {
+      this.mutableTurnIdsByThreadEpoch.delete(epochScope);
+    }
   }
 }
 
 type ThreadDetailTransactionResult<T> = {
-  value: T;
   durable: boolean;
+  value: T;
 };
 
 /**
@@ -388,7 +432,9 @@ async function runThreadDetailTransaction<T>(
   const writes: SyncWriteControls = {
     write(change) {
       const key = change.type === "delete" ? change.key : change.value.id;
-      if (!previousRows.has(key)) previousRows.set(key, source.get(key));
+      if (!previousRows.has(key)) {
+        previousRows.set(key, source.get(key));
+      }
       controls.write(change);
     },
   };
@@ -403,16 +449,19 @@ async function runThreadDetailTransaction<T>(
     committed = true;
     await checkpoint;
     return result.value;
-  } catch (cause) {
+  } catch (error) {
     if (!committed) {
       controls.rollback();
       for (const [key, previous] of previousRows) {
-        if (previous === undefined) source.delete(key);
-        else source.set(key, previous);
+        if (previous === undefined) {
+          source.delete(key);
+        } else {
+          source.set(key, previous);
+        }
       }
       onRollback?.();
     }
-    throw cause;
+    throw error;
   }
 }
 
@@ -420,7 +469,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   const sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const source = new ThreadDetailSource();
   const chat = createThreadChatModel({
-    onEvictWindow: (connectionId, threadId) => source.removeThreadLoaded(connectionId, threadId),
+    onEvictWindow: (connectionId, threadId) => {
+      source.removeThreadLoaded(connectionId, threadId);
+    },
     onResidentRowCountChange: setThreadDetailResidentRows,
   });
   // A new thread can receive its first turn before React switches from the
@@ -440,7 +491,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   // Process-local only: this counter closes the RPC-response/live-patch write
   // race. It is not a protocol cursor, persisted epoch, or replay mechanism.
   const liveRevisions = new Map<string, number>();
-  const projectionSnapshots = new Map<string, { promise: Promise<void>; resolve(): void }>();
+  const projectionSnapshots = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   const reportedStalledOptimisticFingerprintByThread = new Map<string, string>();
   let storageDiagnosticsPromise: Promise<ThreadDetailSqliteDiagnostics> | null = null;
   let storageDiagnosticsReported = false;
@@ -456,10 +507,16 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       threadId === undefined
         ? `${connectionId}\u0000`
         : `${threadChatScope(connectionId, threadId)}\u0000`;
-    for (const key of newerExhaustedTurnIdByThread.keys())
-      if (key.startsWith(prefix)) newerExhaustedTurnIdByThread.delete(key);
-    for (const key of olderExhaustedTurnIdByThread.keys())
-      if (key.startsWith(prefix)) olderExhaustedTurnIdByThread.delete(key);
+    for (const key of newerExhaustedTurnIdByThread.keys()) {
+      if (key.startsWith(prefix)) {
+        newerExhaustedTurnIdByThread.delete(key);
+      }
+    }
+    for (const key of olderExhaustedTurnIdByThread.keys()) {
+      if (key.startsWith(prefix)) {
+        olderExhaustedTurnIdByThread.delete(key);
+      }
+    }
   };
 
   const detailStorage = createThreadDetailSqlite((changes) => {
@@ -478,11 +535,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     const touched = new Map<string, { connectionId: string; threadId: string }>();
     for (const change of published) {
       const row = change.type === "delete" ? chat.row$(change.key).peek() : change.value;
-      if (row !== null)
+      if (row !== null) {
         touched.set(threadChatScope(row.connectionId, row.remoteThreadId), {
           connectionId: row.connectionId,
           threadId: row.remoteThreadId,
         });
+      }
     }
     chat.publishChanges(published);
     for (const { connectionId, threadId } of touched.values()) {
@@ -497,9 +555,13 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     connectionId: string,
     receipts: readonly CommandReceipt[],
   ): Promise<void> => {
-    if (receipts.length === 0) return;
+    if (receipts.length === 0) {
+      return;
+    }
     await writes.run(async () => {
-      if (disposed) throw new Error("Thread detail database is closed");
+      if (disposed) {
+        throw new Error("Thread detail database is closed");
+      }
       // An upstream receipt may beat the JS continuation that commits the
       // staged prompt after native enqueue. Persist that owned intent first.
       await runWriteTransaction((controls) => {
@@ -507,16 +569,20 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         for (const receipt of receipts) {
           const key = pendingTimelineRowId(connectionId, receipt.threadId, receipt.commandId);
           const staged = stagedPendingOverlays.get(key)?.row;
-          if (staged?.kind !== "pending" || source.get(key)?.kind === "turn") continue;
+          if (staged?.kind !== "pending" || source.get(key)?.kind === "turn") {
+            continue;
+          }
           controls.write({ type: "update", value: staged });
           changed = true;
         }
-        return { value: undefined, durable: changed };
+        return { durable: changed, value: undefined };
       });
       const confirmed = await detailStorage.confirmCommandReceipts(connectionId, receipts);
       for (const row of confirmed) {
         const staged = stagedPendingOverlays.get(row.id);
-        if (staged !== undefined) stagedPendingOverlays.set(row.id, { ...staged, row });
+        if (staged !== undefined) {
+          stagedPendingOverlays.set(row.id, { ...staged, row });
+        }
         // SQLite owns off-screen receipts. Do not recreate a window to report one.
         if (source.get(row.id)?.kind === "pending") {
           source.set(row.id, row);
@@ -528,43 +594,48 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           );
         }
         const receipt = row.pending?.confirmation;
-        if (receipt !== undefined)
+        if (receipt !== undefined) {
           recordThreadHistoryTelemetry(
             connectionId,
             row.remoteThreadId,
             "chat.delivery.confirmation_persisted",
             {
-              requestId: receipt.commandId,
-              turnId: receipt.turnId,
               itemId: receipt.itemId,
+              requestId: receipt.commandId,
               tags: {
                 projection: source.has(threadMetaKey(connectionId, row.remoteThreadId))
                   ? "resident"
                   : "unloaded",
               },
+              turnId: receipt.turnId,
             },
           );
+        }
       }
     });
   };
   const reportStorageDiagnostics = (connectionId: string, threadId: string): void => {
-    if (storageDiagnosticsReported) return;
+    if (storageDiagnosticsReported) {
+      return;
+    }
     storageDiagnosticsPromise ??= detailStorage.diagnostics();
     void storageDiagnosticsPromise
       .then((diagnostics) => {
-        if (storageDiagnosticsReported) return;
+        if (storageDiagnosticsReported) {
+          return;
+        }
         storageDiagnosticsReported = true;
         recordThreadHistoryTelemetry(connectionId, threadId, "cache.ui_sqlite_storage", {
-          values: diagnostics,
           tags: {
             rotation: diagnostics.historyFamiliesEvicted > 0 ? "evicted" : "within_limit",
             startupCleanup: diagnostics.staleDeliveryRowsRemoved > 0 ? "removed" : "clean",
           },
+          values: diagnostics,
         });
       })
-      .catch((cause: unknown) => {
+      .catch((error: unknown) => {
         storageDiagnosticsPromise = null;
-        console.warn("UI cache SQLite diagnostics failed", cause);
+        appLogger.warnCaught({ error: error, event: "ui_cache.sqlite_diagnostics.failed" });
       });
   };
   const liveRevision = (connectionId: string, threadId: string): number =>
@@ -578,13 +649,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     threadId: string,
     historyEpoch: number,
     turnIds: readonly string[],
-  ): Promise<ThreadDetailRow[]> => {
+  ): Promise<ThreadDetailRow[]> =>
     // The hot source intentionally contains only the resident chat range. Before a
     // cursor page decides whether it extends history, read exactly its turn
     // family plus the durable epoch minimum. This prevents cached-but-unloaded
     // rows from being reassigned new ordinals after process restart.
-    return await detailStorage.loadPrependFacts(connectionId, threadId, historyEpoch, turnIds);
-  };
+    detailStorage.loadPrependFacts(connectionId, threadId, historyEpoch, turnIds);
 
   const loadDurableAuthoritativeRows = async (
     connectionId: string,
@@ -603,26 +673,27 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             row.historyEpoch === metadata.historyEpoch,
         ),
       )
-    )
+    ) {
       return resident;
+    }
     // Authoritative projection cannot rely on the current in-memory window: it
     // may still be loading or may not contain the incoming turn family. Read
     // only the durable facts required to
     // establish the current epoch and anchor this bounded server page.
-    return await detailStorage.loadAuthoritativeFacts(connectionId, threadId, incomingTurnIds);
+    return detailStorage.loadAuthoritativeFacts(connectionId, threadId, incomingTurnIds);
   };
 
-  const ensureControls = (): SyncControls => {
-    return detailStorage;
-  };
+  const ensureControls = (): SyncControls => detailStorage;
 
   const runWriteTransaction = async <T>(
     mutate: (writes: SyncWriteControls) => ThreadDetailTransactionResult<T>,
   ): Promise<T> => {
     const previousOverlays = new Map(stagedPendingOverlays);
-    return await runThreadDetailTransaction(source, ensureControls(), mutate, () => {
+    return runThreadDetailTransaction(source, ensureControls(), mutate, () => {
       stagedPendingOverlays.clear();
-      for (const [key, overlay] of previousOverlays) stagedPendingOverlays.set(key, overlay);
+      for (const [key, overlay] of previousOverlays) {
+        stagedPendingOverlays.set(key, overlay);
+      }
     });
   };
 
@@ -633,20 +704,22 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   ): boolean => {
     // Once the server claims a stable client-id key, no older optimistic
     // transaction may roll it back or persist a pending tombstone over it.
-    if (row.kind === "turn") stagedPendingOverlays.delete(key);
+    if (row.kind === "turn") {
+      stagedPendingOverlays.delete(key);
+    }
     return writeRow(source, controls, key, row);
   };
 
   const commitThreadTurn = (
     controls: SyncWriteControls,
     input: {
+      authority: "live" | "authoritative";
       connectionId: string;
+      facts: readonly ThreadDetailRow[];
+      historyEpoch: number;
+      ordinal: number;
       threadId: string;
       turn: Turn;
-      ordinal: number;
-      historyEpoch: number;
-      authority: "live" | "authoritative";
-      facts: readonly ThreadDetailRow[];
     },
   ): number => {
     const fact = input.facts.find(
@@ -687,13 +760,17 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     let mutationCount = 0;
 
     if (previousKey !== null && previousKey !== content.id && previous !== content) {
-      if (deleteRow(source, controls, previousKey)) mutationCount += 1;
+      if (deleteRow(source, controls, previousKey)) {
+        mutationCount += 1;
+      }
     }
     const shouldWriteContent =
       input.authority === "authoritative"
         ? shouldWriteAuthoritativeThreadDetailRow(previous, content)
         : shouldWriteThreadDetailRow(previous, content);
-    if (shouldWriteContent && writeOwnedRow(controls, content.id, content)) mutationCount += 1;
+    if (shouldWriteContent && writeOwnedRow(controls, content.id, content)) {
+      mutationCount += 1;
+    }
 
     // A sealed turn is one immutable fact family: content, metadata and
     // ordinal must all come from the same commit. When reconciliation keeps
@@ -709,7 +786,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         contentSealed,
         input.historyEpoch,
       );
-      if (writeOwnedRow(controls, row.id, row)) mutationCount += 1;
+      if (writeOwnedRow(controls, row.id, row)) {
+        mutationCount += 1;
+      }
     }
 
     // When the authoritative projection seals and compacts a turn, preserve
@@ -739,8 +818,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           row,
         ) &&
         writeOwnedRow(controls, overlayKey, row)
-      )
+      ) {
         mutationCount += 1;
+      }
     }
 
     // Activity is part of the same ordered turn family and follows its
@@ -756,52 +836,62 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           historyEpoch: input.historyEpoch,
           ordinal: contentOrdinal,
         })
-      )
+      ) {
         mutationCount += 1;
+      }
     }
     return mutationCount;
   };
 
   const commitThreadProjection = async (input: {
-    connectionId: string;
-    threadId: string;
-    turns: readonly Turn[];
-    ordinals: ReadonlyMap<string, number>;
-    historyEpoch: number;
     authority: "live" | "authoritative";
-    threadMeta?: ThreadDetailRow;
-    historyCursor?: { value: string | null };
-    pruneMissingMutable?: boolean;
-    replaceExisting?: boolean;
+    connectionId: string;
     durable: boolean;
     facts?: readonly ThreadDetailRow[];
+    historyCursor?: { value: string | null };
+    historyEpoch: number;
     mutableRepositions?: readonly ThreadDetailRow[];
+    ordinals: ReadonlyMap<string, number>;
+    pruneMissingMutable?: boolean;
+    replaceExisting?: boolean;
+    threadId: string;
+    threadMeta?: ThreadDetailRow;
+    turns: readonly Turn[];
   }): Promise<number> =>
-    await runWriteTransaction((controls) => {
+    runWriteTransaction((controls) => {
       let mutationCount = 0;
 
       if (input.replaceExisting === true) {
         for (const row of source.rowsForThread(input.connectionId, input.threadId)) {
-          if (row.kind === "pending") continue;
-          if (deleteRow(source, controls, row.id)) mutationCount += 1;
+          if (row.kind === "pending") {
+            continue;
+          }
+          if (deleteRow(source, controls, row.id)) {
+            mutationCount += 1;
+          }
         }
       }
 
       if (input.threadMeta !== undefined) {
-        if (writeOwnedRow(controls, input.threadMeta.id, input.threadMeta)) mutationCount += 1;
+        if (writeOwnedRow(controls, input.threadMeta.id, input.threadMeta)) {
+          mutationCount += 1;
+        }
       } else if (input.historyCursor !== undefined) {
         const metaKey = threadMetaKey(input.connectionId, input.threadId);
         const meta = source.get(metaKey);
         if (meta?.kind === "thread" && meta.historyCursor !== input.historyCursor.value) {
           if (
             writeOwnedRow(controls, metaKey, { ...meta, historyCursor: input.historyCursor.value })
-          )
+          ) {
             mutationCount += 1;
+          }
         }
       }
 
       for (const row of input.mutableRepositions ?? []) {
-        if (writeOwnedRow(controls, row.id, row)) mutationCount += 1;
+        if (writeOwnedRow(controls, row.id, row)) {
+          mutationCount += 1;
+        }
       }
 
       if (input.pruneMissingMutable === true) {
@@ -812,53 +902,62 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             row.sealed ||
             row.remoteTurnId === null ||
             incomingTurnIds.has(row.remoteTurnId)
-          )
+          ) {
             continue;
-          if (deleteRow(source, controls, row.id)) mutationCount += 1;
+          }
+          if (deleteRow(source, controls, row.id)) {
+            mutationCount += 1;
+          }
           if (
             deleteRow(
               source,
               controls,
               turnMetaKey(input.connectionId, input.threadId, row.remoteTurnId),
             )
-          )
+          ) {
             mutationCount += 1;
+          }
           if (
             deleteRow(
               source,
               controls,
               activityKey(input.connectionId, input.threadId, row.remoteTurnId),
             )
-          )
+          ) {
             mutationCount += 1;
+          }
         }
       }
 
       for (const turn of input.turns) {
         const ordinal = input.ordinals.get(turn.id);
-        if (ordinal === undefined) throw new Error(`Missing ordinal for turn ${turn.id}`);
+        if (ordinal === undefined) {
+          throw new Error(`Missing ordinal for turn ${turn.id}`);
+        }
         mutationCount += commitThreadTurn(controls, {
+          authority: input.authority,
           connectionId: input.connectionId,
+          facts: input.facts ?? [],
+          historyEpoch: input.historyEpoch,
+          ordinal,
           threadId: input.threadId,
           turn,
-          ordinal,
-          historyEpoch: input.historyEpoch,
-          authority: input.authority,
-          facts: input.facts ?? [],
         });
       }
 
-      return { value: mutationCount, durable: mutationCount > 0 && input.durable };
+      return { durable: mutationCount > 0 && input.durable, value: mutationCount };
     });
 
   const persistPendingMutation = async (
     mutation: PendingTimelineMutation,
     durable = false,
   ): Promise<boolean> =>
-    await writes.run(async () => {
-      if (disposed) return false;
+    writes.run(async () => {
+      if (disposed) {
+        return false;
+      }
       const volatileChanges: Array<
-        { type: "insert" | "update"; value: ThreadDetailRow } | { type: "delete"; key: string }
+        { type: "insert" | "update"; value: ThreadDetailRow } | { key: string; type: "delete" }
       > = [];
       const touchedVolatileScopes = new Map<string, { connectionId: string; threadId: string }>();
       await runWriteTransaction((controls) => {
@@ -880,22 +979,25 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             );
             const canonical = canonicalKey === null ? undefined : source.get(canonicalKey);
             if (
-              !canonical?.turn?.items.some(
+              canonical?.turn?.items.some(
                 (item) => item.type === "userMessage" && item.clientId === confirmation.commandId,
-              )
-            )
+              ) !== true
+            ) {
               continue;
+            }
           }
           if (previous?.kind === "pending") {
-            if (deleteRow(source, controls, key)) persistentChanged = true;
-            volatileChanges.push({ type: "delete", key });
+            if (deleteRow(source, controls, key)) {
+              persistentChanged = true;
+            }
+            volatileChanges.push({ key, type: "delete" });
             touchedVolatileScopes.set(threadScope(previous.connectionId, previous.remoteThreadId), {
               connectionId: previous.connectionId,
               threadId: previous.remoteThreadId,
             });
           } else if (stagedPendingOverlays.has(key)) {
             // The optimistic overlay can exist before its durable row is visible.
-            controls.write({ type: "delete", key });
+            controls.write({ key, type: "delete" });
             persistentChanged = true;
           }
           // A removed optimistic row must not be resurrected by the next SQLite
@@ -904,22 +1006,27 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           stagedPendingOverlays.delete(key);
         }
         for (const row of mutation.upserts) {
-          if (row.kind !== "pending" || row.pending === null || row.pending === undefined) continue;
+          if (row.kind !== "pending" || row.pending === null || row.pending === undefined) {
+            continue;
+          }
           const previous = source.get(row.id);
-          if (previous?.kind === "turn") continue;
+          if (previous?.kind === "turn") {
+            continue;
+          }
           const next =
             previous?.kind === "pending" &&
             previous.pending !== null &&
             previous.pending !== undefined
               ? { ...row, pending: mergePendingTimelineEntry(previous.pending, row.pending) }
               : row;
-          if (writeOwnedRow(controls, next.id, next)) persistentChanged = true;
-          else if (stagedPendingOverlays.has(next.id)) {
+          if (writeOwnedRow(controls, next.id, next)) {
+            persistentChanged = true;
+          } else if (stagedPendingOverlays.has(next.id)) {
             controls.write({ type: "update", value: next });
             persistentChanged = true;
           }
         }
-        return { value: undefined, durable: durable && persistentChanged };
+        return { durable: durable && persistentChanged, value: undefined };
       });
       if (volatileChanges.length > 0) {
         chat.publishChanges(volatileChanges);
@@ -931,13 +1038,15 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     });
 
   const persistPendingRow = async (row: ThreadDetailRow, durable = false): Promise<boolean> =>
-    await persistPendingMutation({ upserts: [row], deletes: [] }, durable);
+    persistPendingMutation({ deletes: [], upserts: [row] }, durable);
 
   const applyCommandDelivery = async (
     delivery: NativeCommandDelivery,
     allowInsert = false,
   ): Promise<void> => {
-    if (disposed) return;
+    if (disposed) {
+      return;
+    }
     const direct = delivery.method === "turn/start" || delivery.method === "turn/steer";
     if (direct && delivery.threadId !== null) {
       const existing = source.pendingRow(delivery.connectionId, delivery.commandId);
@@ -954,52 +1063,61 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         (delivery.state === "delivered" ||
           !allowInsert ||
           !source.has(threadMetaKey(delivery.connectionId, delivery.threadId)))
-      )
+      ) {
         return;
+      }
       const entry: PendingTimelineEntry = {
-        commandId: delivery.commandId,
-        method: delivery.method === "turn/steer" ? "turn/steer" : "turn/start",
-        presentation: existing?.pending?.presentation ?? "delivery",
-        text: delivery.text,
         attachments: existing?.pending?.attachments ?? delivery.attachments,
-        state: pendingDeliveryStateFromNative(delivery.state),
         attempts: delivery.attempts,
-        lastError: delivery.lastError,
+        commandId: delivery.commandId,
         createdAt: delivery.createdAt,
-        updatedAt: delivery.updatedAt,
+        lastError: delivery.lastError,
+        method: delivery.method === "turn/steer" ? "turn/steer" : "turn/start",
         order: existing?.pending?.order ?? delivery.createdAt,
+        presentation: existing?.pending?.presentation ?? "delivery",
+        state: pendingDeliveryStateFromNative(delivery.state),
+        text: delivery.text,
+        updatedAt: delivery.updatedAt,
       };
       await persistPendingRow(pendingRow(delivery.connectionId, delivery.threadId, entry));
       return;
     }
-    if (!delivery.method.startsWith("companion/queue/")) return;
+    if (!delivery.method.startsWith("companion/queue/")) {
+      return;
+    }
     const commandId = delivery.targetCommandId;
-    if (commandId === null) return;
+    if (commandId === null) {
+      return;
+    }
     const current = source.pendingRow(delivery.connectionId, commandId);
     if (current?.kind !== "pending" || current.pending === null || current.pending === undefined) {
-      if (delivery.method !== "companion/queue/put" || delivery.threadId === null) return;
+      if (delivery.method !== "companion/queue/put" || delivery.threadId === null) {
+        return;
+      }
       const state: PendingTimelineEntry["state"] =
         delivery.state === "delivered" ? "queued" : delivery.state;
       await persistPendingRow(
         pendingRow(delivery.connectionId, delivery.threadId, {
-          commandId,
-          method: "turn/start",
-          presentation: "queue",
-          text: delivery.text,
           attachments: delivery.attachments,
-          state,
           attempts: delivery.attempts,
-          lastError: delivery.lastError,
+          commandId,
           createdAt: delivery.createdAt,
-          updatedAt: delivery.updatedAt,
+          lastError: delivery.lastError,
+          method: "turn/start",
           order: delivery.createdAt,
+          presentation: "queue",
+          state,
+          text: delivery.text,
+          updatedAt: delivery.updatedAt,
         }),
       );
       return;
     }
-    if (current.pending.confirmation !== undefined) return;
+    if (current.pending.confirmation !== undefined) {
+      return;
+    }
     if (delivery.method === "companion/queue/cancel" && delivery.state === "delivered") {
-      await persistPendingMutation({ upserts: [], deletes: [current.id] });
+      await persistPendingMutation({ deletes: [current.id], upserts: [] });
       return;
     }
     // Edit, move, and retry receipts describe completion of the management
@@ -1017,9 +1135,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       ...current,
       pending: {
         ...current.pending,
-        state,
         attempts: Math.max(current.pending.attempts, delivery.attempts),
         lastError: delivery.lastError,
+        state,
         updatedAt: delivery.updatedAt,
       },
     });
@@ -1036,8 +1154,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     suppliedSourceWitness?: string,
     isCurrent: () => boolean = () => true,
   ): Promise<void> => {
-    if (!isCurrent()) return;
-    if (disposed) throw new Error("Thread detail database is closed");
+    if (!isCurrent()) {
+      return;
+    }
+    if (disposed) {
+      throw new Error("Thread detail database is closed");
+    }
     const facts =
       mode === "authoritative" || mode === "append" || mode === "tail"
         ? await loadDurableAuthoritativeRows(
@@ -1046,7 +1168,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             incoming.turns.map((turn) => turn.id),
           )
         : [];
-    if (!isCurrent()) return;
+    if (!isCurrent()) {
+      return;
+    }
     // Lookup facts prove positions and reuse content; they do not grant resident membership.
     const existingRows = mergeHistoryFacts(facts, source.rowsForThread(connectionId, incoming.id));
     const currentHistoryEpoch =
@@ -1082,7 +1206,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             ? projectedHistoryEpoch
             : currentHistoryEpoch;
     const authoritativeDisconnected = historyEpoch !== currentHistoryEpoch;
-    if (authoritativeDisconnected) invalidateHistoryExhaustion(connectionId, incoming.id);
+    if (authoritativeDisconnected) {
+      invalidateHistoryExhaustion(connectionId, incoming.id);
+    }
     const projectionCursor = suppliedProjectionCursor ?? previousMeta?.projectionCursor;
     const historyCursor =
       mode === "reset" || mode === "tail"
@@ -1120,7 +1246,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       ),
     );
     const concurrentHead =
-      preserveConcurrentHead && current !== null && current !== undefined
+      preserveConcurrentHead && current !== undefined
         ? { ...current, turns: current.turns.filter((turn) => mutableTurnIds.has(turn.id)) }
         : null;
     const thread = reconcileAuthoritativeThread(
@@ -1144,12 +1270,11 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       historyHadTurns,
     );
     await commitThreadProjection({
-      connectionId,
-      threadId: thread.id,
-      turns: thread.turns,
-      ordinals: authoritativeOrdinals,
-      historyEpoch,
       authority: mode === "live" ? "live" : "authoritative",
+      connectionId,
+      historyEpoch,
+      ordinals: authoritativeOrdinals,
+      threadId: thread.id,
       threadMeta: threadRow(
         connectionId,
         thread,
@@ -1175,12 +1300,13 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             : (latestThreadOutcome(thread.turns) ??
               (mode === "reset" ? null : (previousMeta?.currentOutcome ?? null))),
       ),
+      turns: thread.turns,
       // A bounded refresh keeps sealed history outside the tail page and
       // removes only mutable turns absent from the authoritative result.
-      pruneMissingMutable: mode === "authoritative",
-      replaceExisting: mode === "reset",
       durable: true,
       facts,
+      pruneMissingMutable: mode === "authoritative",
+      replaceExisting: mode === "reset",
     });
   };
 
@@ -1189,10 +1315,14 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     thread: Thread,
     startedTurnId: string | null = null,
   ): Promise<void> => {
-    if (disposed) return;
+    if (disposed) {
+      return;
+    }
     const metaKey = threadMetaKey(connectionId, thread.id);
     const previousMeta = source.get(metaKey);
-    if (previousMeta?.kind !== "thread") return;
+    if (previousMeta?.kind !== "thread") {
+      return;
+    }
     const historyEpoch = previousMeta.historyEpoch;
     // A historical resident window can end before the known durable tail.
     let nextOrdinal =
@@ -1212,12 +1342,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       ordinals.set(rawTurn.id, ordinal);
     }
     await commitThreadProjection({
-      connectionId,
-      threadId: thread.id,
-      turns: thread.turns,
-      ordinals,
-      historyEpoch,
       authority: "live",
+      connectionId,
+      durable: true,
+      historyEpoch,
+      ordinals,
+      threadId: thread.id,
       threadMeta: threadRow(
         connectionId,
         thread,
@@ -1235,23 +1365,23 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         advanceThreadUsage(previousMeta.currentUsage ?? null, thread.turns),
         advanceThreadOutcome(previousMeta.currentOutcome ?? null, thread.turns, startedTurnId),
       ),
-      durable: true,
+      turns: thread.turns,
     });
   };
 
   const persistAnchoredPage = async (
     input: {
-      connectionId: string;
-      threadId: string;
-      historyEpoch: number;
       anchorTurnId: string;
-      turns: Turn[];
-      sourceWitness: string;
+      connectionId: string;
+      historyEpoch: number;
+      isCurrent: () => boolean;
       requestedSourceWitness: string | undefined;
-      isCurrent(): boolean;
+      sourceWitness: string;
+      threadId: string;
+      turns: Turn[];
     } & ({ direction: "newer" } | { direction: "older"; hasMore: boolean }),
   ): Promise<ThreadHistoryAppendResult> =>
-    await writes.run(async () => {
+    writes.run(async () => {
       const current = (): boolean =>
         !disposed &&
         !closing &&
@@ -1261,7 +1391,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         accepted: false,
         historyEpoch: source.historyEpoch(input.connectionId, input.threadId),
       });
-      if (!current()) return rejected();
+      if (!current()) {
+        return rejected();
+      }
       const ids =
         input.direction === "newer"
           ? [input.anchorTurnId, ...input.turns.map((turn) => turn.id)]
@@ -1271,7 +1403,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         input.threadId,
         ids,
       );
-      if (!current()) return rejected();
+      if (!current()) {
+        return rejected();
+      }
       const facts = mergeHistoryFacts(
         durableFacts,
         source.rowsForThread(input.connectionId, input.threadId),
@@ -1289,13 +1423,18 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         metadata === undefined ||
         metadata.historyEpoch !== input.historyEpoch ||
         anchor === undefined
-      )
+      ) {
         return rejected();
+      }
       // An unwitnessed cache admits only the first source-qualified response.
       // Other requests started without that witness may describe a replaced source.
       // Nonempty checkpoints can differ across valid append-compatible responses.
-      if (input.requestedSourceWitness === undefined && metadata.historySourceWitness !== undefined)
+      if (
+        input.requestedSourceWitness === undefined &&
+        metadata.historySourceWitness !== undefined
+      ) {
         return rejected();
+      }
       const base =
         input.direction === "newer" ? anchor.ordinal + 1 : anchor.ordinal - input.turns.length;
       const ordinals = new Map(input.turns.map((turn, index) => [turn.id, base + index]));
@@ -1307,15 +1446,17 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           !row.sealed ||
           row.historyEpoch !== input.historyEpoch ||
           row.remoteTurnId === null
-        )
+        ) {
           continue;
+        }
         const expectedOrdinal = ordinals.get(row.remoteTurnId);
         const expectedId = idsByOrdinal.get(row.ordinal);
         if (
           (expectedOrdinal !== undefined && expectedOrdinal !== row.ordinal) ||
           (expectedId !== undefined && expectedId !== row.remoteTurnId)
-        )
+        ) {
           return rejected();
+        }
       }
       let historyCursor = metadata.historyCursor;
       if (input.direction === "older") {
@@ -1325,8 +1466,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           input.historyEpoch,
           "asc",
         );
-        if (!current()) return rejected();
-        if (!input.hasMore && (minimum === null || base <= minimum.ordinal)) historyCursor = null;
+        if (!current()) {
+          return rejected();
+        }
+        if (!input.hasMore && (minimum === null || base <= minimum.ordinal)) {
+          historyCursor = null;
+        }
       }
       if (
         input.turns.length === 0 &&
@@ -1361,8 +1506,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           row.remoteTurnId === null ||
           ordinals.has(row.remoteTurnId) ||
           row.ordinal > sealedMaximum
-        )
+        ) {
           continue;
+        }
         // Mutable placement follows the known tail, but never proves adjacency to that tail.
         const ordinal = nextMutableOrdinal++;
         for (const family of facts) {
@@ -1374,17 +1520,21 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           }
         }
       }
-      if (!current()) return rejected();
+      if (!current()) {
+        return rejected();
+      }
       const scope = threadChatScope(input.connectionId, input.threadId);
       rangePersistenceScopes.add(scope);
       try {
         await commitThreadProjection({
-          connectionId: input.connectionId,
-          threadId: input.threadId,
-          turns: input.turns,
-          ordinals,
-          historyEpoch: input.historyEpoch,
           authority: "authoritative",
+          connectionId: input.connectionId,
+          durable: true,
+          facts,
+          historyEpoch: input.historyEpoch,
+          mutableRepositions,
+          ordinals,
+          threadId: input.threadId,
           threadMeta: threadRow(
             input.connectionId,
             metadata.thread,
@@ -1400,9 +1550,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             metadata.currentUsage ?? null,
             metadata.currentOutcome ?? null,
           ),
-          durable: true,
-          facts,
-          mutableRepositions,
+          turns: input.turns,
         });
       } finally {
         rangePersistenceScopes.delete(scope);
@@ -1419,14 +1567,16 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       source.rowsForThread(request.connectionId, request.threadId),
       chat.window$(request.connectionId, request.threadId).peek(),
     );
-    if (resident !== null) return resident;
+    if (resident !== null) {
+      return resident;
+    }
     const sqliteStartedAt = performance.now();
     const loaded = await detailStorage.loadResolvedWindow({
-      connectionId: request.connectionId,
-      threadId: request.threadId,
       anchorTurnId: request.anchorTurnId,
-      turnLimit: THREAD_RESIDENT_TURN_LIMIT,
+      connectionId: request.connectionId,
       newerBuffer: THREAD_HISTORY_PAGE_SIZE,
+      threadId: request.threadId,
+      turnLimit: THREAD_RESIDENT_TURN_LIMIT,
     });
     recordThreadOpeningMeasure(
       request.connectionId,
@@ -1441,10 +1591,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       performance.now() - sqliteStartedAt,
       {
         values: {
-          elapsedMs: performance.now() - requestedAt,
-          turnRows: loaded.turnRows.length,
           detailRows: loaded.detailRows.length,
+          elapsedMs: performance.now() - requestedAt,
           liveRows: loaded.liveRows.length,
+          turnRows: loaded.turnRows.length,
         },
       },
     );
@@ -1471,16 +1621,18 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     );
     const membership = rangeMembership(rows, loaded.historyEpoch);
     const committed = chat.commitWindow(request, generation, {
-      scope: threadChatScope(request.connectionId, request.threadId),
-      requestKey: threadChatRequestKey(request),
+      earliestSealedOrdinal: loaded.earliestSealedOrdinal,
       historyEpoch: loaded.historyEpoch,
       latestSealedOrdinal: loaded.latestSealedOrdinal,
-      earliestSealedOrdinal: loaded.earliestSealedOrdinal,
+      requestKey: threadChatRequestKey(request),
       residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+      scope: threadChatScope(request.connectionId, request.threadId),
       ...membership,
       rows,
     });
-    if (!committed) return false;
+    if (!committed) {
+      return false;
+    }
     source.replaceThreadLoaded(request.connectionId, request.threadId, rows);
     reportStorageDiagnostics(request.connectionId, request.threadId);
     recordThreadNavigationVisualEvent(
@@ -1489,10 +1641,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       "chat_window_model_installed",
       {
         values: {
-          totalLoadMs: performance.now() - requestedAt,
-          turnRows: loaded.turnRows.length,
           detailRows: loaded.detailRows.length,
           liveRows: loaded.liveRows.length,
+          totalLoadMs: performance.now() - requestedAt,
+          turnRows: loaded.turnRows.length,
         },
       },
       navigationId ?? undefined,
@@ -1504,7 +1656,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     request: ThreadChatWindowRequest,
     navigationToken?: number,
   ): Promise<void> => {
-    if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
+    if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
+      return;
+    }
     const navigationId = activeThreadNavigationIdFor(request.connectionId, request.threadId);
     const requestedAt = performance.now();
     recordThreadNavigationVisualEvent(
@@ -1512,11 +1666,11 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       request.threadId,
       "chat_window_load_requested",
       {
-        values: { residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT },
         tags: {
-          source: navigationToken === undefined ? "render" : "press_preload",
           anchor: request.anchorTurnId === null ? "tail" : "saved",
+          source: navigationToken === undefined ? "render" : "press_preload",
         },
+        values: { residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT },
       },
       navigationId ?? undefined,
     );
@@ -1530,11 +1684,17 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       const installed =
         loaded === installedResidentWindow ||
         (await writes.run(async () => {
-          if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken))
-            return false;
-          return installStoredWindow(request, generation, loaded, requestedAt, navigationId);
+          const installedWindow = await Promise.resolve().then(() => {
+            if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
+              return false;
+            }
+            return installStoredWindow(request, generation, loaded, requestedAt, navigationId);
+          });
+          return installedWindow;
         }));
-      if (!installed || remoteLoader === null) return;
+      if (!installed || remoteLoader === null) {
+        return;
+      }
       // SQLite mirrors the visible delivery row while Kotlin's native outbox
       // remains the recovery authority. Reconcile every activation so a failed
       // command and its retry state advance even after the app slept.
@@ -1554,12 +1714,16 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         chat.window$(request.connectionId, request.threadId).peek(),
       );
       if (resident !== null) {
-        if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
-        if (!installStoredWindow(request, generation, resident, requestedAt, navigationId)) return;
+        if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
+          return;
+        }
+        if (!installStoredWindow(request, generation, resident, requestedAt, navigationId)) {
+          return;
+        }
         installedResidentWindow = resident;
         cachedWindow = resident;
         recordThreadOpeningMeasure(request.connectionId, request.threadId, "queue_wait", 0);
-      } else
+      } else {
         cachedWindow = await writes.run(async () => {
           const laneEnteredAt = performance.now();
           recordThreadOpeningMeasure(
@@ -1576,11 +1740,15 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           );
           // Superseded press intents that have not reached SQLite are skipped
           // instead of making the selected destination wait behind useless work.
-          if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken))
+          if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
             return null;
-          return await readStoredWindow(request, requestedAt);
+          }
+          return readStoredWindow(request, requestedAt);
         });
-      if (cachedWindow === null) return;
+      }
+      if (cachedWindow === null) {
+        return;
+      }
 
       recordThreadOpeningMeasure(
         request.connectionId,
@@ -1620,14 +1788,16 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           );
           try {
             await loader.hydrateWindow({
-              request,
               cachedThread,
-              requireAuthoritative: true,
               reason: activationRefresh ? "activation" : coverage.reason,
+              request,
+              requireAuthoritative: true,
             });
-            if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
-            const refreshedWindow = await writes.run(
-              async () => await readStoredWindow(request, requestedAt),
+            if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
+              return;
+            }
+            const refreshedWindow = await writes.run(async () =>
+              readStoredWindow(request, requestedAt),
             );
             const refreshedCoverage = threadWindowCoverage(request, refreshedWindow);
             const refreshedTurnCount = [
@@ -1665,12 +1835,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           // Resolve the navigation resource from local data; the background
           // cursor sync must never hold an already-cached chat behind network
           // recovery.
-          await installAndReconcilePending(cachedWindow as ResolvedThreadDetailWindow);
-          void hydrateAndInstall().catch((cause: unknown) => {
-            console.warn(
-              "CodeWide background thread repair failed:",
-              cause instanceof Error ? cause.message : "unknown error",
-            );
+          await installAndReconcilePending(cachedWindow);
+          void hydrateAndInstall().catch(() => {
+            appLogger.warn({
+              event: "thread.background_repair.failed",
+              fields: { connectionId: request.connectionId, threadId: request.threadId },
+            });
           });
           return;
         }
@@ -1681,15 +1851,17 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         return;
       }
 
-      await installAndReconcilePending(cachedWindow as ResolvedThreadDetailWindow);
-    } catch (cause) {
-      if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
-      if (cachedWindow !== null && hadUsableCachedThread) {
-        await installAndReconcilePending(cachedWindow as ResolvedThreadDetailWindow);
+      await installAndReconcilePending(cachedWindow);
+    } catch (error) {
+      if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
         return;
       }
-      chat.failWindow(request, generation, cause);
-      throw cause;
+      if (cachedWindow !== null && hadUsableCachedThread) {
+        await installAndReconcilePending(cachedWindow);
+        return;
+      }
+      chat.failWindow(request, generation, error);
+      throw error;
     } finally {
       recordThreadOpeningMeasure(
         request.connectionId,
@@ -1701,384 +1873,57 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   };
 
   const database: ThreadDetailDatabase = {
-    sessionId,
-    chat,
-    async prepare() {
-      await detailStorage.prepare();
-    },
-    setRemoteLoader(loader) {
-      remoteLoader = loader;
-    },
-    windowResource(request) {
-      return chat.resource(request, async () => await database.loadWindow(request));
-    },
-    preloadWindow(request) {
-      const scope = threadChatScope(request.connectionId, request.threadId);
-      const lease = windowIntents.begin(scope, threadChatRequestKey(request) as string, () =>
-        chat.retainWindow(request.connectionId, request.threadId),
-      );
-      const resource = chat.resource(request, async () => await loadWindow(request, lease.token));
-      void Promise.resolve(resource.ready$.peek()).catch(() => undefined);
-      return () => windowIntents.cancel(lease);
-    },
-    retainWindow(connectionId, threadId) {
-      const release = chat.retainWindow(connectionId, threadId);
-      windowIntents.adopt(threadChatScope(connectionId, threadId));
-      // Retention is the model-owned subscription boundary. Unlike tap or
-      // press-in, it also runs when the app restores directly into an already
-      // open conversation after a process or OTA restart.
-      remoteLoader?.observe?.({ connectionId, threadId });
-      return release;
-    },
     adoptPreloadedWindow(connectionId, threadId) {
       windowIntents.adopt(threadChatScope(connectionId, threadId));
     },
-    async loadWindow(request) {
-      await loadWindow(request);
-    },
-    async pullRange(connectionId, threadId, direction) {
-      const scope = threadChatScope(connectionId, threadId);
-      const pullKey = `${scope}\u0000${direction}`;
-      const existing = rangePulls.get(pullKey);
-      if (existing !== undefined) {
-        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_coalesced", {
-          tags: { direction },
-        });
-        return await existing;
-      }
-      const operationStartedAt = performance.now();
-      recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_started", {
-        tags: { direction },
-      });
-      let noOpReason = "none";
-      let residentTurnCount = 0;
-      let newerAfterTurnId: string | null = null;
-      let olderBeforeTurnId: string | null = null;
-      const initialWindow = chat.window$(connectionId, threadId).peek();
-      const pullStoredRange = async (): Promise<boolean> =>
-        await writes.run(async () => {
-          if (disposed) {
-            noOpReason = "disposed";
-            return false;
-          }
-          const snapshot = chat.window$(connectionId, threadId).peek();
-          if (!threadLoadHasResidentSnapshot(snapshot.status)) {
-            noOpReason = "snapshot_not_resident";
-            return false;
-          }
-          const residentTurns = chat
-            .readRows(snapshot.turnRowIds)
-            .filter(
-              (row) =>
-                row.kind === "turn" && row.sealed && row.historyEpoch === snapshot.historyEpoch,
-            );
-          residentTurnCount = residentTurns.length;
-          if (residentTurns.length === 0 && direction !== "latest") {
-            noOpReason = "resident_range_empty";
-            return false;
-          }
-          const residentMinimum = residentTurns.reduce<number | null>(
-            (minimum, row) => (minimum === null ? row.ordinal : Math.min(minimum, row.ordinal)),
-            null,
-          );
-          const residentMaximum = residentTurns.reduce<number | null>(
-            (maximum, row) => (maximum === null ? row.ordinal : Math.max(maximum, row.ordinal)),
-            null,
-          );
-          const sqliteStartedAt = performance.now();
-          let latestSealedOrdinal = snapshot.latestSealedOrdinal;
-          let earliestSealedOrdinal = snapshot.earliestSealedOrdinal;
-          let loaded;
-          if (direction === "latest") {
-            loaded = await detailStorage.loadResolvedWindow({
-              connectionId,
-              threadId,
-              anchorTurnId: null,
-              turnLimit: THREAD_RESIDENT_TURN_LIMIT,
-              newerBuffer: THREAD_HISTORY_PAGE_SIZE,
-            });
-            latestSealedOrdinal = loaded.latestSealedOrdinal;
-            earliestSealedOrdinal = loaded.earliestSealedOrdinal;
-          } else {
-            const boundaryOrdinal = direction === "older" ? residentMinimum : residentMaximum;
-            if (boundaryOrdinal === null) {
-              noOpReason = "resident_boundary_missing";
-              return false;
-            }
-            loaded = await detailStorage.loadAdjacentWindow({
-              connectionId,
-              threadId,
-              historyEpoch: snapshot.historyEpoch,
-              boundaryOrdinal,
-              direction,
-              turnLimit: THREAD_HISTORY_PAGE_SIZE,
-            });
-            const boundaryTurnId =
-              residentTurns.find((row) => row.ordinal === boundaryOrdinal)?.remoteTurnId ?? null;
-            if (direction === "older") olderBeforeTurnId = boundaryTurnId;
-            else newerAfterTurnId = boundaryTurnId;
-            const contiguous = contiguousHistoryPage(loaded.turnRows, boundaryOrdinal, direction);
-            const selectedIds = new Set(contiguous.map((row) => row.remoteTurnId));
-            const gap = contiguous.length !== loaded.turnRows.length;
-            loaded = {
-              turnRows: contiguous,
-              detailRows: loaded.detailRows.filter((row) => selectedIds.has(row.remoteTurnId)),
-              liveRows: loaded.liveRows,
-            };
-            if (loaded.turnRows.length === 0) {
-              noOpReason = `${direction}_${gap ? "gap" : "boundary"}`;
-              return false;
-            }
-          }
-          recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_sqlite_loaded", {
-            values: {
-              durationMs: performance.now() - sqliteStartedAt,
-              turnRows: loaded.turnRows.length,
-              detailRows: loaded.detailRows.length,
-              liveRows: loaded.liveRows.length,
-            },
-            tags: { direction },
-          });
-          const persistedRows = [...loaded.turnRows, ...loaded.detailRows, ...loaded.liveRows];
-          const expandedRows = composeExpandedRangeRows(
-            chat
-              .readRows([...snapshot.turnRowIds, ...snapshot.detailRowIds, ...snapshot.liveRowIds])
-              .map((row) => source.get(row.id) ?? row),
-            persistedRows,
-            snapshot.historyEpoch,
-          );
-          const rows = mergePendingTimelineOverlays(
-            direction === "latest"
-              ? trimExpandedRangeRows(
-                  expandedRows,
-                  snapshot.historyEpoch,
-                  "newer",
-                  THREAD_RESIDENT_TURN_LIMIT,
-                )
-              : expandedRows,
-            [...stagedPendingOverlays.values()],
-            connectionId,
-            threadId,
-          );
-          const membership = rangeMembership(rows, snapshot.historyEpoch);
-          const committed = chat.commitRange(
-            connectionId,
-            threadId,
-            {
-              historyEpoch: snapshot.historyEpoch,
-              layoutRevision: snapshot.layoutRevision,
-            },
-            {
-              scope,
-              requestKey: snapshot.requestKey,
-              historyEpoch: snapshot.historyEpoch,
-              latestSealedOrdinal,
-              earliestSealedOrdinal,
-              residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
-              ...membership,
-              rows,
-            },
-          );
-          if (!committed) {
-            noOpReason = "stale_commit";
-            return false;
-          }
-          source.replaceThreadLoaded(connectionId, threadId, rows);
-          return true;
-        });
-      const operation = (async (): Promise<boolean> => {
-        const local = await pullStoredRange();
-        if (local || remoteLoader === null) return local;
-        const historyEpoch = source.historyEpoch(connectionId, threadId);
-        const exhaustionScope = `${scope}\u0000${historyEpoch}`;
-        const exhaustionRevision = historyExhaustionRevision;
-        if (
-          direction === "older" &&
-          (noOpReason === "older_boundary" || noOpReason === "older_gap") &&
-          olderBeforeTurnId !== null &&
-          remoteLoader.loadBefore !== undefined
-        ) {
-          if (olderExhaustedTurnIdByThread.get(exhaustionScope) === olderBeforeTurnId) return false;
-          const result = await remoteLoader.loadBefore({
-            connectionId,
-            threadId,
-            beforeTurnId: olderBeforeTurnId,
-            historyEpoch,
-          });
-          if (
-            result.status === "persisted" &&
-            !result.hasMore &&
-            exhaustionRevision === historyExhaustionRevision &&
-            source.historyEpoch(connectionId, threadId) === historyEpoch
-          ) {
-            olderExhaustedTurnIdByThread.set(exhaustionScope, result.oldestTurnId);
-          }
-        } else if (direction === "older" && noOpReason === "older_boundary") {
-          const cursor = source.historyCursor(connectionId, threadId);
-          if (typeof cursor !== "string") return false;
-          await remoteLoader.loadOlder({ connectionId, threadId, cursor, historyEpoch });
-        } else if (
-          direction === "newer" &&
-          (noOpReason === "newer_boundary" || noOpReason === "newer_gap") &&
-          newerAfterTurnId !== null
-        ) {
-          if (newerExhaustedTurnIdByThread.get(exhaustionScope) === newerAfterTurnId) return false;
-          const result = await remoteLoader.loadNewer({
-            connectionId,
-            threadId,
-            afterTurnId: newerAfterTurnId,
-            historyEpoch,
-          });
-          if (
-            result.status === "persisted" &&
-            !result.hasMore &&
-            exhaustionRevision === historyExhaustionRevision &&
-            source.historyEpoch(connectionId, threadId) === historyEpoch
-          ) {
-            newerExhaustedTurnIdByThread.set(exhaustionScope, result.lastTurnId);
-          }
-        } else {
-          return false;
+    async appendTurns(connectionId, threadId, turns, historyCursor) {
+      return writes.run(async () => {
+        const currentRows = source.rowsForThread(connectionId, threadId);
+        const current = materializeThreadDetail(currentRows, connectionId, threadId, sessionId);
+        if (current === null) {
+          return { accepted: false, historyEpoch: source.historyEpoch(connectionId, threadId) };
         }
-        noOpReason = "none";
-        const currentWindow = chat.window$(connectionId, threadId).peek();
-        if (
-          currentWindow.historyEpoch !== initialWindow.historyEpoch ||
-          currentWindow.requestKey !== initialWindow.requestKey
-        )
-          return false;
-        const extended = await pullStoredRange();
-        return (
-          extended ||
-          !sameStringSequence(
-            initialWindow.turnRowIds,
-            chat.window$(connectionId, threadId).peek().turnRowIds,
-          )
-        );
-      })();
-      rangePulls.set(pullKey, operation);
-      try {
-        const pulled = await operation;
-        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_finished", {
-          values: {
-            durationMs: performance.now() - operationStartedAt,
-            residentTurnCount,
-          },
-          tags: {
-            direction,
-            outcome: pulled ? "pulled" : "ignored",
-            reason: pulled ? "none" : noOpReason,
-          },
-        });
-        return pulled;
-      } catch (cause) {
-        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_failed", {
-          values: { durationMs: performance.now() - operationStartedAt },
-          tags: { direction, errorKind: telemetryErrorKind(cause) },
-        });
-        throw cause;
-      } finally {
-        if (rangePulls.get(pullKey) === operation) rangePulls.delete(pullKey);
-      }
-    },
-    async trimRange(connectionId, threadId, direction) {
-      return await writes.run(async () => {
-        if (disposed) return false;
-        const snapshot = chat.window$(connectionId, threadId).peek();
-        if (!threadLoadHasResidentSnapshot(snapshot.status)) return false;
-        const residentRows = source.rowsForThread(connectionId, threadId);
-        const rows = trimExpandedRangeRows(
-          residentRows,
-          snapshot.historyEpoch,
-          direction,
-          THREAD_RESIDENT_TURN_LIMIT,
-        );
-        if (rows.length === residentRows.length) return false;
-        const membership = rangeMembership(rows, snapshot.historyEpoch);
-        const committed = chat.commitRange(
-          connectionId,
-          threadId,
-          {
-            historyEpoch: snapshot.historyEpoch,
-            layoutRevision: snapshot.layoutRevision,
-          },
-          {
-            scope: threadChatScope(connectionId, threadId),
-            requestKey: snapshot.requestKey,
-            historyEpoch: snapshot.historyEpoch,
-            latestSealedOrdinal: snapshot.latestSealedOrdinal,
-            earliestSealedOrdinal: snapshot.earliestSealedOrdinal,
-            residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
-            ...membership,
-            rows,
-          },
-        );
-        if (!committed) return false;
-        source.replaceThreadLoaded(connectionId, threadId, rows);
-        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_trimmed", {
-          values: {
-            beforeTurnCount: snapshot.turnRowIds.length,
-            afterTurnCount: membership.turnRowIds.length,
-          },
-          tags: { direction },
-        });
-        return true;
+        if (turns.length > 0) {
+          // Only the supplied canonical suffix participates. Existing sealed
+          // rows are never replaced as a collection; overlapping live/final
+          // turns are reconciled by stable turn id and all new rows append
+          // after the durable maximum ordinal.
+          await publishThread(
+            connectionId,
+            { ...current.thread, turns },
+            "append",
+            Date.now(),
+            false,
+            historyCursor,
+          );
+        }
+        return { accepted: true, historyEpoch: source.historyEpoch(connectionId, threadId) };
       });
     },
-    readWindowRows(snapshot) {
-      return {
-        turnRows: chat.readRows(snapshot.turnRowIds),
-        detailRows: chat.readRows(snapshot.detailRowIds),
-        liveRows: chat.readRows(snapshot.liveRowIds),
-      };
-    },
-    windowCoverage(request, snapshot) {
-      return threadWindowCoverage(request, database.readWindowRows(snapshot));
-    },
-    async applySnapshot(connectionId, snapshots, _cursor) {
-      await confirmCommandReceipts(
+    async appendTurnsAfter(
+      connectionId,
+      threadId,
+      expectedHistoryEpoch,
+      afterTurnId,
+      turns,
+      sourceWitness,
+      isCurrent,
+      requestedSourceWitness,
+    ) {
+      return persistAnchoredPage({
+        anchorTurnId: afterTurnId,
         connectionId,
-        snapshots.flatMap(({ thread }) =>
-          thread.turns.flatMap((turn) => commandReceiptsFromTurn(thread.id, turn)),
-        ),
-      );
-      await writes.run(async () => {
-        if (disposed) return;
-        const byId = new Map(snapshots.map((snapshot) => [snapshot.thread.id, snapshot]));
-        await runWriteTransaction((controls) => {
-          let mutationCount = 0;
-          for (const row of source.threadMetaRows(connectionId)) {
-            const snapshot = byId.get(row.remoteThreadId);
-            if (snapshot === undefined || row.thread === null) continue;
-            // Snapshot list updates only bounded thread metadata. Turn metadata is
-            // stored in independent rows and lifecycle belongs exclusively to
-            // the detail stream. The list may update presentation fields only.
-            const metadata = mergeThreadPresentationMetadata(row.thread, snapshot.thread);
-            const next = threadRow(
-              connectionId,
-              metadata,
-              row.sessionId,
-              row.lastOpenedAt,
-              row.historyEpoch,
-              row.historyCursor,
-              row.historyHadTurns === true ||
-                source
-                  .rowsForThread(connectionId, row.remoteThreadId)
-                  .some((candidate) => candidate.kind === "turn")
-                ? true
-                : row.historyHadTurns,
-              row.historyCoverageMinOrdinal,
-              row.historyCoverageMaxOrdinal,
-              row.projectionCursor,
-              row.historySourceWitness,
-              row.currentUsage ?? null,
-              row.currentOutcome ?? null,
-            );
-            if (writeOwnedRow(controls, next.id, next)) mutationCount += 1;
-          }
-          return { value: undefined, durable: mutationCount > 0 };
-        });
+        direction: "newer",
+        historyEpoch: expectedHistoryEpoch,
+        isCurrent,
+        requestedSourceWitness,
+        sourceWitness,
+        threadId,
+        turns,
       });
+    },
+    async applyCommandDelivery(delivery) {
+      await applyCommandDelivery(delivery);
     },
     async applyEvents(connectionId, events) {
       if (disposed || events.length === 0) {
@@ -2112,51 +1957,23 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             ? []
             : [patch];
         });
-      let semanticPatches = await writes.run(async () => projectionPatchesAfterSnapshot());
-      const repairs = await writes.run(async () => {
-        const repairPatchesByThread = new Map<string, ThreadProjectionPatchV1[]>();
-        for (const patch of semanticPatches) {
-          if (!source.has(threadMetaKey(connectionId, patch.threadId))) continue;
-          const patches = repairPatchesByThread.get(patch.threadId) ?? [];
-          patches.push(patch);
-          repairPatchesByThread.set(patch.threadId, patches);
-        }
-        const required: string[] = [];
-        for (const [threadId, patches] of repairPatchesByThread) {
-          const current = materializeThreadDetail(
-            source.liveRows(connectionId, threadId, patches),
-            connectionId,
-            threadId,
-            sessionId,
-          );
-          if (
-            current !== null &&
-            threadProjectionNeedsAuthoritativeRepair(current.thread, patches) &&
-            (remoteLoader?.shouldRepairProjection?.({ connectionId, threadId }) ?? true)
-          ) {
-            required.push(threadId);
-          }
-        }
-        return required;
+      let semanticPatches = await writes.run(async () => {
+        await Promise.resolve();
+        return projectionPatchesAfterSnapshot();
       });
-      if (repairs.length > 0) {
-        const loader = remoteLoader;
-        if (loader === null) throw new Error("Thread projection repair requires a remote loader");
-        for (const threadId of repairs) {
-          await loader.repairProjection({ connectionId, threadId });
-        }
-        const repairedThreadIds = new Set(repairs);
-        semanticPatches = await writes.run(async () => projectionPatchesAfterSnapshot());
-        await writes.run(async () => {
-          const patchesByThread = new Map<string, ThreadProjectionPatchV1[]>();
+      const repairs = await writes.run(async () => {
+        const requiredRepairs = await Promise.resolve().then(() => {
+          const repairPatchesByThread = new Map<string, ThreadProjectionPatchV1[]>();
           for (const patch of semanticPatches) {
-            if (!source.has(threadMetaKey(connectionId, patch.threadId))) continue;
-            const patches = patchesByThread.get(patch.threadId) ?? [];
+            if (!source.has(threadMetaKey(connectionId, patch.threadId))) {
+              continue;
+            }
+            const patches = repairPatchesByThread.get(patch.threadId) ?? [];
             patches.push(patch);
-            patchesByThread.set(patch.threadId, patches);
+            repairPatchesByThread.set(patch.threadId, patches);
           }
-          for (const [threadId, patches] of patchesByThread) {
-            if (!repairedThreadIds.has(threadId)) continue;
+          const required: string[] = [];
+          for (const [threadId, patches] of repairPatchesByThread) {
             const current = materializeThreadDetail(
               source.liveRows(connectionId, threadId, patches),
               connectionId,
@@ -2165,13 +1982,62 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             );
             if (
               current !== null &&
-              threadProjectionNeedsAuthoritativeRepair(current.thread, patches)
+              threadProjectionNeedsAuthoritativeRepair(current.thread, patches) &&
+              (remoteLoader?.shouldRepairProjection?.({ connectionId, threadId }) ?? true)
             ) {
-              throw new Error(
-                `Authoritative thread snapshot did not cover projection gap for ${threadId}`,
-              );
+              required.push(threadId);
             }
           }
+          return required;
+        });
+        return requiredRepairs;
+      });
+      if (repairs.length > 0) {
+        const loader = remoteLoader;
+        if (loader === null) {
+          throw new Error("Thread projection repair requires a remote loader");
+        }
+        await Promise.all(
+          repairs.map(async (threadId) => {
+            await loader.repairProjection({ connectionId, threadId });
+          }),
+        );
+        const repairedThreadIds = new Set(repairs);
+        semanticPatches = await writes.run(async () => {
+          await Promise.resolve();
+          return projectionPatchesAfterSnapshot();
+        });
+        await writes.run(async () => {
+          await Promise.resolve().then(() => {
+            const patchesByThread = new Map<string, ThreadProjectionPatchV1[]>();
+            for (const patch of semanticPatches) {
+              if (!source.has(threadMetaKey(connectionId, patch.threadId))) {
+                continue;
+              }
+              const patches = patchesByThread.get(patch.threadId) ?? [];
+              patches.push(patch);
+              patchesByThread.set(patch.threadId, patches);
+            }
+            for (const [threadId, patches] of patchesByThread) {
+              if (!repairedThreadIds.has(threadId)) {
+                continue;
+              }
+              const current = materializeThreadDetail(
+                source.liveRows(connectionId, threadId, patches),
+                connectionId,
+                threadId,
+                sessionId,
+              );
+              if (
+                current !== null &&
+                threadProjectionNeedsAuthoritativeRepair(current.thread, patches)
+              ) {
+                throw new Error(
+                  `Authoritative thread snapshot did not cover projection gap for ${threadId}`,
+                );
+              }
+            }
+          });
         });
       }
       const startedThreadIds = new Set(
@@ -2180,10 +2046,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           return startedThreadShells.has(threadScope(connectionId, threadId)) ? [threadId] : [];
         }),
       );
-      return await writes.run(async () => {
-        if (disposed) throw new Error("Thread detail database is closed");
+      return writes.run(async () => {
+        if (disposed) {
+          throw new Error("Thread detail database is closed");
+        }
         const checkpoints: Promise<void>[] = [];
-        const projectedThreads = new Map<string, { before: Thread; after: Thread }>();
+        const projectedThreads = new Map<string, { after: Thread; before: Thread }>();
         const hasLoadedThread = events.some((event) => {
           const threadId = threadIdFromEvent(event.payload);
           return threadId !== null && source.has(threadMetaKey(connectionId, threadId));
@@ -2200,13 +2068,19 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         // the native durable stream retries it.
         const controls = ensureControls();
         for (const threadId of startedThreadIds) {
-          if (source.has(threadMetaKey(connectionId, threadId))) continue;
+          if (source.has(threadMetaKey(connectionId, threadId))) {
+            continue;
+          }
           const shell = startedThreadShells.get(threadScope(connectionId, threadId));
-          if (shell !== undefined) await publishThread(connectionId, shell, "live");
+          if (shell !== undefined) {
+            await publishThread(connectionId, shell, "live");
+          }
         }
         const byThread = new Map<string, ThreadProjectionPatchV1[]>();
         for (const patch of semanticPatches) {
-          if (!source.has(threadMetaKey(connectionId, patch.threadId))) continue;
+          if (!source.has(threadMetaKey(connectionId, patch.threadId))) {
+            continue;
+          }
           if (patch.operation.kind === "threadDeleted") {
             await deleteThreadRows(source, controls, connectionId, patch.threadId);
             advanceLiveRevision(connectionId, patch.threadId);
@@ -2219,9 +2093,11 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         for (const [threadId, patches] of byThread) {
           const slice = source.liveRows(connectionId, threadId, patches);
           const current = materializeThreadDetail(slice, connectionId, threadId, sessionId);
-          if (current === null) continue;
+          if (current === null) {
+            continue;
+          }
           const next = applyThreadProjectionPatchesImmutable(current.thread, patches);
-          projectedThreads.set(threadId, { before: current.thread, after: next });
+          projectedThreads.set(threadId, { after: next, before: current.thread });
           if (next !== current.thread) {
             let startedTurnId: string | null = null;
             for (const { operation } of patches) {
@@ -2232,8 +2108,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
                 value !== null &&
                 "id" in value &&
                 typeof value.id === "string"
-              )
+              ) {
                 startedTurnId = value.id;
+              }
             }
             checkpoints.push(publishLiveSlice(connectionId, next, startedTurnId));
             advanceLiveRevision(connectionId, threadId);
@@ -2250,64 +2127,148 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         };
       });
     },
-    liveRevision,
-    historyCursor(connectionId, threadId) {
-      return source.historyCursor(connectionId, threadId);
-    },
-    historySourceWitness(connectionId, threadId) {
-      return source.get(threadMetaKey(connectionId, threadId))?.historySourceWitness;
-    },
-    async latestSealedTurnId(connectionId, threadId) {
-      const meta = await detailStorage.loadThreadMeta(connectionId, threadId);
-      if (meta?.kind !== "thread") return null;
-      const latest = await detailStorage.loadBoundary(
+    async applySnapshot(connectionId, snapshots, _cursor) {
+      await confirmCommandReceipts(
         connectionId,
-        threadId,
-        meta.historyEpoch,
-        "desc",
+        snapshots.flatMap(({ thread }) =>
+          thread.turns.flatMap((turn) => commandReceiptsFromTurn(thread.id, turn)),
+        ),
       );
-      return latest?.kind === "turn" && latest.sealed ? latest.remoteTurnId : null;
+      await writes.run(async () => {
+        if (disposed) {
+          return;
+        }
+        const byId = new Map(snapshots.map((snapshot) => [snapshot.thread.id, snapshot]));
+        await runWriteTransaction((controls) => {
+          let mutationCount = 0;
+          for (const row of source.threadMetaRows(connectionId)) {
+            const snapshot = byId.get(row.remoteThreadId);
+            if (snapshot === undefined || row.thread === null) {
+              continue;
+            }
+            // Snapshot list updates only bounded thread metadata. Turn metadata is
+            // stored in independent rows and lifecycle belongs exclusively to
+            // the detail stream. The list may update presentation fields only.
+            const metadata = mergeThreadPresentationMetadata(row.thread, snapshot.thread);
+            const next = threadRow(
+              connectionId,
+              metadata,
+              row.sessionId,
+              row.lastOpenedAt,
+              row.historyEpoch,
+              row.historyCursor,
+              row.historyHadTurns === true ||
+                source
+                  .rowsForThread(connectionId, row.remoteThreadId)
+                  .some((candidate) => candidate.kind === "turn")
+                ? true
+                : row.historyHadTurns,
+              row.historyCoverageMinOrdinal,
+              row.historyCoverageMaxOrdinal,
+              row.projectionCursor,
+              row.historySourceWitness,
+              row.currentUsage ?? null,
+              row.currentOutcome ?? null,
+            );
+            if (writeOwnedRow(controls, next.id, next)) {
+              mutationCount += 1;
+            }
+          }
+          return { durable: mutationCount > 0, value: undefined };
+        });
+      });
     },
     beginProjectionSnapshot(connectionId, threadId) {
       const scope = threadScope(connectionId, threadId);
       if (projectionSnapshots.has(scope)) {
         throw new Error(`Thread projection snapshot already active for ${threadId}`);
       }
-      let resolve = (): void => undefined;
-      const promise = new Promise<void>((settle) => {
-        resolve = settle;
+      let resolveSnapshot = (): void => undefined;
+      const promise = new Promise<void>((resolve) => {
+        resolveSnapshot = resolve;
       });
-      projectionSnapshots.set(scope, { promise, resolve });
+      projectionSnapshots.set(scope, { promise, resolve: resolveSnapshot });
       let active = true;
       return () => {
-        if (!active) return;
+        if (!active) {
+          return;
+        }
         active = false;
         const snapshot = projectionSnapshots.get(scope);
-        if (snapshot?.promise !== promise) return;
+        if (snapshot?.promise !== promise) {
+          return;
+        }
         projectionSnapshots.delete(scope);
         snapshot.resolve();
       };
     },
-    async synchronizeThread(input) {
-      await writes.run(async () => {
-        const snapshotActive = projectionSnapshots.has(
-          threadScope(input.connectionId, input.thread.id),
-        );
-        const preserveConcurrentHead =
-          !snapshotActive &&
-          liveRevision(input.connectionId, input.thread.id) !== input.expectedLiveRevision;
-        await publishThread(
-          input.connectionId,
-          input.thread,
-          input.mode === "reset" ? "reset" : "authoritative",
-          Date.now(),
-          preserveConcurrentHead,
-          input.historyCursor,
-          input.throughCursor,
-          input.sourceWitness,
-          input.isCurrent,
-        );
-      });
+    chat,
+    async close() {
+      if (closePromise !== null) {
+        return closePromise;
+      }
+      closing = true;
+      windowIntents.close();
+      for (const snapshot of projectionSnapshots.values()) {
+        snapshot.resolve();
+      }
+      projectionSnapshots.clear();
+      const drain = writes.close();
+      closePromise = (async () => {
+        try {
+          // Tasks accepted before closing still see disposed=false and cross
+          // their durable boundary before SQLite is flushed and closed.
+          await drain;
+          disposed = true;
+          await detailStorage.close();
+        } finally {
+          disposed = true;
+          unregisterDetailFlusher();
+          rangePulls.clear();
+          reportedStalledOptimisticFingerprintByThread.clear();
+          stagedPendingOverlays.clear();
+          newerExhaustedTurnIdByThread.clear();
+          olderExhaustedTurnIdByThread.clear();
+          chat.close();
+        }
+      })();
+      return closePromise;
+    },
+    async commitPending(row, options) {
+      return persistPendingRow(row, options?.durable === true);
+    },
+    async commitPendingMutation(mutation, options) {
+      return persistPendingMutation(mutation, options?.durable === true);
+    },
+    createPending(input) {
+      const order = input.order ?? input.createdAt;
+      return pendingRow(input.connectionId, input.threadId, { ...input, order });
+    },
+    getThread(connectionId, threadId) {
+      const rows = source.rowsForThread(connectionId, threadId);
+      const thread =
+        materializeThreadDetail(rows, connectionId, threadId, sessionId)?.thread ?? null;
+      if (
+        thread?.turns.length === 0 &&
+        rows.some((row) => row.kind === "thread" && row.historyHadTurns === true)
+      ) {
+        return null;
+      }
+      return thread;
+    },
+    hasPendingDelivery(connectionId, threadId, commandId) {
+      const row = source.pendingRow(connectionId, commandId);
+      return (
+        row?.remoteThreadId === threadId &&
+        row.kind === "pending" &&
+        row.pending?.presentation === "delivery"
+      );
+    },
+    historyCursor(connectionId, threadId) {
+      return source.historyCursor(connectionId, threadId);
+    },
+    historySourceWitness(connectionId, threadId) {
+      return source.get(threadMetaKey(connectionId, threadId))?.historySourceWitness;
     },
     async importThreadSnapshot(connectionId, thread, _reason, historyCursor) {
       if (thread.turns.length === 0) {
@@ -2315,8 +2276,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         startedThreadShells.delete(key);
         startedThreadShells.set(key, thread);
         while (startedThreadShells.size > 32) {
-          const oldest = startedThreadShells.keys().next().value as string | undefined;
-          if (oldest === undefined) break;
+          const oldest = startedThreadShells.keys().next().value;
+          if (oldest === undefined) {
+            break;
+          }
           startedThreadShells.delete(oldest);
         }
       }
@@ -2331,22 +2294,49 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         );
       });
     },
-    async replaceThreadSnapshot(connectionId, thread, _reason, historyCursor) {
-      await writes.run(async () => {
-        await publishThread(connectionId, thread, "reset", Date.now(), false, historyCursor);
-      });
+    invalidateHistoryExhaustion,
+    async latestSealedTurnId(connectionId, threadId) {
+      const meta = await detailStorage.loadThreadMeta(connectionId, threadId);
+      if (meta?.kind !== "thread") {
+        return null;
+      }
+      const latest = await detailStorage.loadBoundary(
+        connectionId,
+        threadId,
+        meta.historyEpoch,
+        "desc",
+      );
+      return latest?.kind === "turn" && latest.sealed ? latest.remoteTurnId : null;
+    },
+    listQueued(connectionId, threadId) {
+      return source
+        .rowsForThread(connectionId, threadId)
+        .flatMap((row) =>
+          row.kind === "pending" && row.pending?.presentation === "queue" ? [row.pending] : [],
+        )
+        .sort((left, right) => {
+          const order = left.order - right.order;
+          return order !== 0 ? order : left.createdAt - right.createdAt;
+        });
+    },
+    liveRevision,
+    async loadWindow(request) {
+      await loadWindow(request);
     },
     async mergeTailTurns(connectionId, threadId, turns, historyCursor, isCurrent = () => true) {
       await writes.run(async () => {
-        if (!isCurrent()) return;
+        if (!isCurrent()) {
+          return;
+        }
         const current = materializeThreadDetail(
           source.rowsForThread(connectionId, threadId),
           connectionId,
           threadId,
           sessionId,
         );
-        if (current === null)
+        if (current === null) {
           throw new Error(`Cannot merge a tail page before thread ${threadId} is hydrated`);
+        }
         // A canonical tail replaces the active traversal boundary, not the
         // sparse cache. Stable turn ids reconcile overlaps while disconnected
         // cached islands stay durable for later cursor traversal.
@@ -2363,78 +2353,34 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         );
       });
     },
-    async appendTurns(connectionId, threadId, turns, historyCursor) {
-      return await writes.run(async () => {
-        const currentRows = source.rowsForThread(connectionId, threadId);
-        const current = materializeThreadDetail(currentRows, connectionId, threadId, sessionId);
-        if (current === null)
-          return { accepted: false, historyEpoch: source.historyEpoch(connectionId, threadId) };
-        if (turns.length > 0) {
-          // Only the supplied canonical suffix participates. Existing sealed
-          // rows are never replaced as a collection; overlapping live/final
-          // turns are reconciled by stable turn id and all new rows append
-          // after the durable maximum ordinal.
-          await publishThread(
-            connectionId,
-            { ...current.thread, turns },
-            "append",
-            Date.now(),
-            false,
-            historyCursor,
-          );
-        }
-        return { accepted: true, historyEpoch: source.historyEpoch(connectionId, threadId) };
-      });
+    planQueuedEdit(connectionId, commandId, text, attachments) {
+      return planQueuedEditMutation(source.pendingRow(connectionId, commandId), text, attachments);
     },
-    async appendTurnsAfter(
-      connectionId,
-      threadId,
-      expectedHistoryEpoch,
-      afterTurnId,
-      turns,
-      sourceWitness,
-      isCurrent,
-      requestedSourceWitness,
-    ) {
-      return await persistAnchoredPage({
-        connectionId,
-        threadId,
-        historyEpoch: expectedHistoryEpoch,
-        anchorTurnId: afterTurnId,
-        turns,
-        sourceWitness,
-        requestedSourceWitness,
-        isCurrent,
-        direction: "newer",
-      });
+    planQueuedMove(connectionId, threadId, commandId, direction) {
+      return planQueuedMoveMutation(
+        source.rowsForThread(connectionId, threadId),
+        commandId,
+        direction,
+      );
     },
-    async prependTurnsBefore(
-      connectionId,
-      threadId,
-      expectedHistoryEpoch,
-      beforeTurnId,
-      turns,
-      hasMore,
-      sourceWitness,
-      isCurrent,
-      requestedSourceWitness,
-    ) {
-      return await persistAnchoredPage({
-        connectionId,
-        threadId,
-        historyEpoch: expectedHistoryEpoch,
-        anchorTurnId: beforeTurnId,
-        turns,
-        sourceWitness,
-        requestedSourceWitness,
-        isCurrent,
-        direction: "older",
-        hasMore,
-      });
+    planQueuedRemoval(connectionId, commandId) {
+      return planQueuedRemovalMutation(source.pendingRow(connectionId, commandId));
     },
-    invalidateHistoryExhaustion,
-    async replaceActiveThread(connectionId, thread) {
-      await writes.run(async () => await publishLiveSlice(connectionId, thread));
+    preloadWindow(request) {
+      const scope = threadChatScope(request.connectionId, request.threadId);
+      const lease = windowIntents.begin(scope, threadChatRequestKey(request), () =>
+        chat.retainWindow(request.connectionId, request.threadId),
+      );
+      const resource = chat.resource(request, async () => {
+        await loadWindow(request, lease.token);
+      });
+      void Promise.resolve(resource.ready$.peek()).catch(() => undefined);
+      return () => {
+        windowIntents.cancel(lease);
+      };
+    },
+    async prepare() {
+      await detailStorage.prepare();
     },
     async prependTurns(
       connectionId,
@@ -2446,15 +2392,18 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     ) {
       const startedAt = performance.now();
       recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.prepend_started", {
-        values: { expectedHistoryEpoch, turnCount: turns.length },
         tags: { nextCursor: nextCursor === null ? "exhausted" : "available" },
+        values: { expectedHistoryEpoch, turnCount: turns.length },
       });
       try {
         const result = await writes.run(async () => {
           const historyEpoch = source.historyEpoch(connectionId, threadId);
-          if (historyEpoch !== expectedHistoryEpoch || !isCurrent())
-            return { accepted: false, historyEpoch, extendedMinimum: false };
-          if (disposed) throw new Error("Thread detail database is closed");
+          if (historyEpoch !== expectedHistoryEpoch || !isCurrent()) {
+            return { accepted: false, extendedMinimum: false, historyEpoch };
+          }
+          if (disposed) {
+            throw new Error("Thread detail database is closed");
+          }
           const before = chat.window$(connectionId, threadId).peek();
           const beforeTurnRowIds = before.turnRowIds;
           const facts = await loadDurablePrependRows(
@@ -2465,13 +2414,15 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           );
           if (
             !isCurrent() ||
+            // WHY: close() may run while durable rows are loading; TypeScript retains the earlier non-disposed narrowing across the await.
+            // oxlint-disable-next-line typescript/no-unnecessary-condition
             disposed ||
             source.historyEpoch(connectionId, threadId) !== historyEpoch
           ) {
             return {
               accepted: false,
-              historyEpoch: source.historyEpoch(connectionId, threadId),
               extendedMinimum: false,
+              historyEpoch: source.historyEpoch(connectionId, threadId),
             };
           }
           const prependedOrdinals = projectPrependedTurnOrdinals(
@@ -2482,12 +2433,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           const metadata = source.get(threadMetaKey(connectionId, threadId));
           const prependedCoverage = extendAuthoritativeCoverage(metadata, turns, prependedOrdinals);
           await commitThreadProjection({
+            authority: "authoritative",
             connectionId,
+            historyEpoch,
+            ordinals: prependedOrdinals,
             threadId,
             turns,
-            ordinals: prependedOrdinals,
-            historyEpoch,
-            authority: "authoritative",
             ...(metadata?.kind === "thread" && metadata.thread !== null
               ? {
                   threadMeta: threadRow(
@@ -2541,12 +2492,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
                 layoutRevision: current.layoutRevision,
               },
               {
-                scope: threadChatScope(connectionId, threadId),
-                requestKey: current.requestKey,
+                earliestSealedOrdinal: minimumNullable(current.earliestSealedOrdinal, minimum),
                 historyEpoch,
                 latestSealedOrdinal: current.latestSealedOrdinal,
-                earliestSealedOrdinal: minimumNullable(current.earliestSealedOrdinal, minimum),
+                requestKey: current.requestKey,
                 residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+                scope: threadChatScope(connectionId, threadId),
                 ...membership,
                 rows,
               },
@@ -2558,166 +2509,334 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           }
           return {
             accepted: true,
-            historyEpoch,
             extendedMinimum: publishedRange,
+            historyEpoch,
           };
         });
         recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.prepend_finished", {
-          values: {
-            durationMs: performance.now() - startedAt,
-            expectedHistoryEpoch,
-            actualHistoryEpoch: result.historyEpoch,
-            turnCount: turns.length,
-          },
           tags: {
             accepted: result.accepted ? "true" : "false",
             extendedMinimum: result.extendedMinimum ? "true" : "false",
             nextCursor: nextCursor === null ? "exhausted" : "available",
           },
+          values: {
+            actualHistoryEpoch: result.historyEpoch,
+            durationMs: performance.now() - startedAt,
+            expectedHistoryEpoch,
+            turnCount: turns.length,
+          },
         });
         return result;
-      } catch (cause) {
+      } catch (error) {
         recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.prepend_failed", {
+          tags: { errorKind: telemetryErrorKind(error) },
           values: {
             durationMs: performance.now() - startedAt,
             expectedHistoryEpoch,
             turnCount: turns.length,
           },
-          tags: { errorKind: telemetryErrorKind(cause) },
         });
-        throw cause;
+        throw error;
       }
     },
-    async replaceTurnItems(connectionId, threadId, turnId, items) {
-      await writes.run(async () => {
-        // Activity hydration addresses one already loaded turn. Never scan the
-        // full retained history just to attach its lazily fetched tool output.
-        if (disposed) return;
-        const contentKey = source.turnRowKey(connectionId, threadId, turnId);
-        const turnContent = contentKey === null ? undefined : source.get(contentKey);
-        if (turnContent?.turn === null || turnContent?.turn === undefined) return;
-        const row = activityRow(
-          connectionId,
-          threadId,
-          turnId,
-          turnContent.ordinal,
-          items,
-          turnContent.historyEpoch,
-        );
-        if (!shouldWriteHydratedActivityRow(source.get(row.id), row)) return;
-        await runWriteTransaction((controls) => {
-          const changed = writeOwnedRow(controls, row.id, row);
-          return { value: undefined, durable: changed };
-        });
+    async prependTurnsBefore(
+      connectionId,
+      threadId,
+      expectedHistoryEpoch,
+      beforeTurnId,
+      turns,
+      hasMore,
+      sourceWitness,
+      isCurrent,
+      requestedSourceWitness,
+    ) {
+      return persistAnchoredPage({
+        anchorTurnId: beforeTurnId,
+        connectionId,
+        direction: "older",
+        hasMore,
+        historyEpoch: expectedHistoryEpoch,
+        isCurrent,
+        requestedSourceWitness,
+        sourceWitness,
+        threadId,
+        turns,
       });
     },
-    createPending(input) {
-      const order = input.order ?? input.createdAt;
-      return pendingRow(input.connectionId, input.threadId, { ...input, order });
-    },
-    stagePendingMutation(mutation) {
-      if (closing || disposed) return { rollback() {}, complete() {} };
-      const owner = nextStagedPendingOwner++;
-      const previous = new Map<string, ThreadDetailRow | undefined>();
-      const changes: Array<
-        { type: "insert" | "update"; value: ThreadDetailRow } | { type: "delete"; key: string }
-      > = [];
-      for (const key of mutation.deletes) {
-        const row = source.get(key);
-        previous.set(key, row);
-        if (row?.kind !== "pending" || row.pending?.confirmation !== undefined) continue;
-        source.delete(key);
-        stagedPendingOverlays.set(key, {
-          owner,
-          key,
-          connectionId: row.connectionId,
-          threadId: row.remoteThreadId,
-          row: null,
+    async pullRange(connectionId, threadId, direction) {
+      const scope = threadChatScope(connectionId, threadId);
+      const pullKey = `${scope}\u0000${direction}`;
+      const existing = rangePulls.get(pullKey);
+      if (existing !== undefined) {
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_coalesced", {
+          tags: { direction },
         });
-        changes.push({ type: "delete", key });
+        return existing;
       }
-      for (const row of mutation.upserts) {
-        const current = source.get(row.id);
-        previous.set(row.id, current);
-        if (current?.kind === "turn") continue;
-        const next =
-          current?.kind === "pending" &&
-          current.pending !== null &&
-          current.pending !== undefined &&
-          row.pending !== null &&
-          row.pending !== undefined
-            ? { ...row, pending: mergePendingTimelineEntry(current.pending, row.pending) }
-            : row;
-        source.set(next.id, next);
-        stagedPendingOverlays.set(next.id, {
-          owner,
-          key: next.id,
-          connectionId: next.connectionId,
-          threadId: next.remoteThreadId,
-          row: next,
-        });
-        changes.push({ type: current === undefined ? "insert" : "update", value: next });
-      }
-      chat.publishChanges(changes);
-      const scopes = new Map<string, { connectionId: string; threadId: string }>();
-      for (const value of [...previous.values(), ...mutation.upserts]) {
-        if (value === undefined) continue;
-        scopes.set(threadScope(value.connectionId, value.remoteThreadId), {
-          connectionId: value.connectionId,
-          threadId: value.remoteThreadId,
-        });
-      }
-      for (const { connectionId, threadId } of scopes.values())
-        chat.refreshThread(connectionId, threadId, source.rowsForThread(connectionId, threadId));
-      let active = true;
-      return {
-        rollback() {
-          if (!active) return;
-          active = false;
-          const rollbackChanges: Array<
-            { type: "insert" | "update"; value: ThreadDetailRow } | { type: "delete"; key: string }
-          > = [];
-          for (const [key, row] of previous) {
-            if (stagedPendingOverlays.get(key)?.owner !== owner) continue;
-            stagedPendingOverlays.delete(key);
-            if (source.get(key)?.kind === "turn") continue;
-            if (source.get(key)?.pending?.confirmation !== undefined) continue;
-            if (row === undefined) {
-              source.delete(key);
-              rollbackChanges.push({ type: "delete", key });
+      const operationStartedAt = performance.now();
+      recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_started", {
+        tags: { direction },
+      });
+      let noOpReason = "none";
+      let residentTurnCount = 0;
+      let newerAfterTurnId: string | null = null;
+      let olderBeforeTurnId: string | null = null;
+      const initialWindow = chat.window$(connectionId, threadId).peek();
+      const pullStoredRange = async (): Promise<boolean> =>
+        writes.run(async () => {
+          if (disposed) {
+            noOpReason = "disposed";
+            return false;
+          }
+          const snapshot = chat.window$(connectionId, threadId).peek();
+          if (!threadLoadHasResidentSnapshot(snapshot.status)) {
+            noOpReason = "snapshot_not_resident";
+            return false;
+          }
+          const residentTurns = chat
+            .readRows(snapshot.turnRowIds)
+            .filter(
+              (row) =>
+                row.kind === "turn" && row.sealed && row.historyEpoch === snapshot.historyEpoch,
+            );
+          residentTurnCount = residentTurns.length;
+          if (residentTurns.length === 0 && direction !== "latest") {
+            noOpReason = "resident_range_empty";
+            return false;
+          }
+          const residentMinimum = residentTurns.reduce<number | null>(
+            (minimum, row) => (minimum === null ? row.ordinal : Math.min(minimum, row.ordinal)),
+            null,
+          );
+          const residentMaximum = residentTurns.reduce<number | null>(
+            (maximum, row) => (maximum === null ? row.ordinal : Math.max(maximum, row.ordinal)),
+            null,
+          );
+          const sqliteStartedAt = performance.now();
+          let latestSealedOrdinal = snapshot.latestSealedOrdinal;
+          let earliestSealedOrdinal = snapshot.earliestSealedOrdinal;
+          let loaded;
+          if (direction === "latest") {
+            loaded = await detailStorage.loadResolvedWindow({
+              anchorTurnId: null,
+              connectionId,
+              newerBuffer: THREAD_HISTORY_PAGE_SIZE,
+              threadId,
+              turnLimit: THREAD_RESIDENT_TURN_LIMIT,
+            });
+            latestSealedOrdinal = loaded.latestSealedOrdinal;
+            earliestSealedOrdinal = loaded.earliestSealedOrdinal;
+          } else {
+            const boundaryOrdinal = direction === "older" ? residentMinimum : residentMaximum;
+            if (boundaryOrdinal === null) {
+              noOpReason = "resident_boundary_missing";
+              return false;
+            }
+            loaded = await detailStorage.loadAdjacentWindow({
+              boundaryOrdinal,
+              connectionId,
+              direction,
+              historyEpoch: snapshot.historyEpoch,
+              threadId,
+              turnLimit: THREAD_HISTORY_PAGE_SIZE,
+            });
+            const boundaryTurnId =
+              residentTurns.find((row) => row.ordinal === boundaryOrdinal)?.remoteTurnId ?? null;
+            if (direction === "older") {
+              olderBeforeTurnId = boundaryTurnId;
             } else {
-              source.set(key, row);
-              rollbackChanges.push({ type: "update", value: row });
+              newerAfterTurnId = boundaryTurnId;
+            }
+            const contiguous = contiguousHistoryPage(loaded.turnRows, boundaryOrdinal, direction);
+            const selectedIds = new Set(contiguous.map((row) => row.remoteTurnId));
+            const gap = contiguous.length !== loaded.turnRows.length;
+            loaded = {
+              detailRows: loaded.detailRows.filter((row) => selectedIds.has(row.remoteTurnId)),
+              liveRows: loaded.liveRows,
+              turnRows: contiguous,
+            };
+            if (loaded.turnRows.length === 0) {
+              noOpReason = `${direction}_${gap ? "gap" : "boundary"}`;
+              return false;
             }
           }
-          chat.publishChanges(rollbackChanges);
-          for (const { connectionId, threadId } of scopes.values())
-            chat.refreshThread(
-              connectionId,
-              threadId,
-              source.rowsForThread(connectionId, threadId),
-            );
-        },
-        complete() {
-          if (!active) return;
-          active = false;
-          for (const key of previous.keys()) {
-            if (stagedPendingOverlays.get(key)?.owner === owner) stagedPendingOverlays.delete(key);
+          recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_sqlite_loaded", {
+            tags: { direction },
+            values: {
+              detailRows: loaded.detailRows.length,
+              durationMs: performance.now() - sqliteStartedAt,
+              liveRows: loaded.liveRows.length,
+              turnRows: loaded.turnRows.length,
+            },
+          });
+          const persistedRows = [...loaded.turnRows, ...loaded.detailRows, ...loaded.liveRows];
+          const expandedRows = composeExpandedRangeRows(
+            chat
+              .readRows([...snapshot.turnRowIds, ...snapshot.detailRowIds, ...snapshot.liveRowIds])
+              .map((row) => source.get(row.id) ?? row),
+            persistedRows,
+            snapshot.historyEpoch,
+          );
+          const rows = mergePendingTimelineOverlays(
+            direction === "latest"
+              ? trimExpandedRangeRows(
+                  expandedRows,
+                  snapshot.historyEpoch,
+                  "newer",
+                  THREAD_RESIDENT_TURN_LIMIT,
+                )
+              : expandedRows,
+            [...stagedPendingOverlays.values()],
+            connectionId,
+            threadId,
+          );
+          const membership = rangeMembership(rows, snapshot.historyEpoch);
+          const committed = chat.commitRange(
+            connectionId,
+            threadId,
+            {
+              historyEpoch: snapshot.historyEpoch,
+              layoutRevision: snapshot.layoutRevision,
+            },
+            {
+              earliestSealedOrdinal,
+              historyEpoch: snapshot.historyEpoch,
+              latestSealedOrdinal,
+              requestKey: snapshot.requestKey,
+              residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+              scope,
+              ...membership,
+              rows,
+            },
+          );
+          if (!committed) {
+            noOpReason = "stale_commit";
+            return false;
           }
-        },
+          source.replaceThreadLoaded(connectionId, threadId, rows);
+          return true;
+        });
+      const operation = (async (): Promise<boolean> => {
+        const local = await pullStoredRange();
+        if (local || remoteLoader === null) {
+          return local;
+        }
+        const historyEpoch = source.historyEpoch(connectionId, threadId);
+        const exhaustionScope = `${scope}\u0000${String(historyEpoch)}`;
+        const exhaustionRevision = historyExhaustionRevision;
+        if (
+          direction === "older" &&
+          (noOpReason === "older_boundary" || noOpReason === "older_gap") &&
+          // WHY: The no-op reason and boundary ID are set together by the range owner, but TypeScript does not retain that relation across the local closure.
+          // oxlint-disable-next-line typescript/no-unnecessary-condition
+          olderBeforeTurnId !== null &&
+          remoteLoader.loadBefore !== undefined
+        ) {
+          if (olderExhaustedTurnIdByThread.get(exhaustionScope) === olderBeforeTurnId) {
+            return false;
+          }
+          const result = await remoteLoader.loadBefore({
+            beforeTurnId: olderBeforeTurnId,
+            connectionId,
+            historyEpoch,
+            threadId,
+          });
+          if (
+            result.status === "persisted" &&
+            !result.hasMore &&
+            exhaustionRevision === historyExhaustionRevision &&
+            source.historyEpoch(connectionId, threadId) === historyEpoch
+          ) {
+            olderExhaustedTurnIdByThread.set(exhaustionScope, result.oldestTurnId);
+          }
+        } else if (direction === "older" && noOpReason === "older_boundary") {
+          const cursor = source.historyCursor(connectionId, threadId);
+          if (typeof cursor !== "string") {
+            return false;
+          }
+          await remoteLoader.loadOlder({ connectionId, cursor, historyEpoch, threadId });
+        } else if (
+          direction === "newer" &&
+          (noOpReason === "newer_boundary" || noOpReason === "newer_gap") &&
+          // WHY: The no-op reason and boundary ID are set together by the range owner, but TypeScript does not retain that relation across the local closure.
+          // oxlint-disable-next-line typescript/no-unnecessary-condition
+          newerAfterTurnId !== null
+        ) {
+          if (newerExhaustedTurnIdByThread.get(exhaustionScope) === newerAfterTurnId) {
+            return false;
+          }
+          const result = await remoteLoader.loadNewer({
+            afterTurnId: newerAfterTurnId,
+            connectionId,
+            historyEpoch,
+            threadId,
+          });
+          if (
+            result.status === "persisted" &&
+            !result.hasMore &&
+            exhaustionRevision === historyExhaustionRevision &&
+            source.historyEpoch(connectionId, threadId) === historyEpoch
+          ) {
+            newerExhaustedTurnIdByThread.set(exhaustionScope, result.lastTurnId);
+          }
+        } else {
+          return false;
+        }
+        noOpReason = "none";
+        const currentWindow = chat.window$(connectionId, threadId).peek();
+        if (
+          currentWindow.historyEpoch !== initialWindow.historyEpoch ||
+          currentWindow.requestKey !== initialWindow.requestKey
+        ) {
+          return false;
+        }
+        const extended = await pullStoredRange();
+        return (
+          extended ||
+          !sameStringSequence(
+            initialWindow.turnRowIds,
+            chat.window$(connectionId, threadId).peek().turnRowIds,
+          )
+        );
+      })();
+      rangePulls.set(pullKey, operation);
+      try {
+        const pulled = await operation;
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_finished", {
+          tags: {
+            direction,
+            outcome: pulled ? "pulled" : "ignored",
+            reason: pulled ? "none" : noOpReason,
+          },
+          values: {
+            durationMs: performance.now() - operationStartedAt,
+            residentTurnCount,
+          },
+        });
+        return pulled;
+      } catch (error) {
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_failed", {
+          tags: { direction, errorKind: telemetryErrorKind(error) },
+          values: { durationMs: performance.now() - operationStartedAt },
+        });
+        throw error;
+      } finally {
+        if (rangePulls.get(pullKey) === operation) {
+          rangePulls.delete(pullKey);
+        }
+      }
+    },
+    readWindowRows(snapshot) {
+      return {
+        detailRows: chat.readRows(snapshot.detailRowIds),
+        liveRows: chat.readRows(snapshot.liveRowIds),
+        turnRows: chat.readRows(snapshot.turnRowIds),
       };
     },
-    async commitPending(row, options) {
-      return await persistPendingRow(row, options?.durable === true);
-    },
-    async commitPendingMutation(mutation, options) {
-      return await persistPendingMutation(mutation, options?.durable === true);
-    },
-    async applyCommandDelivery(delivery) {
-      await applyCommandDelivery(delivery);
-    },
     async reconcileNativeCommands(connectionId, threadId, deliveries) {
-      if (disposed || !source.has(threadMetaKey(connectionId, threadId))) return;
+      if (disposed || !source.has(threadMetaKey(connectionId, threadId))) {
+        return;
+      }
       const activeCommandIds = new Set(
         deliveries.flatMap((delivery) =>
           delivery.connectionId === connectionId &&
@@ -2758,12 +2877,15 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         }
       }
       for (const delivery of deliveries) {
-        if (delivery.connectionId !== connectionId) continue;
+        if (delivery.connectionId !== connectionId) {
+          continue;
+        }
         if (
           delivery.threadId !== threadId &&
           source.pendingRow(connectionId, delivery.targetCommandId ?? "") === undefined
-        )
+        ) {
           continue;
+        }
         await applyCommandDelivery(delivery, true);
       }
       const projectedRows = source.rowsForThread(connectionId, threadId);
@@ -2772,17 +2894,11 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         retainedCommandIds,
       );
       const cleanup = planPendingDeliveryProjectionCleanup(projectedRows, retainedCommandIds);
-      if (cleanup.deletes.length > 0) await persistPendingMutation(cleanup, true);
+      if (cleanup.deletes.length > 0) {
+        await persistPendingMutation(cleanup, true);
+      }
       if (reconciliation.pendingDeliveryCount > 0 || cleanup.deletes.length > 0) {
         recordThreadHistoryTelemetry(connectionId, threadId, "chat.optimistic.reconciliation", {
-          values: {
-            activeCommandCount: activeCommandIds.size,
-            pendingDeliveryCount: reconciliation.pendingDeliveryCount,
-            inactiveDeliveryCount: reconciliation.inactiveDeliveryCount,
-            cleanedDeliveryCount: cleanup.deletes.length,
-            stalledDeliveryCount: reconciliation.stalledCommandIds.length,
-            oldestInactiveAgeMs: reconciliation.oldestInactiveAgeMs,
-          },
           tags: {
             outcome:
               reconciliation.stalledCommandIds.length > 0
@@ -2790,6 +2906,14 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
                 : reconciliation.pendingDeliveryCount > 0
                   ? "pending"
                   : "settled",
+          },
+          values: {
+            activeCommandCount: activeCommandIds.size,
+            cleanedDeliveryCount: cleanup.deletes.length,
+            inactiveDeliveryCount: reconciliation.inactiveDeliveryCount,
+            oldestInactiveAgeMs: reconciliation.oldestInactiveAgeMs,
+            pendingDeliveryCount: reconciliation.pendingDeliveryCount,
+            stalledDeliveryCount: reconciliation.stalledCommandIds.length,
           },
         });
       }
@@ -2804,15 +2928,20 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           threadId,
           "chat.optimistic.reconciliation_stalled",
           {
-            values: {
-              stalledDeliveryCount: reconciliation.stalledCommandIds.length,
-              oldestInactiveAgeMs: reconciliation.oldestInactiveAgeMs,
-              activeCommandCount: activeCommandIds.size,
-            },
             tags: { authoritativeMatch: "missing" },
+            values: {
+              activeCommandCount: activeCommandIds.size,
+              oldestInactiveAgeMs: reconciliation.oldestInactiveAgeMs,
+              stalledDeliveryCount: reconciliation.stalledCommandIds.length,
+            },
           },
         );
       }
+    },
+    async replaceActiveThread(connectionId, thread) {
+      await writes.run(async () => {
+        await publishLiveSlice(connectionId, thread);
+      });
     },
     async replaceQueued(connectionId, threadId, commands, preserveCommandIds = new Set()) {
       const incoming = new Map(
@@ -2822,8 +2951,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             const existing = source.pendingRow(connectionId, command.commandId)?.pending;
             // Non-terminal receipts may advance an optimistic row created by
             // this app, but must never reconstruct historical direct messages.
-            if (command.presentation === "delivery" && existing?.presentation !== "delivery")
+            if (command.presentation === "delivery" && existing?.presentation !== "delivery") {
               return [];
+            }
             // Once Companion has forwarded an explicit queue entry to App Server,
             // the same durable command becomes the optimistic chat row. Keeping
             // its command id makes the later canonical user item replace this row
@@ -2834,125 +2964,318 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             // durable queue row to the chat projection. Reconstructing every
             // historical delivered receipt after cache loss resurrects stale
             // optimistic bubbles on every queue/list refresh.
-            if (acceptedQueueHandoff && existing === undefined) return [];
+            if (acceptedQueueHandoff && existing === undefined) {
+              return [];
+            }
             const queuedInput = parseQueuedInput(command.params);
             const entry: PendingTimelineEntry = {
-              commandId: command.commandId,
-              method: "turn/start",
-              presentation: acceptedQueueHandoff ? "delivery" : command.presentation,
-              workspaceRequestId: command.workspaceRequestId,
-              text: queuedInput.text,
               attachments: queuedInput.attachments,
+              attempts: existing?.attempts ?? 0,
+              commandId: command.commandId,
+              createdAt: command.createdAt,
+              lastError: command.lastError,
+              method: "turn/start",
+              order: command.order,
+              presentation: acceptedQueueHandoff ? "delivery" : command.presentation,
               state:
                 command.presentation === "delivery" || acceptedQueueHandoff
                   ? pendingDeliveryStateFromCompanion(command.state)
                   : command.state,
-              attempts: existing?.attempts ?? 0,
-              lastError: command.lastError,
-              createdAt: command.createdAt,
+              text: queuedInput.text,
               updatedAt: command.updatedAt,
-              order: command.order,
+              workspaceRequestId: command.workspaceRequestId,
             };
             return [[command.commandId, pendingRow(connectionId, threadId, entry)] as const];
           }),
       );
       await writes.run(async () => {
-        if (disposed) return;
+        if (disposed) {
+          return;
+        }
         await runWriteTransaction((controls) => {
           let changed = false;
           for (const row of source.rowsForThread(connectionId, threadId)) {
-            if (row.kind !== "pending" || row.pending === null || row.pending === undefined)
+            if (row.kind !== "pending" || row.pending === null || row.pending === undefined) {
               continue;
+            }
             const retireMissingQueue =
               row.pending.presentation === "queue" &&
               !incoming.has(row.pending.commandId) &&
               !preserveCommandIds.has(row.pending.commandId);
-            if (!retireMissingQueue) continue;
-            if (deleteRow(source, controls, row.id)) changed = true;
+            if (!retireMissingQueue) {
+              continue;
+            }
+            if (deleteRow(source, controls, row.id)) {
+              changed = true;
+            }
           }
           for (const row of incoming.values()) {
             const incomingEntry = row.pending;
-            if (incomingEntry === null || incomingEntry === undefined) continue;
+            if (incomingEntry === null || incomingEntry === undefined) {
+              continue;
+            }
             const previous = source.get(row.id);
-            if (previous?.kind === "turn") continue;
+            if (previous?.kind === "turn") {
+              continue;
+            }
             const next =
               previous?.kind === "pending" &&
               previous.pending !== null &&
               previous.pending !== undefined
                 ? { ...row, pending: mergePendingTimelineEntry(previous.pending, incomingEntry) }
                 : row;
-            if (writeOwnedRow(controls, next.id, next)) changed = true;
+            if (writeOwnedRow(controls, next.id, next)) {
+              changed = true;
+            }
           }
-          return { value: undefined, durable: changed };
+          return { durable: changed, value: undefined };
         });
       });
     },
-    hasPendingDelivery(connectionId, threadId, commandId) {
-      const row = source.pendingRow(connectionId, commandId);
-      return (
-        row?.remoteThreadId === threadId &&
-        row.kind === "pending" &&
-        row.pending?.presentation === "delivery"
-      );
+    async replaceThreadSnapshot(connectionId, thread, _reason, historyCursor) {
+      await writes.run(async () => {
+        await publishThread(connectionId, thread, "reset", Date.now(), false, historyCursor);
+      });
     },
-    listQueued(connectionId, threadId) {
-      return source
-        .rowsForThread(connectionId, threadId)
-        .flatMap((row) =>
-          row.kind === "pending" && row.pending?.presentation === "queue" ? [row.pending] : [],
-        )
-        .sort((left, right) => left.order - right.order || left.createdAt - right.createdAt);
-    },
-    planQueuedEdit(connectionId, commandId, text, attachments) {
-      return planQueuedEditMutation(source.pendingRow(connectionId, commandId), text, attachments);
-    },
-    planQueuedRemoval(connectionId, commandId) {
-      return planQueuedRemovalMutation(source.pendingRow(connectionId, commandId));
-    },
-    planQueuedMove(connectionId, threadId, commandId, direction) {
-      return planQueuedMoveMutation(
-        source.rowsForThread(connectionId, threadId),
-        commandId,
-        direction,
-      );
-    },
-    getThread(connectionId, threadId) {
-      const rows = source.rowsForThread(connectionId, threadId);
-      const thread =
-        materializeThreadDetail(rows, connectionId, threadId, sessionId)?.thread ?? null;
-      if (
-        thread?.turns.length === 0 &&
-        rows.some((row) => row.kind === "thread" && row.historyHadTurns === true)
-      )
-        return null;
-      return thread;
-    },
-    close() {
-      if (closePromise !== null) return closePromise;
-      closing = true;
-      windowIntents.close();
-      for (const snapshot of projectionSnapshots.values()) snapshot.resolve();
-      projectionSnapshots.clear();
-      const drain = writes.close();
-      closePromise = (async () => {
-        try {
-          // Tasks accepted before closing still see disposed=false and cross
-          // their durable boundary before SQLite is flushed and closed.
-          await drain;
-          disposed = true;
-          await detailStorage.close();
-        } finally {
-          disposed = true;
-          unregisterDetailFlusher();
-          rangePulls.clear();
-          reportedStalledOptimisticFingerprintByThread.clear();
-          stagedPendingOverlays.clear();
-          newerExhaustedTurnIdByThread.clear();
-          olderExhaustedTurnIdByThread.clear();
-          chat.close();
+    async replaceTurnItems(connectionId, threadId, turnId, items) {
+      await writes.run(async () => {
+        // Activity hydration addresses one already loaded turn. Never scan the
+        // full retained history just to attach its lazily fetched tool output.
+        if (disposed) {
+          return;
         }
-      })();
-      return closePromise;
+        const contentKey = source.turnRowKey(connectionId, threadId, turnId);
+        const turnContent = contentKey === null ? undefined : source.get(contentKey);
+        if (turnContent?.turn === null || turnContent?.turn === undefined) {
+          return;
+        }
+        const row = activityRow(
+          connectionId,
+          threadId,
+          turnId,
+          turnContent.ordinal,
+          items,
+          turnContent.historyEpoch,
+        );
+        if (!shouldWriteHydratedActivityRow(source.get(row.id), row)) {
+          return;
+        }
+        await runWriteTransaction((controls) => {
+          const changed = writeOwnedRow(controls, row.id, row);
+          return { durable: changed, value: undefined };
+        });
+      });
+    },
+    retainWindow(connectionId, threadId) {
+      const release = chat.retainWindow(connectionId, threadId);
+      windowIntents.adopt(threadChatScope(connectionId, threadId));
+      // Retention is the model-owned subscription boundary. Unlike tap or
+      // press-in, it also runs when the app restores directly into an already
+      // open conversation after a process or OTA restart.
+      remoteLoader?.observe?.({ connectionId, threadId });
+      return release;
+    },
+    sessionId,
+    setRemoteLoader(loader) {
+      remoteLoader = loader;
+    },
+    stagePendingMutation(mutation) {
+      if (closing || disposed) {
+        return { complete() {}, rollback() {} };
+      }
+      const owner = nextStagedPendingOwner++;
+      const previous = new Map<string, ThreadDetailRow | undefined>();
+      const changes: Array<
+        { type: "insert" | "update"; value: ThreadDetailRow } | { key: string; type: "delete" }
+      > = [];
+      for (const key of mutation.deletes) {
+        const row = source.get(key);
+        previous.set(key, row);
+        if (row?.kind !== "pending" || row.pending?.confirmation !== undefined) {
+          continue;
+        }
+        source.delete(key);
+        stagedPendingOverlays.set(key, {
+          connectionId: row.connectionId,
+          key,
+          owner,
+          row: null,
+          threadId: row.remoteThreadId,
+        });
+        changes.push({ key, type: "delete" });
+      }
+      for (const row of mutation.upserts) {
+        const current = source.get(row.id);
+        previous.set(row.id, current);
+        if (current?.kind === "turn") {
+          continue;
+        }
+        const next =
+          current?.kind === "pending" &&
+          current.pending !== null &&
+          current.pending !== undefined &&
+          row.pending !== null &&
+          row.pending !== undefined
+            ? { ...row, pending: mergePendingTimelineEntry(current.pending, row.pending) }
+            : row;
+        source.set(next.id, next);
+        stagedPendingOverlays.set(next.id, {
+          connectionId: next.connectionId,
+          key: next.id,
+          owner,
+          row: next,
+          threadId: next.remoteThreadId,
+        });
+        changes.push({ type: current === undefined ? "insert" : "update", value: next });
+      }
+      chat.publishChanges(changes);
+      const scopes = new Map<string, { connectionId: string; threadId: string }>();
+      for (const value of [...previous.values(), ...mutation.upserts]) {
+        if (value === undefined) {
+          continue;
+        }
+        scopes.set(threadScope(value.connectionId, value.remoteThreadId), {
+          connectionId: value.connectionId,
+          threadId: value.remoteThreadId,
+        });
+      }
+      for (const { connectionId, threadId } of scopes.values()) {
+        chat.refreshThread(connectionId, threadId, source.rowsForThread(connectionId, threadId));
+      }
+      let active = true;
+      return {
+        complete() {
+          if (!active) {
+            return;
+          }
+          active = false;
+          for (const key of previous.keys()) {
+            if (stagedPendingOverlays.get(key)?.owner === owner) {
+              stagedPendingOverlays.delete(key);
+            }
+          }
+        },
+        rollback() {
+          if (!active) {
+            return;
+          }
+          active = false;
+          const rollbackChanges: Array<
+            { type: "insert" | "update"; value: ThreadDetailRow } | { key: string; type: "delete" }
+          > = [];
+          for (const [key, row] of previous) {
+            if (stagedPendingOverlays.get(key)?.owner !== owner) {
+              continue;
+            }
+            stagedPendingOverlays.delete(key);
+            if (source.get(key)?.kind === "turn") {
+              continue;
+            }
+            if (source.get(key)?.pending?.confirmation !== undefined) {
+              continue;
+            }
+            if (row === undefined) {
+              source.delete(key);
+              rollbackChanges.push({ key, type: "delete" });
+            } else {
+              source.set(key, row);
+              rollbackChanges.push({ type: "update", value: row });
+            }
+          }
+          chat.publishChanges(rollbackChanges);
+          for (const { connectionId, threadId } of scopes.values()) {
+            chat.refreshThread(
+              connectionId,
+              threadId,
+              source.rowsForThread(connectionId, threadId),
+            );
+          }
+        },
+      };
+    },
+    async synchronizeThread(input) {
+      await writes.run(async () => {
+        const snapshotActive = projectionSnapshots.has(
+          threadScope(input.connectionId, input.thread.id),
+        );
+        const preserveConcurrentHead =
+          !snapshotActive &&
+          liveRevision(input.connectionId, input.thread.id) !== input.expectedLiveRevision;
+        await publishThread(
+          input.connectionId,
+          input.thread,
+          input.mode === "reset" ? "reset" : "authoritative",
+          Date.now(),
+          preserveConcurrentHead,
+          input.historyCursor,
+          input.throughCursor,
+          input.sourceWitness,
+          input.isCurrent,
+        );
+      });
+    },
+    async trimRange(connectionId, threadId, direction) {
+      return writes.run(async () => {
+        const trimmed = await Promise.resolve().then(() => {
+          if (disposed) {
+            return false;
+          }
+          const snapshot = chat.window$(connectionId, threadId).peek();
+          if (!threadLoadHasResidentSnapshot(snapshot.status)) {
+            return false;
+          }
+          const residentRows = source.rowsForThread(connectionId, threadId);
+          const rows = trimExpandedRangeRows(
+            residentRows,
+            snapshot.historyEpoch,
+            direction,
+            THREAD_RESIDENT_TURN_LIMIT,
+          );
+          if (rows.length === residentRows.length) {
+            return false;
+          }
+          const membership = rangeMembership(rows, snapshot.historyEpoch);
+          const committed = chat.commitRange(
+            connectionId,
+            threadId,
+            {
+              historyEpoch: snapshot.historyEpoch,
+              layoutRevision: snapshot.layoutRevision,
+            },
+            {
+              earliestSealedOrdinal: snapshot.earliestSealedOrdinal,
+              historyEpoch: snapshot.historyEpoch,
+              latestSealedOrdinal: snapshot.latestSealedOrdinal,
+              requestKey: snapshot.requestKey,
+              residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+              scope: threadChatScope(connectionId, threadId),
+              ...membership,
+              rows,
+            },
+          );
+          if (!committed) {
+            return false;
+          }
+          source.replaceThreadLoaded(connectionId, threadId, rows);
+          recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_trimmed", {
+            tags: { direction },
+            values: {
+              afterTurnCount: membership.turnRowIds.length,
+              beforeTurnCount: snapshot.turnRowIds.length,
+            },
+          });
+          return true;
+        });
+        return trimmed;
+      });
+    },
+    windowCoverage(request, snapshot) {
+      return threadWindowCoverage(request, database.readWindowRows(snapshot));
+    },
+    windowResource(request) {
+      return chat.resource(request, async () => {
+        await database.loadWindow(request);
+      });
     },
   };
   return database;
@@ -2970,21 +3293,21 @@ function baseRow(
   lastOpenedAt: number,
 ): ThreadDetailRow {
   return {
+    activityItems: null,
+    connectionId,
+    historyEpoch,
     id,
     kind,
-    connectionId,
+    lastOpenedAt,
+    ordinal,
+    pending: null,
     remoteThreadId: threadId,
     remoteTurnId: turnId,
-    historyEpoch,
-    ordinal,
-    sessionId,
-    lastOpenedAt,
     sealed: false,
+    sessionId,
     thread: null,
     turn: null,
     turnMetadata: null,
-    activityItems: null,
-    pending: null,
   };
 }
 
@@ -3021,15 +3344,15 @@ function threadRow(
     ...(historyCoverageMaxOrdinal === undefined ? {} : { historyCoverageMaxOrdinal }),
     ...(projectionCursor === undefined ? {} : { projectionCursor }),
     ...(historySourceWitness === undefined ? {} : { historySourceWitness }),
-    thread: stripThreadTurns(thread),
-    currentUsage,
     currentOutcome,
+    currentUsage,
+    thread: stripThreadTurns(thread),
   };
 }
 
 type HistoryCoverage = {
-  min: number | null | undefined;
   max: number | null | undefined;
+  min: number | null | undefined;
 };
 
 /** Durable lookup rows never enter the resident source solely because they establish position. */
@@ -3038,7 +3361,9 @@ function mergeHistoryFacts(
   resident: readonly ThreadDetailRow[],
 ): ThreadDetailRow[] {
   const merged = new Map(facts.map((row) => [row.id, row]));
-  for (const row of resident) merged.set(row.id, row);
+  for (const row of resident) {
+    merged.set(row.id, row);
+  }
   return [...merged.values()];
 }
 
@@ -3053,7 +3378,9 @@ function contiguousHistoryPage(
   const result: ThreadDetailRow[] = [];
   let expected = boundary + step;
   for (const row of ordered) {
-    if (row.ordinal !== expected) break;
+    if (row.ordinal !== expected) {
+      break;
+    }
     result.push(row);
     expected += step;
   }
@@ -3071,17 +3398,25 @@ function projectAuthoritativeCoverage(
   historyHadTurns: boolean | undefined,
 ): HistoryCoverage {
   const previous = metadataCoverage(previousMeta);
-  if (mode === "live") return previous;
+  if (mode === "live") {
+    return previous;
+  }
   const incoming = turnOrdinalCoverage(turns, ordinals);
-  if (mode === "reset" || mode === "tail") return incoming;
+  if (mode === "reset" || mode === "tail") {
+    return incoming;
+  }
   if (incoming.min === null || incoming.max === null) {
-    if (mode === "authoritative" && historyHadTurns === false) return { min: null, max: null };
+    if (mode === "authoritative" && historyHadTurns === false) {
+      return { max: null, min: null };
+    }
     return previous;
   }
   const hasResidentHistory = existingRows.some(
     (row) => row.kind === "turn" && row.historyEpoch === previousHistoryEpoch,
   );
-  if (historyEpoch !== previousHistoryEpoch || !hasResidentHistory) return incoming;
+  if (historyEpoch !== previousHistoryEpoch || !hasResidentHistory) {
+    return incoming;
+  }
   return mergeAdjacentCoverage(previous, incoming);
 }
 
@@ -3095,8 +3430,8 @@ function extendAuthoritativeCoverage(
 
 function metadataCoverage(metadata: ThreadDetailRow | undefined): HistoryCoverage {
   return {
-    min: metadata?.kind === "thread" ? metadata.historyCoverageMinOrdinal : undefined,
     max: metadata?.kind === "thread" ? metadata.historyCoverageMaxOrdinal : undefined,
+    min: metadata?.kind === "thread" ? metadata.historyCoverageMinOrdinal : undefined,
   };
 }
 
@@ -3109,8 +3444,8 @@ function turnOrdinalCoverage(
     return ordinal === undefined ? [] : [ordinal];
   });
   return values.length === 0
-    ? { min: null, max: null }
-    : { min: Math.min(...values), max: Math.max(...values) };
+    ? { max: null, min: null }
+    : { max: Math.max(...values), min: Math.min(...values) };
 }
 
 function mergeAdjacentCoverage(
@@ -3122,32 +3457,34 @@ function mergeAdjacentCoverage(
     incoming.max === undefined ||
     incoming.min === null ||
     incoming.max === null
-  )
+  ) {
     return previous;
+  }
   if (
     previous.min === undefined ||
     previous.max === undefined ||
     previous.min === null ||
     previous.max === null
-  )
+  ) {
     return incoming;
+  }
   const adjacent = incoming.min <= previous.max + 1 && incoming.max >= previous.min - 1;
   return adjacent
-    ? { min: Math.min(previous.min, incoming.min), max: Math.max(previous.max, incoming.max) }
+    ? { max: Math.max(previous.max, incoming.max), min: Math.min(previous.min, incoming.min) }
     : incoming;
 }
 
 function mergeThreadPresentationMetadata(detail: Thread, snapshot: Thread): Thread {
   return {
     ...detail,
-    name: snapshot.name,
-    preview: snapshot.preview,
-    cwd: snapshot.cwd,
-    updatedAt: snapshot.updatedAt,
-    recencyAt: snapshot.recencyAt,
-    parentThreadId: snapshot.parentThreadId,
     agentNickname: snapshot.agentNickname,
     agentRole: snapshot.agentRole,
+    cwd: snapshot.cwd,
+    name: snapshot.name,
+    parentThreadId: snapshot.parentThreadId,
+    preview: snapshot.preview,
+    recencyAt: snapshot.recencyAt,
+    updatedAt: snapshot.updatedAt,
   };
 }
 
@@ -3158,12 +3495,14 @@ function projectionOperationClosesStartedShell(kind: string): boolean {
 export function threadWindowCoverage(
   request: Pick<ThreadChatWindowRequest, "anchorTurnId">,
   rows: {
-    turnRows: readonly ThreadDetailRow[];
     liveRows: readonly ThreadDetailRow[];
+    turnRows: readonly ThreadDetailRow[];
   },
 ): ThreadWindowCoverage {
   const metadata = rows.liveRows.find((row) => row.kind === "thread");
-  if (metadata === undefined) return { complete: false, reason: "metadata-missing" };
+  if (metadata === undefined) {
+    return { complete: false, reason: "metadata-missing" };
+  }
   // Cursor-backed sealed rows are immutable; a live-journal turn is not. It
   // may be an in-progress stream, or a locally observed completion whose
   // canonical final projection has not reached SQLite yet. Always show the
@@ -3172,8 +3511,9 @@ export function threadWindowCoverage(
   if (rows.liveRows.some((row) => row.kind === "turn" && !row.sealed)) {
     return { complete: false, reason: "mutable-head" };
   }
-  if (metadata.historyCursor === undefined)
+  if (metadata.historyCursor === undefined) {
     return { complete: false, reason: "tail-uninitialized" };
+  }
   if (
     metadata.historyCoverageMinOrdinal === undefined ||
     metadata.historyCoverageMaxOrdinal === undefined
@@ -3204,8 +3544,9 @@ export function threadWindowCoverage(
     request.anchorTurnId === null
       ? null
       : (turns.find((row) => row.remoteTurnId === request.anchorTurnId)?.ordinal ?? null);
-  if (request.anchorTurnId !== null && anchorOrdinal === null)
+  if (request.anchorTurnId !== null && anchorOrdinal === null) {
     return { complete: false, reason: "anchor-missing" };
+  }
   const expectedMax =
     anchorOrdinal === null
       ? coverageMax
@@ -3215,7 +3556,9 @@ export function threadWindowCoverage(
     rows.turnRows.flatMap((row) => (row.kind === "turn" && row.sealed ? [row.ordinal] : [])),
   );
   for (let ordinal = expectedMin; ordinal <= expectedMax; ordinal += 1) {
-    if (!residentOrdinals.has(ordinal)) return { complete: false, reason: "history-evicted" };
+    if (!residentOrdinals.has(ordinal)) {
+      return { complete: false, reason: "history-evicted" };
+    }
   }
   return { complete: true, reason: "complete" };
 }
@@ -3293,8 +3636,8 @@ function activityRow(
       null,
       0,
     ),
-    sealed: true,
     activityItems: cloneProtocolValue(items),
+    sealed: true,
   };
 }
 
@@ -3327,8 +3670,9 @@ function composeInitialRangeRows(
 ): ThreadDetailRow[] {
   const rows = new Map<string, ThreadDetailRow>();
   for (const row of loadedRows) {
-    if (row.kind === "pending" || row.kind === "thread" || row.historyEpoch === historyEpoch)
+    if (row.kind === "pending" || row.kind === "thread" || row.historyEpoch === historyEpoch) {
       rows.set(row.id, row);
+    }
   }
   // Pending delivery and mutable stream rows can change while the SQLite read
   // is in flight. They overlay the cold range; old sealed rows do not.
@@ -3337,8 +3681,9 @@ function composeInitialRangeRows(
       row.kind === "pending" ||
       row.kind === "thread" ||
       (!row.sealed && row.historyEpoch === historyEpoch)
-    )
+    ) {
       rows.set(row.id, row);
+    }
   }
   return [...rows.values()];
 }
@@ -3352,8 +3697,12 @@ function composeExpandedRangeRows(
   historyEpoch: number,
 ): ThreadDetailRow[] {
   const combined = new Map<string, ThreadDetailRow>();
-  for (const row of residentRows) combined.set(row.id, row);
-  for (const row of loadedRows) combined.set(row.id, row);
+  for (const row of residentRows) {
+    combined.set(row.id, row);
+  }
+  for (const row of loadedRows) {
+    combined.set(row.id, row);
+  }
   return [...combined.values()].filter(
     (row) => row.kind === "pending" || row.kind === "thread" || row.historyEpoch === historyEpoch,
   );
@@ -3367,10 +3716,15 @@ function trimExpandedRangeRows(
   residentTurnLimit: number,
 ): ThreadDetailRow[] {
   const combined = new Map<string, ThreadDetailRow>();
-  for (const row of residentRows) combined.set(row.id, row);
+  for (const row of residentRows) {
+    combined.set(row.id, row);
+  }
   const turns = [...combined.values()]
     .filter((row) => row.kind === "turn" && row.sealed && row.historyEpoch === historyEpoch)
-    .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id));
+    .sort((left, right) => {
+      const ordinalOrder = left.ordinal - right.ordinal;
+      return ordinalOrder !== 0 ? ordinalOrder : left.id.localeCompare(right.id);
+    });
   const selectedTurns =
     direction === "older" ? turns.slice(0, residentTurnLimit) : turns.slice(-residentTurnLimit);
   const selectedTurnIds = new Set(selectedTurns.map(({ id }) => id));
@@ -3379,11 +3733,13 @@ function trimExpandedRangeRows(
     if (row.kind === "thread" || row.kind === "pending" || !row.sealed) {
       return row.kind === "pending" || row.kind === "thread" || row.historyEpoch === historyEpoch;
     }
-    if (row.historyEpoch !== historyEpoch) return false;
-    if (row.kind === "turn") return selectedTurnIds.has(row.id);
-    return (
-      (row.kind === "turnMeta" || row.kind === "activity") && selectedOrdinals.has(row.ordinal)
-    );
+    if (row.historyEpoch !== historyEpoch) {
+      return false;
+    }
+    if (row.kind === "turn") {
+      return selectedTurnIds.has(row.id);
+    }
+    return selectedOrdinals.has(row.ordinal);
   });
 }
 
@@ -3391,13 +3747,11 @@ function rangeMembership(
   rows: readonly ThreadDetailRow[],
   historyEpoch: number,
 ): Pick<ThreadChatWindowSnapshot, "turnRowIds" | "detailRowIds" | "liveRowIds"> {
-  const compareRows = (left: ThreadDetailRow, right: ThreadDetailRow): number =>
-    right.ordinal - left.ordinal || right.id.localeCompare(left.id);
+  const compareRows = (left: ThreadDetailRow, right: ThreadDetailRow): number => {
+    const ordinalOrder = right.ordinal - left.ordinal;
+    return ordinalOrder !== 0 ? ordinalOrder : right.id.localeCompare(left.id);
+  };
   return {
-    turnRowIds: rows
-      .filter((row) => row.kind === "turn" && row.sealed && row.historyEpoch === historyEpoch)
-      .sort(compareRows)
-      .map(({ id }) => id),
     detailRowIds: rows
       .filter(
         (row) =>
@@ -3411,6 +3765,10 @@ function rangeMembership(
       .filter((row) => !row.sealed && (row.kind === "pending" || row.historyEpoch === historyEpoch))
       .sort(compareRows)
       .map(({ id }) => id),
+    turnRowIds: rows
+      .filter((row) => row.kind === "turn" && row.sealed && row.historyEpoch === historyEpoch)
+      .sort(compareRows)
+      .map(({ id }) => id),
   };
 }
 
@@ -3419,8 +3777,12 @@ function sameStringSequence(left: readonly string[], right: readonly string[]): 
 }
 
 function minimumNullable(left: number | null, right: number | null): number | null {
-  if (left === null) return right;
-  if (right === null) return left;
+  if (left === null) {
+    return right;
+  }
+  if (right === null) {
+    return left;
+  }
   return Math.min(left, right);
 }
 
@@ -3429,8 +3791,11 @@ function stripThreadTurns(thread: Thread): Thread {
 }
 
 function stripTurnMetadata(turn: Turn): Turn {
+  // WHY: Companion adds optional compatibility metadata that the generated protocol type cannot name.
   const augmented = turn as Turn & { codewide?: ProjectedTurnMetadata };
-  if (augmented.codewide === undefined) return turn;
+  if (augmented.codewide === undefined) {
+    return turn;
+  }
   const clone = { ...augmented };
   delete clone.codewide;
   return clone;
@@ -3443,7 +3808,9 @@ function writeRow(
   row: ThreadDetailRow,
 ): boolean {
   const previous = source.get(key);
-  if (previous !== undefined && sameThreadDetailRow(previous, row)) return false;
+  if (previous !== undefined && sameThreadDetailRow(previous, row)) {
+    return false;
+  }
   controls.write({ type: previous === undefined ? "insert" : "update", value: row });
   source.set(key, row);
   return true;
@@ -3462,8 +3829,9 @@ function sameThreadDetailRow(previous: ThreadDetailRow, next: ThreadDetailRow): 
     previous.sessionId !== next.sessionId ||
     previous.lastOpenedAt !== next.lastOpenedAt ||
     previous.sealed !== next.sealed
-  )
+  ) {
     return false;
+  }
   if (next.kind === "turn") {
     // Event reduction preserves references for untouched turns. Never stringify
     // the growing active turn: doing that for every delta makes streaming O(n²).
@@ -3479,7 +3847,9 @@ function sameThreadDetailRow(previous: ThreadDetailRow, next: ThreadDetailRow): 
       samePendingTimelineEntry(previous.pending, next.pending)
     );
   }
-  if (next.kind === "activity") return previous.activityItems === next.activityItems;
+  if (next.kind === "activity") {
+    return previous.activityItems === next.activityItems;
+  }
   if (next.kind === "turnMeta") {
     return JSON.stringify(previous.turnMetadata) === JSON.stringify(next.turnMetadata);
   }
@@ -3496,8 +3866,10 @@ function deleteRow(
   controls: SyncWriteControls,
   key: string,
 ): boolean {
-  if (!source.has(key)) return false;
-  controls.write({ type: "delete", key });
+  if (!source.has(key)) {
+    return false;
+  }
+  controls.write({ key, type: "delete" });
   source.delete(key);
   return true;
 }
@@ -3512,9 +3884,11 @@ async function deleteThreadRows(
     let mutationCount = 0;
     // Deleting one thread must not scan every hydrated row from every server.
     for (const row of source.rowsForThread(connectionId, threadId)) {
-      if (deleteRow(source, writes, row.id)) mutationCount += 1;
+      if (deleteRow(source, writes, row.id)) {
+        mutationCount += 1;
+      }
     }
-    return { value: undefined, durable: mutationCount > 0 };
+    return { durable: mutationCount > 0, value: undefined };
   });
 }
 
@@ -3543,7 +3917,7 @@ function threadScope(connectionId: string, threadId: string): string {
 }
 
 function threadEpochScope(connectionId: string, threadId: string, historyEpoch: number): string {
-  return `${threadScope(connectionId, threadId)}\u0000${historyEpoch}`;
+  return `${threadScope(connectionId, threadId)}\u0000${String(historyEpoch)}`;
 }
 
 function pendingCommandScope(connectionId: string, commandId: string): string {
@@ -3555,9 +3929,9 @@ function pendingDeliveryReconciliationDiagnostics(
   activeCommandIds: ReadonlySet<string>,
   now = Date.now(),
 ): {
-  pendingDeliveryCount: number;
   inactiveDeliveryCount: number;
   oldestInactiveAgeMs: number;
+  pendingDeliveryCount: number;
   stalledCommandIds: string[];
 } {
   let pendingDeliveryCount = 0;
@@ -3567,16 +3941,24 @@ function pendingDeliveryReconciliationDiagnostics(
   for (const row of rows) {
     const pending =
       row.kind === "pending" && row.pending?.presentation === "delivery" ? row.pending : null;
-    if (pending === null) continue;
+    if (pending === null) {
+      continue;
+    }
     pendingDeliveryCount += 1;
-    if (pending.confirmation !== undefined) continue;
-    if (activeCommandIds.has(pending.commandId)) continue;
+    if (pending.confirmation !== undefined) {
+      continue;
+    }
+    if (activeCommandIds.has(pending.commandId)) {
+      continue;
+    }
     inactiveDeliveryCount += 1;
     const ageMs = Math.max(0, now - Math.max(pending.createdAt, pending.updatedAt));
     oldestInactiveAgeMs = Math.max(oldestInactiveAgeMs, ageMs);
-    if (ageMs >= OPTIMISTIC_RECONCILIATION_STALL_MS) stalledCommandIds.push(pending.commandId);
+    if (ageMs >= OPTIMISTIC_RECONCILIATION_STALL_MS) {
+      stalledCommandIds.push(pending.commandId);
+    }
   }
-  return { pendingDeliveryCount, inactiveDeliveryCount, oldestInactiveAgeMs, stalledCommandIds };
+  return { inactiveDeliveryCount, oldestInactiveAgeMs, pendingDeliveryCount, stalledCommandIds };
 }
 
 function samePendingTimelineEntry(

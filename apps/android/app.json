@@ -31,7 +31,6 @@
         }
       ],
       "expo-secure-store",
-      "expo-sqlite",
       [
         "expo-local-authentication",
         {

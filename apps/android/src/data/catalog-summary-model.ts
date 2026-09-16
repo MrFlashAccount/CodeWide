@@ -2,7 +2,9 @@ import { observable } from "@legendapp/state";
 
 /** Catalog totals are server-owned; an absent/old Companion response is not an empty archive. */
 export function parseArchivedCatalogCount(value: unknown): number | null {
-  if (value === null || typeof value !== "object" || !("archivedCount" in value)) return null;
+  if (value === null || typeof value !== "object" || !("archivedCount" in value)) {
+    return null;
+  }
   const count = value.archivedCount;
   return typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? count : null;
 }
@@ -22,15 +24,21 @@ export class CatalogSummaryModel {
   }
 
   publish(connectionId: string, revision: number, count: number | null): void {
-    if (this.revision(connectionId) === revision) this.counts$[connectionId]?.set(count);
+    if (this.revision(connectionId) === revision) {
+      this.counts$[connectionId]?.set(count);
+    }
   }
 
   count(connectionIds: readonly string[]): number | null {
-    if (connectionIds.length === 0) return null;
+    if (connectionIds.length === 0) {
+      return null;
+    }
     let total = 0;
     for (const id of connectionIds) {
-      const count = this.counts$[id]?.get();
-      if (count === undefined || count === null) return null;
+      const count: unknown = this.counts$[id]?.get();
+      if (typeof count !== "number") {
+        return null;
+      }
       total += count;
     }
     return total;

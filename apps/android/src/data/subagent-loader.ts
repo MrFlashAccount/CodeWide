@@ -1,18 +1,19 @@
+import { unknownRecord } from "./unknownRecord";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { RpcClient, SyncSnapshotThread } from "@codewide/sync-client";
 
 type IndexedSubagent = {
-  id: string;
-  parentThreadId: string | null;
-  cwd: string;
-  createdAt: number;
-  updatedAt: number;
-  modelProvider: string;
-  cliVersion: string;
-  source: Thread["source"];
   agentNickname: string | null;
   agentRole: string | null;
   archived: boolean;
+  cliVersion: string;
+  createdAt: number;
+  cwd: string;
+  id: string;
+  modelProvider: string;
+  parentThreadId: string | null;
+  source: Thread["source"];
+  updatedAt: number;
 };
 
 type IndexedSubagentResponse = {
@@ -23,11 +24,17 @@ export function subagentActivityRootThreadId(payload: Record<string, unknown>): 
   // Wait for completion: item/started can race the new rollout header. The
   // Companion watcher advances the local metadata index independently of the
   // UI invalidation suppression window.
-  if (payload.method !== "item/completed") return null;
+  if (payload.method !== "item/completed") {
+    return null;
+  }
   const params = record(payload.params);
   const item = record(params?.item);
-  if (params === null || item?.type !== "subAgentActivity") return null;
-  if (item.kind !== "started" && item.kind !== "interacted") return null;
+  if (params === null || item?.type !== "subAgentActivity") {
+    return null;
+  }
+  if (item.kind !== "started" && item.kind !== "interacted") {
+    return null;
+  }
   return typeof params.threadId === "string" ? params.threadId : null;
 }
 
@@ -47,37 +54,35 @@ export async function loadSubagentDescendants(
 
 function indexedSubagentThread(metadata: IndexedSubagent, rootThreadId: string): Thread {
   return {
-    id: metadata.id,
-    extra: null,
-    sessionId: rootThreadId,
-    forkedFromId: null,
-    parentThreadId: metadata.parentThreadId,
-    preview: "",
-    ephemeral: false,
-    section: null,
-    sectionEnteredAt: null,
-    historyMode: "paginated",
-    modelProvider: metadata.modelProvider,
-    createdAt: metadata.createdAt,
-    updatedAt: metadata.updatedAt,
-    recencyAt: metadata.updatedAt,
-    status: { type: "notLoaded" },
-    path: null,
-    cwd: metadata.cwd,
-    cliVersion: metadata.cliVersion,
-    source: metadata.source,
-    canAcceptDirectInput: null,
-    threadSource: null,
     agentNickname: metadata.agentNickname,
     agentRole: metadata.agentRole,
+    canAcceptDirectInput: null,
+    cliVersion: metadata.cliVersion,
+    createdAt: metadata.createdAt,
+    cwd: metadata.cwd,
+    ephemeral: false,
+    extra: null,
+    forkedFromId: null,
     gitInfo: null,
+    historyMode: "paginated",
+    id: metadata.id,
+    modelProvider: metadata.modelProvider,
     name: null,
+    parentThreadId: metadata.parentThreadId,
+    path: null,
+    preview: "",
+    recencyAt: metadata.updatedAt,
+    section: null,
+    sectionEnteredAt: null,
+    sessionId: rootThreadId,
+    source: metadata.source,
+    status: { type: "notLoaded" },
+    threadSource: null,
     turns: [],
+    updatedAt: metadata.updatedAt,
   };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return unknownRecord(value);
 }

@@ -8,11 +8,11 @@ const RichContentWidthContext = createContext<number | null>(null);
  * bubble, so wide renderers must consume the pane measurement directly.
  */
 export function RichContentWidthProvider({
-  width,
   children,
+  width,
 }: {
-  width: number | null;
   children: ReactNode;
+  width: number | null;
 }) {
   return (
     <RichContentWidthContext.Provider value={width}>{children}</RichContentWidthContext.Provider>

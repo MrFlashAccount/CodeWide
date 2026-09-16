@@ -1,12 +1,12 @@
 import type { SkillPlugin } from "../../../data/skill-catalog-types";
 
 type ComposerMentionBase = {
-  readonly id: string;
-  readonly label: string;
-  readonly insertText: string;
-  readonly url: string;
   readonly description: string;
   readonly group: string;
+  readonly id: string;
+  readonly insertText: string;
+  readonly label: string;
+  readonly url: string;
 };
 
 /** A selected row carries the validated target needed by the sending owner. */

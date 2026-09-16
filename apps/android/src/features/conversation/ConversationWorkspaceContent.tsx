@@ -4,145 +4,147 @@ import type { RenderConversationWorkspaceContentProps } from "./ConversationWork
 export function renderConversationWorkspaceContent(props: RenderConversationWorkspaceContentProps) {
   return (
     <ConversationComposition
-      requests={{
-        pendingRequest: props.activePendingRequests[0] ?? null,
-        pendingRequestCount: props.activePendingRequests.length,
-        onRespondToRequest: props.conversationActions.onRespondToRequest,
-      }}
-      surface={{
-        thread: props.visibleConversationThread,
-        server: props.servers.find((server) => server.id === props.activeConnectionId),
-        newChat: props.newChatDraft !== null,
-        compact: !props.desktop,
-        readOnly: false,
-        onBack: props.desktop ? undefined : props.closeActiveConversation,
-        cwd: props.snapshot.cwd ?? "/workspace",
-        unread: props.activeThread?.unread ?? 0,
-        onViewedLatest: props.markActiveThreadRead,
-      }}
-      read={{
-        searchWindow: props.snapshot.searchWindow ?? null,
-        onExitSearchHistory: undefined,
-        remoteThread: props.snapshot.remoteThread,
-        currentUsage: props.snapshot.currentUsage ?? null,
-        currentOutcome: props.snapshot.currentOutcome ?? null,
-        remoteSealedTurns: props.snapshot.remoteSealedTurns,
-        remoteLiveTurns: props.snapshot.remoteLiveTurns,
-        timelineEntries: props.snapshot.timelineEntries,
-        historyViewport: props.snapshot.historyViewport,
-        historyActivityModel: props.snapshot.historyActivityModel ?? null,
-        historyActivityResourceId: props.snapshot.historyActivityResourceId ?? null,
-        threadChatModel: props.snapshot.threadChatModel ?? null,
-        onLoadTurnItems: props.snapshot.onLoadTurnItems,
-        composerState: props.snapshot.composerState,
-        historyRestoreReady: props.snapshot.historyRestoreReady,
-        messageListState: props.snapshot.messageListState ?? { status: "ready" },
-        liveTextRecovery: props.snapshot.liveTextRecovery ?? false,
-        loadScrollOffset: props.features.conversation.loadScrollOffset,
-        saveScrollOffset: props.features.conversation.saveScrollOffset,
-      }}
-      composer={{
-        onSend: props.conversationActions.onSend,
-        onRetryFailedMessage: props.conversationActions.onRetryFailedMessage,
-        loadDraft: props.features.composer.loadDraft,
-        saveDraft: props.features.composer.saveDraft,
-        saveDraftAttachments: props.features.composer.saveDraftAttachments,
-        upsertDraftAttachment: props.features.composer.upsertDraftAttachment,
-        removeDraftAttachment: props.features.composer.removeDraftAttachment,
-        saveComposerPreferences: props.features.composer.saveComposerPreferences,
-        onLoadControls: props.conversationActions.onLoadControls,
-        onUpdateSettings: props.conversationActions.onUpdateSettings,
-        onInterrupt: props.conversationActions.onInterrupt,
-        workspaceResources: props.runtime.resources,
-        controlsResourceId: props.activeControlsResourceId,
-        voiceController: props.voiceController,
-        onStartVoiceTranscription: props.conversationActions.onStartVoiceTranscription,
-      }}
-      queue={{
-        queuedPrompts: props.snapshot.queuedPrompts,
-        onListQueue: props.conversationActions.onListQueue,
-        onEditQueued: props.conversationActions.onEditQueued,
-        onCancelQueued: props.conversationActions.onCancelQueued,
-        onMoveQueued: props.conversationActions.onMoveQueued,
-        onSteerQueued: props.conversationActions.onSteerQueued,
-      }}
-      projects={{
-        projects: props.activeProjects,
-        discoveredProjects: props.activeDiscoveredProjects,
-        projectLoadError: props.activeProjectError,
-        onChangeProject: props.changeEmptyThreadProject,
-        workspaceSupport: props.activeWorkspaceSupport,
-        workspaceMode: props.newChatDraft?.workspaceMode ?? "current",
-        onChangeWorkspaceMode: (workspaceMode) => {
-          if (props.newChatDraft !== null)
-            props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
-        },
-        onAddProject: props.addActiveProject,
-        onReadDirectory: props.readActiveDirectory,
-        onManageProjects: props.onManageProjects,
-      }}
-      actions={{
-        onRename: props.threadMutationActions.onRename,
-        onArchive: props.threadMutationActions.onArchive,
-        onUnarchive: props.threadMutationActions.onUnarchive,
-        onDelete: props.threadMutationActions.onDelete,
-        archived: props.activeThread?.archived ?? false,
-        pinned: props.activeThread?.pinned ?? false,
-        onTogglePin: props.threadMutationActions.onTogglePin,
-        onCompact: props.conversationActions.onCompact,
-        onFork: props.forkCurrentThread,
-      }}
       accounts={{
         accountRateLimitsDatabase: props.runtime.accountRateLimits,
         onRefreshAccountRateLimits:
           props.activeConnectionId === ""
             ? undefined
             : async () =>
-                await props.features.accounts.refreshAccountRateLimits(props.activeConnectionId),
+                props.features.accounts.refreshAccountRateLimits(props.activeConnectionId),
       }}
-      changes={{
-        onLoadTurnChanges: props.loadTurnChanges,
-        threadResourcesModel: props.runtime.resources?.threadResources ?? null,
-        threadResourceId: props.activeThreadResourceId,
-        threadResourceRevision: props.activeConnectionState,
-        onLoadThreadResources: props.conversationActions.onLoadThreadResources,
-        onLoadThreadChangeDiff: props.conversationActions.onLoadThreadChangeDiff,
+      actions={{
+        archived: props.activeThread?.archived ?? false,
+        onArchive: props.threadMutationActions.onArchive,
+        onCompact: props.conversationActions.onCompact,
+        onDelete: props.threadMutationActions.onDelete,
+        onFork: props.forkCurrentThread,
+        onRename: props.threadMutationActions.onRename,
+        onTogglePin: props.threadMutationActions.onTogglePin,
+        onUnarchive: props.threadMutationActions.onUnarchive,
+        pinned: props.activeThread?.pinned ?? false,
+      }}
+      agents={{
+        onOpenSubagentThread: undefined,
+        onRefreshSubagents: async (rootThreadId: string) => {
+          await props.features.agents.refreshSubagents(props.activeConnectionId, rootThreadId);
+        },
+        subagentSummaryDatabase: props.snapshot.subagentSummaryDatabase,
+        subagentThreadDetails: props.runtime.threadDetails,
       }}
       attachments={{
         fileTransferController: props.fileTransferController,
         getTransferAccess: props.conversationActions.getTransferAccess,
       }}
-      agents={{
-        subagentSummaryDatabase: props.snapshot.subagentSummaryDatabase,
-        subagentThreadDetails: props.runtime.threadDetails,
-        onRefreshSubagents: async (rootThreadId: string) =>
-          await props.features.agents.refreshSubagents(props.activeConnectionId, rootThreadId),
-        onOpenSubagentThread: undefined,
+      changes={{
+        onLoadThreadChangeDiff: props.conversationActions.onLoadThreadChangeDiff,
+        onLoadThreadResources: props.conversationActions.onLoadThreadResources,
+        onLoadTurnChanges: props.loadTurnChanges,
+        threadResourceId: props.activeThreadResourceId,
+        threadResourceRevision: props.activeConnectionState,
+        threadResourcesModel: props.runtime.resources?.threadResources ?? null,
+      }}
+      composer={{
+        controlsResourceId: props.activeControlsResourceId,
+        loadDraft: props.features.composer.loadDraft,
+        onInterrupt: props.conversationActions.onInterrupt,
+        onLoadControls: props.conversationActions.onLoadControls,
+        onRetryFailedMessage: props.conversationActions.onRetryFailedMessage,
+        onSend: props.conversationActions.onSend,
+        onStartVoiceTranscription: props.conversationActions.onStartVoiceTranscription,
+        onUpdateSettings: props.conversationActions.onUpdateSettings,
+        removeDraftAttachment: props.features.composer.removeDraftAttachment,
+        saveComposerPreferences: props.features.composer.saveComposerPreferences,
+        saveDraft: props.features.composer.saveDraft,
+        saveDraftAttachments: props.features.composer.saveDraftAttachments,
+        upsertDraftAttachment: props.features.composer.upsertDraftAttachment,
+        voiceController: props.voiceController,
+        workspaceResources: props.runtime.resources,
+      }}
+      diagnostics={{ onFixUnsupportedBlock: props.onFixUnsupportedBlock }}
+      goal={{
+        goalResourceId: props.activeThreadResourceId,
+        onClearGoal: props.conversationActions.onClearGoal,
+        onGetGoal: props.conversationActions.onGetGoal,
+        onSetGoal: props.conversationActions.onSetGoal,
       }}
       ports={{
-        tunnelResourceId: props.activeTunnelResourceId,
+        onCreateTunnel: props.conversationActions.onCreateTunnel,
+        onOpenLoopbackLink: props.openActiveLoopbackLink,
+        onOpenPortForward: props.onOpenBrowser,
+        onRevokeTunnel: props.conversationActions.onRevokeTunnel,
         portForwardingConnectionId:
           props.native && props.activeConnectionId !== "" ? props.activeConnectionId : null,
         portForwardingServerName:
           props.servers.find((server) => server.id === props.activeConnectionId)?.name ?? "Server",
-        onOpenPortForward: props.onOpenBrowser,
-        onOpenLoopbackLink: props.openActiveLoopbackLink,
-        onCreateTunnel: props.conversationActions.onCreateTunnel,
-        onRevokeTunnel: props.conversationActions.onRevokeTunnel,
+        tunnelResourceId: props.activeTunnelResourceId,
+      }}
+      projects={{
+        discoveredProjects: props.activeDiscoveredProjects,
+        onAddProject: props.addActiveProject,
+        onChangeProject: props.changeEmptyThreadProject,
+        onChangeWorkspaceMode: (workspaceMode) => {
+          if (props.newChatDraft !== null) {
+            props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
+          }
+        },
+        onManageProjects: props.onManageProjects,
+        onReadDirectory: props.readActiveDirectory,
+        projectLoadError: props.activeProjectError,
+        projects: props.activeProjects,
+        workspaceMode: props.newChatDraft?.workspaceMode ?? "current",
+        workspaceSupport: props.activeWorkspaceSupport,
+      }}
+      queue={{
+        onCancelQueued: props.conversationActions.onCancelQueued,
+        onEditQueued: props.conversationActions.onEditQueued,
+        onListQueue: props.conversationActions.onListQueue,
+        onMoveQueued: props.conversationActions.onMoveQueued,
+        onSteerQueued: props.conversationActions.onSteerQueued,
+        queuedPrompts: props.snapshot.queuedPrompts,
+      }}
+      read={{
+        composerState: props.snapshot.composerState,
+        currentOutcome: props.snapshot.currentOutcome ?? null,
+        currentUsage: props.snapshot.currentUsage ?? null,
+        historyActivityModel: props.snapshot.historyActivityModel ?? null,
+        historyActivityResourceId: props.snapshot.historyActivityResourceId ?? null,
+        historyRestoreReady: props.snapshot.historyRestoreReady,
+        historyViewport: props.snapshot.historyViewport,
+        liveTextRecovery: props.snapshot.liveTextRecovery ?? false,
+        loadScrollOffset: props.features.conversation.loadScrollOffset,
+        messageListState: props.snapshot.messageListState ?? { status: "ready" },
+        onExitSearchHistory: undefined,
+        onLoadTurnItems: props.snapshot.onLoadTurnItems,
+        remoteLiveTurns: props.snapshot.remoteLiveTurns,
+        remoteSealedTurns: props.snapshot.remoteSealedTurns,
+        remoteThread: props.snapshot.remoteThread,
+        saveScrollOffset: props.features.conversation.saveScrollOffset,
+        searchWindow: props.snapshot.searchWindow ?? null,
+        threadChatModel: props.snapshot.threadChatModel ?? null,
+        timelineEntries: props.snapshot.timelineEntries,
+      }}
+      requests={{
+        onRespondToRequest: props.conversationActions.onRespondToRequest,
+        pendingRequest: props.activePendingRequests[0] ?? null,
+        pendingRequestCount: props.activePendingRequests.length,
+      }}
+      review={{ onStartReview: props.conversationActions.onStartReview }}
+      surface={{
+        compact: !props.desktop,
+        cwd: props.snapshot.cwd ?? "/workspace",
+        newChat: props.newChatDraft !== null,
+        onBack: props.desktop ? undefined : props.closeActiveConversation,
+        onViewedLatest: props.markActiveThreadRead,
+        readOnly: false,
+        server: props.servers.find((server) => server.id === props.activeConnectionId),
+        thread: props.visibleConversationThread,
+        unread: props.activeThread?.unread ?? 0,
       }}
       terminal={{
         backgroundTerminalsResourceId: props.activeThreadResourceId,
         onListTerminals: props.conversationActions.onListTerminals,
         onTerminateTerminal: props.conversationActions.onTerminateTerminal,
       }}
-      goal={{
-        goalResourceId: props.activeThreadResourceId,
-        onGetGoal: props.conversationActions.onGetGoal,
-        onSetGoal: props.conversationActions.onSetGoal,
-        onClearGoal: props.conversationActions.onClearGoal,
-      }}
-      review={{ onStartReview: props.conversationActions.onStartReview }}
-      diagnostics={{ onFixUnsupportedBlock: props.onFixUnsupportedBlock }}
     />
   );
 }

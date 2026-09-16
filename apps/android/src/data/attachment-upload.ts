@@ -22,11 +22,12 @@ export function attachmentUploadPath(
   ) {
     throw new Error("A valid thread ID is required before attaching files");
   }
-  const sanitized =
-    originalName
-      .replace(/[\\/\u0000-\u001f\u007f]/gu, "_")
-      .trim()
-      .slice(-MAX_ATTACHMENT_FILENAME_CHARS) || "attachment";
-  const filename = `${Math.max(0, Math.floor(now)).toString(36)}-${nonce.replace(/[^a-z\d_-]/giu, "").slice(0, 16) || "file"}-${sanitized}`;
+  const sanitizedName = originalName
+    .replaceAll(/[\\/\u0000-\u001F\u007F]/gu, "_")
+    .trim()
+    .slice(-MAX_ATTACHMENT_FILENAME_CHARS);
+  const sanitized = sanitizedName === "" ? "attachment" : sanitizedName;
+  const nonceSegment = nonce.replaceAll(/[^a-z\d_-]/giu, "").slice(0, 16);
+  const filename = `${Math.max(0, Math.floor(now)).toString(36)}-${nonceSegment === "" ? "file" : nonceSegment}-${sanitized}`;
   return `sessions/${session}/files/${filename}`;
 }

@@ -5,31 +5,31 @@ import { useAppDialog } from "../../../ui/AppDialog";
 import type { QueuedComposerEdit } from "../composerTypes";
 
 type AttachmentRemovalCapabilities = {
+  composerScope: string;
   composerUploadScope: string;
-  queuedComposerEdit: QueuedComposerEdit | null;
-  updateAttachments(attachments: StoredDraftAttachment[]): void;
-  latestAttachmentsRef: { current: { latest: StoredDraftAttachment[] } };
+  contentReviewAttachmentId: string | null;
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  latestAttachmentsRef: { current: { latest: StoredDraftAttachment[] } };
+  queuedComposerEdit: QueuedComposerEdit | null;
   removeDraftAttachment:
     | ((connectionId: string, threadId: string, attachmentId: string) => Promise<void>)
     | undefined;
-  contentReviewAttachmentId: string | null;
-  setContentReviewAttachmentId(scope: string, attachmentId: string | null): void;
-  composerScope: string;
+  setContentReviewAttachmentId: (scope: string, attachmentId: string | null) => void;
+  updateAttachments: (attachments: StoredDraftAttachment[]) => void;
 };
 /** Removes staged or durable attachments from the active draft's qualified owner. */
 export function useAttachmentRemoval({
+  composerScope,
   composerUploadScope,
-  queuedComposerEdit,
-  updateAttachments,
-  latestAttachmentsRef,
+  contentReviewAttachmentId,
   draftConnectionId,
   draftThreadId,
+  latestAttachmentsRef,
+  queuedComposerEdit,
   removeDraftAttachment,
-  contentReviewAttachmentId,
   setContentReviewAttachmentId,
-  composerScope,
+  updateAttachments,
 }: AttachmentRemovalCapabilities) {
   const dialog = useAppDialog();
   const removeComposerAttachment = useEvent((attachmentId: string) => {
@@ -45,12 +45,13 @@ export function useAttachmentRemoval({
       draftThreadId !== null &&
       removeDraftAttachment !== undefined
     ) {
-      void removeDraftAttachment(draftConnectionId, draftThreadId, attachmentId).catch(() =>
-        dialog.alert("Could not remove attachment", "Please try again."),
-      );
+      void removeDraftAttachment(draftConnectionId, draftThreadId, attachmentId).catch(() => {
+        dialog.alert("Could not remove attachment", "Please try again.");
+      });
     }
-    if (contentReviewAttachmentId === attachmentId)
+    if (contentReviewAttachmentId === attachmentId) {
       setContentReviewAttachmentId(composerScope, null);
+    }
   });
   return { removeComposerAttachment };
 }

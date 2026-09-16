@@ -21,16 +21,16 @@ export function WaveText(props: WaveTextProps) {
   if (!animated || NativeShimmerText === null) {
     return (
       <View
-        testID={testID}
-        accessible
-        accessibilityRole="text"
         accessibilityLabel={text}
+        accessibilityRole="text"
+        accessible
         style={[styles.shell, containerStyle]}
+        testID={testID}
       >
         <Text
           accessible={false}
-          numberOfLines={numberOfLines}
           ellipsizeMode="tail"
+          numberOfLines={numberOfLines}
           style={[style, styles.textGeometry]}
         >
           {text}
@@ -39,7 +39,7 @@ export function WaveText(props: WaveTextProps) {
     );
   }
 
-  const resolvedTextStyle = StyleSheet.flatten([style, productFontStyle(style)]) ?? {};
+  const resolvedTextStyle = StyleSheet.flatten([style, productFontStyle(style)]);
   const fontSize = typeof resolvedTextStyle.fontSize === "number" ? resolvedTextStyle.fontSize : 14;
   const lineHeight =
     typeof resolvedTextStyle.lineHeight === "number"
@@ -49,17 +49,17 @@ export function WaveText(props: WaveTextProps) {
 
   return (
     <View
-      testID={testID}
-      accessible
-      accessibilityRole="text"
       accessibilityLabel={text}
+      accessibilityRole="text"
+      accessible
       style={[styles.shell, containerStyle]}
+      testID={testID}
     >
       <Text
         accessible={false}
+        ellipsizeMode="tail"
         importantForAccessibility="no-hide-descendants"
         numberOfLines={numberOfLines}
-        ellipsizeMode="tail"
         style={[style, styles.textGeometry, styles.measure]}
       >
         {text}
@@ -89,15 +89,15 @@ export function WaveText(props: WaveTextProps) {
 
 const styles = StyleSheet.create({
   shell: {
-    minWidth: 0,
-    maxWidth: "100%",
-    flexShrink: 1,
     alignSelf: "center",
+    flexShrink: 1,
     justifyContent: "center",
+    maxWidth: "100%",
+    minWidth: 0,
     overflow: "hidden",
   },
   // NativeShimmerText uses StaticLayout.setIncludePad(false). Its Yoga measure
   // and reduced-motion fallback must not reserve Android's extra font padding.
-  textGeometry: { includeFontPadding: false },
   measure: { opacity: 0 },
+  textGeometry: { includeFontPadding: false },
 });

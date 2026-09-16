@@ -13,7 +13,7 @@ export function PerformanceDiagnostics() {
     <View style={styles.section}>
       <View style={styles.toggleRow}>
         <View style={styles.iconShell}>
-          <Ionicons name="pulse-outline" size={iconSize.action} color={colors.text} />
+          <Ionicons color={colors.text} name="pulse-outline" size={iconSize.action} />
         </View>
         <View style={styles.toggleCopy}>
           <Text style={styles.title}>Data for geeks</Text>
@@ -22,8 +22,8 @@ export function PerformanceDiagnostics() {
         <Switch
           accessibilityLabel="Enable performance data"
           disabled={!state.metrics.available}
-          value={state.metrics.enabled}
           onValueChange={(enabled) => void state.toggle(enabled)}
+          value={state.metrics.enabled}
         />
       </View>
 
@@ -31,8 +31,8 @@ export function PerformanceDiagnostics() {
       {state.metrics.available && (
         <View style={styles.diagnosticsButtonRow}>
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Copy scroll report"
+            accessibilityRole="button"
             disabled={state.copyPending}
             onPress={() => void state.copySnapshot()}
             style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
@@ -46,8 +46,8 @@ export function PerformanceDiagnostics() {
             </Text>
           </Pressable>
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Copy memory report"
+            accessibilityRole="button"
             disabled={state.memoryReportCopyState === "collecting"}
             onPress={() => void state.copyMemoryReport()}
             style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
@@ -61,8 +61,8 @@ export function PerformanceDiagnostics() {
             </Text>
           </Pressable>
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Run memory reclamation experiment"
+            accessibilityRole="button"
             disabled={
               !memoryReclamationExperimentAvailable() || state.memoryExperimentState === "running"
             }
@@ -97,7 +97,7 @@ export function PerformanceDiagnostics() {
       )}
       {state.metrics.enabled && state.current === null && (
         <View style={styles.collecting}>
-          <ActivityIndicator size="small" color={colors.textMuted} />
+          <ActivityIndicator color={colors.textMuted} size="small" />
           <Text style={styles.notice}>Collecting the first native sample…</Text>
         </View>
       )}

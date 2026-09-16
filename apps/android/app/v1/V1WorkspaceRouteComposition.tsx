@@ -1,4 +1,3 @@
-import { useSelector } from "@legendapp/state/react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useThreadListAccountRefresh } from "../../src/features/accounts/threadListAccountRefresh";
@@ -47,11 +46,9 @@ export function V1WorkspaceRouteComposition(): React.JSX.Element {
     threadListSources,
     threadRouter: route.threadRouter,
   });
-  const draft = useSelector(() => newThreadService.draft$.get());
   const project = useWorkspaceProjectBindings({
     connections,
     list,
-    newThreadActive: route.pathname === "/v1/new" || draft !== null,
     runtime,
     searchActive: route.pathname === "/v1/search",
   });
@@ -156,40 +153,25 @@ export function V1WorkspaceRouteComposition(): React.JSX.Element {
 
   const threadList = (
     <V1WorkspaceThreadList
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       createSidebarThread={createSidebarThread}
       desktop={windowLayout.desktop}
       list={list}
       listActions={listActions}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       openGlobalSearch={openGlobalSearch}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       openProjects={() => {
         route.router.push("/v1/projects");
       }}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       openSettings={() => {
         route.router.push("/v1/settings");
       }}
       project={project}
       refreshThreadListAccountRateLimits={refreshThreadListAccountRateLimits}
-      // WHY: Thread-list sources are render-derived from stable runtime owners; React Compiler owns their prop identity.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-object-as-prop
       threadListSources={threadListSources}
       viewportWidth={windowLayout.width}
     />
   );
   return (
-    <V1WorkspaceShell
-      pathname={route.pathname}
-      // WHY: Workspace resources are render-derived; React Compiler owns their provider identity.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-object-as-prop
-      resources={resources}
-    >
+    <V1WorkspaceShell pathname={route.pathname} resources={resources}>
       {threadList}
     </V1WorkspaceShell>
   );

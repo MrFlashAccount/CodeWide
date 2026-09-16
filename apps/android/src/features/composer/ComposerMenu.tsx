@@ -5,31 +5,32 @@ import type { Personality } from "@codewide/codex-protocol/v0.147.0";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { View } from "react-native";
-import { type GetTransferAccess } from "../../data/private-transfer";
-import { type TurnControlsValue } from "../../data/turn-controls-types";
+import type { GetTransferAccess } from "../../data/private-transfer";
+import type { TurnControlsValue } from "../../data/turn-controls-types";
 import { useTurnControlsRow } from "../../data/use-workspace-resource-row";
-import { type WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
+import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
+import { useEvent } from "../../react/useEvent";
 import { PrivateImageAccessProvider } from "../../rendering/use-private-image-uri";
 import { AppSheet } from "../../ui/AppSheet";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ComposerMenu.styles";
-import { type ComposerMenuPage } from "./composerTypes";
+import type { ComposerMenuPage } from "./composerTypes";
 import { composerModelSettings } from "./modelSettings";
 import { EMPTY_TURN_CONTROLS } from "./settings";
 import { SkillsPicker } from "./skills/SkillsPicker";
 
 export function ResourceComposerMenu({
+  controlError,
+  controlsResourceId,
   newChat,
   resources,
-  controlsResourceId,
-  controlError,
   ...props
 }: Omit<ComposerMenuProps, "controls" | "loading" | "error"> & {
+  controlError: string | null;
+  controlsResourceId: string | null;
   newChat: boolean;
   resources: WorkspaceResourceDatabase | null;
-  controlsResourceId: string | null;
-  controlError: string | null;
-}) {
+}): ReactNode {
   const controlsResource = useTurnControlsRow(resources, controlsResourceId);
   const controls = controlsResource?.value ?? EMPTY_TURN_CONTROLS;
   const loading =
@@ -41,10 +42,10 @@ export function ResourceComposerMenu({
       : controlsResource?.status === "loading" && controlsResource.value === null;
   const serverExecution =
     props.thread === null ? null : projectedThreadExecutionSettings(props.thread);
-  const { model: selectedModel, effort: selectedEffort } = composerModelSettings(
+  const { effort: selectedEffort, model: selectedModel } = composerModelSettings(
     newChat,
     serverExecution,
-    { model: props.selectedModel, effort: props.selectedEffort },
+    { effort: props.selectedEffort, model: props.selectedModel },
     controls,
   );
   const selectedPermissions =
@@ -52,79 +53,83 @@ export function ResourceComposerMenu({
   return (
     <ComposerMenu
       {...props}
-      selectedModel={selectedModel}
-      selectedEffort={selectedEffort}
-      selectedPermissions={selectedPermissions}
       controls={controls}
-      loading={loading}
       error={controlError ?? controlsResource?.error ?? null}
+      loading={loading}
+      selectedEffort={selectedEffort}
+      selectedModel={selectedModel}
+      selectedPermissions={selectedPermissions}
     />
   );
 }
 
 export function ComposerMenu({
-  toolPage,
-  hideTitle,
-  visible,
-  initialPage,
-  onClose,
   controls,
-  voiceScope,
-  loading,
   error,
-  selectedModel,
-  selectedEffort,
-  selectedPersonality,
-  selectedPermissions,
-  onSelectModel,
-  onSelectEffort,
-  onSelectPersonality,
-  onSelectPermissions,
-  onInvokeSkill,
   getTransferAccess,
+  hideTitle,
+  initialPage,
+  loading,
+  onClose,
+  onInvokeSkill,
+  onSelectEffort,
+  onSelectModel,
+  onSelectPermissions,
+  onSelectPersonality,
+  selectedEffort,
+  selectedModel,
+  selectedPermissions,
+  selectedPersonality,
+  toolPage,
+  visible,
+  voiceScope,
 }: {
-  toolPage: ReactNode;
-  hideTitle: boolean;
-  visible: boolean;
-  initialPage: ComposerMenuPage;
-  onClose(): void;
   controls: TurnControlsValue;
-  thread: Thread | null;
-  voiceScope: string;
-  loading: boolean;
   error: string | null;
-  selectedModel: string | null;
-  selectedEffort: string | null;
-  selectedPersonality: Personality | null;
-  selectedPermissions: string | null;
-  onSelectModel(model: string, effort: string): void;
-  onSelectEffort(effort: string): void;
-  onSelectPersonality(personality: Personality | null): void;
-  onSelectPermissions(permissions: string | null): void;
-  onInvokeSkill(skill: { name: string; path: string }): void;
   getTransferAccess?: GetTransferAccess;
-}) {
+  hideTitle: boolean;
+  initialPage: ComposerMenuPage;
+  loading: boolean;
+  onClose: () => void;
+  onInvokeSkill: (skill: { name: string; path: string }) => void;
+  onSelectEffort: (effort: string) => void;
+  onSelectModel: (model: string, effort: string) => void;
+  onSelectPermissions: (permissions: string | null) => void;
+  onSelectPersonality: (personality: Personality | null) => void;
+  selectedEffort: string | null;
+  selectedModel: string | null;
+  selectedPermissions: string | null;
+  selectedPersonality: Personality | null;
+  thread: Thread | null;
+  toolPage: ReactNode;
+  visible: boolean;
+  voiceScope: string;
+}): ReactNode {
   const page = initialPage;
-  if (page === "goal") return toolPage;
+  if (page === "goal") {
+    return toolPage;
+  }
 
   return (
     <AppSheet
-      isOpen={visible}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
       contentProps={{
-        index: 0,
-        snapPoints: ["55%", "90%"],
+        contentContainerClassName: "h-full",
         enableDynamicSizing: false,
         enableOverDrag: false,
-        contentContainerClassName: "h-full",
+        index: 0,
         performanceSurface: page === "ports" ? "ports" : page === "skills" ? "skills" : "sheet",
+        snapPoints: ["55%", "90%"],
+      }}
+      isOpen={visible}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
       }}
     >
       {!hideTitle && (
         <View style={styles.menuTitleRow}>
-          <Text numberOfLines={1} ellipsizeMode="tail" style={styles.sheetTitle}>
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.sheetTitle}>
             {pageTitle(page)}
           </Text>
         </View>
@@ -143,9 +148,9 @@ export function ComposerMenu({
           >
             {visible && (
               <SkillsPicker
-                skills={controls.skills}
-                loading={loading}
                 error={error}
+                loading={loading}
+                skills={controls.skills}
                 {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
                 onSelect={(skill) => {
                   onInvokeSkill(skill);
@@ -158,16 +163,16 @@ export function ComposerMenu({
           toolPage
         ) : (
           <ComposerControlOptions
-            page={page}
             controls={controls}
-            selectedModel={selectedModel}
-            selectedEffort={selectedEffort}
-            selectedPersonality={selectedPersonality}
-            selectedPermissions={selectedPermissions}
-            onSelectModel={onSelectModel}
             onSelectEffort={onSelectEffort}
-            onSelectPersonality={onSelectPersonality}
+            onSelectModel={onSelectModel}
             onSelectPermissions={onSelectPermissions}
+            onSelectPersonality={onSelectPersonality}
+            page={page}
+            selectedEffort={selectedEffort}
+            selectedModel={selectedModel}
+            selectedPermissions={selectedPermissions}
+            selectedPersonality={selectedPersonality}
           />
         )}
       </View>
@@ -176,13 +181,27 @@ export function ComposerMenu({
 }
 
 export function pageTitle(page: ComposerMenuPage): string {
-  if (page === "model") return "Model & Thinking";
-  if (page === "skills") return "Skills";
-  if (page === "permissions") return "Permissions";
-  if (page === "queue") return "Queued prompts";
-  if (page === "goal") return "Goal & progress";
-  if (page === "review") return "Review";
-  if (page === "ports") return "Ports";
+  if (page === "model") {
+    return "Model & Thinking";
+  }
+  if (page === "skills") {
+    return "Skills";
+  }
+  if (page === "permissions") {
+    return "Permissions";
+  }
+  if (page === "queue") {
+    return "Queued prompts";
+  }
+  if (page === "goal") {
+    return "Goal & progress";
+  }
+  if (page === "review") {
+    return "Review";
+  }
+  if (page === "ports") {
+    return "Ports";
+  }
   return "Runtime";
 }
 
@@ -195,9 +214,23 @@ export function useComposerMenuState(composerScope: string) {
     composerScope,
     () => false,
   );
+  const [goalAttachmentVisible, setGoalAttachmentVisible] = useConversationState(
+    `${composerScope}\u0000goal-attachment`,
+    () => false,
+  );
+  const closeGoalAttachment = useEvent(() => {
+    setGoalAttachmentVisible(false);
+  });
+  const openGoalAttachment = useEvent(() => {
+    setComposerTrayVisible(false);
+    setGoalAttachmentVisible(true);
+  });
 
   return {
+    closeGoalAttachment,
     composerTrayVisible,
+    goalAttachmentVisible,
+    openGoalAttachment,
     setComposerTrayVisible,
   };
 }

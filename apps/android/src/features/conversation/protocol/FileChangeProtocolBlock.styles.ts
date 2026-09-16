@@ -3,29 +3,29 @@ import { colors, controlSize, radii, spacing, typeScale } from "../../../theme";
 
 export const styles = StyleSheet.create({
   diffFile: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    overflow: "hidden",
-    borderRadius: radii.small,
     backgroundColor: colors.code,
+    borderRadius: radii.small,
+    maxWidth: "100%",
+    minWidth: 0,
+    overflow: "hidden",
+    width: "100%",
   },
   diffFileHeader: {
-    width: "100%",
-    minWidth: 0,
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    gap: spacing.xxs,
     minHeight: controlSize.compact,
+    minWidth: 0,
     paddingHorizontal: spacing.compact,
     paddingVertical: spacing.xxs,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-    backgroundColor: colors.surface,
+    width: "100%",
   },
   diffFilePath: {
-    minWidth: 0,
+    color: colors.text,
     flex: 1,
     flexShrink: 1,
-    color: colors.text,
+    minWidth: 0,
     ...typeScale.code,
     fontFamily: Platform.select({
       android: "monospace",
@@ -33,14 +33,19 @@ export const styles = StyleSheet.create({
     }),
   },
   diffKind: {
-    flexShrink: 0,
     color: colors.textMuted,
+    flexShrink: 0,
     ...typeScale.caption,
     textTransform: "uppercase",
   },
+  diffLines: {
+    minWidth: 0,
+    paddingVertical: spacing.xxs,
+    width: "100%",
+  },
   diffStat: {
-    minWidth: 18,
     flexShrink: 0,
+    minWidth: 18,
     ...typeScale.code,
     fontFamily: Platform.select({
       android: "monospace",
@@ -51,11 +56,6 @@ export const styles = StyleSheet.create({
   },
   diffStatAdd: { color: colors.green },
   diffStatDelete: { color: colors.red },
-  diffLines: {
-    width: "100%",
-    minWidth: 0,
-    paddingVertical: spacing.xxs,
-  },
   menuNotice: {
     color: colors.textMuted,
     ...typeScale.body,

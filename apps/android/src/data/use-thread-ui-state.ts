@@ -1,5 +1,5 @@
 import { useSelector } from "@legendapp/state/react";
-import { use } from "react";
+import { use, useEffect } from "react";
 
 import type { ThreadUiStateDatabase } from "./thread-ui-state-database";
 import type { ThreadUiStateRow } from "./thread-ui-state-types";
@@ -14,6 +14,7 @@ export function useThreadUiState(
   connectionId: string,
   threadId: string,
 ): ThreadUiStateRow {
+  useEffect(() => database.retain(connectionId, threadId), [connectionId, database, threadId]);
   const initial =
     database.get(connectionId, threadId) ?? use(database.read(connectionId, threadId));
   return useSelector(() => database.row$(connectionId, threadId).get()) ?? initial;

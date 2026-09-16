@@ -1,8 +1,8 @@
-import { Popover } from "heroui-native/popover";
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, useWindowDimensions } from "react-native";
+import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
+import { AppPopover } from "../../../presentation/overlay/AppPopover";
 import { radii, spacing } from "../../theme";
 import { PresentationIconProvider, usePresentationIconRenderer } from "../icons/PresentationIcon";
 import { LiveTurnPlanContent } from "./LiveTurnPlanContent";
@@ -21,46 +21,44 @@ export function LiveTurnPlanPopover(props: LiveTurnPlanPopoverProps): React.JSX.
   const contentWidth = Math.max(spacing.optical, Math.min(400, width - spacing.lg));
   const contentMaxHeight = Math.max(spacing.optical, Math.min(440, height - spacing.xl * 3));
   const changeOpen = useEvent((next: boolean) => setOpen(next));
+  const toggleOpen = (): void => {
+    changeOpen(!open);
+  };
   return (
-    <Popover isOpen={open} onOpenChange={changeOpen} presentation="popover">
-      <Popover.Trigger asChild>
+    <AppPopover
+      align="center"
+      onOpenChange={changeOpen}
+      open={open}
+      placement="top"
+      trigger={
         <Pressable
           accessibilityHint="Shows the current plan"
           accessibilityLabel={planAccessibilityLabel(plan)}
           accessibilityRole="button"
           accessibilityState={{ expanded: open }}
+          onPress={toggleOpen}
           style={styles.triggerPressable}
           testID="live-plan-chip"
         >
           <LiveTurnPlanTrigger expanded={open} plan={plan} />
         </Pressable>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <PresentationIconProvider renderIcon={portalIconRenderer}>
-          <Popover.Overlay className="bg-backdrop" />
-          <Popover.Content
-            align="center"
-            className="border border-border"
-            offset={spacing.xs}
-            placement="top"
-            presentation="popover"
-            style={StyleSheet.flatten([styles.popover, { maxHeight: contentMaxHeight }])}
-            width={contentWidth}
+      }
+      width={contentWidth}
+    >
+      <PresentationIconProvider renderIcon={portalIconRenderer}>
+        <View style={StyleSheet.flatten([styles.popover, { maxHeight: contentMaxHeight }])}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={false}
+            style={{ maxHeight: contentMaxHeight }}
+            testID="live-plan-popover"
           >
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
-              showsVerticalScrollIndicator={false}
-              style={{ maxHeight: contentMaxHeight }}
-              testID="live-plan-popover"
-            >
-              <LiveTurnPlanContent plan={plan} />
-            </ScrollView>
-            <Popover.Arrow />
-          </Popover.Content>
-        </PresentationIconProvider>
-      </Popover.Portal>
-    </Popover>
+            <LiveTurnPlanContent plan={plan} />
+          </ScrollView>
+        </View>
+      </PresentationIconProvider>
+    </AppPopover>
   );
 }
 

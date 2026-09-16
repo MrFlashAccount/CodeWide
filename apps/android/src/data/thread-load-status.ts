@@ -34,18 +34,26 @@ export function mergeThreadLoadStatuses(
 ): ThreadLoadStatus {
   const hasResidentSnapshot = statuses.some(threadLoadHasResidentSnapshot);
   if (hasResidentSnapshot) {
-    if (statuses.includes("loading-history")) return "loading-history";
-    if (statuses.includes("background-retrying") || statuses.includes("initial-error"))
+    if (statuses.includes("loading-history")) {
+      return "loading-history";
+    }
+    if (statuses.includes("background-retrying") || statuses.includes("initial-error")) {
       return "background-retrying";
+    }
     if (
       statuses.includes("background-updating") ||
       statuses.includes("initial-loading") ||
       statuses.includes("idle")
-    )
+    ) {
       return "background-updating";
+    }
     return "ready";
   }
-  if (statuses.includes("initial-error")) return "initial-error";
-  if (statuses.includes("initial-loading")) return "initial-loading";
+  if (statuses.includes("initial-error")) {
+    return "initial-error";
+  }
+  if (statuses.includes("initial-loading")) {
+    return "initial-loading";
+  }
   return "idle";
 }

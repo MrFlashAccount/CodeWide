@@ -1,6 +1,7 @@
 /** V1 PairingQrScanner owner, extracted without changing interaction or resource lifetime. */
 import { Ionicons } from "@expo/vector-icons";
-import { CameraView, useCameraPermissions } from "expo-camera";
+import type { useCameraPermissions } from "expo-camera";
+import { CameraView } from "expo-camera";
 import { useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,21 +11,21 @@ import { styles } from "./PairingQrScanner.styles";
 
 export function PairingQrScanner({
   initialPermission,
-  requestPermission,
   onClose,
   onScan,
+  requestPermission,
 }: {
   initialPermission: ReturnType<typeof useCameraPermissions>[0];
+  onClose: () => void;
+  onScan: (raw: string) => string | null;
   requestPermission: ReturnType<typeof useCameraPermissions>[1];
-  onClose(): void;
-  onScan(raw: string): string | null;
 }) {
   const [permission, setPermission] = useState(initialPermission);
   const [scanned, setScanned] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.scannerRoot, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.scannerRoot, { paddingBottom: insets.bottom, paddingTop: insets.top }]}>
       <View style={styles.scannerHeader}>
         <Text style={styles.sheetTitle}>Scan host pairing QR</Text>
         <Pressable
@@ -32,7 +33,7 @@ export function PairingQrScanner({
           onPress={onClose}
           style={styles.headerIcon}
         >
-          <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
+          <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
         </Pressable>
       </View>
       {permission === null ? (
@@ -41,9 +42,8 @@ export function PairingQrScanner({
         </View>
       ) : permission.granted ? (
         <CameraView
-          style={styles.scannerCamera}
-          facing="back"
           barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+          facing="back"
           onBarcodeScanned={
             scanned
               ? undefined
@@ -52,10 +52,13 @@ export function PairingQrScanner({
                   const message = onScan(data);
                   if (message !== null) {
                     setScanError(message);
-                    setTimeout(() => setScanned(false), 900);
+                    setTimeout(() => {
+                      setScanned(false);
+                    }, 900);
                   }
                 }
           }
+          style={styles.scannerCamera}
         >
           <View style={styles.scannerFrame} />
           {scanError !== null && (

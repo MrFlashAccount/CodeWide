@@ -6,35 +6,35 @@ import { styles } from "./ComposerFeature.styles";
 
 /** The existing read-only dock publishes execution metadata without creating editor state. */
 export function ReadOnlyComposerContext({
-  thread,
   children,
+  thread,
 }: {
-  thread: Thread;
   children: ReactNode;
+  thread: Thread;
 }) {
   return (
-    <View testID="composer-dock" style={styles.composerDock}>
+    <View style={styles.composerDock} testID="composer-dock">
       <ComposerContextStrip
-        newChat={false}
-        workspaceResources={null}
+        closeQuickControlMenu={() => undefined}
+        controlError={null}
         controlsResourceId={null}
         cwd={thread.cwd}
-        remoteThread={thread}
-        readOnly
-        selectedModel={null}
-        selectedEffort={null}
-        selectedPersonality={null}
-        selectedPermissions={null}
-        controlError={null}
+        newChat={false}
         onLoadControls={undefined}
-        openQuickControlMenu={() => undefined}
-        closeQuickControlMenu={() => undefined}
         openControls={() => undefined}
-        selectModel={() => undefined}
+        openQuickControlMenu={() => undefined}
+        readOnly
+        remoteThread={thread}
+        selectedEffort={null}
+        selectedModel={null}
+        selectedPermissions={null}
+        selectedPersonality={null}
         selectEffort={() => undefined}
-        setSelectedPersonality={() => undefined}
+        selectModel={() => undefined}
         selectPermissions={() => undefined}
+        setSelectedPersonality={() => undefined}
         toolContextChips={children}
+        workspaceResources={null}
       />
     </View>
   );

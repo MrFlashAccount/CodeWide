@@ -10,29 +10,31 @@ import type { PortForwardingManagerProps } from "./portForwardingContract";
 /** Select native forwarding or the existing explicit tunnel within the host-owned sheet. */
 export function PortsFeature({
   mode,
-  portForwarding,
   onClose,
-  resource,
   onCreate,
   onRevoke,
+  portForwarding,
+  resource,
 }: {
   mode: "forwarding" | "runtime";
+  onClose: () => void;
+  onCreate?: (port: number, ttlSeconds: number) => Promise<TunnelValue>;
+  onRevoke?: (tunnelId: string) => Promise<void>;
   portForwarding: PortForwardingManagerProps | undefined;
-  onClose(): void;
   resource: TunnelRow | null;
-  onCreate?(port: number, ttlSeconds: number): Promise<TunnelValue>;
-  onRevoke?(tunnelId: string): Promise<void>;
 }) {
-  if (portForwarding !== undefined)
+  if (portForwarding !== undefined) {
     return <PortForwardingManager {...portForwarding} renderScrollComponent={AppSheetScrollView} />;
-  if (mode === "forwarding")
+  }
+  if (mode === "forwarding") {
     return <Text style={styles.notice}>Port forwarding is unavailable for this server</Text>;
+  }
   return (
     <LocalhostPreview
       embedded
-      visible
       onClose={onClose}
       resource={resource}
+      visible
       {...(onCreate === undefined ? {} : { onCreate })}
       {...(onRevoke === undefined ? {} : { onRevoke })}
     />

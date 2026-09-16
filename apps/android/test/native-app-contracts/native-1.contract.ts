@@ -171,9 +171,7 @@ it("preserves native integration contracts — 1", () => {
   expect(nativeFrameStore).toContain("MAX_TOTAL_BYTES = 256L * 1024L * 1024L");
   expect(nativeFrameStore).toContain("fun storageStats(): NativeFrameStorageStats");
   expect(nativeProtocolEngine).toContain('.put("journalPayloadBytes", storage?.payloadBytes ?: 0)');
-  expect(nativeEngine).toContain(
-    "journalPayloadBytes: Number.isSafeInteger(signal.journalPayloadBytes)",
-  );
+  expect(nativeEngine).toContain("journalPayloadBytes: safeIntegerOrZero(signal.journalPayloadBytes)");
   expect(nativeCommandStore).toContain("fun storageStats(): NativeCommandStorageStats");
   expect(nativeCommandStore).toContain('.put("pendingBytes", storage.pendingBytes)');
   expect(nativeEngine).toContain('name: "outbox.native_sqlite_storage"');
@@ -198,8 +196,9 @@ it("preserves native integration contracts — 1", () => {
   expect(nativeProtocolEngine).toContain('.put("rpcAvailable", upstreamLive)');
   expect(nativeEngine).toContain('typeof state.rpcAvailable !== "boolean"');
   expect(nativeEngine).toContain("state.rpcAvailable");
+  expect(nativeEngine).toContain('this.#publishConnectionState("connecting", null, false)');
   expect(nativeEngine).toContain(
-    'setConnectionState(this.connectionId, "connecting", null, false)',
+    "this.#connectionState.setConnectionState(this.connectionId, state, diagnostic, rpcAvailable)",
   );
   expect(nativeEngine).not.toContain("waitUntilLive");
   expect(nativeModule).toContain("private const val AUDIO_CHUNKS_PER_SECOND = 5");

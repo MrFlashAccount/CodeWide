@@ -8,13 +8,13 @@ import { useWindowLayout } from "../workspace/useWindowLayout";
 import { useConversationPaneGeometry } from "./timeline/timelineViewport";
 
 export function useConversationActivation({
-  surfaceInputs,
-  readInputs,
   composerInputs,
+  readInputs,
+  surfaceInputs,
 }: {
-  surfaceInputs: ConversationSurfaceCapabilities;
-  readInputs: MainThreadReadCapabilities;
   composerInputs: ComposerWorkspaceCapabilities;
+  readInputs: MainThreadReadCapabilities;
+  surfaceInputs: ConversationSurfaceCapabilities;
 }) {
   const windowLayout = useWindowLayout();
   const parentVoiceInputRuntime = useAppVoiceInputRuntime();
@@ -38,15 +38,15 @@ export function useConversationActivation({
   const timelineCompact =
     surfaceInputs.compact || conversationPaneGeometryBinding.narrowConversationPane;
   return {
+    animateLiveUpdates,
+    appVoiceInputRuntime,
     composerScope,
-    draftConnectionId,
-    draftThreadId,
+    conversationInsets,
     conversationOwner,
     conversationPaneGeometryBinding,
-    appVoiceInputRuntime,
+    draftConnectionId,
+    draftThreadId,
     timelineCompact,
-    animateLiveUpdates,
     windowLayout,
-    conversationInsets,
   };
 }

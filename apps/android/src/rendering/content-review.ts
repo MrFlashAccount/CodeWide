@@ -5,19 +5,19 @@ export type ContentReviewTarget = {
 };
 
 type TextReviewAnchor = {
-  kind: "text";
-  target: ContentReviewTarget;
   blockPath: string;
+  end: number;
+  kind: "text";
   quote: string;
   start: number;
-  end: number;
+  target: ContentReviewTarget;
 };
 
 type MermaidReviewAnchor = {
-  kind: "mermaid";
-  target: ContentReviewTarget;
   diagramId: string;
+  kind: "mermaid";
   source: string;
+  target: ContentReviewTarget;
   x: number;
   y: number;
 };
@@ -41,10 +41,10 @@ export type ContentReviewAnchor =
   | ImageReviewAnchor;
 
 export type ContentReviewComment = {
-  id: string;
   anchor: ContentReviewAnchor;
   body: string;
   createdAt: number;
+  id: string;
 };
 
 export function contentReviewTextHighlights(
@@ -52,13 +52,14 @@ export function contentReviewTextHighlights(
   targetId: string,
   blockPath: string,
   offset = 0,
-): Array<{ start: number; end: number }> {
+): Array<{ end: number; start: number }> {
   return anchors.flatMap((anchor) => {
-    if (anchor.kind !== "text" || anchor.target.id !== targetId || anchor.blockPath !== blockPath)
+    if (anchor.kind !== "text" || anchor.target.id !== targetId || anchor.blockPath !== blockPath) {
       return [];
+    }
     const start = Math.max(0, anchor.start - offset);
     const end = Math.max(0, anchor.end - offset);
-    return end > start ? [{ start, end }] : [];
+    return end > start ? [{ end, start }] : [];
   });
 }
 
@@ -70,14 +71,16 @@ export function serializeContentReviewAttachment(
   comments: readonly ContentReviewComment[],
 ): string {
   const populated = comments.filter((comment) => comment.body.trim() !== "");
-  if (populated.length === 0) return "";
+  if (populated.length === 0) {
+    return "";
+  }
   const targetIds = new Set(populated.map((comment) => comment.anchor.target.id));
   const lines = [
     "---",
     "kind: codewide-content-review",
     "version: 1",
-    `targets: ${targetIds.size}`,
-    `comments: ${populated.length}`,
+    `targets: ${String(targetIds.size)}`,
+    `comments: ${String(populated.length)}`,
     "---",
     "",
     "# Content review comments",
@@ -88,17 +91,18 @@ export function serializeContentReviewAttachment(
   populated.forEach((comment) => {
     const { anchor } = comment;
     if (anchor.target.id !== previousTargetId) {
-      lines.push(`## ${escapeHeading(anchor.target.label.trim() || "Reviewed content")}`, "");
+      const label = anchor.target.label.trim();
+      lines.push(`## ${escapeHeading(label === "" ? "Reviewed content" : label)}`, "");
       if (anchor.target.reference !== null && anchor.target.reference.trim() !== "") {
         lines.push(`Reference: \`${escapeInlineCode(anchor.target.reference)}\``, "");
       }
       previousTargetId = anchor.target.id;
     }
-    const ordinal = lines.filter((line) => /^### Comment /u.test(line)).length + 1;
+    const ordinal = lines.filter((line) => line.startsWith("### Comment ")).length + 1;
     if (anchor.kind === "text") {
-      lines.push(`### Comment ${ordinal} · selected text`, "");
+      lines.push(`### Comment ${String(ordinal)} · selected text`, "");
       lines.push(
-        `Block: \`${escapeInlineCode(anchor.blockPath)}\` · rendered offsets ${anchor.start}–${anchor.end}`,
+        `Block: \`${escapeInlineCode(anchor.blockPath)}\` · rendered offsets ${String(anchor.start)}–${String(anchor.end)}`,
         "",
       );
       lines.push(...quoteMarkdown(anchor.quote), "");
@@ -106,13 +110,13 @@ export function serializeContentReviewAttachment(
       return;
     }
     if (anchor.kind === "response") {
-      lines.push(`### Comment ${ordinal} · whole response`, "");
+      lines.push(`### Comment ${String(ordinal)} · whole response`, "");
       lines.push("Scope: **entire response**", "");
       lines.push(comment.body.trim(), "");
       return;
     }
     if (anchor.kind === "image") {
-      lines.push(`### Comment ${ordinal} · image point`, "");
+      lines.push(`### Comment ${String(ordinal)} · image point`, "");
       lines.push(
         `Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the image top-left.`,
         "",
@@ -121,7 +125,7 @@ export function serializeContentReviewAttachment(
       return;
     }
     const diagramKey = `${anchor.target.id}\u0000${anchor.diagramId}`;
-    lines.push(`### Comment ${ordinal} · Mermaid point`, "");
+    lines.push(`### Comment ${String(ordinal)} · Mermaid point`, "");
     lines.push(`Diagram: \`${escapeInlineCode(anchor.diagramId)}\``, "");
     lines.push(
       `Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the SVG top-left.`,

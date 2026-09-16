@@ -6,18 +6,17 @@ import type { useComposerDraftState } from "./draft";
 
 /** Settings read and rollback share the captured draft preferences and mounted owner. */
 export type ComposerSettingsCapabilities = {
+  composerPreferences: StoredComposerPreferences;
   composerScope: string;
-  newChat: boolean;
+  controlsResourceId: string | null;
+  conversationOwner: ConversationOwner;
   cwd: string;
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  workspaceResources: WorkspaceResourceDatabase | null;
-  controlsResourceId: string | null;
-  composerPreferences: StoredComposerPreferences;
   latestComposerPreferencesRef: ReturnType<
     typeof useComposerDraftState
   >["latestComposerPreferencesRef"];
-  conversationOwner: ConversationOwner;
+  newChat: boolean;
   onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
   onUpdateSettings: ((settings: ThreadSettings) => Promise<void>) | undefined;
   saveComposerPreferences:
@@ -27,4 +26,5 @@ export type ComposerSettingsCapabilities = {
         preferences: StoredComposerPreferences,
       ) => Promise<void>)
     | undefined;
+  workspaceResources: WorkspaceResourceDatabase | null;
 };

@@ -12,16 +12,16 @@ export type VoiceAuraPhase = "idle" | "recording" | "transcribing";
  * the live-root shader on the GPU; microphone levels stay in the native loop.
  */
 export function VoiceAura({
+  children,
   phase,
   reducedMotion,
-  children,
 }: {
-  phase: VoiceAuraPhase;
-  controller: VoiceInputController | null;
-  scope: string | null;
-  reducedMotion: boolean;
   children: ReactNode;
-}) {
+  controller: VoiceInputController | null;
+  phase: VoiceAuraPhase;
+  reducedMotion: boolean;
+  scope: string | null;
+}): ReactNode {
   const motionExperimentDisabled = usePerformanceExperiment("reduceCustomMotion");
   const active = phase !== "idle" && !motionExperimentDisabled;
 

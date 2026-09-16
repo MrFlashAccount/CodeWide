@@ -1,11 +1,8 @@
 import { open } from "@op-engineering/op-sqlite";
-import {
-  wrapSqliteDatabase,
-  type SqliteDatabase,
-  type SqliteDatabaseLike,
-} from "@codewide/tanstack-db-sqlite";
+import { wrapSqliteDatabase, type SqliteDatabase } from "@codewide/tanstack-db-sqlite";
 import { cacheDirectory, getInfoAsync } from "expo-file-system/legacy";
 import { AppState } from "react-native";
+import { appLogger } from "../observability/logger";
 
 const LIVE_COLLECTIONS = new Set(["thread-details-v2"]);
 
@@ -16,25 +13,29 @@ const flushersByCollection = new Map<string, Set<() => Promise<void>>>();
 
 export type UiCacheFileDiagnostics = {
   mainFileBytes: number;
-  walFileBytes: number;
   shmFileBytes: number;
+  walFileBytes: number;
 };
 
 function uiCacheDirectory(): string {
-  if (cacheDirectory === null) throw new Error("Android cache directory is unavailable");
+  if (cacheDirectory === null) {
+    throw new Error("Android cache directory is unavailable");
+  }
   return `${cacheDirectory}codex-remote/sqlite`;
 }
 
 function getUiCacheNativeDatabase(): ReturnType<typeof open> {
-  if (sharedDatabase !== null) return sharedDatabase;
-  const database = open({ name: "codex-remote-ui-cache.db", location: uiCacheDirectory() });
+  if (sharedDatabase !== null) {
+    return sharedDatabase;
+  }
+  const database = open({ location: uiCacheDirectory(), name: "codex-remote-ui-cache.db" });
   // Configure the connection before any consumer can start a transaction.
   // History memberships must never outlive their chain or referenced content.
   try {
     database.executeSync("PRAGMA foreign_keys = ON");
-  } catch (cause) {
+  } catch (error) {
     database.close();
-    throw cause;
+    throw error;
   }
   sharedDatabase = database;
   return sharedDatabase;
@@ -47,7 +48,7 @@ export async function getUiCacheFileDiagnostics(): Promise<UiCacheFileDiagnostic
     fileSize(`${path}-wal`),
     fileSize(`${path}-shm`),
   ]);
-  return { mainFileBytes, walFileBytes, shmFileBytes };
+  return { mainFileBytes, shmFileBytes, walFileBytes };
 }
 
 async function fileSize(path: string): Promise<number> {
@@ -61,18 +62,18 @@ async function fileSize(path: string): Promise<number> {
 }
 
 export function getUiCacheSqliteDatabase(): SqliteDatabase {
-  sharedSqliteDatabase ??= wrapSqliteDatabase(
-    getUiCacheNativeDatabase() as unknown as SqliteDatabaseLike,
-  );
+  sharedSqliteDatabase ??= wrapSqliteDatabase(getUiCacheNativeDatabase());
   installLifecycleFlush();
   return sharedSqliteDatabase;
 }
 
-export function openLegacyUiCacheSqliteDatabase(): { database: SqliteDatabase; close(): void } {
-  const nativeDatabase = open({ name: "codex-remote-ui-cache.db", location: "default" });
+export function openLegacyUiCacheSqliteDatabase(): { close: () => void; database: SqliteDatabase } {
+  const nativeDatabase = open({ location: "default", name: "codex-remote-ui-cache.db" });
   return {
-    database: wrapSqliteDatabase(nativeDatabase as unknown as SqliteDatabaseLike),
-    close: () => nativeDatabase.close(),
+    close: () => {
+      nativeDatabase.close();
+    },
+    database: wrapSqliteDatabase(nativeDatabase),
   };
 }
 
@@ -85,13 +86,17 @@ export function registerUiCacheCollectionFlusher(
   flushersByCollection.set(collectionId, flushers);
   return () => {
     flushers.delete(flush);
-    if (flushers.size === 0) flushersByCollection.delete(collectionId);
+    if (flushers.size === 0) {
+      flushersByCollection.delete(collectionId);
+    }
   };
 }
 
 export async function flushUiCacheCollection(collectionId: string): Promise<void> {
   await Promise.all(
-    [...(flushersByCollection.get(collectionId) ?? [])].map(async (flush) => await flush()),
+    [...(flushersByCollection.get(collectionId) ?? [])].map(async (flush) => {
+      await flush();
+    }),
   );
 }
 
@@ -100,12 +105,16 @@ export async function flushLiveUiCacheCheckpoints(): Promise<void> {
 }
 
 function installLifecycleFlush(): void {
-  if (lifecycleFlushInstalled) return;
+  if (lifecycleFlushInstalled) {
+    return;
+  }
   lifecycleFlushInstalled = true;
   AppState.addEventListener("change", (state) => {
-    if (state === "active") return;
-    void flushLiveUiCacheCheckpoints().catch((cause: unknown) => {
-      console.warn("Could not flush live UI checkpoints before backgrounding", cause);
+    if (state === "active") {
+      return;
+    }
+    void flushLiveUiCacheCheckpoints().catch((error: unknown) => {
+      appLogger.warnCaught({ error: error, event: "ui_cache.background_flush.failed" });
     });
   });
 }

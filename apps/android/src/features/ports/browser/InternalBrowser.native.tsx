@@ -16,34 +16,36 @@ import { useBrowserPaneLayout } from "./browserPaneLayout";
 import { BROWSER_FEEDBACK_BOOTSTRAP, type BrowserFeedbackCapability } from "./feedback";
 import { styles } from "./InternalBrowser.styles";
 
+const DEFAULT_ORIGIN_WHITELIST = ["http://*", "https://*"];
+
 export function InternalBrowser({
-  url,
-  headers,
-  header,
-  originWhitelist = ["http://*", "https://*"],
-  onHttpError,
-  onError,
   feedback: suppliedFeedback,
+  header,
+  headers,
+  onError,
+  onHttpError,
+  originWhitelist = DEFAULT_ORIGIN_WHITELIST,
+  url,
 }: {
-  url: string;
-  headers?: Record<string, string>;
-  header?: InternalBrowserHeader;
-  originWhitelist?: string[];
-  onHttpError?(statusCode: number): void;
-  onError?(description: string): void;
   feedback?: BrowserFeedbackCapability;
+  header?: InternalBrowserHeader;
+  headers?: Record<string, string>;
+  onError?: (description: string) => void;
+  onHttpError?: (statusCode: number) => void;
+  originWhitelist?: string[];
+  url: string;
 }) {
   const {
-    webView,
-    addressSource,
-    navigation,
-    navigateAddress,
-    updateNavigation,
     addressEditing,
+    addressSource,
+    navigateAddress,
+    navigation,
     setAddressEditing,
+    updateNavigation,
+    webView,
   } = useBrowserNavigationState(url);
   const devTools = useBrowserDevTools(webView, navigation, onError);
-  const { feedback, feedbackSelecting, feedbackCapturing, selectFeedbackElement, captureFeedback } =
+  const { captureFeedback, feedback, feedbackCapturing, feedbackSelecting, selectFeedbackElement } =
     useBrowserFeedbackSession(
       suppliedFeedback,
       webView,
@@ -51,7 +53,7 @@ export function InternalBrowser({
       devTools.isMounted,
     );
   const devToolsOpen = devTools.devToolsUrl !== null;
-  const { dividerPanResponder, onContentLayout, verticalDock, targetPaneStyle } =
+  const { dividerPanResponder, onContentLayout, targetPaneStyle, verticalDock } =
     useBrowserPaneLayout(devTools.devToolsDockSide, devToolsOpen);
   useBrowserBack(
     header,
@@ -65,81 +67,91 @@ export function InternalBrowser({
       <View style={[styles.toolbar, addressEditing && styles.toolbarEditing]}>
         {!addressEditing && header !== undefined && (
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel={header.closeLabel}
+            accessibilityRole="button"
             onPress={header.onClose}
             style={({ pressed }) => [styles.button, pressed && styles.pressed]}
           >
-            <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
+            <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
           </Pressable>
         )}
         {!addressEditing && (
           <BrowserButton
-            label="Back"
-            icon="chevron-back"
             disabled={!navigation.canGoBack}
+            icon="chevron-back"
+            label="Back"
             onPress={() => webView.current?.goBack()}
           />
         )}
         {!addressEditing && (
           <BrowserButton
-            label="Forward"
-            icon="chevron-forward"
             disabled={!navigation.canGoForward}
+            icon="chevron-forward"
+            label="Forward"
             onPress={() => webView.current?.goForward()}
           />
         )}
         {!addressEditing &&
           (navigation.loading ? (
             <BrowserButton
-              label="Stop loading"
               icon="close"
+              label="Stop loading"
               onPress={() => webView.current?.stopLoading()}
             />
           ) : (
             <BrowserButton
-              label="Reload"
               icon="refresh"
+              label="Reload"
               onPress={() => webView.current?.reload()}
             />
           ))}
         <BrowserAddressBar
           key={url}
-          url={navigation.url}
           onEditingChange={setAddressEditing}
           onNavigate={navigateAddress}
+          url={navigation.url}
         />
         {!addressEditing && feedback !== undefined && (
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel={
               feedbackSelecting ? "Cancel element selection" : "Select element to fix"
             }
+            accessibilityRole="button"
             disabled={feedbackCapturing}
             onPress={selectFeedbackElement}
             style={styles.button}
           >
             {feedbackCapturing ? (
-              <ActivityIndicator size="small" color={colors.text} />
+              <ActivityIndicator color={colors.text} size="small" />
             ) : (
               <Ionicons
+                color={feedbackSelecting ? colors.success : colors.textMuted}
                 name="locate-outline"
                 size={iconSize.action}
-                color={feedbackSelecting ? colors.success : colors.textMuted}
               />
             )}
           </Pressable>
         )}
         {!addressEditing && (
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel={devToolsOpen ? "Close Chromium DevTools" : "Open Chromium DevTools"}
+            accessibilityRole="button"
             accessibilityState={{
-              selected: devToolsOpen,
               busy: devTools.devToolsLoading || devTools.devToolsDocumentLoading,
+              selected: devToolsOpen,
             }}
             disabled={devTools.devToolsLoading}
-            onPress={() => (devToolsOpen ? devTools.closeDevTools() : void devTools.openDevTools())}
+            onPress={() => {
+              if (devToolsOpen) {
+                devTools.closeDevTools();
+              } else {
+                devTools.openDevTools().catch((error: unknown) => {
+                  onError?.(
+                    error instanceof Error ? error.message : "Could not open Chromium DevTools",
+                  );
+                });
+              }
+            }}
             style={({ pressed }) => [
               styles.button,
               devToolsOpen && styles.activeButton,
@@ -147,12 +159,12 @@ export function InternalBrowser({
             ]}
           >
             {devTools.devToolsLoading ? (
-              <ActivityIndicator size="small" color={colors.text} />
+              <ActivityIndicator color={colors.text} size="small" />
             ) : (
               <Ionicons
+                color={devToolsOpen ? colors.accent : colors.textMuted}
                 name="code-slash"
                 size={iconSize.action}
-                color={devToolsOpen ? colors.accent : colors.textMuted}
               />
             )}
           </Pressable>
@@ -162,39 +174,39 @@ export function InternalBrowser({
         <Text style={styles.browserNotice}>Tap an element to describe what should change</Text>
       )}
       <View
+        onLayout={onContentLayout}
         style={[
           styles.content,
           verticalDock &&
             (devTools.devToolsDockSide === "left" ? styles.contentRowReverse : styles.contentRow),
         ]}
-        onLayout={onContentLayout}
       >
         <View style={targetPaneStyle}>
           <WebView
+            domStorageEnabled
+            javaScriptEnabled
+            originWhitelist={originWhitelist}
             ref={webView}
-            style={styles.webView}
+            sharedCookiesEnabled
             source={{
               uri: addressSource.uri,
               ...(headers === undefined || !browserAddressKeepsOrigin(url, addressSource.uri)
                 ? {}
                 : { headers }),
             }}
-            originWhitelist={originWhitelist}
-            sharedCookiesEnabled
+            style={styles.webView}
             thirdPartyCookiesEnabled={false}
-            javaScriptEnabled
-            domStorageEnabled
             {...(feedback === undefined
               ? {}
               : {
                   injectedJavaScriptBeforeContentLoaded: BROWSER_FEEDBACK_BOOTSTRAP,
                   onMessage: captureFeedback,
                 })}
-            startInLoadingState
-            renderLoading={() => <ActivityIndicator style={styles.loading} color={colors.accent} />}
-            onNavigationStateChange={updateNavigation}
-            onHttpError={(event) => onHttpError?.(event.nativeEvent.statusCode)}
             onError={(event) => onError?.(event.nativeEvent.description)}
+            onHttpError={(event) => onHttpError?.(event.nativeEvent.statusCode)}
+            onNavigationStateChange={updateNavigation}
+            renderLoading={() => <ActivityIndicator color={colors.accent} style={styles.loading} />}
+            startInLoadingState
           />
         </View>
         {renderBrowserDevToolsPane(

@@ -8,11 +8,11 @@ import type { DrawingCommit } from "./DrawingWorkspace";
 export type DrawingAdmission = {
   available: boolean;
   draftThreadId: string | null;
-  stageAttachment(
+  stageAttachment: (
     selected: SelectedUpload,
     existing: StoredDraftAttachment | null,
     editor: StoredDraftAttachment["editor"],
-  ): boolean;
+  ) => boolean;
 };
 
 export async function commitDrawing(
@@ -22,8 +22,11 @@ export async function commitDrawing(
   name: string | null,
   value: DrawingCommit,
 ): Promise<boolean> {
+  await Promise.resolve();
   const { available, draftThreadId, stageAttachment } = admission;
-  if (!available || draftThreadId === null) return false;
+  if (!available || draftThreadId === null) {
+    return false;
+  }
   const selected = createBinaryUpload(
     name ?? existing?.name ?? quickdrawAttachmentName(),
     "image/png",
@@ -35,14 +38,14 @@ export async function commitDrawing(
       ? {
           ...existing,
           name: selected.name,
-          rootId: ATTACHMENT_ROOT_ID,
           path: attachmentUploadPath(draftThreadId, selected.name),
+          rootId: ATTACHMENT_ROOT_ID,
         }
       : existing;
   return stageAttachment(selected, replacement, {
     kind: "quickdraw",
     mode,
-    snapshot: value.snapshot,
     revision: Date.now(),
+    snapshot: value.snapshot,
   });
 }

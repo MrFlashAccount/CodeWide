@@ -6,33 +6,33 @@ import type { ComposerMention } from "./composer-mentions";
 import type { SearchComposerMentions } from "./composer-suggestions";
 
 export type ComposerMarkdownInputHandle = {
-  focus(): void;
-  getMarkdown(): Promise<string>;
-  insertCode(block: boolean): void;
-  insertLinkedText(text: string, url: string): void;
-  insertText(text: string): void;
-  startMention(indicator: "/" | "@"): void;
-  toggleOrderedList(): void;
-  toggleUnorderedList(): void;
+  focus: () => void;
+  getMarkdown: () => Promise<string>;
+  insertCode: (block: boolean) => void;
+  insertLinkedText: (text: string, url: string) => void;
+  insertText: (text: string) => void;
+  startMention: (indicator: "/" | "@") => void;
+  toggleOrderedList: () => void;
+  toggleUnorderedList: () => void;
 };
 
 export type ComposerMarkdownInputProps = {
-  readonly value: string;
   readonly accessibilityLabel: string;
-  readonly placeholder: string;
-  readonly mentionIndicators: readonly ("/" | "@")[];
-  readonly search: SearchComposerMentions;
   readonly getTransferAccess?: GetTransferAccess;
-  readonly onChangeText: (text: string) => void;
+  readonly largePasteThreshold?: number;
+  readonly mentionIndicators: readonly ("/" | "@")[];
   readonly onChangeMarkdown?: (markdown: string) => void;
+  readonly onChangeText: (text: string) => void;
+  readonly onLargePaste?: (event: LargePasteEvent) => void;
   readonly onSelectionChange?: (selection: {
-    readonly start: number;
     readonly end: number;
+    readonly start: number;
   }) => void;
   readonly onSelectMention?: (mention: ComposerMention) => void;
-  readonly selection?: { readonly start: number; readonly end: number };
-  readonly largePasteThreshold?: number;
-  readonly onLargePaste?: (event: LargePasteEvent) => void;
+  readonly placeholder: string;
   readonly scrollEnabled?: boolean;
+  readonly search: SearchComposerMentions;
+  readonly selection?: { readonly end: number; readonly start: number };
   readonly style?: StyleProp<TextStyle>;
+  readonly value: string;
 };

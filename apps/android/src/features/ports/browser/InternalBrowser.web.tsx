@@ -6,26 +6,26 @@ import type { BrowserFeedbackCapability } from "./feedback";
 export function InternalBrowser({
   url,
 }: {
-  url: string;
   feedback?: BrowserFeedbackCapability;
-  headers?: Record<string, string>;
   header?: {
-    title: string;
-    closeLabel: string;
-    onClose(): void;
     closeIcon?: "arrow-back" | "close";
+    closeLabel: string;
+    onClose: () => void;
     status?: string;
+    title: string;
   };
+  headers?: Record<string, string>;
+  onError?: (description: string) => void;
+  onHttpError?: (statusCode: number) => void;
   originWhitelist?: string[];
-  onHttpError?(statusCode: number): void;
-  onError?(description: string): void;
+  url: string;
 }) {
   return <View accessibilityLabel={`Internal browser: ${url}`} style={styles.root} />;
 }
 
 const styles = StyleSheet.create({
   root: {
-    flex: 1,
     backgroundColor: colors.background,
+    flex: 1,
   },
 });

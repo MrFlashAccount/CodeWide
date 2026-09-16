@@ -17,10 +17,10 @@ export function useQueueEditState(composerScope: string) {
   );
   return {
     queuedComposerEdit,
-    setQueuedComposerEdit,
     queuedComposerEditBusy,
-    setQueuedComposerEditBusy,
     queuedComposerEditError,
+    setQueuedComposerEdit,
+    setQueuedComposerEditBusy,
     setQueuedComposerEditError,
   };
 }
@@ -29,46 +29,54 @@ import { composerUploads } from "../../data/composer-uploads";
 import type { QueuedPrompt } from "../../data/thread-delivery-state";
 import type { QueueEditCapabilities } from "./queueEditCapabilities";
 import { markdownForComposerSubmission } from "./skills/composer-skill-suggestions";
+
+function clearQueuedComposerUploads(scope: string): void {
+  for (const upload of composerUploads.entries(scope)) {
+    composerUploads.remove(scope, upload.attachment.id);
+  }
+}
+
 export function useQueueEditActions({
-  queuedComposerEdit,
-  setQueuedComposerEdit,
-  queuedComposerEditBusy,
-  setQueuedComposerEditBusy,
-  setQueuedComposerEditError,
-  composerUploadScope,
-  draftSelectionRef,
+  closeInlineQueueOverlay,
   composerInputRef,
   composerMarkdownRef,
+  composerUploadScope,
+  conversationOwner,
+  draftSelectionRef,
   latestAttachmentsRef,
-  uploadsBlockSend,
-  voicePhase,
-  closeInlineQueueOverlay,
   onEditQueued,
   onListQueue,
-  conversationOwner,
+  queuedComposerEdit,
+  queuedComposerEditBusy,
+  setQueuedComposerEdit,
+  setQueuedComposerEditBusy,
+  setQueuedComposerEditError,
+  uploadsBlockSend,
+  voicePhase,
 }: QueueEditCapabilities) {
-  const clearQueuedComposerUploads = (scope: string) => {
-    for (const upload of composerUploads.entries(scope))
-      composerUploads.remove(scope, upload.attachment.id);
-  };
-
   const cancelQueuedComposerEdit = useEvent(() => {
-    if (queuedComposerEdit === null) return;
+    if (queuedComposerEdit === null) {
+      return;
+    }
     clearQueuedComposerUploads(composerUploadScope);
     setQueuedComposerEdit(null);
     setQueuedComposerEditBusy(false);
     setQueuedComposerEditError(null);
-    draftSelectionRef.current = { start: 0, end: 0 };
+    draftSelectionRef.current = { end: 0, start: 0 };
   });
 
   const beginQueuedComposerEdit = useEvent((item: QueuedPrompt) => {
-    if (queuedComposerEditBusy || voicePhase !== "idle" || item.state !== "queued") return;
-    if (queuedComposerEdit !== null) clearQueuedComposerUploads(composerUploadScope);
+    if (queuedComposerEditBusy || voicePhase !== "idle" || item.state !== "queued") {
+      return;
+    }
+    if (queuedComposerEdit !== null) {
+      clearQueuedComposerUploads(composerUploadScope);
+    }
     closeInlineQueueOverlay();
     setQueuedComposerEdit({
+      attachments: item.attachments,
       commandId: item.commandId,
       text: item.text,
-      attachments: item.attachments,
     });
     setQueuedComposerEditError(null);
     requestAnimationFrame(() => composerInputRef.current?.focus());
@@ -76,14 +84,17 @@ export function useQueueEditActions({
 
   const saveQueuedComposerEdit = useEvent(() => {
     const edit = queuedComposerEdit;
-    if (edit === null || onEditQueued === undefined || queuedComposerEditBusy || uploadsBlockSend)
+    if (edit === null || onEditQueued === undefined || queuedComposerEditBusy || uploadsBlockSend) {
       return;
+    }
     const text = markdownForComposerSubmission(composerMarkdownRef.current).trim();
     const editedAttachments = composerUploads.readyAttachments(
       composerUploadScope,
       latestAttachmentsRef.current.latest,
     );
-    if (text === "" && editedAttachments.length === 0) return;
+    if (text === "" && editedAttachments.length === 0) {
+      return;
+    }
     const editScope = composerUploadScope;
     setQueuedComposerEditBusy(true);
     setQueuedComposerEditError(null);
@@ -93,18 +104,22 @@ export function useQueueEditActions({
           clearQueuedComposerUploads(editScope);
           setQueuedComposerEdit(null);
           setQueuedComposerEditBusy(false);
-          draftSelectionRef.current = { start: 0, end: 0 };
-          if (onListQueue !== undefined) void onListQueue().catch(() => undefined);
+          draftSelectionRef.current = { end: 0, start: 0 };
+          if (onListQueue !== undefined) {
+            void onListQueue().catch(() => undefined);
+          }
         }
       },
-      (cause: unknown) => {
-        if (!conversationOwner.isCurrent()) return;
+      (error: unknown) => {
+        if (!conversationOwner.isCurrent()) {
+          return;
+        }
         setQueuedComposerEditError(
-          cause instanceof Error ? cause.message : "Could not update queued message",
+          error instanceof Error ? error.message : "Could not update queued message",
         );
         setQueuedComposerEditBusy(false);
       },
     );
   });
-  return { cancelQueuedComposerEdit, beginQueuedComposerEdit, saveQueuedComposerEdit };
+  return { beginQueuedComposerEdit, cancelQueuedComposerEdit, saveQueuedComposerEdit };
 }

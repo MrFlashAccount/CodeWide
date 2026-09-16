@@ -13,7 +13,9 @@ export function projectThreadHotStates(
   const counts = new Map<string, number>();
   for (const request of pendingRequests) {
     const threadId = typeof request.params.threadId === "string" ? request.params.threadId : null;
-    if (threadId === null) continue;
+    if (threadId === null) {
+      continue;
+    }
     const key = `${request.connectionId}\u0000${threadId}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }

@@ -3,20 +3,23 @@ import { randomUUID } from "expo-crypto";
 import type { ThreadDetailDatabase } from "../../data/thread-detail-database";
 import { buildThreadForkParams, type ThreadForkOptions } from "../../data/thread-fork";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
+import type { ThreadUiStateDatabase } from "../../data/thread-ui-state-database";
 import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/workspace-session";
 import { enqueueNativeCommand } from "../../native/native-transport";
 
 import type { TurnActionsWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts turnActions intents using retained lower authorities. */
 export function createTurnActionsWorkspaceAdapter({
-  getSummaries,
   getDetails,
   getSession,
+  getSummaries,
+  getThreadUiState,
   rpcAfterAttach,
 }: {
-  getSummaries(): ThreadSummaryDatabase | null;
-  getDetails(): ThreadDetailDatabase | null;
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
+  getDetails: () => ThreadDetailDatabase | null;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
+  getSummaries: () => ThreadSummaryDatabase | null;
+  getThreadUiState: () => ThreadUiStateDatabase | null;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): TurnActionsWorkspaceCapabilities {
   const setThreadPinned = async (connectionId: string, threadId: string, pinned: boolean) => {
@@ -58,9 +61,10 @@ export function createTurnActionsWorkspaceAdapter({
     await summaries.beginDelete(connectionId, threadId, commandId);
     try {
       await enqueueNativeCommand(connectionId, commandId, "thread/delete", { threadId });
-    } catch (cause) {
+      await getThreadUiState()?.deleteThread(connectionId, threadId);
+    } catch (error) {
       await summaries.rollbackDelete(connectionId, threadId, commandId);
-      throw cause;
+      throw error;
     }
   };
 
@@ -70,7 +74,9 @@ export function createTurnActionsWorkspaceAdapter({
 
   const interruptTurn = async (connectionId: string, threadId: string, turnId: string) => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     // Interrupt is an ephemeral control-plane action. Persisting it behind
     // the durable mutation outbox can make Stop wait for an unrelated turn
     // reconciliation and can replay a stale stop after reconnect.
@@ -83,7 +89,9 @@ export function createTurnActionsWorkspaceAdapter({
     options: ThreadForkOptions,
   ): Promise<string> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const response = await rpcAfterAttach<ThreadForkResponse>(
       session,
       "thread/fork",
@@ -95,24 +103,28 @@ export function createTurnActionsWorkspaceAdapter({
 
   const compactThread = async (connectionId: string, threadId: string): Promise<void> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     await rpcAfterAttach(session, "thread/compact/start", { threadId });
   };
   return {
-    setThreadPinned,
-    renameThread,
     archiveThread,
-    unarchiveThread,
-    deleteThread,
-    markThreadRead,
-    interruptTurn,
-    forkThread,
     compactThread,
+    deleteThread,
+    forkThread,
+    interruptTurn,
+    markThreadRead,
+    renameThread,
+    setThreadPinned,
+    unarchiveThread,
   };
 }
 function requireThreadSummaryDatabase(
   database: ThreadSummaryDatabase | null,
 ): ThreadSummaryDatabase {
-  if (database === null) throw new Error("Local thread summaries are not ready");
+  if (database === null) {
+    throw new Error("Local thread summaries are not ready");
+  }
   return database;
 }

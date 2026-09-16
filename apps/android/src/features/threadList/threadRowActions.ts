@@ -6,70 +6,74 @@ import { useAppDialog } from "../../ui/AppDialog";
 import type { ThreadRowProps } from "./threadRowContract";
 
 export function useThreadRowActions({
-  thread,
-  onTogglePin,
   onArchive,
-  onUnarchive,
   onMarkRead,
+  onTogglePin,
+  onUnarchive,
+  thread,
 }: ThreadRowProps) {
   const dialog = useAppDialog();
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const [webContextVisible, setWebContextVisible] = useState(false);
-  const archiveAction = thread.archived ? onUnarchive : onArchive;
-  const archiveLabel = thread.archived ? "Unarchive" : "Archive";
+  const archiveAction = thread.archived === true ? onUnarchive : onArchive;
+  const archiveLabel = thread.archived === true ? "Unarchive" : "Archive";
   const swipeEnabled =
     onTogglePin !== undefined || archiveAction !== undefined || onMarkRead !== undefined;
   const menuActions: ActionMenuItem[] = [
-    { id: "copy-session-id", label: "Copy session ID", icon: "copy-outline" },
+    { icon: "copy-outline", id: "copy-session-id", label: "Copy session ID" },
     {
+      disabled: onTogglePin === undefined,
+      icon: "pin-outline",
       id: "pin",
       label: thread.pinned ? "Unpin" : "Pin",
-      icon: "pin-outline",
       selected: thread.pinned,
-      disabled: onTogglePin === undefined,
     },
     {
+      disabled: onMarkRead === undefined,
+      icon: "checkmark-done-outline",
       id: "read",
       label: "Mark as read",
-      icon: "checkmark-done-outline",
-      disabled: onMarkRead === undefined,
     },
     {
+      destructive: thread.archived !== true,
+      disabled: archiveAction === undefined,
+      icon: thread.archived === true ? "archive" : "archive-outline",
       id: "archive",
       label: archiveLabel,
-      icon: thread.archived ? "archive" : "archive-outline",
-      destructive: !thread.archived,
-      disabled: archiveAction === undefined,
     },
   ];
   const runThreadAction = useEvent(
-    (action: (() => Promise<void>) | undefined, label: string, closeSwipe = false) => {
-      if (action === undefined) return;
+    (action: (() => Promise<void>) | undefined, label: string, closeSwipe: boolean = false) => {
+      if (action === undefined) {
+        return;
+      }
       // Start the action before closing the animated row. A close failure must
       // never swallow the actual thread command.
-      void action().catch((cause) =>
+      void action().catch((error: unknown) => {
         dialog.alert(
           `${label} failed`,
-          cause instanceof Error ? cause.message : "Thread action failed",
-        ),
-      );
-      if (closeSwipe) swipeableRef.current?.close();
+          error instanceof Error ? error.message : "Thread action failed",
+        );
+      });
+      if (closeSwipe) {
+        swipeableRef.current?.close();
+      }
     },
   );
   const closeSwipe = useEvent(() => {
     swipeableRef.current?.close();
   });
   return {
-    dialog,
-    swipeableRef,
-    webContextVisible,
-    setWebContextVisible,
     archiveAction,
     archiveLabel,
-    swipeEnabled,
+    closeSwipe,
+    dialog,
     menuActions,
     runThreadAction,
-    closeSwipe,
+    setWebContextVisible,
+    swipeableRef,
+    swipeEnabled,
+    webContextVisible,
   };
 }
 /** Explicit actions exposed by the thread-row action owner. */

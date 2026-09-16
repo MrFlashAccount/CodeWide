@@ -21,8 +21,6 @@ export default function V1AddProjectRoute(): React.JSX.Element {
     return (
       <RouteUnavailable
         message="Choose an available server to add a project."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           router.dismissTo("/v1/projects");
         }}
@@ -38,22 +36,14 @@ export default function V1AddProjectRoute(): React.JSX.Element {
       cwd=""
       discoveredProjects={EMPTY_PROJECTS}
       error={null}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onAddProject={async (path) => resources.project.projectWorkspace.addSidebarProject(id, path)}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={() => {
         router.dismissTo("/v1/projects");
       }}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onReadDirectory={async (path) => features.projects.readDirectory(id, path)}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onReadHomeDirectory={async () => features.projects.readProjectHome(id)}
       // WHY: This render-local callback must return a Promise because the picker action contract is async.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop typescript/promise-function-async
+      // oxlint-disable-next-line typescript/promise-function-async
       onSelect={() => {
         router.dismissTo("/v1/projects");
         return Promise.resolve();

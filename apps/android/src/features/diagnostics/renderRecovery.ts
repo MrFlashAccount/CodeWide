@@ -64,7 +64,7 @@ export function useRenderRecovery({
   };
   const createUnsupportedFixThread = useEvent(async (block: RenderBlock): Promise<void> => {
     const rawType = typeof block.raw.type === "string" ? block.raw.type : block.kind;
-    const raw = JSON.stringify(block.raw, null, "  ") ?? "{}";
+    const raw = JSON.stringify(block.raw, null, "  ");
     const prompt = [
       `Implement support for the Codex protocol block \`${rawType}\` in this remote client.`,
       "Inspect the renderer registry, add a compact safe renderer, preserve unknown-field compatibility, and add regression tests.",

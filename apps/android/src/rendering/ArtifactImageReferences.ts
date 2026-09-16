@@ -9,13 +9,17 @@ export function artifactImageReferences(
 ): ReadonlySet<string> {
   const references = new Set<string>();
   for (const attachment of attachments) {
-    if (attachment.kind !== "image") continue;
+    if (attachment.kind !== "image") {
+      continue;
+    }
     if (attachment.source.type === "path") {
       references.add(attachment.source.path);
       references.add(`sandbox:${attachment.source.path}`);
-    } else if (attachment.source.type === "url") references.add(attachment.source.url);
-    else if (attachment.source.type === "content")
+    } else if (attachment.source.type === "url") {
+      references.add(attachment.source.url);
+    } else if (attachment.source.type === "content") {
       references.add(`content:${attachment.source.asset.id}`);
+    }
   }
   return references;
 }

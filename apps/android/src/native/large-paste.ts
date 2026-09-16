@@ -1,38 +1,50 @@
 import { DeviceEventEmitter, NativeModules } from "react-native";
+import { unknownRecord } from "../data/unknownRecord";
 
 export type LargePasteEvent = {
-  text: string;
-  start: number;
   end: number;
+  start: number;
+  text: string;
 };
 
 type NativeLargePasteEvent = LargePasteEvent & { token?: string };
 
 type NativeLargePasteModule = {
-  install(reactTag: number, token: string, minimumChars: number): void;
-  uninstall(reactTag: number, token: string): void;
+  install: (reactTag: number, token: string, minimumChars: number) => void;
+  uninstall: (reactTag: number, token: string) => void;
 };
 
 const callbacks = new Map<string, (event: LargePasteEvent) => void>();
-let nativeSubscription: { remove(): void } | null = null;
+let nativeSubscription: { remove: () => void } | null = null;
 
 function bridge(): NativeLargePasteModule | null {
-  const candidate = NativeModules.CodeWideLargePaste as Partial<NativeLargePasteModule> | undefined;
-  return typeof candidate?.install === "function" && typeof candidate.uninstall === "function"
-    ? (candidate as NativeLargePasteModule)
-    : null;
+  const candidate = unknownRecord(NativeModules.CodeWideLargePaste);
+  if (
+    candidate === null ||
+    typeof candidate.install !== "function" ||
+    typeof candidate.uninstall !== "function"
+  ) {
+    return null;
+  }
+  // WHY: React Native exposes callable native methods without parameter metadata after registration; presence is the only runtime capability check available.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return candidate as NativeLargePasteModule;
 }
 
 function ensureNativeSubscription(): void {
-  if (nativeSubscription !== null) return;
+  if (nativeSubscription !== null) {
+    return;
+  }
   nativeSubscription = DeviceEventEmitter.addListener(
     "codewideLargePaste",
     (event: NativeLargePasteEvent) => {
-      if (typeof event.token !== "string" || typeof event.text !== "string") return;
+      if (typeof event.token !== "string" || typeof event.text !== "string") {
+        return;
+      }
       callbacks.get(event.token)?.({
-        text: event.text,
-        start: Number.isFinite(event.start) ? event.start : 0,
         end: Number.isFinite(event.end) ? event.end : 0,
+        start: Number.isFinite(event.start) ? event.start : 0,
+        text: event.text,
       });
     },
   );
@@ -45,7 +57,9 @@ export function installLargePasteInterceptor(
   callback: (event: LargePasteEvent) => void,
 ): (() => void) | null {
   const nativeBridge = bridge();
-  if (nativeBridge === null) return null;
+  if (nativeBridge === null) {
+    return null;
+  }
   ensureNativeSubscription();
   callbacks.set(token, callback);
   nativeBridge.install(reactTag, token, minimumChars);

@@ -13,7 +13,9 @@ export function ComposerDeliveryMenu(props: ComposerDeliveryMenuProps) {
         <CodeWideMenu
           actions={props.actions}
           expanded={expanded}
-          onDismiss={() => setExpanded(false)}
+          onDismiss={() => {
+            setExpanded(false);
+          }}
           onSelect={(id) => {
             setExpanded(false);
             props.onSelect(id);
@@ -34,15 +36,15 @@ export function ComposerDeliveryMenu(props: ComposerDeliveryMenuProps) {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    width: touchTarget,
-    height: touchTarget,
-    flexShrink: 0,
-    overflow: "visible",
-    zIndex: 4,
-  },
   anchor: {
-    width: touchTarget,
     height: touchTarget,
+    width: touchTarget,
+  },
+  root: {
+    flexShrink: 0,
+    height: touchTarget,
+    overflow: "visible",
+    width: touchTarget,
+    zIndex: 4,
   },
 });

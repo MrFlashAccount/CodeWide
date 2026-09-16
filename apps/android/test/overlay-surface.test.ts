@@ -1,25 +1,34 @@
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
+import { sourceHasJsxElement } from "./source-contract";
 
-const context = readFileSync(new URL("../src/ui/OverlaySurfaceContext.tsx", import.meta.url), "utf8");
+const context = readFileSync(
+  new URL("../src/ui/OverlaySurfaceContext.tsx", import.meta.url),
+  "utf8",
+);
 const appSheet = readFileSync(new URL("../src/ui/AppSheet.tsx", import.meta.url), "utf8");
-const fullscreenModal = readFileSync(new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url), "utf8");
-const actionMenu = readFileSync(new URL("../src/ui/ActionMenu.native.tsx", import.meta.url), "utf8");
+const fullscreenModal = readFileSync(
+  new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url),
+  "utf8",
+);
+const actionMenu = readFileSync(
+  new URL("../src/ui/ActionMenu.native.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("overlay surface ownership", () => {
   it("marks only content hosted by a native bottom sheet", () => {
-    expect(context).toContain('const ROOT_OVERLAY_SURFACE: OverlaySurfaceContextValue = { surface: "root" }');
-    expect(appSheet).toContain('<OverlaySurfaceProvider surface="native-sheet" portalHostName={portalHostName}>');
-    expect(appSheet.indexOf('<OverlaySurfaceProvider surface="native-sheet" portalHostName={portalHostName}>')).toBeLessThan(
-      appSheet.indexOf("{children}"),
+    expect(context).toContain(
+      'const ROOT_OVERLAY_SURFACE: OverlaySurfaceContextValue = { surface: "root" }',
     );
+    expect(
+      sourceHasJsxElement(appSheet, "OverlaySurfaceProvider", ['surface="native-sheet"']),
+    ).toBe(true);
   });
 
   it("lets Expo UI own menu popups inside native sheet surfaces", () => {
-    expect(appSheet).toContain('import { PortalHost } from "heroui-native/portal"');
-    expect(appSheet).toContain("const portalHostName = `app-sheet-${useId()}`");
-    expect(appSheet).toContain("<PortalHost name={portalHostName} />");
+    expect(appSheet).not.toContain("PortalHost");
     expect(appSheet).not.toContain("measureInWindow");
     expect(appSheet).not.toContain("useWindowDimensions");
     expect(actionMenu).toContain('from "./CodeWideMenu.native"');
@@ -31,14 +40,16 @@ describe("overlay surface ownership", () => {
     expect(actionMenu).not.toContain("requestAnimationFrame");
   });
 
-  it("hosts menu portals inside the native fullscreen modal window", () => {
-    expect(context).toContain('export type OverlaySurface = "root" | "native-sheet" | "fullscreen-modal"');
-    expect(fullscreenModal).toContain('import { PortalHost } from "heroui-native/portal"');
-    expect(fullscreenModal).toContain("const portalHostName = `fullscreen-modal-${useId()}`");
-    expect(fullscreenModal).toContain('<OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>');
-    const providerIndex = fullscreenModal.indexOf('<OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>');
-    expect(providerIndex).toBeLessThan(fullscreenModal.indexOf("{children}", providerIndex));
-    expect(fullscreenModal).toContain("<PortalHost name={portalHostName} />");
+  it("marks the native fullscreen modal window without a second portal tree", () => {
+    expect(context).toContain(
+      'export type OverlaySurface = "root" | "native-sheet" | "fullscreen-modal"',
+    );
+    expect(
+      sourceHasJsxElement(fullscreenModal, "OverlaySurfaceProvider", [
+        'surface="fullscreen-modal"',
+      ]),
+    ).toBe(true);
+    expect(fullscreenModal).not.toContain("PortalHost");
   });
 
   it("does not reintroduce cross-window z-index workarounds", () => {

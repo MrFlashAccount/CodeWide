@@ -2,8 +2,6 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { sourceObjectDeclaration } from "./source-contract";
-
 const source = readFileSync(
   new URL("../src/native/file-transfer.native.ts", import.meta.url),
   "utf8",
@@ -19,10 +17,11 @@ const documentPreviewHost = readFileSync(
   new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url),
   "utf8",
 );
-const heroUIRoot = readFileSync(
-  new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url),
+const appRootProviders = readFileSync(
+  new URL("../src/ui/AppRootProviders.tsx", import.meta.url),
   "utf8",
 );
+const appNotice = readFileSync(new URL("../src/ui/AppNotice.tsx", import.meta.url), "utf8");
 const expoFileHandlePatch = readFileSync(
   new URL("../../../patches/expo-file-system@57.0.2.patch", import.meta.url),
   "utf8",
@@ -55,19 +54,12 @@ describe("Android download finalization", () => {
     expect(source).toContain("return existing");
   });
 
-  it("reports success non-modally through the native HeroUI toast", () => {
-    expect(heroUIRoot).toContain('from "heroui-native/toast"');
-    expect(heroUIRoot).toContain("<ToastProvider");
-    expect(heroUIRoot).toContain("insets={{ left: 16, right: 16 }}");
-    expect(heroUIRoot).not.toContain("bottom: 20");
-    expect(documentPreviewHost).toContain('variant: "success"');
+  it("reports success non-modally through the application notice host", () => {
+    expect(appRootProviders).toContain("<AppNoticeProvider>");
+    expect(appNotice).toContain('accessibilityLiveRegion="polite"');
+    expect(appNotice).toContain("request.onActionPress?.()");
     expect(documentPreviewHost).toContain('label: "File saved"');
-    expect(documentPreviewHost).toContain("<Toast.Action");
-    expect(documentPreviewHost).toContain('variant="primary"');
-    expect(documentPreviewHost).toContain("style={styles.downloadToastAction}");
-    const downloadToastAction = sourceObjectDeclaration(documentPreviewHost, "downloadToastAction");
-    expect(downloadToastAction).toContain("minHeight: controlSize.regular");
-    expect(downloadToastAction).toContain("backgroundColor: colors.primary");
+    expect(documentPreviewHost).toContain("notice.show(");
     expect(documentPreviewHost).not.toContain('dialog.alert("Download complete"');
   });
 

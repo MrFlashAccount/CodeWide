@@ -635,6 +635,27 @@ async fn content_read(
         .unwrap_or_else(IntoResponse::into_response)
 }
 
+async fn content_text_read(
+    State(state): State<AppState>,
+    Path(digest): Path<String>,
+    Query(query): Query<ContentQuery>,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
+    let Some(content) = state.services.content.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some()
+        || !is_authenticated_session(&state, &headers).await
+    {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    content
+        .serve_text(&digest, query, &headers, method == Method::HEAD)
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
 async fn file_download(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
@@ -651,6 +672,192 @@ async fn file_preview(
     method: Method,
 ) -> Response {
     file_read(state, query, headers, method == Method::HEAD, true).await
+}
+
+async fn file_text(
+    State(state): State<AppState>,
+    Query(query): Query<FileTextQuery>,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
+    file_text_read(state, query, headers, method == Method::HEAD, false).await
+}
+
+async fn file_preview_text(
+    State(state): State<AppState>,
+    Query(query): Query<FileTextQuery>,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
+    file_text_read(state, query, headers, method == Method::HEAD, true).await
+}
+
+async fn file_text_read(
+    state: AppState,
+    query: FileTextQuery,
+    headers: HeaderMap,
+    head_only: bool,
+    preview: bool,
+) -> Response {
+    let Some(files) = state.services.files.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some()
+        || !is_authenticated_session(&state, &headers).await
+    {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    #[cfg(feature = "e2e-command-fault")]
+    if let Some(response) = e2e_v1_surface_fault(
+        &state,
+        crate::sync_v2::E2ESurfaceFaultTarget::ResourceRead,
+        "e2e_resource_read_action_mismatch",
+    )
+    .await
+    {
+        return response;
+    }
+    files
+        .read_text(query, &headers, head_only, preview)
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileImagePreviewQuery {
+    #[serde(flatten)]
+    file: FileQuery,
+    #[serde(flatten)]
+    preview: ImagePreviewQuery,
+}
+
+async fn file_image_preview(
+    State(state): State<AppState>,
+    Query(query): Query<FileImagePreviewQuery>,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
+    file_image_preview_read(state, query, headers, method == Method::HEAD, false).await
+}
+
+async fn host_file_image_preview(
+    State(state): State<AppState>,
+    Query(query): Query<FileImagePreviewQuery>,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
+    file_image_preview_read(state, query, headers, method == Method::HEAD, true).await
+}
+
+async fn file_image_preview_read(
+    state: AppState,
+    query: FileImagePreviewQuery,
+    headers: HeaderMap,
+    head_only: bool,
+    preview: bool,
+) -> Response {
+    let (Some(files), Some(image_previews)) = (
+        state.services.files.clone(),
+        state.services.image_previews.clone(),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some()
+        || !is_authenticated_session(&state, &headers).await
+    {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    let source = match files.image_source(query.file, preview).await {
+        Ok(source) => source,
+        Err(error) => return error.into_response(),
+    };
+    image_previews
+        .preview_file(
+            source.source_key,
+            source.path,
+            query.preview.variant.unwrap_or(ImageVariant::Preview),
+            &headers,
+            head_only,
+        )
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
+async fn content_image_preview(
+    State(state): State<AppState>,
+    Path(digest): Path<String>,
+    Query(query): Query<ImagePreviewQuery>,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
+    let (Some(content), Some(image_previews)) = (
+        state.services.content.clone(),
+        state.services.image_previews.clone(),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some()
+        || !is_authenticated_session(&state, &headers).await
+    {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    let source = match content.asset(&digest).await {
+        Ok(source) => source,
+        Err(error) => return error.into_response(),
+    };
+    if !source.content_type.starts_with("image/") {
+        return ImagePreviewError::Unsupported.into_response();
+    }
+    image_previews
+        .preview_shared_bytes(
+            format!("content:{digest}"),
+            source.bytes,
+            query.variant.unwrap_or(ImageVariant::Preview),
+            &headers,
+            method == Method::HEAD,
+        )
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
+async fn media_image_preview(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ImagePreviewQuery>,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
+    let (Some(media), Some(image_previews)) = (
+        state.services.media.clone(),
+        state.services.image_previews.clone(),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some() {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    let Some(authorization) = authenticated_session(&state, &headers).await else {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    };
+    let owner = authorization.device_id().unwrap_or("local-admin");
+    let source = match media.image_source_for_owner(owner, &id) {
+        Ok(source) => source,
+        Err(error) => return error.into_response(),
+    };
+    if !source.content_type.starts_with("image/") {
+        return ImagePreviewError::Unsupported.into_response();
+    }
+    image_previews
+        .preview_bytes(
+            source.source_key,
+            source.bytes,
+            query.variant.unwrap_or(ImageVariant::Preview),
+            &headers,
+            method == Method::HEAD,
+        )
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
 }
 
 async fn file_read(

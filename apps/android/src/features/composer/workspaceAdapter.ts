@@ -14,19 +14,18 @@ import type { ComposerWorkspaceCapabilities } from "./workspaceCapabilities";
 export function createComposerWorkspaceAdapter({
   getThreadUiState,
   loadTurnControls,
-  sendText,
   retryFailedMessage,
+  sendText,
   startVoiceTranscription,
 }: {
-  getThreadUiState(): ThreadUiStateDatabase | null;
+  getThreadUiState: () => ThreadUiStateDatabase | null;
   loadTurnControls: (connectionId: string, cwd: string) => Promise<TurnControlsValue>;
-  sendText: ComposerWorkspaceCapabilities["sendText"];
   retryFailedMessage: ComposerWorkspaceCapabilities["retryFailedMessage"];
+  sendText: ComposerWorkspaceCapabilities["sendText"];
   startVoiceTranscription: ComposerWorkspaceCapabilities["startVoiceTranscription"];
 }): ComposerWorkspaceCapabilities {
-  const loadDraft = async (connectionId: string, threadId: string): Promise<string> => {
-    return (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState())).draftText;
-  };
+  const loadDraft = async (connectionId: string, threadId: string): Promise<string> =>
+    (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState())).draftText;
 
   const saveDraft = async (connectionId: string, threadId: string, text: string): Promise<void> => {
     await requireThreadUiStateDatabase(getThreadUiState()).saveDraft(connectionId, threadId, text);
@@ -35,9 +34,8 @@ export function createComposerWorkspaceAdapter({
   const loadDraftAttachments = async (
     connectionId: string,
     threadId: string,
-  ): Promise<StoredDraftAttachment[]> => {
-    return (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState())).attachments;
-  };
+  ): Promise<StoredDraftAttachment[]> =>
+    (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState())).attachments;
 
   const saveDraftAttachments = async (
     connectionId: string,
@@ -77,9 +75,8 @@ export function createComposerWorkspaceAdapter({
     );
   };
 
-  const loadComposerPreferences = async (connectionId: string, threadId: string) => {
-    return (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState())).preferences;
-  };
+  const loadComposerPreferences = async (connectionId: string, threadId: string) =>
+    (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState())).preferences;
 
   const saveComposerPreferences = async (
     connectionId: string,
@@ -106,24 +103,26 @@ export function createComposerWorkspaceAdapter({
     );
   };
   return {
-    loadDraft,
-    saveDraft,
-    loadDraftAttachments,
-    saveDraftAttachments,
-    upsertDraftAttachment,
-    removeDraftAttachment,
     loadComposerPreferences,
-    saveComposerPreferences,
-    updateThreadSettings,
-    sendText,
-    retryFailedMessage,
+    loadDraft,
+    loadDraftAttachments,
     loadTurnControls,
+    removeDraftAttachment,
+    retryFailedMessage,
+    saveComposerPreferences,
+    saveDraft,
+    saveDraftAttachments,
+    sendText,
     startVoiceTranscription,
+    updateThreadSettings,
+    upsertDraftAttachment,
   };
 }
 function requireThreadUiStateDatabase(
   database: ThreadUiStateDatabase | null,
 ): ThreadUiStateDatabase {
-  if (database === null) throw new Error("Local thread UI state is not ready");
+  if (database === null) {
+    throw new Error("Local thread UI state is not ready");
+  }
   return database;
 }

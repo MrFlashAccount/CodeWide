@@ -8,29 +8,27 @@ import { CodeWideMenu, type CodeWideMenuAction } from "./CodeWideMenu.native";
 export type { ActionMenuItem } from "./ActionMenu.types";
 
 function nativeActions(actions: readonly ActionMenuItem[]): readonly CodeWideMenuAction[] {
-  return actions.map((action) => {
-    return {
-      id: action.id,
-      label: action.label,
-      ...(action.section === undefined ? {} : { section: action.section }),
-      ...(action.description === undefined ? {} : { description: action.description }),
-      ...(action.icon === undefined ? {} : { icon: action.icon }),
-      ...(action.disabled === undefined ? {} : { disabled: action.disabled }),
-      ...(action.destructive === undefined ? {} : { destructive: action.destructive }),
-      ...(action.selected === undefined ? {} : { selected: action.selected }),
-    };
-  });
+  return actions.map((action) => ({
+    id: action.id,
+    label: action.label,
+    ...(action.section === undefined ? {} : { section: action.section }),
+    ...(action.description === undefined ? {} : { description: action.description }),
+    ...(action.icon === undefined ? {} : { icon: action.icon }),
+    ...(action.disabled === undefined ? {} : { disabled: action.disabled }),
+    ...(action.destructive === undefined ? {} : { destructive: action.destructive }),
+    ...(action.selected === undefined ? {} : { selected: action.selected }),
+  }));
 }
 
 export function ActionMenu({
   accessibilityLabel,
   actions,
   children,
-  trigger = "press",
   menuWidth = 288,
-  style,
   onOpenChange,
   onSelect,
+  style,
+  trigger = "press",
 }: ActionMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const { width } = useWindowDimensions();
@@ -39,7 +37,9 @@ export function ActionMenu({
     setIsOpen(open);
     onOpenChange?.(open);
   };
-  const open = () => setOpen(true);
+  const open = () => {
+    setOpen(true);
+  };
   const triggerElement = cloneElement(
     children,
     trigger === "long-press"
@@ -60,8 +60,12 @@ export function ActionMenu({
   );
   const select = (id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
-    if (action === undefined || action.disabled === true) return;
-    if (action.keepOpen !== true) setOpen(false);
+    if (action === undefined || action.disabled === true) {
+      return;
+    }
+    if (action.keepOpen !== true) {
+      setOpen(false);
+    }
     void Haptics.selectionAsync().catch(() => undefined);
     onSelect(id);
   };
@@ -72,7 +76,9 @@ export function ActionMenu({
         actions={nativeActions(actions)}
         expanded={isOpen}
         menuWidth={Math.min(menuWidth, width - 24)}
-        onDismiss={() => setOpen(false)}
+        onDismiss={() => {
+          setOpen(false);
+        }}
         onSelect={select}
       >
         {triggerElement}

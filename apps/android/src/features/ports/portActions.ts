@@ -14,8 +14,8 @@ export function usePortActions(props: PortForwardingManagerProps) {
     setWebMenuId(null);
     try {
       await action();
-    } catch (cause) {
-      setActionError(message(cause, "Could not update port forwarding"));
+    } catch (error) {
+      setActionError(message(error, "Could not update port forwarding"));
     }
     setPendingId((current) => (current === id ? null : current));
   });
@@ -24,8 +24,8 @@ export function usePortActions(props: PortForwardingManagerProps) {
     setActionError(null);
     try {
       await props.onSelectPort(candidate);
-    } catch (cause) {
-      setActionError(message(cause, "Could not forward this port"));
+    } catch (error) {
+      setActionError(message(error, "Could not forward this port"));
     }
     setPendingPort((current) => (current === candidate.port ? null : current));
   });
@@ -34,19 +34,19 @@ export function usePortActions(props: PortForwardingManagerProps) {
     setActionError(null);
     try {
       await props.onExcludePort(candidate);
-    } catch (cause) {
-      setActionError(message(cause, "Could not exclude this port"));
+    } catch (error) {
+      setActionError(message(error, "Could not exclude this port"));
     }
     setPendingPort((current) => (current === candidate.port ? null : current));
   });
   return {
     actionError,
-    pendingId,
-    pendingPort,
-    webMenuId,
-    setWebMenuId,
-    runProfileAction,
     choosePort,
     excludePort,
+    pendingId,
+    pendingPort,
+    runProfileAction,
+    setWebMenuId,
+    webMenuId,
   };
 }

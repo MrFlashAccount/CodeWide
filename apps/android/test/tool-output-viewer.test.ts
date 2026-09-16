@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { compactSource } from "./source-contract";
+import { compactSource, sourceHasJsxElement } from "./source-contract";
 
 const screen = compactSource(
   readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
@@ -91,9 +91,11 @@ describe("tool output presentation", () => {
     );
 
     expect(controls).toContain("useContext(LargeContentViewerContext)");
-    expect(controls).toContain(
-      "open?.({ pointer, reference, presentation: largeContentPresentation(pointer, reference), getTransferAccess, });",
-    );
+    expect(controls).toContain("open?.({");
+    expect(controls).toContain("pointer");
+    expect(controls).toContain("reference");
+    expect(controls).toContain("presentation: largeContentPresentation(pointer, reference)");
+    expect(controls).toContain("getTransferAccess");
     expect(controls).not.toContain("useState");
     expect(controls).not.toContain("AppFullscreenModal");
     expect(controls).not.toContain("readPrivateAssetText");
@@ -105,10 +107,15 @@ describe("tool output presentation", () => {
     expect(frame).toContain("<LargeContentViewerHost>");
     expect(ownerFullContentViewer).toContain("navigation.openContent(request)");
     expect(ownerFullContentViewer).toContain("function LargeContentViewerSession");
-    expect(ownerFullContentViewerBody).toContain('<View testID="full-content-viewer"');
+    expect(
+      sourceHasJsxElement(ownerFullContentViewerBody, "View", [
+        'testID="full-content-viewer"',
+        "style={styles.fullContentViewer}",
+      ]),
+    ).toBe(true);
     expect(controls).not.toContain("largeContentChunk");
     expect(ownerFullContentViewer).toContain(
-      "async (_publish, signal) => await readPrivateAssetText(",
+      "async (_publish, signal) => readPrivateAssetText(",
     );
     expect(ownerFullContentViewer).toContain("signal,");
   });

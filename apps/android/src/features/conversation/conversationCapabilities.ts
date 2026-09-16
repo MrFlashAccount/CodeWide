@@ -15,40 +15,40 @@ import type { MessageListState } from "../../ui/MessageListBoundary";
 import type { SearchConversationWindow } from "../search/search-conversation-window";
 /** Existing qualified model handles and history mutation authority for destination reads. */
 export type ConversationDetailResources = {
-  threadDetails: ThreadDetailDatabase | null;
-  threadUiStateDatabase: ThreadUiStateDatabase | null;
-  threadSummaryDatabase: ThreadSummaryDatabase | null;
-  threadHistoryModel: ThreadHistoryModel | null;
+  loadTurnItems: (connectionId: string, threadId: string, turnId: string) => Promise<Turn["items"]>;
   putThreadHistory: ((row: Omit<ThreadHistoryRow, "updatedAt">) => void) | undefined;
-  loadTurnItems(connectionId: string, threadId: string, turnId: string): Promise<Turn["items"]>;
+  threadDetails: ThreadDetailDatabase | null;
+  threadHistoryModel: ThreadHistoryModel | null;
+  threadSummaryDatabase: ThreadSummaryDatabase | null;
+  threadUiStateDatabase: ThreadUiStateDatabase | null;
 };
 /** A progressive transcript snapshot published after local editor restoration. */
 export type ConversationDetailSnapshot = {
-  remoteThread: Thread | null;
-  remoteSealedTurns: readonly Turn[];
-  remoteLiveTurns: readonly Turn[];
-  timelineEntries: readonly ProjectedThreadChatTimelineEntry[];
-  queuedPrompts: QueuedPrompt[];
   composerState: ThreadUiStateRow;
-  historyRestoreReady: boolean;
-  historyViewport: ThreadHistoryViewport;
-  subagentSummaryDatabase: ThreadSummaryDatabase | null;
-  searchWindow?: SearchConversationWindow | null;
-  liveTextRecovery?: boolean;
-  cwd?: string;
-  currentUsage?: TurnUsageProjection | null;
   currentOutcome?: ThreadCurrentOutcome | null;
-  messageListState?: MessageListState;
+  currentUsage?: TurnUsageProjection | null;
+  cwd?: string;
   historyActivityModel?: ThreadHistoryModel | null;
   historyActivityResourceId?: string;
+  historyRestoreReady: boolean;
+  historyViewport: ThreadHistoryViewport;
+  liveTextRecovery?: boolean;
+  messageListState?: MessageListState;
+  onLoadTurnItems?: (turnId: string) => Promise<void>;
+  queuedPrompts: QueuedPrompt[];
+  remoteLiveTurns: readonly Turn[];
+  remoteSealedTurns: readonly Turn[];
+  remoteThread: Thread | null;
+  searchWindow?: SearchConversationWindow | null;
+  subagentSummaryDatabase: ThreadSummaryDatabase | null;
   threadChatModel?: ThreadChatModel;
-  onLoadTurnItems?(turnId: string): Promise<void>;
+  timelineEntries: readonly ProjectedThreadChatTimelineEntry[];
 };
 /** Destination metadata plus a presentation slot; no composer or tool implementation crosses this boundary. */
 export type ConversationDestinationBaseProps = {
-  navigationKey: string;
-  searchWindow: SearchConversationWindow | null;
   cwd: string | undefined;
+  navigationKey: string;
   onExitSearchHistory: (() => void) | undefined;
-  renderContent(snapshot: ConversationDetailSnapshot): ReactNode;
+  renderContent: (snapshot: ConversationDetailSnapshot) => ReactNode;
+  searchWindow: SearchConversationWindow | null;
 };

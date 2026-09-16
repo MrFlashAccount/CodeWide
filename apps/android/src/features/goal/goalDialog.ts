@@ -8,11 +8,11 @@ import { validateGoalEditorDraft } from "./goalEditor";
 import type { GoalDialogProps } from "./goalDialogContract";
 
 export function useGoalDialog({
-  onClose,
   goal,
-  resourceError,
-  onSet,
   onClear,
+  onClose,
+  onSet,
+  resourceError,
   voiceScope: parentVoiceScope,
 }: GoalDialogProps) {
   const inputId = useId();
@@ -40,7 +40,9 @@ export function useGoalDialog({
       onClose();
       return;
     }
-    void voiceController.finish(voiceScope, false).then(onClose);
+    voiceController.finish(voiceScope, false).then(onClose, (error: unknown) => {
+      setError(error instanceof Error ? error.message : "Could not stop voice input");
+    });
   });
   const save = useEvent(() => {
     const validation = validateGoalEditorDraft(objective, tokenBudget, goal?.status ?? "active");
@@ -52,53 +54,67 @@ export function useGoalDialog({
     setError(null);
     const input = validation.value;
     const operation = onSet(input);
-    void operation
+    operation
       .then(
         (next) => {
           applyGoal(next);
           onClose();
         },
-        (cause: unknown) => {
-          setError(cause instanceof Error ? cause.message : "Could not save goal");
+        (error: unknown) => {
+          setError(error instanceof Error ? error.message : "Could not save goal");
         },
       )
-      .then(() => setBusy(false));
+      .then(() => {
+        setBusy(false);
+      })
+      .catch((error: unknown) => {
+        setError(error instanceof Error ? error.message : "Could not save goal");
+        setBusy(false);
+      });
   });
   const clear = useEvent(() => {
     setBusy(true);
     setError(null);
     const operation = onClear();
-    void operation
+    operation
       .then(
         (cleared) => {
           if (cleared) {
             applyGoal(null);
             setConfirmClear(false);
             onClose();
-          } else setError("Goal was already cleared");
+          } else {
+            setError("Goal was already cleared");
+          }
         },
-        (cause: unknown) => {
-          setError(cause instanceof Error ? cause.message : "Could not clear goal");
+        (error: unknown) => {
+          setError(error instanceof Error ? error.message : "Could not clear goal");
         },
       )
-      .then(() => setBusy(false));
+      .then(() => {
+        setBusy(false);
+      })
+      .catch((error: unknown) => {
+        setError(error instanceof Error ? error.message : "Could not clear goal");
+        setBusy(false);
+      });
   });
 
   return {
-    objective,
-    setObjective,
-    tokenBudget,
-    setTokenBudget,
     busy,
+    clear,
+    close,
     confirmClear,
-    setConfirmClear,
+    effectiveError,
     error,
+    objective,
+    save,
+    setConfirmClear,
     setError,
+    setObjective,
+    setTokenBudget,
+    tokenBudget,
     voicePhase,
     voiceScope,
-    effectiveError,
-    close,
-    save,
-    clear,
   };
 }

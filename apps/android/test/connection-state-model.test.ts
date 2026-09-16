@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { connectionDisplayState, createConnectionStateModel } from "../src/data/connection-state-model";
+import {
+  connectionDisplayState,
+  createConnectionStateModel,
+} from "../src/data/connection-state-model";
 
 describe("connection state model", () => {
   it("starts enabled profiles as connecting instead of restoring a durable live state", () => {
@@ -8,15 +11,17 @@ describe("connection state model", () => {
 
     model.reconcileProfiles([{ id: "buddy", connectionId: "buddy", enabled: true }]);
 
-    expect(model.rows$.peek()).toEqual([{
-      id: "buddy",
-      connectionId: "buddy",
-      enabled: true,
-      state: "connecting",
-      rpcAvailable: false,
-      lastError: null,
-      lastErrorAt: null,
-    }]);
+    expect(model.rows$.peek()).toEqual([
+      {
+        id: "buddy",
+        connectionId: "buddy",
+        enabled: true,
+        state: "connecting",
+        rpcAvailable: false,
+        lastError: null,
+        lastErrorAt: null,
+      },
+    ]);
   });
 
   it("keeps transport state and RPC availability in one native-owned snapshot", () => {
@@ -59,6 +64,26 @@ describe("connection state model", () => {
     model.reconcileProfiles([{ id: "buddy", connectionId: "buddy", enabled: false }]);
     model.reconcileProfiles([{ id: "buddy", connectionId: "buddy", enabled: true }]);
 
-    expect(model.rows$.peek()[0]).toMatchObject({ enabled: true, state: "connecting", rpcAvailable: false });
+    expect(model.rows$.peek()[0]).toMatchObject({
+      enabled: true,
+      state: "connecting",
+      rpcAvailable: false,
+    });
+  });
+
+  it("preserves existing connection order and appends newly discovered profiles", () => {
+    const model = createConnectionStateModel();
+    model.reconcileProfiles([
+      { id: "first", connectionId: "first", enabled: true },
+      { id: "second", connectionId: "second", enabled: true },
+    ]);
+
+    model.reconcileProfiles([
+      { id: "second", connectionId: "second", enabled: true },
+      { id: "first", connectionId: "first", enabled: true },
+      { id: "third", connectionId: "third", enabled: true },
+    ]);
+
+    expect(model.rows$.peek().map((row) => row.id)).toEqual(["first", "second", "third"]);
   });
 });

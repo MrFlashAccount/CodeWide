@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { sourceHasJsxElement } from "./source-contract";
 
 const typesUrl = new URL("../src/ui/ActionMenu.types.ts", import.meta.url);
 const nativeMenuUrl = new URL("../src/ui/ActionMenu.native.tsx", import.meta.url);
@@ -29,6 +30,8 @@ describe("native action-menu icons", () => {
   it("preserves custom React Native image sources as a fallback", () => {
     expect(codeWideMenu).toContain("ActionMenuIconName | ImageSourcePropType");
     expect(codeWideMenu).toContain('if (typeof icon !== "string")');
-    expect(codeWideMenu).toContain("<Icon source={icon} size={size} tint={color} />");
+    expect(
+      sourceHasJsxElement(codeWideMenu, "Icon", ["source={icon}", "size={size}", "tint={color}"]),
+    ).toBe(true);
   });
 });

@@ -18,13 +18,13 @@ export function EveryCommitProbe({ onCommit }: { onCommit: CommitCallback }) {
 
 /** Runs external commit bookkeeping only when its semantic revision changes. */
 export function CommitOnChangeProbe({
-  scope,
-  revision,
   onCommit,
+  revision,
+  scope,
 }: {
-  scope: string;
-  revision: string | number | null;
   onCommit: CommitCallback;
+  revision: string | number | null;
+  scope: string;
 }) {
   const commit = useEvent(onCommit);
   useLayoutEffect(() => commit(), [commit, scope, revision]);

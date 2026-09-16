@@ -1,6 +1,6 @@
 import * as LocalAuthentication from "expo-local-authentication";
 
-export type DeviceAuthenticationResult = { success: true } | { success: false; message: string };
+export type DeviceAuthenticationResult = { success: true } | { message: string; success: false };
 
 export async function authenticateWithDevice(
   promptMessage: string,
@@ -10,30 +10,32 @@ export async function authenticateWithDevice(
     LocalAuthentication.isEnrolledAsync(),
   ]);
   if (!hasHardware) {
-    return { success: false, message: "Biometric authentication is not available on this device." };
+    return { message: "Biometric authentication is not available on this device.", success: false };
   }
   if (!enrolled) {
-    return { success: false, message: "Add a fingerprint or face in system settings first." };
+    return { message: "Add a fingerprint or face in system settings first.", success: false };
   }
   const result = await LocalAuthentication.authenticateAsync({
-    promptMessage,
     cancelLabel: "Cancel",
-    fallbackLabel: "Use device passcode",
     disableDeviceFallback: false,
+    fallbackLabel: "Use device passcode",
+    promptMessage,
   });
-  if (result.success) return { success: true };
+  if (result.success) {
+    return { success: true };
+  }
   if (
     result.error === "user_cancel" ||
     result.error === "system_cancel" ||
     result.error === "app_cancel"
   ) {
-    return { success: false, message: "Authentication cancelled." };
+    return { message: "Authentication cancelled.", success: false };
   }
   if (result.error === "lockout") {
     return {
-      success: false,
       message: "Biometrics are temporarily locked. Use your device passcode.",
+      success: false,
     };
   }
-  return { success: false, message: "Could not verify your identity." };
+  return { message: "Could not verify your identity.", success: false };
 }

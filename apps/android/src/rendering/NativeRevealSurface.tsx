@@ -13,33 +13,35 @@ import { useReducedMotionPreference } from "./reduced-motion-store";
 import { useStreamingRevealKey } from "./streaming-reveal-context";
 
 type NativeRevealProps = {
+  children?: ReactNode;
+  delayMs: number;
+  pointerEvents?: "auto" | "none" | "box-none" | "box-only";
   ready: boolean;
   reduceMotion: boolean;
   revealKey: string;
-  delayMs: number;
-  pointerEvents?: "auto" | "none" | "box-none" | "box-only";
   style?: StyleProp<ViewStyle>;
-  children?: ReactNode;
 };
 
 const AndroidRevealSurface =
-  Platform.OS === "android" && UIManager.getViewManagerConfig("CodexRevealSurface") != null
+  // WHY: OTA JavaScript can run on an older native shell where the typed view manager is absent at runtime.
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
+  Platform.OS === "android" && UIManager.getViewManagerConfig("CodexRevealSurface") !== null
     ? requireNativeComponent<NativeRevealProps>("CodexRevealSurface")
     : null;
 
 /** Reveals native content after readiness while preserving reduced-motion policy. */
 export function NativeRevealSurface({
-  children,
-  ready = true,
   animate = true,
+  children,
   delayMs = 0,
+  ready = true,
   revealKey,
   style,
 }: {
-  children: ReactNode;
-  ready?: boolean;
   animate?: boolean;
+  children: ReactNode;
   delayMs?: number;
+  ready?: boolean;
   revealKey: string;
   style?: StyleProp<ViewStyle>;
 }) {
@@ -54,11 +56,11 @@ export function NativeRevealSurface({
   }
   return (
     <AndroidRevealSurface
+      delayMs={Math.max(0, Math.min(120, delayMs))}
+      pointerEvents="box-none"
       ready={ready}
       reduceMotion={false}
       revealKey={`${streamKey ?? "static"}:${revealKey}`}
-      delayMs={Math.max(0, Math.min(120, delayMs))}
-      pointerEvents="box-none"
       style={[styles.surface, style]}
     >
       {children}
@@ -68,7 +70,7 @@ export function NativeRevealSurface({
 
 const styles = StyleSheet.create({
   surface: {
-    minWidth: 0,
     maxWidth: "100%",
+    minWidth: 0,
   },
 });

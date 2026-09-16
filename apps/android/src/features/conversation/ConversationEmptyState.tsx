@@ -10,83 +10,87 @@ import { AppText as Text } from "../../ui/Typography";
 import { ThreadHistoryEmptyState } from "./ConversationHistoryStatus";
 
 export function ConversationEmptyState({
-  threadSearchActive,
-  emptyRemoteThread,
   cwd,
-  openProjectPicker,
-  workspaceSupport,
-  onChangeWorkspaceMode,
-  workspaceMode,
+  emptyRemoteThread,
   historyActivityModel,
   historyActivityResourceId,
+  onChangeWorkspaceMode,
+  openProjectPicker,
+  threadSearchActive,
+  workspaceMode,
+  workspaceSupport,
 }: {
-  threadSearchActive: boolean;
-  emptyRemoteThread: boolean;
   cwd: string;
-  openProjectPicker: () => void;
-  workspaceSupport: WorkspaceSupport | null;
-  onChangeWorkspaceMode: ((mode: NewChatWorkspaceMode) => void) | undefined;
-  workspaceMode: NewChatWorkspaceMode;
+  emptyRemoteThread: boolean;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
+  onChangeWorkspaceMode: ((mode: NewChatWorkspaceMode) => void) | undefined;
+  openProjectPicker: () => void;
+  threadSearchActive: boolean;
+  workspaceMode: NewChatWorkspaceMode;
+  workspaceSupport: WorkspaceSupport | null;
 }) {
+  const project = projectLabel(cwd);
+  const projectDescription = project === "" ? "server default" : project;
   return (
     <View style={styles.emptyConversation}>
       {emptyRemoteThread && !threadSearchActive ? (
-        <View testID="new-chat-empty-state" style={styles.newChatEmptyState}>
+        <View style={styles.newChatEmptyState} testID="new-chat-empty-state">
           <Text style={styles.newChatPrompt}>What would you like to work on?</Text>
           <Pressable
+            accessibilityLabel={`Change project, currently ${projectDescription}`}
             accessibilityRole="button"
-            accessibilityLabel={`Change project, currently ${projectLabel(cwd) || "server default"}`}
             onPress={openProjectPicker}
             style={({ pressed }) => [styles.newChatProjectButton, pressed && styles.pressed]}
           >
             <Text numberOfLines={1} style={styles.newChatProjectText}>
-              in {projectLabel(cwd) || "server default"}
+              in {projectDescription}
             </Text>
-            <InlineIcon name="chevron-down" role="label" color={colors.accent} />
+            <InlineIcon color={colors.accent} name="chevron-down" role="label" />
           </Pressable>
           {workspaceSupport !== null && onChangeWorkspaceMode !== undefined ? (
             <ActionMenu
               accessibilityLabel="Choose workspace mode"
               actions={[
                 {
-                  id: "current",
-                  section: "Workspace",
-                  label: "In this folder",
                   description: "Use the selected project directly",
                   icon: "folder-outline",
+                  id: "current",
+                  label: "In this folder",
+                  section: "Workspace",
                   selected: workspaceMode === "current",
                 },
                 {
-                  id: "isolated",
-                  section: "Workspace",
-                  label: "New workspace",
                   description: `Create an isolated ${workspaceSupport.displayName}`,
                   icon: "git-branch-outline",
+                  id: "isolated",
+                  label: "New workspace",
+                  section: "Workspace",
                   selected: workspaceMode === "isolated",
                 },
               ]}
-              placement="bottom"
               align="center"
               onSelect={(id) => {
-                if (id === "current" || id === "isolated") onChangeWorkspaceMode(id);
+                if (id === "current" || id === "isolated") {
+                  onChangeWorkspaceMode(id);
+                }
               }}
+              placement="bottom"
             >
               <Pressable
-                accessibilityRole="button"
                 accessibilityLabel={`Workspace mode, ${workspaceMode === "isolated" ? "new workspace" : "in this folder"}`}
+                accessibilityRole="button"
                 style={({ pressed }) => [styles.newChatWorkspaceButton, pressed && styles.pressed]}
               >
                 <Ionicons
+                  color={colors.textMuted}
                   name={workspaceMode === "isolated" ? "git-branch-outline" : "folder-outline"}
                   size={iconSize.inline}
-                  color={colors.textMuted}
                 />
                 <Text style={styles.newChatWorkspaceText}>
                   {workspaceMode === "isolated" ? "New workspace" : "In this folder"}
                 </Text>
-                <InlineIcon name="chevron-down" role="label" color={colors.textMuted} />
+                <InlineIcon color={colors.textMuted} name="chevron-down" role="label" />
               </Pressable>
             </ActionMenu>
           ) : null}
@@ -105,64 +109,64 @@ export function ConversationEmptyState({
 export function ConversationSelectionPlaceholder() {
   return (
     <View style={styles.emptyConversation}>
-      <Ionicons name="chatbubbles-outline" size={iconSize.illustration} color={colors.textDim} />
+      <Ionicons color={colors.textDim} name="chatbubbles-outline" size={iconSize.illustration} />
       <Text style={styles.emptyText}>Select a thread</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  emptyConversation: {
+    alignItems: "center",
+    backgroundColor: colors.conversationSurface,
+    flex: 1,
+    gap: spacing.sm,
+    justifyContent: "center",
+  },
   emptyText: {
     color: colors.textMuted,
     ...typeScale.title,
   },
-  pressed: { opacity: 0.68 },
-  emptyConversation: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    backgroundColor: colors.conversationSurface,
-  },
   newChatEmptyState: {
-    maxWidth: 520,
     alignItems: "center",
-    justifyContent: "center",
     gap: spacing.xs,
+    justifyContent: "center",
+    maxWidth: 520,
     paddingHorizontal: spacing.lg,
+  },
+  newChatProjectButton: {
+    alignItems: "center",
+    borderRadius: radii.large,
+    flexDirection: "row",
+    gap: spacing.xxs,
+    justifyContent: "center",
+    maxWidth: "100%",
+    minHeight: controlSize.regular,
+    paddingHorizontal: spacing.sm,
+  },
+  newChatProjectText: {
+    color: colors.accent,
+    flexShrink: 1,
+    minWidth: 0,
+    ...typeScale.title,
   },
   newChatPrompt: {
     color: colors.text,
     ...typeScale.heading,
     textAlign: "center",
   },
-  newChatProjectButton: {
-    maxWidth: "100%",
-    minHeight: controlSize.regular,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.xxs,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radii.large,
-  },
-  newChatProjectText: {
-    minWidth: 0,
-    flexShrink: 1,
-    color: colors.accent,
-    ...typeScale.title,
-  },
   newChatWorkspaceButton: {
-    minHeight: controlSize.regular,
-    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.xxs,
-    paddingHorizontal: spacing.sm,
     borderRadius: radii.large,
+    flexDirection: "row",
+    gap: spacing.xxs,
+    justifyContent: "center",
+    minHeight: controlSize.regular,
+    paddingHorizontal: spacing.sm,
   },
   newChatWorkspaceText: {
     color: colors.textMuted,
     ...typeScale.body,
   },
+  pressed: { opacity: 0.68 },
 });

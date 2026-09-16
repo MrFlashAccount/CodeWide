@@ -9,7 +9,7 @@ import type {
 type Partition = keyof LoadedThreadSummaryView;
 type SummaryChange =
   | { type: "insert" | "update"; value: StoredThreadSummary }
-  | { type: "delete"; key: string };
+  | { key: string; type: "delete" };
 
 /** Membership and ordering are shared by initial reads and incremental updates. */
 function includesRow(
@@ -17,34 +17,49 @@ function includesRow(
   row: StoredThreadSummary,
   request: ThreadSummaryViewRequest,
 ): boolean {
-  if (partition === "selected")
+  if (partition === "selected") {
     return (
       row.connectionId === request.selectedConnectionId &&
       row.remoteThreadId === request.selectedThreadId
     );
-  if (partition === "subagents")
+  }
+  if (partition === "subagents") {
     return (
       row.connectionId === request.subagentConnectionId &&
       row.parentThreadId !== null &&
       row.deleteCommandId === null
     );
+  }
   if (
     row.parentThreadId !== null ||
     row.deleteCommandId !== null ||
     (request.connectionId !== null && row.connectionId !== request.connectionId) ||
     (request.projectCwd !== undefined && row.cwd !== request.projectCwd)
-  )
+  ) {
     return false;
-  if (partition === "pinned") return !row.archived && row.pinned;
-  if (partition === "recent") return !row.archived && !row.pinned;
+  }
+  if (partition === "pinned") {
+    return !row.archived && row.pinned;
+  }
+  if (partition === "recent") {
+    return !row.archived && !row.pinned;
+  }
   return row.archived;
 }
 
 function limitFor(partition: Partition, request: ThreadSummaryViewRequest): number {
-  if (partition === "pinned") return Infinity;
-  if (partition === "recent") return request.recentLimit;
-  if (partition === "archived") return request.archivedLimit;
-  if (partition === "selected") return request.selectedThreadId === null ? 0 : 1;
+  if (partition === "pinned") {
+    return Infinity;
+  }
+  if (partition === "recent") {
+    return request.recentLimit;
+  }
+  if (partition === "archived") {
+    return request.archivedLimit;
+  }
+  if (partition === "selected") {
+    return request.selectedThreadId === null ? 0 : 1;
+  }
   return request.subagentLimit;
 }
 
@@ -53,13 +68,16 @@ function compare(
   left: StoredThreadSummary,
   right: StoredThreadSummary,
 ): number {
-  return (
-    (partition === "archived" ? Number(right.pinned) - Number(left.pinned) : 0) ||
-    (right.recencyAt ?? right.updatedAt) - (left.recencyAt ?? left.updatedAt) ||
-    threadSummaryKey(left.connectionId, left.remoteThreadId).localeCompare(
-      threadSummaryKey(right.connectionId, right.remoteThreadId),
-    )
-  );
+  const pinnedOrder = partition === "archived" ? Number(right.pinned) - Number(left.pinned) : 0;
+  if (pinnedOrder !== 0) {
+    return pinnedOrder;
+  }
+  const recencyOrder = (right.recencyAt ?? right.updatedAt) - (left.recencyAt ?? left.updatedAt);
+  return recencyOrder !== 0
+    ? recencyOrder
+    : threadSummaryKey(left.connectionId, left.remoteThreadId).localeCompare(
+        threadSummaryKey(right.connectionId, right.remoteThreadId),
+      );
 }
 
 function projectPartition(
@@ -68,9 +86,13 @@ function projectPartition(
   request: ThreadSummaryViewRequest,
 ): StoredThreadSummary[] {
   const result = rows.filter((row) => includesRow(partition, row, request));
-  if (partition !== "selected") result.sort((left, right) => compare(partition, left, right));
+  if (partition !== "selected") {
+    result.sort((left, right) => compare(partition, left, right));
+  }
   const limit = limitFor(partition, request);
-  if (result.length > limit) result.length = limit;
+  if (result.length > limit) {
+    result.length = limit;
+  }
   return result;
 }
 
@@ -79,9 +101,9 @@ export function projectThreadSummaryView(
   request: ThreadSummaryViewRequest,
 ): LoadedThreadSummaryView {
   return {
+    archived: projectPartition(rows, "archived", request),
     pinned: projectPartition(rows, "pinned", request),
     recent: projectPartition(rows, "recent", request),
-    archived: projectPartition(rows, "archived", request),
     selected: projectPartition(rows, "selected", request),
     subagents: projectPartition(rows, "subagents", request),
   };
@@ -97,8 +119,11 @@ function insertionIndex(
   while (low < high) {
     const middle = (low + high) >>> 1;
     const row = rows[middle];
-    if (row !== undefined && compare(partition, row, value) < 0) low = middle + 1;
-    else high = middle;
+    if (row !== undefined && compare(partition, row, value) < 0) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
   }
   return low;
 }
@@ -109,9 +134,11 @@ function updatePartition(
   changes: readonly SummaryChange[],
   partition: Partition,
   request: ThreadSummaryViewRequest,
-): { rows: readonly StoredThreadSummary[]; removed: boolean } {
+): { removed: boolean; rows: readonly StoredThreadSummary[] } {
   const limit = limitFor(partition, request);
-  if (limit === 0 && previous.length === 0) return { rows: previous, removed: false };
+  if (limit === 0 && previous.length === 0) {
+    return { removed: false, rows: previous };
+  }
   let result: StoredThreadSummary[] | null = null;
   let removed = false;
   for (const change of changes) {
@@ -124,7 +151,9 @@ function updatePartition(
       (row) => threadSummaryKey(row.connectionId, row.remoteThreadId) === key,
     );
     if (change.type === "delete" || !includesRow(partition, change.value, request)) {
-      if (index < 0) continue;
+      if (index < 0) {
+        continue;
+      }
       result ??= previous.slice();
       result.splice(index, 1);
       removed = true;
@@ -132,11 +161,15 @@ function updatePartition(
     }
     const old = rows[index];
     const value = old === undefined ? change.value : replaceEqualDeep(old, change.value);
-    if (value === old) continue;
+    if (value === old) {
+      continue;
+    }
     if (index >= 0) {
       // A lowered rank can expose a candidate retained only by another range
       // (for example the selected chat outside the recent limit).
-      if (old !== undefined && compare(partition, old, value) < 0) removed = true;
+      if (old !== undefined && compare(partition, old, value) < 0) {
+        removed = true;
+      }
       const left = rows[index - 1];
       const right = rows[index + 1];
       if (
@@ -151,12 +184,16 @@ function updatePartition(
       result.splice(index, 1);
     }
     const destination = insertionIndex(result ?? previous, value, partition);
-    if (destination >= limit && changes.length === 1) continue;
+    if (destination >= limit && changes.length === 1) {
+      continue;
+    }
     result ??= previous.slice();
     result.splice(destination, 0, value);
   }
-  if (result !== null && result.length > limit) result.length = limit;
-  return { rows: result ?? previous, removed };
+  if (result !== null && result.length > limit) {
+    result.length = limit;
+  }
+  return { removed, rows: result ?? previous };
 }
 
 /** Rebuilds membership after removals, including candidates retained in another partition. */
@@ -173,16 +210,19 @@ export function reprojectThreadSummaryChanges(
     previous.selected,
     previous.subagents,
   ]) {
-    for (const row of partition)
+    for (const row of partition) {
       residents.set(threadSummaryKey(row.connectionId, row.remoteThreadId), row);
+    }
   }
   for (const change of changes) {
-    if (change.type === "delete") residents.delete(change.key);
-    else
+    if (change.type === "delete") {
+      residents.delete(change.key);
+    } else {
       residents.set(
         threadSummaryKey(change.value.connectionId, change.value.remoteThreadId),
         change.value,
       );
+    }
   }
   return projectThreadSummaryView([...residents.values()], request);
 }
@@ -207,17 +247,17 @@ export function updateThreadSummaryView(
   ) {
     const rebuilt = reprojectThreadSummaryChanges(previous, changes, request);
     return {
+      archived: replaceEqualDeep(previous.archived, rebuilt.archived),
       pinned: replaceEqualDeep(previous.pinned, rebuilt.pinned),
       recent: replaceEqualDeep(previous.recent, rebuilt.recent),
-      archived: replaceEqualDeep(previous.archived, rebuilt.archived),
       selected: replaceEqualDeep(previous.selected, rebuilt.selected),
       subagents: replaceEqualDeep(previous.subagents, rebuilt.subagents),
     };
   }
   return {
+    archived: archived.rows,
     pinned: pinned.rows,
     recent: recent.rows,
-    archived: archived.rows,
     selected: selected.rows,
     subagents: subagents.rows,
   };

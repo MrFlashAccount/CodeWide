@@ -13,32 +13,34 @@ import { styles } from "./AttachmentsFeature.styles";
 import { ThreadAttachmentResourceRow } from "./ThreadAttachmentResourceRow";
 
 export function ThreadResourcesSheet(props: AttachmentSheetProps) {
-  const { visible, codePreviewMaxHeight } = props;
+  const { codePreviewMaxHeight, visible } = props;
   const preview = useAttachmentPreview(props);
   const {
     attachments,
-    attachmentsInitialLoading,
     attachmentsError,
+    attachmentsInitialLoading,
     attachmentsReady,
-    title,
+    closeSheet,
     document,
     navigateBack,
-    closeSheet,
     openAttachment,
+    title,
   } = preview;
   return (
     <AppSheet
-      isOpen={visible}
-      onOpenChange={(open) => {
-        if (!open) (document === null ? closeSheet : navigateBack)();
-      }}
       contentProps={{
+        contentContainerClassName: "h-full",
         dismissLabel: document === null ? "Close attachments" : "Back to attachments",
-        index: 0,
-        snapPoints: ["55%", "90%"],
         enableDynamicSizing: false,
         enableOverDrag: false,
-        contentContainerClassName: "h-full",
+        index: 0,
+        snapPoints: ["55%", "90%"],
+      }}
+      isOpen={visible}
+      onOpenChange={(open) => {
+        if (!open) {
+          (document === null ? closeSheet : navigateBack)();
+        }
       }}
     >
       <View
@@ -47,31 +49,32 @@ export function ThreadResourcesSheet(props: AttachmentSheetProps) {
       >
         <View style={styles.menuTitleRow}>
           <View style={styles.sheetHeaderIconSlot}>
-            <Ionicons name="attach-outline" size={iconSize.action} color={colors.textMuted} />
+            <Ionicons color={colors.textMuted} name="attach-outline" size={iconSize.action} />
           </View>
-          <Text numberOfLines={1} ellipsizeMode="tail" style={styles.sheetTitle}>
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.sheetTitle}>
             {title}
           </Text>
           <View style={styles.flex} />
-          {attachmentsInitialLoading && <ActivityIndicator size="small" color={colors.accent} />}
+          {attachmentsInitialLoading && <ActivityIndicator color={colors.accent} size="small" />}
         </View>
         <LegendList
-          style={styles.menuScroll}
           contentContainerStyle={styles.threadResourcesContent}
-          renderScrollComponent={AppSheetScrollView}
-          keyboardShouldPersistTaps="handled"
           data={attachments}
-          keyExtractor={(attachment) => attachment.key}
           getFixedItemSize={() => listRowHeight.double}
-          renderItem={({ item, index }) => (
-            <View style={styles.threadAttachmentCell}>
-              <ThreadAttachmentResourceRow
-                attachment={item}
-                position={listRowPosition(index, attachments.length)}
-                onPress={() => openAttachment(item)}
-              />
-            </View>
-          )}
+          keyboardShouldPersistTaps="handled"
+          keyExtractor={(attachment) => attachment.key}
+          ListEmptyComponent={
+            attachmentsReady ? (
+              <View style={styles.threadResourcesEmpty}>
+                <Ionicons
+                  color={colors.textDim}
+                  name="attach-outline"
+                  size={iconSize.illustration}
+                />
+                <Text style={styles.menuNotice}>No attachments in this thread.</Text>
+              </View>
+            ) : null
+          }
           ListHeaderComponent={
             attachmentsError !== null ? (
               <Text selectable style={styles.errorText}>
@@ -79,22 +82,23 @@ export function ThreadResourcesSheet(props: AttachmentSheetProps) {
               </Text>
             ) : null
           }
-          ListEmptyComponent={
-            attachmentsReady ? (
-              <View style={styles.threadResourcesEmpty}>
-                <Ionicons
-                  name="attach-outline"
-                  size={iconSize.illustration}
-                  color={colors.textDim}
-                />
-                <Text style={styles.menuNotice}>No attachments in this thread.</Text>
-              </View>
-            ) : null
-          }
+          renderItem={({ index, item }) => (
+            <View style={styles.threadAttachmentCell}>
+              <ThreadAttachmentResourceRow
+                attachment={item}
+                onPress={() => {
+                  openAttachment(item);
+                }}
+                position={listRowPosition(index, attachments.length)}
+              />
+            </View>
+          )}
+          renderScrollComponent={AppSheetScrollView}
+          style={styles.menuScroll}
         />
       </View>
 
-      <AttachmentDocumentPreview preview={preview} codePreviewMaxHeight={codePreviewMaxHeight} />
+      <AttachmentDocumentPreview codePreviewMaxHeight={codePreviewMaxHeight} preview={preview} />
     </AppSheet>
   );
 }

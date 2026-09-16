@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-const legacyPlanPopover = readFileSync(
-  new URL("../src/features/goal/LiveTurnPlanPopover.tsx", import.meta.url),
+const legacyPlanMenu = readFileSync(
+  new URL("../src/features/goal/LiveTurnPlanMenu.tsx", import.meta.url),
   "utf8",
 );
 const v2PlanPopover = readFileSync(
@@ -31,7 +31,7 @@ const ownerConversationTimelineSurface = readFileSync(
 
 describe("goal and plan presentation contract", () => {
   it("keeps both native plan popovers vertically scrollable", () => {
-    expect(legacyPlanPopover).toContain("nestedScrollEnabled");
+    expect(legacyPlanMenu).toContain("nestedScrollEnabled");
     expect(v2PlanPopover).toContain("nestedScrollEnabled");
     expect(v2PlanPopover).toContain('testID="live-plan-popover"');
   });

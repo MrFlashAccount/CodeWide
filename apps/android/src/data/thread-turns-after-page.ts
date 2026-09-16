@@ -3,9 +3,9 @@ import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { parseThreadHistorySummaryPage } from "./thread-history-summary-page";
 
 export type ThreadTurnsAfterPage = {
-  turns: Turn[];
   hasMore: boolean;
   sourceWitness: string;
+  turns: Turn[];
 };
 
 /** Validates one Companion-owned forward page before it reaches SQLite. */

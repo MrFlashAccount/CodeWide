@@ -15,7 +15,7 @@ import { CollapsedTurnActivity, CompletedTurnHistory } from "./CompletedTurnHist
 import { LiveAgentResponse } from "./LiveAgentResponse";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
 import { TurnActivitySegment } from "./TurnActivity";
-import { projectTurnPresentation } from "./turnProjection";
+import type { projectTurnPresentation } from "./turnProjection";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
 import { UserImageGallery, userMessageAttachmentReference } from "./UserMessageContent";
@@ -25,25 +25,25 @@ export function renderAgentTurnBody(
   turn: TurnTimelineItemProps["turn"],
   presentation: ReturnType<typeof projectTurnPresentation>,
   {
+    animateLiveUpdates,
     compact,
     forceExpanded,
-    animateLiveUpdates,
-    requestPrompt,
     getTransferAccess,
-    onFixUnsupportedBlock,
-    onLoadItems,
     latestAgentRef,
+    onFixUnsupportedBlock,
     onLatestAgentLayout,
+    onLoadItems,
+    requestPrompt,
   }: {
-    requestPrompt: TurnTimelineItemProps["requestPrompt"];
+    animateLiveUpdates: boolean;
     compact: boolean;
     forceExpanded: boolean;
-    animateLiveUpdates: boolean;
     getTransferAccess: TurnTimelineItemProps["getTransferAccess"];
-    onFixUnsupportedBlock: TurnTimelineItemProps["onFixUnsupportedBlock"];
-    onLoadItems: TurnTimelineItemProps["onLoadItems"];
     latestAgentRef: TurnTimelineItemProps["latestAgentRef"];
+    onFixUnsupportedBlock: TurnTimelineItemProps["onFixUnsupportedBlock"];
     onLatestAgentLayout: TurnTimelineItemProps["onLatestAgentLayout"];
+    onLoadItems: TurnTimelineItemProps["onLoadItems"];
+    requestPrompt: TurnTimelineItemProps["requestPrompt"];
   },
 ) {
   return (
@@ -52,17 +52,17 @@ export function renderAgentTurnBody(
         {presentation.preTurnBlocks.length > 0 && (
           <PreTurnLifecycleRows
             blocks={presentation.preTurnBlocks}
-            turnStatus={presentation.rawTurn.status}
             turnKey={turn.key}
+            turnStatus={presentation.rawTurn.status}
             {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
             {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
           />
         )}
         {presentation.rawTurn.status !== "inProgress" && (
           <CompletedTurnHistory
-            item={turn}
             compact={compact}
             forceExpanded={forceExpanded}
+            item={turn}
             {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
             {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
             {...(onLoadItems === undefined ? {} : { onLoadItems })}
@@ -87,24 +87,24 @@ export function renderAgentTurnBody(
             />
           )}
         {presentation.rawTurn.status === "inProgress" &&
-          presentation.visibleLiveActivitySequence.map((part, index) =>
+          presentation.visibleLiveActivitySequence.map((part) =>
             part.kind === "collapsedActivity" ? (
               <CollapsedTurnActivity
-                key={`${part.key}:${index}`}
-                item={turn}
-                indexes={part.indexes}
                 compact={compact}
                 forceExpanded={forceExpanded}
+                indexes={part.indexes}
+                item={turn}
+                key={part.key}
                 {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
                 {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
               />
             ) : part.kind === "agent" ? (
               <LiveAgentResponse
-                key={`${part.key}:${index}`}
-                cacheKey={part.block.key}
-                fill={richMarkdownLayout(part.block.body ?? "") === "fill"}
-                projection={presentation.liveMarkdownProjections.get(part.block.key)!}
                 animateNew={animateLiveUpdates}
+                cacheKey={part.block.key}
+                fill={richMarkdownLayout(part.block.body) === "fill"}
+                key={part.key}
+                projection={liveMarkdownProjection(presentation, part.block.key)}
                 streamMetricKey={
                   animateLiveUpdates
                     ? liveStreamMetricKey(
@@ -118,20 +118,20 @@ export function renderAgentTurnBody(
               />
             ) : (
               <TurnActivitySegment
-                key={`${part.key}:${index}`}
-                turnKey={turn.key}
-                part={part}
-                turnStatus={presentation.rawTurn.status}
                 animateNew={animateLiveUpdates}
                 compact={compact}
                 forceExpanded={forceExpanded}
+                key={part.key}
+                part={part}
+                turnKey={turn.key}
+                turnStatus={presentation.rawTurn.status}
                 {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
                 {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
               />
             ),
           )}
         {presentation.artifacts.length > 0 && (
-          <View testID="agent-artifacts" style={styles.userMessageContent}>
+          <View style={styles.userMessageContent} testID="agent-artifacts">
             <UserImageGallery
               attachments={presentation.artifacts.filter(
                 (attachment) => attachment.kind === "image",
@@ -144,8 +144,8 @@ export function renderAgentTurnBody(
                   .filter((attachment) => attachment.kind !== "image")
                   .map((attachment) => (
                     <MessageAttachmentCard
-                      key={userMessageAttachmentReference(attachment)}
                       attachment={attachment}
+                      key={userMessageAttachmentReference(attachment)}
                       {...(getTransferAccess === undefined ? {} : { getAccess: getTransferAccess })}
                     />
                   ))}
@@ -163,12 +163,23 @@ export function renderAgentTurnBody(
         )}
         {!presentation.hasAgentContent && presentation.rawTurn.status === "inProgress" && (
           <WaveText
+            style={styles.agentPlaceholder}
             testID="turn-thinking-placeholder"
             text="Thinking"
-            style={styles.agentPlaceholder}
           />
         )}
       </BubbleContent>
     </ArtifactImageReferences.Provider>
   );
+}
+
+function liveMarkdownProjection(
+  presentation: ReturnType<typeof projectTurnPresentation>,
+  blockKey: string,
+) {
+  const projection = presentation.liveMarkdownProjections.get(blockKey);
+  if (projection === undefined) {
+    throw new Error(`Live Markdown projection is missing for block ${blockKey}`);
+  }
+  return projection;
 }

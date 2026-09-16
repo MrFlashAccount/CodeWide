@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { sourceObjectDeclaration } from "../source-contract";
 import {
   ownerConversationDetail,
   conversationLayout,
@@ -14,13 +15,27 @@ import {
   ownerConversationScopeBindings,
 } from "./conversation-composition-sources";
 
-const ownerMainConversationPublication = readFileSync(new URL("../../src/features/conversation/MainConversationPublication.tsx", import.meta.url), "utf8");
-const ownerActiveConversationScope = readFileSync(new URL("../../src/features/conversation/activeConversationScope.ts", import.meta.url), "utf8");
-const ownerConversationDestinationSurface = readFileSync(new URL("../../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url), "utf8");
-const ownerMainConversationHistory = readFileSync(new URL("../../src/features/conversation/mainConversationHistory.ts", import.meta.url), "utf8");
+const ownerMainConversationPublication = readFileSync(
+  new URL("../../src/features/conversation/MainConversationPublication.tsx", import.meta.url),
+  "utf8",
+);
+const ownerActiveConversationScope = readFileSync(
+  new URL("../../src/features/conversation/activeConversationScope.ts", import.meta.url),
+  "utf8",
+);
+const ownerConversationDestinationSurface = readFileSync(
+  new URL("../../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url),
+  "utf8",
+);
+const ownerMainConversationHistory = readFileSync(
+  new URL("../../src/features/conversation/mainConversationHistory.ts", import.meta.url),
+  "utf8",
+);
 
 it("preserves conversation composition integration contracts", () => {
-  expect(ownerMainConversationPublication).toContain("queuedPrompts: history.projection.queuedPrompts");
+  expect(ownerMainConversationPublication).toContain(
+    "queuedPrompts: history.projection.queuedPrompts",
+  );
   expect(conversationLayout).not.toContain("menuVisible");
   expect(conversationOverlay).not.toContain("ComposerMenuComposition");
   expect(conversationLayout).toContain("{projectPickerVisible && projectPickerContent}");
@@ -80,15 +95,19 @@ it("preserves conversation composition integration contracts", () => {
   );
   expect(ownerConversationLayout).toContain("const next = paneWidth < 520");
   expect(ownerConversationLayout).toContain("style={styles.conversationKeyboard}");
-  expect(conversationLayoutStyles).toMatch(
-    /conversationKeyboard: \{\s*flex: 1,\s*minWidth: 0,\s*alignSelf: "stretch"/,
+  const conversationKeyboard = sourceObjectDeclaration(
+    conversationLayoutStyles,
+    "conversationKeyboard",
   );
+  expect(conversationKeyboard).toContain('alignSelf: "stretch"');
+  expect(conversationKeyboard).toContain("flex: 1");
+  expect(conversationKeyboard).toContain("minWidth: 0");
   expect(ownerConversationWorkspaceContent).toContain(
     "threadResourcesModel: props.runtime.resources?.threadResources ?? null",
   );
   expect(ownerConversationTools).toContain("<ThreadResourceContextChips");
   expect(ownerConversationScopeBindings).toMatch(
-    /onLoadThreadResources: async \(\s*scope\?: ThreadChangeScope,\s*kind\?: "all" \| "changes" \| "attachments",?\s*\) =>\s*await features\.changes\.loadThreadResources\(/,
+    /onLoadThreadResources: async \(\s*scope\?: ThreadChangeScope,\s*kind\?: "all" \| "changes" \| "attachments",?\s*\) =>\s*features\.changes\.loadThreadResources\(/,
   );
   expect(ownerConversationWorkspaceContent).toContain(
     "threadResourceRevision: props.activeConnectionState",
@@ -115,7 +134,7 @@ it("preserves conversation composition integration contracts", () => {
     ),
   );
   expect(ownerMainConversationHistory).toContain(
-    "status: remoteThread === null ? \"initial-loading\" : \"ready\"",
+    'status: remoteThread === null ? "initial-loading" : "ready"',
   );
   expect(ownerConversationWorkspaceContent).toContain(
     "threadResourceRevision: props.activeConnectionState",

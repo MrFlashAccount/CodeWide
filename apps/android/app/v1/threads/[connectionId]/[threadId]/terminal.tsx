@@ -40,8 +40,6 @@ export default function V1TerminalRoute(): React.JSX.Element {
     return (
       <RouteUnavailable
         message="This thread link is invalid."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           recoverUnavailableRoute(
             router,
@@ -60,8 +58,6 @@ export default function V1TerminalRoute(): React.JSX.Element {
     <TerminalWorkspace
       connectionId={session.request.connectionId}
       cwd={session.request.cwd}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onMinimize={close}
       threadId={session.request.threadId}
     />

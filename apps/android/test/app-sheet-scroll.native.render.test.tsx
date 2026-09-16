@@ -8,7 +8,6 @@ import { AppSheetScrollView } from "../src/ui/AppSheet.android";
 // the actual React Native scroll host, not the unused native sheet window.
 jest.mock("@expo/ui/jetpack-compose", () => ({}));
 // WHY: The native portal registry is not available in the Node renderer.
-jest.mock("heroui-native/portal", () => ({ PortalHost: () => null }));
 
 it("preserves the virtual list ref and scroll events in one sheet-integrated scroll host", () => {
   const ref = createRef<ScrollView>();

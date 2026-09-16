@@ -11,27 +11,27 @@ import { AppText as Text } from "../../ui/Typography";
 
 /** Display content stays with its owner; this sheet owns only settings navigation. */
 interface SettingsServer {
-  readonly id: string;
-  readonly title: string;
+  readonly content: ReactNode;
   readonly description: string;
+  readonly id: string;
   readonly leading: ReactNode;
   readonly statusIcon: ReactNode;
-  readonly content: ReactNode;
+  readonly title: string;
 }
 
 interface SettingsSheetProps {
-  readonly servers: readonly SettingsServer[];
-  readonly security: ReactNode;
   readonly advanced: ReactNode;
-  readonly version: ReactNode;
   readonly onAddServer: () => void;
   readonly onClose: () => void;
+  readonly security: ReactNode;
+  readonly servers: readonly SettingsServer[];
+  readonly version: ReactNode;
 }
 
 type SettingsPage =
   | { readonly kind: "overview" }
   | { readonly kind: "advanced" }
-  | { readonly kind: "server"; readonly id: string };
+  | { readonly id: string; readonly kind: "server" };
 
 export function SettingsSheet(props: SettingsSheetProps) {
   const [page, setPage] = useState<SettingsPage>({ kind: "overview" });
@@ -45,36 +45,44 @@ export function SettingsSheet(props: SettingsSheetProps) {
     : page.kind === "advanced"
       ? "Advanced"
       : (selectedServer?.title ?? "Settings");
-  const back = useEvent(() => setPage({ kind: "overview" }));
-  const openAdvanced = useEvent(() => setPage({ kind: "advanced" }));
-  const openServer = useEvent((id: string) => setPage({ kind: "server", id }));
+  const back = useEvent(() => {
+    setPage({ kind: "overview" });
+  });
+  const openAdvanced = useEvent(() => {
+    setPage({ kind: "advanced" });
+  });
+  const openServer = useEvent((id: string) => {
+    setPage({ id, kind: "server" });
+  });
   const changeOpen = useEvent((open: boolean) => {
-    if (!open) props.onClose();
+    if (!open) {
+      props.onClose();
+    }
   });
 
   return (
     <AppSheet
-      isOpen
-      onOpenChange={changeOpen}
       contentProps={{
+        contentContainerClassName: "h-full",
         dismissLabel: "Close settings",
-        performanceSurface: "settings",
-        index: 0,
-        snapPoints: ["65%", "90%"],
         enableDynamicSizing: false,
         enableOverDrag: false,
-        contentContainerClassName: "h-full",
+        index: 0,
+        performanceSurface: "settings",
+        snapPoints: ["65%", "90%"],
       }}
+      isOpen
+      onOpenChange={changeOpen}
     >
       <View style={styles.header}>
         {!overview && (
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Back to settings"
+            accessibilityRole="button"
             onPress={back}
             style={styles.back}
           >
-            <Ionicons name="arrow-back" size={iconSize.action} color={colors.text} />
+            <Ionicons color={colors.text} name="arrow-back" size={iconSize.action} />
           </Pressable>
         )}
         <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
@@ -82,10 +90,10 @@ export function SettingsSheet(props: SettingsSheetProps) {
         </Text>
       </View>
       <AppSheetScrollView
-        key={overview ? "overview" : page.kind === "advanced" ? "advanced" : selectedServer?.id}
-        style={styles.scroll}
         contentContainerStyle={styles.content}
+        key={overview ? "overview" : page.kind === "advanced" ? "advanced" : selectedServer?.id}
         keyboardShouldPersistTaps="handled"
+        style={styles.scroll}
       >
         {overview ? (
           <>
@@ -93,48 +101,50 @@ export function SettingsSheet(props: SettingsSheetProps) {
               {props.servers.length === 0 && <Text style={styles.notice}>No saved servers</Text>}
               {props.servers.map((server, index) => (
                 <AppListRow
-                  key={server.id}
-                  title={server.title}
+                  accessibilityHint="Open connection and Codex accounts"
+                  accessibilityLabel={`Settings for ${server.title}`}
                   description={server.description}
-                  fixedHeight={listRowHeight.double}
                   descriptionLeading={server.statusIcon}
+                  fixedHeight={listRowHeight.double}
+                  key={server.id}
                   leading={server.leading}
-                  trailingIcon={{
-                    name: "chevron-forward",
-                    size: iconSize.inline,
-                    color: colors.textMuted,
+                  onPress={() => {
+                    openServer(server.id);
                   }}
                   position={listRowPosition(index, props.servers.length + 1)}
-                  accessibilityLabel={`Settings for ${server.title}`}
-                  accessibilityHint="Open connection and Codex accounts"
-                  onPress={() => openServer(server.id)}
+                  title={server.title}
+                  trailingIcon={{
+                    color: colors.textMuted,
+                    name: "chevron-forward",
+                    size: iconSize.inline,
+                  }}
                 />
               ))}
               <AppListRow
-                title="Add server"
                 fixedHeight={listRowHeight.single}
-                position={props.servers.length === 0 ? "only" : "last"}
+                leadingIcon={{ color: colors.textMuted, name: "add", size: iconSize.action }}
                 onPress={props.onAddServer}
-                leadingIcon={{ name: "add", size: iconSize.action, color: colors.textMuted }}
+                position={props.servers.length === 0 ? "only" : "last"}
+                title="Add server"
               />
             </SettingsSection>
             {props.security === null ? null : (
               <SettingsSection title="Security">{props.security}</SettingsSection>
             )}
             <AppListRow
-              title="Advanced"
               description="Interface, experiments and diagnostics"
               fixedHeight={listRowHeight.double}
-              onPress={openAdvanced}
               leadingIcon={{
+                color: colors.textMuted,
                 name: "options-outline",
                 size: iconSize.action,
-                color: colors.textMuted,
               }}
+              onPress={openAdvanced}
+              title="Advanced"
               trailingIcon={{
+                color: colors.textMuted,
                 name: "chevron-forward",
                 size: iconSize.inline,
-                color: colors.textMuted,
               }}
             />
             {props.version}
@@ -150,7 +160,7 @@ export function SettingsSheet(props: SettingsSheetProps) {
 }
 
 /** Section rhythm uses the same type and spacing tokens as the surrounding app lists. */
-export function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+export function SettingsSection({ children, title }: { children: ReactNode; title: string }) {
   return (
     <View style={styles.section}>
       <Text accessibilityRole="header" style={styles.sectionTitle}>
@@ -162,32 +172,31 @@ export function SettingsSection({ title, children }: { title: string; children: 
 }
 
 const styles = StyleSheet.create({
-  header: {
-    minHeight: touchTarget,
-    marginBottom: spacing.xs,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.compact,
-  },
   back: {
-    width: touchTarget,
-    height: touchTarget,
     alignItems: "center",
+    height: touchTarget,
     justifyContent: "center",
-  },
-  title: {
-    minWidth: 0,
-    flex: 1,
-    color: colors.text,
-    ...typeScale.heading,
-  },
-  scroll: {
-    flex: 1,
-    minHeight: 0,
+    width: touchTarget,
   },
   content: {
     gap: spacing.md,
     paddingBottom: spacing.sm,
+  },
+  header: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.compact,
+    marginBottom: spacing.xs,
+    minHeight: touchTarget,
+  },
+  notice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.sm,
+  },
+  scroll: {
+    flex: 1,
+    minHeight: 0,
   },
   section: { gap: spacing.xs },
   sectionTitle: {
@@ -196,9 +205,10 @@ const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
     textTransform: "uppercase",
   },
-  notice: {
-    color: colors.textMuted,
-    ...typeScale.body,
-    paddingVertical: spacing.sm,
+  title: {
+    color: colors.text,
+    flex: 1,
+    minWidth: 0,
+    ...typeScale.heading,
   },
 });

@@ -1,12 +1,12 @@
 /** V1 TurnActivity owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock } from "@codewide/renderers";
-import { type OutputFootprintProjection } from "@codewide/sync-client";
+import type { RenderBlock } from "@codewide/renderers";
+import type { OutputFootprintProjection } from "@codewide/sync-client";
 import { useContext } from "react";
 import { Pressable, View } from "react-native";
 import { activityOutputFootprint } from "../../../rendering/command-activity";
 import { TimelineMotionContext } from "../../../rendering/FluidLayoutFrame";
 import { NativeRevealSurface } from "../../../rendering/NativeRevealSurface";
-import { type TurnSequencePart } from "../../../rendering/turn-sequence";
+import type { TurnSequencePart } from "../../../rendering/turn-sequence";
 import { colors } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
@@ -24,23 +24,23 @@ import {
 import { turnActivityLabel } from "./turnProjection";
 
 export function TurnActivitySegment({
-  turnKey,
-  part,
-  turnStatus,
   animateNew,
   compact,
   forceExpanded,
   getTransferAccess,
   onFixUnsupportedBlock,
+  part,
+  turnKey,
+  turnStatus,
 }: {
-  turnKey: string;
-  part: Extract<TurnSequencePart, { kind: "activity" }>;
-  turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
   animateNew: boolean;
   compact: boolean;
   forceExpanded: boolean;
-  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
-  onFixUnsupportedBlock?(block: RenderBlock): Promise<void>;
+  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
+  part: Extract<TurnSequencePart, { kind: "activity" }>;
+  turnKey: string;
+  turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
 }) {
   const motionAllowed = useContext(TimelineMotionContext);
   const thinkingOnly =
@@ -55,7 +55,7 @@ export function TurnActivitySegment({
   const visiblyExpanded = forceExpanded || shouldAutoExpand || expanded;
   if (thinkingOnly) {
     return (
-      <View testID="thinking-status-section" style={styles.thinkingStatusSection}>
+      <View style={styles.thinkingStatusSection} testID="thinking-status-section">
         {part.blocks.map((block, index) => (
           <ActiveToolCallContext.Provider
             key={block.key}
@@ -69,12 +69,12 @@ export function TurnActivitySegment({
   }
   if (agentNavigationOnly) {
     return (
-      <View testID="subagent-activity-navigation" style={styles.turnActivityList}>
+      <View style={styles.turnActivityList} testID="subagent-activity-navigation">
         {part.blocks.map((block) => (
           <ExpansionItemKeyContext.Provider key={block.key} value={`${turnKey}:${block.key}`}>
             <NativeRevealSurface
-              revealKey={`${turnKey}:${block.key}`}
               animate={animateNew && motionAllowed && turnStatus === "inProgress"}
+              revealKey={`${turnKey}:${block.key}`}
             >
               <ProtocolBlock
                 block={block}
@@ -95,12 +95,14 @@ export function TurnActivitySegment({
         part.blocks.map((block) => block.kind),
         compact,
       )}
+      onToggle={() => {
+        setExpanded((value) => !value);
+      }}
       outputFootprint={activityOutputFootprint(
         part.blocks.flatMap((block) =>
           block.kind === "commandExecution" ? [{ raw: block.raw, visibleOutput: block.body }] : [],
         ),
       )}
-      onToggle={() => setExpanded((value) => !value)}
       showToggle={!shouldAutoExpand}
     >
       {part.blocks.map((block, index) => (
@@ -110,8 +112,8 @@ export function TurnActivitySegment({
         >
           <ExpansionItemKeyContext.Provider value={`${turnKey}:${block.key}`}>
             <NativeRevealSurface
-              revealKey={`${turnKey}:${block.key}`}
               animate={animateNew && motionAllowed && turnStatus === "inProgress"}
+              revealKey={`${turnKey}:${block.key}`}
             >
               <ProtocolBlock
                 block={block}
@@ -133,7 +135,7 @@ export interface TurnActivityProps {
   forceExpandCards?: boolean;
   label: string;
   loading?: boolean;
-  onToggle(): void;
+  onToggle: () => void;
   outputFootprint?: OutputFootprintProjection | null;
   showToggle?: boolean;
 }
@@ -152,17 +154,17 @@ export function TurnActivity(props: TurnActivityProps) {
   } = props;
   return (
     <View
-      testID="turn-activity"
       style={[
         styles.turnActivity,
         compactHeader && styles.turnActivityCompact,
         expanded && styles.turnActivityExpanded,
       ]}
+      testID="turn-activity"
     >
       {showToggle && (
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel={`${expanded ? "Collapse" : "Expand"} activity ${label}`}
+          accessibilityRole="button"
           hitSlop={10}
           onPress={onToggle}
           style={({ pressed }) => [
@@ -172,14 +174,14 @@ export function TurnActivity(props: TurnActivityProps) {
           ]}
         >
           <View style={styles.activityIconSlot}>
-            <InlineIcon name="construct-outline" role="label" color={colors.textMuted} />
+            <InlineIcon color={colors.textMuted} name="construct-outline" role="label" />
           </View>
           {loading ? (
             <WaveText
+              containerStyle={styles.turnActivityLabelWave}
+              style={styles.turnActivityLabel}
               testID="turn-activity-loading-shimmer"
               text={label}
-              style={styles.turnActivityLabel}
-              containerStyle={styles.turnActivityLabelWave}
             />
           ) : (
             <Text numberOfLines={1} style={styles.turnActivityLabel}>
@@ -189,9 +191,9 @@ export function TurnActivity(props: TurnActivityProps) {
           <OutputFootprintMetric footprint={outputFootprint} />
           <View style={styles.activityChevronSlot}>
             <InlineIcon
+              color={colors.textDim}
               name={expanded ? "chevron-up" : "chevron-down"}
               role="label"
-              color={colors.textDim}
             />
           </View>
         </Pressable>
@@ -200,8 +202,8 @@ export function TurnActivity(props: TurnActivityProps) {
         <ForceExpandCardsContext.Provider value={forceExpandCards}>
           <TurnActivityContentContext.Provider value>
             <View
-              testID="turn-activity-list"
               style={[styles.turnActivityList, !showToggle && styles.turnActivityListWithoutToggle]}
+              testID="turn-activity-list"
             >
               {children}
             </View>

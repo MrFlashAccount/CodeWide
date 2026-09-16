@@ -30,25 +30,25 @@ type Props = Pick<
   | "voiceResource"
 >;
 export function ComposerEditor({
-  voicePhase,
-  composerScope,
-  getTransferAccess,
-  getStableTransferAccess,
-  composerInputRef,
-  fileAttachmentEnabled,
-  pastedAttachmentPending,
   attachments,
-  handleComposerLargePaste,
+  composerInputRef,
+  composerScope,
   draft,
-  handleComposerTextChange,
-  handleComposerMarkdownChange,
   draftSelectionRef,
+  editingQueuedMessage,
+  fileAttachmentEnabled,
+  getStableTransferAccess,
+  getTransferAccess,
+  handleComposerLargePaste,
+  handleComposerMarkdownChange,
+  handleComposerTextChange,
+  pastedAttachmentPending,
   pendingVoiceSelection,
-  voiceController,
   searchComposerSuggestions,
   selectComposerMention,
-  editingQueuedMessage,
   voiceBackend,
+  voiceController,
+  voicePhase,
   voiceResource,
 }: Props) {
   return voicePhase === "idle" || voicePhase === "starting" ? (
@@ -57,8 +57,8 @@ export function ComposerEditor({
       {...(getTransferAccess === undefined ? {} : { getAccess: getStableTransferAccess })}
     >
       <ComposerMarkdownInput
-        ref={composerInputRef}
         accessibilityLabel="Message Codex"
+        ref={composerInputRef}
         {...(fileAttachmentEnabled &&
         !pastedAttachmentPending &&
         attachments.length < MAX_TURN_ATTACHMENTS
@@ -67,18 +67,19 @@ export function ComposerEditor({
               onLargePaste: handleComposerLargePaste,
             }
           : {})}
-        value={draft}
-        onChangeText={handleComposerTextChange}
         onChangeMarkdown={handleComposerMarkdownChange}
+        onChangeText={handleComposerTextChange}
         onSelectionChange={(selection) => {
           draftSelectionRef.current = selection;
           if (
             pendingVoiceSelection !== null &&
             pendingVoiceSelection.start === selection.start &&
             pendingVoiceSelection.end === selection.end
-          )
+          ) {
             voiceController?.clearPendingSelection(composerScope);
+          }
         }}
+        value={draft}
         {...(pendingVoiceSelection === null ? {} : { selection: pendingVoiceSelection })}
         mentionIndicators={["/"]}
         search={searchComposerSuggestions}
@@ -90,11 +91,11 @@ export function ComposerEditor({
     </PrivateImageAccessProvider>
   ) : (
     <VoiceCaptureStatus
-      phase={voicePhase}
       backend={voiceBackend}
-      startedAt={voiceResource?.updatedAt ?? 0}
       controller={voiceController}
+      phase={voicePhase}
       scope={composerScope}
+      startedAt={voiceResource?.updatedAt ?? 0}
     />
   );
 }

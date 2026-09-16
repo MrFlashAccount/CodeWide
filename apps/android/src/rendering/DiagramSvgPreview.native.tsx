@@ -6,6 +6,7 @@ import { Image, Pressable, StyleSheet, View } from "react-native";
 import { useEvent } from "../react/useEvent";
 import { colors, iconSize, radii, spacing, typeScale, typeWeight } from "../theme";
 import { AppText } from "../ui/Typography";
+import { useAppDialog } from "../ui/AppDialog";
 import { useAsyncResource } from "./async-resource-store";
 import { diagramPreviewKey, renderDiagramPreview } from "./diagram-preview.native";
 import type { DiagramPreviewResult } from "./diagram-preview-result";
@@ -14,9 +15,9 @@ import { checkAborted } from "../native/check-aborted";
 import { DiagramPreviewVisibility } from "./DiagramPreviewViewport";
 
 interface DiagramSvgPreviewProps {
-  readonly source: string;
   readonly onOpen: () => void;
   readonly onSettled: () => void;
+  readonly source: string;
 }
 
 export function DiagramSvgPreview(props: DiagramSvgPreviewProps) {
@@ -28,12 +29,13 @@ export function DiagramSvgPreview(props: DiagramSvgPreviewProps) {
 }
 
 function DiagramImagePreview({
-  source,
+  activated,
+  near,
   onOpen,
   onSettled,
-  near,
-  activated,
-}: DiagramSvgPreviewProps & { readonly near: boolean; readonly activated: boolean }) {
+  source,
+}: DiagramSvgPreviewProps & { readonly activated: boolean; readonly near: boolean }) {
+  const dialog = useAppDialog();
   const key = diagramPreviewKey(source);
   const [copied, setCopied] = useState(false);
   const resource = useAsyncResource<DiagramPreviewResult>(
@@ -42,11 +44,11 @@ function DiagramImagePreview({
     async (_publish, signal) => {
       try {
         return await renderDiagramPreview(source, signal);
-      } catch (cause) {
+      } catch (error) {
         checkAborted(signal);
         return {
+          message: error instanceof Error ? error.message : "Diagram renderer failed",
           status: "error",
-          message: cause instanceof Error ? cause.message : "Diagram renderer failed",
         };
       }
     },
@@ -54,7 +56,9 @@ function DiagramImagePreview({
   );
   const settled = useEvent(onSettled);
   useEffect(() => {
-    if (resource.status === "ready" || resource.status === "error") settled();
+    if (resource.status === "ready" || resource.status === "error") {
+      settled();
+    }
   }, [resource.status, settled]);
   const result = resource.value;
   const preview = result?.status === "ready" ? result.preview : null;
@@ -66,23 +70,32 @@ function DiagramImagePreview({
           <View style={styles.errorHeader}>
             <AppText style={styles.errorTitle}>Could not render diagram</AppText>
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Copy diagram error"
+              accessibilityRole="button"
               onPress={() => {
-                void Clipboard.setStringAsync(error);
-                setCopied(true);
+                Clipboard.setStringAsync(error).then(
+                  () => {
+                    setCopied(true);
+                  },
+                  (error: unknown) => {
+                    dialog.alert(
+                      "Copy failed",
+                      error instanceof Error ? error.message : "Could not copy diagram error",
+                    );
+                  },
+                );
               }}
               style={styles.copyButton}
             >
               <Ionicons
+                color={copied ? colors.green : colors.textMuted}
                 name={copied ? "checkmark" : "copy-outline"}
                 size={iconSize.inline}
-                color={copied ? colors.green : colors.textMuted}
               />
               <AppText style={styles.copyLabel}>{copied ? "Copied" : "Copy error"}</AppText>
             </Pressable>
           </View>
-          <AppText selectable numberOfLines={4} style={styles.errorMessage}>
+          <AppText numberOfLines={4} selectable style={styles.errorMessage}>
             {error}
           </AppText>
         </View>
@@ -92,18 +105,18 @@ function DiagramImagePreview({
   return (
     <InlineMediaFrame>
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel="Open diagram fullscreen"
+        accessibilityRole="button"
         onPress={onOpen}
         style={styles.preview}
       >
         {!near || preview === null ? (
           <View style={styles.placeholder}>
-            <Ionicons name="git-network-outline" size={iconSize.inline} color={colors.textMuted} />
+            <Ionicons color={colors.textMuted} name="git-network-outline" size={iconSize.inline} />
             <AppText style={styles.hint}>{near ? "Rendering diagram…" : "Diagram preview"}</AppText>
           </View>
         ) : (
-          <Image source={{ uri: preview.uri }} resizeMode="contain" style={styles.image} />
+          <Image resizeMode="contain" source={{ uri: preview.uri }} style={styles.image} />
         )}
       </Pressable>
     </InlineMediaFrame>
@@ -111,53 +124,11 @@ function DiagramImagePreview({
 }
 
 const styles = StyleSheet.create({
-  preview: {
-    flex: 1,
-    width: "100%",
-    padding: spacing.xs,
-    backgroundColor: colors.surfaceRaised,
-  },
-  placeholder: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.xs,
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-  },
-  hint: {
-    color: colors.textMuted,
-    ...typeScale.label,
-  },
-  errorPreview: {
-    minHeight: 120,
-    gap: spacing.xs,
-    justifyContent: "center",
-  },
-  errorHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-  },
-  errorTitle: {
-    flex: 1,
-    color: colors.text,
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
-  errorMessage: {
-    color: colors.textMuted,
-    ...typeScale.caption,
-  },
   copyButton: {
-    flexDirection: "row",
     alignItems: "center",
-    gap: spacing.xs,
     borderRadius: radii.medium,
+    flexDirection: "row",
+    gap: spacing.xs,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
   },
@@ -165,5 +136,47 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     ...typeScale.caption,
     fontWeight: typeWeight.medium,
+  },
+  errorHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    justifyContent: "space-between",
+  },
+  errorMessage: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  errorPreview: {
+    gap: spacing.xs,
+    justifyContent: "center",
+    minHeight: 120,
+  },
+  errorTitle: {
+    color: colors.text,
+    flex: 1,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  hint: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  image: {
+    height: "100%",
+    width: "100%",
+  },
+  placeholder: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.xs,
+    justifyContent: "center",
+  },
+  preview: {
+    backgroundColor: colors.surfaceRaised,
+    flex: 1,
+    padding: spacing.xs,
+    width: "100%",
   },
 });

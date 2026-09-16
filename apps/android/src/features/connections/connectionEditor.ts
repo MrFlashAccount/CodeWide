@@ -41,28 +41,28 @@ export function useConnectionEditor({
       await onUpdate(connection.id, input);
       setReplacementToken("");
       setEditing(false);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update server");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not update server");
     }
     setSaving(false);
   });
   return {
-    editing,
-    setEditing,
-    name,
-    setName,
-    emoji,
-    setEmoji,
-    endpoint,
-    setEndpoint,
-    replacementToken,
-    setReplacementToken,
-    tlsPinSha256,
-    setTlsPinSha256,
-    saving,
-    error,
     cancelEditing,
+    editing,
+    emoji,
+    endpoint,
+    error,
+    name,
+    replacementToken,
     save,
+    saving,
+    setEditing,
+    setEmoji,
+    setEndpoint,
+    setName,
+    setReplacementToken,
+    setTlsPinSha256,
+    tlsPinSha256,
   };
 }
 

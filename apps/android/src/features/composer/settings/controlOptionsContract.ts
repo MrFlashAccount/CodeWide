@@ -4,14 +4,14 @@ import type { ComposerMenuPage } from "../composerTypes";
 
 /** State and commands exposed by the composer's control-options page. */
 export type ComposerControlOptionsProps = {
-  page: ComposerMenuPage;
   controls: TurnControlsValue;
-  selectedModel: string | null;
+  onSelectEffort: (effort: string) => void;
+  onSelectModel: (model: string, effort: string) => void;
+  onSelectPermissions: (permissions: string | null) => void;
+  onSelectPersonality: (personality: Personality | null) => void;
+  page: ComposerMenuPage;
   selectedEffort: string | null;
-  selectedPersonality: Personality | null;
+  selectedModel: string | null;
   selectedPermissions: string | null;
-  onSelectModel(model: string, effort: string): void;
-  onSelectEffort(effort: string): void;
-  onSelectPersonality(personality: Personality | null): void;
-  onSelectPermissions(permissions: string | null): void;
+  selectedPersonality: Personality | null;
 };

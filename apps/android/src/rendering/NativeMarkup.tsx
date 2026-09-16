@@ -33,7 +33,7 @@ interface NativeMarkupProps extends MarkupCapabilities {
 }
 type MixedProps = CustomRendererProps<TBlock | TPhrasing | TText>;
 const Capabilities = createContext<MarkupCapabilities | null>(null);
-const MathSurface = lazy(() => import("./NativeMath"));
+const MathSurface = lazy(async () => import("./NativeMath"));
 
 /** The library owns HTML layout; adapters retain the app's file, link and code capabilities. */
 export function NativeMarkup(props: NativeMarkupProps): ReactNode {
@@ -45,9 +45,9 @@ export function NativeMarkup(props: NativeMarkupProps): ReactNode {
       <RenderHTML
         {...nativeMarkupConfig}
         contentWidth={available ?? window.width}
-        source={{ html: highlightMessageMarkup(props.html, query) }}
+        defaultTextProps={{ maxFontSizeMultiplier: 1.3, selectable: true }}
         renderers={renderers}
-        defaultTextProps={{ selectable: true, maxFontSizeMultiplier: 1.3 }}
+        source={{ html: highlightMessageMarkup(props.html, query) }}
       />
     </Capabilities.Provider>
   );
@@ -55,7 +55,9 @@ export function NativeMarkup(props: NativeMarkupProps): ReactNode {
 
 function useCapabilities(): MarkupCapabilities {
   const capabilities = useContext(Capabilities);
-  if (capabilities === null) throw new Error("Native markup requires presentation capabilities");
+  if (capabilities === null) {
+    throw new Error("Native markup requires presentation capabilities");
+  }
   return capabilities;
 }
 
@@ -64,10 +66,14 @@ function nodeText(node: TNode): string {
 }
 
 function findTag(node: TNode, tag: string): TNode | undefined {
-  if (node.tagName === tag) return node;
+  if (node.tagName === tag) {
+    return node;
+  }
   for (const child of node.children) {
     const found = findTag(child, tag);
-    if (found !== undefined) return found;
+    if (found !== undefined) {
+      return found;
+    }
   }
   return undefined;
 }
@@ -123,7 +129,7 @@ function MathRenderer(props: MixedProps): ReactNode {
         </Text>
       }
     >
-      <MathSurface source={source} display={props.tnode.tagName === "cw-display-math"} />
+      <MathSurface display={props.tnode.tagName === "cw-display-math"} source={source} />
     </Suspense>
   );
 }
@@ -133,7 +139,8 @@ function DetailsRenderer(props: CustomRendererProps<TBlock>): ReactNode {
   const query = useContext(SearchHighlightQuery);
   // A search match inside collapsed HTML must be visible when the chat opens.
   const [expanded, setExpanded] = useState(
-    Object.hasOwn(props.tnode.attributes, "open") ||
+    () =>
+      Object.hasOwn(props.tnode.attributes, "open") ||
       (query !== "" && findTag(props.tnode, "mark") !== undefined),
   );
   const summary = props.tnode.children.find((node) => node.tagName === "summary");
@@ -143,22 +150,24 @@ function DetailsRenderer(props: CustomRendererProps<TBlock>): ReactNode {
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        onPress={() => setExpanded(!expanded)}
+        onPress={() => {
+          setExpanded(!expanded);
+        }}
         style={styles.summary}
       >
         <Svg
-          width={iconSize.inline}
+          accessible={false}
           height={iconSize.inline}
           viewBox="0 0 24 24"
-          accessible={false}
+          width={iconSize.inline}
         >
           <Path
             d={expanded ? "M5 9L12 16L19 9" : "M9 5L16 12L9 19"}
             fill="none"
             stroke={colors.textMuted}
-            strokeWidth={2}
             strokeLinecap="round"
             strokeLinejoin="round"
+            strokeWidth={2}
           />
         </Svg>
         <View style={styles.summaryText}>
@@ -183,18 +192,18 @@ function DetailsRenderer(props: CustomRendererProps<TBlock>): ReactNode {
 }
 
 const renderers = {
-  pre: PreRenderer,
-  img: ImageRenderer,
   a: LinkRenderer,
-  details: DetailsRenderer,
-  input: MarkupInput,
-  progress: MarkupProgress,
-  meter: MarkupProgress,
-  video: MediaRenderer,
   audio: MediaRenderer,
-  table: NativeMarkupTable,
-  "cw-inline-math": MathRenderer,
   "cw-display-math": MathRenderer,
+  "cw-inline-math": MathRenderer,
+  details: DetailsRenderer,
+  img: ImageRenderer,
+  input: MarkupInput,
+  meter: MarkupProgress,
+  pre: PreRenderer,
+  progress: MarkupProgress,
+  table: NativeMarkupTable,
+  video: MediaRenderer,
 };
 
 const styles = StyleSheet.create({
@@ -202,29 +211,29 @@ const styles = StyleSheet.create({
     color: colors.text,
     ...typeScale.code,
   },
-  text: {
-    color: colors.text,
-    fontFamily: productFonts.regular,
-    ...typeScale.body,
-  },
   details: {
-    minWidth: 0,
-    borderRadius: radii.small,
     backgroundColor: colors.surfaceContainerLow,
-  },
-  summary: {
-    minHeight: controlSize.regular,
-    padding: spacing.xs,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-  },
-  summaryText: {
-    flex: 1,
+    borderRadius: radii.small,
     minWidth: 0,
   },
   detailsBody: {
     padding: spacing.sm,
     paddingTop: 0,
+  },
+  summary: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xxs,
+    minHeight: controlSize.regular,
+    padding: spacing.xs,
+  },
+  summaryText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  text: {
+    color: colors.text,
+    fontFamily: productFonts.regular,
+    ...typeScale.body,
   },
 });

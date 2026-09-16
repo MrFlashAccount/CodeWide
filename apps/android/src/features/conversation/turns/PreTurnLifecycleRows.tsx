@@ -1,5 +1,5 @@
 /** V1 PreTurnLifecycleRows owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 import { Ionicons } from "@expo/vector-icons";
 import { View } from "react-native";
 import { colors, iconSize } from "../../../theme";
@@ -13,19 +13,19 @@ import { preTurnBlockUsesDisclosure } from "./turnProjection";
 
 export function PreTurnLifecycleRows({
   blocks,
-  turnStatus,
-  turnKey,
   getTransferAccess,
   onFixUnsupportedBlock,
+  turnKey,
+  turnStatus,
 }: {
   blocks: RenderBlock[];
-  turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
+  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   turnKey: string;
-  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
-  onFixUnsupportedBlock?(block: RenderBlock): Promise<void>;
+  turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
 }) {
   return (
-    <View testID="pre-turn-lifecycle" style={styles.preTurnLifecycleList}>
+    <View style={styles.preTurnLifecycleList} testID="pre-turn-lifecycle">
       {blocks.map((block) => {
         const lifecyclePhase = block.raw.codewideLifecyclePhase;
         const running =
@@ -51,28 +51,28 @@ export function PreTurnLifecycleRows({
         }
         return (
           <View
-            key={block.key}
-            accessible
             accessibilityLabel={`${block.title}, ${running ? "running" : "completed"}`}
-            testID="pre-turn-lifecycle-row"
+            accessible
+            key={block.key}
             style={styles.preTurnLifecycleRow}
+            testID="pre-turn-lifecycle-row"
           >
             <View style={styles.preTurnLifecycleIcon}>
               {running && turnStatus === "inProgress" ? (
-                <CalmSpinner size={10} color={colors.textMuted} durationMs={3_000} />
+                <CalmSpinner color={colors.textMuted} durationMs={3000} size={10} />
               ) : (
                 <Ionicons
+                  color={colors.textMuted}
                   name="checkmark-circle-outline"
                   size={iconSize.inline}
-                  color={colors.textMuted}
                 />
               )}
             </View>
             {running && turnStatus === "inProgress" ? (
               <WaveText
-                text={block.title}
-                style={styles.preTurnLifecycleText}
                 containerStyle={styles.preTurnLifecycleWave}
+                style={styles.preTurnLifecycleText}
+                text={block.title}
               />
             ) : (
               <Text numberOfLines={1} style={styles.preTurnLifecycleText}>

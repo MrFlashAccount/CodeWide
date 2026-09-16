@@ -22,7 +22,7 @@ export const Easing = {
   out: <Value>(value: Value): Value => value,
 };
 
-// WHY: HeroUI constructs native layout keyframes at import time; Node renders final layout only.
+// WHY: Reanimated constructs native layout keyframes at import time; Node renders final layout only.
 export class Keyframe {
   constructor(_definitions: unknown) {}
   duration(_milliseconds: number): this {

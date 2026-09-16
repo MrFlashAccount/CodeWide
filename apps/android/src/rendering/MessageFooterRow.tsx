@@ -7,17 +7,17 @@ import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../ui/typography-policy";
 import { useEvent } from "../react/useEvent";
 
 interface MessageFooterRowProps {
-  readonly time: string | null;
-  readonly children: ReactNode;
-  readonly tokens?: ReactNode;
-  readonly cost?: ReactNode;
   readonly changes?: ReactNode;
+  readonly children: ReactNode;
+  readonly cost?: ReactNode;
+  readonly time: string | null;
+  readonly tokens?: ReactNode;
 }
 
 /** Status remains one indivisible group at every available width. */
 export function MessageFooterStatus(props: { children: ReactNode }) {
   return (
-    <View testID="turn-footer-status" style={styles.status}>
+    <View style={styles.status} testID="turn-footer-status">
       {props.children}
     </View>
   );
@@ -29,21 +29,23 @@ type FooterPart = "primary" | "tokens" | "cost" | "changes" | "time";
 export function MessageFooterRow(props: MessageFooterRowProps) {
   const [width, setWidth] = useState(0);
   const [widths, setWidths] = useState<Record<FooterPart, number | null>>({
-    primary: null,
-    tokens: null,
-    cost: null,
     changes: null,
+    cost: null,
+    primary: null,
     time: null,
+    tokens: null,
   });
   const measure = useEvent((part: FooterPart, measured: number) => {
     setWidths((current) =>
       current[part] === measured ? current : { ...current, [part]: measured },
     );
   });
-  const layout = useEvent((event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width));
-  const tokens = props.tokens != null;
-  const cost = props.cost != null;
-  const changes = props.changes != null;
+  const layout = useEvent((event: LayoutChangeEvent) => {
+    setWidth(event.nativeEvent.layout.width);
+  });
+  const tokens = props.tokens !== null && props.tokens !== undefined;
+  const cost = props.cost !== null && props.cost !== undefined;
+  const changes = props.changes !== null && props.changes !== undefined;
   const time = props.time !== null;
   const measured =
     widths.primary !== null &&
@@ -63,41 +65,41 @@ export function MessageFooterRow(props: MessageFooterRowProps) {
     essentialWidth + (showCost ? costWidth : 0) + (showTokens ? tokensWidth : 0) + spacing.sm * 2;
   return (
     <View
-      testID="turn-footer"
       onLayout={layout}
       style={[styles.row, measured && { minWidth: visibleWidth }]}
+      testID="turn-footer"
     >
-      <FooterPartView part="primary" visible onMeasure={measure}>
-        <View testID="turn-footer-metadata" style={styles.metadata}>
+      <FooterPartView onMeasure={measure} part="primary" visible>
+        <View style={styles.metadata} testID="turn-footer-metadata">
           {props.children}
         </View>
       </FooterPartView>
       {tokens && (
-        <FooterPartView part="tokens" visible={showTokens} onMeasure={measure}>
+        <FooterPartView onMeasure={measure} part="tokens" visible={showTokens}>
           <FooterSeparator />
           {props.tokens}
         </FooterPartView>
       )}
       {cost && (
-        <FooterPartView part="cost" visible={showCost} onMeasure={measure}>
+        <FooterPartView onMeasure={measure} part="cost" visible={showCost}>
           <FooterSeparator />
           {props.cost}
         </FooterPartView>
       )}
       {changes && (
-        <FooterPartView part="changes" visible onMeasure={measure}>
+        <FooterPartView onMeasure={measure} part="changes" visible>
           <FooterSeparator />
           {props.changes}
         </FooterPartView>
       )}
       {time && (
-        <View testID="turn-footer-time-anchor" style={styles.alignEnd}>
-          <FooterPartView part="time" visible onMeasure={measure}>
+        <View style={styles.alignEnd} testID="turn-footer-time-anchor">
+          <FooterPartView onMeasure={measure} part="time" visible>
             <Text
-              testID="turn-footer-time"
-              numberOfLines={1}
               maxFontSizeMultiplier={APP_MAX_FONT_SIZE_MULTIPLIER}
+              numberOfLines={1}
               style={styles.time}
+              testID="turn-footer-time"
             >
               {props.time}
             </Text>
@@ -109,29 +111,29 @@ export function MessageFooterRow(props: MessageFooterRowProps) {
 }
 
 function FooterPartView({
+  children,
+  onMeasure,
   part,
   visible,
-  onMeasure,
-  children,
 }: {
+  children: ReactNode;
+  onMeasure: (part: FooterPart, width: number) => void;
   part: FooterPart;
   visible: boolean;
-  onMeasure(part: FooterPart, width: number): void;
-  children: ReactNode;
 }) {
-  const layout = useEvent((event: LayoutChangeEvent) =>
-    onMeasure(part, event.nativeEvent.layout.width),
-  );
+  const layout = useEvent((event: LayoutChangeEvent) => {
+    onMeasure(part, event.nativeEvent.layout.width);
+  });
   // Keep a single mounted instance measurable when hidden, so widening restores it
   // and popovers/animated values never require a duplicate measurement tree.
   return (
     <View
-      testID={`turn-footer-${part}-segment`}
-      onLayout={layout}
-      pointerEvents={visible ? "auto" : "none"}
       accessibilityElementsHidden={!visible}
       importantForAccessibility={visible ? "auto" : "no-hide-descendants"}
+      onLayout={layout}
+      pointerEvents={visible ? "auto" : "none"}
       style={[styles.part, !visible && styles.hidden]}
+      testID={`turn-footer-${part}-segment`}
     >
       {children}
     </View>
@@ -147,57 +149,57 @@ function FooterSeparator() {
 }
 
 const styles = StyleSheet.create({
-  status: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 0,
-    gap: spacing.xxs,
-  },
-  row: {
-    alignSelf: "stretch",
-    minWidth: 0,
-    maxWidth: "100%",
-    flexShrink: 1,
-    minHeight: typeScale.label.lineHeight,
-    flexDirection: "row",
-    flexWrap: "nowrap",
-    alignItems: "center",
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.optical,
-  },
-  metadata: {
-    flexShrink: 0,
-    flexDirection: "row",
-    flexWrap: "nowrap",
-    alignItems: "center",
-    gap: spacing.xxs,
-  },
-  part: {
-    flexDirection: "row",
-    flexShrink: 0,
-    alignItems: "center",
-  },
   alignEnd: {
     marginLeft: "auto",
     paddingLeft: spacing.sm,
   },
   hidden: {
-    position: "absolute",
     opacity: 0,
+    position: "absolute",
     zIndex: -1,
+  },
+  metadata: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    flexWrap: "nowrap",
+    gap: spacing.xxs,
+  },
+  part: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+  },
+  row: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    flexDirection: "row",
+    flexShrink: 1,
+    flexWrap: "nowrap",
+    maxWidth: "100%",
+    minHeight: typeScale.label.lineHeight,
+    minWidth: 0,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.optical,
   },
   separator: {
     color: colors.textDim,
     ...typeScale.caption,
     marginHorizontal: spacing.xs,
   },
+  status: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: spacing.xxs,
+  },
   time: {
+    color: colors.textDim,
     flexShrink: 0,
     textAlign: "right",
-    color: colors.textDim,
     ...typeScale.caption,
     fontFamily: productFonts.medium,
-    fontWeight: typeWeight.regular,
     fontVariant: ["tabular-nums"],
+    fontWeight: typeWeight.regular,
   },
 });

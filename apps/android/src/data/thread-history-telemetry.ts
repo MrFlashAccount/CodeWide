@@ -13,13 +13,15 @@ export function recordThreadOpeningMeasure(
   stage: "queue_wait" | "sqlite_read" | "cache_read" | "hydrate" | "open",
   durationMs: number,
 ): void {
-  if (connectionId === "" || threadId === "") return;
+  if (connectionId === "" || threadId === "") {
+    return;
+  }
   recordOperationalTelemetryEvent(connectionId, {
-    name: "chat.window.open_stage",
     connectionId,
+    name: "chat.window.open_stage",
+    tags: { stage },
     threadId,
     values: { durationMs },
-    tags: { stage },
   });
 }
 
@@ -30,16 +32,20 @@ export function recordThreadHistoryTelemetry(
   name: string,
   input: ThreadHistoryTelemetryInput = {},
 ): void {
-  if (connectionId === "" || threadId === "") return;
+  if (connectionId === "" || threadId === "") {
+    return;
+  }
   recordTelemetryEvent(connectionId, {
     ...input,
-    name,
     connectionId,
+    name,
     threadId,
   });
 }
 
 export function telemetryErrorKind(cause: unknown): string {
-  if (cause instanceof Error && cause.name.length > 0) return cause.name.slice(0, 128);
+  if (cause instanceof Error && cause.name.length > 0) {
+    return cause.name.slice(0, 128);
+  }
   return "unknown";
 }

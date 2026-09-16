@@ -25,7 +25,7 @@ import {
 export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
   const rawTurn = props.item.turn;
   const [expanded, setExpanded] = usePersistentExpansion(
-    `${props.item.key}:prior-activity:${props.indexes[0] ?? "empty"}`,
+    `${props.item.key}:prior-activity:${String(props.indexes[0] ?? "empty")}`,
     false,
   );
   const [visibleBlockCount, setVisibleBlockCount] = useRecyclingState(16);
@@ -43,7 +43,9 @@ export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
   const outputFootprint = activityOutputFootprint(
     props.indexes.flatMap((index) => {
       const rawItem = rawTurn.items[index];
-      if (rawItem === undefined || rawItem.type !== "commandExecution") return [];
+      if (rawItem === undefined || rawItem.type !== "commandExecution") {
+        return [];
+      }
       const raw: Record<string, unknown> = rawItem;
       return [
         {
@@ -58,16 +60,18 @@ export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
     <TurnActivity
       expanded={isExpanded}
       forceExpandCards={props.forceExpanded}
-      label={`${turnActivityLabel(activityKinds, props.compact)} · ${props.indexes.length}`}
+      label={`${turnActivityLabel(activityKinds, props.compact)} · ${String(props.indexes.length)}`}
+      onToggle={() => {
+        setExpanded(!isExpanded);
+      }}
       outputFootprint={outputFootprint}
-      onToggle={() => setExpanded(!isExpanded)}
     >
-      {blocks.map((block, index) =>
+      {blocks.map((block) =>
         block.kind === "agentMessage" ? (
-          <RichMarkdown key={`${block.key}:${index}`} source={block.body ?? ""} />
+          <RichMarkdown key={block.key} source={block.body ?? ""} />
         ) : (
           <ExpansionItemKeyContext.Provider
-            key={`${block.key}:${index}`}
+            key={block.key}
             value={`${props.item.key}:${block.key}`}
           >
             <ProtocolBlock
@@ -85,9 +89,9 @@ export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
       {visibleBlockCount < props.indexes.length && (
         <Pressable
           accessibilityRole="button"
-          onPress={() =>
-            setVisibleBlockCount((current) => Math.min(props.indexes.length, current + 16))
-          }
+          onPress={() => {
+            setVisibleBlockCount((current) => Math.min(props.indexes.length, current + 16));
+          }}
           style={styles.activityMoreButton}
         >
           <Text style={styles.activityMoreText}>
@@ -112,7 +116,7 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   const activityItems = selectTurnRenderWindow(rawTurn).collapsedActivityIndexes.flatMap(
     (index) => {
       const rawItem = rawTurn.items[index];
-      return rawItem === undefined ? [] : [{ rawItem, index }];
+      return rawItem === undefined ? [] : [{ index, rawItem }];
     },
   );
   const metadataKinds = turnMetadataKinds(rawTurn);
@@ -130,7 +134,9 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   const outputFootprint = hasFullItems
     ? activityOutputFootprint(
         activityItems.flatMap(({ rawItem }) => {
-          if (rawItem.type !== "commandExecution") return [];
+          if (rawItem.type !== "commandExecution") {
+            return [];
+          }
           const raw: Record<string, unknown> = rawItem;
           return [
             {
@@ -144,7 +150,7 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   const historyBlocks =
     !isExpanded || rawTurn.itemsView !== "full"
       ? []
-      : activityItems.map(({ rawItem, index }) => projectThreadItem(props.item, rawItem, index));
+      : activityItems.map(({ index, rawItem }) => projectThreadItem(props.item, rawItem, index));
   if (isExpanded && rawTurn.itemsView === "full") {
     historyBlocks.push(...turnMetadataBlocks(props.item.key, rawTurn));
   }
@@ -154,57 +160,64 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
       requestedTurnRef.current === rawTurn.id ||
       rawTurn.itemsView === "full" ||
       props.onLoadItems === undefined
-    )
+    ) {
       return;
+    }
     requestedTurnRef.current = rawTurn.id;
     setLoading(true);
     setError(null);
     void props
       .onLoadItems(rawTurn.id)
-      .catch((cause: unknown) => {
+      .catch((error: unknown) => {
         requestedTurnRef.current = null;
-        setError(cause instanceof Error ? cause.message : "Could not load activity");
+        setError(error instanceof Error ? error.message : "Could not load activity");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+      });
   };
-  if (rawTurn.itemsView === "full" && activityCount === 0) return null;
+  if (rawTurn.itemsView === "full" && activityCount === 0) {
+    return null;
+  }
   return (
     <TurnActivity
       compactHeader
       expanded={isExpanded}
       forceExpandCards={props.forceExpanded}
-      loading={loading}
-      outputFootprint={outputFootprint}
       label={
         loading
           ? "Loading activity…"
           : error !== null
             ? "Activity unavailable"
             : rawTurn.itemsView === "full"
-              ? `${turnActivityLabel(activityKinds, props.compact)} · ${activityCount}`
+              ? `${turnActivityLabel(activityKinds, props.compact)} · ${String(activityCount)}`
               : activityCount > 0
-                ? `${turnActivityLabel(activityKinds, props.compact)} · ${activityCount}`
+                ? `${turnActivityLabel(activityKinds, props.compact)} · ${String(activityCount)}`
                 : "Activity"
       }
+      loading={loading}
       onToggle={() => {
         const next = !isExpanded;
         setExpanded(next);
-        if (next) load();
+        if (next) {
+          load();
+        }
       }}
+      outputFootprint={outputFootprint}
     >
       {error !== null && <Text style={styles.agentPlaceholder}>{error}</Text>}
-      {sequence.map((part, index) =>
+      {sequence.map((part) =>
         part.kind === "agent" ? (
-          <RichMarkdown key={`${part.key}:${index}`} source={part.block.body ?? ""} />
+          <RichMarkdown key={part.key} source={part.block.body ?? ""} />
         ) : (
           <TurnActivitySegment
-            key={`${part.key}:${index}`}
-            turnKey={`${props.item.key}:completed-history`}
-            part={part}
-            turnStatus={rawTurn.status}
             animateNew={false}
             compact={props.compact}
             forceExpanded={props.forceExpanded}
+            key={part.key}
+            part={part}
+            turnKey={`${props.item.key}:completed-history`}
+            turnStatus={rawTurn.status}
             {...(props.getTransferAccess === undefined
               ? {}
               : { getTransferAccess: props.getTransferAccess })}

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
-import { sourceObjectDeclaration } from "../source-contract";
+import { sourceHasJsxElement, sourceObjectDeclaration } from "../source-contract";
 import {
-  heroUiRoot,
+  appRootProviders,
   appSheet,
   appFullscreenModal,
   turnControlMenus,
@@ -9,7 +9,6 @@ import {
   messageActionMenu,
   appDialog,
   appDialogSurface,
-  heroUIRoot,
   conversationPanelUnderlay,
   conversationChromeLayout,
   swipeDiscardAction,
@@ -18,14 +17,9 @@ import {
 } from "./presentation-sources";
 
 it("preserves presentation integration contracts", () => {
-  expect(heroUiRoot).toContain('from "heroui-native/provider-raw"');
-  expect(heroUiRoot).toContain('from "heroui-native/portal"');
-  expect(heroUiRoot).toContain("<AppDialogProvider>");
-  expect(heroUiRoot).toContain("<PortalHost />");
-  expect(heroUiRoot.indexOf("<AppDialogProvider>")).toBeLessThan(
-    heroUiRoot.indexOf("<PortalHost />"),
-  );
-  expect(heroUiRoot).toContain('Uniwind.setTheme("dark")');
+  expect(appRootProviders).toContain("<AppNoticeProvider>");
+  expect(appRootProviders).toContain("<AppDialogProvider>");
+  expect(appRootProviders).not.toContain("heroui-native");
   expect(appSheet).toContain('from "@expo/ui/jetpack-compose"');
   expect(appSheet).toContain('<Host colorScheme="dark"');
   expect(appSheet).toContain("<ModalBottomSheet");
@@ -75,16 +69,12 @@ it("preserves presentation integration contracts", () => {
   expect(messageActionMenu).toContain("hostRef.current?.open(request, event)");
   expect(turnControlMenus).toContain("id: SERVER_DEFAULT_PERMISSIONS");
   expect(turnControlMenus).toContain('description: "Use the server\'s configured access level"');
-  expect(appDialog).toMatch(
-    /\{state\.isOpen\s*&&\s*\(\s*<AppDialogSurface\s+isOpen\s+request=\{state\.request\}/u,
-  );
-  expect(appDialogSurface).toContain('from "heroui-native/dialog"');
-  expect(appDialogSurface).toContain('<Dialog.Overlay variant="blur"');
-  expect(appDialogSurface).toContain("<Dialog.Portal style={styles.portal}>");
-  expect(appDialogSurface).toContain('alignItems: "center"');
-  expect(appDialogSurface).toContain('justifyContent: "center"');
-  expect(appDialogSurface).toContain('alignSelf: "center"');
-  expect(heroUIRoot).toContain("<ImagePreviewHost>");
+  expect(appDialog).toContain("{state.isOpen && (");
+  expect(
+    sourceHasJsxElement(appDialog, "AppDialogSurface", ["isOpen", "request={state.request}"]),
+  ).toBe(true);
+  expect(appDialogSurface).toContain("<AppModalDialog");
+  expect(appRootProviders).toContain("<ImagePreviewHost>");
   expect(conversationPanelUnderlay).toContain("backgroundColor: surfaceColor");
   expect(conversationPanelUnderlay).not.toMatch(/blur/iu);
   expect(conversationChromeLayout).not.toContain("conversationBlurExtent");
@@ -95,8 +85,10 @@ it("preserves presentation integration contracts", () => {
   expect(resourceContextChipStyles).toMatch(
     /composerContextValue: \{\s*alignSelf: "center",\s*justifyContent: "center",?\s*\}/,
   );
-  expect(messageActionMenu).toMatch(/\{\s*id: "copy",\s*label: "Copy",\s*icon: "copy-outline"/);
   expect(messageActionMenu).toMatch(
-    /\{\s*id: "fork",\s*label: "Fork",\s*icon: "git-branch-outline"/,
+    /\{(?=[^}]*id: "copy")(?=[^}]*label: "Copy")(?=[^}]*icon: "copy-outline")[^}]*\}/u,
+  );
+  expect(messageActionMenu).toMatch(
+    /\{(?=[^}]*id: "fork")(?=[^}]*label: "Fork")(?=[^}]*icon: "git-branch-outline")[^}]*\}/u,
   );
 });

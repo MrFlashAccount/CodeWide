@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { sourceHasJsxElement } from "../source-contract";
 import { migratedThreadResourceContextChips, migratedChangesFeature } from "./changes-sources";
 import { threadRow } from "./threadList-sources";
 
@@ -19,12 +20,20 @@ it("preserves changes integration contracts", () => {
   );
   expect(migratedThreadResourceContextChips).toContain("{!changesUnavailable && (");
   expect(migratedThreadResourceContextChips).toContain("{!attachmentsUnavailable && (");
-  expect(migratedThreadResourceContextChips).toMatch(
-    /<ComposerContextCount\s+label="Changes"\s+value=\{changeCount\}\s+testID="composer-changes-label"\s*\/>/,
-  );
-  expect(migratedThreadResourceContextChips).toMatch(
-    /<ComposerContextCount\s+label="Attachments"\s+value=\{attachmentCount\}\s+testID="composer-attachments-label"\s*\/>/,
-  );
+  expect(
+    sourceHasJsxElement(migratedThreadResourceContextChips, "ComposerContextCount", [
+      'label="Changes"',
+      'testID="composer-changes-label"',
+      "value={changeCount}",
+    ]),
+  ).toBe(true);
+  expect(
+    sourceHasJsxElement(migratedThreadResourceContextChips, "ComposerContextCount", [
+      'label="Attachments"',
+      'testID="composer-attachments-label"',
+      "value={attachmentCount}",
+    ]),
+  ).toBe(true);
   expect(migratedChangesFeature).toMatch(
     /onInitialLoad: async \(\) =>\s*loadResources\(scope, "changes"\)/,
   );

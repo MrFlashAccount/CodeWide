@@ -1,18 +1,20 @@
+import { unknownRecord } from "./unknownRecord";
+
 export const WORKSPACE_CREATE_CAPABILITY = "workspace.create@1";
 
 export type WorkspaceSupport = {
   capability: typeof WORKSPACE_CREATE_CAPABILITY;
-  provider: string;
   displayName: string;
+  provider: string;
   repositoryRoot: string;
 };
 
 export type CreatedWorkspace = {
   capability: typeof WORKSPACE_CREATE_CAPABILITY;
+  created: boolean;
+  cwd: string;
   provider: string;
   repositoryRoot: string;
-  cwd: string;
-  created: boolean;
 };
 
 export type NewChatWorkspaceMode = "current" | "isolated";
@@ -41,7 +43,9 @@ export function parseWorkspaceSupport(value: unknown): WorkspaceSupport | null {
   if (envelope === null || !("support" in envelope)) {
     throw new Error("Companion returned an invalid workspace capability response");
   }
-  if (envelope.support === null) return null;
+  if (envelope.support === null) {
+    return null;
+  }
   const support = record(envelope.support);
   if (
     support === null ||
@@ -52,12 +56,13 @@ export function parseWorkspaceSupport(value: unknown): WorkspaceSupport | null {
     support.displayName === "" ||
     typeof support.repositoryRoot !== "string" ||
     support.repositoryRoot === ""
-  )
+  ) {
     throw new Error("Companion returned invalid workspace capability metadata");
+  }
   return {
     capability: WORKSPACE_CREATE_CAPABILITY,
-    provider: support.provider,
     displayName: support.displayName,
+    provider: support.provider,
     repositoryRoot: support.repositoryRoot,
   };
 }
@@ -75,19 +80,18 @@ export function parseCreatedWorkspace(value: unknown): CreatedWorkspace {
     typeof workspace.cwd !== "string" ||
     workspace.cwd === "" ||
     typeof workspace.created !== "boolean"
-  )
+  ) {
     throw new Error("Companion returned an invalid created workspace");
+  }
   return {
     capability: WORKSPACE_CREATE_CAPABILITY,
+    created: workspace.created,
+    cwd: workspace.cwd,
     provider: workspace.provider,
     repositoryRoot: workspace.repositoryRoot,
-    cwd: workspace.cwd,
-    created: workspace.created,
   };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return unknownRecord(value);
 }

@@ -11,7 +11,7 @@ export function createReviewWorkspaceAdapter({
   getSession,
   rpcAfterAttach,
 }: {
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): ReviewWorkspaceCapabilities {
   const startReview = async (
@@ -21,11 +21,13 @@ export function createReviewWorkspaceAdapter({
     delivery: ReviewDelivery,
   ): Promise<string> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const response = await rpcAfterAttach<ReviewStartResponse>(session, "review/start", {
-      threadId,
-      target,
       delivery,
+      target,
+      threadId,
     });
     return response.reviewThreadId;
   };

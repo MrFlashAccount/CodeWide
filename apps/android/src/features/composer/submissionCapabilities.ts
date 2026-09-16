@@ -25,21 +25,20 @@ export type ComposerSubmissionCapabilities = Pick<
     | "capturePreferenceUpdate"
     | "captureControlsResource"
   > & {
-    composerScope: string;
-    queuedComposerEdit: QueuedComposerEdit | null;
-    pastedAttachmentPendingRef: { current: boolean };
     captureDraftMutations: ReturnType<typeof useComposerDraftCommands>["captureDraftMutations"];
-    threadLifecycleActive: boolean;
-    currentTurnId: string | null;
+    clearContentReviewAttachmentId: (scope: string, attachmentId: string) => void;
+    composerScope: string;
     contentReviewAttachmentId: string | null;
-    clearContentReviewAttachmentId(scope: string, attachmentId: string): void;
     conversationOwner: ConversationOwner;
+    currentTurnId: string | null;
     draftConnectionId: string | null;
     draftThreadId: string | null;
+    onListQueue: (() => Promise<unknown>) | undefined;
     onSend:
       | ((text: string, mode: SendMode, options: TurnSendOptions) => Promise<string>)
       | undefined;
-    onListQueue: (() => Promise<unknown>) | undefined;
+    pastedAttachmentPendingRef: { current: boolean };
+    queuedComposerEdit: QueuedComposerEdit | null;
     saveDraft:
       | ((connectionId: string, threadId: string, text: string) => Promise<void>)
       | undefined;
@@ -50,4 +49,5 @@ export type ComposerSubmissionCapabilities = Pick<
           attachments: StoredDraftAttachment[],
         ) => Promise<void>)
       | undefined;
+    threadLifecycleActive: boolean;
   };

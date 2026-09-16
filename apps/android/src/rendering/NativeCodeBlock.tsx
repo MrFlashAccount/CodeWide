@@ -17,29 +17,29 @@ import {
 import { useRichContentWidth } from "./RichContentLayout";
 
 export function NativeCodeBlock({
-  value,
+  embeddedInParentScroll = true,
+  fillAvailableWidth = false,
   language,
-  variant = "code",
   maxHeight,
   maxVisibleLines,
-  fillAvailableWidth = false,
-  embeddedInParentScroll = true,
   truncate = true,
+  value,
+  variant = "code",
 }: {
-  value: string;
+  embeddedInParentScroll?: boolean;
+  fillAvailableWidth?: boolean;
   language: string;
-  variant?: NativeCodeVariant;
   maxHeight?: number;
   maxVisibleLines?: number;
-  fillAvailableWidth?: boolean;
-  embeddedInParentScroll?: boolean;
   truncate?: boolean;
+  value: string;
+  variant?: NativeCodeVariant;
 }) {
   const availableWidth = useRichContentWidth();
   const searchQuery = useContext(SearchHighlightQuery);
   const preview = truncate
     ? nativeCodePreview(value)
-    : { value, truncated: false, originalLines: value === "" ? 1 : value.split("\n").length };
+    : { originalLines: value === "" ? 1 : value.split("\n").length, truncated: false, value };
   const normalizedLanguage = normalizeNativeCodeLanguage(language, variant);
   const height = nativeCodeHeight(preview.value, maxHeight, maxVisibleLines);
   if (NativeCodeBlockHost === null) {
@@ -47,10 +47,10 @@ export function NativeCodeBlock({
       variant === "terminal" ? stripTerminalControlSequences(preview.value) : preview.value;
     return (
       <ScrollView
+        contentContainerStyle={styles.fallbackContent}
         horizontal
         showsHorizontalScrollIndicator={false}
         style={[styles.fallbackViewport, { height }]}
-        contentContainerStyle={styles.fallbackContent}
       >
         <Text selectable style={styles.fallbackText}>
           <HighlightSearchText text={fallbackValue} />
@@ -69,12 +69,12 @@ export function NativeCodeBlock({
     >
       <NativeCodeBlockHost
         code={preview.value}
-        searchQuery={searchQuery}
-        language={normalizedLanguage}
-        variant={variant}
-        maxLines={maxVisibleLines ?? 0}
         embeddedInParentScroll={embeddedInParentScroll}
+        language={normalizedLanguage}
+        maxLines={maxVisibleLines ?? 0}
+        searchQuery={searchQuery}
         style={[styles.nativeView, { height }]}
+        variant={variant}
       />
       {preview.truncated && (
         <Text style={styles.truncated}>
@@ -88,22 +88,10 @@ export function NativeCodeBlock({
 
 const styles = StyleSheet.create({
   container: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
     gap: spacing.xxs,
-  },
-  nativeView: {
-    width: "100%",
-    minWidth: 0,
     maxWidth: "100%",
-  },
-  fallbackViewport: {
-    width: "100%",
     minWidth: 0,
-    maxWidth: "100%",
-    flexGrow: 0,
-    backgroundColor: colors.code,
+    width: "100%",
   },
   fallbackContent: {
     flexGrow: 0,
@@ -114,6 +102,18 @@ const styles = StyleSheet.create({
     ...typeScale.code,
     fontSize: NATIVE_CODE_FONT_SIZE,
     lineHeight: NATIVE_CODE_LINE_HEIGHT,
+  },
+  fallbackViewport: {
+    backgroundColor: colors.code,
+    flexGrow: 0,
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
+  },
+  nativeView: {
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
   },
   truncated: {
     color: colors.textDim,

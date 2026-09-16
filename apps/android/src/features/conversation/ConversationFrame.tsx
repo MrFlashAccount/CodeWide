@@ -1,67 +1,67 @@
 import type { ConversationSurfaceCapabilities } from "./conversationSurfaceCapabilities";
 import type { ConversationAgentCapabilities } from "../agents/conversationAgentCapabilities";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppFullscreenOverlayBoundary } from "../../ui/AppFullscreenOverlay";
 import { AppVoiceInputProvider, type AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
-import { useComposerProjectSelection } from "../projects/composerProjectSelection";
-import { useThreadRename } from "../turnActions/threadRename";
+import type { useComposerProjectSelection } from "../projects/composerProjectSelection";
+import type { useThreadRename } from "../turnActions/threadRename";
 import { LargeContentViewerHost } from "./content/FullContentViewer";
-import { createConversationChromeContent } from "./ConversationChromeContent";
-import { useComposerState } from "../composer/composerState";
+import type { createConversationChromeContent } from "./ConversationChromeContent";
+import type { useComposerState } from "../composer/composerState";
 import { ConversationLayout } from "./ConversationLayout";
-import { createConversationOverlayContent } from "./ConversationOverlayContent";
-import { createConversationTimelineContent } from "./ConversationTimelineContent";
-import { useConversationTools } from "./ConversationTools";
-import { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
-import { useConversationTimelineState } from "./timeline/conversationTimelineState";
-import { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
-import { useConversationPaneGeometry } from "./timeline/timelineViewport";
+import type { createConversationOverlayContent } from "./ConversationOverlayContent";
+import type { createConversationTimelineContent } from "./ConversationTimelineContent";
+import type { useConversationTools } from "./ConversationTools";
+import type { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
+import type { useConversationTimelineState } from "./timeline/conversationTimelineState";
+import type { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
+import type { useConversationPaneGeometry } from "./timeline/timelineViewport";
 import { SubagentNavigationContext } from "./turns/turnContexts";
 
 export function createConversationFrame({
-  appVoiceInputRuntime,
-  composerScope,
-  overlayScrollOwnershipBinding,
   agentsInputs,
+  appVoiceInputRuntime,
+  chromeView,
+  composerProjectSelectionBinding,
+  composerScope,
+  composerStateBinding,
+  conversationInsets,
+  conversationOverlayContentBinding,
+  conversationPaneGeometryBinding,
   draftConnectionId,
   draftThreadId,
-  toolsBinding,
-  chromeView,
-  conversationOverlayContentBinding,
+  overlayScrollOwnershipBinding,
   surfaceInputs,
-  conversationPaneGeometryBinding,
-  timelineState,
-  conversationInsets,
-  composerStateBinding,
-  timelineView,
-  timelineRead,
-  composerProjectSelectionBinding,
   threadRenameBinding,
+  timelineRead,
+  timelineState,
+  timelineView,
+  toolsBinding,
 }: {
-  appVoiceInputRuntime: AppVoiceInputRuntime;
-  composerScope: string;
-  overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
   agentsInputs: ConversationAgentCapabilities;
+  appVoiceInputRuntime: AppVoiceInputRuntime;
+  chromeView: ReturnType<typeof createConversationChromeContent>;
+  composerProjectSelectionBinding: ReturnType<typeof useComposerProjectSelection>;
+  composerScope: string;
+  composerStateBinding: ReturnType<typeof useComposerState>;
+  conversationInsets: ReturnType<typeof useSafeAreaInsets>;
+  conversationOverlayContentBinding: ReturnType<typeof createConversationOverlayContent>;
+  conversationPaneGeometryBinding: ReturnType<typeof useConversationPaneGeometry>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  toolsBinding: ReturnType<typeof useConversationTools>;
-  chromeView: ReturnType<typeof createConversationChromeContent>;
-  conversationOverlayContentBinding: ReturnType<typeof createConversationOverlayContent>;
+  overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
   surfaceInputs: ConversationSurfaceCapabilities;
-  conversationPaneGeometryBinding: ReturnType<typeof useConversationPaneGeometry>;
-  timelineState: ReturnType<typeof useConversationTimelineState>;
-  conversationInsets: ReturnType<typeof useSafeAreaInsets>;
-  composerStateBinding: ReturnType<typeof useComposerState>;
-  timelineView: ReturnType<typeof createConversationTimelineContent>;
-  timelineRead: ReturnType<typeof useConversationTimelineRead>;
-  composerProjectSelectionBinding: ReturnType<typeof useComposerProjectSelection>;
   threadRenameBinding: ReturnType<typeof useThreadRename>;
+  timelineRead: ReturnType<typeof useConversationTimelineRead>;
+  timelineState: ReturnType<typeof useConversationTimelineState>;
+  timelineView: ReturnType<typeof createConversationTimelineContent>;
+  toolsBinding: ReturnType<typeof useConversationTools>;
 }) {
   const frame = (
     <AppVoiceInputProvider runtime={appVoiceInputRuntime}>
       <AppFullscreenOverlayBoundary
-        scope={composerScope}
         lifecycle={overlayScrollOwnershipBinding.fullscreenOverlayLifecycle}
+        scope={composerScope}
       >
         <SubagentNavigationContext.Provider
           value={
@@ -69,36 +69,37 @@ export function createConversationFrame({
             (draftConnectionId !== null &&
             draftThreadId !== null &&
             agentsInputs.subagentThreadDetails !== null
-              ? (threadId) =>
-                  toolsBinding.openSubagents(toolsBinding.currentSubagentSummaries(), threadId)
+              ? (threadId) => {
+                  toolsBinding.openSubagents(toolsBinding.currentSubagentSummaries(), threadId);
+                }
               : null)
           }
         >
           <LargeContentViewerHost>
             <ConversationLayout
-              searchContent={chromeView.searchContent}
-              jumpContent={chromeView.jumpContent}
-              projectPickerContent={conversationOverlayContentBinding.projectPickerContent}
-              renameContent={conversationOverlayContentBinding.renameContent}
+              awayFromLatest={timelineState.historyAnchorStateBinding.awayFromLatest}
+              bottomChrome={chromeView.bottomChrome}
               compact={surfaceInputs.compact}
-              setConversationPaneHeight={conversationPaneGeometryBinding.setConversationPaneHeight}
-              setNarrowConversationPane={conversationPaneGeometryBinding.setNarrowConversationPane}
-              headerContent={chromeView.headerContent}
-              threadSearchVisible={timelineState.timelineSearchStateBinding.threadSearchVisible}
+              conversationBackdropVisible={timelineRead.conversationBackdropVisible}
               conversationInsets={conversationInsets}
+              cwd={surfaceInputs.cwd}
+              headerContent={chromeView.headerContent}
+              jumpContent={chromeView.jumpContent}
+              openCodeDocument={toolsBinding.openTimelineDocument}
+              presentTurnChanges={toolsBinding.changesFeatureBinding.presentTurnChanges}
+              projectPickerContent={conversationOverlayContentBinding.projectPickerContent}
+              projectPickerVisible={composerProjectSelectionBinding.projectPickerVisible}
+              renameContent={conversationOverlayContentBinding.renameContent}
+              reviewContent={conversationOverlayContentBinding.reviewContent}
+              searchContent={chromeView.searchContent}
               setComposerTrayVisible={
                 composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
               }
-              cwd={surfaceInputs.cwd}
-              openCodeDocument={toolsBinding.openTimelineDocument}
-              presentTurnChanges={toolsBinding.changesFeatureBinding.presentTurnChanges}
-              timelineSurface={timelineView.timelineSurface}
-              conversationBackdropVisible={timelineRead.conversationBackdropVisible}
-              awayFromLatest={timelineState.historyAnchorStateBinding.awayFromLatest}
-              bottomChrome={chromeView.bottomChrome}
-              reviewContent={conversationOverlayContentBinding.reviewContent}
-              projectPickerVisible={composerProjectSelectionBinding.projectPickerVisible}
+              setConversationPaneHeight={conversationPaneGeometryBinding.setConversationPaneHeight}
+              setNarrowConversationPane={conversationPaneGeometryBinding.setNarrowConversationPane}
               threadRenameVisible={threadRenameBinding.threadRenameVisible}
+              threadSearchVisible={timelineState.timelineSearchStateBinding.threadSearchVisible}
+              timelineSurface={timelineView.timelineSurface}
             />
           </LargeContentViewerHost>
         </SubagentNavigationContext.Provider>

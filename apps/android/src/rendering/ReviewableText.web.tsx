@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { Text as NativeText } from "react-native";
+import type { Text as NativeText } from "react-native";
 
 import { AppText } from "../ui/Typography";
 import type { ReviewSelection } from "./ReviewableText.native";
@@ -9,8 +9,8 @@ export function ReviewableText({
   reviewHighlights: _reviewHighlights,
   ...props
 }: ComponentProps<typeof NativeText> & {
-  onReviewSelection(selection: ReviewSelection): void;
-  reviewHighlights?: readonly { start: number; end: number }[];
+  onReviewSelection: (selection: ReviewSelection) => void;
+  reviewHighlights?: readonly { end: number; start: number }[];
 }) {
   return <AppText {...props} selectable />;
 }

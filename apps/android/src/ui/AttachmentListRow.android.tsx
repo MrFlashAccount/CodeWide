@@ -10,53 +10,55 @@ import { listRowHeight } from "./AppListRow.types";
 import type { AttachmentListRowProps } from "./AttachmentListRow.types";
 
 const leadingIcons = {
-  image: "image-outline",
   audio: "musical-note-outline",
   file: "document-attach-outline",
+  image: "image-outline",
 } as const;
-const trailingIcons = { open: "open-outline", download: "download-outline" } as const;
+const trailingIcons = { download: "download-outline", open: "open-outline" } as const;
 
 /** LegendList owns virtualization; each cell has one Compose layout/touch subtree. */
 export function AttachmentListRow(props: AttachmentListRowProps) {
-  const press = useEvent(() => props.onPress());
+  const press = useEvent(() => {
+    props.onPress();
+  });
   const top = props.position === "only" || props.position === "first" ? radii.medium : 0;
   const bottom = props.position === "only" || props.position === "last" ? radii.medium : 0;
   // WHY: Host does not expose RN accessibility props. This wrapper owns the single
   // labelled accessibility action and separator, not Compose content measurement.
   return (
     <View
-      style={[styles.surface, styles[props.position], localStyles.cell]}
-      accessible
-      accessibilityRole="button"
       accessibilityLabel={props.accessibilityLabel}
+      accessibilityRole="button"
+      accessible
       onAccessibilityTap={press}
+      style={[styles.surface, styles[props.position], localStyles.cell]}
     >
       <Host colorScheme="dark" matchContents={false} style={localStyles.cell}>
         <ListItem
-          modifiers={[
-            fillMaxWidth(),
-            height(listRowHeight.double),
-            clip(
-              Shapes.RoundedCorner({
-                topStart: top,
-                topEnd: top,
-                bottomStart: bottom,
-                bottomEnd: bottom,
-              }),
-            ),
-            clickable(press),
-          ]}
           colors={{
             containerColor: colors.surfaceContainer,
             contentColor: colors.text,
             supportingContentColor: colors.textMuted,
           }}
+          modifiers={[
+            fillMaxWidth(),
+            height(listRowHeight.double),
+            clip(
+              Shapes.RoundedCorner({
+                bottomEnd: bottom,
+                bottomStart: bottom,
+                topEnd: top,
+                topStart: top,
+              }),
+            ),
+            clickable(press),
+          ]}
         >
           <ListItem.LeadingContent>
             <ComposeNamedIcon
+              color={colors.textMuted}
               name={leadingIcons[props.leading]}
               size={iconSize.action}
-              color={colors.textMuted}
             />
           </ListItem.LeadingContent>
           <ListItem.HeadlineContent>
@@ -72,9 +74,9 @@ export function AttachmentListRow(props: AttachmentListRowProps) {
           {props.trailing !== undefined && (
             <ListItem.TrailingContent>
               <ComposeNamedIcon
+                color={colors.textDim}
                 name={trailingIcons[props.trailing]}
                 size={iconSize.inline}
-                color={colors.textDim}
               />
             </ListItem.TrailingContent>
           )}
@@ -89,17 +91,17 @@ export function AttachmentListRow(props: AttachmentListRowProps) {
 
 const localStyles = StyleSheet.create({
   cell: {
-    width: "100%",
     height: listRowHeight.double,
-  },
-  title: {
-    fontSize: typeScale.body.fontSize,
-    lineHeight: typeScale.body.lineHeight,
-    fontFamily: "RobotoFlex-Regular",
+    width: "100%",
   },
   description: {
+    fontFamily: "RobotoFlex-Regular",
     fontSize: typeScale.label.fontSize,
     lineHeight: typeScale.label.lineHeight,
+  },
+  title: {
     fontFamily: "RobotoFlex-Regular",
+    fontSize: typeScale.body.fontSize,
+    lineHeight: typeScale.body.lineHeight,
   },
 });

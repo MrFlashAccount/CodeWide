@@ -7,12 +7,12 @@ import type { TurnControlsRow } from "./turn-controls-types";
 /** Durable stale-while-revalidate source for model, skill and permission catalogs. */
 export function createTurnControlsCollection(): Collection<TurnControlsRow, string> {
   return createPersistentCollectionModel<TurnControlsRow, string>({
-    id: "workspace-turn-controls-v2",
-    tableName: "codewide_turn_controls",
-    schemaVersion: 2,
+    columns: [{ column: "updated_at", property: "updatedAt", type: "REAL" }],
     database: getUiCacheSqliteDatabase(),
     getKey: (row) => row.id,
-    columns: [{ property: "updatedAt", column: "updated_at", type: "REAL" }],
+    id: "workspace-turn-controls-v2",
     legacyCollectionId: "workspace-turn-controls-v2",
+    schemaVersion: 2,
+    tableName: "codewide_turn_controls",
   }).collection;
 }

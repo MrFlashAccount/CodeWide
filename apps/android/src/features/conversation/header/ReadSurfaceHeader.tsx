@@ -22,23 +22,23 @@ export function ReadSurfaceHeader(props: Props) {
   return (
     <ConversationHeader
       {...props}
-      threadChatModel={null}
+      accountRateLimitsDatabase={null}
+      archived={false}
+      currentUsage={null}
+      deleteThread={undefined}
       historyActivityModel={null}
       historyActivityResourceId={null}
       newChat={false}
-      currentUsage={null}
-      accountRateLimitsDatabase={null}
-      onRefreshAccountRateLimits={undefined}
-      readOnly
-      archived={false}
-      pinned={false}
-      openThreadRename={() => undefined}
-      onTogglePin={undefined}
-      onUnarchive={undefined}
       onArchive={undefined}
       onCompact={undefined}
       onFork={undefined}
-      deleteThread={undefined}
+      onRefreshAccountRateLimits={undefined}
+      onTogglePin={undefined}
+      onUnarchive={undefined}
+      openThreadRename={() => undefined}
+      pinned={false}
+      readOnly
+      threadChatModel={null}
     />
   );
 }

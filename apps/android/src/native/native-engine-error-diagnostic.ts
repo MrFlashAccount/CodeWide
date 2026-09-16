@@ -1,9 +1,13 @@
-const MAX_NATIVE_ERROR_DIAGNOSTIC_CHARS = 8_000;
+const MAX_NATIVE_ERROR_DIAGNOSTIC_CHARS = 8000;
 
 /** Preserves the original native-engine failure without trusting Error fields. */
 export function nativeEngineErrorDiagnostic(cause: unknown, fallback: string): string {
-  if (typeof cause === "string") return boundedNonEmpty(cause, fallback);
-  if (cause === null || (typeof cause !== "object" && typeof cause !== "function")) return fallback;
+  if (typeof cause === "string") {
+    return boundedNonEmpty(cause, fallback);
+  }
+  if (cause === null || (typeof cause !== "object" && typeof cause !== "function")) {
+    return fallback;
+  }
 
   const message = readableStringProperty(cause, "message");
   const name = readableStringProperty(cause, "name");
@@ -23,9 +27,12 @@ export function nativeEngineErrorDiagnostic(cause: unknown, fallback: string): s
   return diagnostic.slice(0, MAX_NATIVE_ERROR_DIAGNOSTIC_CHARS);
 }
 
-function readableStringProperty(value: object, key: string): string {
+function readableStringProperty(value: unknown, key: string): string {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    return "";
+  }
   try {
-    const property = Reflect.get(value, key);
+    const property: unknown = Reflect.get(value, key);
     return typeof property === "string" ? property.trim() : "";
   } catch {
     return "";

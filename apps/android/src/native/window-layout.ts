@@ -1,26 +1,26 @@
 const DESKTOP_BREAKPOINT = 840;
 
 export type WindowLayoutSnapshot = Readonly<{
-  width: number;
-  height: number;
-  scale: number;
-  fontScale: number;
-  measurementRevision: string;
   desktop: boolean;
+  fontScale: number;
+  height: number;
+  measurementRevision: string;
+  scale: number;
+  width: number;
 }>;
 
 export function windowLayoutSnapshot(
-  window: Readonly<{ width: number; height: number; scale?: number; fontScale?: number }>,
+  window: Readonly<{ fontScale?: number; height: number; scale?: number; width: number }>,
 ): WindowLayoutSnapshot {
   const scale = finitePositiveOr(window.scale, 1);
   const fontScale = finitePositiveOr(window.fontScale, scale);
   return {
-    width: window.width,
-    height: window.height,
-    scale,
-    fontScale,
-    measurementRevision: `${scale}:${fontScale}`,
     desktop: window.width >= DESKTOP_BREAKPOINT && window.height >= 480,
+    fontScale,
+    height: window.height,
+    measurementRevision: `${String(scale)}:${String(fontScale)}`,
+    scale,
+    width: window.width,
   };
 }
 

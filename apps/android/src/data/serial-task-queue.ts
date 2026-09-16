@@ -3,8 +3,10 @@ export class SerialTaskQueue {
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
 
-  run<T>(task: () => Promise<T>): Promise<T> {
-    if (this.#closed) return Promise.reject(new Error("Serial task queue is closed"));
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.#closed) {
+      throw new Error("Serial task queue is closed");
+    }
     const result = this.#tail.then(task);
     this.#tail = result.then(
       () => undefined,
@@ -14,7 +16,7 @@ export class SerialTaskQueue {
   }
 
   /** Rejects future work and resolves after every task already accepted. */
-  close(): Promise<void> {
+  async close(): Promise<void> {
     this.#closed = true;
     return this.#tail;
   }

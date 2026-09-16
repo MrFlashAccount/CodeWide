@@ -1,12 +1,12 @@
 export type ThreadListItem = {
+  archived?: boolean;
   id: string;
-  serverId: string;
-  title: string;
+  pinned: boolean;
   preview: string;
+  serverId: string;
+  state?: "running" | "approval" | "failed";
   time?: string;
   timestamp?: number;
-  pinned: boolean;
-  archived?: boolean;
+  title: string;
   unread: number;
-  state?: "running" | "approval" | "failed";
 };

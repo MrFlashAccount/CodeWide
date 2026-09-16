@@ -2,13 +2,13 @@ import type { Dispatch, SetStateAction } from "react";
 
 /** Search query and match-navigation contract for a thread timeline. */
 export type TimelineSearchBarProps = {
-  threadSearch: string;
-  updateThreadSearch: (value: string) => void;
-  setThreadSearchMatch: Dispatch<SetStateAction<number>>;
-  scrollToThreadSearchIndex: (index: number) => void;
-  threadSearchMatches: number[];
-  threadSearchMatch: number;
+  closeThreadSearch: () => void;
   compact: boolean;
   moveThreadSearch: (delta: -1 | 1) => void;
-  closeThreadSearch: () => void;
+  scrollToThreadSearchIndex: (index: number) => void;
+  setThreadSearchMatch: Dispatch<SetStateAction<number>>;
+  threadSearch: string;
+  threadSearchMatch: number;
+  threadSearchMatches: number[];
+  updateThreadSearch: (value: string) => void;
 };

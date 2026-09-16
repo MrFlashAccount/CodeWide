@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { compactSource } from "./source-contract";
+import { compactSource, sourceHasJsxElement } from "./source-contract";
 
 const screen = compactSource(
   readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
@@ -20,11 +20,31 @@ const webMenu = readFileSync(
   "utf8",
 );
 
-const ownerMessageActionRail = compactSource(readFileSync(new URL("../src/features/conversation/turns/MessageActionRail.tsx", import.meta.url), "utf8"));
-const ownerTurnTimelineItem = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url), "utf8"));
-const ownerTurnFooter = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnFooter.tsx", import.meta.url), "utf8"));
+const ownerMessageActionRail = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/MessageActionRail.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerTurnTimelineItem = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerTurnFooter = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/TurnFooter.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
-const layout = compactSource(readFileSync(new URL("../src/features/conversation/ConversationLayout.tsx", import.meta.url), "utf8"));
+const layout = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationLayout.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("conversation-owned message actions", () => {
   it("mounts one shared native menu host instead of one menu per bubble", () => {
@@ -59,7 +79,8 @@ describe("conversation-owned message actions", () => {
     expect(nativeMenu).toContain("setMenu(null)");
     expect(nativeMenu).toContain("collapsable={false}");
     expect(nativeMenu).toContain('key={menu?.generation ?? "closed"}');
-    expect(webMenu).toContain("if (!openState) setRequest(null)");
+    expect(webMenu).toContain("!openState");
+    expect(webMenu).toContain("setRequest(null)");
   });
 
   it("keeps native text selection free and exposes actions beside the agent bubble", () => {
@@ -78,8 +99,8 @@ describe("conversation-owned message actions", () => {
     expect(nativeMenu).toContain('icon: "chatbubble-ellipses-outline"');
     expect(nativeMenu).not.toContain("assets/menu-icons");
     expect(webMenu).toContain("<Text style={styles.label}>Review response</Text>");
-    expect(ownerTurnTimelineItem).toContain(
-      'await beginContentReview({ kind: "response", target: agentReviewTarget, });',
+    expect(ownerTurnTimelineItem).toMatch(
+      /beginContentReview\(\{\s*kind: "response",\s*target: agentReviewTarget,\s*\}\);/u,
     );
   });
 
@@ -89,12 +110,17 @@ describe("conversation-owned message actions", () => {
     expect(ownerMessageActionRail).toContain("<View style={styles.messageActionRail}>");
     const rail = ownerMessageActionRail;
     expect(rail).not.toContain("formatClockTime");
-    expect(ownerTurnFooter).toContain(
-      "<MessageFooterRow time={completedAt === null ? null : formatClockTime(completedAt)}",
-    );
+    expect(
+      sourceHasJsxElement(ownerTurnFooter, "MessageFooterRow", [
+        "time={completedAt === null ? null : formatClockTime(completedAt)}",
+      ]),
+    ).toBe(true);
     expect(ownerMessageActionRail).toContain('name="ellipsis-vertical"');
     expect(ownerMessageActionRail).toContain("actionButtonRef.current?.measureInWindow");
     expect(screen).not.toContain("event.nativeEvent.pageX");
-    expect(nativeMenu).toContain("left: pageX - rootX, top: pageY - rootY, width, height");
+    expect(nativeMenu).toContain("left: pageX - rootX");
+    expect(nativeMenu).toContain("top: pageY - rootY");
+    expect(nativeMenu).toContain("width");
+    expect(nativeMenu).toContain("height");
   });
 });

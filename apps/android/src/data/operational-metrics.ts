@@ -74,28 +74,28 @@ export type CounterMetric =
   | "voice_failures";
 
 export type OperationalMetricsSnapshot = {
+  counters: Partial<Record<CounterMetric, number>>;
+  gauges: {
+    liveOldestPendingMs: number;
+    livePendingChars: number;
+    livePendingStreams: number;
+    sqliteSubsetLastRows: number;
+    sqliteSubsetMaxRows: number;
+    threadDetailResidentRows: number;
+  };
   timings: Partial<
     Record<
       TimingMetric,
       {
         count: number;
-        totalCount: number;
-        totalMs: number;
+        maxMs: number;
         p50Ms: number;
         p95Ms: number;
-        maxMs: number;
+        totalCount: number;
+        totalMs: number;
       }
     >
   >;
-  counters: Partial<Record<CounterMetric, number>>;
-  gauges: {
-    livePendingStreams: number;
-    livePendingChars: number;
-    liveOldestPendingMs: number;
-    sqliteSubsetLastRows: number;
-    sqliteSubsetMaxRows: number;
-    threadDetailResidentRows: number;
-  };
 };
 
 const MAX_SAMPLES_PER_METRIC = 256;
@@ -105,7 +105,7 @@ const counters = new Map<CounterMetric, number>();
 const MAX_PENDING_LIVE_STREAMS = 256;
 const pendingLiveCommits = new Map<
   string,
-  { firstAtMs: number; chars: number; projectionBatches: number }
+  { chars: number; firstAtMs: number; projectionBatches: number }
 >();
 let diagnosticsEnabled = false;
 let sqliteSubsetLastRows = 0;
@@ -113,11 +113,14 @@ let sqliteSubsetMaxRows = 0;
 let threadDetailResidentRows = 0;
 
 export function recordTiming(name: TimingMetric, valueMs: number): void {
-  if (!Number.isFinite(valueMs) || valueMs < 0) return;
+  if (!Number.isFinite(valueMs) || valueMs < 0) {
+    return;
+  }
   const values = timingSamples.get(name) ?? [];
   values.push(Math.min(valueMs, 60_000));
-  if (values.length > MAX_SAMPLES_PER_METRIC)
+  if (values.length > MAX_SAMPLES_PER_METRIC) {
     values.splice(0, values.length - MAX_SAMPLES_PER_METRIC);
+  }
   timingSamples.set(name, values);
   const total = timingTotals.get(name) ?? { count: 0, totalMs: 0 };
   total.count = Math.min(Number.MAX_SAFE_INTEGER, total.count + 1);
@@ -126,32 +129,44 @@ export function recordTiming(name: TimingMetric, valueMs: number): void {
 }
 
 export function incrementMetric(name: CounterMetric, amount = 1): void {
-  if (!Number.isSafeInteger(amount) || amount < 1) return;
+  if (!Number.isSafeInteger(amount) || amount < 1) {
+    return;
+  }
   counters.set(name, Math.min(Number.MAX_SAFE_INTEGER, (counters.get(name) ?? 0) + amount));
 }
 
 export function recordSqliteSubsetLoad(rowCount: number, durationMs: number): void {
-  if (!Number.isSafeInteger(rowCount) || rowCount < 0) return;
+  if (!Number.isSafeInteger(rowCount) || rowCount < 0) {
+    return;
+  }
   recordTiming("sqlite_subset_load_ms", durationMs);
   incrementMetric("sqlite_subset_loads");
-  if (rowCount > 0) incrementMetric("sqlite_subset_rows_loaded", rowCount);
+  if (rowCount > 0) {
+    incrementMetric("sqlite_subset_rows_loaded", rowCount);
+  }
   sqliteSubsetLastRows = rowCount;
   sqliteSubsetMaxRows = Math.max(sqliteSubsetMaxRows, rowCount);
 }
 
 export function setThreadDetailResidentRows(rowCount: number): void {
-  if (!Number.isSafeInteger(rowCount) || rowCount < 0) return;
+  if (!Number.isSafeInteger(rowCount) || rowCount < 0) {
+    return;
+  }
   threadDetailResidentRows = rowCount;
 }
 
 /** Hot-path diagnostics are inert unless Data for geeks is explicitly enabled. */
 export function recordDiagnosticTiming(name: TimingMetric, valueMs: number): void {
-  if (diagnosticsEnabled) recordTiming(name, valueMs);
+  if (diagnosticsEnabled) {
+    recordTiming(name, valueMs);
+  }
 }
 
 /** Hot-path diagnostics are inert unless Data for geeks is explicitly enabled. */
 export function incrementDiagnosticMetric(name: CounterMetric, amount = 1): void {
-  if (diagnosticsEnabled) incrementMetric(name, amount);
+  if (diagnosticsEnabled) {
+    incrementMetric(name, amount);
+  }
 }
 
 export function setOperationalDiagnosticsEnabled(enabled: boolean): void {
@@ -162,6 +177,9 @@ export function operationalDiagnosticsEnabled(): boolean {
   return diagnosticsEnabled;
 }
 
+// WHY: This key builder owns the bounded-cardinality inclusion rules for one live stream metric;
+// splitting them could make producer and flush keys diverge.
+// oxlint-disable-next-line eslint/complexity
 export function liveStreamMetricKey(
   connectionId: unknown,
   threadId: unknown,
@@ -169,27 +187,42 @@ export function liveStreamMetricKey(
   itemId: unknown,
 ): string | null {
   if (
-    ![connectionId, threadId, turnId, itemId].every(
-      (value) => typeof value === "string" && value !== "",
-    )
-  )
+    typeof connectionId !== "string" ||
+    connectionId === "" ||
+    typeof threadId !== "string" ||
+    threadId === "" ||
+    typeof turnId !== "string" ||
+    turnId === "" ||
+    typeof itemId !== "string" ||
+    itemId === ""
+  ) {
     return null;
-  return `${connectionId as string}\u0000${threadId as string}\u0000${turnId as string}\u0000${itemId as string}`;
+  }
+  return `${connectionId}\u0000${threadId}\u0000${turnId}\u0000${itemId}`;
 }
 
+// WHY: This accumulator owns one stream's bounded insertion, eviction and counter update order;
+// reordering those steps can evict the newly delivered batch.
+// oxlint-disable-next-line eslint/complexity
 export function markLiveBatchDelivered(
   streamKey: string,
   deltaChars: number,
   values: Record<string, number> = {},
 ): void {
-  if (!Number.isSafeInteger(deltaChars) || deltaChars < 1) return;
+  if (!Number.isSafeInteger(deltaChars) || deltaChars < 1) {
+    return;
+  }
   const previous = pendingLiveCommits.get(streamKey);
   if (previous === undefined) {
-    if (pendingLiveCommits.size >= MAX_PENDING_LIVE_STREAMS)
-      pendingLiveCommits.delete(pendingLiveCommits.keys().next().value as string);
+    if (pendingLiveCommits.size >= MAX_PENDING_LIVE_STREAMS) {
+      const oldest = pendingLiveCommits.keys().next();
+      if (oldest.done === false) {
+        pendingLiveCommits.delete(oldest.value);
+      }
+    }
     pendingLiveCommits.set(streamKey, {
-      firstAtMs: performance.now(),
       chars: deltaChars,
+      firstAtMs: performance.now(),
       projectionBatches: 1,
     });
   } else {
@@ -213,7 +246,9 @@ export function markLiveBatchDelivered(
 
 export function recordLiveRenderCommit(streamKey: string): void {
   const pending = pendingLiveCommits.get(streamKey);
-  if (pending === undefined) return;
+  if (pending === undefined) {
+    return;
+  }
   pendingLiveCommits.delete(streamKey);
   const latencyMs = performance.now() - pending.firstAtMs;
   if (diagnosticsEnabled) {
@@ -228,12 +263,12 @@ export function recordLiveRenderCommit(streamKey: string): void {
       name: "stream.react_commit",
       sessionId: dimensions.threadId,
       ...dimensions,
+      tags: { renderer: "react-native" },
       values: {
-        latencyMs,
         chars: pending.chars,
+        latencyMs,
         projectionBatches: pending.projectionBatches,
       },
-      tags: { renderer: "react-native" },
     });
   }
 }
@@ -248,11 +283,11 @@ export function operationalMetricsSnapshot(): OperationalMetricsSnapshot {
     };
     timings[name] = {
       count: values.length,
-      totalCount: total.count,
-      totalMs: rounded(total.totalMs),
+      maxMs: rounded(values.at(-1) ?? 0),
       p50Ms: rounded(values[Math.floor(values.length * 0.5)] ?? 0),
       p95Ms: rounded(values[Math.min(values.length - 1, Math.floor(values.length * 0.95))] ?? 0),
-      maxMs: rounded(values.at(-1) ?? 0),
+      totalCount: total.count,
+      totalMs: rounded(total.totalMs),
     };
   }
   const now = performance.now();
@@ -263,16 +298,16 @@ export function operationalMetricsSnapshot(): OperationalMetricsSnapshot {
     liveOldestPendingMs = Math.max(liveOldestPendingMs, now - pending.firstAtMs);
   }
   return {
-    timings,
-    counters: Object.fromEntries(counters) as OperationalMetricsSnapshot["counters"],
+    counters: Object.fromEntries(counters),
     gauges: {
-      livePendingStreams: pendingLiveCommits.size,
-      livePendingChars,
       liveOldestPendingMs: rounded(liveOldestPendingMs),
+      livePendingChars,
+      livePendingStreams: pendingLiveCommits.size,
       sqliteSubsetLastRows,
       sqliteSubsetMaxRows,
       threadDetailResidentRows,
     },
+    timings,
   };
 }
 
@@ -297,7 +332,7 @@ function rounded(value: number): number {
 
 function liveStreamDimensions(
   streamKey: string,
-): { connectionId: string; threadId: string; turnId: string; itemId: string } | null {
+): { connectionId: string; itemId: string; threadId: string; turnId: string } | null {
   const [connectionId, threadId, turnId, itemId, extra] = streamKey.split("\u0000");
   if (
     extra !== undefined ||
@@ -305,7 +340,8 @@ function liveStreamDimensions(
     threadId === undefined ||
     turnId === undefined ||
     itemId === undefined
-  )
+  ) {
     return null;
-  return { connectionId, threadId, turnId, itemId };
+  }
+  return { connectionId, itemId, threadId, turnId };
 }

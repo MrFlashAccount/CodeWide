@@ -10,29 +10,29 @@ import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
 
 export function MobileThreadsHeader({
-  props,
   archivedCount,
+  props,
 }: {
-  props: MobileThreadsProps;
   archivedCount: number;
+  props: MobileThreadsProps;
 }) {
   const {
-    remote,
-    project,
-    onBackToProjects,
-    onManageProjects,
-    servers,
-    serverScope,
-    mode,
     filter,
-    onQueryChange,
-    onOpenSearch,
-    searchContent,
-    onModeChange,
+    mode,
+    onBackToProjects,
     onFilterChange,
+    onManageProjects,
+    onModeChange,
+    onOpenSearch,
+    onQueryChange,
+    onRefreshAccountRateLimits,
     onSelectServer,
     onSettings,
-    onRefreshAccountRateLimits,
+    project,
+    remote,
+    searchContent,
+    servers,
+    serverScope,
   } = props;
   const activeServer =
     serverScope.kind === "connection"
@@ -43,35 +43,40 @@ export function MobileThreadsHeader({
       <View style={styles.mobileTitleRow}>
         {project !== null ? (
           <SidebarProjectHeader
+            archived={mode === "archived"}
+            onBack={() => {
+              onQueryChange("");
+              if (mode === "archived") {
+                onModeChange("active");
+              } else {
+                onBackToProjects();
+              }
+            }}
+            onRoot={onBackToProjects}
             project={project}
             serverName={
               servers.find((entry) => entry.id === project.connectionId)?.name ??
               activeServer?.name ??
               "Server"
             }
-            archived={mode === "archived"}
-            onRoot={onBackToProjects}
-            onBack={() => {
-              onQueryChange("");
-              if (mode === "archived") onModeChange("active");
-              else onBackToProjects();
-            }}
           />
         ) : mode === "archived" ? (
           <View style={styles.mobileTitleSelector}>
             <Pressable
               accessibilityLabel="Back to threads"
-              onPress={() => onModeChange("active")}
+              onPress={() => {
+                onModeChange("active");
+              }}
               style={styles.headerIcon}
             >
-              <Ionicons name="arrow-back" size={iconSize.navigation} color={colors.text} />
+              <Ionicons color={colors.text} name="arrow-back" size={iconSize.navigation} />
             </Pressable>
             <View style={styles.mobileIdentity}>
               <Text numberOfLines={1} style={styles.mobileTitle}>
                 Archived threads
               </Text>
               <Text numberOfLines={1} style={styles.mobileSubtitle}>
-                {archivedCount === 1 ? "1 thread" : `${archivedCount} threads`}
+                {archivedCount === 1 ? "1 thread" : `${String(archivedCount)} threads`}
               </Text>
             </View>
           </View>
@@ -81,21 +86,21 @@ export function MobileThreadsHeader({
           </Text>
         )}
         <ThreadListMenu
-          onManageProjects={onManageProjects}
-          onSettings={onSettings}
+          accountDatabase={remote.accountRateLimitsDatabase}
+          accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}
+          archived={mode === "archived"}
           catalogConnectionIds={
             serverScope.kind === "all"
               ? servers.map((entry) => entry.id)
               : [serverScope.connectionId]
           }
+          includeArchiveCount={project === null}
+          onManageProjects={onManageProjects}
+          onSettings={onSettings}
           onToggleArchive={() => {
             onQueryChange("");
             onModeChange(mode === "archived" ? "active" : "archived");
           }}
-          archived={mode === "archived"}
-          includeArchiveCount={project === null}
-          accountDatabase={remote.accountRateLimitsDatabase}
-          accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}
           {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
         />
       </View>
@@ -103,22 +108,22 @@ export function MobileThreadsHeader({
         <View style={styles.mobileSearchWrap}>
           <View style={styles.threadSearchRow}>
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Search threads and messages"
+              accessibilityRole="button"
               onPress={onOpenSearch}
               style={[styles.searchBox, styles.threadSearchBox]}
             >
-              <InlineIcon name="search" color={colors.textMuted} role="body" />
+              <InlineIcon color={colors.textMuted} name="search" role="body" />
               <Text style={styles.searchInput}>Search</Text>
             </Pressable>
             <ThreadFilterMenu
               mode={mode}
-              projectScoped={project !== null}
-              servers={servers}
-              serverScope={serverScope}
-              selected={filter}
               onSelect={onFilterChange}
               onSelectServer={onSelectServer}
+              projectScoped={project !== null}
+              selected={filter}
+              servers={servers}
+              serverScope={serverScope}
             />
           </View>
         </View>

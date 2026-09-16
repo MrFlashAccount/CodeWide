@@ -1,19 +1,19 @@
 export type AppDialogAction = {
-  text: string;
+  onPress?: () => void;
   style?: "default" | "cancel" | "destructive";
-  onPress?(): void;
+  text: string;
 };
 
 export type AppDialogRequest = {
-  title: string;
-  message?: string;
-  diagnostic?: string;
   actions: readonly AppDialogAction[];
+  diagnostic?: string;
+  message?: string;
+  title: string;
 };
 
 export type AppDialogSurfaceProps = {
   isOpen: boolean;
+  onAction: (action: AppDialogAction) => void;
+  onDismiss: () => void;
   request: AppDialogRequest | null;
-  onDismiss(): void;
-  onAction(action: AppDialogAction): void;
 };

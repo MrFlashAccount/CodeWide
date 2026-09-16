@@ -1,15 +1,17 @@
 import type { SyncSnapshotThread } from "@codewide/sync-client";
-import { type ThreadCatalogPage, type ThreadCatalogPageRequest } from "./thread-catalog-loader";
+import type { ThreadCatalogPage, ThreadCatalogPageRequest } from "./thread-catalog-loader";
 
 export interface ThreadCatalogWindowPort {
-  load(request: ThreadCatalogPageRequest): Promise<ThreadCatalogPage>;
-  publish(
+  close: () => void;
+  load: (request: ThreadCatalogPageRequest) => Promise<ThreadCatalogPage>;
+  // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+  // oxlint-disable-next-line eslint/max-params
+  publish: (
     threads: SyncSnapshotThread[],
     archived: boolean,
     prefixIds: ReadonlySet<string>,
     replaceHead: boolean,
-  ): Promise<void>;
-  close(): void;
+  ) => Promise<void>;
 }
 
 /** Owns one server/partition's requested prefix, not the entire catalog. */
@@ -29,13 +31,15 @@ export class ThreadCatalogWindow {
     this.#archived = archived;
   }
 
-  ensure(count: number): Promise<void> {
+  async ensure(count: number): Promise<void> {
     this.#requested = Math.max(this.#requested, count);
     return this.#run();
   }
 
-  refresh(): Promise<void> {
-    if (this.#requested === 0) return Promise.resolve();
+  async refresh(): Promise<void> {
+    if (this.#requested === 0) {
+      return;
+    }
     this.#refreshRequested = true;
     return this.#run();
   }
@@ -45,10 +49,14 @@ export class ThreadCatalogWindow {
     this.#port.close();
   }
 
-  #run(): Promise<void> {
-    if (this.#inFlight !== null) return this.#inFlight;
+  async #run(): Promise<void> {
+    if (this.#inFlight !== null) {
+      return this.#inFlight;
+    }
     const operation = this.#drain().finally(() => {
-      if (this.#inFlight === operation) this.#inFlight = null;
+      if (this.#inFlight === operation) {
+        this.#inFlight = null;
+      }
     });
     this.#inFlight = operation;
     return operation;
@@ -67,19 +75,33 @@ export class ThreadCatalogWindow {
       if (
         this.#requested === 0 ||
         (this.#loaded && (this.#cursor === null || this.#ids.size >= this.#requested))
-      )
+      ) {
         return;
+      }
       const replaceHead = this.#cursor === null;
       const page = await this.#port.load({ archived: this.#archived, cursor: this.#cursor });
-      if (this.#closed) return;
-      if (this.#refreshRequested) continue;
-      if (page.nextCursor !== null && seenCursors.has(page.nextCursor))
+      // WHY: close() may run while the awaited catalog page is loading; TypeScript retains the loop-entry state.
+      // oxlint-disable-next-line typescript/no-unnecessary-condition
+      if (this.#closed) {
+        return;
+      }
+      // WHY: refresh() may run while the awaited catalog page is loading; TypeScript retains the flag reset from before the await.
+      // oxlint-disable-next-line typescript/no-unnecessary-condition
+      if (this.#refreshRequested) {
+        continue;
+      }
+      if (page.nextCursor !== null && seenCursors.has(page.nextCursor)) {
         throw new Error("thread/list returned a repeated catalog cursor");
-      if (page.nextCursor !== null) seenCursors.add(page.nextCursor);
+      }
+      if (page.nextCursor !== null) {
+        seenCursors.add(page.nextCursor);
+      }
       // Publication may fail. Keep the prior committed continuation intact
       // until its newly extended prefix is durably accepted by the consumer.
       const ids = new Set(this.#ids);
-      for (const row of page.threads) ids.add(row.thread.id);
+      for (const row of page.threads) {
+        ids.add(row.thread.id);
+      }
       await this.#port.publish(page.threads, this.#archived, ids, replaceHead);
       this.#ids = ids;
       this.#loaded = true;

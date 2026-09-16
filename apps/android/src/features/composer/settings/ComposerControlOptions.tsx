@@ -9,16 +9,16 @@ import { permissionProfileLabel } from "../settings";
 import type { ComposerControlOptionsProps } from "./controlOptionsContract";
 
 export function ComposerControlOptions({
-  page,
   controls,
-  selectedModel,
-  selectedEffort,
-  selectedPersonality,
-  selectedPermissions,
-  onSelectModel,
   onSelectEffort,
-  onSelectPersonality,
+  onSelectModel,
   onSelectPermissions,
+  onSelectPersonality,
+  page,
+  selectedEffort,
+  selectedModel,
+  selectedPermissions,
+  selectedPersonality,
 }: ComposerControlOptionsProps) {
   const model = controls.models.find((candidate) => candidate.id === selectedModel);
   const reasoningEfforts =
@@ -26,10 +26,10 @@ export function ComposerControlOptions({
 
   return (
     <AppSheetScrollView
-      key={page}
-      style={styles.menuScroll}
       contentContainerStyle={styles.menuScrollContent}
+      key={page}
       keyboardShouldPersistTaps="handled"
+      style={styles.menuScroll}
     >
       {page === "model" && (
         <>
@@ -46,11 +46,13 @@ export function ComposerControlOptions({
               return (
                 <ControlOption
                   key={candidate.id}
+                  onPress={() => {
+                    onSelectModel(candidate.id, nextEffort);
+                  }}
                   position={listRowPosition(index, controls.models.length)}
-                  title={candidate.label}
-                  subtitle={candidate.id}
                   selected={candidate.id === selectedModel}
-                  onPress={() => onSelectModel(candidate.id, nextEffort)}
+                  subtitle={candidate.id}
+                  title={candidate.label}
                 />
               );
             })
@@ -61,10 +63,12 @@ export function ComposerControlOptions({
               {reasoningEfforts.map((effort, index) => (
                 <ControlOption
                   key={effort}
+                  onPress={() => {
+                    onSelectEffort(effort);
+                  }}
                   position={listRowPosition(index, reasoningEfforts.length)}
-                  title={effort}
                   selected={effort === selectedEffort}
-                  onPress={() => onSelectEffort(effort)}
+                  title={effort}
                 />
               ))}
             </>
@@ -73,18 +77,22 @@ export function ComposerControlOptions({
             <>
               <Text style={styles.controlSectionLabel}>Personality</Text>
               <ControlOption
+                onPress={() => {
+                  onSelectPersonality(null);
+                }}
                 position="first"
-                title="Server default"
                 selected={selectedPersonality === null}
-                onPress={() => onSelectPersonality(null)}
+                title="Server default"
               />
               {(["friendly", "pragmatic", "none"] as const).map((personality, index) => (
                 <ControlOption
-                  position={listRowPosition(index + 1, 4)}
                   key={personality}
-                  title={personality}
+                  onPress={() => {
+                    onSelectPersonality(personality);
+                  }}
+                  position={listRowPosition(index + 1, 4)}
                   selected={personality === selectedPersonality}
-                  onPress={() => onSelectPersonality(personality)}
+                  title={personality}
                 />
               ))}
             </>
@@ -94,24 +102,28 @@ export function ComposerControlOptions({
       {page === "permissions" && (
         <>
           <ControlOption
+            onPress={() => {
+              onSelectPermissions(null);
+            }}
             position={controls.permissions.length === 0 ? "only" : "first"}
-            title="Server default"
             selected={selectedPermissions === null}
-            onPress={() => onSelectPermissions(null)}
+            title="Server default"
           />
           {controls.permissions.map((permission, index) => (
             <ControlOption
+              disabled={!permission.allowed}
               key={permission.id}
+              onPress={() => {
+                onSelectPermissions(permission.id);
+              }}
               position={listRowPosition(index + 1, controls.permissions.length + 1)}
-              title={permissionProfileLabel(permission.id)}
+              selected={permission.id === selectedPermissions}
               subtitle={
                 permission.description === null
                   ? permission.id
                   : `${permission.description} · ${permission.id}`
               }
-              selected={permission.id === selectedPermissions}
-              disabled={!permission.allowed}
-              onPress={() => onSelectPermissions(permission.id)}
+              title={permissionProfileLabel(permission.id)}
             />
           ))}
         </>

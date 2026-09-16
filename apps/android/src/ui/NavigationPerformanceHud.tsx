@@ -28,6 +28,7 @@ import {
   controlSize,
 } from "../theme";
 import { useAppFullscreenOverlay } from "./AppFullscreenOverlay";
+import { useAppDialog } from "./AppDialog";
 import { SpeedscopeProfileViewer } from "./SpeedscopeProfileViewer";
 import { AppText as Text } from "./Typography";
 
@@ -40,15 +41,18 @@ export function NavigationPerformanceHud() {
   );
   const insets = useSafeAreaInsets();
   const fullscreenOverlay = useAppFullscreenOverlay({
-    scope: "navigation-performance",
     lifecycle: null,
+    scope: "navigation-performance",
   });
+  const dialog = useAppDialog();
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [heapCaptureRunning, setHeapCaptureRunning] = useState(false);
   const [heapSnapshot, setHeapSnapshot] = useState<HermesHeapSnapshot | null>(null);
   const [heapError, setHeapError] = useState<string | null>(null);
-  if (!metrics.enabled) return null;
+  if (!metrics.enabled) {
+    return null;
+  }
 
   const current = metrics.current;
   const profile = profiles.active ?? profiles.last;
@@ -58,20 +62,24 @@ export function NavigationPerformanceHud() {
       ? "collecting frames"
       : `${integer(current.renderedFps)} fps · p95 ${decimal(current.p95FrameMs)} ms · ${decimal(current.jankPercent)}% jank · ${bytes(current.pssBytes)}`;
   const copyReport = async () => {
-    if (profile === null) return;
+    if (profile === null) {
+      return;
+    }
     await Clipboard.setStringAsync(serializeNavigationProfile(profile, current));
     setCopied(true);
-    setTimeout(() => setCopied(false), 2_000);
+    setTimeout(() => {
+      setCopied(false);
+    }, 2000);
   };
   const openViewer = (title: string, fileName: string, content: string) => {
     setMenuOpen(false);
     fullscreenOverlay.present(
       ({ close }) => (
         <SpeedscopeProfileViewer
-          title={title}
-          fileName={fileName}
           content={content}
+          fileName={fileName}
           onClose={close}
+          title={title}
         />
       ),
       { dismissOnScopeUnmount: false },
@@ -79,14 +87,16 @@ export function NavigationPerformanceHud() {
   };
   const hermesProfile = profile?.frames?.hermesProfile?.content ?? null;
   const captureHeap = async () => {
-    if (heapCaptureRunning) return;
+    if (heapCaptureRunning) {
+      return;
+    }
     setHeapCaptureRunning(true);
     setHeapSnapshot(null);
     setHeapError(null);
     try {
       setHeapSnapshot(await captureHermesHeapSnapshot());
-    } catch (cause) {
-      setHeapError(cause instanceof Error ? cause.message : "Could not capture the Hermes heap");
+    } catch (error) {
+      setHeapError(error instanceof Error ? error.message : "Could not capture the Hermes heap");
     }
     setHeapCaptureRunning(false);
   };
@@ -99,13 +109,15 @@ export function NavigationPerformanceHud() {
   return (
     <>
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel="Open navigation performance tools"
+        accessibilityRole="button"
         accessibilityState={{ expanded: menuOpen }}
-        onPress={() => setMenuOpen((open) => !open)}
         onLongPress={() => void copyReport()}
+        onPress={() => {
+          setMenuOpen((open) => !open);
+        }}
+        style={[styles.root, { left: insets.left, right: insets.right, top: insets.top }]}
         testID="navigation-performance-hud"
-        style={[styles.root, { top: insets.top, left: insets.left, right: insets.right }]}
       >
         <View
           style={[
@@ -119,15 +131,15 @@ export function NavigationPerformanceHud() {
             : `${frameText}${profileText === "" ? "" : `  ·  ${profileText}`}`}
         </Text>
         <Ionicons
+          color={colors.textMuted}
           name={menuOpen ? "chevron-up" : "chevron-down"}
           size={iconSize.indicator}
-          color={colors.textMuted}
         />
       </Pressable>
       {menuOpen && (
         <View
+          style={[styles.menu, { right: insets.right + 8, top: insets.top + 28 }]}
           testID="navigation-performance-menu"
-          style={[styles.menu, { top: insets.top + 28, right: insets.right + 8 }]}
         >
           {profile === null ? (
             <Text style={styles.menuEmpty}>
@@ -137,45 +149,50 @@ export function NavigationPerformanceHud() {
             <>
               <MenuAction
                 icon="git-compare-outline"
-                title="Navigation timeline"
-                subtitle={`${profile.stages.length} stages · ${profile.measures.length} measures · ${profile.visualEvents.length} UI events`}
-                onPress={() =>
+                onPress={() => {
                   openViewer(
                     "Navigation timeline",
                     `${profile.id}.speedscope.json`,
                     serializeNavigationSpeedscopeProfile(profile),
-                  )
-                }
+                  );
+                }}
+                subtitle={`${String(profile.stages.length)} stages · ${String(profile.measures.length)} measures · ${String(profile.visualEvents.length)} UI events`}
+                title="Navigation timeline"
               />
               {hermesProfile !== null && (
                 <MenuAction
                   icon="flame-outline"
-                  title="Hermes CPU profile"
+                  onPress={() => {
+                    openViewer("Hermes CPU profile", `${profile.id}.cpuprofile`, hermesProfile);
+                  }}
                   subtitle={`${bytes(profile.frames?.hermesProfile?.sizeBytes ?? 0)} · sampled stacks`}
-                  onPress={() =>
-                    openViewer("Hermes CPU profile", `${profile.id}.cpuprofile`, hermesProfile)
-                  }
+                  title="Hermes CPU profile"
                 />
               )}
             </>
           )}
           <MenuAction
-            icon="layers-outline"
-            title="Hermes heap snapshot"
-            subtitle={heapSubtitle}
             busy={heapCaptureRunning}
             disabled={heapCaptureRunning}
+            icon="layers-outline"
             onPress={() => void captureHeap()}
+            subtitle={heapSubtitle}
+            title="Hermes heap snapshot"
           />
           {profile !== null && (
             <MenuAction
               icon="copy-outline"
-              title="Copy full JSON"
-              subtitle="Stages, measures, frames, and Hermes"
               onPress={() => {
                 setMenuOpen(false);
-                void copyReport();
+                copyReport().catch((error: unknown) => {
+                  dialog.alert(
+                    "Copy failed",
+                    error instanceof Error ? error.message : "Could not copy navigation profile",
+                  );
+                });
               }}
+              subtitle="Stages, measures, frames, and Hermes"
+              title="Copy full JSON"
             />
           )}
         </View>
@@ -185,24 +202,24 @@ export function NavigationPerformanceHud() {
 }
 
 function MenuAction({
-  icon,
-  title,
-  subtitle,
   busy = false,
   disabled = false,
+  icon,
   onPress,
+  subtitle,
+  title,
 }: {
-  icon: ComponentProps<typeof Ionicons>["name"];
-  title: string;
-  subtitle: string;
   busy?: boolean;
   disabled?: boolean;
-  onPress(): void;
+  icon: ComponentProps<typeof Ionicons>["name"];
+  onPress: () => void;
+  subtitle: string;
+  title: string;
 }) {
   return (
     <Pressable
-      accessibilityRole="button"
       accessibilityLabel={title}
+      accessibilityRole="button"
       accessibilityState={{ busy, disabled }}
       disabled={disabled}
       onPress={onPress}
@@ -213,9 +230,9 @@ function MenuAction({
       ]}
     >
       {busy ? (
-        <ActivityIndicator size="small" color={colors.textMuted} />
+        <ActivityIndicator color={colors.textMuted} size="small" />
       ) : (
-        <Ionicons name={icon} size={iconSize.action} color={colors.textMuted} />
+        <Ionicons color={colors.textMuted} name={icon} size={iconSize.action} />
       )}
       <View style={styles.menuActionText}>
         <Text style={styles.menuActionTitle}>{title}</Text>
@@ -235,21 +252,22 @@ function serializeNavigationProfile(
   let samplingProfile: unknown = null;
   if (hermes?.content !== null && hermes?.content !== undefined) {
     try {
-      samplingProfile = JSON.parse(hermes.content) as unknown;
+      samplingProfile = JSON.parse(hermes.content);
     } catch {
       samplingProfile = hermes.content;
     }
   }
   return JSON.stringify(
     {
-      version: 2,
-      kind: "codewide-navigation-profile",
-      collectedAt: new Date().toISOString(),
       app: {
-        version: Constants.expoConfig?.version ?? null,
         runtimeVersion: Updates.runtimeVersion ?? null,
         updateId: Updates.updateId ?? null,
+        version: Constants.expoConfig?.version ?? null,
       },
+      collectedAt: new Date().toISOString(),
+      hermesSamplingProfile: samplingProfile,
+      kind: "codewide-navigation-profile",
+      nativeSample: current,
       navigation: {
         ...profile,
         frames:
@@ -261,15 +279,14 @@ function serializeNavigationProfile(
                   hermes === null
                     ? null
                     : {
-                        format: hermes.format,
-                        sizeBytes: hermes.sizeBytes,
                         error: hermes.error,
+                        format: hermes.format,
                         included: samplingProfile !== null,
+                        sizeBytes: hermes.sizeBytes,
                       },
               },
       },
-      nativeSample: current,
-      hermesSamplingProfile: samplingProfile,
+      version: 2,
     },
     null,
     2,
@@ -277,14 +294,16 @@ function serializeNavigationProfile(
 }
 
 function formatProfile(profile: ThreadNavigationProfile | null): string {
-  if (profile === null) return "chat profile waiting";
+  if (profile === null) {
+    return "chat profile waiting";
+  }
   const prefix =
     profile.status === "active" ? "chat profiling" : `chat ${integer(profile.totalMs)} ms`;
   const stage =
     profile.bottleneckStage === null
       ? profile.currentStage
       : `${shortStage(profile.bottleneckStage)} ${integer(profile.bottleneckMs)} ms`;
-  const rows = `${profile.uniqueRowsCommitted} rows/${profile.rowCommits} commits`;
+  const rows = `${String(profile.uniqueRowsCommitted)} rows/${String(profile.rowCommits)} commits`;
   const slowest = profile.measures.reduce<(typeof profile.measures)[number] | null>(
     (current, measure) =>
       current === null || measure.durationMs > current.durationMs ? measure : current,
@@ -295,19 +314,35 @@ function formatProfile(profile: ThreadNavigationProfile | null): string {
   const frames =
     profile.frames === null
       ? ""
-      : ` · ${profile.frames.jankFrames} jank/${profile.frames.droppedFrameEstimate} missed`;
+      : ` · ${String(profile.frames.jankFrames)} jank/${String(profile.frames.droppedFrameEstimate)} missed`;
   return `${prefix} · ${stage} · ${rows}${hotPath}${frames}`;
 }
 
 function shortStage(stage: ThreadNavigationProfile["currentStage"]): string {
-  if (stage === "hydration_result") return "hydrate";
-  if (stage === "timeline_model_ready") return "model";
-  if (stage === "timeline_first_draw") return "draw";
-  if (stage === "timeline_positioned") return "position";
-  if (stage === "visible_commit") return "commit";
-  if (stage === "selection_next_frame") return "select frame";
-  if (stage === "scope_commit") return "scope";
-  if (stage === "next_frame") return "frame";
+  if (stage === "hydration_result") {
+    return "hydrate";
+  }
+  if (stage === "timeline_model_ready") {
+    return "model";
+  }
+  if (stage === "timeline_first_draw") {
+    return "draw";
+  }
+  if (stage === "timeline_positioned") {
+    return "position";
+  }
+  if (stage === "visible_commit") {
+    return "commit";
+  }
+  if (stage === "selection_next_frame") {
+    return "select frame";
+  }
+  if (stage === "scope_commit") {
+    return "scope";
+  }
+  if (stage === "next_frame") {
+    return "frame";
+  }
   return stage.replaceAll("_", " ");
 }
 
@@ -320,58 +355,38 @@ function decimal(value: number): string {
 }
 
 function bytes(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "n/a";
+  if (!Number.isFinite(value) || value < 0) {
+    return "n/a";
+  }
   return `${decimal(value / (1024 * 1024))} MB`;
 }
 
 const styles = StyleSheet.create({
-  root: {
-    position: "absolute",
-    zIndex: 20_000,
-    elevation: 20,
-    height: layoutSize.metadataRow,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.inputInset,
-    backgroundColor: "rgba(10, 10, 10, 0.92)",
-    borderBottomColor: colors.border,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  status: {
-    width: 6,
-    height: 6,
-    borderRadius: radii.pill,
-    flexShrink: 0,
-  },
-  statusActive: { backgroundColor: colors.amber },
-  statusReady: { backgroundColor: colors.green },
-  text: {
-    color: colors.textMuted,
-    ...typeScale.caption,
-    flexShrink: 1,
-  },
   menu: {
-    position: "absolute",
-    zIndex: 20_001,
-    elevation: 21,
-    width: 280,
-    overflow: "hidden",
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.border,
     borderRadius: radii.medium,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceRaised,
+    elevation: 21,
+    overflow: "hidden",
+    position: "absolute",
+    width: 280,
+    zIndex: 20_001,
   },
   menuAction: {
-    minHeight: controlSize.touch,
-    flexDirection: "row",
     alignItems: "center",
+    flexDirection: "row",
     gap: spacing.inputInset,
+    minHeight: controlSize.touch,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xxs,
   },
-  menuActionPressed: { backgroundColor: colors.surfaceHover },
   menuActionDisabled: { opacity: 0.68 },
+  menuActionPressed: { backgroundColor: colors.surfaceHover },
+  menuActionSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
   menuActionText: {
     flex: 1,
     minWidth: 0,
@@ -381,13 +396,35 @@ const styles = StyleSheet.create({
     ...typeScale.body,
     fontWeight: typeWeight.medium,
   },
-  menuActionSubtitle: {
-    color: colors.textMuted,
-    ...typeScale.caption,
-  },
   menuEmpty: {
     color: colors.textMuted,
     ...typeScale.label,
     padding: spacing.md,
+  },
+  root: {
+    alignItems: "center",
+    backgroundColor: "rgba(10, 10, 10, 0.92)",
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    elevation: 20,
+    flexDirection: "row",
+    gap: spacing.xs,
+    height: layoutSize.metadataRow,
+    paddingHorizontal: spacing.inputInset,
+    position: "absolute",
+    zIndex: 20_000,
+  },
+  status: {
+    borderRadius: radii.pill,
+    flexShrink: 0,
+    height: 6,
+    width: 6,
+  },
+  statusActive: { backgroundColor: colors.amber },
+  statusReady: { backgroundColor: colors.green },
+  text: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    flexShrink: 1,
   },
 });

@@ -1,5 +1,5 @@
 import { LegendList } from "@legendapp/list/react-native";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 import type { GetTransferAccess } from "../../../data/private-transfer";
 import type { CatalogSkill } from "../../../data/skill-catalog-types";
@@ -15,21 +15,21 @@ import { AppTextInput, AppText as Text } from "../../../ui/Typography";
 import { styles } from "./SkillsPicker.styles";
 
 export function SkillsPicker({
-  skills,
-  loading,
   error,
-  onSelect,
   getTransferAccess,
+  loading,
+  onSelect,
+  skills,
 }: {
-  skills: readonly CatalogSkill[];
-  loading: boolean;
   error: string | null;
   getTransferAccess?: GetTransferAccess;
-  onSelect(skill: CatalogSkill): void;
+  loading: boolean;
+  onSelect: (skill: CatalogSkill) => void;
+  skills: readonly CatalogSkill[];
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SkillFilter>("all");
-  const rows = useMemo(() => skillPickerRows(skills, query, filter), [skills, query, filter]);
+  const rows = skillPickerRows(skills, query, filter);
   const filterLabel = skillFilters.find(({ id }) => id === filter)?.label ?? "All sources";
   const unresolved = skills.some(
     (skill) => skill.enabled && skill.catalog?.pluginLink.status !== "resolved",
@@ -44,26 +44,28 @@ export function SkillsPicker({
     <View style={styles.root}>
       <View style={styles.searchRow}>
         <View style={styles.search}>
-          <InlineIcon name="search-outline" role="body" color={colors.textMuted} />
+          <InlineIcon color={colors.textMuted} name="search-outline" role="body" />
           <AppTextInput
             accessibilityLabel="Search skills"
-            placeholder="Search skills"
-            placeholderTextColor={colors.textDim}
-            value={query}
-            onChangeText={setQuery}
-            voiceInput={false}
             autoCapitalize="none"
             autoCorrect={false}
+            onChangeText={setQuery}
+            placeholder="Search skills"
+            placeholderTextColor={colors.textDim}
             style={styles.input}
+            value={query}
+            voiceInput={false}
           />
           {query !== "" && (
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Clear skill search"
-              onPress={() => setQuery("")}
+              accessibilityRole="button"
+              onPress={() => {
+                setQuery("");
+              }}
               style={styles.searchAction}
             >
-              <InlineIcon name="close" role="body" color={colors.textMuted} />
+              <InlineIcon color={colors.textMuted} name="close" role="body" />
             </Pressable>
           )}
         </View>
@@ -73,23 +75,29 @@ export function SkillsPicker({
             .filter(
               ({ id }) =>
                 id !== "unknown" ||
-                skills.some((skill) => skill.enabled && skill.catalog?.source == null),
+                skills.some(
+                  (skill) =>
+                    (skill.enabled && skill.catalog?.source === null) ||
+                    skill.catalog?.source === undefined,
+                ),
             )
             .map((item) => ({ ...item, selected: filter === item.id }))}
           onSelect={(id) => {
             const option = skillFilters.find((item) => item.id === id);
-            if (option !== undefined) setFilter(option.id);
+            if (option !== undefined) {
+              setFilter(option.id);
+            }
           }}
         >
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel={`Filter skills: ${filterLabel}`}
+            accessibilityRole="button"
             style={styles.filter}
           >
             <InlineIcon
+              color={filter === "all" ? colors.textMuted : colors.accent}
               name="options-outline"
               role="body"
-              color={filter === "all" ? colors.textMuted : colors.accent}
             />
             {filter !== "all" && <View style={styles.filterDot} />}
           </Pressable>
@@ -97,13 +105,15 @@ export function SkillsPicker({
       </View>
       {filter !== "all" && (
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Clear skill source filter"
-          onPress={() => setFilter("all")}
+          accessibilityRole="button"
+          onPress={() => {
+            setFilter("all");
+          }}
           style={styles.activeFilter}
         >
           <Text style={styles.filterLabel}>{filterLabel}</Text>
-          <InlineIcon name="close" role="label" color={colors.textMuted} />
+          <InlineIcon color={colors.textMuted} name="close" role="label" />
         </Pressable>
       )}
       {loading && <Text style={styles.notice}>Loading skills…</Text>}
@@ -116,21 +126,19 @@ export function SkillsPicker({
         <Text style={styles.notice}>Plugin details unavailable. Skills are still usable.</Text>
       )}
       <LegendList
-        key={`${filter}:${query.trim()}`}
+        contentContainerStyle={styles.content}
         data={rows}
-        keyExtractor={(row) => row.key}
-        getItemType={(row) => row.kind}
         getFixedItemSize={(row) =>
           row.kind === "header" ? listRowHeight.single : listRowHeight.double
         }
-        renderScrollComponent={AppSheetScrollView}
-        recycleItems
-        style={styles.list}
-        contentContainerStyle={styles.content}
+        getItemType={(row) => row.kind}
+        key={`${filter}:${query.trim()}`}
         keyboardShouldPersistTaps="handled"
+        keyExtractor={(row) => row.key}
         ListEmptyComponent={
           !loading && error === null ? <Text style={styles.notice}>{emptyLabel}</Text> : null
         }
+        recycleItems
         renderItem={({ item }) =>
           item.kind === "header" ? (
             <View accessibilityRole="header" style={styles.groupHeader}>
@@ -147,16 +155,20 @@ export function SkillsPicker({
           ) : (
             <View style={[styles.row, item.first && styles.firstRow, item.last && styles.lastRow]}>
               <SkillPickerRow
-                title={item.title}
                 description={item.description}
                 onPress={() => {
-                  if (item.skill.enabled) onSelect(item.skill);
+                  if (item.skill.enabled) {
+                    onSelect(item.skill);
+                  }
                 }}
+                title={item.title}
               />
               {!item.last && <View style={styles.separator} />}
             </View>
           )
         }
+        renderScrollComponent={AppSheetScrollView}
+        style={styles.list}
       />
     </View>
   );

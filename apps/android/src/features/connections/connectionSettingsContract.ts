@@ -4,6 +4,6 @@ import type { ConnectionEditorProps } from "./connectionEditorContract";
 
 /** Public server settings surface. Its records contain views, never runtime handles. */
 export type ConnectionSettingsProps = Omit<ConnectionEditorProps, "connection" | "accountPool"> & {
-  connections: StoredConnection[];
   accountRateLimits: AccountRateLimitsRow[];
+  connections: StoredConnection[];
 };

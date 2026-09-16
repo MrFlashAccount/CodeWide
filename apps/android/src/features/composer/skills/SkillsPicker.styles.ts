@@ -4,18 +4,57 @@ import { colors, controlSize, radii, spacing, typeScale } from "../../../theme";
 import { listRowHeight } from "../../../ui/AppListRow.types";
 
 export const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    minHeight: 0,
-  },
-  searchRow: {
-    flexDirection: "row",
+  activeFilter: {
     alignItems: "center",
-    gap: spacing.xxs,
-    paddingBottom: spacing.xs,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
   },
-  search: {
-    ...searchFieldLayout,
+  content: { paddingBottom: spacing.md },
+  count: {
+    ...typeScale.label,
+    color: colors.textDim,
+  },
+  error: {
+    ...typeScale.label,
+    color: colors.red,
+    paddingVertical: spacing.sm,
+  },
+  filter: {
+    alignItems: "center",
+    height: controlSize.regular,
+    justifyContent: "center",
+    width: controlSize.regular,
+  },
+  filterDot: {
+    backgroundColor: colors.accent,
+    borderRadius: radii.compact,
+    height: spacing.xxs,
+    position: "absolute",
+    right: spacing.xs,
+    top: spacing.xs,
+    width: spacing.xxs,
+  },
+  filterLabel: {
+    ...typeScale.label,
+    color: colors.textMuted,
+  },
+  firstRow: {
+    borderTopLeftRadius: radii.medium,
+    borderTopRightRadius: radii.medium,
+  },
+  groupHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    height: listRowHeight.single,
+    paddingBottom: spacing.xs,
+    paddingTop: spacing.md,
+  },
+  groupTitle: {
+    ...typeScale.label,
+    color: colors.text,
     flex: 1,
     minWidth: 0,
   },
@@ -26,90 +65,51 @@ export const styles = StyleSheet.create({
     minWidth: 0,
     paddingVertical: spacing.xs,
   },
-  searchAction: {
-    width: controlSize.compact,
-    height: controlSize.regular,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  filter: {
-    width: controlSize.regular,
-    height: controlSize.regular,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  filterDot: {
-    position: "absolute",
-    right: spacing.xs,
-    top: spacing.xs,
-    width: spacing.xxs,
-    height: spacing.xxs,
-    borderRadius: radii.compact,
-    backgroundColor: colors.accent,
-  },
-  activeFilter: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    alignSelf: "flex-start",
-    paddingVertical: spacing.xs,
-  },
-  filterLabel: {
-    ...typeScale.label,
-    color: colors.textMuted,
+  lastRow: {
+    borderBottomLeftRadius: radii.medium,
+    borderBottomRightRadius: radii.medium,
   },
   list: {
     flex: 1,
     minHeight: 0,
   },
-  content: { paddingBottom: spacing.md },
   notice: {
     ...typeScale.label,
     color: colors.textMuted,
     paddingVertical: spacing.sm,
   },
-  error: {
-    ...typeScale.label,
-    color: colors.red,
-    paddingVertical: spacing.sm,
+  root: {
+    flex: 1,
+    minHeight: 0,
   },
-  groupHeader: {
-    height: listRowHeight.single,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xs,
+  row: {
+    backgroundColor: colors.surfaceContainer,
+    height: listRowHeight.double,
+    overflow: "hidden",
   },
-  groupTitle: {
-    ...typeScale.label,
-    color: colors.text,
+  search: {
+    ...searchFieldLayout,
     flex: 1,
     minWidth: 0,
   },
-  count: {
-    ...typeScale.label,
-    color: colors.textDim,
+  searchAction: {
+    alignItems: "center",
+    height: controlSize.regular,
+    justifyContent: "center",
+    width: controlSize.compact,
   },
-  row: {
-    height: listRowHeight.double,
-    overflow: "hidden",
-    backgroundColor: colors.surfaceContainer,
-  },
-  firstRow: {
-    borderTopLeftRadius: radii.medium,
-    borderTopRightRadius: radii.medium,
-  },
-  lastRow: {
-    borderBottomLeftRadius: radii.medium,
-    borderBottomRightRadius: radii.medium,
+  searchRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xxs,
+    paddingBottom: spacing.xs,
   },
   separator: {
-    position: "absolute",
-    bottom: 0,
-    left: spacing.sm,
-    right: spacing.sm,
-    height: StyleSheet.hairlineWidth,
     backgroundColor: colors.border,
+    bottom: 0,
+    height: StyleSheet.hairlineWidth,
+    left: spacing.sm,
+    position: "absolute",
+    right: spacing.sm,
   },
 });

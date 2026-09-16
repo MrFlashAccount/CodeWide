@@ -6,15 +6,15 @@ import type { RemoteProject } from "../../data/remote-projects";
 import { useEvent } from "../../react/useEvent";
 
 type ProjectConnection = {
-  id: string;
   enabled: boolean;
+  id: string;
   state: string;
 };
 
 type RemoteProjectCatalog = {
-  projectsByConnection: Record<string, RemoteProject[]>;
   errorsByConnection: Record<string, string | null>;
-  mergeProject(connectionId: string, project: RemoteProject): void;
+  mergeProject: (connectionId: string, project: RemoteProject) => void;
+  projectsByConnection: Record<string, RemoteProject[]>;
 };
 
 /**
@@ -37,10 +37,8 @@ export function useRemoteProjectCatalog(
     .map((connection) => connection.id)
     .join("\u0000");
   for (const connection of demandedConnections) {
-    remoteProjectCatalogModel.resource(
-      connection.id,
-      connection.state,
-      async () => await load(connection.id),
+    remoteProjectCatalogModel.resource(connection.id, connection.state, async () =>
+      load(connection.id),
     );
   }
   useEffect(() => {
@@ -49,7 +47,9 @@ export function useRemoteProjectCatalog(
       remoteProjectCatalogModel.retain(connectionId),
     );
     return () => {
-      for (const release of releases) release();
+      for (const release of releases) {
+        release();
+      }
     };
   }, [demandedConnectionKey]);
   const snapshot = useSelector(() => remoteProjectCatalogModel.snapshot$.get());
@@ -58,8 +58,8 @@ export function useRemoteProjectCatalog(
   });
 
   return {
-    projectsByConnection: snapshot.projectsByConnection,
     errorsByConnection: snapshot.errorsByConnection,
     mergeProject,
+    projectsByConnection: snapshot.projectsByConnection,
   };
 }

@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { sourceHasJsxElement, sourceObjectDeclaration } from "../source-contract";
 import {
   ownerSettings,
   ownerComposerMicrophone,
@@ -22,34 +23,47 @@ it("preserves composer integration contracts", () => {
   expect(ownerSettings).toContain("requestControls()");
   expect(ownerComposerMicrophone).toContain('"Stop voice input and insert transcript"');
   expect(ownerComposerSubmitAction).toContain('"Finish voice input and send transcript"');
-  expect(ownerComposerMenu).toMatch(
-    /<AppSheet\s+isOpen=\{visible\}\s+onOpenChange=\{\(open\) => \{\s*if \(!open\) onClose\(\);\s*\}\}/u,
-  );
+  expect(
+    sourceHasJsxElement(ownerComposerMenu, "AppSheet", [
+      "isOpen={visible}",
+      "onOpenChange={(open) =>",
+      "if (!open)",
+      "onClose();",
+    ]),
+  ).toBe(true);
   expect(ownerComposerControlChips).toContain("accessibilityLabel={`Model and thinking:");
   expect(ownerComposerControlChips).toContain("<ModelThinkingMenu");
   expect(ownerComposerControlChips).toContain("<PermissionsMenu");
-  expect(ownerComposerControlChips).toContain('onFallbackPress={() => onFallback("model")}');
-  expect(ownerComposerControlChips).toContain('onFallbackPress={() => onFallback("permissions")}');
+  expect(ownerComposerControlChips).toMatch(
+    /onFallbackPress=\{\(\) => \{\s*onFallback\("model"\);\s*\}\}/u,
+  );
+  expect(ownerComposerControlChips).toMatch(
+    /onFallbackPress=\{\(\) => \{\s*onFallback\("permissions"\);\s*\}\}/u,
+  );
   expect(ownerComposerFeature).toContain("<ActionMenu");
-  expect(composerMenuStyles).toMatch(
-    /menuTitleRow: \{[^}]*minHeight: touchTarget[^}]*marginBottom: spacing\.xs/u,
-  );
-  expect(ownerComposerControlOptions).toMatch(
-    /<AppSheetScrollView\s+[^>]*style=\{styles\.menuScroll\}[^>]*contentContainerStyle=\{styles\.menuScrollContent\}[^>]*keyboardShouldPersistTaps="handled"[^>]*>/u,
-  );
+  const menuTitleRow = sourceObjectDeclaration(composerMenuStyles, "menuTitleRow");
+  expect(menuTitleRow).toContain("marginBottom: spacing.xs");
+  expect(menuTitleRow).toContain("minHeight: touchTarget");
+  expect(
+    sourceHasJsxElement(ownerComposerControlOptions, "AppSheetScrollView", [
+      "contentContainerStyle={styles.menuScrollContent}",
+      'keyboardShouldPersistTaps="handled"',
+      "style={styles.menuScroll}",
+    ]),
+  ).toBe(true);
   expect(ownerComposerControlOptions).toMatch(
     /<Text style=\{styles\.controlSectionLabel\}>\s*Thinking\s*<\/Text>/u,
   );
-  expect(ownerSettings).toMatch(
-    /onUpdateSettings\(\{(?=[^}]*effort)(?=[^}]*model)[^}]*\}\)/u,
-  );
+  expect(ownerSettings).toMatch(/onUpdateSettings\(\{(?=[^}]*effort)(?=[^}]*model)[^}]*\}\)/u);
   expect(ownerComposerControlChips).toContain(
     "executionPermissionsLabel(serverExecution, pending)",
   );
   expect(ownerComposerControlOptions).toMatch(
     /const reasoningEfforts\s*=\s*model === undefined\s*\? \[\]/u,
   );
-  expect(composerMenuStyles).toMatch(/menuScroll: \{[^}]*flex: 1[^}]*minHeight: 0[^}]*\}/u);
+  const menuScroll = sourceObjectDeclaration(composerMenuStyles, "menuScroll");
+  expect(menuScroll).toContain("flex: 1");
+  expect(menuScroll).toContain("minHeight: 0");
   expect(ownerVoiceCaptureStatus).toContain("function VoiceCaptureStatus({");
   expect(ownerVoiceCaptureStatus).toContain(
     'useVoiceInputLevel(controller, phase === "recording" ? scope : null)',
@@ -67,19 +81,32 @@ it("preserves composer integration contracts", () => {
   expect(ownerComposerAccessoryTray).toContain(
     'const useAnchoredComposerMenu = Platform.OS === "android";',
   );
-  expect(ownerComposerFeature).toContain("if (open) props.dismissComposerKeyboardForOverlay();");
-  expect(ownerComposerAccessoryTray).toContain('icon: "terminal-outline"');
-  expect(composerControlStyles).toMatch(/composerContextChip: \{\s*flexGrow: 0,\s*flexShrink: 0/);
+  expect(ownerComposerFeature).toContain("if (open)");
+  expect(ownerComposerFeature).toContain("props.dismissComposerKeyboardForOverlay();");
+  expect(ownerComposerAccessoryTray).not.toContain('icon: "terminal-outline"');
+  expect(ownerComposerAccessoryTray).not.toContain('id: "ports"');
+  const composerContextChip = sourceObjectDeclaration(composerControlStyles, "composerContextChip");
+  expect(composerContextChip).toContain("flexGrow: 0");
+  expect(composerContextChip).toContain("flexShrink: 0");
   expect(composerControlStyles).not.toContain("composerContextChip: { maxWidth:");
-  expect(ownerComposerFeature).toContain(
-    '<View testID="composer-input-shell" style={styles.composerInputShell}>',
+  expect(
+    sourceHasJsxElement(ownerComposerFeature, "View", [
+      "style={styles.composerInputShell}",
+      'testID="composer-input-shell"',
+    ]),
+  ).toBe(true);
+  const composerInputShell = sourceObjectDeclaration(
+    ownerComposerFeatureStyles,
+    "composerInputShell",
   );
-  expect(ownerComposerFeatureStyles).toMatch(
-    /composerInputShell: \{\s*flex: 1,\s*flexBasis: 0,\s*flexShrink: 1,\s*width: 0,\s*minWidth: 0/,
-  );
-  expect(ownerComposerEditorStyles).toMatch(
-    /composerInput: \{\s*minHeight: COMPOSER_MIN_HEIGHT,\s*maxHeight: COMPOSER_MAX_HEIGHT/,
-  );
+  expect(composerInputShell).toContain("flex: 1");
+  expect(composerInputShell).toContain("flexBasis: 0");
+  expect(composerInputShell).toContain("flexShrink: 1");
+  expect(composerInputShell).toContain("minWidth: 0");
+  expect(composerInputShell).toContain("width: 0");
+  const composerInput = sourceObjectDeclaration(ownerComposerEditorStyles, "composerInput");
+  expect(composerInput).toContain("maxHeight: COMPOSER_MAX_HEIGHT");
+  expect(composerInput).toContain("minHeight: COMPOSER_MIN_HEIGHT");
   expect(ownerSettings).toContain("an already loaded sheet\n    // never refetches its model");
   expect(ownerSettings).toContain(
     'if (initialPage !== "ports" && (current === null || current.status === "error"))',

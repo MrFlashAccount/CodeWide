@@ -2,23 +2,25 @@ import type { RenderBlock } from "@codewide/renderers";
 
 export interface ToolContentProps {
   block: RenderBlock;
-  getTransferAccess?(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
+  getTransferAccess?: (
+    forceRefresh?: boolean,
+  ) => Promise<{ authorization: string; baseUrl: string }>;
 }
 export interface ToolResourceLinkProps {
-  uri: string;
   label: string;
+  uri: string;
 }
 export interface LazyJsonBodyProps {
-  value: unknown;
   section?: string;
+  value: unknown;
 }
 export interface ProtocolBodyProps {
   body: string;
   code: boolean;
+  codeVariant?: "code" | "diff" | "terminal";
   collapsible: boolean;
   expandedMaxHeight?: number;
-  section?: string;
   language?: string;
-  codeVariant?: "code" | "diff" | "terminal";
+  section?: string;
   showCopyAction?: boolean;
 }

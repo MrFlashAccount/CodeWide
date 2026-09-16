@@ -35,9 +35,9 @@ export function projectPortList(
   const entries: ServiceEntry[] =
     segment === "available"
       ? availableCandidates.map((candidate) => ({
-          type: "candidate",
-          group: candidate.group,
           candidate,
+          group: candidate.group,
+          type: "candidate",
         }))
       : (segment === "active" ? activeProfiles : excludedProfiles).flatMap((profile) => {
           const candidate = props.discoveredPorts.find(
@@ -45,13 +45,15 @@ export function projectPortList(
               value.forwardingKey === profile.serviceKey ||
               (profile.serviceKey === null && value.port === profile.remotePort),
           );
-          if (candidate === undefined) return [];
+          if (candidate === undefined) {
+            return [];
+          }
           return [
             {
-              type: "profile" as const,
               group: candidate.group,
-              profile,
               kind: candidate.kind,
+              profile,
+              type: "profile" as const,
             },
           ];
         });
@@ -59,13 +61,15 @@ export function projectPortList(
   const groups = groupEntries(entries.filter((entry) => serviceEntryMatches(entry, needle)));
   const rows: ServiceListRow[] = [];
   for (const [group, members] of groups) {
-    rows.push({ type: "group", group });
-    for (const member of members) rows.push(member);
+    rows.push({ group, type: "group" });
+    for (const member of members) {
+      rows.push(member);
+    }
   }
   const counts: Record<ServiceSegment, number> = {
     active: activeProfiles.length,
     available: availableCandidates.length,
     excluded: excludedProfiles.length,
   };
-  return { rows, counts, groups };
+  return { counts, groups, rows };
 }

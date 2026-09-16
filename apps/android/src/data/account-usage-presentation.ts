@@ -24,7 +24,9 @@ export function accountUsageProfiles(
     const profiles = source.rateLimits?.accountPool?.profiles ?? [];
     for (let index = 0; index < profiles.length; index += 1) {
       const profile = profiles[index];
-      if (profile === undefined) continue;
+      if (profile === undefined) {
+        continue;
+      }
       result.push({
         detail: accountPlanLabel(profile.planType),
         id: JSON.stringify([source.id, profile.id]),
@@ -37,7 +39,9 @@ export function accountUsageProfiles(
 }
 
 function accountPlanLabel(plan: string | null): string {
-  if (plan === null || plan === "unknown") return "Plan unavailable";
+  if (plan === null || plan === "unknown") {
+    return "Plan unavailable";
+  }
   const normalized = plan.replaceAll("_", " ");
-  return normalized.replace(/\b\w/gu, (letter) => letter.toUpperCase());
+  return normalized.replaceAll(/\b\w/gu, (letter) => letter.toUpperCase());
 }

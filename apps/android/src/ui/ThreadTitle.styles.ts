@@ -3,26 +3,26 @@ import { colors, spacing, typeScale, typeWeight } from "../theme";
 import { StyleSheet } from "react-native";
 
 export const styles = StyleSheet.create({
+  emojiText: {
+    fontFamily: Platform.select({
+      default: "sans-serif",
+      web: "system-ui",
+    }),
+  },
   runningThreadTitle: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.compact,
     maxWidth: "100%",
     minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.compact,
   },
   threadTitle: {
-    minWidth: 0,
-    maxWidth: "100%",
-    flexShrink: 1,
     color: colors.text,
+    flexShrink: 1,
+    maxWidth: "100%",
+    minWidth: 0,
     ...typeScale.body,
     fontWeight: typeWeight.semibold,
   },
   threadTitleWave: { maxWidth: "100%" },
-  emojiText: {
-    fontFamily: Platform.select({
-      web: "system-ui",
-      default: "sans-serif",
-    }),
-  },
 });

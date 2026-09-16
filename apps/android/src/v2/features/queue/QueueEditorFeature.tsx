@@ -126,8 +126,6 @@ export function QueueEditorFeature(props: QueueEditorFeatureProps): React.JSX.El
       onRetryAttachment={retryAttachment}
       onSave={save}
       onTextChange={changeText}
-      // WHY: This is a render prop; repository callback policy delegates its identity to React Compiler instead of stabilizing it with useEvent/useCallback.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       renderTextInput={renderTextInput}
       text={localState.value.persisted ? localState.value.text : item.editableText}
     />

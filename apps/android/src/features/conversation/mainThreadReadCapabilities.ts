@@ -7,29 +7,26 @@ import type { ThreadHistoryModel } from "../../data/thread-history-model";
 import type { ThreadUiStateRow } from "../../data/thread-ui-state-types";
 import type { ThreadHistoryViewport } from "../../data/use-thread-history-controller";
 import type { MessageListState } from "../../ui/MessageListBoundary";
-import { SearchConversationWindow } from "../search/search-conversation-window";
+import type { SearchConversationWindow } from "../search/search-conversation-window";
 /** Qualified capabilities consumed by the conversation owner in conversation composition. */
 export type MainThreadReadCapabilities = {
-  searchWindow: SearchConversationWindow | null;
-  onExitSearchHistory: (() => void) | undefined;
-  remoteThread: Thread | null | undefined;
-  currentUsage: TurnUsageProjection | null;
+  composerState: ThreadUiStateRow | null;
   currentOutcome: ThreadCurrentOutcome | null;
-  remoteSealedTurns: readonly Thread["turns"][number][] | undefined;
-  remoteLiveTurns: readonly Thread["turns"][number][] | undefined;
-  timelineEntries: readonly ProjectedThreadChatTimelineEntry[] | undefined;
-  historyViewport: ThreadHistoryViewport;
+  currentUsage: TurnUsageProjection | null;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
-  threadChatModel: ThreadChatModel | null;
-  onLoadTurnItems: ((turnId: string) => Promise<void>) | undefined;
-  composerState: ThreadUiStateRow | null;
   historyRestoreReady: boolean;
-  messageListState: MessageListState;
+  historyViewport: ThreadHistoryViewport;
   liveTextRecovery: boolean;
   loadScrollOffset:
     | ((connectionId: string, threadId: string) => Promise<number | null>)
     | undefined;
+  messageListState: MessageListState;
+  onExitSearchHistory: (() => void) | undefined;
+  onLoadTurnItems: ((turnId: string) => Promise<void>) | undefined;
+  remoteLiveTurns: readonly Thread["turns"][number][] | undefined;
+  remoteSealedTurns: readonly Thread["turns"][number][] | undefined;
+  remoteThread: Thread | null | undefined;
   saveScrollOffset:
     | ((
         connectionId: string,
@@ -39,4 +36,7 @@ export type MainThreadReadCapabilities = {
         historyAnchorOffsetPx: number | null,
       ) => Promise<void>)
     | undefined;
+  searchWindow: SearchConversationWindow | null;
+  threadChatModel: ThreadChatModel | null;
+  timelineEntries: readonly ProjectedThreadChatTimelineEntry[] | undefined;
 };

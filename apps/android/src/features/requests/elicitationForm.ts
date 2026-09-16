@@ -1,11 +1,13 @@
+import { unknownRecord } from "../../data/unknownRecord";
+
 export type ElicitationField = {
+  defaultValue: string;
+  description: string | null;
   id: string;
   label: string;
-  description: string | null;
-  type: string;
+  options: Array<{ label: string; value: string }>;
   required: boolean;
-  defaultValue: string;
-  options: Array<{ value: string; label: string }>;
+  type: string;
 };
 
 export function mcpElicitationFields(params: Record<string, unknown>): ElicitationField[] {
@@ -16,59 +18,78 @@ export function mcpElicitationFields(params: Record<string, unknown>): Elicitati
       ? schema.required.filter((value): value is string => typeof value === "string")
       : [],
   );
-  if (properties === null) return [];
+  if (properties === null) {
+    return [];
+  }
   return Object.entries(properties).flatMap(([id, rawSchema]) => {
     const field = asRecord(rawSchema);
-    if (field === null || typeof field.type !== "string") return [];
+    if (field === null || typeof field.type !== "string") {
+      return [];
+    }
     const options = elicitationOptions(field);
     const defaultValue = Array.isArray(field.default)
       ? field.default.filter((value): value is string => typeof value === "string").join(", ")
       : field.default === undefined
         ? ""
-        : String(field.default);
+        : primitiveDefaultValue(field.default);
     return [
       {
+        defaultValue,
+        description: typeof field.description === "string" ? field.description : null,
         id,
         label: typeof field.title === "string" ? field.title : id,
-        description: typeof field.description === "string" ? field.description : null,
-        type: field.type,
-        required: required.has(id),
-        defaultValue,
         options,
+        required: required.has(id),
+        type: field.type,
       },
     ];
   });
 }
 
+function primitiveDefaultValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return "";
+}
+
 export function parseElicitationValue(type: string, raw: string): unknown {
   if (type === "number" || type === "integer") {
     const value = Number(raw);
-    if (!Number.isFinite(value) || (type === "integer" && !Number.isInteger(value)))
+    if (!Number.isFinite(value) || (type === "integer" && !Number.isInteger(value))) {
       throw new Error(`Expected ${type}`);
+    }
     return value;
   }
-  if (type === "boolean") return raw === "true";
-  if (type === "array")
+  if (type === "boolean") {
+    return raw === "true";
+  }
+  if (type === "array") {
     return raw
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
+  }
   return raw;
 }
 
 function elicitationOptions(
   schema: Record<string, unknown>,
-): Array<{ value: string; label: string }> {
-  if (schema.type === "boolean")
+): Array<{ label: string; value: string }> {
+  if (schema.type === "boolean") {
     return [
-      { value: "true", label: "Yes" },
-      { value: "false", label: "No" },
+      { label: "Yes", value: "true" },
+      { label: "No", value: "false" },
     ];
+  }
   if (Array.isArray(schema.enum)) {
     const names = Array.isArray(schema.enumNames) ? schema.enumNames : [];
     return schema.enum.flatMap((value, index) =>
       typeof value === "string"
-        ? [{ value, label: typeof names[index] === "string" ? names[index] : value }]
+        ? [{ label: typeof names[index] === "string" ? names[index] : value, value }]
         : [],
     );
   }
@@ -78,8 +99,8 @@ function elicitationOptions(
       return object !== null && typeof object.const === "string"
         ? [
             {
-              value: object.const,
               label: typeof object.title === "string" ? object.title : object.const,
+              value: object.const,
             },
           ]
         : [];
@@ -89,7 +110,5 @@ function elicitationOptions(
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return unknownRecord(value);
 }

@@ -14,31 +14,35 @@ export function useTerminalActions(
   presentTerminal: () => void,
 ) {
   const openTerminal = useEvent(() => {
-    if (draftConnectionId === null || draftThreadId === null) return;
+    if (draftConnectionId === null || draftThreadId === null) {
+      return;
+    }
     if (
       Platform.OS === "android" &&
       readInteractiveTerminalWorkspace(draftConnectionId, draftThreadId).tabs.length === 0
     ) {
       createInteractiveTerminalTab({
         connectionId: draftConnectionId,
-        threadId: draftThreadId,
         cwd: cwd ?? null,
+        threadId: draftThreadId,
       });
     }
     presentTerminal();
   });
   const createAndOpenTerminal = useEvent(() => {
-    if (draftConnectionId === null || draftThreadId === null) return;
+    if (draftConnectionId === null || draftThreadId === null) {
+      return;
+    }
     if (Platform.OS === "android") {
       createInteractiveTerminalTab({
         connectionId: draftConnectionId,
-        threadId: draftThreadId,
         cwd: cwd ?? null,
+        threadId: draftThreadId,
       });
     }
     presentTerminal();
   });
-  return { openTerminal, createAndOpenTerminal };
+  return { createAndOpenTerminal, openTerminal };
 }
 
 /** Delete acknowledgement closes only the workspace captured by that activation. */
@@ -48,10 +52,13 @@ export function useTerminalDeletion(
   draftThreadId: string | null,
 ) {
   const deleteThread = useEvent(async () => {
-    if (onDelete === undefined) return;
+    if (onDelete === undefined) {
+      return;
+    }
     await onDelete();
-    if (draftConnectionId !== null && draftThreadId !== null)
+    if (draftConnectionId !== null && draftThreadId !== null) {
       closeInteractiveTerminalWorkspace(draftConnectionId, draftThreadId);
+    }
   });
   return onDelete === undefined ? undefined : deleteThread;
 }

@@ -2,28 +2,28 @@
 export const ATTACHMENT_CACHE_BYTES = 1024 * 1024 * 1024;
 
 export interface CachedAttachment {
-  key: string;
   bytes: number;
+  key: string;
   touchedAt: number;
 }
 
 /** Platform storage publishes a completed file atomically; partial files are never readable. */
 export interface AttachmentStorage {
-  restore(): Promise<CachedAttachment[]>;
-  exists(key: string, bytes: number): Promise<boolean>;
-  touch(entry: CachedAttachment): Promise<void>;
-  remove(key: string): Promise<void>;
-  uri(key: string): string;
+  exists: (key: string, bytes: number) => Promise<boolean>;
+  remove: (key: string) => Promise<void>;
+  restore: () => Promise<CachedAttachment[]>;
+  touch: (entry: CachedAttachment) => Promise<void>;
+  uri: (key: string) => string;
 }
 
 export interface AttachmentLease {
+  release: () => void;
   uri: string;
-  release(): void;
 }
 
 interface ResidentEntry {
-  value: CachedAttachment;
   readers: number;
+  value: CachedAttachment;
 }
 
 /** Owns admission, LRU eviction and readers. Payloads never enter this owner's JS heap. */
@@ -49,12 +49,16 @@ export class AttachmentDiskCache {
     bytes: number,
     write: () => Promise<void>,
   ): Promise<AttachmentLease | null> {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.limit) return null;
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.limit) {
+      return null;
+    }
     if (this.initialized === null) {
       const initialization = this.initialize();
       this.initialized = initialization;
       void initialization.catch(() => {
-        if (this.initialized === initialization) this.initialized = null;
+        if (this.initialized === initialization) {
+          this.initialized = null;
+        }
       });
     }
     await this.initialized;
@@ -70,55 +74,69 @@ export class AttachmentDiskCache {
       }
       if (entry !== undefined) {
         entry.value.touchedAt = this.now();
-        if (!this.pending.has(key)) await this.storage.touch(entry.value);
+        if (!this.pending.has(key)) {
+          await this.storage.touch(entry.value);
+        }
         entry.readers += 1;
         return { entry, ready: this.pending.get(key) ?? Promise.resolve() };
       }
-      if (!(await this.makeRoom(bytes))) return null;
-      const created: ResidentEntry = { value: { key, bytes, touchedAt: this.now() }, readers: 1 };
+      if (!(await this.makeRoom(bytes))) {
+        return null;
+      }
+      const created: ResidentEntry = { readers: 1, value: { bytes, key, touchedAt: this.now() } };
       this.entries.set(key, created);
       this.bytes += bytes;
       // Download outside the metadata queue; one failed generation cleans itself up exactly once.
       const operation = Promise.resolve()
         .then(write)
-        .then(() =>
+        .then(async () =>
           this.exclusive(async () => {
             await this.storage.touch(created.value);
             this.pending.delete(key);
           }),
         )
-        .catch(async (cause: unknown) => {
+        .catch(async (error: unknown) => {
           await this.exclusive(async () => {
-            if (this.entries.get(key) === created) await this.remove(created);
+            if (this.entries.get(key) === created) {
+              await this.remove(created);
+            }
             this.pending.delete(key);
           });
-          throw cause;
+          throw error;
         });
       this.pending.set(key, operation);
       void operation.catch(() => undefined);
       return { entry: created, ready: operation };
     });
-    if (admitted === null) return null;
+    if (admitted === null) {
+      return null;
+    }
     await admitted.ready;
     let released = false;
     return {
-      uri: this.storage.uri(key),
       release: () => {
-        if (released) return;
+        if (released) {
+          return;
+        }
         released = true;
         admitted.entry.readers -= 1;
       },
+      uri: this.storage.uri(key),
     };
   }
 
   /** A native image/player retains a local URI while it owns the file. */
   retain(uri: string): () => void {
     for (const entry of this.entries.values()) {
-      if (this.storage.uri(entry.value.key) !== uri) continue;
+      if (this.storage.uri(entry.value.key) !== uri) {
+        continue;
+      }
       entry.readers += 1;
       let released = false;
       return () => {
-        if (released) return;
+        if (released) {
+          return;
+        }
         released = true;
         entry.readers -= 1;
       };
@@ -130,19 +148,25 @@ export class AttachmentDiskCache {
     this.entries.clear();
     this.bytes = 0;
     for (const value of await this.storage.restore()) {
-      this.entries.set(value.key, { value, readers: 0 });
+      this.entries.set(value.key, { readers: 0, value });
       this.bytes += value.bytes;
     }
     await this.makeRoom(0);
   }
 
   private async makeRoom(incoming: number): Promise<boolean> {
-    if (this.bytes + incoming <= this.limit) return true;
+    if (this.bytes + incoming <= this.limit) {
+      return true;
+    }
     const oldest = [...this.entries.values()].sort((a, b) => a.value.touchedAt - b.value.touchedAt);
     for (const entry of oldest) {
-      if (entry.readers > 0 || this.pending.has(entry.value.key)) continue;
+      if (entry.readers > 0 || this.pending.has(entry.value.key)) {
+        continue;
+      }
       await this.remove(entry);
-      if (this.bytes + incoming <= this.limit) return true;
+      if (this.bytes + incoming <= this.limit) {
+        return true;
+      }
     }
     return false;
   }

@@ -8,56 +8,60 @@ import { connectionStateLabel, type ThreadListServer } from "../connections/conn
 import { styles } from "./NewThreadServerSheet.styles";
 
 export function NewThreadServerSheet({
-  visible,
-  servers,
   onClose,
   onSelect,
+  servers,
+  visible,
 }: {
-  visible: boolean;
+  onClose: () => void;
+  onSelect: (serverId: string) => Promise<void>;
   servers: ThreadListServer[];
-  onClose(): void;
-  onSelect(serverId: string): Promise<void>;
+  visible: boolean;
 }) {
   const [busyServerId, setBusyServerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const select = async (serverId: string) => {
-    if (busyServerId !== null) return;
+    if (busyServerId !== null) {
+      return;
+    }
     setBusyServerId(serverId);
     setError(null);
     try {
       await onSelect(serverId);
       onClose();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not create thread");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not create thread");
     }
     setBusyServerId(null);
   };
   return (
     <AppSheet
+      contentProps={{ dismissLabel: "Close new thread", enableDynamicSizing: true, index: 0 }}
       isOpen={visible}
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open) {
+          onClose();
+        }
       }}
-      contentProps={{ dismissLabel: "Close new thread", index: 0, enableDynamicSizing: true }}
     >
       <View style={styles.menuTitleRow}>
         <Text style={styles.sheetTitle}>Choose server</Text>
         <View style={styles.flex} />
       </View>
       <AppSheetScrollView
-        style={styles.menuScroll}
         contentContainerStyle={styles.menuScrollContent}
+        style={styles.menuScroll}
       >
         {servers.map((server, index) => (
           <ControlOption
             key={server.id}
+            onPress={() => void select(server.id)}
             position={listRowPosition(index, servers.length)}
-            title={`${server.emoji} ${server.name}`}
+            selected={false}
             subtitle={
               busyServerId === server.id ? "Creating…" : connectionStateLabel(server.status)
             }
-            selected={false}
-            onPress={() => void select(server.id)}
+            title={`${server.emoji} ${server.name}`}
           />
         ))}
         {error !== null && <Text style={styles.errorText}>{error}</Text>}

@@ -15,8 +15,8 @@ export function createGoalWorkspaceAdapter({
   getSession,
   rpcAfterAttach,
 }: {
-  getResources(): WorkspaceResourceDatabase;
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
+  getResources: () => WorkspaceResourceDatabase;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): GoalWorkspaceCapabilities {
   const getThreadGoal = async (
@@ -26,38 +26,40 @@ export function createGoalWorkspaceAdapter({
     const key = threadResourceKey(connectionId, threadId);
     const previous = getResources().threadGoals.get(key);
     getResources().putThreadGoal({
-      id: key,
       connectionId,
-      threadId,
-      status: "loading",
-      goal: previous?.goal ?? null,
       error: null,
+      goal: previous?.goal ?? null,
+      id: key,
+      status: "loading",
+      threadId,
     });
     const session = getSession(connectionId);
     try {
-      if (session === undefined) throw new Error("Connection is not enabled");
+      if (session === undefined) {
+        throw new Error("Connection is not enabled");
+      }
       const response = await rpcAfterAttach<ThreadGoalGetResponse>(session, "thread/goal/get", {
         threadId,
       });
       getResources().putThreadGoal({
-        id: key,
         connectionId,
-        threadId,
-        status: "ready",
-        goal: response.goal,
         error: null,
+        goal: response.goal,
+        id: key,
+        status: "ready",
+        threadId,
       });
       return response.goal;
-    } catch (cause) {
+    } catch (error) {
       getResources().putThreadGoal({
-        id: key,
         connectionId,
-        threadId,
-        status: "error",
+        error: errorMessage(error),
         goal: previous?.goal ?? null,
-        error: errorMessage(cause),
+        id: key,
+        status: "error",
+        threadId,
       });
-      throw cause;
+      throw error;
     }
   };
 
@@ -67,8 +69,9 @@ export function createGoalWorkspaceAdapter({
     input: ThreadGoalInput,
   ): Promise<ThreadGoal> => {
     const objective = input.objective.trim();
-    if (objective.length < 1 || objective.length > 100_000)
+    if (objective.length < 1 || objective.length > 100_000) {
       throw new Error("Goal objective must be 1–100000 characters");
+    }
     if (
       input.tokenBudget !== null &&
       (!Number.isSafeInteger(input.tokenBudget) || input.tokenBudget < 1)
@@ -76,42 +79,47 @@ export function createGoalWorkspaceAdapter({
       throw new Error("Token budget must be a positive integer");
     }
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const response = await rpcAfterAttach<ThreadGoalSetResponse>(session, "thread/goal/set", {
-      threadId,
       objective,
       status: input.status,
+      threadId,
       tokenBudget: input.tokenBudget,
     });
     getResources().putThreadGoal({
-      id: threadResourceKey(connectionId, threadId),
       connectionId,
-      threadId,
-      status: "ready",
-      goal: response.goal,
       error: null,
+      goal: response.goal,
+      id: threadResourceKey(connectionId, threadId),
+      status: "ready",
+      threadId,
     });
     return response.goal;
   };
 
   const clearThreadGoal = async (connectionId: string, threadId: string): Promise<boolean> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const response = await rpcAfterAttach<{ cleared: boolean }>(session, "thread/goal/clear", {
       threadId,
     });
-    if (response.cleared)
+    if (response.cleared) {
       getResources().putThreadGoal({
-        id: threadResourceKey(connectionId, threadId),
         connectionId,
-        threadId,
-        status: "ready",
-        goal: null,
         error: null,
+        goal: null,
+        id: threadResourceKey(connectionId, threadId),
+        status: "ready",
+        threadId,
       });
+    }
     return response.cleared;
   };
-  return { getThreadGoal, setThreadGoal, clearThreadGoal };
+  return { clearThreadGoal, getThreadGoal, setThreadGoal };
 }
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "Remote operation failed";

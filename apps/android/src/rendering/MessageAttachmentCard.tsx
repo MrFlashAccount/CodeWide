@@ -23,7 +23,9 @@ export function MessageAttachmentCard(props: MessageAttachmentCardProps) {
   const source = attachmentPrivateSource(attachment);
   const kind = remoteFileKind(attachment.name, attachment.name);
   const open = () => {
-    if (getAccess === undefined) return;
+    if (getAccess === undefined) {
+      return;
+    }
     const request = {
       getTransferAccess: getAccess,
       kind,
@@ -39,14 +41,26 @@ export function MessageAttachmentCard(props: MessageAttachmentCardProps) {
       return;
     }
     if (video) {
-      openVideo({ name: attachment.name, source, getAccess });
+      openVideo({ getAccess, name: attachment.name, source });
       return;
     }
     openDocument(request);
   };
   return (
     <MessageAttachmentTile
-      name={attachment.name}
+      icon={
+        <Ionicons
+          color={colors.accent}
+          name={
+            video
+              ? "play-circle-outline"
+              : attachment.kind === "audio"
+                ? "musical-note-outline"
+                : "document-text-outline"
+          }
+          size={iconSize.action}
+        />
+      }
       label={
         video
           ? "Video"
@@ -56,19 +70,7 @@ export function MessageAttachmentCard(props: MessageAttachmentCardProps) {
               ? "File"
               : kind
       }
-      icon={
-        <Ionicons
-          name={
-            video
-              ? "play-circle-outline"
-              : attachment.kind === "audio"
-                ? "musical-note-outline"
-                : "document-text-outline"
-          }
-          size={iconSize.action}
-          color={colors.accent}
-        />
-      }
+      name={attachment.name}
       {...(attachment.source.type === "content"
         ? { bytes: attachment.source.asset.byteLength }
         : {})}
@@ -79,8 +81,14 @@ export function MessageAttachmentCard(props: MessageAttachmentCardProps) {
 
 function attachmentPrivateSource(attachment: UserMessageAttachment): PrivateAssetSource {
   const source = attachment.source;
-  if (source.type === "path") return { kind: "path", path: source.path };
-  if (source.type === "scoped") return { kind: "scoped", rootId: source.rootId, path: source.path };
-  if (source.type === "content") return { kind: "content", id: source.asset.id };
+  if (source.type === "path") {
+    return { kind: "path", path: source.path };
+  }
+  if (source.type === "scoped") {
+    return { kind: "scoped", path: source.path, rootId: source.rootId };
+  }
+  if (source.type === "content") {
+    return { id: source.asset.id, kind: "content" };
+  }
   return { kind: "remote", url: source.url };
 }

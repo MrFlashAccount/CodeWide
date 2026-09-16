@@ -10,7 +10,7 @@ import { ThreadResourceContextChips } from "../changes/ThreadResourceContextChip
 import { useDrawingFeature } from "../drawing/DrawingFeature";
 import { ComposerPortContextChip } from "../ports/ComposerPortContextChip";
 import { useReviewFeature } from "../review/ReviewFeature";
-import { useReviewSubmission } from "../review/reviewSubmission";
+import { useReviewSubmission } from "../review/comments/reviewSubmission";
 import { ComposerTerminalContextChip } from "../terminal/ComposerTerminalContextChip";
 import { useTerminalActions, useTerminalDeletion } from "../terminal/terminalActions";
 import type { UseConversationToolsProps } from "./ConversationTools.types";

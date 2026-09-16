@@ -2,77 +2,77 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  attachmentChip: {
-    minHeight: controlSize.compact,
-    maxWidth: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-    paddingHorizontal: spacing.xs,
-    borderRadius: radii.small,
-    backgroundColor: colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  attachmentText: {
-    flex: 1,
-    color: colors.textMuted,
-    ...typeScale.label,
-  },
   agentText: {
-    minWidth: 0,
-    maxWidth: "100%",
     color: colors.text,
+    maxWidth: "100%",
+    minWidth: 0,
     ...typeScale.body,
   },
-  searchResult: {
-    paddingVertical: spacing.compact,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft,
+  attachmentChip: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.border,
+    borderRadius: radii.small,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.xxs,
+    maxWidth: "100%",
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.xs,
   },
-  rawLink: {
-    color: colors.accent,
+  attachmentText: {
+    color: colors.textMuted,
+    flex: 1,
+    ...typeScale.label,
+  },
+  controlSectionLabel: {
+    color: colors.textMuted,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
+    paddingBottom: spacing.xs,
+    paddingTop: spacing.md,
+    textTransform: "uppercase",
   },
-  protocolBody: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    alignSelf: "stretch",
-    gap: spacing.xxs,
-  },
-  toolMarkdownResult: {
-    width: "100%",
-    minWidth: 0,
-    maxWidth: "100%",
-    alignSelf: "stretch",
-  },
-  protocolBodyActions: {
-    minHeight: controlSize.compact,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  turnMetaText: {
-    color: colors.textMuted,
-    ...typeScale.caption,
+  menuActionTitle: {
+    color: colors.text,
+    ...typeScale.title,
   },
   menuNotice: {
     color: colors.textMuted,
     ...typeScale.body,
     paddingVertical: spacing.xs,
   },
-  menuActionTitle: {
-    color: colors.text,
-    ...typeScale.title,
+  protocolBody: {
+    alignSelf: "stretch",
+    gap: spacing.xxs,
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
   },
-  controlSectionLabel: {
-    color: colors.textMuted,
+  protocolBodyActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: controlSize.compact,
+  },
+  rawLink: {
+    color: colors.accent,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
-    textTransform: "uppercase",
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xs,
+  },
+  searchResult: {
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: 1,
+    paddingVertical: spacing.compact,
+  },
+  toolMarkdownResult: {
+    alignSelf: "stretch",
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
+  },
+  turnMetaText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
   },
 });

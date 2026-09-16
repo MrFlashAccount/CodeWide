@@ -1,8 +1,6 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { LegendList } from "@legendapp/list/react-native";
 import type { ReactNode } from "react";
-import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
-import { Uniwind } from "uniwind";
 import { ProjectPickerSheet } from "../src/features/projects/ProjectPickerSheet";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
@@ -18,26 +16,8 @@ jest.mock("@expo/ui/community/bottom-sheet", () => {
 });
 
 const homePath = "/srv/remote-user";
-beforeAll(() => {
-  // WHY: Metro normally registers these CSS variables; Node mounts the real HeroUI controls without Metro.
-  for (const theme of Uniwind.themes)
-    Uniwind.updateCSSVariables(theme, {
-      "--theme": "default",
-      "--color-accent-hover": "#92e6da",
-      "--color-default-hover": "#383838",
-      "--color-danger-hover": "#ee7777",
-      "--color-danger-soft-hover": "#552222",
-      "--color-muted": "#aaaaaa",
-    });
-});
 function TestProvider({ children }: { children: ReactNode }) {
-  return (
-    <HeroUINativeProviderRaw
-      config={{ animation: "disable-all", devInfo: { stylingPrinciples: false } }}
-    >
-      {children}
-    </HeroUINativeProviderRaw>
-  );
+  return <>{children}</>;
 }
 const entry = (fileName: string) => ({ fileName, isDirectory: true, isFile: false });
 const defaults = {
@@ -104,7 +84,8 @@ it("virtualizes every project as an independent recyclable row", () => {
   const list = view.UNSAFE_getByType(LegendList);
   expect(list.props.recycleItems).toBe(true);
   for (const item of list.props.data) {
-    if (item.kind === "project") expect(list.props.getFixedItemSize(item)).toBe(listRowHeight.double);
+    if (item.kind === "project")
+      expect(list.props.getFixedItemSize(item)).toBe(listRowHeight.double);
   }
   for (const row of view.UNSAFE_getAllByType(AppListRow)) {
     expect(row.props.fixedHeight).toBe(listRowHeight.double);
@@ -124,7 +105,9 @@ it("keeps a discovered project's secondary Pin action independent from row selec
     pinned: false,
   };
   let settle: () => void = () => undefined;
-  const pending = new Promise<void>((resolve) => { settle = resolve; });
+  const pending = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
   const add = jest.fn(async () => {
     await pending;
     return { ...discovered, pinned: true };
@@ -144,7 +127,10 @@ it("keeps a discovered project's secondary Pin action independent from row selec
   expect(add).toHaveBeenCalledWith(discovered.path);
   expect(select).not.toHaveBeenCalled();
   expect(view.getByLabelText("Pin Discovered project")).toBeDisabled();
-  await act(async () => { settle(); await pending; });
+  await act(async () => {
+    settle();
+    await pending;
+  });
   expect(view.getByLabelText("Pin Discovered project")).toBeEnabled();
   expect(select).not.toHaveBeenCalled();
   fireEvent.press(view.getByLabelText("Discovered project"));

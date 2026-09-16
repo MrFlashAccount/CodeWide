@@ -1,34 +1,35 @@
 import { observable, type Observable } from "@legendapp/state";
 
 import type { RemoteProject } from "./remote-projects";
+import { observablePromise } from "./observablePromise";
 
 type RemoteProjectCatalogSnapshot = {
-  projectsByConnection: Record<string, RemoteProject[]>;
   errorsByConnection: Record<string, string | null>;
+  projectsByConnection: Record<string, RemoteProject[]>;
 };
 
 export type RemoteProjectCatalogModel = {
-  snapshot$: Observable<RemoteProjectCatalogSnapshot>;
-  resource(
+  clear: () => void;
+  mergeProject: (connectionId: string, project: RemoteProject) => void;
+  resource: (
     connectionId: string,
     revision: string,
     loader: () => Promise<RemoteProject[]>,
-  ): Observable<boolean>;
-  retain(connectionId: string): () => void;
-  mergeProject(connectionId: string, project: RemoteProject): void;
-  clear(): void;
+  ) => Observable<boolean>;
+  retain: (connectionId: string) => () => void;
+  snapshot$: Observable<RemoteProjectCatalogSnapshot>;
 };
 
 type ProjectResource = {
-  ready$: Observable<boolean>;
-  revision: string;
-  loadingRevision: string | null;
-  generation: number;
   failed: boolean;
+  generation: number;
+  loader: () => Promise<RemoteProject[]>;
+  loadingRevision: string | null;
+  mergedWhileLoading: Map<string, RemoteProject>;
+  ready$: Observable<boolean> | null;
   retryAttempt: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
-  loader: () => Promise<RemoteProject[]>;
-  mergedWhileLoading: Map<string, RemoteProject>;
+  revision: string;
 };
 
 /**
@@ -37,8 +38,8 @@ type ProjectResource = {
  */
 export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
   const snapshot$ = observable<RemoteProjectCatalogSnapshot>({
-    projectsByConnection: {},
     errorsByConnection: {},
+    projectsByConnection: {},
   });
   const resources = new Map<string, ProjectResource>();
   const retainCounts = new Map<string, number>();
@@ -52,25 +53,30 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
       record.retryTimer !== null ||
       record.loadingRevision !== null ||
       (retainCounts.get(connectionId) ?? 0) === 0
-    )
+    ) {
       return;
-    const delay = immediate ? 0 : Math.min(250 * 2 ** record.retryAttempt, 5_000);
-    if (!immediate) record.retryAttempt += 1;
+    }
+    const delay = immediate ? 0 : Math.min(250 * 2 ** record.retryAttempt, 5000);
+    if (!immediate) {
+      record.retryAttempt += 1;
+    }
     record.retryTimer = setTimeout(() => {
       record.retryTimer = null;
       if (resources.get(connectionId) === record && (retainCounts.get(connectionId) ?? 0) > 0) {
-        void beginLoad(connectionId, record.revision, record.loader, record);
+        beginLoad(connectionId, record.revision, record.loader, record).catch(() => false);
       }
     }, delay);
   };
 
-  function beginLoad(
+  async function beginLoad(
     connectionId: string,
     revision: string,
     loader: () => Promise<RemoteProject[]>,
     record: ProjectResource,
   ): Promise<boolean> {
-    if (record.retryTimer !== null) clearTimeout(record.retryTimer);
+    if (record.retryTimer !== null) {
+      clearTimeout(record.retryTimer);
+    }
     record.retryTimer = null;
     const generation = record.generation + 1;
     record.generation = generation;
@@ -87,8 +93,9 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
           current !== record ||
           current.generation !== generation ||
           current.revision !== revision
-        )
+        ) {
           return false;
+        }
         current.loadingRevision = null;
         current.retryAttempt = 0;
         // A pin/add acknowledgement is newer than the list read already in flight.
@@ -98,22 +105,17 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
             (project) => current.mergedWhileLoading.get(project.path) ?? project,
           );
           for (const [path, project] of current.mergedWhileLoading) {
-            if (!projects.some((candidate) => candidate.path === path))
+            if (!projects.some((candidate) => candidate.path === path)) {
               resolvedProjects.push(project);
+            }
           }
         }
         current.mergedWhileLoading.clear();
-        snapshot$.projectsByConnection.set({
-          ...snapshot$.projectsByConnection.peek(),
-          [connectionId]: resolvedProjects,
-        });
-        snapshot$.errorsByConnection.set({
-          ...snapshot$.errorsByConnection.peek(),
-          [connectionId]: null,
-        });
+        snapshot$.projectsByConnection.assign({ [connectionId]: resolvedProjects });
+        snapshot$.errorsByConnection.assign({ [connectionId]: null });
         return true;
       })
-      .catch((cause: unknown) => {
+      .catch((error: unknown) => {
         const current = resources.get(connectionId);
         if (
           current === record &&
@@ -122,9 +124,8 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
         ) {
           current.loadingRevision = null;
           current.failed = true;
-          snapshot$.errorsByConnection.set({
-            ...snapshot$.errorsByConnection.peek(),
-            [connectionId]: cause instanceof Error ? cause.message : "Could not load projects",
+          snapshot$.errorsByConnection.assign({
+            [connectionId]: error instanceof Error ? error.message : "Could not load projects",
           });
           scheduleRetry(connectionId, current, false);
         }
@@ -133,78 +134,84 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
   }
 
   return {
-    snapshot$,
+    clear() {
+      for (const resource of resources.values()) {
+        if (resource.retryTimer !== null) {
+          clearTimeout(resource.retryTimer);
+        }
+      }
+      resources.clear();
+      retainCounts.clear();
+      snapshot$.set({ errorsByConnection: {}, projectsByConnection: {} });
+    },
+    mergeProject(connectionId, project) {
+      const resource = resources.get(connectionId);
+      if (resource !== undefined && resource.loadingRevision !== null) {
+        resource.mergedWhileLoading.set(project.path, project);
+      }
+      const existing = snapshot$.projectsByConnection.peek()[connectionId] ?? [];
+      snapshot$.projectsByConnection.assign({
+        [connectionId]: [
+          project,
+          ...existing.filter((candidate) => candidate.path !== project.path),
+        ],
+      });
+      snapshot$.errorsByConnection.assign({ [connectionId]: null });
+    },
     resource(connectionId, revision, loader) {
       let record = resources.get(connectionId);
       if (record === undefined) {
         record = {
-          ready$: null as unknown as Observable<boolean>,
-          revision,
-          loadingRevision: revision,
-          generation: 0,
           failed: false,
+          generation: 0,
+          loader,
+          loadingRevision: revision,
+          mergedWhileLoading: new Map(),
+          ready$: null,
           retryAttempt: 0,
           retryTimer: null,
-          loader,
-          mergedWhileLoading: new Map(),
+          revision,
         };
         resources.set(connectionId, record);
-        record.ready$ = observable(
-          beginLoad(connectionId, revision, loader, record),
-        ) as unknown as Observable<boolean>;
+        record.ready$ = observablePromise(beginLoad(connectionId, revision, loader, record));
       } else if (record.revision !== revision && record.loadingRevision !== revision) {
         // Connection reconnection is a stale-while-refresh boundary: keep the
         // last usable catalog until the replacement has completely arrived.
-        void beginLoad(connectionId, revision, loader, record);
+        beginLoad(connectionId, revision, loader, record).catch(() => false);
+      }
+      if (record.ready$ === null) {
+        throw new Error("Project catalog readiness was not initialized");
       }
       return record.ready$;
     },
     retain(connectionId) {
       retainCounts.set(connectionId, (retainCounts.get(connectionId) ?? 0) + 1);
       const record = resources.get(connectionId);
-      if (record?.failed === true) scheduleRetry(connectionId, record, true);
+      if (record?.failed === true) {
+        scheduleRetry(connectionId, record, true);
+      }
       let retained = true;
       return () => {
-        if (!retained) return;
+        if (!retained) {
+          return;
+        }
         retained = false;
         const next = (retainCounts.get(connectionId) ?? 1) - 1;
         if (next <= 0) {
           retainCounts.delete(connectionId);
           const current = resources.get(connectionId);
-          if (current?.retryTimer !== null && current?.retryTimer !== undefined)
+          if (current?.retryTimer !== null && current?.retryTimer !== undefined) {
             clearTimeout(current.retryTimer);
-          if (current !== undefined) current.retryTimer = null;
+          }
+          if (current !== undefined) {
+            current.retryTimer = null;
+          }
         } else {
           retainCounts.set(connectionId, next);
         }
       };
     },
-    mergeProject(connectionId, project) {
-      const resource = resources.get(connectionId);
-      if (resource !== undefined && resource.loadingRevision !== null)
-        resource.mergedWhileLoading.set(project.path, project);
-      const projectsByConnection = snapshot$.projectsByConnection.peek();
-      const existing = projectsByConnection[connectionId] ?? [];
-      snapshot$.projectsByConnection.set({
-        ...projectsByConnection,
-        [connectionId]: [
-          project,
-          ...existing.filter((candidate) => candidate.path !== project.path),
-        ],
-      });
-      snapshot$.errorsByConnection.set({
-        ...snapshot$.errorsByConnection.peek(),
-        [connectionId]: null,
-      });
-    },
-    clear() {
-      for (const resource of resources.values()) {
-        if (resource.retryTimer !== null) clearTimeout(resource.retryTimer);
-      }
-      resources.clear();
-      retainCounts.clear();
-      snapshot$.set({ projectsByConnection: {}, errorsByConnection: {} });
-    },
+    snapshot$,
   };
 }
 

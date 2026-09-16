@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
-import { useState } from "react";
 import { useThreadSummaryView } from "../../data/use-thread-summary-view";
+import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
 import { serverScopeConnectionId, type ServerScope } from "../../services/servers/serverScope";
 import { threadSelectionKey } from "../../services/threads/threadRouteParams";
@@ -21,18 +21,18 @@ export function useThreadListWorkspace(
   threadListLimit: number,
   setThreadListLimit: Dispatch<SetStateAction<number>>,
 ) {
-  const [threadListProjection] = useState(() => new ThreadListProjection());
+  const threadListProjection = useConstant(() => new ThreadListProjection());
 
-  const [threadListItemProjection] = useState(() => new ThreadListItemProjection());
+  const threadListItemProjection = useConstant(() => new ThreadListItemProjection());
 
-  const [threadListScopeProjection] = useState(() => new ThreadListScopeProjection());
+  const threadListScopeProjection = useConstant(() => new ThreadListScopeProjection());
 
   const threadConnectionId = serverScopeConnectionId(serverScope);
 
   const threadSummaryView = useThreadSummaryView(remote.threadSummaryDatabase, {
+    archivedLimit: threadListMode === "archived" ? threadListLimit : 0,
     connectionId: threadConnectionId,
     recentLimit: threadListMode === "active" ? threadListLimit : 0,
-    archivedLimit: threadListMode === "archived" ? threadListLimit : 0,
     selectedConnectionId: null,
     selectedThreadId: null,
     subagentConnectionId: null,
@@ -71,16 +71,18 @@ export function useThreadListWorkspace(
       threadListMode === "archived"
         ? archivedThreadSummaryRows.length
         : recentThreadSummaryRows.length + pinnedThreadSummaryRows.length;
-    if (loadedCount < threadListLimit) return;
+    if (loadedCount < threadListLimit) {
+      return;
+    }
     setThreadListLimit((current) => current + THREAD_LIST_PAGE_SIZE);
   });
   return {
-    threadSummaryView,
+    archivedThreads,
     loadedThreadSummaries,
+    loadMoreThreads,
     scopedThreads,
     serverThreads,
-    archivedThreads,
-    loadMoreThreads,
+    threadSummaryView,
   };
 }
 

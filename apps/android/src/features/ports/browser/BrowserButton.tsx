@@ -4,20 +4,20 @@ import { colors, iconSize } from "../../../theme";
 import { styles } from "./InternalBrowser.styles";
 
 export function BrowserButton({
-  label,
-  icon,
   disabled = false,
+  icon,
+  label,
   onPress,
 }: {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
   disabled?: boolean;
-  onPress(): void;
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
 }) {
   return (
     <Pressable
-      accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityRole="button"
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
@@ -27,7 +27,7 @@ export function BrowserButton({
         pressed && styles.pressed,
       ]}
     >
-      <Ionicons name={icon} size={iconSize.action} color={colors.textMuted} />
+      <Ionicons color={colors.textMuted} name={icon} size={iconSize.action} />
     </Pressable>
   );
 }

@@ -10,7 +10,7 @@ export const sessionConversationHistoryAnchors = new Map<
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { ThreadUiStateRow } from "../../../data/thread-ui-state-types";
 import { useConversationRef, useConversationState } from "../../../ui/use-conversation-scope";
-import { SearchConversationWindow } from "../../search/search-conversation-window";
+import type { SearchConversationWindow } from "../../search/search-conversation-window";
 
 export function useHistoryAnchorState(
   composerScope: string,
@@ -65,26 +65,26 @@ export function useHistoryAnchorState(
   const [awayFromLatest, setAwayFromLatest] = useConversationState(composerScope, () => false);
 
   const mountedConversationScopeRef = useConversationRef(composerScope, () => ({
-    scope: composerScope,
     connectionId: draftConnectionId,
-    threadId: draftThreadId,
     saveScrollOffset,
+    scope: composerScope,
+    threadId: draftThreadId,
   }));
 
   const [pendingLatestJump, setPendingLatestJump] = useConversationState<{
     sourceSearchWindow: SearchConversationWindow | null;
   } | null>(composerScope, () => null);
   return {
-    scrollSaveTimerRef,
-    firstVisibleHistoryAnchorRef,
-    firstVisibleHistoryAnchorKeyRef,
-    firstVisibleHistoryAnchorStatusRef,
+    awayFromLatest,
     awayFromLatestRef,
+    firstVisibleHistoryAnchorKeyRef,
+    firstVisibleHistoryAnchorRef,
+    firstVisibleHistoryAnchorStatusRef,
     initialHistoryRestore,
     initialRestoreAnchorTurnId,
-    awayFromLatest,
     mountedConversationScopeRef,
     pendingLatestJump,
+    scrollSaveTimerRef,
     setAwayFromLatest,
     setPendingLatestJump,
   };
@@ -98,41 +98,41 @@ import {
 import type { ThreadHistoryViewport } from "../../../data/use-thread-history-controller";
 import { useEvent } from "../../../react/useEvent";
 import type { TimelineInitialPosition } from "../../../rendering/ThreadTimelineList";
-import { createFullscreenScrollOwnership } from "../../../ui/fullscreen-scroll-ownership";
+import type { createFullscreenScrollOwnership } from "../../../ui/fullscreen-scroll-ownership";
 import type { ConversationOwner } from "../../../ui/use-conversation-owner";
 import { useConversationCleanup } from "../../../ui/use-conversation-scope";
-import { useTimelineSearchState } from "./timelineSearch";
+import type { useTimelineSearchState } from "./timelineSearch";
 import type { TimelineItem } from "./timelineTypes";
-import { useTimelineViewportState } from "./timelineViewport";
-import { useUnreadReceiptState } from "./unreadReceipt";
+import type { useTimelineViewportState } from "./timelineViewport";
+import type { useUnreadReceiptState } from "./unreadReceipt";
 export function useHistoryAnchorActions({
+  acknowledgeUnreadReceipt,
   awayFromLatestRef,
-  setAwayFromLatest,
-  firstVisibleHistoryAnchorRef,
-  firstVisibleHistoryAnchorStatusRef,
-  firstVisibleHistoryAnchorKeyRef,
-  scrollSaveTimerRef,
-  pendingLatestJump,
-  setPendingLatestJump,
-  timelineContentHeightRef,
-  timelineViewportHeightRef,
-  setTimelineDidLoad,
-  timelineRef,
-  scrollOffsetRef,
-  timelineInitialPosition,
+  composerScope,
+  conversationOwner,
+  currentTurnId,
   draftConnectionId,
   draftThreadId,
-  timeline,
-  currentTurnId,
-  composerScope,
-  saveScrollOffset,
-  latestUnreadReceiptKey,
-  acknowledgeUnreadReceipt,
-  searchWindow,
-  timelineModelReady,
-  historyViewport,
-  conversationOwner,
+  firstVisibleHistoryAnchorKeyRef,
+  firstVisibleHistoryAnchorRef,
+  firstVisibleHistoryAnchorStatusRef,
   fullscreenScrollOwnership,
+  historyViewport,
+  latestUnreadReceiptKey,
+  pendingLatestJump,
+  saveScrollOffset,
+  scrollOffsetRef,
+  scrollSaveTimerRef,
+  searchWindow,
+  setAwayFromLatest,
+  setPendingLatestJump,
+  setTimelineDidLoad,
+  timeline,
+  timelineContentHeightRef,
+  timelineInitialPosition,
+  timelineModelReady,
+  timelineRef,
+  timelineViewportHeightRef,
 }: Pick<
   ReturnType<typeof useHistoryAnchorState>,
   | "awayFromLatestRef"
@@ -152,20 +152,20 @@ export function useHistoryAnchorActions({
     | "timelineRef"
     | "scrollOffsetRef"
   > & {
-    timelineInitialPosition: TimelineInitialPosition;
+    acknowledgeUnreadReceipt: (receiptKey: string) => void;
+    composerScope: string;
+    conversationOwner: ConversationOwner;
+    currentTurnId: string | null;
     draftConnectionId: string | null;
     draftThreadId: string | null;
-    timeline: TimelineItem[];
-    currentTurnId: string | null;
-    composerScope: string;
-    saveScrollOffset: Parameters<typeof useHistoryAnchorState>[5];
-    latestUnreadReceiptKey: string | null;
-    acknowledgeUnreadReceipt: (receiptKey: string) => void;
-    searchWindow: SearchConversationWindow | null;
-    timelineModelReady: boolean;
-    historyViewport: ThreadHistoryViewport;
-    conversationOwner: ConversationOwner;
     fullscreenScrollOwnership: ReturnType<typeof createFullscreenScrollOwnership>;
+    historyViewport: ThreadHistoryViewport;
+    latestUnreadReceiptKey: string | null;
+    saveScrollOffset: Parameters<typeof useHistoryAnchorState>[5];
+    searchWindow: SearchConversationWindow | null;
+    timeline: TimelineItem[];
+    timelineInitialPosition: TimelineInitialPosition;
+    timelineModelReady: boolean;
   }) {
   const commitInitialTimelineLoad = useEvent(() => {
     const restoredToAnchor = timelineInitialPosition.kind === "item";
@@ -173,21 +173,21 @@ export function useHistoryAnchorActions({
     setAwayFromLatest(restoredToAnchor);
     if (draftConnectionId !== null && draftThreadId !== null) {
       const values = {
-        itemCount: timeline.length,
         contentHeightPx: timelineContentHeightRef.current,
+        itemCount: timeline.length,
         viewportHeightPx: timelineViewportHeightRef.current,
       };
       markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
-        values,
         tags: { position: restoredToAnchor ? "anchor" : "end" },
+        values,
       });
       recordThreadNavigationVisualEvent(
         draftConnectionId,
         draftThreadId,
         "timeline_position_applied",
         {
-          values,
           tags: { position: restoredToAnchor ? "anchor" : "end" },
+          values,
         },
       );
     }
@@ -199,13 +199,14 @@ export function useHistoryAnchorActions({
       const turnId = firstVisibleHistoryAnchorRef.current;
       if (
         !isPersistableHistoryAnchor({
-          atEnd: !awayFromLatestRef.current,
+          activeTurnId: currentTurnId,
           anchorTurnId: turnId,
           anchorTurnStatus: firstVisibleHistoryAnchorStatusRef.current,
-          activeTurnId: currentTurnId,
+          atEnd: !awayFromLatestRef.current,
         })
-      )
+      ) {
         return { turnId: null, viewportOffsetPx: null };
+      }
       const itemKey = turnId === null ? null : firstVisibleHistoryAnchorKeyRef.current;
       return {
         turnId,
@@ -218,15 +219,20 @@ export function useHistoryAnchorActions({
   const persistTimelineOffset = useEvent((offset: number) => {
     scrollOffsetRef.current = offset;
     const historyAnchor = currentHistoryAnchor();
-    if (historyAnchor.turnId === null) sessionConversationHistoryAnchors.delete(composerScope);
-    else
+    if (historyAnchor.turnId === null) {
+      sessionConversationHistoryAnchors.delete(composerScope);
+    } else {
       sessionConversationHistoryAnchors.set(composerScope, {
         turnId: historyAnchor.turnId,
         viewportOffsetPx: historyAnchor.viewportOffsetPx,
       });
-    if (scrollSaveTimerRef.current !== null) clearTimeout(scrollSaveTimerRef.current);
-    if (saveScrollOffset === undefined || draftConnectionId === null || draftThreadId === null)
+    }
+    if (scrollSaveTimerRef.current !== null) {
+      clearTimeout(scrollSaveTimerRef.current);
+    }
+    if (saveScrollOffset === undefined || draftConnectionId === null || draftThreadId === null) {
       return;
+    }
     scrollSaveTimerRef.current = setTimeout(() => {
       scrollSaveTimerRef.current = null;
       void saveScrollOffset(
@@ -242,7 +248,9 @@ export function useHistoryAnchorActions({
   const persistTimelineAtEnd = useEvent(() => {
     scrollOffsetRef.current = 0;
     sessionConversationHistoryAnchors.delete(composerScope);
-    if (scrollSaveTimerRef.current !== null) clearTimeout(scrollSaveTimerRef.current);
+    if (scrollSaveTimerRef.current !== null) {
+      clearTimeout(scrollSaveTimerRef.current);
+    }
     if (saveScrollOffset !== undefined && draftConnectionId !== null && draftThreadId !== null) {
       scrollSaveTimerRef.current = setTimeout(() => {
         scrollSaveTimerRef.current = null;
@@ -253,7 +261,9 @@ export function useHistoryAnchorActions({
     }
     awayFromLatestRef.current = false;
     setAwayFromLatest(false);
-    if (latestUnreadReceiptKey !== null) acknowledgeUnreadReceipt(latestUnreadReceiptKey);
+    if (latestUnreadReceiptKey !== null) {
+      acknowledgeUnreadReceipt(latestUnreadReceiptKey);
+    }
   });
 
   const mayFinishLatestJump = useEvent(
@@ -261,21 +271,26 @@ export function useHistoryAnchorActions({
   );
 
   const completeLatestJump = useEvent(() => {
-    if (pendingLatestJump === null) return;
+    if (pendingLatestJump === null) {
+      return;
+    }
     if (!mayFinishLatestJump(pendingLatestJump.sourceSearchWindow)) {
       setPendingLatestJump(null);
       return;
     }
-    if (searchWindow !== null || !timelineModelReady || !historyViewport.containsLatest) return;
+    if (searchWindow !== null || !timelineModelReady || !historyViewport.containsLatest) {
+      return;
+    }
     setPendingLatestJump(null);
     requestAnimationFrame(() => {
       if (
         !conversationOwner.isCurrent() ||
         fullscreenScrollOwnership.isCovered() ||
         !mayFinishLatestJump(pendingLatestJump.sourceSearchWindow)
-      )
+      ) {
         return;
-      void timelineRef.current?.scrollToEnd({ animated: false });
+      }
+      timelineRef.current?.scrollToEnd({ animated: false }).catch(() => undefined);
     });
   });
 
@@ -284,30 +299,32 @@ export function useHistoryAnchorActions({
     void historyViewport
       .loadLatest()
       .then(() => {
-        if (!conversationOwner.isCurrent() || !mayFinishLatestJump(sourceSearchWindow)) return;
+        if (!conversationOwner.isCurrent() || !mayFinishLatestJump(sourceSearchWindow)) {
+          return;
+        }
         setPendingLatestJump({ sourceSearchWindow });
       })
       .catch(() => undefined);
   });
   return {
     commitInitialTimelineLoad,
-    persistTimelineOffset,
-    persistTimelineAtEnd,
     completeLatestJump,
     jumpTimelineToLatest,
+    persistTimelineAtEnd,
+    persistTimelineOffset,
   };
 }
 
 export function useTimelineCleanup({
-  scrollSaveTimerRef,
-  mountedConversationScopeRef,
-  scrollOffsetRef,
-  paginationTrimTimerRef,
-  unreadVisibilityFrameRef,
-  latestUnreadAgentRef,
-  timelineIndexRetryTimerRef,
-  fullscreenOverlay,
   composerScope,
+  fullscreenOverlay,
+  latestUnreadAgentRef,
+  mountedConversationScopeRef,
+  paginationTrimTimerRef,
+  scrollOffsetRef,
+  scrollSaveTimerRef,
+  timelineIndexRetryTimerRef,
+  unreadVisibilityFrameRef,
 }: Pick<
   ReturnType<typeof useHistoryAnchorState>,
   "scrollSaveTimerRef" | "mountedConversationScopeRef"
@@ -318,15 +335,19 @@ export function useTimelineCleanup({
     "unreadVisibilityFrameRef" | "latestUnreadAgentRef"
   > &
   Pick<ReturnType<typeof useTimelineSearchState>, "timelineIndexRetryTimerRef"> & {
-    fullscreenOverlay: { dismissScope(scope: string): void };
     composerScope: string;
+    fullscreenOverlay: { dismissScope: (scope: string) => void };
   }) {
   const clearTimelineRuntime = () => {
-    if (scrollSaveTimerRef.current !== null) clearTimeout(scrollSaveTimerRef.current);
-    if (timelineIndexRetryTimerRef.current !== null)
+    if (scrollSaveTimerRef.current !== null) {
+      clearTimeout(scrollSaveTimerRef.current);
+    }
+    if (timelineIndexRetryTimerRef.current !== null) {
       clearTimeout(timelineIndexRetryTimerRef.current);
-    if (unreadVisibilityFrameRef.current !== null)
+    }
+    if (unreadVisibilityFrameRef.current !== null) {
       cancelAnimationFrame(unreadVisibilityFrameRef.current);
+    }
     scrollSaveTimerRef.current = null;
     timelineIndexRetryTimerRef.current = null;
     unreadVisibilityFrameRef.current = null;
@@ -359,7 +380,9 @@ export function useTimelineCleanup({
     fullscreenOverlay.dismissScope(current.scope);
   };
   useConversationCleanup(composerScope, () => {
-    if (paginationTrimTimerRef.current !== null) clearTimeout(paginationTrimTimerRef.current);
+    if (paginationTrimTimerRef.current !== null) {
+      clearTimeout(paginationTrimTimerRef.current);
+    }
     cleanUpTimeline();
   });
 }

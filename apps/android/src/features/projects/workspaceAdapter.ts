@@ -26,27 +26,31 @@ import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/wo
 import type { ProjectsWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts projects intents using retained lower authorities. */
 export function createProjectsWorkspaceAdapter({
-  getSummaries,
   getDetails,
   getSession,
-  rpcAfterAttach,
+  getSummaries,
   loadTurnControls,
+  rpcAfterAttach,
 }: {
-  getSummaries(): Pick<ThreadSummaryDatabase, "insertStartedThread"> | null;
-  getDetails(): Pick<ThreadDetailDatabase, "importThreadSnapshot"> | null;
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
-  rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
+  getDetails: () => Pick<ThreadDetailDatabase, "importThreadSnapshot"> | null;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
+  getSummaries: () => Pick<ThreadSummaryDatabase, "insertStartedThread"> | null;
   loadTurnControls: (connectionId: string, cwd: string) => Promise<TurnControlsValue>;
+  rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): ProjectsWorkspaceCapabilities {
   const listProjects = async (connectionId: string): Promise<RemoteProject[]> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     return parseRemoteProjects(await rpcAfterAttach(session, "companion/project/list", {}));
   };
 
   const addProject = async (connectionId: string, path: string): Promise<RemoteProject> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     return parseAddedRemoteProject(
       await rpcAfterAttach(session, "companion/project/add", { path }),
     );
@@ -59,9 +63,11 @@ export function createProjectsWorkspaceAdapter({
     pinned: boolean,
   ): Promise<RemoteProject> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     return parseAddedRemoteProject(
-      await rpcAfterAttach(session, "companion/project/add", { path, name, pinned }),
+      await rpcAfterAttach(session, "companion/project/add", { name, path, pinned }),
     );
   };
 
@@ -70,7 +76,9 @@ export function createProjectsWorkspaceAdapter({
     path: string,
   ): Promise<RemoteDirectoryEntry[]> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const response = await rpcAfterAttach<FsReadDirectoryResponse>(session, "fs/readDirectory", {
       path,
     });
@@ -79,7 +87,9 @@ export function createProjectsWorkspaceAdapter({
 
   const readProjectHome = async (connectionId: string): Promise<string> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     return parseProjectHome(await rpcAfterAttach(session, "companion/project/home", {}));
   };
 
@@ -88,7 +98,9 @@ export function createProjectsWorkspaceAdapter({
     workspace: string,
   ): Promise<WorkspaceSupport | null> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     return parseWorkspaceSupport(
       await rpcAfterAttach(session, "companion/workspace/inspect", { workspace }),
     );
@@ -100,9 +112,11 @@ export function createProjectsWorkspaceAdapter({
     requestId: string,
   ): Promise<CreatedWorkspace> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     return parseCreatedWorkspace(
-      await rpcAfterAttach(session, "companion/workspace/create", { workspace, requestId }),
+      await rpcAfterAttach(session, "companion/workspace/create", { requestId, workspace }),
     );
   };
 
@@ -112,15 +126,17 @@ export function createProjectsWorkspaceAdapter({
     requestId: string,
   ): Promise<string> => {
     const started = await startThreadInCreatedWorkspace({
-      createWorkspace: () => createWorkspace(connectionId, workspace, requestId),
-      startThread: (cwd) => startThread(connectionId, cwd),
+      createWorkspace: async () => createWorkspace(connectionId, workspace, requestId),
+      startThread: async (cwd) => startThread(connectionId, cwd),
     });
     return started.threadId;
   };
 
   const startThread = async (connectionId: string, cwd?: string): Promise<string> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const response = await rpcAfterAttach<ThreadStartResponse>(
       session,
       "thread/start",
@@ -130,11 +146,11 @@ export function createProjectsWorkspaceAdapter({
     // Preserve them on the empty shell so a new conversation can paint its
     // model and permission chips before the first turn exists.
     const started = seedThreadExecutionSettings(response.thread, {
-      model: response.model,
-      effort: response.reasoningEffort,
-      permissions: response.activePermissionProfile?.id ?? null,
       approvalPolicy:
         typeof response.approvalPolicy === "string" ? response.approvalPolicy : "granular",
+      effort: response.reasoningEffort,
+      model: response.model,
+      permissions: response.activePermissionProfile?.id ?? null,
       sandboxPolicy: response.sandbox.type,
     });
     await getDetails()?.importThreadSnapshot(connectionId, started, "initial");
@@ -145,14 +161,14 @@ export function createProjectsWorkspaceAdapter({
     return started.id;
   };
   return {
-    listProjects,
     addProject,
-    setProjectPinned,
+    createWorkspace,
+    inspectWorkspace,
+    listProjects,
     readDirectory,
     readProjectHome,
-    inspectWorkspace,
-    createWorkspace,
-    startThreadInWorkspace,
+    setProjectPinned,
     startThread,
+    startThreadInWorkspace,
   };
 }

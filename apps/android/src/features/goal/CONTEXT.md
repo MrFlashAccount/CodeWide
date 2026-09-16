@@ -2,7 +2,7 @@
 
 Goal resource selection and explicit editing.
 
-Public surfaces: GoalFeature, ThreadGoalChip, LiveTurnPlanPopover, goalResource, goalCommands.
+Public surfaces: GoalFeature, ThreadGoalChip, LiveTurnPlanMenu, goalResource, goalCommands.
 
 The lower workspace resource database owns the goal row and ThreadGoalInput. The stable resource key and existing async resource cache own loading. Dialog key, voice scope, validation, save/clear pending and error behavior remain unchanged.
 

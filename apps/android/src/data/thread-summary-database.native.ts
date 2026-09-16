@@ -1,3 +1,4 @@
+import { appLogger } from "../observability/logger";
 import type { ThreadRenameHandler } from "./thread-summary-database-contract";
 import type { ThreadSummaryDatabase } from "./thread-summary-database-contract";
 
@@ -43,25 +44,29 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     const generation = model.startView(request);
     try {
       model.commitView(request, generation, await storage.loadView(request));
-    } catch (cause) {
-      model.failView(request, generation, cause);
-      throw cause;
+    } catch (error) {
+      model.failView(request, generation, error);
+      throw error;
     }
   };
 
   const scheduleActiveViewRefresh = (): void => {
-    if (refreshScheduled || disposed) return;
+    if (refreshScheduled || disposed) {
+      return;
+    }
     refreshScheduled = true;
     queueMicrotask(() => {
       refreshScheduled = false;
-      for (const request of model.activeRequests()) void loadView(request).catch(() => undefined);
+      for (const request of model.activeRequests()) {
+        void loadView(request).catch(() => undefined);
+      }
     });
   };
 
   const publishModelChanges = (
     changes: readonly (
       | { type: "insert" | "update"; value: StoredThreadSummary }
-      | { type: "delete"; key: string }
+      | { key: string; type: "delete" }
     )[],
     refillBoundedViews = false,
   ): void => {
@@ -69,16 +74,22 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       if (change.type === "delete") {
         const separator = change.key.indexOf("\u0000");
         catalogReads.changed(change.key.slice(0, separator), change.key.slice(separator + 1));
-      } else catalogReads.changed(change.value.connectionId, change.value.remoteThreadId);
+      } else {
+        catalogReads.changed(change.value.connectionId, change.value.remoteThreadId);
+      }
     }
     model.publish(changes);
     projectUnread.publish(changes);
-    if (refillBoundedViews) scheduleActiveViewRefresh();
+    if (refillBoundedViews) {
+      scheduleActiveViewRefresh();
+    }
   };
 
   const publish = async (row: StoredThreadSummary): Promise<void> => {
     await writes.run(async () => {
-      if (disposed) return;
+      if (disposed) {
+        return;
+      }
       const normalized = normalizeStoredThreadSummary(row);
       const previous = await loadRow(normalized.connectionId, normalized.remoteThreadId);
       storage.begin();
@@ -94,20 +105,26 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
 
   const remove = async (key: string): Promise<void> => {
     await writes.run(async () => {
-      if (disposed) return;
+      if (disposed) {
+        return;
+      }
       storage.begin();
-      storage.write({ type: "delete", key });
+      storage.write({ key, type: "delete" });
       const checkpoint = storage.commit({ durable: true });
-      publishModelChanges([{ type: "delete", key }], true);
+      publishModelChanges([{ key, type: "delete" }], true);
       await checkpoint;
     });
   };
 
   const applyDeleteDelivery = async (delivery: NativeCommandDelivery): Promise<void> => {
-    if (delivery.method !== "thread/delete" || delivery.threadId === null) return;
+    if (delivery.method !== "thread/delete" || delivery.threadId === null) {
+      return;
+    }
     const key = threadSummaryKey(delivery.connectionId, delivery.threadId);
     const row = await loadRow(delivery.connectionId, delivery.threadId);
-    if (row === undefined || row.deleteCommandId !== delivery.commandId) return;
+    if (row === undefined || row.deleteCommandId !== delivery.commandId) {
+      return;
+    }
     if (delivery.state === "failed") {
       await publish({ ...row, deleteCommandId: null });
     } else if (delivery.state === "delivered") {
@@ -121,14 +138,18 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     missingScope: (current: readonly StoredThreadSummary[]) => ReadonlySet<string>,
   ): Promise<void> => {
     await writes.run(async () => {
-      if (disposed) return;
+      if (disposed) {
+        return;
+      }
       const currentRows = await loadConnectionRows(connectionId);
       const current = new Map(
         currentRows.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
       );
       const next = new Map<string, StoredThreadSummary>();
       for (const snapshot of snapshots) {
-        if (snapshot.thread.ephemeral) continue;
+        if (snapshot.thread.ephemeral) {
+          continue;
+        }
         const key = threadSummaryKey(connectionId, snapshot.thread.id);
         next.set(
           key,
@@ -146,15 +167,20 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         const previous = current.get(key);
         return previous === undefined || !sameThreadSummary(previous, row);
       });
-      if (removed.length === 0 && changed.length === 0) return;
+      if (removed.length === 0 && changed.length === 0) {
+        return;
+      }
       storage.begin();
-      for (const [key] of removed) storage.write({ type: "delete", key });
-      for (const [key, row] of changed)
+      for (const [key] of removed) {
+        storage.write({ key, type: "delete" });
+      }
+      for (const [key, row] of changed) {
         storage.write({ type: current.has(key) ? "update" : "insert", value: row });
+      }
       const checkpoint = storage.commit({ durable: true });
       publishModelChanges(
         [
-          ...removed.map(([key]) => ({ type: "delete" as const, key })),
+          ...removed.map(([key]) => ({ key, type: "delete" as const })),
           ...changed.map(([key, row]) => ({
             type: current.has(key) ? ("update" as const) : ("insert" as const),
             value: row,
@@ -171,33 +197,6 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   };
 
   return {
-    model,
-    projectUnread,
-    async prepare() {
-      await storage.prepare();
-      await projectUnread.resource(storage.loadUnread);
-    },
-    viewResource(request) {
-      return model.resource(request, async () => {
-        const cached = await storage.loadView(request);
-        if (catalogLoader !== null && (request.recentLimit > 0 || request.archivedLimit > 0)) {
-          const updating = catalogLoader(request);
-          const count = request.archivedLimit > 0 ? cached.archived.length : cached.recent.length;
-          if (count === 0) {
-            await updating;
-            return await storage.loadView(request);
-          }
-          void updating.catch((cause: unknown) =>
-            console.warn("Catalog window refresh failed", cause),
-          );
-        }
-        return cached;
-      });
-    },
-    setCatalogLoader(loader) {
-      catalogLoader = loader;
-    },
-    beginCatalogRead: (connectionId) => catalogReads.begin(connectionId),
     async applyCatalogPage(
       connectionId,
       snapshots,
@@ -208,22 +207,26 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       projectCwd,
     ) {
       await writes.run(async () => {
-        if (disposed) return;
+        if (disposed) {
+          return;
+        }
         const count = Math.max(THREAD_CATALOG_PAGE_SIZE, prefixIds.size);
-        const window = await storage.loadView({
-          connectionId,
-          ...(projectCwd === undefined ? {} : { projectCwd }),
-          recentLimit: archived ? 0 : count,
-          archivedLimit: archived ? count : 0,
-          selectedConnectionId: null,
-          selectedThreadId: null,
-          subagentConnectionId: null,
-          subagentLimit: 0,
-        });
-        const existing = await loadRows(
-          connectionId,
-          snapshots.map(({ thread }) => thread.id),
-        );
+        const [window, existing] = await Promise.all([
+          storage.loadView({
+            connectionId,
+            ...(projectCwd === undefined ? {} : { projectCwd }),
+            archivedLimit: archived ? count : 0,
+            recentLimit: archived ? 0 : count,
+            selectedConnectionId: null,
+            selectedThreadId: null,
+            subagentConnectionId: null,
+            subagentLimit: 0,
+          }),
+          loadRows(
+            connectionId,
+            snapshots.map(({ thread }) => thread.id),
+          ),
+        ]);
         const current = new Map(existing.map((row) => [row.remoteThreadId, row]));
         const changes: import("./thread-summary-sqlite.native").ThreadSummaryChange[] = [];
         for (const row of replaceHead ? (archived ? window.archived : window.recent) : []) {
@@ -238,13 +241,15 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
             // Evict only this stale cached prefix; absence is not a server
             // thread deletion, and older cached ranges are left untouched.
             changes.push({
-              type: "delete",
               key: threadSummaryKey(connectionId, row.remoteThreadId),
+              type: "delete",
             });
           }
         }
         for (const snapshot of snapshots) {
-          if (read.changed.has(snapshot.thread.id)) continue;
+          if (read.changed.has(snapshot.thread.id)) {
+            continue;
+          }
           const previous = current.get(snapshot.thread.id);
           const row = projectThreadSummarySnapshot(
             connectionId,
@@ -256,111 +261,26 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
             changes.push({ type: previous === undefined ? "insert" : "update", value: row });
           }
         }
-        if (changes.length === 0) return;
+        if (changes.length === 0) {
+          return;
+        }
         storage.begin();
-        for (const change of changes) storage.write(change);
+        for (const change of changes) {
+          storage.write(change);
+        }
         const checkpoint = storage.commit({ durable: true });
         publishModelChanges(changes, true);
         await checkpoint;
       });
     },
-    loadView,
-    async get(connectionId, threadId) {
-      return (await loadRow(connectionId, threadId)) ?? null;
-    },
-    async insertStartedThread(connectionId, thread) {
-      const previous = await loadRow(connectionId, thread.id);
-      const mutation = projectThreadSummaryEvent(
-        connectionId,
-        {
-          method: "thread/started",
-          params: { thread },
-          codewideThreadPatch: {
-            version: 1,
-            threadId: thread.id,
-            operation: { kind: "threadStarted", thread },
-          },
-        },
-        () => previous,
-      );
-      if (mutation?.value !== null && mutation?.value !== undefined) await publish(mutation.value);
-    },
-    async applySnapshot(connectionId, snapshots) {
-      await replaceSnapshotRows(
-        connectionId,
-        snapshots,
-        (current) =>
-          new Set(
-            current
-              .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
-              .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
-          ),
-      );
-    },
-    async replaceCatalog(connectionId, snapshots) {
-      await replaceSnapshotRows(
-        connectionId,
-        snapshots,
-        (current) =>
-          new Set(
-            current
-              .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
-              .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
-          ),
-      );
-    },
-    async replaceSubagentCatalog(connectionId, rootThreadId, snapshots) {
-      const projected = snapshots.filter(({ thread }) => thread.parentThreadId !== null);
-      await replaceSnapshotRows(connectionId, projected, (current) =>
-        threadSummaryDescendantKeys(current, rootThreadId),
-      );
-    },
-    async mergeSnapshots(connectionId, snapshots) {
-      await writes.run(async () => {
-        if (disposed || snapshots.length === 0) return;
-        const existing = await loadRows(
-          connectionId,
-          snapshots.map(({ thread }) => thread.id),
-        );
-        const current = new Map(
-          existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
-        );
-        const changed = new Map<string, StoredThreadSummary>();
-        for (const snapshot of snapshots) {
-          if (snapshot.thread.ephemeral) continue;
-          const key = threadSummaryKey(connectionId, snapshot.thread.id);
-          const previous = current.get(key);
-          const row = projectThreadSummarySnapshot(
-            connectionId,
-            snapshot.thread,
-            snapshot.archived,
-            previous,
-          );
-          if (previous === undefined || !sameThreadSummary(previous, row)) changed.set(key, row);
-        }
-        if (changed.size === 0) return;
-        storage.begin();
-        for (const [key, row] of changed) {
-          const previous = current.get(key);
-          storage.write({ type: previous === undefined ? "insert" : "update", value: row });
-        }
-        const checkpoint = storage.commit({ durable: true });
-        publishModelChanges(
-          [...changed].map(([key, row]) => ({
-            ...(current.has(key) ? { type: "update" as const } : { type: "insert" as const }),
-            value: row,
-          })),
-          [...changed].some(([key, row]) => {
-            const previous = current.get(key);
-            return previous !== undefined && summaryViewMembershipChanged(previous, row);
-          }),
-        );
-        await checkpoint;
-      });
+    async applyCommandDelivery(delivery) {
+      await applyDeleteDelivery(delivery);
     },
     async applyEvents(connectionId, events) {
       await writes.run(async () => {
-        if (disposed || events.length === 0) return;
+        if (disposed || events.length === 0) {
+          return;
+        }
         const threadIds = [
           ...new Set(
             events.flatMap((event) => {
@@ -385,13 +305,17 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
             undefined,
             event.cursor,
           );
-          if (mutation !== null) changed.set(mutation.key, mutation.value);
+          if (mutation !== null) {
+            changed.set(mutation.key, mutation.value);
+          }
         }
-        if (changed.size === 0) return;
+        if (changed.size === 0) {
+          return;
+        }
         storage.begin();
         for (const [key, row] of changed) {
           if (row === null) {
-            storage.write({ type: "delete", key });
+            storage.write({ key, type: "delete" });
           } else {
             const previous = current.get(key);
             storage.write({ type: previous === undefined ? "insert" : "update", value: row });
@@ -401,11 +325,13 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         publishModelChanges(
           [...changed].map(([key, row]) =>
             row === null
-              ? { type: "delete" as const, key }
+              ? { key, type: "delete" as const }
               : { type: current.has(key) ? ("update" as const) : ("insert" as const), value: row },
           ),
           [...changed].some(([key, row]) => {
-            if (row === null) return true;
+            if (row === null) {
+              return true;
+            }
             const previous = current.get(key);
             return previous !== undefined && summaryViewMembershipChanged(previous, row);
           }),
@@ -413,19 +339,120 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         await checkpoint;
       });
     },
+    async applySnapshot(connectionId, snapshots) {
+      await replaceSnapshotRows(
+        connectionId,
+        snapshots,
+        (current) =>
+          new Set(
+            current
+              .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
+              .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
+          ),
+      );
+    },
+    beginCatalogRead: (connectionId) => catalogReads.begin(connectionId),
     async beginDelete(connectionId, threadId, commandId) {
       const row = await loadRow(connectionId, threadId);
-      if (row === undefined) return;
+      if (row === undefined) {
+        return;
+      }
       await publish({ ...row, deleteCommandId: commandId });
     },
-    async rollbackDelete(connectionId, threadId, commandId) {
+    close() {
+      disposed = true;
+      model.close();
+      projectUnread.close();
+      void storage.close().catch((error: unknown) => {
+        appLogger.warnCaught({ error: error, event: "thread_summary.close.failed" });
+      });
+    },
+    async get(connectionId, threadId) {
+      return (await loadRow(connectionId, threadId)) ?? null;
+    },
+    async insertStartedThread(connectionId, thread) {
+      const previous = await loadRow(connectionId, thread.id);
+      const mutation = projectThreadSummaryEvent(
+        connectionId,
+        {
+          codewideThreadPatch: {
+            operation: { kind: "threadStarted", thread },
+            threadId: thread.id,
+            version: 1,
+          },
+          method: "thread/started",
+          params: { thread },
+        },
+        () => previous,
+      );
+      if (mutation?.value !== null && mutation?.value !== undefined) {
+        await publish(mutation.value);
+      }
+    },
+    loadView,
+    async markRead(connectionId, threadId) {
       const row = await loadRow(connectionId, threadId);
-      if (row === undefined || row.deleteCommandId !== commandId) return;
-      await publish({ ...row, deleteCommandId: null });
+      if (row !== undefined) {
+        await publish({ ...row, lastSeenCursor: row.latestActivityCursor, unread: 0 });
+      }
     },
-    async applyCommandDelivery(delivery) {
-      await applyDeleteDelivery(delivery);
+    async mergeSnapshots(connectionId, snapshots) {
+      await writes.run(async () => {
+        if (disposed || snapshots.length === 0) {
+          return;
+        }
+        const existing = await loadRows(
+          connectionId,
+          snapshots.map(({ thread }) => thread.id),
+        );
+        const current = new Map(
+          existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
+        );
+        const changed = new Map<string, StoredThreadSummary>();
+        for (const snapshot of snapshots) {
+          if (snapshot.thread.ephemeral) {
+            continue;
+          }
+          const key = threadSummaryKey(connectionId, snapshot.thread.id);
+          const previous = current.get(key);
+          const row = projectThreadSummarySnapshot(
+            connectionId,
+            snapshot.thread,
+            snapshot.archived,
+            previous,
+          );
+          if (previous === undefined || !sameThreadSummary(previous, row)) {
+            changed.set(key, row);
+          }
+        }
+        if (changed.size === 0) {
+          return;
+        }
+        storage.begin();
+        for (const [key, row] of changed) {
+          const previous = current.get(key);
+          storage.write({ type: previous === undefined ? "insert" : "update", value: row });
+        }
+        const checkpoint = storage.commit({ durable: true });
+        publishModelChanges(
+          [...changed].map(([key, row]) => ({
+            ...(current.has(key) ? { type: "update" as const } : { type: "insert" as const }),
+            value: row,
+          })),
+          [...changed].some(([key, row]) => {
+            const previous = current.get(key);
+            return previous !== undefined && summaryViewMembershipChanged(previous, row);
+          }),
+        );
+        await checkpoint;
+      });
     },
+    model,
+    async prepare() {
+      await storage.prepare();
+      await projectUnread.resource(storage.loadUnread);
+    },
+    projectUnread,
     async reconcileDeleteCommands(deliveries) {
       const byId = new Map(
         deliveries.map((delivery) => [
@@ -434,7 +461,9 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         ]),
       );
       for (const row of await storage.loadAll()) {
-        if (row.deleteCommandId === null || row.deleteCommandId === undefined) continue;
+        if (row.deleteCommandId === null) {
+          continue;
+        }
         const delivery = byId.get(`${row.connectionId}\u0000${row.deleteCommandId}`);
         if (delivery === undefined || delivery.state === "failed") {
           await publish({ ...row, deleteCommandId: null });
@@ -443,51 +472,93 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         }
       }
     },
-    setRenameHandler(handler) {
-      renameHandler = handler;
+    async replaceCatalog(connectionId, snapshots) {
+      await replaceSnapshotRows(
+        connectionId,
+        snapshots,
+        (current) =>
+          new Set(
+            current
+              .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
+              .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
+          ),
+      );
+    },
+    async replaceSubagentCatalog(connectionId, rootThreadId, snapshots) {
+      const projected = snapshots.filter(({ thread }) => thread.parentThreadId !== null);
+      await replaceSnapshotRows(connectionId, projected, (current) =>
+        threadSummaryDescendantKeys(current, rootThreadId),
+      );
+    },
+    async rollbackDelete(connectionId, threadId, commandId) {
+      const row = await loadRow(connectionId, threadId);
+      if (row === undefined || row.deleteCommandId !== commandId) {
+        return;
+      }
+      await publish({ ...row, deleteCommandId: null });
     },
     async search(query, connectionId = null) {
       const needle = query.trim().toLocaleLowerCase();
-      if (needle === "") return [];
+      if (needle === "") {
+        return [];
+      }
       const rows =
         connectionId === null ? await storage.loadAll() : await loadConnectionRows(connectionId);
       return rows
         .filter(
           (row) =>
-            row.deleteCommandId == null &&
-            row.parentThreadId == null &&
+            row.deleteCommandId === null &&
+            row.parentThreadId === null &&
             (connectionId === null || row.connectionId === connectionId) &&
             `${row.name ?? ""}\n${row.preview}`.toLocaleLowerCase().includes(needle),
         )
         .sort(compareThreadSummaryRecency)
         .slice(0, 200);
     },
-    async updatePinned(connectionId, threadId, pinned) {
-      const row = await loadRow(connectionId, threadId);
-      if (row !== undefined) await publish({ ...row, pinned });
+    setCatalogLoader(loader) {
+      catalogLoader = loader;
+    },
+    setRenameHandler(handler) {
+      renameHandler = handler;
     },
     async updateArchived(connectionId, threadId, archived) {
       const row = await loadRow(connectionId, threadId);
-      if (row !== undefined) await publish({ ...row, archived });
+      if (row !== undefined) {
+        await publish({ ...row, archived });
+      }
     },
     async updateName(connectionId, threadId, name) {
-      if (renameHandler === null) throw new Error("Thread rename transport is not ready");
+      if (renameHandler === null) {
+        throw new Error("Thread rename transport is not ready");
+      }
       await renameHandler(connectionId, threadId, name);
       const row = await loadRow(connectionId, threadId);
-      if (row !== undefined) await publish({ ...row, name });
+      if (row !== undefined) {
+        await publish({ ...row, name });
+      }
     },
-    async markRead(connectionId, threadId) {
+    async updatePinned(connectionId, threadId, pinned) {
       const row = await loadRow(connectionId, threadId);
-      if (row !== undefined)
-        await publish({ ...row, lastSeenCursor: row.latestActivityCursor, unread: 0 });
+      if (row !== undefined) {
+        await publish({ ...row, pinned });
+      }
     },
-    close() {
-      disposed = true;
-      model.close();
-      projectUnread.close();
-      void storage
-        .close()
-        .catch((cause: unknown) => console.warn("Could not close thread summary model", cause));
+    viewResource(request) {
+      return model.resource(request, async () => {
+        const cached = await storage.loadView(request);
+        if (catalogLoader !== null && (request.recentLimit > 0 || request.archivedLimit > 0)) {
+          const updating = catalogLoader(request);
+          const count = request.archivedLimit > 0 ? cached.archived.length : cached.recent.length;
+          if (count === 0) {
+            await updating;
+            return storage.loadView(request);
+          }
+          void updating.catch((error: unknown) => {
+            appLogger.warnCaught({ error: error, event: "thread_catalog.window_refresh.failed" });
+          });
+        }
+        return cached;
+      });
     },
   };
 }
@@ -521,7 +592,9 @@ function compareThreadSummaryRecency(
   left: StoredThreadSummary,
   right: StoredThreadSummary,
 ): number {
-  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+  if (left.pinned !== right.pinned) {
+    return left.pinned ? -1 : 1;
+  }
   return (right.recencyAt ?? right.updatedAt) - (left.recencyAt ?? left.updatedAt);
 }
 

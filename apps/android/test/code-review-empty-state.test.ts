@@ -7,16 +7,16 @@ import {
   EMPTY_CHANGES_STATE,
   EMPTY_CHANGES_TREE_STATE,
   LOADING_CHANGE_STATE,
-} from "../src/rendering/code-review-empty-state";
-import type { CodeReviewDocument } from "../src/rendering/code-review-bridge";
-import { sourceObjectDeclaration } from "./source-contract";
+} from "../src/features/review/editor/editorEmptyState";
+import type { CodeReviewDocument } from "../src/features/review/editor/editorBridge";
+import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
 const nativeEditorHtml = readFileSync(
-  new URL("../assets/code-review-editor.html", import.meta.url),
+  new URL("../src/features/review/editor/webview/codeReviewEditor.html", import.meta.url),
   "utf8",
 );
 const webEditor = readFileSync(
-  new URL("../src/rendering/CodeReviewEditor.web.tsx", import.meta.url),
+  new URL("../src/features/review/editor/CodeReviewEditor.web.tsx", import.meta.url),
   "utf8",
 );
 
@@ -66,7 +66,7 @@ describe("code review empty states", () => {
   });
 
   it("centers empty states in both native and web review panes", () => {
-    expect(nativeEditorHtml).toContain(
+    expect(compactSource(nativeEditorHtml)).toContain(
       ".review-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;",
     );
     expect(nativeEditorHtml).toContain('.review-empty[data-loading="true"] .review-empty-title');

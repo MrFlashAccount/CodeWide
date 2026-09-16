@@ -1,4 +1,4 @@
-export function abortableDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+export async function abortableDelay(delayMs: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
       const error = new Error("Aborted");

@@ -12,14 +12,14 @@ import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AccountPoolFeature.styles";
 
 export function AccountPoolEditor({
-  connectionId,
   accountPool,
-  onRefresh,
-  onStartLogin,
-  onCancelLogin,
+  connectionId,
   onActivate,
-  onUpdate,
+  onCancelLogin,
+  onRefresh,
   onRemove,
+  onStartLogin,
+  onUpdate,
 }: AccountPoolProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,25 +29,30 @@ export function AccountPoolEditor({
     .sort()
     .join("|");
   const {
-    pendingAccountLogin,
-    codeCopied,
-    loginActionBusy,
     addAccount,
     closeAccountLogin,
+    codeCopied,
     copyAccountCode,
+    loginActionBusy,
     openAccountSignIn,
-  } = useAccountLogin({ connectionId, onStartLogin, onCancelLogin }, profileIds, setError);
+    pendingAccountLogin,
+  } = useAccountLogin({ connectionId, onCancelLogin, onStartLogin }, profileIds, setError);
 
-  const run = useEvent(async (operation: () => Promise<unknown>) => {
-    if (busy) return;
+  const run = useEvent((operation: () => Promise<unknown>): void => {
+    if (busy) {
+      return;
+    }
     setBusy(true);
     setError(null);
-    try {
-      await operation();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Account operation failed");
-    }
-    setBusy(false);
+    operation().then(
+      () => {
+        setBusy(false);
+      },
+      (error: unknown) => {
+        setError(error instanceof Error ? error.message : "Account operation failed");
+        setBusy(false);
+      },
+    );
   });
   return (
     <>
@@ -62,13 +67,15 @@ export function AccountPoolEditor({
           <Pressable
             accessibilityLabel="Refresh Codex accounts"
             disabled={busy}
-            onPress={() => void run(async () => await onRefresh(connectionId))}
+            onPress={() => {
+              run(async () => onRefresh(connectionId));
+            }}
             style={[styles.connectionMiniButton, busy && styles.disabled]}
           >
             {busy ? (
-              <ActivityIndicator size="small" color={colors.textMuted} />
+              <ActivityIndicator color={colors.textMuted} size="small" />
             ) : (
-              <Ionicons name="refresh" size={iconSize.action} color={colors.textMuted} />
+              <Ionicons color={colors.textMuted} name="refresh" size={iconSize.action} />
             )}
           </Pressable>
         </View>
@@ -81,15 +88,15 @@ export function AccountPoolEditor({
         )}
         {profiles.map((profile, index) => (
           <AccountProfileRow
-            key={profile.id}
-            profile={profile}
-            index={index}
-            count={profiles.length}
             busy={busy}
             connectionId={connectionId}
+            count={profiles.length}
+            index={index}
+            key={profile.id}
             onActivate={onActivate}
-            onUpdate={onUpdate}
             onRemove={onRemove}
+            onUpdate={onUpdate}
+            profile={profile}
             run={run}
           />
         ))}
@@ -100,21 +107,23 @@ export function AccountPoolEditor({
         <Pressable
           accessibilityRole="button"
           disabled={busy}
-          onPress={() => void run(addAccount)}
+          onPress={() => {
+            run(addAccount);
+          }}
           style={[styles.secondaryButton, styles.accountPoolAddButton, busy && styles.disabled]}
         >
-          <Ionicons name="person-add-outline" size={iconSize.inline} color={colors.text} />
+          <Ionicons color={colors.text} name="person-add-outline" size={iconSize.inline} />
           <Text style={styles.secondaryButtonText}>Add Codex account</Text>
         </Pressable>
       </View>
       {pendingAccountLogin !== null && (
         <AccountLoginSheet
-          userCode={pendingAccountLogin.userCode}
-          codeCopied={codeCopied}
-          loginActionBusy={loginActionBusy}
           closeAccountLogin={closeAccountLogin}
+          codeCopied={codeCopied}
           copyAccountCode={copyAccountCode}
+          loginActionBusy={loginActionBusy}
           openAccountSignIn={openAccountSignIn}
+          userCode={pendingAccountLogin.userCode}
         />
       )}
     </>

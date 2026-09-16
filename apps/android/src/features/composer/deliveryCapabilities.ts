@@ -4,25 +4,25 @@ import type { QueuedComposerEdit } from "./composerTypes";
 import type { ComposerSendPreference } from "./deliveryMode";
 /** Primary and alternate activation dispatch only to their existing command owners. */
 export type ComposerDeliveryCapabilities = {
-  queuedComposerEdit: QueuedComposerEdit | null;
-  queuedComposerEditBusy: boolean;
-  voicePhase: VoiceInputRow["phase"];
-  finishVoice(sendAfter: boolean, preference?: ComposerSendPreference): Promise<void>;
-  send(textOverride?: string, preference?: ComposerSendPreference): void;
-  currentTurnId: string | null;
-  draft: string;
   attachments: StoredDraftAttachment[];
+  cancelQueuedComposerEdit: () => void;
+  clearComposerText: () => void;
+  currentTurnId: string | null;
+  discardVoice: () => Promise<void>;
+  draft: string;
+  finishVoice: (sendAfter: boolean, preference?: ComposerSendPreference) => Promise<void>;
   onEditQueued:
     | ((commandId: string, text: string, attachments: StoredDraftAttachment[]) => Promise<void>)
     | undefined;
-  pastedAttachmentPending: boolean;
-  uploadsBlockSend: boolean;
-  voiceRetryAvailable: boolean;
-  voiceError: string | null;
-  cancelQueuedComposerEdit(): void;
-  discardVoice(): Promise<void>;
-  clearComposerText(): void;
-  saveQueuedComposerEdit(): void;
   onInterrupt: ((turnId: string) => Promise<void>) | undefined;
+  pastedAttachmentPending: boolean;
+  queuedComposerEdit: QueuedComposerEdit | null;
+  queuedComposerEditBusy: boolean;
+  saveQueuedComposerEdit: () => void;
+  send: (textOverride?: string, preference?: ComposerSendPreference) => void;
   threadLifecycleActive: boolean;
+  uploadsBlockSend: boolean;
+  voiceError: string | null;
+  voicePhase: VoiceInputRow["phase"];
+  voiceRetryAvailable: boolean;
 };

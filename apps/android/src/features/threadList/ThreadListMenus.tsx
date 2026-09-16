@@ -8,7 +8,7 @@ import type { AccountUsageServer } from "../../data/thread-list-account-usage";
 import type { ServerScope } from "../../services/servers/serverScope";
 import { colors, iconSize } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
-import { WorkspaceAccountUsagePopover } from "../accounts/WorkspaceAccountUsagePopover";
+import { WorkspaceAccountUsageMenu } from "../accounts/WorkspaceAccountUsageMenu";
 import { serverGlyph, type ThreadListServer } from "../connections/connectionPresentation";
 import { threadFilterLabel, threadFilterOptions, type ThreadListFilter } from "./threadListFilters";
 import { styles } from "./ThreadListMenus.styles";
@@ -30,16 +30,16 @@ export function ThreadListMenu({
   archived: boolean;
   catalogConnectionIds: string[];
   includeArchiveCount?: boolean;
-  onManageProjects(): void;
-  onRefreshAccountRateLimits?(): Promise<unknown>;
-  onSettings(): void;
-  onToggleArchive(): void;
+  onManageProjects: () => void;
+  onRefreshAccountRateLimits?: () => Promise<unknown>;
+  onSettings: () => void;
+  onToggleArchive: () => void;
 }) {
   const archivedCount = useSelector(() =>
     includeArchiveCount && !archived ? catalogSummaryModel.count(catalogConnectionIds) : null,
   );
   return (
-    <WorkspaceAccountUsagePopover
+    <WorkspaceAccountUsageMenu
       database={accountDatabase}
       servers={accountServers}
       {...(onRefreshAccountRateLimits === undefined
@@ -47,9 +47,9 @@ export function ThreadListMenu({
         : { onRefresh: onRefreshAccountRateLimits })}
       actions={[
         {
+          icon: "folder-outline",
           id: "projects",
           label: "Manage Projects",
-          icon: "folder-outline",
           onPress: onManageProjects,
         },
         {
@@ -57,11 +57,13 @@ export function ThreadListMenu({
           label: archived ? "Active threads" : "Archived threads",
           ...(archivedCount === null
             ? {}
-            : { description: archivedCount === 1 ? "1 thread" : `${archivedCount} threads` }),
+            : {
+                description: archivedCount === 1 ? "1 thread" : `${String(archivedCount)} threads`,
+              }),
           icon: archived ? "chatbubbles-outline" : "archive-outline",
           onPress: onToggleArchive,
         },
-        { id: "settings", label: "Settings", icon: "settings-outline", onPress: onSettings },
+        { icon: "settings-outline", id: "settings", label: "Settings", onPress: onSettings },
       ]}
       align="end"
       placement="bottom"
@@ -69,7 +71,7 @@ export function ThreadListMenu({
       <Pressable accessibilityLabel="Thread list menu" style={styles.headerIcon}>
         <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.navigation} />
       </Pressable>
-    </WorkspaceAccountUsagePopover>
+    </WorkspaceAccountUsageMenu>
   );
 }
 
@@ -83,8 +85,8 @@ export function ThreadFilterMenu({
   serverScope,
 }: {
   mode: ThreadListMode;
-  onSelect(filter: ThreadListFilter): void;
-  onSelectServer(scope: ServerScope): void;
+  onSelect: (filter: ThreadListFilter) => void;
+  onSelectServer: (scope: ServerScope) => void;
   projectScoped: boolean;
   selected: ThreadListFilter;
   servers: readonly ThreadListServer[];

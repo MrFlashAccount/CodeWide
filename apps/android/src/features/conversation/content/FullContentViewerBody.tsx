@@ -12,31 +12,31 @@ import type { FullContentViewerProps } from "./FullContentViewer.types";
 
 /** Displays the current bounded output range; the host retains selection and measurement state. */
 export function renderFullContentViewerBody({
-  selection,
+  formatContentBytes,
+  hasNext,
+  hasPrevious,
   onClose,
-  onPrevious,
   onNext,
-  viewportHeight,
+  onPrevious,
+  rangeEnd,
+  selection,
   setViewportHeight,
   title,
-  hasPrevious,
-  hasNext,
-  rangeEnd,
-  formatContentBytes,
+  viewportHeight,
 }: FullContentViewerProps & {
-  viewportHeight: number;
+  formatContentBytes: (value: number) => string;
+  hasNext: boolean;
+  hasPrevious: boolean;
+  rangeEnd: number;
   setViewportHeight: Dispatch<SetStateAction<number>>;
   title: string;
-  hasPrevious: boolean;
-  hasNext: boolean;
-  rangeEnd: number;
-  formatContentBytes(value: number): string;
+  viewportHeight: number;
 }) {
   return (
-    <View testID="full-content-viewer" style={styles.fullContentViewer}>
+    <View style={styles.fullContentViewer} testID="full-content-viewer">
       <View style={styles.fullContentHeader}>
         <View style={styles.fullContentHeaderIcon}>
-          <Ionicons name="terminal-outline" size={iconSize.navigation} color={colors.textMuted} />
+          <Ionicons color={colors.textMuted} name="terminal-outline" size={iconSize.navigation} />
         </View>
         <View style={styles.fullContentHeaderText}>
           <Text numberOfLines={1} style={styles.fullContentTitle}>
@@ -45,29 +45,29 @@ export function renderFullContentViewerBody({
           <Text numberOfLines={1} style={styles.fullContentMeta}>
             {selection.loading
               ? "Loading…"
-              : `${selection.offset + 1}–${rangeEnd} / ${selection.reference.byteLength.toLocaleString()} bytes`}
+              : `${String(selection.offset + 1)}–${String(rangeEnd)} / ${selection.reference.byteLength.toLocaleString()} bytes`}
           </Text>
         </View>
         {selection.text !== null && <CopyButton text={selection.text} />}
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Close full output"
+          accessibilityRole="button"
           onPress={onClose}
           style={styles.headerIcon}
         >
-          <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
+          <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
         </Pressable>
       </View>
       <View
-        style={styles.fullContentViewport}
         onLayout={(event) => {
           const nextHeight = Math.floor(event.nativeEvent.layout.height);
           setViewportHeight((current) => (current === nextHeight ? current : nextHeight));
         }}
+        style={styles.fullContentViewport}
       >
         {selection.loading ? (
           <View style={styles.fullContentCentered}>
-            <ActivityIndicator size="small" color={colors.accent} />
+            <ActivityIndicator color={colors.accent} size="small" />
             <Text style={styles.menuNotice}>Loading full output…</Text>
           </View>
         ) : selection.error !== null ? (
@@ -77,28 +77,28 @@ export function renderFullContentViewerBody({
         ) : selection.text !== null && viewportHeight > 0 ? (
           selection.presentation === "markdown" ? (
             <ScrollView
+              contentContainerStyle={styles.fullContentMarkdown}
               nestedScrollEnabled
               showsVerticalScrollIndicator
-              contentContainerStyle={styles.fullContentMarkdown}
             >
               <RichMarkdown source={selection.text} />
             </ScrollView>
           ) : Platform.OS === "android" ? (
             <NativeCodeBlock
-              value={selection.text}
-              language="text"
-              variant={selection.presentation === "terminal" ? "terminal" : "code"}
-              maxHeight={viewportHeight}
               embeddedInParentScroll={false}
+              language="text"
+              maxHeight={viewportHeight}
               truncate={false}
+              value={selection.text}
+              variant={selection.presentation === "terminal" ? "terminal" : "code"}
             />
           ) : (
             <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
               <ScrollView
+                contentContainerStyle={styles.fullContentRawHorizontal}
                 horizontal
                 nestedScrollEnabled
                 showsHorizontalScrollIndicator
-                contentContainerStyle={styles.fullContentRawHorizontal}
               >
                 <Text selectable style={styles.fullContentRawText}>
                   {selection.presentation === "terminal"
@@ -116,8 +116,8 @@ export function renderFullContentViewerBody({
         </Text>
         <View style={styles.largeContentPager}>
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Previous output page"
+            accessibilityRole="button"
             disabled={!hasPrevious || selection.loading}
             onPress={onPrevious}
             style={[
@@ -125,11 +125,11 @@ export function renderFullContentViewerBody({
               (!hasPrevious || selection.loading) && styles.disabled,
             ]}
           >
-            <Ionicons name="chevron-back" size={iconSize.action} color={colors.text} />
+            <Ionicons color={colors.text} name="chevron-back" size={iconSize.action} />
           </Pressable>
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Next output page"
+            accessibilityRole="button"
             disabled={!hasNext || selection.loading}
             onPress={onNext}
             style={[
@@ -137,7 +137,7 @@ export function renderFullContentViewerBody({
               (!hasNext || selection.loading) && styles.disabled,
             ]}
           >
-            <Ionicons name="chevron-forward" size={iconSize.action} color={colors.text} />
+            <Ionicons color={colors.text} name="chevron-forward" size={iconSize.action} />
           </Pressable>
         </View>
       </View>

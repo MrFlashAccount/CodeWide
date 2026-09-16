@@ -9,7 +9,7 @@ import {
   type ContentReviewComment,
 } from "../src/rendering/content-review";
 import { contentReviewNativeModule } from "../src/rendering/content-review-native-module";
-import { compactSource } from "./source-contract";
+import { compactSource, sourceHasJsxElement } from "./source-contract";
 
 const target = { id: "answer-1", label: "Completed agent response", reference: "item-1" };
 const contentReviewHost = readFileSync(
@@ -101,25 +101,36 @@ describe("content review", () => {
     expect(contentReviewHost).toContain("<InlineContentReviewComposer");
     expect(contentReviewHost).not.toContain("useAppFullscreenOverlay");
     expect(contentReviewHost).not.toContain("resumeTray");
-    expect(compactSource(documentPreview)).toContain(
-      '<ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />',
-    );
+    expect(
+      sourceHasJsxElement(documentPreview, "ContentReviewComposer", [
+        "targetId={markdownReviewTarget.id}",
+        'anchorKind="text"',
+      ]),
+    ).toBe(true);
     expect(overlays).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
     expect(compactSource(attachmentDocument)).toMatch(
       /<ContentReviewComposer(?=[^>]*anchorKind="text")(?=[^>]*targetId=\{`markdown-document:\$\{document\.request\.path\}`\})[^>]*\/>/u,
     );
-    expect(compactSource(mermaidDiagram)).toContain(
-      '<ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />',
-    );
+    expect(
+      sourceHasJsxElement(mermaidDiagram, "ContentReviewComposer", [
+        "targetId={reviewTarget.id}",
+        'anchorKind="mermaid"',
+        "diagramId={diagramId}",
+      ]),
+    ).toBe(true);
   });
 
   it("keeps Mermaid review state and saved comments inside its fullscreen surface", () => {
     expect(mermaidDiagram).toContain("active={annotating}");
     expect(mermaidDiagram).toContain('color={annotating ? "#ffffff" : colors.textMuted}');
     expect(mermaidDiagram).toContain("reviewPoints={reviewPoints}");
-    expect(compactSource(mermaidDiagram)).toContain(
-      '<ContentReviewComments targetId={reviewTarget.id} diagramId={diagramId} presentation="overlay"',
-    );
+    expect(
+      sourceHasJsxElement(mermaidDiagram, "ContentReviewComments", [
+        "targetId={reviewTarget.id}",
+        "diagramId={diagramId}",
+        'presentation="overlay"',
+      ]),
+    ).toBe(true);
     expect(mermaidRenderer).toContain("window.diagramSetReviewPoints = function (points)");
     expect(mermaidRenderer).toContain("pending ? '#ffffff' : '#b794f6'");
   });
@@ -132,9 +143,12 @@ describe("content review", () => {
     expect(attachmentDocument).toContain(
       "<ContentReviewComments targetId={`markdown-document:${document.request.path}`} />",
     );
-    expect(documentPreview).toContain(
-      '<ContentReviewComments targetId={markdownReviewTarget.id} presentation="overlay" />',
-    );
+    expect(
+      sourceHasJsxElement(documentPreview, "ContentReviewComments", [
+        "targetId={markdownReviewTarget.id}",
+        'presentation="overlay"',
+      ]),
+    ).toBe(true);
   });
 
   it("updates one regular Markdown attachment as comments are saved", () => {

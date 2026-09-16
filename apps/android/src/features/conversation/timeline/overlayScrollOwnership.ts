@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { KeyboardController } from "react-native-keyboard-controller";
+import { useConstant } from "../../../react/useConstant";
 import { useEvent } from "../../../react/useEvent";
 import {
   useAppFullscreenOverlay,
@@ -10,7 +11,7 @@ import { createFullscreenScrollOwnership } from "../../../ui/fullscreen-scroll-o
 export function useOverlayScrollState() {
   const [fullscreenCovered, setFullscreenCovered] = useState(false);
 
-  const [fullscreenScrollOwnership] = useState(() =>
+  const fullscreenScrollOwnership = useConstant(() =>
     createFullscreenScrollOwnership((covered) => {
       // Covering the timeline suspends pagination and tail following, not keyboard
       // geometry: dismissing the IME must still remove its inset behind the overlay.
@@ -26,26 +27,28 @@ export function useOverlayScrollOwnership(
   cancelScheduledPaginationTrim: () => void,
 ) {
   const fullscreenOverlayLifecycle: AppFullscreenOverlayLifecycle = {
+    didClose: fullscreenScrollOwnership.didClose,
     willOpen: (id) => {
       fullscreenScrollOwnership.willOpen(id);
       cancelScheduledPaginationTrim();
       dismissComposerKeyboardForOverlay();
     },
-    didClose: fullscreenScrollOwnership.didClose,
   };
 
   const fullscreenOverlay = useAppFullscreenOverlay({
-    scope: composerScope,
     lifecycle: fullscreenOverlayLifecycle,
+    scope: composerScope,
   });
 
   const dismissComposerKeyboardForOverlay = useEvent(() => {
     // KeyboardController.dismiss is synchronous on Android. Treating its void
     // result as a Promise produced the global "undefined is not a function"
     // rejection whenever a menu or sheet opened.
-    KeyboardController.dismiss({ animated: true, keepFocus: false });
+    Promise.resolve(KeyboardController.dismiss({ animated: true, keepFocus: false })).catch(
+      () => undefined,
+    );
   });
-  return { fullscreenOverlay, fullscreenOverlayLifecycle, dismissComposerKeyboardForOverlay };
+  return { dismissComposerKeyboardForOverlay, fullscreenOverlay, fullscreenOverlayLifecycle };
 }
 
 import { Platform } from "react-native";

@@ -1,5 +1,6 @@
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { RpcClient } from "@codewide/sync-client";
+import { appLogger } from "../observability/logger";
 import { reconcileActiveThreadCommands } from "./command-delivery";
 import { recordTiming } from "./operational-metrics";
 import { readPrivateAssetText } from "./private-transfer";
@@ -20,18 +21,20 @@ import { createThreadSyncForeground } from "./thread-sync-foreground";
 import { createThreadSyncHistory } from "./thread-sync-history";
 import { createThreadSyncItems } from "./thread-sync-items";
 import type { ThreadSyncAuthority, ThreadWindow } from "./thread-sync-types";
+
+const RESOLVED_VOID_PROMISE = Promise.resolve();
 /** Retains shared source authority, read serialization and desired live observation. */
 export function createThreadSyncRuntime({
-  getDetails,
-  getSummaries,
-  getSession,
-  rpcAfterAttach,
-  refreshSubagents,
-  loadTurnControls,
-  transferAccess,
-  readInvalidationArchived,
   clearInvalidationArchived,
+  getDetails,
+  getSession,
+  getSummaries,
+  loadTurnControls,
+  readInvalidationArchived,
+  refreshSubagents,
   refreshThreadCatalog,
+  rpcAfterAttach,
+  transferAccess,
 }: ThreadSyncAuthority) {
   const threadSyncLane = new ThreadSyncLane<ThreadWindow | null>();
   const historyReadAuthority = new ThreadHistoryReadAuthority();
@@ -44,16 +47,18 @@ export function createThreadSyncRuntime({
     const hasAuthority = historyReadAuthority.capture(connectionId);
     return () => hasAuthority() && getSession(connectionId) === session && getDetails() === details;
   }
-  const observeThread = (
+  const observeThread = async (
     connectionId: string,
     threadId: string,
     keepAcrossReconnect = true,
   ): Promise<void> => {
-    if (keepAcrossReconnect) threadObserverDesired.set(connectionId, threadId);
+    if (keepAcrossReconnect) {
+      threadObserverDesired.set(connectionId, threadId);
+    }
     // Observation owns live/reconnect demand only. Window activation owns
     // the single authoritative hydration, so one selection cannot launch a
     // weak read followed immediately by the same full thread sync.
-    return Promise.resolve();
+    await RESOLVED_VOID_PROMISE;
   };
 
   const readThread = async (
@@ -64,35 +69,38 @@ export function createThreadSyncRuntime({
     repairShortWindow = false,
   ): Promise<ThreadWindow | null> => {
     const requestKey = `${connectionId}\u0000${threadId}`;
-    return await threadSyncLane.run(
+    return threadSyncLane.run(
       requestKey,
       async (): Promise<ThreadWindow | null> => {
         const details = getDetails();
         const summaries = getSummaries();
-        if (details === null) throw new Error("Thread history database is not available");
+        if (details === null) {
+          throw new Error("Thread history database is not available");
+        }
         const cached = details.getThread(connectionId, threadId) ?? cachedThread ?? null;
         const session = getSession(connectionId);
         if (session === undefined) {
           await reconcileActiveThreadCommands(details, connectionId, threadId);
           if (cached !== null) {
             return {
-              thread: residentThreadWindow(cached),
               nextCursor: details.historyCursor(connectionId, threadId),
+              thread: residentThreadWindow(cached),
             };
           }
-          if (requireAuthoritative)
+          if (requireAuthoritative) {
             throw new Error("Authoritative thread sync requires an active connection");
+          }
           return null;
         }
         const finishProjectionSnapshot = details.beginProjectionSnapshot(connectionId, threadId);
         const finishBackendRefresh = details.chat.beginBackendRefresh(connectionId, threadId);
         const isCurrent = captureThreadHistoryRead(connectionId, session, details);
         try {
-          void refreshSubagents(connectionId, threadId).catch((cause: unknown) => {
-            console.warn(
-              "CodeWide subagent refresh failed:",
-              cause instanceof Error ? cause.message : "unknown error",
-            );
+          void refreshSubagents(connectionId, threadId).catch(() => {
+            appLogger.warn({
+              event: "subagent.refresh.failed",
+              fields: { connectionId, threadId },
+            });
           });
           const startedAt = performance.now();
           const liveRevision = details.liveRevision(connectionId, threadId);
@@ -106,19 +114,19 @@ export function createThreadSyncRuntime({
           );
           let response: ThreadSyncResponse;
           let materialized;
-          do {
+          for (;;) {
             const rawResponse = await rpcAfterAttach<unknown>(session, "companion/thread/sync", {
-              threadId,
               afterTurnId,
               limit: THREAD_RESIDENT_TURN_LIMIT,
               sourceWitness: catchUp.sourceWitness,
+              threadId,
             });
             response = await hydrateThreadSyncActiveText(
               parseThreadSyncResponse(rawResponse),
               async (reference) => {
                 const loaded = await readPrivateAssetText(
-                  { kind: "content", id: reference.id },
-                  async (forceRefresh) => await transferAccess(connectionId, forceRefresh),
+                  { id: reference.id, kind: "content" },
+                  async (forceRefresh) => transferAccess(connectionId, forceRefresh),
                   { accept: reference.contentType },
                 );
                 if (
@@ -130,7 +138,9 @@ export function createThreadSyncRuntime({
                 return loaded.text;
               },
             );
-            if (!isCurrent()) throw new Error("History read was superseded");
+            if (!isCurrent()) {
+              throw new Error("History read was superseded");
+            }
             materialized = catchUp.accept(response);
             const lastTurn = response.history.turns.at(-1);
             if (!response.history.hasMore) {
@@ -141,21 +151,23 @@ export function createThreadSyncRuntime({
               throw new Error("Companion thread sync did not advance its semantic cursor");
             }
             afterTurnId = lastTurn.id;
-          } while (true);
+          }
           recordTiming("thread_cursor_sync_ms", performance.now() - startedAt);
           await details.synchronizeThread({
             connectionId,
-            thread: materialized.thread,
-            mode: catchUp.mode,
-            historyCursor: materialized.historyCursor,
-            throughCursor: response.throughCursor,
             expectedLiveRevision: liveRevision,
+            historyCursor: materialized.historyCursor,
+            mode: catchUp.mode,
+            thread: materialized.thread,
+            throughCursor: response.throughCursor,
             ...(catchUp.sourceWitness === undefined
               ? {}
               : { sourceWitness: catchUp.sourceWitness }),
             isCurrent,
           });
-          if (!isCurrent()) throw new Error("History read was superseded");
+          if (!isCurrent()) {
+            throw new Error("History read was superseded");
+          }
           finishProjectionSnapshot();
           let synchronizedThread = details.getThread(connectionId, threadId) ?? materialized.thread;
           const residentTurnCount = residentThreadWindow(synchronizedThread).turns.length;
@@ -171,20 +183,20 @@ export function createThreadSyncRuntime({
             const previous = await summaries.get(connectionId, threadId);
             await summaries.mergeSnapshots(connectionId, [
               {
-                thread: synchronizedThread,
                 archived: previous?.archived ?? readInvalidationArchived(requestKey) ?? false,
+                thread: synchronizedThread,
               },
             ]);
           }
           clearInvalidationArchived(requestKey);
           recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.synchronized", {
-            values: { turnCount: synchronizedThread.turns.length },
             tags: { historyKind: response.history.kind },
+            values: { turnCount: synchronizedThread.turns.length },
           });
           void loadTurnControls(connectionId, synchronizedThread.cwd).catch(() => undefined);
           return {
-            thread: residentThreadWindow(synchronizedThread),
             nextCursor: details.historyCursor(connectionId, threadId),
+            thread: residentThreadWindow(synchronizedThread),
           };
         } finally {
           finishBackendRefresh();
@@ -200,15 +212,15 @@ export function createThreadSyncRuntime({
     threadId: string,
   ): Promise<ThreadWindow | null> => {
     const cached = getDetails()?.getThread(connectionId, threadId);
-    return await readThread(connectionId, threadId, cached, true);
+    return readThread(connectionId, threadId, cached, true);
   };
-  const { loadCanonicalThreadTail, loadOlderTurns, loadNewerTurns, loadTurnsBefore } =
+  const { loadCanonicalThreadTail, loadNewerTurns, loadOlderTurns, loadTurnsBefore } =
     createThreadSyncHistory({
+      captureThreadHistoryRead,
       getDetails,
       getSession,
-      rpcAfterAttach,
-      captureThreadHistoryRead,
       readThread,
+      rpcAfterAttach,
     });
   const loadTurnItems = createThreadSyncItems({ getDetails, getSession, rpcAfterAttach });
   const desiredThreadId = (connectionId: string) => threadObserverDesired.get(connectionId);
@@ -224,20 +236,22 @@ export function createThreadSyncRuntime({
     refreshThreadCatalog,
   });
   return {
-    observeThread,
-    readThread,
-    repairThreadProjection,
-    loadOlderTurns,
-    loadNewerTurns,
-    loadTurnsBefore,
-    loadTurnItems,
+    bindForegroundRepair,
     desiredThreadId,
     forgetObservedThread,
     invalidateHistoryReads,
-    bindForegroundRepair,
+    loadNewerTurns,
+    loadOlderTurns,
+    loadTurnItems,
+    loadTurnsBefore,
+    observeThread,
+    readThread,
+    repairThreadProjection,
   };
 }
 function residentThreadWindow(thread: Thread, limit = THREAD_RESIDENT_TURN_LIMIT): Thread {
-  if (thread.turns.length <= limit) return thread;
+  if (thread.turns.length <= limit) {
+    return thread;
+  }
   return { ...thread, turns: thread.turns.slice(-limit) };
 }

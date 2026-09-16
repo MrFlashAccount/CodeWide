@@ -11,73 +11,83 @@ import type { AccountPoolProps } from "./accountCapabilities";
 export function useAccountLogin(
   {
     connectionId,
-    onStartLogin,
     onCancelLogin,
+    onStartLogin,
   }: Pick<AccountPoolProps, "connectionId" | "onStartLogin" | "onCancelLogin">,
   profileIds: string,
   setError: (error: string | null) => void,
 ) {
-  const [pendingAccountLoginState, setPendingAccountLogin] = useState<{
+  const [pendingLoginByProfile, setPendingLoginByProfile] = useState<{
     loginId: string;
-    verificationUrl: string;
-    userCode: string;
     profileIds: string;
+    userCode: string;
+    verificationUrl: string;
   } | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
   const codeCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loginActionBusy, setLoginActionBusy] = useState(false);
   const pendingAccountLogin =
-    pendingAccountLoginState?.profileIds === profileIds ? pendingAccountLoginState : null;
+    pendingLoginByProfile?.profileIds === profileIds ? pendingLoginByProfile : null;
 
   useUnmount(() => {
-    if (codeCopiedTimerRef.current !== null) clearTimeout(codeCopiedTimerRef.current);
+    if (codeCopiedTimerRef.current !== null) {
+      clearTimeout(codeCopiedTimerRef.current);
+    }
   });
 
   const markCodeCopied = useEvent(() => {
-    if (codeCopiedTimerRef.current !== null) clearTimeout(codeCopiedTimerRef.current);
+    if (codeCopiedTimerRef.current !== null) {
+      clearTimeout(codeCopiedTimerRef.current);
+    }
     setCodeCopied(true);
     codeCopiedTimerRef.current = setTimeout(() => {
       codeCopiedTimerRef.current = null;
       setCodeCopied(false);
-    }, 2_400);
+    }, 2400);
   });
 
   const addAccount = useEvent(async () => {
     const login = await onStartLogin(connectionId);
     setCodeCopied(false);
-    setPendingAccountLogin({ ...login, profileIds });
+    setPendingLoginByProfile({ ...login, profileIds });
   });
   const closeAccountLogin = useEvent(() => {
     const login = pendingAccountLogin;
-    setPendingAccountLogin(null);
+    setPendingLoginByProfile(null);
     setCodeCopied(false);
-    if (login !== null) void onCancelLogin(connectionId, login.loginId).catch(() => undefined);
+    if (login !== null) {
+      void onCancelLogin(connectionId, login.loginId).catch(() => undefined);
+    }
   });
   const copyAccountCode = useEvent(async () => {
-    if (pendingAccountLogin === null) return;
+    if (pendingAccountLogin === null) {
+      return;
+    }
     await Clipboard.setStringAsync(pendingAccountLogin.userCode);
     markCodeCopied();
   });
   const openAccountSignIn = useEvent(async () => {
-    if (pendingAccountLogin === null || loginActionBusy) return;
+    if (pendingAccountLogin === null || loginActionBusy) {
+      return;
+    }
     setLoginActionBusy(true);
     setError(null);
     try {
       await Clipboard.setStringAsync(pendingAccountLogin.userCode);
       markCodeCopied();
       await Linking.openURL(pendingAccountLogin.verificationUrl);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not open Codex sign-in");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not open Codex sign-in");
     }
     setLoginActionBusy(false);
   });
   return {
-    pendingAccountLogin,
-    codeCopied,
-    loginActionBusy,
     addAccount,
     closeAccountLogin,
+    codeCopied,
     copyAccountCode,
+    loginActionBusy,
     openAccountSignIn,
+    pendingAccountLogin,
   };
 }

@@ -1,36 +1,37 @@
 import { batch, observable, type Observable } from "@legendapp/state";
 
 import { replaceEqualDeep } from "./replace-equal-deep";
+import { observablePromise } from "./observablePromise";
 import type { ThreadDetailRow } from "./thread-detail-projection";
 import { threadLoadHasResidentSnapshot, type ThreadLoadStatus } from "./thread-load-status";
 import { THREAD_RESIDENT_TURN_LIMIT } from "./thread-pagination";
 
 export type ThreadChatWindowRequest = {
-  connectionId: string;
-  threadId: string;
   anchorTurnId: string | null;
+  connectionId: string;
   /** Changes once per explicit chat opening, including a repeated selection. */
   openGeneration?: number;
+  threadId: string;
 };
 
 export type ThreadChatWindowSnapshot = {
-  scope: string;
-  requestKey: string | null;
-  status: ThreadLoadStatus;
   /** An authoritative backend hydration is currently in flight. */
   backendRefreshing: boolean;
+  detailRowIds: readonly string[];
+  earliestSealedOrdinal: number | null;
   error: string | null;
   historyEpoch: number;
   latestSealedOrdinal: number | null;
-  earliestSealedOrdinal: number | null;
-  residentTurnLimit: number;
-  turnRowIds: readonly string[];
-  detailRowIds: readonly string[];
-  liveRowIds: readonly string[];
   /** Range membership, order, sealing, or lifecycle changed. */
   layoutRevision: number;
+  liveRowIds: readonly string[];
+  requestKey: string | null;
+  residentTurnLimit: number;
   /** Any content changed, including incremental streaming text. */
   revision: number;
+  scope: string;
+  status: ThreadLoadStatus;
+  turnRowIds: readonly string[];
 };
 
 export type LoadedThreadChatWindow = Omit<
@@ -41,36 +42,41 @@ export type LoadedThreadChatWindow = Omit<
 };
 
 export type ThreadChatModel = {
-  window$(connectionId: string, threadId: string): Observable<ThreadChatWindowSnapshot>;
-  resource(request: ThreadChatWindowRequest, loader: () => Promise<void>): ThreadChatWindowResource;
-  retainWindow(connectionId: string, threadId: string): () => void;
-  row$(rowId: string): Observable<ThreadDetailRow | null>;
-  readRows(rowIds: readonly string[]): ThreadDetailRow[];
-  beginPresentation(connectionId: string, threadId: string): void;
-  finishPresentation(connectionId: string, threadId: string): void;
-  startWindow(request: ThreadChatWindowRequest): number;
-  beginBackendRefresh(connectionId: string, threadId: string): () => void;
-  commitWindow(
-    request: ThreadChatWindowRequest,
-    generation: number,
-    loaded: LoadedThreadChatWindow,
-  ): boolean;
-  commitRange(
+  beginBackendRefresh: (connectionId: string, threadId: string) => () => void;
+  beginPresentation: (connectionId: string, threadId: string) => void;
+  close: () => void;
+  // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+  // oxlint-disable-next-line eslint/max-params
+  commitRange: (
     connectionId: string,
     threadId: string,
     expected: Pick<ThreadChatWindowSnapshot, "historyEpoch" | "layoutRevision">,
     loaded: LoadedThreadChatWindow,
-  ): boolean;
-  failWindow(request: ThreadChatWindowRequest, generation: number, cause: unknown): void;
-  publishChanges(
+  ) => boolean;
+  commitWindow: (
+    request: ThreadChatWindowRequest,
+    generation: number,
+    loaded: LoadedThreadChatWindow,
+  ) => boolean;
+  failWindow: (request: ThreadChatWindowRequest, generation: number, cause: unknown) => void;
+  finishPresentation: (connectionId: string, threadId: string) => void;
+  publishChanges: (
     changes: readonly (
       | { type: "insert" | "update"; value: ThreadDetailRow }
-      | { type: "delete"; key: string }
+      | { key: string; type: "delete" }
     )[],
-  ): void;
-  refreshThread(connectionId: string, threadId: string, rows: readonly ThreadDetailRow[]): void;
-  residentRowCount(): number;
-  close(): void;
+  ) => void;
+  readRows: (rowIds: readonly string[]) => ThreadDetailRow[];
+  refreshThread: (connectionId: string, threadId: string, rows: readonly ThreadDetailRow[]) => void;
+  residentRowCount: () => number;
+  resource: (
+    request: ThreadChatWindowRequest,
+    loader: () => Promise<void>,
+  ) => ThreadChatWindowResource;
+  retainWindow: (connectionId: string, threadId: string) => () => void;
+  row$: (rowId: string) => Observable<ThreadDetailRow | null>;
+  startWindow: (request: ThreadChatWindowRequest) => number;
+  window$: (connectionId: string, threadId: string) => Observable<ThreadChatWindowSnapshot>;
 };
 
 export type ThreadChatWindowResource = {
@@ -78,9 +84,20 @@ export type ThreadChatWindowResource = {
   window$: Observable<ThreadChatWindowSnapshot>;
 };
 
+type ThreadChatResourceRecord = {
+  committedToken: number;
+  hasReadySnapshot: boolean;
+  loadingKey: string | null;
+  ready$: Observable<boolean> | null;
+  requestKey: string | null;
+  retryAttempt: number;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  token: number;
+};
+
 export type ThreadChatModelOptions = {
-  onEvictWindow?(connectionId: string, threadId: string): void;
-  onResidentRowCountChange?(rowCount: number): void;
+  onEvictWindow?: (connectionId: string, threadId: string) => void;
+  onResidentRowCountChange?: (rowCount: number) => void;
 };
 
 // Keep data, not mounted screens, for the three most recently visited inactive
@@ -101,28 +118,16 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     string,
     {
       hasCommittedWindow: boolean;
+      pendingRows: { rows: readonly ThreadDetailRow[]; sequence: number } | null;
       pendingWindow: {
-        sequence: number;
-        request: ThreadChatWindowRequest;
         generation: number;
         loaded: LoadedThreadChatWindow;
+        request: ThreadChatWindowRequest;
+        sequence: number;
       } | null;
-      pendingRows: { sequence: number; rows: readonly ThreadDetailRow[] } | null;
     }
   >();
-  const resources = new Map<
-    string,
-    {
-      ready$: Observable<boolean>;
-      requestKey: string | null;
-      loadingKey: string | null;
-      token: number;
-      committedToken: number;
-      hasReadySnapshot: boolean;
-      retryAttempt: number;
-      retryTimer: ReturnType<typeof setTimeout> | null;
-    }
-  >();
+  const resources = new Map<string, ThreadChatResourceRecord>();
   let closed = false;
   let reportedResidentRowCount = -1;
   // Only this owner installs, deletes or evicts row values. Metadata updates
@@ -136,8 +141,12 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   let residentResourceScope: string | null = null;
 
   const reportResidentRowCount = (): void => {
-    if (options.onResidentRowCountChange === undefined) return;
-    if (residentRowCount === reportedResidentRowCount) return;
+    if (options.onResidentRowCountChange === undefined) {
+      return;
+    }
+    if (residentRowCount === reportedResidentRowCount) {
+      return;
+    }
     reportedResidentRowCount = residentRowCount;
     options.onResidentRowCountChange(residentRowCount);
   };
@@ -177,8 +186,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const evictWindow = (scope: string): void => {
     const identity = windowIdentities.get(scope);
     const resource = resources.get(scope);
-    if (resource?.retryTimer !== null && resource?.retryTimer !== undefined)
+    if (resource?.retryTimer !== null && resource?.retryTimer !== undefined) {
       clearTimeout(resource.retryTimer);
+    }
     windowNodes.delete(scope);
     activeRequests.delete(scope);
     retainCounts.delete(scope);
@@ -188,7 +198,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     changedRowIdsByScope.delete(scope);
     presentations.delete(scope);
     resources.delete(scope);
-    if (identity !== undefined) options.onEvictWindow?.(identity.connectionId, identity.threadId);
+    if (identity !== undefined) {
+      options.onEvictWindow?.(identity.connectionId, identity.threadId);
+    }
   };
 
   const pruneUnreferencedRows = (): void => {
@@ -199,18 +211,24 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         ...snapshot.turnRowIds,
         ...snapshot.detailRowIds,
         ...snapshot.liveRowIds,
-      ])
+      ]) {
         retainedRowIds.add(rowId);
+      }
     }
     for (const rowId of rowNodes.keys()) {
       if (!retainedRowIds.has(rowId)) {
-        if (rowNodes.get(rowId)?.peek() != null) residentRowCount -= 1;
+        const row = rowNodes.get(rowId)?.peek();
+        if (row !== null && row !== undefined) {
+          residentRowCount -= 1;
+        }
         rowNodes.delete(rowId);
       }
     }
     reportResidentRowCount();
   };
 
+  // WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+  // oxlint-disable-next-line eslint/complexity
   const evictUnretainedWindows = (protectedScope: string | null): void => {
     let inactiveCount = 0;
     for (const scope of windowNodes.keys()) {
@@ -218,19 +236,23 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         scope !== protectedScope &&
         scope !== residentResourceScope &&
         (retainCounts.get(scope) ?? 0) === 0
-      )
+      ) {
         inactiveCount += 1;
+      }
     }
     // Map insertion order is navigation recency; live updates never promote a
     // background conversation ahead of one the user actually selected.
     for (const scope of windowNodes.keys()) {
-      if (inactiveCount <= INACTIVE_WINDOW_LIMIT) break;
+      if (inactiveCount <= INACTIVE_WINDOW_LIMIT) {
+        break;
+      }
       if (
         scope === protectedScope ||
         scope === residentResourceScope ||
         (retainCounts.get(scope) ?? 0) > 0
-      )
+      ) {
         continue;
+      }
       evictWindow(scope);
       inactiveCount -= 1;
     }
@@ -243,8 +265,12 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const node = row$(row.id);
       const previous = node.peek();
       const next = previous === null ? row : replaceEqualDeep(previous, row);
-      if (next === previous) continue;
-      if (previous === null) residentRowCount += 1;
+      if (next === previous) {
+        continue;
+      }
+      if (previous === null) {
+        residentRowCount += 1;
+      }
       node.set(next);
       changed = true;
     }
@@ -269,8 +295,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       closed ||
       generations.get(scope) !== generation ||
       threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)
-    )
+    ) {
       return false;
+    }
     batch(() => {
       const rowsChanged = installRows(loaded.rows);
       const node = window$(request.connectionId, request.threadId);
@@ -280,13 +307,15 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const { rows: _rows, ...loadedWindow } = loaded;
       const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
         ...loadedWindow,
-        status: "ready",
         backendRefreshing: previous.backendRefreshing,
         error: null,
         layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
         revision: previous.revision + (rowsChanged ? 1 : 0),
+        status: "ready",
       });
-      if (next !== previous) node.set(next);
+      if (next !== previous) {
+        node.set(next);
+      }
       windowLayoutSignatures.set(scope, signature);
     });
     // commitWindow is the atomic presentation seam. Mark the resident
@@ -313,7 +342,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     changedRowIdsByScope.delete(scope);
     const request = activeRequests.get(scope);
     const node = windowNodes.get(scope);
-    if (request === undefined || node === undefined) return;
+    if (request === undefined || node === undefined) {
+      return;
+    }
     const previous = node.peek();
     const next = projectResidentRows(rows, previous, previous.residentTurnLimit);
     const signature = threadLayoutSignature(rows, {
@@ -337,31 +368,37 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const nextSnapshot = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
         ...previous,
         ...next,
+        error: null,
+        layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
+        revision: previous.revision + (publishedContentChanged || rowsChanged ? 1 : 0),
         status:
           previous.status === "initial-loading" || previous.status === "initial-error"
             ? "ready"
             : previous.status,
-        error: null,
-        layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
-        revision: previous.revision + (publishedContentChanged || rowsChanged ? 1 : 0),
       });
-      if (nextSnapshot !== previous) node.set(nextSnapshot);
+      if (nextSnapshot !== previous) {
+        node.set(nextSnapshot);
+      }
     });
     windowLayoutSignatures.set(scope, signature);
   };
 
-  const beginResourceLoad = (
+  // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+  // oxlint-disable-next-line eslint/max-params
+  const beginResourceLoad = async (
     request: ThreadChatWindowRequest,
     loader: () => Promise<void>,
     initial: boolean,
     retryAttempt = 0,
   ): Promise<boolean> => {
     const scope = threadChatScope(request.connectionId, request.threadId);
-    const requestKey = threadChatRequestKey(request) as string;
+    const requestKey = threadChatRequestKey(request);
     const record = resources.get(scope);
     const token = (record?.token ?? 0) + 1;
     if (record !== undefined) {
-      if (record.retryTimer !== null) clearTimeout(record.retryTimer);
+      if (record.retryTimer !== null) {
+        clearTimeout(record.retryTimer);
+      }
       record.retryTimer = null;
       record.requestKey = requestKey;
       record.loadingKey = requestKey;
@@ -378,8 +415,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           current !== record ||
           current.token !== token ||
           current.requestKey !== requestKey
-        )
+        ) {
           return false;
+        }
         current.loadingKey = null;
         // A superseded press can finish without installing its SQLite window.
         // Live rows (or a previous opening) do not prove this load completed.
@@ -391,7 +429,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         current.retryAttempt = 0;
         return true;
       })
-      .catch((cause: unknown) => {
+      .catch((error: unknown) => {
         const current = resources.get(scope);
         const ownsLoad =
           !closed &&
@@ -399,10 +437,14 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           current === record &&
           current.token === token &&
           current.requestKey === requestKey;
-        if (!ownsLoad) return false;
+        if (!ownsLoad) {
+          return false;
+        }
         current.loadingKey = null;
-        if (initial) throw cause;
-        const retryDelay = Math.min(250 * 2 ** current.retryAttempt, 5_000);
+        if (initial) {
+          throw error;
+        }
+        const retryDelay = Math.min(250 * 2 ** current.retryAttempt, 5000);
         current.retryTimer = setTimeout(() => {
           const latest = resources.get(scope);
           if (
@@ -410,156 +452,32 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
             latest !== current ||
             latest.requestKey !== requestKey ||
             latest.loadingKey !== null
-          )
+          ) {
             return;
-          void beginResourceLoad(request, loader, false, current.retryAttempt + 1);
+          }
+          beginResourceLoad(request, loader, false, current.retryAttempt + 1).catch(() => false);
         }, retryDelay);
         return false;
       });
   };
 
   return {
-    window$,
-    resource(request, loader) {
-      if (closed) throw new Error("Thread chat model is closed");
-      const scope = threadChatScope(request.connectionId, request.threadId);
-      if (residentResourceScope !== scope) {
-        const resident = windowNodes.get(scope);
-        if (resident !== undefined) {
-          windowNodes.delete(scope);
-          windowNodes.set(scope, resident);
-        }
-      }
-      residentResourceScope = scope;
-      const requestKey = threadChatRequestKey(request) as string;
-      let record = resources.get(scope);
-      if (record === undefined) {
-        const holder = {
-          ready$: null as unknown as Observable<boolean>,
-          requestKey,
-          loadingKey: requestKey,
-          token: 0,
-          committedToken: 0,
-          hasReadySnapshot: false,
-          retryAttempt: 0,
-          retryTimer: null,
-        };
-        resources.set(scope, holder);
-        holder.ready$ = observable(
-          beginResourceLoad(request, loader, true),
-        ) as unknown as Observable<boolean>;
-        record = holder;
-      } else if (record.requestKey !== requestKey && record.loadingKey !== requestKey) {
-        // Window changes preserve the current rows. The SQLite page is merged
-        // into the active resident set atomically, so pagination never removes
-        // the visible anchor or the mutable head.
-        const load = beginResourceLoad(request, loader, !record.hasReadySnapshot);
-        if (!record.hasReadySnapshot)
-          record.ready$ = observable(load) as unknown as Observable<boolean>;
-        else void load;
-      }
-      return { ready$: record.ready$, window$: window$(request.connectionId, request.threadId) };
-    },
-    retainWindow(connectionId, threadId) {
-      if (closed) return () => undefined;
-      const scope = threadChatScope(connectionId, threadId);
-      retainCounts.set(scope, (retainCounts.get(scope) ?? 0) + 1);
-      let retained = true;
-      return () => {
-        if (!retained) return;
-        retained = false;
-        const next = (retainCounts.get(scope) ?? 1) - 1;
-        if (next <= 0) retainCounts.delete(scope);
-        else retainCounts.set(scope, next);
-        // React destroys the old passive effect before mounting the replacement
-        // effect. A responsive mobile/desktop handoff therefore reaches zero
-        // owners briefly even though the same thread remains visible. Defer
-        // eviction to the commit's microtask boundary so the new owner can
-        // retain the exact same observable instead of subscribing to a window
-        // that cleanup has already removed from the model.
-        if (next <= 0) {
-          queueMicrotask(() => {
-            if (scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) return;
-            evictUnretainedWindows(residentResourceScope);
-          });
-        }
-      };
-    },
-    row$,
-    readRows(rowIds) {
-      return rowIds.flatMap((rowId) => {
-        const row = row$(rowId).peek();
-        return row === null ? [] : [row];
-      });
-    },
-    beginPresentation(connectionId, threadId) {
-      if (closed) return;
-      const scope = threadChatScope(connectionId, threadId);
-      if (presentations.has(scope)) return;
-      const snapshot = windowNodes.get(scope)?.peek();
-      presentations.set(scope, {
-        hasCommittedWindow:
-          snapshot !== undefined &&
-          threadLoadHasResidentSnapshot(snapshot.status) &&
-          hasTimelineRows(snapshot),
-        pendingWindow: null,
-        pendingRows: null,
-      });
-    },
-    finishPresentation(connectionId, threadId) {
-      const scope = threadChatScope(connectionId, threadId);
-      const presentation = presentations.get(scope);
-      if (presentation === undefined) return;
-      presentations.delete(scope);
-      batch(() => {
-        const pending = [presentation.pendingWindow, presentation.pendingRows]
-          .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-          .sort((left, right) => left.sequence - right.sequence);
-        for (const entry of pending) {
-          if ("request" in entry) commitWindowNow(entry.request, entry.generation, entry.loaded);
-          else refreshThreadNow(connectionId, threadId, entry.rows);
-        }
-      });
-    },
-    startWindow(request) {
-      if (closed) throw new Error("Thread chat model is closed");
-      const scope = threadChatScope(request.connectionId, request.threadId);
-      const generation = (generations.get(scope) ?? 0) + 1;
-      generations.set(scope, generation);
-      activeRequests.set(scope, request);
-      const node = window$(request.connectionId, request.threadId);
-      // Protect the destination before applying the inactive-window budget.
-      evictUnretainedWindows(scope);
-      const previous = node.peek();
-      const requestKey = threadChatRequestKey(request);
-      const hasResidentSnapshot =
-        resources.get(scope)?.hasReadySnapshot === true ||
-        threadLoadHasResidentSnapshot(previous.status);
-      const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
-        ...previous,
-        requestKey,
-        backendRefreshing: (backendRefreshCounts.get(scope) ?? 0) > 0,
-        status: hasResidentSnapshot
-          ? previous.requestKey === requestKey
-            ? "background-updating"
-            : "loading-history"
-          : "initial-loading",
-        error: null,
-        residentTurnLimit: previous.residentTurnLimit || THREAD_RESIDENT_TURN_LIMIT,
-      });
-      if (next !== previous) node.set(next);
-      return generation;
-    },
     beginBackendRefresh(connectionId, threadId) {
       const scope = threadChatScope(connectionId, threadId);
-      if (closed) return () => undefined;
+      if (closed) {
+        return () => undefined;
+      }
       backendRefreshCounts.set(scope, (backendRefreshCounts.get(scope) ?? 0) + 1);
       const node = window$(connectionId, threadId);
       const previous = node.peek();
-      if (!previous.backendRefreshing) node.set({ ...previous, backendRefreshing: true });
+      if (!previous.backendRefreshing) {
+        node.set({ ...previous, backendRefreshing: true });
+      }
       let active = true;
       return () => {
-        if (!active) return;
+        if (!active) {
+          return;
+        }
         active = false;
         const remaining = (backendRefreshCounts.get(scope) ?? 1) - 1;
         if (remaining > 0) {
@@ -567,130 +485,41 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           return;
         }
         backendRefreshCounts.delete(scope);
-        if (closed) return;
+        if (closed) {
+          return;
+        }
         const current = node.peek();
-        if (current.backendRefreshing) node.set({ ...current, backendRefreshing: false });
+        if (current.backendRefreshing) {
+          node.set({ ...current, backendRefreshing: false });
+        }
       };
     },
-    commitWindow(request, generation, loaded) {
-      const scope = threadChatScope(request.connectionId, request.threadId);
-      if (
-        closed ||
-        generations.get(scope) !== generation ||
-        threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)
-      )
-        return false;
-      const presentation = presentations.get(scope);
-      if (presentation?.hasCommittedWindow) {
-        presentation.pendingWindow = {
-          sequence: ++presentationSequence,
-          request,
-          generation,
-          loaded,
-        };
-        const resource = resources.get(scope);
-        if (resource?.requestKey === threadChatRequestKey(request))
-          resource.committedToken = resource.token;
-        return true;
-      }
-      const committed = commitWindowNow(request, generation, loaded);
-      if (committed && presentation !== undefined) {
-        presentation.hasCommittedWindow = hasTimelineRows(
-          window$(request.connectionId, request.threadId).peek(),
-        );
-      }
-      return committed;
-    },
-    commitRange(connectionId, threadId, expected, loaded) {
-      const scope = threadChatScope(connectionId, threadId);
-      const node = windowNodes.get(scope);
-      if (closed || node === undefined) return false;
-      const before = node.peek();
-      if (
-        before.historyEpoch !== expected.historyEpoch ||
-        before.layoutRevision !== expected.layoutRevision
-      )
-        return false;
-      batch(() => {
-        const rowsChanged = installRows(loaded.rows);
-        const previous = node.peek();
-        if (
-          previous.historyEpoch !== expected.historyEpoch ||
-          previous.layoutRevision !== expected.layoutRevision
-        )
-          return;
-        const signature = threadLayoutSignature(loaded.rows, loaded);
-        const layoutChanged = windowLayoutSignatures.get(scope) !== signature;
-        const { rows: _rows, ...loadedWindow } = loaded;
-        const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
-          ...loadedWindow,
-          status: "ready",
-          backendRefreshing: previous.backendRefreshing,
-          error: null,
-          layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
-          revision: previous.revision + (rowsChanged ? 1 : 0),
-        });
-        if (next !== previous) node.set(next);
-        windowLayoutSignatures.set(scope, signature);
-      });
-      pruneUnreferencedRows();
-      return true;
-    },
-    failWindow(request, generation, cause) {
-      const scope = threadChatScope(request.connectionId, request.threadId);
-      if (closed || generations.get(scope) !== generation) return;
-      const node = window$(request.connectionId, request.threadId);
-      const previous = node.peek();
-      const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
-        ...previous,
-        status: threadLoadHasResidentSnapshot(previous.status)
-          ? "background-retrying"
-          : "initial-error",
-        error: cause instanceof Error ? cause.message : "Could not load messages",
-      });
-      if (next !== previous) node.set(next);
-    },
-    publishChanges(changes) {
-      if (closed || changes.length === 0) return;
-      batch(() => {
-        for (const change of changes) {
-          if (change.type === "delete") {
-            const node = row$(change.key);
-            const previous = node.peek();
-            if (previous === null) continue;
-            recordChangedRow(previous);
-            residentRowCount -= 1;
-            node.set(null);
-            continue;
-          }
-          const node = row$(change.value.id);
-          const previous = node.peek();
-          const next = previous === null ? change.value : replaceEqualDeep(previous, change.value);
-          if (next === previous) continue;
-          recordChangedRow(change.value);
-          if (previous === null) residentRowCount += 1;
-          node.set(next);
-        }
-      });
-      reportResidentRowCount();
-    },
-    refreshThread(connectionId, threadId, rows) {
-      const scope = threadChatScope(connectionId, threadId);
-      const presentation = presentations.get(scope);
-      if (presentation !== undefined) {
-        presentation.pendingRows = { sequence: ++presentationSequence, rows };
+    beginPresentation(connectionId, threadId) {
+      if (closed) {
         return;
       }
-      refreshThreadNow(connectionId, threadId, rows);
-    },
-    residentRowCount() {
-      return residentRowCount;
+      const scope = threadChatScope(connectionId, threadId);
+      if (presentations.has(scope)) {
+        return;
+      }
+      const snapshot = windowNodes.get(scope)?.peek();
+      presentations.set(scope, {
+        hasCommittedWindow:
+          snapshot !== undefined &&
+          threadLoadHasResidentSnapshot(snapshot.status) &&
+          hasTimelineRows(snapshot),
+        pendingRows: null,
+        pendingWindow: null,
+      });
     },
     close() {
       residentResourceScope = null;
       closed = true;
-      for (const resource of resources.values())
-        if (resource.retryTimer !== null) clearTimeout(resource.retryTimer);
+      for (const resource of resources.values()) {
+        if (resource.retryTimer !== null) {
+          clearTimeout(resource.retryTimer);
+        }
+      }
       activeRequests.clear();
       retainCounts.clear();
       generations.clear();
@@ -705,6 +534,291 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       residentRowCount = 0;
       reportResidentRowCount();
     },
+    // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+    // oxlint-disable-next-line eslint/max-params
+    commitRange(connectionId, threadId, expected, loaded) {
+      const scope = threadChatScope(connectionId, threadId);
+      const node = windowNodes.get(scope);
+      if (closed || node === undefined) {
+        return false;
+      }
+      const before = node.peek();
+      if (
+        before.historyEpoch !== expected.historyEpoch ||
+        before.layoutRevision !== expected.layoutRevision
+      ) {
+        return false;
+      }
+      batch(() => {
+        const rowsChanged = installRows(loaded.rows);
+        const previous = node.peek();
+        if (
+          previous.historyEpoch !== expected.historyEpoch ||
+          previous.layoutRevision !== expected.layoutRevision
+        ) {
+          return;
+        }
+        const signature = threadLayoutSignature(loaded.rows, loaded);
+        const layoutChanged = windowLayoutSignatures.get(scope) !== signature;
+        const { rows: _rows, ...loadedWindow } = loaded;
+        const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
+          ...loadedWindow,
+          backendRefreshing: previous.backendRefreshing,
+          error: null,
+          layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
+          revision: previous.revision + (rowsChanged ? 1 : 0),
+          status: "ready",
+        });
+        if (next !== previous) {
+          node.set(next);
+        }
+        windowLayoutSignatures.set(scope, signature);
+      });
+      pruneUnreferencedRows();
+      return true;
+    },
+    // WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+    // oxlint-disable-next-line eslint/complexity
+    commitWindow(request, generation, loaded) {
+      const scope = threadChatScope(request.connectionId, request.threadId);
+      if (
+        closed ||
+        generations.get(scope) !== generation ||
+        threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)
+      ) {
+        return false;
+      }
+      const presentation = presentations.get(scope);
+      if (presentation?.hasCommittedWindow === true) {
+        presentation.pendingWindow = {
+          generation,
+          loaded,
+          request,
+          sequence: ++presentationSequence,
+        };
+        const resource = resources.get(scope);
+        if (resource?.requestKey === threadChatRequestKey(request)) {
+          resource.committedToken = resource.token;
+        }
+        return true;
+      }
+      const committed = commitWindowNow(request, generation, loaded);
+      if (committed && presentation !== undefined) {
+        presentation.hasCommittedWindow = hasTimelineRows(
+          window$(request.connectionId, request.threadId).peek(),
+        );
+      }
+      return committed;
+    },
+    failWindow(request, generation, cause) {
+      const scope = threadChatScope(request.connectionId, request.threadId);
+      if (closed || generations.get(scope) !== generation) {
+        return;
+      }
+      const node = window$(request.connectionId, request.threadId);
+      const previous = node.peek();
+      const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
+        ...previous,
+        error: cause instanceof Error ? cause.message : "Could not load messages",
+        status: threadLoadHasResidentSnapshot(previous.status)
+          ? "background-retrying"
+          : "initial-error",
+      });
+      if (next !== previous) {
+        node.set(next);
+      }
+    },
+    finishPresentation(connectionId, threadId) {
+      const scope = threadChatScope(connectionId, threadId);
+      const presentation = presentations.get(scope);
+      if (presentation === undefined) {
+        return;
+      }
+      presentations.delete(scope);
+      batch(() => {
+        const pending = [presentation.pendingWindow, presentation.pendingRows]
+          .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+          .sort((left, right) => left.sequence - right.sequence);
+        for (const entry of pending) {
+          if ("request" in entry) {
+            commitWindowNow(entry.request, entry.generation, entry.loaded);
+          } else {
+            refreshThreadNow(connectionId, threadId, entry.rows);
+          }
+        }
+      });
+    },
+    publishChanges(changes) {
+      if (closed || changes.length === 0) {
+        return;
+      }
+      batch(() => {
+        for (const change of changes) {
+          if (change.type === "delete") {
+            const node = row$(change.key);
+            const previous = node.peek();
+            if (previous === null) {
+              continue;
+            }
+            recordChangedRow(previous);
+            residentRowCount -= 1;
+            node.set(null);
+            continue;
+          }
+          const node = row$(change.value.id);
+          const previous = node.peek();
+          const next = previous === null ? change.value : replaceEqualDeep(previous, change.value);
+          if (next === previous) {
+            continue;
+          }
+          recordChangedRow(change.value);
+          if (previous === null) {
+            residentRowCount += 1;
+          }
+          node.set(next);
+        }
+      });
+      reportResidentRowCount();
+    },
+    readRows(rowIds) {
+      return rowIds.flatMap((rowId) => {
+        const row = row$(rowId).peek();
+        return row === null ? [] : [row];
+      });
+    },
+    refreshThread(connectionId, threadId, rows) {
+      const scope = threadChatScope(connectionId, threadId);
+      const presentation = presentations.get(scope);
+      if (presentation !== undefined) {
+        presentation.pendingRows = { rows, sequence: ++presentationSequence };
+        return;
+      }
+      refreshThreadNow(connectionId, threadId, rows);
+    },
+    residentRowCount() {
+      return residentRowCount;
+    },
+    // WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+    // oxlint-disable-next-line eslint/complexity
+    resource(request, loader) {
+      if (closed) {
+        throw new Error("Thread chat model is closed");
+      }
+      const scope = threadChatScope(request.connectionId, request.threadId);
+      if (residentResourceScope !== scope) {
+        const resident = windowNodes.get(scope);
+        if (resident !== undefined) {
+          windowNodes.delete(scope);
+          windowNodes.set(scope, resident);
+        }
+      }
+      residentResourceScope = scope;
+      const requestKey = threadChatRequestKey(request);
+      let record = resources.get(scope);
+      if (record === undefined) {
+        const holder: ThreadChatResourceRecord = {
+          committedToken: 0,
+          hasReadySnapshot: false,
+          loadingKey: requestKey,
+          ready$: null,
+          requestKey,
+          retryAttempt: 0,
+          retryTimer: null,
+          token: 0,
+        };
+        resources.set(scope, holder);
+        holder.ready$ = observablePromise(beginResourceLoad(request, loader, true));
+        record = holder;
+      } else if (record.requestKey !== requestKey && record.loadingKey !== requestKey) {
+        // Window changes preserve the current rows. The SQLite page is merged
+        // into the active resident set atomically, so pagination never removes
+        // the visible anchor or the mutable head.
+        const load = beginResourceLoad(request, loader, !record.hasReadySnapshot);
+        if (!record.hasReadySnapshot) {
+          record.ready$ = observablePromise(load);
+        } else {
+          load.catch(() => false);
+        }
+      }
+      if (record.ready$ === null) {
+        throw new Error("Thread chat readiness was not initialized");
+      }
+      return { ready$: record.ready$, window$: window$(request.connectionId, request.threadId) };
+    },
+    retainWindow(connectionId, threadId) {
+      if (closed) {
+        return () => undefined;
+      }
+      const scope = threadChatScope(connectionId, threadId);
+      retainCounts.set(scope, (retainCounts.get(scope) ?? 0) + 1);
+      let retained = true;
+      return () => {
+        if (!retained) {
+          return;
+        }
+        retained = false;
+        const next = (retainCounts.get(scope) ?? 1) - 1;
+        if (next <= 0) {
+          retainCounts.delete(scope);
+        } else {
+          retainCounts.set(scope, next);
+        }
+        // React destroys the old passive effect before mounting the replacement
+        // effect. A responsive mobile/desktop handoff therefore reaches zero
+        // owners briefly even though the same thread remains visible. Defer
+        // eviction to the commit's microtask boundary so the new owner can
+        // retain the exact same observable instead of subscribing to a window
+        // that cleanup has already removed from the model.
+        if (next <= 0) {
+          queueMicrotask(() => {
+            if (scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) {
+              return;
+            }
+            evictUnretainedWindows(residentResourceScope);
+          });
+        }
+      };
+    },
+    row$,
+    // WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+    // oxlint-disable-next-line eslint/complexity
+    startWindow(request) {
+      if (closed) {
+        throw new Error("Thread chat model is closed");
+      }
+      const scope = threadChatScope(request.connectionId, request.threadId);
+      const generation = (generations.get(scope) ?? 0) + 1;
+      generations.set(scope, generation);
+      activeRequests.set(scope, request);
+      const node = window$(request.connectionId, request.threadId);
+      // Protect the destination before applying the inactive-window budget.
+      evictUnretainedWindows(scope);
+      const previous = node.peek();
+      const requestKey = threadChatRequestKey(request);
+      const hasResidentSnapshot =
+        resources.get(scope)?.hasReadySnapshot === true ||
+        threadLoadHasResidentSnapshot(previous.status);
+      const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
+        ...previous,
+        backendRefreshing: (backendRefreshCounts.get(scope) ?? 0) > 0,
+        error: null,
+        requestKey,
+        residentTurnLimit:
+          previous.residentTurnLimit === 0 || Number.isNaN(previous.residentTurnLimit)
+            ? THREAD_RESIDENT_TURN_LIMIT
+            : previous.residentTurnLimit,
+        status: hasResidentSnapshot
+          ? previous.requestKey === requestKey
+            ? "background-updating"
+            : "loading-history"
+          : "initial-loading",
+      });
+      if (next !== previous) {
+        node.set(next);
+      }
+      return generation;
+    },
+    window$,
   };
 }
 
@@ -712,8 +826,13 @@ export function threadChatScope(connectionId: string, threadId: string): string 
   return `${connectionId}\u0000${threadId}`;
 }
 
+export function threadChatRequestKey(request: ThreadChatWindowRequest): string;
+export function threadChatRequestKey(request: undefined): null;
+export function threadChatRequestKey(request: ThreadChatWindowRequest | undefined): string | null;
 export function threadChatRequestKey(request: ThreadChatWindowRequest | undefined): string | null {
-  if (request === undefined) return null;
+  if (request === undefined) {
+    return null;
+  }
   return [
     request.connectionId,
     request.threadId,
@@ -724,20 +843,20 @@ export function threadChatRequestKey(request: ThreadChatWindowRequest | undefine
 
 function emptyWindow(scope: string): ThreadChatWindowSnapshot {
   return {
-    scope,
-    requestKey: null,
-    status: "idle",
     backendRefreshing: false,
+    detailRowIds: [],
+    earliestSealedOrdinal: null,
     error: null,
     historyEpoch: 0,
     latestSealedOrdinal: null,
-    earliestSealedOrdinal: null,
-    residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
-    turnRowIds: [],
-    detailRowIds: [],
-    liveRowIds: [],
     layoutRevision: 0,
+    liveRowIds: [],
+    requestKey: null,
+    residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
     revision: 0,
+    scope,
+    status: "idle",
+    turnRowIds: [],
   };
 }
 
@@ -761,6 +880,8 @@ function threadLayoutSignature(
   ]);
   const rowSignature = rows
     .filter((row) => residentRowIds.has(row.id))
+    // WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+    // oxlint-disable-next-line eslint/complexity
     .map((row) => {
       const lifecycle =
         row.kind === "thread"
@@ -770,7 +891,7 @@ function threadLayoutSignature(
             : row.kind === "pending"
               ? `${row.pending?.presentation ?? ""}:${row.pending?.state ?? ""}`
               : "";
-      return `${row.id}\u0001${row.kind}\u0001${row.historyEpoch}\u0001${row.ordinal}\u0001${row.sealed ? 1 : 0}\u0001${lifecycle}`;
+      return `${row.id}\u0001${row.kind}\u0001${String(row.historyEpoch)}\u0001${String(row.ordinal)}\u0001${String(row.sealed ? 1 : 0)}\u0001${lifecycle}`;
     })
     .sort()
     .join("\u0002");
@@ -783,6 +904,8 @@ function threadLayoutSignature(
   ].join("\u0003");
 }
 
+// WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+// oxlint-disable-next-line eslint/complexity
 function projectResidentRows(
   rows: readonly ThreadDetailRow[],
   window: ThreadChatWindowSnapshot,
@@ -802,7 +925,10 @@ function projectResidentRows(
   const epochRows = rows.filter((row) => row.historyEpoch === currentEpoch);
   const allSealedTurns = epochRows
     .filter((row) => row.kind === "turn" && row.sealed)
-    .sort((left, right) => right.ordinal - left.ordinal || right.id.localeCompare(left.id));
+    .sort((left, right) => {
+      const ordinalOrder = right.ordinal - left.ordinal;
+      return ordinalOrder !== 0 ? ordinalOrder : right.id.localeCompare(left.id);
+    });
   const currentTurnIds = new Set(window.turnRowIds);
   const currentTurns = allSealedTurns.filter((row) => currentTurnIds.has(row.id));
   const residentMaximum = currentTurns.reduce<number | null>(
@@ -835,8 +961,6 @@ function projectResidentRows(
   const maxOrdinal =
     visibleTurns.length === 0 ? null : Math.max(...visibleTurns.map(({ ordinal }) => ordinal));
   return {
-    historyEpoch: currentEpoch,
-    turnRowIds: visibleTurns.map(({ id }) => id),
     detailRowIds:
       minOrdinal === null || maxOrdinal === null
         ? []
@@ -849,21 +973,25 @@ function projectResidentRows(
                 row.ordinal <= maxOrdinal,
             )
             .map(({ id }) => id),
-    liveRowIds: rows
-      .filter((row) => !row.sealed && (row.kind === "pending" || row.historyEpoch === currentEpoch))
-      .map(({ id }) => id),
-    latestSealedOrdinal: epochChanged
-      ? (allSealedTurns[0]?.ordinal ?? null)
-      : maximumNullable(window.latestSealedOrdinal, allSealedTurns[0]?.ordinal ?? null),
     earliestSealedOrdinal: epochChanged
       ? (allSealedTurns.at(-1)?.ordinal ?? null)
       : minimumNullable(window.earliestSealedOrdinal, allSealedTurns.at(-1)?.ordinal ?? null),
+    historyEpoch: currentEpoch,
+    latestSealedOrdinal: epochChanged
+      ? (allSealedTurns[0]?.ordinal ?? null)
+      : maximumNullable(window.latestSealedOrdinal, allSealedTurns[0]?.ordinal ?? null),
+    liveRowIds: rows
+      .filter((row) => !row.sealed && (row.kind === "pending" || row.historyEpoch === currentEpoch))
+      .map(({ id }) => id),
+    turnRowIds: visibleTurns.map(({ id }) => id),
   };
 }
 
 /** Metadata commits preserve an explicitly expanded range. Contiguous live
  * advancement may roll that same capacity forward, but cannot import a cache
  * island or grow residency indefinitely between gestures. */
+// WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
+// oxlint-disable-next-line eslint/complexity, eslint/max-params
 function advanceResidentTail(
   sealedTurns: readonly ThreadDetailRow[],
   residentIds: ReadonlySet<string>,
@@ -874,14 +1002,22 @@ function advanceResidentTail(
 ): ThreadDetailRow[] {
   let maximum = residentMaximum;
   for (let index = sealedTurns.length - 1; index >= 0; index -= 1) {
-    const turn = sealedTurns[index]!;
-    if (maximum === null && previousLiveIds.has(turn.id)) maximum = turn.ordinal;
-    else if (maximum !== null && turn.ordinal === maximum + 1) maximum = turn.ordinal;
+    const turn = sealedTurns[index];
+    if (turn === undefined) {
+      continue;
+    }
+    if (maximum === null && previousLiveIds.has(turn.id)) {
+      maximum = turn.ordinal;
+    } else if (maximum !== null && turn.ordinal === maximum + 1) {
+      maximum = turn.ordinal;
+    }
   }
   const capacity = Math.max(turnLimit, residentCount);
   const result: ThreadDetailRow[] = [];
   for (const turn of sealedTurns) {
-    if (result.length === capacity) break;
+    if (result.length === capacity) {
+      break;
+    }
     if (
       residentIds.has(turn.id) ||
       (maximum !== null &&
@@ -895,13 +1031,21 @@ function advanceResidentTail(
 }
 
 function maximumNullable(left: number | null, right: number | null): number | null {
-  if (left === null) return right;
-  if (right === null) return left;
+  if (left === null) {
+    return right;
+  }
+  if (right === null) {
+    return left;
+  }
   return Math.max(left, right);
 }
 
 function minimumNullable(left: number | null, right: number | null): number | null {
-  if (left === null) return right;
-  if (right === null) return left;
+  if (left === null) {
+    return right;
+  }
+  if (right === null) {
+    return left;
+  }
   return Math.min(left, right);
 }

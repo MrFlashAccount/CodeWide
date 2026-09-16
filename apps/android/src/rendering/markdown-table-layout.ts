@@ -4,10 +4,10 @@ export function markdownTableLayout(
   viewportWidth: number,
   columnCount: number,
 ): {
-  tableWidth: number;
   cellWidth: number;
+  tableWidth: number;
 } {
   const safeColumnCount = Math.max(1, columnCount);
   const tableWidth = Math.max(0, viewportWidth, safeColumnCount * MIN_TABLE_COLUMN_WIDTH);
-  return { tableWidth, cellWidth: tableWidth / safeColumnCount };
+  return { cellWidth: tableWidth / safeColumnCount, tableWidth };
 }

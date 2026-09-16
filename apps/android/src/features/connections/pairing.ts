@@ -5,13 +5,13 @@ import { humanPairingError } from "./pairingError";
 export function pairingParseResult(
   raw: string,
 ):
-  | { value: ReturnType<typeof parsePairingPayload>; parsedAt: number; error: null }
-  | { value: null; parsedAt: number; error: string } {
+  | { error: null; parsedAt: number; value: ReturnType<typeof parsePairingPayload> }
+  | { error: string; parsedAt: number; value: null } {
   const parsedAt = Date.now();
   try {
-    return { value: parsePairingPayload(raw, parsedAt), parsedAt, error: null };
-  } catch (cause) {
-    return { value: null, parsedAt, error: humanPairingError(cause) };
+    return { error: null, parsedAt, value: parsePairingPayload(raw, parsedAt) };
+  } catch (error) {
+    return { error: humanPairingError(error), parsedAt, value: null };
   }
 }
 

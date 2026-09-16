@@ -12,7 +12,10 @@ import type { CachedTransferOptions } from "./transfer-options";
 let residentCache: AttachmentDiskCache | null = null;
 let state: Promise<{ cache: AttachmentDiskCache; storage: ExpoAttachmentStorage }> | null = null;
 
-function cacheState(): Promise<{ cache: AttachmentDiskCache; storage: ExpoAttachmentStorage }> {
+async function cacheState(): Promise<{
+  cache: AttachmentDiskCache;
+  storage: ExpoAttachmentStorage;
+}> {
   return (state ??= import("./storage.native").then(({ ExpoAttachmentStorage }) => {
     const storage = new ExpoAttachmentStorage();
     const cache = new AttachmentDiskCache(storage, Date.now);
@@ -32,32 +35,47 @@ export async function cachedAttachmentFetch(
   init: RequestInit,
   options: CachedTransferOptions,
 ): Promise<Response> {
-  if ((init.method ?? "GET") !== "GET" || !/^https?:/u.test(uri)) return fetch(uri, init);
+  if ((init.method ?? "GET") !== "GET" || !/^https?:/u.test(uri)) {
+    return fetch(uri, init);
+  }
   const headers = new Headers(init.headers);
   const head = await fetch(uri, {
-    method: "HEAD",
     headers: withoutRange(headers),
+    method: "HEAD",
     ...(init.signal === undefined ? {} : { signal: init.signal }),
   });
-  if (!head.ok) return head;
+  if (!head.ok) {
+    return head;
+  }
   const metadata = attachmentMetadata(head.headers, headers.get("range"));
-  if (metadata === null) return fetch(uri, init);
+  if (metadata === null) {
+    return fetch(uri, init);
+  }
   let lease: AttachmentLease | null;
   try {
     lease = await acquireDownload(uri, headers, options, metadata);
-  } catch (cause) {
-    if (cause instanceof AttachmentHttpError) return new Response(null, { status: cause.status });
-    throw cause;
+  } catch (error) {
+    if (error instanceof AttachmentHttpError) {
+      return new Response(null, { status: error.status });
+    }
+    throw error;
   }
-  if (lease === null) return fetch(uri, init);
+  if (lease === null) {
+    return fetch(uri, init);
+  }
+  const signal = init.signal ?? null;
   try {
-    if (init.signal != null) checkAborted(init.signal);
+    if (signal !== null) {
+      checkAborted(signal);
+    }
     const { File } = await import("expo-file-system");
     const bytes = await new File(lease.uri).arrayBuffer();
-    if (init.signal != null) checkAborted(init.signal);
+    if (signal !== null) {
+      checkAborted(signal);
+    }
     return new AttachmentResponse(bytes, {
-      status: metadata.ranged ? 206 : 200,
       headers: cachedResponseHeaders(metadata),
+      status: metadata.ranged ? 206 : 200,
     });
   } finally {
     lease.release();
@@ -70,20 +88,28 @@ export async function cachedAttachmentSource(
   headers: Record<string, string>,
   options: CachedTransferOptions,
   signal?: AbortSignal,
-): Promise<{ uri: string; headers: Record<string, string> }> {
-  if (!/^https?:/u.test(uri)) return { uri, headers };
+): Promise<{ headers: Record<string, string>; uri: string }> {
+  if (!/^https?:/u.test(uri)) {
+    return { headers, uri };
+  }
   const head = await fetch(uri, {
-    method: "HEAD",
     headers,
+    method: "HEAD",
     ...(signal === undefined ? {} : { signal }),
   });
-  if (!head.ok) throw new Error(`Private attachment unavailable (${head.status})`);
+  if (!head.ok) {
+    throw new Error(`Private attachment unavailable (${String(head.status)})`);
+  }
   const metadata = attachmentMetadata(head.headers, null);
-  if (metadata === null) return { uri, headers };
+  if (metadata === null) {
+    return { headers, uri };
+  }
   const lease = await acquireDownload(uri, new Headers(headers), options, metadata);
-  if (lease === null) return { uri, headers };
+  if (lease === null) {
+    return { headers, uri };
+  }
   retainUntilAbort(lease, signal);
-  return { uri: lease.uri, headers: {} };
+  return { headers: {}, uri: lease.uri };
 }
 
 export function retainCachedAttachment(uri: string): () => void {
@@ -91,9 +117,13 @@ export function retainCachedAttachment(uri: string): () => void {
 }
 
 export async function cacheInlineAttachment(uri: string, base64: string): Promise<string> {
-  const { cache, storage } = await cacheState();
-  const { deleteAsync, moveAsync, writeAsStringAsync } = await import("expo-file-system/legacy");
-  const key = await digest(base64);
+  const [state, fileSystem, key] = await Promise.all([
+    cacheState(),
+    import("expo-file-system/legacy"),
+    digest(base64),
+  ]);
+  const { cache, storage } = state;
+  const { deleteAsync, moveAsync, writeAsStringAsync } = fileSystem;
   const bytes =
     Math.floor((base64.length * 3) / 4) -
     (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
@@ -106,7 +136,9 @@ export async function cacheInlineAttachment(uri: string, base64: string): Promis
       await deleteAsync(partial, { idempotent: true });
     }
   });
-  if (lease === null) return uri;
+  if (lease === null) {
+    return uri;
+  }
   lease.release();
   return lease.uri;
 }
@@ -118,29 +150,34 @@ async function acquireDownload(
   metadata: AttachmentMetadata,
 ): Promise<AttachmentLease | null> {
   // The namespace is independent of rotating session credentials and local transport ports.
-  const { cache, storage } = await cacheState();
-  const { deleteAsync, downloadAsync, getInfoAsync, moveAsync } =
-    await import("expo-file-system/legacy");
-  const key = await digest(
-    JSON.stringify([
-      options.scope,
-      options.identity,
-      metadata.revision,
-      metadata.start,
-      metadata.bytes,
-    ]),
-  );
+  const [state, fileSystem, key] = await Promise.all([
+    cacheState(),
+    import("expo-file-system/legacy"),
+    digest(
+      JSON.stringify([
+        options.scope,
+        options.identity,
+        metadata.revision,
+        metadata.start,
+        metadata.bytes,
+      ]),
+    ),
+  ]);
+  const { cache, storage } = state;
+  const { deleteAsync, downloadAsync, getInfoAsync, moveAsync } = fileSystem;
   return cache.acquire(key, metadata.bytes, async () => {
     const partial = `${storage.uri(key)}.partial`;
     try {
       const downloaded = await downloadAsync(uri, partial, {
-        headers: Object.fromEntries(headers.entries()),
         cache: false,
+        headers: Object.fromEntries(headers.entries()),
       });
-      if (downloaded.status < 200 || downloaded.status >= 300)
+      if (downloaded.status < 200 || downloaded.status >= 300) {
         throw new AttachmentHttpError(downloaded.status);
-      if (downloaded.status !== (metadata.ranged ? 206 : 200))
+      }
+      if (downloaded.status !== (metadata.ranged ? 206 : 200)) {
         throw new Error("Attachment server did not honor the requested range");
+      }
       const received = new Headers(downloaded.headers);
       const revision = received.get("x-content-sha256") ?? received.get("etag");
       const info = await getInfoAsync(partial);
@@ -164,22 +201,29 @@ async function acquireDownload(
 function withoutRange(headers: Headers): Record<string, string> {
   const result: Record<string, string> = {};
   headers.forEach((value, key) => {
-    if (key !== "range") result[key] = value;
+    if (key !== "range") {
+      result[key] = value;
+    }
   });
   return result;
 }
 
 function retainUntilAbort(lease: AttachmentLease, signal: AbortSignal | undefined): void {
-  if (signal === undefined || signal.aborted) lease.release();
-  else signal.addEventListener("abort", lease.release, { once: true });
-  if (signal !== undefined) checkAborted(signal);
+  if (signal === undefined || signal.aborted) {
+    lease.release();
+  } else {
+    signal.addEventListener("abort", lease.release, { once: true });
+  }
+  if (signal !== undefined) {
+    checkAborted(signal);
+  }
 }
 
 class AttachmentHttpError extends Error {
   readonly status: number;
 
   constructor(status: number) {
-    super(`Private attachment unavailable (${status})`);
+    super(`Private attachment unavailable (${String(status)})`);
     this.status = status;
   }
 }

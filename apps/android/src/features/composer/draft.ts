@@ -3,12 +3,12 @@ import type { StoredComposerPreferences } from "../../data/thread-ui-state-types
 import type { StoredDraftAttachment } from "../../data/thread-ui-state-types";
 
 export const EMPTY_COMPOSER_PREFERENCES: StoredComposerPreferences = {
-  model: null,
   effort: null,
-  personality: null,
+  model: null,
   permissions: null,
-  skillPaths: [],
+  personality: null,
   sendMode: "start",
+  skillPaths: [],
 };
 
 export const EMPTY_COMPOSER_ATTACHMENTS: StoredDraftAttachment[] = [];
@@ -64,8 +64,8 @@ export function useComposerDraftState(
   const composerStateMissing = composerState === null;
 
   const draftSelectionRef = useConversationRef<DraftSelection>(composerUploadScope, () => ({
-    start: 0,
     end: 0,
+    start: 0,
   }));
 
   const composerInputRef = useConversationRef<ComposerMarkdownInputHandle | null>(
@@ -75,19 +75,19 @@ export function useComposerDraftState(
 
   const composerMarkdownRef = useConversationRef(composerUploadScope, () => draft);
   return {
-    composerUploadScope,
-    draft,
-    attachments,
-    uploadsBlockSend,
     attachmentCount,
-    composerPreferences,
-    latestDraftRef,
-    latestAttachmentsRef,
-    latestComposerPreferencesRef,
-    composerStateMissing,
-    draftSelectionRef,
+    attachments,
     composerInputRef,
     composerMarkdownRef,
+    composerPreferences,
+    composerStateMissing,
+    composerUploadScope,
+    draft,
+    draftSelectionRef,
+    latestAttachmentsRef,
+    latestComposerPreferencesRef,
+    latestDraftRef,
+    uploadsBlockSend,
   };
 }
 
@@ -95,13 +95,12 @@ import type { Dispatch, SetStateAction } from "react";
 import { useEvent } from "../../react/useEvent";
 
 type DraftMutationCapabilities = {
-  queuedComposerEdit: QueuedComposerEdit | null;
-  setQueuedComposerEdit: Dispatch<SetStateAction<QueuedComposerEdit | null>>;
-  latestDraftRef: { current: { latest: string } };
-  latestAttachmentsRef: { current: { latest: StoredDraftAttachment[] } };
   composerMarkdownRef: { current: string };
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  latestAttachmentsRef: { current: { latest: StoredDraftAttachment[] } };
+  latestDraftRef: { current: { latest: string } };
+  queuedComposerEdit: QueuedComposerEdit | null;
   saveDraft: ((connectionId: string, threadId: string, text: string) => Promise<void>) | undefined;
   saveDraftAttachments:
     | ((
@@ -110,18 +109,19 @@ type DraftMutationCapabilities = {
         attachments: StoredDraftAttachment[],
       ) => Promise<void>)
     | undefined;
+  setQueuedComposerEdit: Dispatch<SetStateAction<QueuedComposerEdit | null>>;
 };
 
 export function useComposerDraftCommands({
-  queuedComposerEdit,
-  setQueuedComposerEdit,
-  latestDraftRef,
-  latestAttachmentsRef,
   composerMarkdownRef,
   draftConnectionId,
   draftThreadId,
+  latestAttachmentsRef,
+  latestDraftRef,
+  queuedComposerEdit,
   saveDraft,
   saveDraftAttachments,
+  setQueuedComposerEdit,
 }: DraftMutationCapabilities) {
   const updateCurrentDraft = (text: string) => {
     latestDraftRef.current.latest = text;
@@ -130,14 +130,21 @@ export function useComposerDraftCommands({
       setQueuedComposerEdit((current) => (current === null ? null : { ...current, text }));
       return;
     }
-    if (saveDraft === undefined || draftConnectionId === null || draftThreadId === null) return;
+    if (saveDraft === undefined || draftConnectionId === null || draftThreadId === null) {
+      return;
+    }
     void saveDraft(draftConnectionId, draftThreadId, text).catch(() => undefined);
   };
 
   const persistAttachments = async (next: StoredDraftAttachment[]): Promise<void> => {
     latestAttachmentsRef.current.latest = next;
-    if (saveDraftAttachments === undefined || draftConnectionId === null || draftThreadId === null)
+    if (
+      saveDraftAttachments === undefined ||
+      draftConnectionId === null ||
+      draftThreadId === null
+    ) {
       return;
+    }
     await saveDraftAttachments(draftConnectionId, draftThreadId, next);
   };
 
@@ -155,10 +162,10 @@ export function useComposerDraftCommands({
   const updateAttachments = useEvent(updateCurrentAttachments);
   // Async work captures these activation-bound mutations before its first await.
   const captureDraftMutations = useEvent(() => ({
-    updateDraft: updateCurrentDraft,
     updateAttachments: updateCurrentAttachments,
+    updateDraft: updateCurrentDraft,
   }));
-  return { updateDraft, updateAttachments, captureDraftMutations };
+  return { captureDraftMutations, updateAttachments, updateDraft };
 }
 
 import { useAsyncResource } from "../../rendering/async-resource-store";
@@ -183,8 +190,9 @@ export function useComposerSeed(
       loadDraft === undefined ||
       draftConnectionId === null ||
       draftThreadId === null
-    )
+    ) {
       return false;
+    }
     // Migration/read owns the transition into the TanStack row. React only
     // observes that row and never mirrors the native composer state locally.
     await loadDraft(draftConnectionId, draftThreadId);
@@ -197,25 +205,25 @@ type ComposerEditorEventsCapabilities = Pick<
   ReturnType<typeof useComposerDraftState>,
   "composerMarkdownRef" | "draftSelectionRef"
 > & {
-  voiceController: VoiceInputController | null;
   composerScope: string;
-  updateDraft(text: string): void;
+  updateDraft: (text: string) => void;
+  voiceController: VoiceInputController | null;
 };
 export function useComposerEditorEvents({
   composerMarkdownRef,
-  draftSelectionRef,
-  voiceController,
   composerScope,
+  draftSelectionRef,
   updateDraft,
+  voiceController,
 }: ComposerEditorEventsCapabilities) {
   const handleComposerMarkdownChange = useEvent((markdown: string) => {
     composerMarkdownRef.current = markdown;
   });
 
   const clearComposerText = useEvent(() => {
-    draftSelectionRef.current = { start: 0, end: 0 };
+    draftSelectionRef.current = { end: 0, start: 0 };
     voiceController?.clearPendingSelection(composerScope);
     updateDraft("");
   });
-  return { handleComposerMarkdownChange, clearComposerText };
+  return { clearComposerText, handleComposerMarkdownChange };
 }

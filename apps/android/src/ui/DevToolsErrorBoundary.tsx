@@ -1,24 +1,26 @@
 import { Component, type ErrorInfo, type ReactNode, useState } from "react";
+import { setStringAsync } from "expo-clipboard";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 
+import { appLogger } from "../observability/logger";
 import { colors, radii, spacing, typeScale, controlSize } from "../theme";
 import { AppText as Text } from "./Typography";
 
 export type DevToolsFailureKind = "react" | "renderer" | "load" | "health" | "bridge";
 
 export type DevToolsFailure = {
+  componentStack?: string;
+  context?: string;
   kind: DevToolsFailureKind;
   message: string;
   occurredAt: number;
   stack?: string;
-  componentStack?: string;
-  context?: string;
 };
 
 export function createDevToolsFailure(
   kind: DevToolsFailureKind,
   message: string,
-  options: { stack?: string; componentStack?: string; context?: string } = {},
+  options: { componentStack?: string; context?: string; stack?: string } = {},
 ): DevToolsFailure {
   return {
     kind,
@@ -30,25 +32,26 @@ export function createDevToolsFailure(
 
 type BoundaryProps = {
   children: ReactNode;
-  resetKey: string;
   context?: string;
-  onFailure?(failure: DevToolsFailure): void;
-  onRetry(): void;
-  onClose(): void;
+  onClose: () => void;
+  onFailure?: (failure: DevToolsFailure) => void;
+  onRetry: () => void;
+  resetKey: string;
 };
 
 type BoundaryState = { failure: DevToolsFailure | null };
 
-/** Isolates embedded DevTools failures from the surrounding conversation UI. */
-export class DevToolsErrorBoundary extends Component<BoundaryProps, BoundaryState> {
+class DevToolsErrorBoundaryImpl extends Component<BoundaryProps, BoundaryState> {
   override state: BoundaryState = { failure: null };
 
   static getDerivedStateFromError(value: unknown): Partial<BoundaryState> {
     const error = normalizeError(value);
     return {
-      failure: createDevToolsFailure("react", error.message, {
-        ...(error.stack === undefined ? {} : { stack: error.stack }),
-      }),
+      failure: createDevToolsFailure(
+        "react",
+        error.message,
+        error.stack === undefined ? {} : { stack: error.stack },
+      ),
     };
   }
 
@@ -58,48 +61,56 @@ export class DevToolsErrorBoundary extends Component<BoundaryProps, BoundaryStat
       ...(info.componentStack === null ? {} : { componentStack: info.componentStack }),
       ...(this.props.context === undefined ? {} : { context: this.props.context }),
     });
-    console.error("Chromium DevTools pane crashed", error, info.componentStack);
+    appLogger.error({
+      err: error,
+      event: "browser_devtools.render.failed",
+      fields: { componentStack: info.componentStack ?? "" },
+    });
+    // WHY: React exposes the component stack only through componentDidCatch, after derived state.
+    // oxlint-disable-next-line react/no-set-state
     this.setState({ failure });
     this.props.onFailure?.(failure);
   }
 
-  override componentDidUpdate(previous: BoundaryProps): void {
-    if (this.state.failure !== null && previous.resetKey !== this.props.resetKey) {
-      this.setState({ failure: null });
-    }
-  }
-
   override render(): ReactNode {
-    if (this.state.failure === null) return this.props.children;
+    if (this.state.failure === null) {
+      return this.props.children;
+    }
     return (
       <DevToolsFailurePanel
         failure={this.state.failure}
-        onRetry={this.props.onRetry}
         onClose={this.props.onClose}
+        onRetry={this.props.onRetry}
       />
     );
   }
 }
 
+/** Isolates embedded DevTools failures from the surrounding conversation UI. */
+export function DevToolsErrorBoundary(props: BoundaryProps): ReactNode {
+  return <DevToolsErrorBoundaryImpl key={props.resetKey} {...props} />;
+}
+
 export function DevToolsFailurePanel({
   failure,
-  onRetry,
   onClose,
+  onRetry,
 }: {
   failure: DevToolsFailure;
-  onRetry(): void;
-  onClose(): void;
+  onClose: () => void;
+  onRetry: () => void;
 }) {
   const [copying, setCopying] = useState(false);
   const report = devToolsFailureReport(failure);
   const copy = async () => {
-    if (copying) return;
+    if (copying) {
+      return;
+    }
     setCopying(true);
     try {
-      const Clipboard = require("expo-clipboard") as typeof import("expo-clipboard");
-      await Clipboard.setStringAsync(report);
+      await setStringAsync(report);
     } catch (error) {
-      console.error("Could not copy the DevTools failure report", error);
+      appLogger.warnCaught({ error, event: "browser_devtools.report_copy.failed" });
     }
     setCopying(false);
   };
@@ -125,7 +136,7 @@ export function DevToolsFailurePanel({
           <Text style={styles.secondaryLabel}>Close DevTools</Text>
         </Pressable>
       </View>
-      <ScrollView style={styles.details} contentContainerStyle={styles.detailsContent}>
+      <ScrollView contentContainerStyle={styles.detailsContent} style={styles.details}>
         <Text selectable style={styles.detailsText}>
           {report}
         </Text>
@@ -153,8 +164,12 @@ function devToolsFailureReport(failure: DevToolsFailure): string {
 }
 
 function normalizeError(value: unknown): Error {
-  if (value instanceof Error) return value;
-  if (typeof value === "string") return new Error(value);
+  if (value instanceof Error) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return new Error(value);
+  }
   try {
     return new Error(JSON.stringify(value));
   } catch {
@@ -163,58 +178,58 @@ function normalizeError(value: unknown): Error {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    minHeight: 0,
-    gap: spacing.sm,
-    padding: spacing.md,
-    backgroundColor: "#202124",
-  },
-  title: {
-    color: colors.text,
-    ...typeScale.title,
-  },
-  message: {
-    color: colors.red,
-    ...typeScale.body,
-  },
   actions: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.xs,
   },
-  primaryButton: {
-    minHeight: controlSize.touch,
-    justifyContent: "center",
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.large,
-    backgroundColor: colors.primary,
-  },
-  primaryLabel: {
-    color: colors.onPrimary,
-    ...typeScale.label,
-  },
-  secondaryButton: {
-    minHeight: controlSize.regular,
-    justifyContent: "center",
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.large,
-    backgroundColor: colors.surfaceRaised,
-  },
-  secondaryLabel: {
-    color: colors.text,
-    ...typeScale.label,
-  },
   details: {
+    backgroundColor: colors.background,
+    borderRadius: radii.medium,
     flex: 1,
     minHeight: 80,
-    borderRadius: radii.medium,
-    backgroundColor: colors.background,
   },
   detailsContent: { padding: spacing.sm },
   detailsText: {
     color: colors.textMuted,
     ...typeScale.code,
     fontFamily: "monospace",
+  },
+  message: {
+    color: colors.red,
+    ...typeScale.body,
+  },
+  primaryButton: {
+    backgroundColor: colors.primary,
+    borderRadius: radii.large,
+    justifyContent: "center",
+    minHeight: controlSize.touch,
+    paddingHorizontal: spacing.md,
+  },
+  primaryLabel: {
+    color: colors.onPrimary,
+    ...typeScale.label,
+  },
+  root: {
+    backgroundColor: "#202124",
+    flex: 1,
+    gap: spacing.sm,
+    minHeight: 0,
+    padding: spacing.md,
+  },
+  secondaryButton: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.large,
+    justifyContent: "center",
+    minHeight: controlSize.regular,
+    paddingHorizontal: spacing.md,
+  },
+  secondaryLabel: {
+    color: colors.text,
+    ...typeScale.label,
+  },
+  title: {
+    color: colors.text,
+    ...typeScale.title,
   },
 });

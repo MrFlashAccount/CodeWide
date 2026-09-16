@@ -8,21 +8,21 @@ import { conversationChromeEdgeInset } from "../../ui/conversation-chrome-layout
 import { MessageListSkeleton } from "../../ui/MessageListBoundary";
 import { emojiSafeTitle } from "../../ui/ThreadTitle";
 import { AppText as Text } from "../../ui/Typography";
-import { type ThreadListServer } from "../connections/connectionPresentation";
-import { type ThreadListItem } from "../threadList/threadListTypes";
+import type { ThreadListServer } from "../connections/connectionPresentation";
+import type { ThreadListItem } from "../threadList/threadListTypes";
 
 export function ConversationNavigationLoader({
-  thread,
-  server,
-  cwd = "/workspace",
   compact = false,
+  cwd = "/workspace",
   onBack,
+  server,
+  thread,
 }: {
-  thread: ThreadListItem | null;
-  server: ThreadListServer | undefined;
-  cwd: string | undefined;
   compact: boolean | undefined;
+  cwd: string | undefined;
   onBack: (() => void) | undefined;
+  server: ThreadListServer | undefined;
+  thread: ThreadListItem | null;
 }) {
   return (
     <View style={styles.conversation} testID="conversation-navigation-loader">
@@ -30,18 +30,18 @@ export function ConversationNavigationLoader({
         <View style={styles.conversationHeader}>
           {compact && onBack !== undefined ? (
             <Pressable
+              accessibilityLabel="Back to threads"
               onPress={onBack}
               style={styles.headerIcon}
-              accessibilityLabel="Back to threads"
             >
-              <Ionicons name="arrow-back" size={iconSize.navigation} color={colors.text} />
+              <Ionicons color={colors.text} name="arrow-back" size={iconSize.navigation} />
             </Pressable>
           ) : null}
           <View style={styles.conversationIdentity}>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={styles.conversationTitle}>
+            <Text ellipsizeMode="tail" numberOfLines={1} style={styles.conversationTitle}>
               {thread === null ? "Loading thread…" : emojiSafeTitle(thread.title)}
             </Text>
-            <Text numberOfLines={1} ellipsizeMode="middle" style={styles.conversationSubtitle}>
+            <Text ellipsizeMode="middle" numberOfLines={1} style={styles.conversationSubtitle}>
               {threadContextLabel(server?.name ?? "", cwd)}
             </Text>
           </View>
@@ -53,20 +53,18 @@ export function ConversationNavigationLoader({
 }
 export function ConversationNavigationFallback({
   connectionId,
-  threadId,
   navigationKey,
+  threadId,
   ...loader
 }: Parameters<typeof ConversationNavigationLoader>[0] & {
   connectionId: string;
-  threadId: string | null;
   navigationKey: string;
+  threadId: string | null;
 }) {
   return (
     <>
       {threadId !== null && (
         <CommitOnChangeProbe
-          scope={`conversation-fallback:${navigationKey}`}
-          revision="visible"
           onCommit={() => {
             const navigationId = recordThreadNavigationVisualEvent(
               connectionId,
@@ -84,6 +82,8 @@ export function ConversationNavigationFallback({
                     navigationId,
                   );
           }}
+          revision="visible"
+          scope={`conversation-fallback:${navigationKey}`}
         />
       )}
       <ConversationNavigationLoader {...loader} />
@@ -91,42 +91,42 @@ export function ConversationNavigationFallback({
   );
 }
 const styles = StyleSheet.create({
-  headerIcon: {
-    width: touchTarget,
-    height: touchTarget,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radii.large,
-  },
   conversation: {
+    backgroundColor: colors.conversationSurface,
     flex: 1,
     minWidth: 0,
-    backgroundColor: colors.conversationSurface,
-  },
-  conversationKeyboard: {
-    flex: 1,
-    minWidth: 0,
-    alignSelf: "stretch",
-    backgroundColor: colors.conversationSurface,
   },
   conversationHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 0,
     minHeight: layoutSize.header,
     paddingHorizontal: conversationChromeEdgeInset,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 0,
   },
   conversationIdentity: {
     flex: 1,
     minWidth: 0,
   },
-  conversationTitle: {
-    color: colors.text,
-    ...typeScale.title,
+  conversationKeyboard: {
+    alignSelf: "stretch",
+    backgroundColor: colors.conversationSurface,
+    flex: 1,
+    minWidth: 0,
   },
   conversationSubtitle: {
     color: colors.textMuted,
     ...typeScale.label,
     marginTop: spacing.optical,
+  },
+  conversationTitle: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  headerIcon: {
+    alignItems: "center",
+    borderRadius: radii.large,
+    height: touchTarget,
+    justifyContent: "center",
+    width: touchTarget,
   },
 });

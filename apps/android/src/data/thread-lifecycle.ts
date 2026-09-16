@@ -23,11 +23,17 @@ export function pendingDeliveryMayOwnTurn(state: PendingDeliveryState): boolean 
  * thread status is allowed to close a stale in-progress detail row locally.
  */
 export function staleTurnLifecycleId(thread: Thread | null | undefined): string | null {
-  if (thread === null || thread === undefined) return null;
-  if (thread.status?.type !== "idle" && thread.status?.type !== "systemError") return null;
+  if (thread === null || thread === undefined) {
+    return null;
+  }
+  if (thread.status.type !== "idle" && thread.status.type !== "systemError") {
+    return null;
+  }
   for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
     const turn = thread.turns[index];
-    if (turn?.status === "inProgress") return turn.id;
+    if (turn?.status === "inProgress") {
+      return turn.id;
+    }
   }
   return null;
 }
@@ -35,10 +41,14 @@ export function staleTurnLifecycleId(thread: Thread | null | undefined): string 
 /** V1 thread-lifecycle owner, extracted without changing interaction or resource lifetime. */
 
 export function activeTurnId(thread: Thread | null | undefined): string | null {
-  if (thread === null || thread === undefined) return null;
+  if (thread === null || thread === undefined) {
+    return null;
+  }
   for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
     const turn = thread.turns[index];
-    if (turn?.status === "inProgress") return turn.id;
+    if (turn?.status === "inProgress") {
+      return turn.id;
+    }
   }
   return null;
 }

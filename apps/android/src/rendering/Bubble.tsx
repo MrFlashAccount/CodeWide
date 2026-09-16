@@ -18,25 +18,25 @@ export function useInsideBubbleSurface(): boolean {
  * never measures content or writes computed width/height back into layout.
  */
 export function Bubble({
-  variant,
-  fill = false,
   animateLayout = false,
-  testID,
-  errorLabel,
-  errorContext,
-  errorResetKey,
-  footer,
   children,
+  errorContext,
+  errorLabel,
+  errorResetKey,
+  fill = false,
+  footer,
+  testID,
+  variant,
 }: {
-  variant: BubbleVariant;
-  fill?: boolean;
   animateLayout?: boolean;
-  testID?: string;
-  errorLabel?: string;
-  errorContext?: string;
-  errorResetKey?: string;
-  footer?: ReactNode;
   children: ReactNode;
+  errorContext?: string;
+  errorLabel?: string;
+  errorResetKey?: string;
+  fill?: boolean;
+  footer?: ReactNode;
+  testID?: string;
+  variant: BubbleVariant;
 }) {
   const surfaceStyle = [
     styles.surface,
@@ -44,27 +44,29 @@ export function Bubble({
   ];
   return (
     <RecoverableRenderBoundary
-      scope="bubble"
       label={errorLabel ?? (variant === "agent" ? "Agent message" : "User message")}
+      scope="bubble"
       {...(errorContext === undefined ? {} : { context: errorContext })}
       resetKey={errorResetKey ?? `${variant}:${testID ?? "bubble"}`}
     >
       {variant === "agent" ? (
         <View
-          testID="agent-bubble-frame"
           style={[
             styles.agentFrame,
             fill && styles.agentFrameFill,
-            footer != null && styles.agentFrameWithFooter,
+            footer !== null && footer !== undefined && styles.agentFrameWithFooter,
           ]}
+          testID="agent-bubble-frame"
         >
-          <FluidLayoutFrame animate={animateLayout} testID={testID} style={surfaceStyle}>
+          <FluidLayoutFrame animate={animateLayout} style={surfaceStyle} testID={testID}>
             {children}
           </FluidLayoutFrame>
-          {footer != null && <FluidLayoutFrame animate={animateLayout}>{footer}</FluidLayoutFrame>}
+          {footer !== null && footer !== undefined && (
+            <FluidLayoutFrame animate={animateLayout}>{footer}</FluidLayoutFrame>
+          )}
         </View>
       ) : (
-        <View testID={testID} style={surfaceStyle}>
+        <View style={surfaceStyle} testID={testID}>
           {children}
         </View>
       )}
@@ -82,38 +84,38 @@ export function BubbleContent({ children }: { children: ReactNode }) {
 
 const styles = StyleSheet.create({
   surface: {
-    minWidth: 0,
     borderRadius: radii.selected,
+    minWidth: 0,
   },
   // The body and footer share one intrinsic width; rich content may fill its cap.
   agentFrame: {
-    minWidth: 0,
-    maxWidth: "100%",
-    flexShrink: 1,
     alignSelf: "flex-start",
+    flexShrink: 1,
     gap: spacing.optical,
+    maxWidth: "100%",
+    minWidth: 0,
+  },
+  agentFrameFill: {
+    flexBasis: 0,
+    flexGrow: 1,
   },
   agentFrameWithFooter: {
     marginBottom: spacing.xs,
   },
-  agentFrameFill: {
-    flexGrow: 1,
-    flexBasis: 0,
-  },
   agentSurface: {
     alignSelf: "stretch",
+    backgroundColor: colors.messageSurface,
+    paddingBottom: spacing.xs,
     paddingHorizontal: spacing.sm,
     paddingTop: spacing.xs,
-    paddingBottom: spacing.xs,
-    backgroundColor: colors.messageSurface,
-  },
-  userSurface: {
-    maxWidth: "82%",
-    alignSelf: "flex-end",
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.xs,
-    backgroundColor: colors.messageSurface,
   },
   content: { minWidth: 0 },
+  userSurface: {
+    alignSelf: "flex-end",
+    backgroundColor: colors.messageSurface,
+    maxWidth: "82%",
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.xs,
+  },
 });

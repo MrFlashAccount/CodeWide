@@ -5,10 +5,10 @@ import type { ThreadDetailDatabase } from "./thread-detail-database";
 import type { ThreadChatWindowRequest, ThreadChatWindowSnapshot } from "./thread-chat-model";
 
 export type ThreadChatWindowView = {
-  snapshot: ThreadChatWindowSnapshot;
-  turnRows: ReturnType<ThreadDetailDatabase["readWindowRows"]>["turnRows"];
   detailRows: ReturnType<ThreadDetailDatabase["readWindowRows"]>["detailRows"];
   liveRows: ReturnType<ThreadDetailDatabase["readWindowRows"]>["liveRows"];
+  snapshot: ThreadChatWindowSnapshot;
+  turnRows: ReturnType<ThreadDetailDatabase["readWindowRows"]>["turnRows"];
 };
 
 function useThreadChatWindowResource(
@@ -22,21 +22,25 @@ function useThreadChatWindowResource(
   const anchorTurnId = input?.anchorTurnId ?? null;
   const openGeneration = input?.openGeneration ?? 0;
   useEffect(() => {
-    if (database === null || !enabled) return;
+    if (database === null || !enabled) {
+      return undefined;
+    }
     return database.retainWindow(connectionId, threadId);
   }, [connectionId, database, enabled, threadId]);
   useEffect(() => {
-    if (database === null || !enabled) return;
+    if (database === null || !enabled) {
+      return;
+    }
     database.adoptPreloadedWindow(connectionId, threadId);
   }, [anchorTurnId, connectionId, database, enabled, threadId]);
   const resource =
     database === null || !enabled
       ? null
       : database.windowResource({
-          connectionId,
-          threadId,
           anchorTurnId,
+          connectionId,
           openGeneration,
+          threadId,
         });
   useSelector(() => (resource === null ? true : resource.ready$.get()), {
     suspense: suspendUntilReady,
@@ -54,15 +58,19 @@ export function useThreadChatWindow(
   const connectionId = input?.connectionId ?? "";
   const threadId = input?.threadId ?? "";
   const snapshot = useSelector(() => {
-    if (database === null || !enabled) return null;
+    if (database === null || !enabled) {
+      return null;
+    }
     const node = database.chat.window$(connectionId, threadId);
     const layoutRevision = node.layoutRevision.get();
     const revision = node.revision.get();
     const status = node.status.get();
     const error = node.error.get();
-    return { ...node.peek(), layoutRevision, revision, status, error };
+    return { ...node.peek(), error, layoutRevision, revision, status };
   });
 
-  if (database === null || snapshot === null) return null;
+  if (database === null || snapshot === null) {
+    return null;
+  }
   return { snapshot, ...database.readWindowRows(snapshot) };
 }

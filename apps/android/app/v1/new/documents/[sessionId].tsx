@@ -66,8 +66,6 @@ export default function V1DraftDocumentRoute(): React.JSX.Element {
       changesRouteSessions.close(codeSession.id);
       router.back();
     };
-    // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-    // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
     return <RouteCodeDocumentReview onClose={closeCodeDocument} request={codeSession.request} />;
   }
   if (documentSession === null) {
@@ -85,11 +83,7 @@ export default function V1DraftDocumentRoute(): React.JSX.Element {
   };
   return (
     <RouteDocumentPreview
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={close}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onOpenDocument={(request) => {
         const nested = documentRouteService.open(documentSession.owner, request);
         router.push({

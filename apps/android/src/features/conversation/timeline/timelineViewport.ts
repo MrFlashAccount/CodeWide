@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { View } from "react-native";
+import type { View } from "react-native";
 import type { ThreadTimelineListRef } from "../../../rendering/ThreadTimelineList";
 import { useConversationRef, useConversationState } from "../../../ui/use-conversation-scope";
 
@@ -42,35 +42,35 @@ export function useTimelineViewportState(composerScope: string) {
     () => false,
   );
   return {
-    scrollOffsetRef,
-    timelineViewportHeightRef,
-    timelineContentHeightRef,
-    timelineViewportRef,
+    bottomChromeHeight,
     lastTimelineOffsetYRef,
-    scrollGestureStartedAtRef,
     paginationEdgeLockRef,
     paginationTrimTimerRef,
-    timelineRef,
-    bottomChromeHeight,
-    timelineDidLoad,
-    timelineGestureActive,
+    scrollGestureStartedAtRef,
+    scrollOffsetRef,
     setBottomChromeHeight,
     setTimelineDidLoad,
     setTimelineGestureActive,
+    timelineContentHeightRef,
+    timelineDidLoad,
+    timelineGestureActive,
+    timelineRef,
+    timelineViewportHeightRef,
+    timelineViewportRef,
   };
 }
 
 import { recordThreadHistoryTelemetry } from "../../../data/thread-history-telemetry";
 import type { ThreadHistoryViewport } from "../../../data/use-thread-history-controller";
 import { useEvent } from "../../../react/useEvent";
-import { createFullscreenScrollOwnership } from "../../../ui/fullscreen-scroll-ownership";
+import type { createFullscreenScrollOwnership } from "../../../ui/fullscreen-scroll-ownership";
 import { timelineItemKey } from "./timelineProjection";
 import type { TimelineItem } from "./timelineTypes";
 export function usePaginationTrim({
-  paginationTrimTimerRef,
-  paginationEdgeLockRef,
   fullscreenScrollOwnership,
   historyViewport,
+  paginationEdgeLockRef,
+  paginationTrimTimerRef,
 }: Pick<
   ReturnType<typeof useTimelineViewportState>,
   "paginationTrimTimerRef" | "paginationEdgeLockRef"
@@ -79,17 +79,23 @@ export function usePaginationTrim({
   historyViewport: ThreadHistoryViewport;
 }) {
   const cancelScheduledPaginationTrim = useEvent(() => {
-    if (paginationTrimTimerRef.current === null) return;
+    if (paginationTrimTimerRef.current === null) {
+      return;
+    }
     clearTimeout(paginationTrimTimerRef.current);
     paginationTrimTimerRef.current = null;
   });
 
   const trimPaginationWindow = useEvent(() => {
-    if (fullscreenScrollOwnership.isCovered()) return;
+    if (fullscreenScrollOwnership.isCovered()) {
+      return;
+    }
     cancelScheduledPaginationTrim();
     const direction = paginationEdgeLockRef.current;
     paginationEdgeLockRef.current = null;
-    if (direction !== null) void historyViewport.trimAfterGesture(direction);
+    if (direction !== null) {
+      historyViewport.trimAfterGesture(direction).catch(() => undefined);
+    }
   });
 
   const schedulePaginationWindowTrim = useEvent(() => {
@@ -99,25 +105,25 @@ export function usePaginationTrim({
     // momentum event that will never arrive.
     paginationTrimTimerRef.current = setTimeout(trimPaginationWindow, 32);
   });
-  return { cancelScheduledPaginationTrim, trimPaginationWindow, schedulePaginationWindowTrim };
+  return { cancelScheduledPaginationTrim, schedulePaginationWindowTrim, trimPaginationWindow };
 }
 
 export function useTimelineViewportActions({
-  scrollOffsetRef,
-  lastTimelineOffsetYRef,
-  paginationEdgeLockRef,
-  timelineViewportHeightRef,
-  timelineContentHeightRef,
-  firstVisibleHistoryAnchorRef,
+  displayedTimeline,
+  draftConnectionId,
+  draftThreadId,
   firstVisibleHistoryAnchorKeyRef,
+  firstVisibleHistoryAnchorRef,
   firstVisibleHistoryAnchorStatusRef,
   fullscreenScrollOwnership,
   historyViewport,
-  draftConnectionId,
-  draftThreadId,
-  timeline,
-  displayedTimeline,
+  lastTimelineOffsetYRef,
+  paginationEdgeLockRef,
+  scrollOffsetRef,
   threadSearchActive,
+  timeline,
+  timelineContentHeightRef,
+  timelineViewportHeightRef,
 }: Pick<
   ReturnType<typeof useTimelineViewportState>,
   | "scrollOffsetRef"
@@ -126,33 +132,39 @@ export function useTimelineViewportActions({
   | "timelineViewportHeightRef"
   | "timelineContentHeightRef"
 > & {
-  firstVisibleHistoryAnchorRef: import("react").RefObject<string | null>;
   firstVisibleHistoryAnchorKeyRef: import("react").RefObject<string | null>;
+  firstVisibleHistoryAnchorRef: import("react").RefObject<string | null>;
   firstVisibleHistoryAnchorStatusRef: import("react").RefObject<
     import("@codewide/codex-protocol/v0.147.0/v2").Turn["status"] | null
   >;
 } & {
-  fullscreenScrollOwnership: ReturnType<typeof createFullscreenScrollOwnership>;
-  historyViewport: ThreadHistoryViewport;
+  displayedTimeline: TimelineItem[];
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  timeline: TimelineItem[];
-  displayedTimeline: TimelineItem[];
+  fullscreenScrollOwnership: ReturnType<typeof createFullscreenScrollOwnership>;
+  historyViewport: ThreadHistoryViewport;
   threadSearchActive: boolean;
+  timeline: TimelineItem[];
 }) {
   const reportHistoryViewport = useEvent(() => {
-    if (threadSearchActive || fullscreenScrollOwnership.isCovered()) return;
+    if (threadSearchActive || fullscreenScrollOwnership.isCovered()) {
+      return;
+    }
     void historyViewport
       .reportViewport(timelineViewportHeightRef.current, timelineContentHeightRef.current)
       .catch(() => undefined);
   });
   const onTimelineFirstVisibleItemChanged = useEvent(
     ({ index, item }: { index: number; item: TimelineItem; key: string }) => {
-      if (fullscreenScrollOwnership.isCovered()) return;
+      if (fullscreenScrollOwnership.isCovered()) {
+        return;
+      }
       let anchor = item.kind === "turn" ? item : null;
       for (let next = index + 1; anchor === null && next < timeline.length; next += 1) {
         const candidate = timeline[next];
-        if (candidate?.kind === "turn") anchor = candidate;
+        if (candidate?.kind === "turn") {
+          anchor = candidate;
+        }
       }
       firstVisibleHistoryAnchorRef.current = anchor?.id ?? null;
       firstVisibleHistoryAnchorKeyRef.current = anchor === null ? null : timelineItemKey(anchor);
@@ -162,19 +174,18 @@ export function useTimelineViewportActions({
   );
 
   const loadOlderAtTimelineStart = useEvent(() => {
-    if (fullscreenScrollOwnership.isCovered()) return;
+    if (fullscreenScrollOwnership.isCovered()) {
+      return;
+    }
     const oppositeEdge = paginationEdgeLockRef.current === "newer";
-    if (!oppositeEdge) paginationEdgeLockRef.current = "older";
+    if (!oppositeEdge) {
+      paginationEdgeLockRef.current = "older";
+    }
     if (draftConnectionId !== null && draftThreadId !== null) {
       recordThreadHistoryTelemetry(draftConnectionId, draftThreadId, "chat.scroll.edge_reached", {
         ...(firstVisibleHistoryAnchorRef.current === null
           ? {}
           : { turnId: firstVisibleHistoryAnchorRef.current }),
-        values: {
-          itemCount: displayedTimeline.length,
-          offsetY: lastTimelineOffsetYRef.current ?? 0,
-          distanceFromEndPx: scrollOffsetRef.current,
-        },
         tags: {
           direction: "older",
           outcome: threadSearchActive
@@ -184,26 +195,32 @@ export function useTimelineViewportActions({
               : "requested",
           status: historyViewport.readStatus(),
         },
+        values: {
+          distanceFromEndPx: scrollOffsetRef.current,
+          itemCount: displayedTimeline.length,
+          offsetY: lastTimelineOffsetYRef.current ?? 0,
+        },
       });
     }
-    if (threadSearchActive || oppositeEdge) return;
+    if (threadSearchActive || oppositeEdge) {
+      return;
+    }
     void historyViewport.loadOlder().catch(() => undefined);
   });
 
   const loadNewerAtTimelineEnd = useEvent(() => {
-    if (fullscreenScrollOwnership.isCovered()) return;
+    if (fullscreenScrollOwnership.isCovered()) {
+      return;
+    }
     const oppositeEdge = paginationEdgeLockRef.current === "older";
-    if (!oppositeEdge) paginationEdgeLockRef.current = "newer";
+    if (!oppositeEdge) {
+      paginationEdgeLockRef.current = "newer";
+    }
     if (draftConnectionId !== null && draftThreadId !== null) {
       recordThreadHistoryTelemetry(draftConnectionId, draftThreadId, "chat.scroll.edge_reached", {
         ...(firstVisibleHistoryAnchorRef.current === null
           ? {}
           : { turnId: firstVisibleHistoryAnchorRef.current }),
-        values: {
-          itemCount: displayedTimeline.length,
-          offsetY: lastTimelineOffsetYRef.current ?? 0,
-          distanceFromEndPx: scrollOffsetRef.current,
-        },
         tags: {
           direction: "newer",
           outcome: threadSearchActive
@@ -213,15 +230,22 @@ export function useTimelineViewportActions({
               : "requested",
           status: historyViewport.readStatus(),
         },
+        values: {
+          distanceFromEndPx: scrollOffsetRef.current,
+          itemCount: displayedTimeline.length,
+          offsetY: lastTimelineOffsetYRef.current ?? 0,
+        },
       });
     }
-    if (threadSearchActive || oppositeEdge) return;
+    if (threadSearchActive || oppositeEdge) {
+      return;
+    }
     void historyViewport.loadNewer().catch(() => undefined);
   });
   return {
-    onTimelineFirstVisibleItemChanged,
-    loadOlderAtTimelineStart,
     loadNewerAtTimelineEnd,
+    loadOlderAtTimelineStart,
+    onTimelineFirstVisibleItemChanged,
     reportHistoryViewport,
   };
 }
@@ -231,9 +255,9 @@ export function useConversationPaneGeometry() {
 
   const [conversationPaneHeight, setConversationPaneHeight] = useState(0);
   return {
-    narrowConversationPane,
-    setNarrowConversationPane,
     conversationPaneHeight,
+    narrowConversationPane,
     setConversationPaneHeight,
+    setNarrowConversationPane,
   };
 }

@@ -3,19 +3,19 @@ import type { RemoteConnection, RemoteConnectionState } from "@codewide/sync-cli
 export type StoredConnection = RemoteConnection & {
   displayName: string;
   emoji: string;
-  sortOrder: number;
-  state: RemoteConnectionState;
   lastError: string | null;
   lastErrorAt: number | null;
+  sortOrder: number;
+  state: RemoteConnectionState;
 };
 
 export type ConnectionProfileRow = {
-  id: string;
   displayName: string;
   emoji: string;
-  endpoint: string;
-  tlsPinSha256: string | null;
   enabled: boolean;
+  endpoint: string;
+  id: string;
   sortOrder: number;
+  tlsPinSha256: string | null;
   updatedAt: number;
 };

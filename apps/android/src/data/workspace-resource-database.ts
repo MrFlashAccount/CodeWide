@@ -24,90 +24,90 @@ import { createThreadResourcesModel, type ThreadResourcesModel } from "./thread-
 export type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
 
 export type BackgroundTerminalValue = {
-  itemId: string;
-  processId: string;
   command: string;
-  cwd: string;
-  osPid: number | null;
   cpuPercent: number | null;
+  cwd: string;
+  itemId: string;
+  osPid: number | null;
+  processId: string;
   rssKb: string | null;
 };
 
 export type BackgroundTerminalsRow = {
-  id: string;
   connectionId: string;
-  threadId: string;
-  status: "loading" | "ready" | "error";
-  items: BackgroundTerminalValue[];
   error: string | null;
+  id: string;
+  items: BackgroundTerminalValue[];
+  status: "loading" | "ready" | "error";
+  threadId: string;
   updatedAt: number;
 };
 
 export type ThreadGoalRow = {
-  id: string;
   connectionId: string;
-  threadId: string;
-  status: "loading" | "ready" | "error";
-  goal: ThreadGoal | null;
   error: string | null;
+  goal: ThreadGoal | null;
+  id: string;
+  status: "loading" | "ready" | "error";
+  threadId: string;
   updatedAt: number;
 };
 
-export type TunnelValue = { id: string; url: string; expiresAt: number; authorization: string };
+export type TunnelValue = { authorization: string; expiresAt: number; id: string; url: string };
 
 export type TunnelRow = {
-  id: string;
   connectionId: string;
+  error: string | null;
+  id: string;
   status: "creating" | "ready" | "revoking" | "error";
   tunnel: TunnelValue | null;
-  error: string | null;
   updatedAt: number;
 };
 
 export type VoiceInputRow = {
-  id: string;
-  scope: string;
-  phase: "idle" | "starting" | "recording" | "finishing";
   backend: "remote" | "android";
-  level: number;
-  seconds: number;
   error: string | null;
+  id: string;
+  level: number;
+  pendingSelection: { end: number; start: number } | null;
+  phase: "idle" | "starting" | "recording" | "finishing";
   retryAvailable: boolean;
-  pendingSelection: { start: number; end: number } | null;
+  scope: string;
+  seconds: number;
   updatedAt: number;
 };
 
 type FileTransferRow = {
+  error: string | null;
   id: string;
-  scope: string;
-  status: "idle" | "authorizing" | "running" | "complete" | "error";
   progress: {
-    transferred: number;
-    total: number;
     phase: "hashing" | "transferring" | "verifying";
+    total: number;
+    transferred: number;
   } | null;
   result: string | null;
-  error: string | null;
+  scope: string;
+  status: "idle" | "authorizing" | "running" | "complete" | "error";
   updatedAt: number;
 };
 
 export type WorkspaceResourceDatabase = {
-  threadHistories: ThreadHistoryModel;
-  turnControls: LocalCollection<TurnControlsRow>;
   backgroundTerminals: LocalCollection<BackgroundTerminalsRow>;
-  threadGoals: LocalCollection<ThreadGoalRow>;
-  tunnels: LocalCollection<TunnelRow>;
-  voiceInputs: LocalCollection<VoiceInputRow>;
   fileTransfers: LocalCollection<FileTransferRow>;
+  putBackgroundTerminals: (row: Omit<BackgroundTerminalsRow, "updatedAt">) => void;
+  putFileTransfer: (row: Omit<FileTransferRow, "updatedAt">) => void;
+  putThreadGoal: (row: Omit<ThreadGoalRow, "updatedAt">) => void;
+  putThreadHistory: (row: Omit<ThreadHistoryRow, "updatedAt">) => void;
+  putThreadResources: (row: Omit<ThreadResourcesRow, "updatedAt">) => void;
+  putTunnel: (row: Omit<TunnelRow, "updatedAt">) => void;
+  putTurnControls: (row: Omit<TurnControlsRow, "updatedAt">) => void;
+  putVoiceInput: (row: Omit<VoiceInputRow, "updatedAt">) => void;
+  threadGoals: LocalCollection<ThreadGoalRow>;
+  threadHistories: ThreadHistoryModel;
   threadResources: ThreadResourcesModel;
-  putThreadHistory(row: Omit<ThreadHistoryRow, "updatedAt">): void;
-  putTurnControls(row: Omit<TurnControlsRow, "updatedAt">): void;
-  putBackgroundTerminals(row: Omit<BackgroundTerminalsRow, "updatedAt">): void;
-  putThreadGoal(row: Omit<ThreadGoalRow, "updatedAt">): void;
-  putTunnel(row: Omit<TunnelRow, "updatedAt">): void;
-  putVoiceInput(row: Omit<VoiceInputRow, "updatedAt">): void;
-  putFileTransfer(row: Omit<FileTransferRow, "updatedAt">): void;
-  putThreadResources(row: Omit<ThreadResourcesRow, "updatedAt">): void;
+  tunnels: LocalCollection<TunnelRow>;
+  turnControls: LocalCollection<TurnControlsRow>;
+  voiceInputs: LocalCollection<VoiceInputRow>;
 };
 
 export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
@@ -115,82 +115,87 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
   const turnControls = createTurnControlsCollection();
   const backgroundTerminals = createCollection(
     localOnlyCollectionOptions<BackgroundTerminalsRow, string>({
-      id: "workspace-background-terminals-v1",
       getKey: (row) => row.id,
+      id: "workspace-background-terminals-v1",
     }),
   );
   const threadGoals = createCollection(
     localOnlyCollectionOptions<ThreadGoalRow, string>({
-      id: "workspace-thread-goals-v1",
       getKey: (row) => row.id,
+      id: "workspace-thread-goals-v1",
     }),
   );
   const tunnels = createCollection(
     localOnlyCollectionOptions<TunnelRow, string>({
-      id: "workspace-tunnels-v1",
       getKey: (row) => row.id,
+      id: "workspace-tunnels-v1",
     }),
   );
   const voiceInputs = createCollection(
     localOnlyCollectionOptions<VoiceInputRow, string>({
-      id: "workspace-voice-inputs-v1",
       getKey: (row) => row.id,
+      id: "workspace-voice-inputs-v1",
     }),
   );
   const fileTransfers = createCollection(
     localOnlyCollectionOptions<FileTransferRow, string>({
-      id: "workspace-file-transfers-v1",
       getKey: (row) => row.id,
+      id: "workspace-file-transfers-v1",
     }),
   );
   const threadResources = createThreadResourcesModel();
   return {
-    threadHistories,
-    turnControls,
     backgroundTerminals,
-    threadGoals,
-    tunnels,
-    voiceInputs,
     fileTransfers,
-    threadResources,
-    putThreadHistory(row) {
-      threadHistories.put(row);
-    },
-    putTurnControls(row) {
-      put(turnControls, { ...row, updatedAt: Date.now() });
-      trimOldest(turnControls, 48);
-    },
     putBackgroundTerminals(row) {
       put(backgroundTerminals, { ...row, updatedAt: Date.now() });
       trimOldest(backgroundTerminals, 48);
-    },
-    putThreadGoal(row) {
-      put(threadGoals, { ...row, updatedAt: Date.now() });
-      trimOldest(threadGoals, 48);
-    },
-    putTunnel(row) {
-      put(tunnels, { ...row, updatedAt: Date.now() });
-      trimOldest(tunnels, 24);
-    },
-    putVoiceInput(row) {
-      put(voiceInputs, { ...row, updatedAt: Date.now() });
-      trimOldest(voiceInputs, 8);
     },
     putFileTransfer(row) {
       put(fileTransfers, { ...row, updatedAt: Date.now() });
       trimOldest(fileTransfers, 16);
     },
+    putThreadGoal(row) {
+      put(threadGoals, { ...row, updatedAt: Date.now() });
+      trimOldest(threadGoals, 48);
+    },
+    putThreadHistory(row) {
+      threadHistories.put(row);
+    },
     putThreadResources(row) {
       threadResources.put({ ...row, updatedAt: Date.now() });
     },
+    putTunnel(row) {
+      put(tunnels, { ...row, updatedAt: Date.now() });
+      trimOldest(tunnels, 24);
+    },
+    putTurnControls(row) {
+      put(turnControls, { ...row, updatedAt: Date.now() });
+      trimOldest(turnControls, 48);
+    },
+    putVoiceInput(row) {
+      put(voiceInputs, { ...row, updatedAt: Date.now() });
+      trimOldest(voiceInputs, 8);
+    },
+    threadGoals,
+    threadHistories,
+    threadResources,
+    tunnels,
+    turnControls,
+    voiceInputs,
   };
 }
 
-type LocalCollection<T extends object> = Collection<T, string>;
+type LocalCollection<T extends Record<string, unknown>> = Collection<T, string>;
 
 function put<T extends { id: string }>(collection: LocalCollection<T>, row: T): void {
-  if (collection.has(row.id)) collection.update(row.id, (draft) => Object.assign(draft, row));
-  else collection.insert(row);
+  if (collection.has(row.id)) {
+    collection.update(row.id, (draft) => {
+      Object.assign(draft, row);
+    });
+  } else {
+    collection.insert(row);
+  }
 }
 
 function trimOldest<T extends { id: string; updatedAt: number }>(
@@ -201,7 +206,9 @@ function trimOldest<T extends { id: string; updatedAt: number }>(
   const overflow = rows
     .sort((left, right) => left.updatedAt - right.updatedAt)
     .slice(0, Math.max(0, rows.length - max));
-  if (overflow.length > 0) collection.delete(overflow.map((row) => row.id));
+  if (overflow.length > 0) {
+    collection.delete(overflow.map((row) => row.id));
+  }
 }
 
 export type ThreadGoalInput = {

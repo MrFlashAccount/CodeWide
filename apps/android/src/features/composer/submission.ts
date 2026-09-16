@@ -1,7 +1,9 @@
 import { composerUploads } from "../../data/composer-uploads";
+import { useState } from "react";
 import { remoteAttachment } from "../../data/quickdraw-attachment";
 import type { SendMode } from "../../data/thread-delivery-state";
 import { useEvent } from "../../react/useEvent";
+import { useAppDialog } from "../../ui/AppDialog";
 import { resolveComposerSendMode, type ComposerSendPreference } from "./deliveryMode";
 import { EMPTY_TURN_CONTROLS } from "./settings";
 import {
@@ -12,35 +14,35 @@ import type { ComposerSubmissionCapabilities } from "./submissionCapabilities";
 import { mergeFailedComposerAttachments, mergeFailedComposerText } from "./submissionRecovery";
 
 export function useComposerSubmission({
+  captureControlsResource,
+  captureDraftMutations,
+  capturePreferenceUpdate,
+  clearContentReviewAttachmentId,
+  composerMarkdownRef,
   composerScope,
   composerUploadScope,
-  latestAttachmentsRef,
-  latestDraftRef,
-  latestComposerPreferencesRef,
-  composerMarkdownRef,
-  selectedModel,
-  selectedEffort,
-  selectedPersonality,
-  selectedPermissions,
-  capturePreferenceUpdate,
-  captureControlsResource,
-  queuedComposerEdit,
-  pastedAttachmentPendingRef,
-  captureDraftMutations,
-  threadLifecycleActive,
-  currentTurnId,
   contentReviewAttachmentId,
-  clearContentReviewAttachmentId,
   conversationOwner,
+  currentTurnId,
   draftConnectionId,
   draftThreadId,
-  onSend,
+  latestAttachmentsRef,
+  latestComposerPreferencesRef,
+  latestDraftRef,
   onListQueue,
+  onSend,
+  pastedAttachmentPendingRef,
+  queuedComposerEdit,
   saveDraft,
   saveDraftAttachments,
+  selectedEffort,
+  selectedModel,
+  selectedPermissions,
+  selectedPersonality,
+  threadLifecycleActive,
 }: ComposerSubmissionCapabilities) {
   const captureSend = useEvent(() => {
-    const { updateDraft, updateAttachments } = captureDraftMutations();
+    const { updateAttachments, updateDraft } = captureDraftMutations();
     const updateComposerPreferences = capturePreferenceUpdate();
     const currentControlsResource = captureControlsResource();
     const send = (textOverride?: string, preference: ComposerSendPreference = "start") => {
@@ -48,8 +50,9 @@ export function useComposerSubmission({
         queuedComposerEdit !== null ||
         pastedAttachmentPendingRef.current ||
         composerUploads.blocksSend(composerUploadScope)
-      )
+      ) {
         return;
+      }
       // Voice completion passes its final draft explicitly. Reading `draft`
       // here would use the render captured when recording started and can send
       // the pre-transcription text instead of the latest transcript.
@@ -60,7 +63,9 @@ export function useComposerSubmission({
         composerUploadScope,
         latestAttachmentsRef.current.latest,
       );
-      if ((!text && sentAttachments.length === 0) || onSend === undefined) return;
+      if ((text === "" && sentAttachments.length === 0) || onSend === undefined) {
+        return;
+      }
       const scope = composerScope;
       const sentContentReviewAttachmentId = contentReviewAttachmentId;
       // Delivery mode is a one-shot command for this draft. Normal Send uses the
@@ -82,7 +87,9 @@ export function useComposerSubmission({
         )
         .map(({ name, path }) => ({ name, path }));
       const restoreSentSkillPaths = () => {
-        if (selectedSkillPaths.length === 0) return;
+        if (selectedSkillPaths.length === 0) {
+          return;
+        }
         updateComposerPreferences((current) => {
           const missing = selectedSkillPaths.filter((path) => !current.skillPaths.includes(path));
           return missing.length === 0
@@ -102,18 +109,21 @@ export function useComposerSubmission({
       });
       updateDraft("");
       updateAttachments([]);
-      if (selectedSkillPaths.length > 0)
+      if (selectedSkillPaths.length > 0) {
         updateComposerPreferences((current) => ({ ...current, skillPaths: [] }));
-      for (const attachment of sentAttachments)
+      }
+      for (const attachment of sentAttachments) {
         composerUploads.remove(composerUploadScope, attachment.id);
+      }
       // Do not move or replace the resident history window here. The delivery is
       // already a row in the model-owned timeline. LegendList MVCP remains the
       // only position owner; calling loadLatest or scrollToEnd from Send can
       // replace the range underneath an already measured list.
       void operation
         .then(() => {
-          if (sentContentReviewAttachmentId !== null)
+          if (sentContentReviewAttachmentId !== null) {
             clearContentReviewAttachmentId(scope, sentContentReviewAttachmentId);
+          }
           if (mode.type === "queue" && onListQueue !== undefined) {
             void onListQueue().catch(() => undefined);
           }
@@ -125,16 +135,21 @@ export function useComposerSubmission({
           if (conversationOwner.isCurrent()) {
             restoreSentSkillPaths();
             const recoveredDraft = mergeFailedComposerText(latestDraftRef.current.latest, text);
-            if (recoveredDraft !== latestDraftRef.current.latest) updateDraft(recoveredDraft);
+            if (recoveredDraft !== latestDraftRef.current.latest) {
+              updateDraft(recoveredDraft);
+            }
             const recoveredAttachments = mergeFailedComposerAttachments(
               latestAttachmentsRef.current.latest,
               sentAttachments,
             );
-            if (recoveredAttachments !== latestAttachmentsRef.current.latest)
+            if (recoveredAttachments !== latestAttachmentsRef.current.latest) {
               updateAttachments(recoveredAttachments);
+            }
             return;
           }
-          if (conversationOwner.hasReplacement()) return;
+          if (conversationOwner.hasReplacement()) {
+            return;
+          }
           // The user already navigated away. Restore the failed submission in its
           // owning thread without mutating the newly selected composer's local UI.
           const recoveredDraft = mergeFailedComposerText(latestDraftRef.current.latest, text);
@@ -161,55 +176,79 @@ export function useComposerSubmission({
     };
     return send;
   });
-  const send = useEvent((textOverride?: string, preference: ComposerSendPreference = "start") =>
-    captureSend()(textOverride, preference),
-  );
-  return { send, captureSend };
+  const send = useEvent((textOverride?: string, preference: ComposerSendPreference = "start") => {
+    captureSend()(textOverride, preference);
+  });
+  return { captureSend, send };
 }
 
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import type { ComposerDeliveryCapabilities } from "./deliveryCapabilities";
 export function useComposerDeliveryActions({
+  attachments,
+  cancelQueuedComposerEdit,
+  clearComposerText,
+  currentTurnId,
+  discardVoice,
+  draft,
+  finishVoice,
+  onEditQueued,
+  onInterrupt,
+  pastedAttachmentPending,
   queuedComposerEdit,
   queuedComposerEditBusy,
-  voicePhase,
-  finishVoice,
-  send,
-  currentTurnId,
-  draft,
-  attachments,
-  onEditQueued,
-  pastedAttachmentPending,
-  uploadsBlockSend,
-  voiceRetryAvailable,
-  voiceError,
-  cancelQueuedComposerEdit,
-  discardVoice,
-  clearComposerText,
   saveQueuedComposerEdit,
-  onInterrupt,
+  send,
   threadLifecycleActive,
+  uploadsBlockSend,
+  voiceError,
+  voicePhase,
+  voiceRetryAvailable,
 }: ComposerDeliveryCapabilities) {
+  const dialog = useAppDialog();
+  const [actionPending, setActionPending] = useState(false);
+  const runAction = useEvent((operation: () => Promise<void>, fallback: string): void => {
+    if (actionPending) {
+      return;
+    }
+    setActionPending(true);
+    operation().then(
+      () => {
+        setActionPending(false);
+      },
+      (error: unknown) => {
+        setActionPending(false);
+        dialog.alert(fallback, error instanceof Error ? error.message : fallback);
+      },
+    );
+  });
   const deliveryActions: ActionMenuItem[] = [
-    { id: "start", label: "Send now", icon: "send-outline", disabled: threadLifecycleActive },
+    { disabled: threadLifecycleActive, icon: "send-outline", id: "start", label: "Send now" },
     {
+      disabled: !threadLifecycleActive,
+      icon: "time-outline",
       id: "queue",
       label: "Queue after current turn",
-      icon: "time-outline",
-      disabled: !threadLifecycleActive,
     },
     {
+      disabled: currentTurnId === null,
+      icon: "navigate-outline",
       id: "steer",
       label: "Steer active turn",
-      icon: "navigate-outline",
-      disabled: currentTurnId === null,
     },
   ];
 
   const handleDeliveryAction = useEvent((id: string) => {
-    if (queuedComposerEdit !== null || (id !== "start" && id !== "queue" && id !== "steer")) return;
-    if (voicePhase !== "idle") void finishVoice(true, id);
-    else send(undefined, id);
+    if (queuedComposerEdit !== null || (id !== "start" && id !== "queue" && id !== "steer")) {
+      return;
+    }
+    if (voicePhase !== "idle") {
+      runAction(async () => {
+        await finishVoice(true, id);
+      }, "Could not finish voice input");
+    } else {
+      send(undefined, id);
+    }
   });
 
   const editingQueuedMessage = queuedComposerEdit !== null;
@@ -222,6 +261,7 @@ export function useComposerDeliveryActions({
     attachments.length === 0;
 
   const sendDisabled =
+    actionPending ||
     voicePhase === "finishing" ||
     queuedComposerEditBusy ||
     (editingQueuedMessage && onEditQueued === undefined) ||
@@ -237,39 +277,51 @@ export function useComposerDeliveryActions({
     draft !== "";
 
   const discardComposer = useEvent(() => {
-    if (editingQueuedMessage) cancelQueuedComposerEdit();
-    else if (voicePhase !== "idle" || voiceRetryAvailable || voiceError !== null)
-      void discardVoice();
-    else clearComposerText();
+    if (editingQueuedMessage) {
+      cancelQueuedComposerEdit();
+    } else if (voicePhase !== "idle" || voiceRetryAvailable || voiceError !== null) {
+      runAction(discardVoice, "Could not discard voice input");
+    } else {
+      clearComposerText();
+    }
   });
 
   const activatePrimaryAction = useEvent(() => {
-    if (editingQueuedMessage) void saveQueuedComposerEdit();
-    else if (voicePhase !== "idle") void finishVoice(true);
-    else if (
+    if (editingQueuedMessage) {
+      saveQueuedComposerEdit();
+    } else if (voicePhase !== "idle") {
+      runAction(async () => {
+        await finishVoice(true);
+      }, "Could not finish voice input");
+    } else if (
       currentTurnId !== null &&
       onInterrupt !== undefined &&
       draft.trim() === "" &&
       attachments.length === 0
-    )
-      void onInterrupt(currentTurnId);
-    else send();
+    ) {
+      runAction(async () => {
+        await onInterrupt(currentTurnId);
+      }, "Could not stop response");
+    } else {
+      send();
+    }
   });
 
   const steerComposer = useEvent(() => {
-    if (editingQueuedMessage || sendDisabled || currentTurnId === null || !threadLifecycleActive)
+    if (editingQueuedMessage || sendDisabled || currentTurnId === null || !threadLifecycleActive) {
       return;
+    }
     handleDeliveryAction("steer");
   });
   return {
-    deliveryActions,
-    handleDeliveryAction,
-    editingQueuedMessage,
-    stoppingResponse,
-    sendDisabled,
-    composerDiscardEnabled,
-    discardComposer,
     activatePrimaryAction,
+    composerDiscardEnabled,
+    deliveryActions,
+    discardComposer,
+    editingQueuedMessage,
+    handleDeliveryAction,
+    sendDisabled,
     steerComposer,
+    stoppingResponse,
   };
 }

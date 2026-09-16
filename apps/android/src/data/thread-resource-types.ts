@@ -1,13 +1,13 @@
 /** Thread changes and attachments shared by projection and persistence owners. */
 export type ThreadChangeResource = {
-  path: string;
-  kind: "add" | "delete" | "update";
-  availability: "available" | "deleted" | "unavailable" | "unknown";
   additions: number;
-  deletions: number;
+  availability: "available" | "deleted" | "unavailable" | "unknown";
   binary?: boolean;
-  turnId: string;
+  deletions: number;
   itemId: string;
+  kind: "add" | "delete" | "update";
+  path: string;
+  turnId: string;
 };
 
 export type ThreadChangeScope = "session" | "lastTurn" | "staged" | "unstaged" | "branch";
@@ -15,49 +15,49 @@ export type ThreadChangeScope = "session" | "lastTurn" | "staged" | "unstaged" |
 export type ThreadResourceKind = "changes" | "attachments";
 
 export type ThreadAttachmentResource = {
-  key: string;
-  name: string;
-  kind: "image" | "audio" | "file";
-  path: string | null;
-  url: string | null;
-  origin: "user" | "agent";
-  turnId: string;
   itemId: string;
+  key: string;
+  kind: "image" | "audio" | "file";
+  name: string;
+  origin: "user" | "agent";
+  path: string | null;
+  turnId: string;
+  url: string | null;
 };
 
 export type ThreadResourcesValue = {
-  threadId: string;
-  revision: string;
+  attachments: ThreadAttachmentResource[];
+  changes: ThreadChangeResource[];
   changeScope: ThreadChangeScope;
   changeScopes: ThreadChangeScope[];
-  changes: ThreadChangeResource[];
-  attachments: ThreadAttachmentResource[];
+  revision: string;
+  threadId: string;
 };
 
 export type ThreadResourcesRow = {
-  id: string;
   connectionId: string;
-  threadId: string;
-  status: "loading" | "ready" | "error";
-  value: ThreadResourcesValue | null;
   error: string | null;
+  id: string;
   /** Resource-specific refresh state. Older persisted rows fall back to `status`. */
   pendingKinds?: readonly ThreadResourceKind[];
   readyKinds?: readonly ThreadResourceKind[];
   resourceErrors?: Partial<Record<ThreadResourceKind, string>>;
+  status: "loading" | "ready" | "error";
+  threadId: string;
   updatedAt: number;
+  value: ThreadResourcesValue | null;
 };
 
 export type ThreadChangeDiffValue = {
-  threadId: string;
-  path: string;
   changeScope: ThreadChangeScope;
   patches: Array<{
-    turnId: string;
+    diff: string;
     itemId: string;
     kind: "add" | "delete" | "update";
-    diff: string;
+    turnId: string;
   }>;
+  path: string;
   source: string | null;
+  threadId: string;
   truncated: boolean;
 };

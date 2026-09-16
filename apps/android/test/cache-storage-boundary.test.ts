@@ -12,16 +12,23 @@ describe("Android cache storage boundary", () => {
   const profiles = source("../src/data/connection-profile-database.native.ts");
   const workspace = source("../src/features/composer/workspaceAdapter.ts");
   const migration = source("../src/data/connection-runtime.ts");
-  const legacyStore = source("../src/data/legacy-remote-store.native.ts");
   const nativeTransport = source("../src/native/native-transport.native.ts");
-  const frameStore = source("../android/app/src/main/java/dev/codewide/app/remote/NativeFrameStore.kt");
-  const commandStore = source("../android/app/src/main/java/dev/codewide/app/remote/NativeCommandStore.kt");
-  const cleanup = source("../android/app/src/main/java/dev/codewide/app/remote/DerivedStorageCleanup.kt");
-  const nativeModule = source("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
+  const frameStore = source(
+    "../android/app/src/main/java/dev/codewide/app/remote/NativeFrameStore.kt",
+  );
+  const commandStore = source(
+    "../android/app/src/main/java/dev/codewide/app/remote/NativeCommandStore.kt",
+  );
+  const cleanup = source(
+    "../android/app/src/main/java/dev/codewide/app/remote/DerivedStorageCleanup.kt",
+  );
+  const nativeModule = source(
+    "../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt",
+  );
 
   it("puts server-reconstructable SQLite stores under cacheDir", () => {
-    expect(uiCache).toContain('return `${cacheDirectory}codex-remote/sqlite`');
-    expect(uiCache).toContain('location: uiCacheDirectory()');
+    expect(uiCache).toContain("return `${cacheDirectory}codex-remote/sqlite`");
+    expect(uiCache).toContain("location: uiCacheDirectory()");
     expect(uiCache.match(/location: "default"/gu)).toHaveLength(1);
     expect(frameStore).toContain("context.cacheDir");
     expect(frameStore).toContain('"codex-remote/transport/codex-remote-frames.db"');
@@ -38,7 +45,8 @@ describe("Android cache storage boundary", () => {
   });
 
   it("keeps server identity and the unfinished outbox durable", () => {
-    expect(settings).toContain('name: "codex-remote-settings.db", location: "settings"');
+    expect(settings).toContain('name: "codex-remote-settings.db"');
+    expect(settings).toContain('location: "settings"');
     expect(profiles).toContain("getSettingsSqliteDatabase()");
     expect(profiles).not.toContain("getUiCacheSqliteDatabase()");
     expect(commandStore).toContain('context.getDatabasePath("codex-remote-native-commands.db")');
@@ -65,8 +73,10 @@ describe("Android cache storage boundary", () => {
   it("does not reopen the obsolete data database while opening threads", () => {
     expect(workspace).not.toContain("legacyStore.loadDraft");
     expect(workspace).not.toContain("legacyStore.loadDraftAttachments");
-    expect(source("../src/features/conversation/workspaceAdapter.ts")).not.toContain("legacyStore.loadScrollOffset");
+    expect(source("../src/features/conversation/workspaceAdapter.ts")).not.toContain(
+      "legacyStore.loadScrollOffset",
+    );
     expect(workspace).not.toContain("legacyStore.loadComposerPreferences");
-    expect(legacyStore).toContain("await this.#database.closeAsync()");
+    expect(migration).not.toContain("LegacyRemoteStore");
   });
 });

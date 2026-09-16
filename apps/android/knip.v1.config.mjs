@@ -6,12 +6,22 @@ export default {
   metro: false,
   node: false,
   typescript: false,
+  ignoreDependencies: [
+    // Kotlin imports SplashScreenManager directly; Knip cannot see native source consumers.
+    "expo-splash-screen",
+    // Expo applies this package as an auto-plugin for the configured system appearance.
+    "expo-system-ui",
+    // Babel resolves the compiler through babel-preset-expo's react-compiler option.
+    "babel-plugin-react-compiler",
+    // babel.config.js selects this preset by module name while Knip's Babel plugin is disabled.
+    "babel-preset-expo",
+    // Gradle copies the selected grammar files directly from this package into native assets.
+    "tm-grammars",
+  ],
   // WHY: Metro resolves these exact module names to native, Android, or web files before
   // the unsuffixed fallback. Knip does not model React Native platform resolution.
   ignoreUnresolved: [
-    // WHY: The source-only V1 graph excludes this CommonJS test fixture owned by ESLint.
-    /^\.\/eslint-presentation-tokens[.]cjs$/u,
-    /^(?:\.\.?\/)+(?:[^/]+\/)*(?:ActionMenu|AppDialogSurface|BrowserDevToolsPane|CodeReviewEditor|CodeWideMenu|ComposerDeliveryMenu|ComposerEditorTrialEntry|ComposerMarkdownInput|Diagram|HeroUIRoot|InternalBrowser|MermaidDiagram|MessageActionMenu|ReviewableText|SpeedscopeProfileViewer|TerminalWorkspace|TurnControlMenus|VoiceAura|account-rate-limits-database|connection-profile-database|file-transfer|interactive-terminal-store|legacy-remote-store|local-authentication|native-engine|pending-request-database|performance-metrics|quickdraw-image-source|send-feedback|thread-detail-database|thread-summary-database|thread-ui-state-database|turn-controls-collection|user-preferences-database)$/u,
+    /^(?:\.\.?\/)+(?:[^/]+\/)*(?:ActionMenu|AppDialogSurface|BrowserDevToolsPane|CodeReviewEditor|CodeWideMenu|ComposerDeliveryMenu|ComposerEditorTrialEntry|ComposerMarkdownInput|Diagram|AppRootProviders|InternalBrowser|MermaidDiagram|MessageActionMenu|ReviewableText|SpeedscopeProfileViewer|TerminalWorkspace|TurnControlMenus|VoiceAura|account-rate-limits-database|connection-profile-database|file-transfer|interactive-terminal-store|local-authentication|native-engine|pending-request-database|performance-metrics|quickdraw-image-source|send-feedback|thread-detail-database|thread-summary-database|thread-ui-state-database|turn-controls-collection|user-preferences-database)$/u,
   ],
   entry: [
     "app/legacy.tsx",

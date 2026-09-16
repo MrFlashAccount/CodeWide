@@ -9,19 +9,19 @@ import { styles } from "./SubagentWorkspace.styles";
 
 /** Renders the retained status and progress of one pending subagent. */
 export function SubagentPendingDetail({
-  summary,
   compact,
-  loading,
   error,
+  loading,
   onBack,
   onClose,
+  summary,
 }: {
-  summary: StoredThreadSummary;
   compact: boolean;
-  loading: boolean;
   error: string | null;
-  onBack(): void;
-  onClose(): void;
+  loading: boolean;
+  onBack: () => void;
+  onClose: () => void;
+  summary: StoredThreadSummary;
 }) {
   return (
     <View style={styles.pendingPane}>
@@ -32,7 +32,7 @@ export function SubagentPendingDetail({
             onPress={onBack}
             style={styles.iconButton}
           >
-            <Ionicons name="arrow-back" size={iconSize.navigation} color={colors.text} />
+            <Ionicons color={colors.text} name="arrow-back" size={iconSize.navigation} />
           </Pressable>
         )}
         <View style={styles.headerIdentity}>
@@ -49,7 +49,7 @@ export function SubagentPendingDetail({
             onPress={onClose}
             style={styles.iconButton}
           >
-            <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
+            <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
           </Pressable>
         )}
       </View>
@@ -74,7 +74,7 @@ export function SubagentPendingDetail({
 export function EmptySelection() {
   return (
     <View style={styles.center}>
-      <Ionicons name="chatbubbles-outline" size={iconSize.illustration} color={colors.textDim} />
+      <Ionicons color={colors.textDim} name="chatbubbles-outline" size={iconSize.illustration} />
       <Text style={styles.muted}>Select a subagent</Text>
     </View>
   );
@@ -83,7 +83,7 @@ export function EmptySelection() {
 export function EmptySubagents() {
   return (
     <View style={styles.empty}>
-      <Ionicons name="people-outline" size={iconSize.illustration} color={colors.textDim} />
+      <Ionicons color={colors.textDim} name="people-outline" size={iconSize.illustration} />
       <Text style={styles.muted}>No subagents in this thread</Text>
     </View>
   );

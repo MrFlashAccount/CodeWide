@@ -66,20 +66,13 @@ export function RouteTextDocumentPreview({
     <AppSheet
       contentProps={DOCUMENT_SHEET_PROPS}
       isOpen
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onOpenChange={(open) => {
         if (!open) {
           onClose();
         }
       }}
     >
-      <AttachmentDocumentPreview
-        codePreviewMaxHeight={420}
-        // WHY: This preview model is render-derived; React Compiler owns its identity.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-object-as-prop
-        preview={preview}
-      />
+      <AttachmentDocumentPreview codePreviewMaxHeight={420} preview={preview} />
     </AppSheet>
   );
 }

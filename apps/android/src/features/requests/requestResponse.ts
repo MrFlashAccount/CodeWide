@@ -7,7 +7,9 @@ export function useRequestResponse(
     | undefined,
 ) {
   const respondToRequest = useEvent(async (request: PendingServerRequest, result: unknown) => {
-    if (onRespondToRequest === undefined) throw new Error("Request response is unavailable");
+    if (onRespondToRequest === undefined) {
+      throw new Error("Request response is unavailable");
+    }
     await onRespondToRequest(request, result);
   });
   return { respondToRequest };

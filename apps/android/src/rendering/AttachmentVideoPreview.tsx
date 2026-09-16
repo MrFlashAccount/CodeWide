@@ -16,9 +16,9 @@ import { materializePrivateAsset } from "./private-asset";
 import { usePrivateFileAccessScope } from "./use-private-image-uri";
 
 interface VideoRequest {
+  readonly getAccess: GetTransferAccess;
   readonly name: string;
   readonly source: PrivateAssetSource;
-  readonly getAccess: GetTransferAccess;
 }
 type VideoPreviewSource =
   | { readonly fallbackPath: string; readonly source?: undefined }
@@ -26,7 +26,7 @@ type VideoPreviewSource =
 type VideoPreviewProps = VideoPreviewSource & {
   readonly getAccess: GetTransferAccess;
   readonly name: string;
-  onClose(): void;
+  onClose: () => void;
   readonly scope: string;
 };
 
@@ -39,7 +39,7 @@ export function useAttachmentVideoPreview(): (request: VideoRequest) => void {
   const scope = usePrivateFileAccessScope();
   return useEvent((request: VideoRequest) => {
     overlay.present((controls) => (
-      <AttachmentVideoPreview {...request} scope={scope} onClose={controls.close} />
+      <AttachmentVideoPreview {...request} onClose={controls.close} scope={scope} />
     ));
   });
 }
@@ -86,7 +86,9 @@ function AttachmentVideoPreview(props: VideoPreviewProps) {
   const resource = useEphemeralAsyncResource<VideoSource>(key, revision, async (_publish, signal) =>
     materializePrivateAsset(source, props.getAccess, undefined, signal),
   );
-  const retry = () => setRevision((value) => value + 1);
+  const retry = () => {
+    setRevision((value) => value + 1);
+  };
   return (
     <View style={styles.root}>
       <View style={styles.header}>
@@ -94,17 +96,17 @@ function AttachmentVideoPreview(props: VideoPreviewProps) {
           {props.name}
         </Text>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Close video"
+          accessibilityRole="button"
           onPress={props.onClose}
         >
           <Text style={styles.text}>Close</Text>
         </Pressable>
       </View>
       {resource.value !== null ? (
-        <AttachmentVideoPlayer key={revision} source={resource.value} onRetry={retry} />
+        <AttachmentVideoPlayer key={revision} onRetry={retry} source={resource.value} />
       ) : resource.status === "error" ? (
-        <Pressable accessibilityRole="button" accessibilityLabel="Retry video" onPress={retry}>
+        <Pressable accessibilityLabel="Retry video" accessibilityRole="button" onPress={retry}>
           <Text style={styles.text}>{resource.error} · Retry</Text>
         </Pressable>
       ) : (
@@ -115,19 +117,21 @@ function AttachmentVideoPreview(props: VideoPreviewProps) {
 }
 
 interface VideoPlayerProps {
+  onRetry: () => void;
   readonly source: VideoSource;
-  onRetry(): void;
 }
 function AttachmentVideoPlayer(props: VideoPlayerProps) {
-  const player = useVideoPlayer(props.source, (created) => created.play());
+  const player = useVideoPlayer(props.source, (created) => {
+    created.play();
+  });
   const event = useExpoEvent(player, "statusChange", { status: player.status });
   return (
     <View style={styles.player}>
-      <VideoView player={player} nativeControls contentFit="contain" style={styles.player} />
+      <VideoView contentFit="contain" nativeControls player={player} style={styles.player} />
       {event.status === "error" && (
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Retry video"
+          accessibilityRole="button"
           onPress={props.onRetry}
         >
           <Text style={styles.text}>{event.error?.message ?? "Could not play video"} · Retry</Text>
@@ -137,25 +141,25 @@ function AttachmentVideoPlayer(props: VideoPlayerProps) {
   );
 }
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.background,
+  header: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.md,
+    padding: spacing.md,
   },
   player: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    padding: spacing.md,
-    gap: spacing.md,
-    alignItems: "center",
-  },
-  title: {
+  root: {
+    backgroundColor: colors.background,
     flex: 1,
-    ...typeScale.title,
-    color: colors.text,
   },
   text: {
     ...typeScale.body,
     color: colors.text,
     padding: spacing.sm,
+  },
+  title: {
+    flex: 1,
+    ...typeScale.title,
+    color: colors.text,
   },
 });

@@ -13,6 +13,7 @@ import {
   subscribeNativeTerminal,
   writeNativeTerminal,
 } from "../../native/native-transport";
+import { useConstant } from "../../react/useConstant";
 import { colors, iconSize } from "../../theme";
 import { useFullscreenWindowReady } from "../../ui/FullscreenWindowReady";
 import { AppText as Text } from "../../ui/Typography";
@@ -21,7 +22,8 @@ import { styles } from "./TerminalWorkspace.styles";
 export function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
   const terminalRef = useRef<TerminalViewRef>(null);
   const fullscreenWindowReady = useFullscreenWindowReady();
-  const nextOffsetRef = useRef(readInteractiveTerminalRenderedOffset(tab.id));
+  const initialOffset = useConstant(() => readInteractiveTerminalRenderedOffset(tab.id));
+  const nextOffsetRef = useRef(initialOffset);
   const [renderError, setRenderError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -29,15 +31,20 @@ export function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
     let pumping = false;
     let requested = false;
     let finished = false;
+    const isDisposed = (): boolean => disposed;
 
     const drain = async () => {
       while (requested && !disposed) {
         requested = false;
         const terminal = terminalRef.current;
-        if (terminal === null) return;
-        while (!disposed) {
+        if (terminal === null) {
+          return;
+        }
+        while (!isDisposed()) {
           const chunk = await readNativeTerminalOutput(tab.id, nextOffsetRef.current);
-          if (chunk.data !== "") await terminal.write(chunk.data);
+          if (chunk.data !== "") {
+            await terminal.write(chunk.data);
+          }
           nextOffsetRef.current = chunk.nextOffset;
           commitInteractiveTerminalRenderedOffset(tab.id, chunk.nextOffset);
           if (!chunk.hasMore) {
@@ -53,30 +60,41 @@ export function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
 
     const pump = () => {
       requested = true;
-      if (pumping || disposed) return;
+      if (pumping || disposed) {
+        return;
+      }
       pumping = true;
       void drain().then(
         () => {
           pumping = false;
-          if (requested && !disposed) pump();
+          if (requested && !disposed) {
+            pump();
+          }
         },
-        (cause: unknown) => {
+        (error: unknown) => {
           pumping = false;
-          if (!disposed) setRenderError(message(cause, "Could not restore terminal output"));
-          if (requested && !disposed) pump();
+          if (!disposed) {
+            setRenderError(message(error, "Could not restore terminal output"));
+          }
+          if (requested && !disposed) {
+            pump();
+          }
         },
       );
     };
 
     const unsubscribe = subscribeNativeTerminal((event) => {
-      if (event.sessionId !== tab.id) return;
+      if (event.sessionId !== tab.id) {
+        return;
+      }
       if (
         event.type === "output" ||
         event.type === "open" ||
         event.type === "closed" ||
         event.type === "error"
-      )
+      ) {
         pump();
+      }
     });
     pump();
     return () => {
@@ -86,25 +104,30 @@ export function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
   }, [tab.id]);
 
   useEffect(() => {
-    if (!fullscreenWindowReady) return;
+    if (!fullscreenWindowReady) {
+      return undefined;
+    }
     const frame = requestAnimationFrame(() => {
-      void terminalRef.current?.reconcileLayout?.().catch((cause: unknown) => {
-        setRenderError(message(cause, "Could not restore terminal layout"));
+      void terminalRef.current?.reconcileLayout?.().catch((error: unknown) => {
+        setRenderError(message(error, "Could not restore terminal layout"));
       });
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+    };
   }, [fullscreenWindowReady, tab.id]);
 
   const resize = (cols: number, rows: number) => {
-    void resizeNativeTerminal(tab.id, cols, rows).catch((cause) => {
-      if (tab.status !== "closed" && tab.status !== "error")
-        setRenderError(message(cause, "Could not resize terminal"));
+    void resizeNativeTerminal(tab.id, cols, rows).catch((error: unknown) => {
+      if (tab.status !== "closed" && tab.status !== "error") {
+        setRenderError(message(error, "Could not resize terminal"));
+      }
     });
   };
   const send = (data: string) => {
-    void writeNativeTerminal(tab.id, data).catch((cause) =>
-      setRenderError(message(cause, "Could not send terminal input")),
-    );
+    void writeNativeTerminal(tab.id, data).catch((error: unknown) => {
+      setRenderError(message(error, "Could not send terminal input"));
+    });
   };
   const error = renderError ?? tab.error;
 
@@ -112,29 +135,33 @@ export function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
     <View style={styles.terminalPane}>
       {error !== null && (
         <View style={styles.errorBanner}>
-          <Ionicons name="alert-circle-outline" size={iconSize.inline} color={colors.red} />
+          <Ionicons color={colors.red} name="alert-circle-outline" size={iconSize.inline} />
           <Text selectable style={styles.errorText}>
             {error}
           </Text>
         </View>
       )}
       <TerminalView
-        ref={terminalRef}
-        persistentSessionId={tab.id}
         fontSize={TERMINAL_FONT_SIZE}
+        onInput={({ nativeEvent }) => {
+          send(nativeEvent.data);
+        }}
+        onResize={({ nativeEvent }) => {
+          resize(nativeEvent.cols, nativeEvent.rows);
+        }}
+        persistentSessionId={tab.id}
+        ref={terminalRef}
+        style={styles.terminal}
         theme={{
           background: colors.background,
-          foreground: colors.text,
           cursorColor: colors.text,
+          foreground: colors.text,
           selectionBackground: colors.surfaceHover,
         }}
-        onInput={({ nativeEvent }) => send(nativeEvent.data)}
-        onResize={({ nativeEvent }) => resize(nativeEvent.cols, nativeEvent.rows)}
-        style={styles.terminal}
       />
       {tab.status === "connecting" && (
         <View pointerEvents="none" style={styles.connecting}>
-          <ActivityIndicator size="small" color={colors.textMuted} />
+          <ActivityIndicator color={colors.textMuted} size="small" />
         </View>
       )}
     </View>

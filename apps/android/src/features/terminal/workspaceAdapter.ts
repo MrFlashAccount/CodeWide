@@ -16,8 +16,8 @@ export function createTerminalWorkspaceAdapter({
   getSession,
   rpcAfterAttach,
 }: {
-  getResources(): WorkspaceResourceDatabase;
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
+  getResources: () => WorkspaceResourceDatabase;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): TerminalWorkspaceCapabilities {
   const listBackgroundTerminals = async (
@@ -27,44 +27,46 @@ export function createTerminalWorkspaceAdapter({
     const key = threadResourceKey(connectionId, threadId);
     const previous = getResources().backgroundTerminals.get(key);
     getResources().putBackgroundTerminals({
-      id: key,
       connectionId,
-      threadId,
-      status: "loading",
-      items: previous?.items ?? [],
       error: null,
+      id: key,
+      items: previous?.items ?? [],
+      status: "loading",
+      threadId,
     });
     const session = getSession(connectionId);
     try {
-      if (session === undefined) throw new Error("Connection is not enabled");
+      if (session === undefined) {
+        throw new Error("Connection is not enabled");
+      }
       const response = await rpcAfterAttach<ThreadBackgroundTerminalsListResponse>(
         session,
         "thread/backgroundTerminals/list",
-        { threadId, cursor: null, limit: 100 },
+        { cursor: null, limit: 100, threadId },
       );
       const items = response.data.map((terminal) => ({
         ...terminal,
         rssKb: terminal.rssKb === null ? null : String(terminal.rssKb),
       }));
       getResources().putBackgroundTerminals({
-        id: key,
         connectionId,
-        threadId,
-        status: "ready",
-        items,
         error: null,
+        id: key,
+        items,
+        status: "ready",
+        threadId,
       });
       return items;
-    } catch (cause) {
+    } catch (error) {
       getResources().putBackgroundTerminals({
-        id: key,
         connectionId,
-        threadId,
-        status: "error",
+        error: errorMessage(error),
+        id: key,
         items: previous?.items ?? [],
-        error: errorMessage(cause),
+        status: "error",
+        threadId,
       });
-      throw cause;
+      throw error;
     }
   };
 
@@ -74,24 +76,27 @@ export function createTerminalWorkspaceAdapter({
     processId: string,
   ): Promise<boolean> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const response = await rpcAfterAttach<ThreadBackgroundTerminalsTerminateResponse>(
       session,
       "thread/backgroundTerminals/terminate",
-      { threadId, processId },
+      { processId, threadId },
     );
     if (response.terminated) {
       const key = threadResourceKey(connectionId, threadId);
       const current = getResources().backgroundTerminals.get(key);
-      if (current !== undefined)
+      if (current !== undefined) {
         getResources().putBackgroundTerminals({
-          id: key,
           connectionId,
-          threadId,
-          status: "ready",
-          items: current.items.filter((terminal) => terminal.processId !== processId),
           error: null,
+          id: key,
+          items: current.items.filter((terminal) => terminal.processId !== processId),
+          status: "ready",
+          threadId,
         });
+      }
     }
     return response.terminated;
   };

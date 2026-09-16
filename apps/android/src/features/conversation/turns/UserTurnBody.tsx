@@ -6,7 +6,7 @@ import { SearchMessage } from "../../../rendering/SearchMessageFocus";
 import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary";
 import { AppText as Text } from "../../../ui/Typography";
 import { LargeContentControls } from "../content/FullContentViewer";
-import { projectTurnPresentation } from "./turnProjection";
+import type { projectTurnPresentation } from "./turnProjection";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
 import { UserMessageContent } from "./UserMessageContent";
@@ -20,23 +20,23 @@ export function renderUserTurnBody(
   return (
     <View style={styles.userTurnCluster}>
       <RecoverableRenderBoundary
-        scope="bubble"
-        label="User message"
         context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
+        label="User message"
         resetKey={`${turn.key}:user`}
+        scope="bubble"
       >
         <ImagePreviewGroup id={`${turn.key}:user`}>
           <View style={styles.userMessageRow}>
             <Bubble
-              variant="user"
-              testID="user-bubble"
               errorContext={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
               errorResetKey={`${turn.key}:user`}
+              testID="user-bubble"
+              variant="user"
             >
               <BubbleContent>
                 <View style={styles.userMessageContent}>
-                  {userBlocks.map((block, index) => (
-                    <SearchMessage key={`${block.key}:${index}`} itemId={block.raw.id}>
+                  {userBlocks.map((block) => (
+                    <SearchMessage itemId={block.raw.id} key={block.key}>
                       <View style={styles.userMessageBlock}>
                         <UserMessageContent
                           content={Array.isArray(block.raw.content) ? block.raw.content : []}
@@ -54,7 +54,7 @@ export function renderUserTurnBody(
               </BubbleContent>
             </Bubble>
             {turn.turn.startedAt !== null && (
-              <Text testID="user-message-time" style={styles.messageTime}>
+              <Text style={styles.messageTime} testID="user-message-time">
                 {formatClockTime(turn.turn.startedAt)}
               </Text>
             )}

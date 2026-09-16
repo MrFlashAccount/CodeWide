@@ -2,19 +2,19 @@ import type { Personality } from "@codewide/codex-protocol/v0.147.0";
 import type { RemoteFileAttachment } from "@codewide/sync-client";
 
 export type StoredComposerPreferences = {
-  model: string | null;
   effort: string | null;
-  personality: Personality | null;
+  model: string | null;
   permissions: string | null;
-  skillPaths: string[];
+  personality: Personality | null;
   sendMode: "start" | "queue" | "steer";
+  skillPaths: string[];
 };
 
 export type QuickdrawDraftState = {
   kind: "quickdraw";
   mode: "drawing" | "image-annotation";
-  snapshot: Record<string, unknown>;
   revision: number;
+  snapshot: Record<string, unknown>;
 };
 
 /**
@@ -28,23 +28,23 @@ export type StoredDraftAttachment = RemoteFileAttachment & {
 };
 
 export interface AttachmentPreview {
-  readonly uri: string | null;
-  readonly text: string | null;
   readonly bytes: number;
   readonly mimeType: string;
+  readonly text: string | null;
+  readonly uri: string | null;
 }
 
 export type ThreadUiStateRow = {
-  id: string;
-  connectionId: string;
-  threadId: string;
-  draftText: string;
   attachments: StoredDraftAttachment[];
-  scrollOffset: number | null;
-  /** Stable viewport cursor. Absent on pre-anchor cache rows. */
-  historyAnchorTurnId?: string | null;
+  connectionId: string;
+  draftText: string;
   /** Anchor row top relative to the viewport top in pixels. */
   historyAnchorOffsetPx?: number | null;
+  /** Stable viewport cursor. Absent on pre-anchor cache rows. */
+  historyAnchorTurnId?: string | null;
+  id: string;
   preferences: StoredComposerPreferences | null;
+  scrollOffset: number | null;
+  threadId: string;
   updatedAt: number;
 };

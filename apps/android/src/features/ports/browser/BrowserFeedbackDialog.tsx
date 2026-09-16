@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect, useState, useTransition } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
 
+import { useConstant } from "../../../react/useConstant";
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, typeScale } from "../../../theme";
 import { ActionMenu } from "../../../ui/ActionMenu";
@@ -10,8 +11,8 @@ import { WaveText } from "../../../ui/WaveText";
 import type { BrowserFeedbackCapability, BrowserFeedbackDraft } from "./feedback";
 
 interface FeedbackDialogProps {
-  readonly draft: BrowserFeedbackDraft;
   readonly capability: BrowserFeedbackCapability;
+  readonly draft: BrowserFeedbackDraft;
   readonly onClose: () => void;
 }
 
@@ -23,14 +24,21 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
   const [errors, setErrors] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const [abort] = useState(() => new AbortController());
-  useLayoutEffect(() => () => abort.abort(), [abort]);
+  const abort = useConstant(() => new AbortController());
+  useLayoutEffect(
+    () => () => {
+      abort.abort();
+    },
+    [abort],
+  );
   const voiceScope = `browser-feedback:${useId()}`;
   const voiceRuntime = useAppVoiceInputRuntime();
   const voice = useVoiceInputResource(voiceRuntime, voiceScope);
   const voiceBusy = voice !== null && voice.phase !== "idle";
   const close = useEvent(() => {
-    if (!pending) props.onClose();
+    if (!pending) {
+      props.onClose();
+    }
   });
   const submit = useEvent(() => {
     if (
@@ -38,26 +46,32 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
       voiceBusy ||
       prompt.trim() === "" ||
       !props.capability.destinations.some((entry) => entry.id === destination)
-    )
+    ) {
       return;
+    }
     const submission = {
       destination,
+      includeErrors: errors,
       prompt,
       report: props.draft.report,
       screenshot: screenshot ? props.draft.screenshot : null,
-      includeErrors: errors,
     };
     startTransition(async () => {
       setError(null);
       let errorMessage: string | null = null;
       try {
         await props.capability.send(submission, abort.signal);
-      } catch (cause) {
-        errorMessage = cause instanceof Error ? cause.message : "Could not send browser feedback";
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : "Could not send browser feedback";
       }
-      if (abort.signal.aborted) return;
-      if (errorMessage === null) props.onClose();
-      else setError(errorMessage);
+      if (abort.signal.aborted) {
+        return;
+      }
+      if (errorMessage === null) {
+        props.onClose();
+      } else {
+        setError(errorMessage);
+      }
     });
   });
   return (
@@ -68,23 +82,23 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
         </Pressable>
         <Text style={styles.title}>Fix this element</Text>
       </View>
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <TextInput
           accessibilityLabel="Describe the browser issue"
-          voiceScope={voiceScope}
           editable={!pending}
           multiline
-          value={prompt}
           onChangeText={setPrompt}
           placeholder="What should change?"
           style={styles.input}
+          value={prompt}
+          voiceScope={voiceScope}
         />
         <ActionMenu
           accessibilityLabel="Destination chat"
           actions={props.capability.destinations.map((entry) => ({
+            disabled: pending,
             id: entry.id,
             label: entry.label,
-            disabled: pending,
           }))}
           onSelect={setDestination}
         >
@@ -104,13 +118,13 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
           <>
             <View style={styles.header}>
               <Text style={styles.label}>Include marked screenshot</Text>
-              <Switch value={screenshot} onValueChange={setScreenshot} disabled={pending} />
+              <Switch disabled={pending} onValueChange={setScreenshot} value={screenshot} />
             </View>
             {screenshot && (
               <Image
                 accessibilityLabel="Screenshot to send"
-                source={{ uri: `data:image/png;base64,${props.draft.screenshot}` }}
                 resizeMode="contain"
+                source={{ uri: `data:image/png;base64,${props.draft.screenshot}` }}
                 style={styles.screenshot}
               />
             )}
@@ -130,11 +144,13 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
           <Text style={styles.label}>
             Include console / network failures ({props.draft.report.errors.length})
           </Text>
-          <Switch value={errors} onValueChange={setErrors} disabled={pending} />
+          <Switch disabled={pending} onValueChange={setErrors} value={errors} />
         </View>
         {errors && (
           <Text selectable style={styles.code}>
-            {props.draft.report.errors.join("\n") || "No captured failures"}
+            {props.draft.report.errors.length === 0
+              ? "No captured failures"
+              : props.draft.report.errors.join("\n")}
           </Text>
         )}
         <Text style={styles.caption}>
@@ -145,13 +161,13 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
         {error !== null && <Text style={styles.error}>{error}</Text>}
       </ScrollView>
       <Pressable
-        onPress={submit}
-        disabled={pending || voiceBusy || prompt.trim() === "" || destination === ""}
-        style={styles.send}
         accessibilityRole="button"
+        disabled={pending || voiceBusy || prompt.trim() === "" || destination === ""}
+        onPress={submit}
+        style={styles.send}
       >
         {pending ? (
-          <WaveText text="Sending to chat" style={styles.label} />
+          <WaveText style={styles.label} text="Sending to chat" />
         ) : (
           <Text style={styles.label}>
             {voiceBusy ? "Finish dictation before sending" : "Send to chat"}
@@ -163,64 +179,64 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-    padding: spacing.sm,
-  },
-  title: {
-    ...typeScale.body,
-    color: colors.text,
-    flex: 1,
-  },
-  label: {
-    ...typeScale.body,
-    color: colors.text,
-  },
   button: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.medium,
     padding: spacing.sm,
-    backgroundColor: colors.surface,
-    borderRadius: radii.medium,
-  },
-  content: {
-    padding: spacing.md,
-    gap: spacing.md,
-  },
-  input: {
-    minHeight: 100,
-    padding: spacing.md,
-    ...typeScale.body,
-    color: colors.text,
-    backgroundColor: colors.surface,
-    borderRadius: radii.medium,
-  },
-  screenshot: {
-    height: 240,
-    width: "100%",
-  },
-  code: {
-    ...typeScale.caption,
-    color: colors.textMuted,
   },
   caption: {
     ...typeScale.caption,
     color: colors.textMuted,
   },
+  code: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+  },
+  content: {
+    gap: spacing.md,
+    padding: spacing.md,
+  },
   error: {
     ...typeScale.caption,
     color: colors.error,
   },
-  send: {
+  header: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    justifyContent: "space-between",
+    padding: spacing.sm,
+  },
+  input: {
+    minHeight: 100,
     padding: spacing.md,
-    margin: spacing.md,
+    ...typeScale.body,
+    backgroundColor: colors.surface,
+    borderRadius: radii.medium,
+    color: colors.text,
+  },
+  label: {
+    ...typeScale.body,
+    color: colors.text,
+  },
+  root: {
+    backgroundColor: colors.background,
+    flex: 1,
+  },
+  screenshot: {
+    height: 240,
+    width: "100%",
+  },
+  send: {
     alignItems: "center",
     backgroundColor: colors.surface,
     borderRadius: radii.medium,
+    margin: spacing.md,
+    padding: spacing.md,
+  },
+  title: {
+    ...typeScale.body,
+    color: colors.text,
+    flex: 1,
   },
 });

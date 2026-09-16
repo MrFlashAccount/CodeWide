@@ -6,7 +6,8 @@ export async function cachedAttachmentFetch(
   init: RequestInit,
   _options: CachedTransferOptions,
 ): Promise<Response> {
-  return fetch(uri, init);
+  const response = await fetch(uri, init);
+  return response;
 }
 
 export async function cachedAttachmentSource(
@@ -14,8 +15,9 @@ export async function cachedAttachmentSource(
   headers: Record<string, string>,
   _options: CachedTransferOptions,
   _signal?: AbortSignal,
-): Promise<{ uri: string; headers: Record<string, string> }> {
-  return { uri, headers };
+): Promise<{ headers: Record<string, string>; uri: string }> {
+  await Promise.resolve();
+  return { headers, uri };
 }
 
 export function retainCachedAttachment(_uri: string): () => void {
@@ -23,5 +25,6 @@ export function retainCachedAttachment(_uri: string): () => void {
 }
 
 export async function cacheInlineAttachment(uri: string, _base64: string): Promise<string> {
+  await Promise.resolve();
   return uri;
 }

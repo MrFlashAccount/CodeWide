@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import { useRef, useState } from "react";
-import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import type { WebView, WebViewMessageEvent } from "react-native-webview";
 import { useEvent } from "../../../react/useEvent";
 import { useAppFullscreenOverlay } from "../../../ui/AppFullscreenOverlay";
 import { AppVoiceInputProvider, useAppVoiceInputRuntime } from "../../../ui/VoiceInputRuntime";
@@ -24,6 +24,7 @@ export function useBrowserFeedbackSession(
   const feedbackOverlay = useAppFullscreenOverlay();
   const feedbackVoiceRuntime = useAppVoiceInputRuntime();
   const feedbackArmed = useRef(false);
+  const feedbackCaptureTask = useRef<Promise<void> | null>(null);
   const [feedbackSelecting, setFeedbackSelecting] = useState(false);
   const [feedbackCapturing, setFeedbackCapturing] = useState(false);
   const selectFeedbackElement = useEvent(() => {
@@ -36,15 +37,19 @@ export function useBrowserFeedbackSession(
   const closeFeedback = useEvent(() => {
     webView.current?.injectJavaScript("window.__codewideFeedback?.clear(); true;");
   });
-  const captureFeedback = useEvent(async (event: WebViewMessageEvent) => {
-    if (!feedbackArmed.current || feedback === undefined) return;
+  const captureFeedbackAsync = useEvent(async (event: WebViewMessageEvent) => {
+    if (!feedbackArmed.current || feedback === undefined) {
+      return;
+    }
     let report;
     try {
       report = parseBrowserElementReport(JSON.parse(event.nativeEvent.data));
     } catch {
       return;
     }
-    if (report === null) return;
+    if (report === null) {
+      return;
+    }
     feedbackArmed.current = false;
     setFeedbackSelecting(false);
     setFeedbackCapturing(true);
@@ -52,16 +57,16 @@ export function useBrowserFeedbackSession(
     let screenshotError: string | null = null;
     try {
       screenshot = await captureScreenshot();
-    } catch (cause) {
-      screenshotError = cause instanceof Error ? cause.message : "Capture failed";
+    } catch (error) {
+      screenshotError = error instanceof Error ? error.message : "Capture failed";
     }
     if (isMounted()) {
       const draft: BrowserFeedbackDraft = { report, screenshot, screenshotError };
       feedbackOverlay.present((controls) => {
         const content = (
           <BrowserFeedbackDialog
-            draft={draft}
             capability={feedback}
+            draft={draft}
             onClose={() => {
               closeFeedback();
               controls.close();
@@ -77,5 +82,18 @@ export function useBrowserFeedbackSession(
       setFeedbackCapturing(false);
     }
   });
-  return { feedback, feedbackSelecting, feedbackCapturing, selectFeedbackElement, captureFeedback };
+  const captureFeedback = useEvent((event: WebViewMessageEvent) => {
+    feedbackCaptureTask.current = captureFeedbackAsync(event).then(
+      () => {
+        feedbackCaptureTask.current = null;
+      },
+      () => {
+        feedbackCaptureTask.current = null;
+        if (isMounted()) {
+          setFeedbackCapturing(false);
+        }
+      },
+    );
+  });
+  return { captureFeedback, feedback, feedbackCapturing, feedbackSelecting, selectFeedbackElement };
 }

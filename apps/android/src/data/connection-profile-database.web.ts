@@ -8,35 +8,56 @@ export type { ConnectionProfileDatabase } from "./connection-profile-database-co
 export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
   const collection = createCollection(
     localOnlyCollectionOptions<ConnectionProfileRow, string>({
-      id: "connection-profiles-web",
       getKey: (row) => row.id,
+      id: "connection-profiles-web",
     }),
   );
   return {
+    async add() {
+      await Promise.resolve();
+      throw new Error("Android only");
+    },
+    close() {
+      collection.cleanup().catch(() => undefined);
+    },
     collection,
+    async delete() {
+      await Promise.resolve();
+    },
+    async hydrate() {
+      await Promise.resolve();
+      return [];
+    },
+    async importLegacy() {
+      await Promise.resolve();
+    },
+    async importLegacyUiCache() {
+      await Promise.resolve();
+    },
+    async migrateLegacyCredentials() {
+      await Promise.resolve();
+    },
+    async move() {
+      await Promise.resolve();
+    },
     project() {
       return [];
     },
-    async importLegacyUiCache() {},
-    async importLegacy() {},
-    async hydrate() {
-      return [];
+    async purgeLegacyCredentials() {
+      await Promise.resolve();
     },
-    async migrateLegacyCredentials() {},
-    async purgeLegacyCredentials() {},
-    async reconcileRuntimeConfigs() {},
-    async add() {
-      throw new Error("Android only");
+    async reconcileRuntimeConfigs() {
+      await Promise.resolve();
     },
-    async delete() {},
-    async setEnabled() {},
-    async updateProfile() {},
+    async setEnabled() {
+      await Promise.resolve();
+    },
     async update() {
+      await Promise.resolve();
       throw new Error("Android only");
     },
-    async move() {},
-    close() {
-      void collection.cleanup();
+    async updateProfile() {
+      await Promise.resolve();
     },
   };
 }

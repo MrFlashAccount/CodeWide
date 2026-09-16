@@ -22,35 +22,35 @@ type Props = Pick<
   | "currentTurnId"
 >;
 export function ComposerSubmitAction({
-  editingQueuedMessage,
-  sendDisabled,
-  composerDiscardEnabled,
-  queuedComposerEditBusy,
-  discardComposer,
-  steerComposer,
   activatePrimaryAction,
+  composerDiscardEnabled,
+  currentTurnId,
   deliveryActions,
+  discardComposer,
   dismissComposerKeyboardForOverlay,
+  editingQueuedMessage,
   handleDeliveryAction,
-  voicePhase,
+  queuedComposerEditBusy,
+  sendDisabled,
+  steerComposer,
   stoppingResponse,
   threadLifecycleActive,
-  currentTurnId,
+  voicePhase,
 }: Props) {
   return editingQueuedMessage ? (
     <SwipeDiscardAction
       accessibilityLabel="Save queued message"
       disabled={sendDisabled}
+      disabledStyle={styles.disabled}
       discardEnabled={composerDiscardEnabled}
-      steerEnabled={false}
       icon={queuedComposerEditBusy ? "hourglass-outline" : "checkmark"}
       iconColor={colors.onPrimary}
-      style={styles.sendButton}
-      pressedStyle={styles.sendButtonPressed}
-      disabledStyle={styles.disabled}
       onDiscard={discardComposer}
-      onSteer={steerComposer}
       onPress={activatePrimaryAction}
+      onSteer={steerComposer}
+      pressedStyle={styles.sendButtonPressed}
+      steerEnabled={false}
+      style={styles.sendButton}
     />
   ) : (
     <ComposerDeliveryMenu
@@ -67,18 +67,18 @@ export function ComposerSubmitAction({
               : "Send message"
         }
         disabled={sendDisabled}
+        disabledStyle={styles.disabled}
         discardEnabled={composerDiscardEnabled}
-        steerEnabled={!sendDisabled && threadLifecycleActive && currentTurnId !== null}
         icon={
           voicePhase === "finishing" ? "hourglass-outline" : stoppingResponse ? "stop" : "arrow-up"
         }
         iconColor={stoppingResponse ? "#ffffff" : colors.onPrimary}
-        style={[styles.sendButton, stoppingResponse && styles.stopButton]}
-        pressedStyle={stoppingResponse ? undefined : styles.sendButtonPressed}
-        disabledStyle={styles.disabled}
         onDiscard={discardComposer}
-        onSteer={steerComposer}
         onPress={activatePrimaryAction}
+        onSteer={steerComposer}
+        pressedStyle={stoppingResponse ? undefined : styles.sendButtonPressed}
+        steerEnabled={!sendDisabled && threadLifecycleActive && currentTurnId !== null}
+        style={[styles.sendButton, stoppingResponse && styles.stopButton]}
       />
     </ComposerDeliveryMenu>
   );

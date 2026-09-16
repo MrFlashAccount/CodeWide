@@ -2,8 +2,8 @@ export type ConnectionInput = {
   displayName: string;
   emoji: string;
   endpoint: string;
-  token: string;
   tlsPinSha256?: string;
+  token: string;
 };
 
 export type ConnectionUpdateInput = Omit<ConnectionInput, "token"> & { token?: string };
@@ -17,7 +17,7 @@ export function validateConnectionProfile(
   if (
     displayName.length < 1 ||
     displayName.length > 80 ||
-    /[\u0000-\u001f\u007f]/u.test(displayName)
+    /[\u0000-\u001F\u007F]/u.test(displayName)
   ) {
     throw new Error("Server name must be 1–80 visible characters");
   }
@@ -34,15 +34,18 @@ export function validateConnectionInput(
   const endpoint = input.endpoint.trim();
   const token = input.token.trim();
   const tlsPinSha256 = input.tlsPinSha256?.trim();
-  if (token.length < 32 || token.length > 512) throw new Error("Capability token is invalid");
+  if (token.length < 32 || token.length > 512) {
+    throw new Error("Capability token is invalid");
+  }
   let url: URL;
   try {
     url = new URL(endpoint);
   } catch {
     throw new Error("Endpoint must be a valid ws:// or wss:// URL");
   }
-  if (url.protocol !== "ws:" && url.protocol !== "wss:")
+  if (url.protocol !== "ws:" && url.protocol !== "wss:") {
     throw new Error("Endpoint must use ws:// or wss://");
+  }
   const localDevelopmentHost =
     url.hostname === "localhost" ||
     url.hostname === "127.0.0.1" ||
@@ -57,7 +60,9 @@ export function validateConnectionInput(
     throw new Error("Endpoint must not contain credentials, query parameters, or fragments");
   }
   const pathname = url.pathname === "/" || url.pathname === "" ? "/v1/sync" : url.pathname;
-  if (pathname !== "/v1/sync") throw new Error("Endpoint path must be /v1/sync");
+  if (pathname !== "/v1/sync") {
+    throw new Error("Endpoint path must be /v1/sync");
+  }
   if (tlsPinSha256 === undefined || !/^sha256\/[A-Za-z0-9+/]{43}=$/.test(tlsPinSha256)) {
     throw new Error("TLS pin must be an OkHttp sha256/base64 certificate pin");
   }
@@ -65,8 +70,8 @@ export function validateConnectionInput(
     displayName,
     emoji,
     endpoint: (pathname === url.pathname ? url : new URL(pathname, url)).toString(),
-    token,
     tlsPinSha256,
+    token,
   };
 }
 
@@ -94,7 +99,7 @@ export function validateConnectionRuntimeUpdate(
     emoji: validated.emoji,
     endpoint: validated.endpoint,
     ...(replacement === undefined || replacement === "" ? {} : { token: validated.token }),
-    ...(validated.tlsPinSha256 === undefined ? {} : { tlsPinSha256: validated.tlsPinSha256 }),
+    tlsPinSha256: validated.tlsPinSha256,
   };
 }
 
@@ -103,7 +108,8 @@ export function isProfileOnlyConnectionUpdate(
   current: Pick<ConnectionInput, "endpoint" | "tlsPinSha256">,
 ): boolean {
   const replacementToken = input.token?.trim();
-  const nextPin = input.tlsPinSha256?.trim() || undefined;
+  const trimmedPin = input.tlsPinSha256?.trim();
+  const nextPin = trimmedPin === undefined || trimmedPin === "" ? undefined : trimmedPin;
   return (
     (replacementToken === undefined || replacementToken === "") &&
     input.endpoint.trim() === current.endpoint &&
@@ -114,17 +120,21 @@ export function isProfileOnlyConnectionUpdate(
 function isSingleEmojiGrapheme(value: string): boolean {
   const singleEmojiSequence =
     /^(?:\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*|\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3)$/u;
-  if (!singleEmojiSequence.test(value)) return false;
-  const Segmenter = (
-    Intl as unknown as {
-      Segmenter?: new (
-        locale?: string,
-        options?: { granularity: "grapheme" },
-      ) => {
-        segment(input: string): Iterable<unknown>;
-      };
-    }
-  ).Segmenter;
+  if (!singleEmojiSequence.test(value)) {
+    return false;
+  }
+  const runtimeIntl: unknown = Intl;
+  // WHY: Hermes provides Intl.Segmenter, but the React Native TypeScript library set does not declare it.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const runtimeIntlWithSegmenter = runtimeIntl as {
+    Segmenter?: new (
+      locale?: string,
+      options?: { granularity: "grapheme" },
+    ) => {
+      segment: (input: string) => Iterable<unknown>;
+    };
+  };
+  const { Segmenter } = runtimeIntlWithSegmenter;
   return (
     Segmenter === undefined ||
     [...new Segmenter(undefined, { granularity: "grapheme" }).segment(value)].length === 1

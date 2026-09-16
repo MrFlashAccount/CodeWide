@@ -18,48 +18,52 @@ export interface SearchThread {
 }
 export interface SearchProject {
   readonly id: string;
-  readonly serverId: string;
-  readonly path: string;
   readonly name: string;
-  readonly subtitle: string;
+  readonly path: string;
   readonly pinned: boolean;
+  readonly serverId: string;
+  readonly subtitle: string;
 }
 export type SearchDateField = "from" | "until";
 export interface SearchFilterValue {
+  readonly from: string;
+  readonly project: string;
   readonly serverId: string;
   readonly threadId: string;
-  readonly project: string;
-  readonly from: string;
   readonly until: string;
 }
 interface FiltersProps {
-  readonly value: SearchFilterValue;
+  readonly onChange: (value: SearchFilterValue) => void;
+  readonly onPickDate: (field: SearchDateField) => void;
+  readonly projects: readonly SearchProject[];
   readonly servers: readonly SearchServer[];
   readonly threads: readonly SearchThread[];
-  readonly projects: readonly SearchProject[];
-  readonly onPickDate: (field: SearchDateField) => void;
-  readonly onChange: (value: SearchFilterValue) => void;
+  readonly value: SearchFilterValue;
 }
 
 /** Editing filters is local; submitting search applies one complete filter set. */
 export function SearchFilters(props: FiltersProps) {
   const value = props.value;
-  const changeServer = (serverId: string) =>
-    props.onChange({ ...value, serverId, threadId: "", project: "" });
-  const changeThread = (threadId: string) => props.onChange({ ...value, threadId });
+  const changeServer = (serverId: string) => {
+    props.onChange({ ...value, project: "", serverId, threadId: "" });
+  };
+  const changeThread = (threadId: string) => {
+    props.onChange({ ...value, threadId });
+  };
   const changeProject = (id: string) => {
     if (id === "") {
       props.onChange({ ...value, project: "" });
       return;
     }
     const project = props.projects.find((candidate) => candidate.id === id);
-    if (project !== undefined)
+    if (project !== undefined) {
       props.onChange({
         ...value,
         project: project.path,
         serverId: project.serverId,
         threadId: project.serverId === value.serverId ? value.threadId : "",
       });
+    }
   };
   const projects = props.projects
     .filter((project) => value.serverId === "" || project.serverId === value.serverId)
@@ -69,46 +73,49 @@ export function SearchFilters(props: FiltersProps) {
   );
   return (
     <ScrollView
+      contentContainerStyle={styles.panel}
       keyboardShouldPersistTaps="handled"
       style={styles.scroll}
-      contentContainerStyle={styles.panel}
     >
       <FilterSelect
         label="Server"
-        value={value.serverId}
         onChange={changeServer}
         options={[
           { id: "", label: "All servers" },
           ...props.servers.map((server) => ({
             id: server.id,
-            label: server.name.trim() || "Unnamed server",
+            label: server.name.trim() === "" ? "Unnamed server" : server.name.trim(),
           })),
         ]}
+        value={value.serverId}
       />
       <FilterSelect
         label="Chat"
-        value={value.threadId}
         onChange={changeThread}
         options={[
           { id: "", label: "All chats" },
           ...props.threads
             .filter((thread) => value.serverId === "" || thread.serverId === value.serverId)
-            .map((thread) => ({ id: thread.id, label: thread.title.trim() || "Untitled chat" })),
+            .map((thread) => ({
+              id: thread.id,
+              label: thread.title.trim() === "" ? "Untitled chat" : thread.title.trim(),
+            })),
         ]}
+        value={value.threadId}
       />
       <FilterSelect
         label="Project"
-        value={selectedProject?.id ?? ""}
         onChange={changeProject}
         options={[
           { id: "", label: "All projects" },
           ...projects.map((project) => ({
             id: project.id,
             label: project.name,
-            subtitle: project.subtitle,
             pinned: project.pinned,
+            subtitle: project.subtitle,
           })),
         ]}
+        value={selectedProject?.id ?? ""}
       />
       <View style={styles.divider} />
       <Text style={styles.heading}>Date range</Text>
@@ -116,18 +123,26 @@ export function SearchFilters(props: FiltersProps) {
         <Text style={styles.label}>From</Text>
         <DateField
           label="From date"
+          onClear={() => {
+            props.onChange({ ...value, from: "" });
+          }}
+          onPress={() => {
+            props.onPickDate("from");
+          }}
           value={value.from}
-          onPress={() => props.onPickDate("from")}
-          onClear={() => props.onChange({ ...value, from: "" })}
         />
       </View>
       <View style={styles.group}>
         <Text style={styles.label}>Through</Text>
         <DateField
           label="Through date"
+          onClear={() => {
+            props.onChange({ ...value, until: "" });
+          }}
+          onPress={() => {
+            props.onPickDate("until");
+          }}
           value={value.until}
-          onPress={() => props.onPickDate("until")}
-          onClear={() => props.onChange({ ...value, until: "" })}
         />
       </View>
       <Text style={styles.hint}>
@@ -139,32 +154,32 @@ export function SearchFilters(props: FiltersProps) {
 
 interface DateFieldProps {
   readonly label: string;
-  readonly value: string;
-  readonly onPress: () => void;
   readonly onClear: () => void;
+  readonly onPress: () => void;
+  readonly value: string;
 }
 function DateField(props: DateFieldProps) {
   return (
     <View style={styles.dateRow}>
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={props.label}
+        accessibilityRole="button"
         onPress={props.onPress}
         style={styles.dateButton}
       >
-        <Ionicons name="calendar-outline" size={iconSize.inline} color={colors.textMuted} />
+        <Ionicons color={colors.textMuted} name="calendar-outline" size={iconSize.inline} />
         <Text style={styles.selected}>
           {props.value === "" ? "Any date" : formatSearchDay(props.value)}
         </Text>
       </Pressable>
       {props.value !== "" && (
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel={`Clear ${props.label.toLowerCase()}`}
+          accessibilityRole="button"
           onPress={props.onClear}
           style={styles.clearDate}
         >
-          <Ionicons name="close" size={iconSize.inline} color={colors.textMuted} />
+          <Ionicons color={colors.textMuted} name="close" size={iconSize.inline} />
         </Pressable>
       )}
     </View>

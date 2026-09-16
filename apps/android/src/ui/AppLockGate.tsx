@@ -25,7 +25,12 @@ import { AppText as Text } from "./Typography";
 
 type AppLockContextValue = {
   enabled: boolean;
-  setEnabled(enabled: boolean): Promise<void>;
+  setEnabled: (enabled: boolean) => Promise<void>;
+};
+type AppLockState = {
+  authenticating: boolean;
+  message: string | null;
+  unlocked: boolean;
 };
 
 const AppLockContext = createContext<AppLockContextValue | null>(null);
@@ -38,63 +43,85 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     query.data?.find((candidate) => candidate.id === APP_LOCK_PREFERENCE_ID) ??
     database.collection.get(APP_LOCK_PREFERENCE_ID);
   const enabled = row === undefined ? false : decodeAppLockPreferences(row.value).enabled;
-  const [unlocked, setUnlocked] = useState(false);
-  const [authenticating, setAuthenticating] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [lockState, setLockState] = useState<AppLockState>({
+    authenticating: false,
+    message: null,
+    unlocked: false,
+  });
+  const { authenticating, message, unlocked } = lockState;
   const authenticatingRef = useRef(false);
+  const authenticationTaskRef = useRef<Promise<void> | null>(null);
 
-  const authenticate = useEvent(async () => {
-    if (authenticatingRef.current) return;
-    authenticatingRef.current = true;
-    setAuthenticating(true);
-    setMessage(null);
-    try {
-      const result = await authenticateWithDevice("Unlock CodeWide");
-      if (result.success) setUnlocked(true);
-      else setMessage(result.message);
-    } catch {
-      setMessage("Could not open system authentication.");
+  const authenticate = useEvent((): void => {
+    if (authenticatingRef.current) {
+      return;
     }
-    authenticatingRef.current = false;
-    setAuthenticating(false);
+    authenticatingRef.current = true;
+    setLockState((current) => ({ ...current, authenticating: true, message: null }));
+    const task: Promise<void> = (async () => {
+      try {
+        const result = await authenticateWithDevice("Unlock CodeWide");
+        if (result.success) {
+          setLockState({ authenticating: false, message: null, unlocked: true });
+        } else {
+          setLockState({ authenticating: false, message: result.message, unlocked: false });
+        }
+      } catch {
+        setLockState({
+          authenticating: false,
+          message: "Could not open system authentication.",
+          unlocked: false,
+        });
+      }
+      authenticatingRef.current = false;
+    })();
+    authenticationTaskRef.current = task;
   });
 
   const setEnabled = useEvent(async (nextEnabled: boolean) => {
     if (nextEnabled) {
       const result = await authenticateWithDevice("Turn on CodeWide app lock");
-      if (!result.success) throw new Error(result.message);
+      if (!result.success) {
+        throw new Error(result.message);
+      }
     }
     await database.update(APP_LOCK_PREFERENCE_ID, () =>
       encodeAppLockPreferences({ enabled: nextEnabled }),
     );
-    setUnlocked(true);
-    setMessage(null);
+    setLockState({ authenticating: false, message: null, unlocked: true });
   });
 
   useEffect(() => {
-    if (enabled && !unlocked && AppState.currentState === "active") void authenticate();
+    if (enabled && !unlocked && AppState.currentState === "active") {
+      // WHY: entering the active app state must synchronize with the device authentication UI.
+      // oxlint-disable-next-line react-doctor/no-chain-state-updates
+      authenticate();
+    }
   }, [authenticate, enabled, unlocked]);
 
   const handleAppStateChange = useEvent((state: string) => {
-    if (!enabled) return;
-    if (state === "active") void authenticate();
-    else setUnlocked(false);
+    if (!enabled) {
+      return;
+    }
+    if (state === "active") {
+      authenticate();
+    } else {
+      setLockState((current) => ({ ...current, unlocked: false }));
+    }
   });
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", handleAppStateChange);
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+    };
   }, [handleAppStateChange]);
 
   const context: AppLockContextValue = { enabled, setEnabled };
   if (enabled && !unlocked) {
     return (
       <AppLockContext.Provider value={context}>
-        <LockedSurface
-          loading={authenticating}
-          message={message}
-          onUnlock={() => void authenticate()}
-        />
+        <LockedSurface loading={authenticating} message={message} onUnlock={authenticate} />
       </AppLockContext.Provider>
     );
   }
@@ -103,7 +130,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
 export function useAppLockSettings(): AppLockContextValue {
   const context = useContext(AppLockContext);
-  if (context === null) throw new Error("useAppLockSettings must be used inside AppLockGate");
+  if (context === null) {
+    throw new Error("useAppLockSettings must be used inside AppLockGate");
+  }
   return context;
 }
 
@@ -114,12 +143,12 @@ function LockedSurface({
 }: {
   loading: boolean;
   message?: string | null;
-  onUnlock?(): void;
+  onUnlock?: () => void;
 }) {
   return (
     <View accessibilityLabel="CodeWide is locked" style={styles.root} testID="app-lock-screen">
       <View style={styles.icon}>
-        <Ionicons name="lock-closed" color={colors.text} size={iconSize.illustration} />
+        <Ionicons color={colors.text} name="lock-closed" size={iconSize.illustration} />
       </View>
       <Text style={styles.title}>CodeWide is locked</Text>
       <Text style={styles.message}>{message ?? "Verify with your device to continue."}</Text>
@@ -132,7 +161,7 @@ function LockedSurface({
             onPress={onUnlock}
             style={({ pressed }) => [styles.button, pressed && styles.pressed]}
           >
-            <Ionicons name="finger-print" color={colors.background} size={iconSize.action} />
+            <Ionicons color={colors.background} name="finger-print" size={iconSize.action} />
             <Text style={styles.buttonText}>Unlock</Text>
           </Pressable>
         )
@@ -142,33 +171,6 @@ function LockedSurface({
 }
 
 const styles = StyleSheet.create({
-  root: {
-    alignItems: "center",
-    backgroundColor: colors.background,
-    flex: 1,
-    gap: spacing.md,
-    justifyContent: "center",
-    padding: spacing.xl,
-  },
-  icon: {
-    alignItems: "center",
-    borderColor: colors.border,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    height: layoutSize.row,
-    justifyContent: "center",
-    width: 72,
-  },
-  title: {
-    color: colors.text,
-    ...typeScale.heading,
-    fontWeight: typeWeight.semibold,
-  },
-  message: {
-    color: colors.textMuted,
-    maxWidth: 320,
-    textAlign: "center",
-  },
   button: {
     alignItems: "center",
     backgroundColor: colors.text,
@@ -183,5 +185,32 @@ const styles = StyleSheet.create({
     color: colors.background,
     fontWeight: typeWeight.semibold,
   },
+  icon: {
+    alignItems: "center",
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    height: layoutSize.row,
+    justifyContent: "center",
+    width: 72,
+  },
+  message: {
+    color: colors.textMuted,
+    maxWidth: 320,
+    textAlign: "center",
+  },
   pressed: { opacity: 0.78 },
+  root: {
+    alignItems: "center",
+    backgroundColor: colors.background,
+    flex: 1,
+    gap: spacing.md,
+    justifyContent: "center",
+    padding: spacing.xl,
+  },
+  title: {
+    color: colors.text,
+    ...typeScale.heading,
+    fontWeight: typeWeight.semibold,
+  },
 });

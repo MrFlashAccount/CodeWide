@@ -28,8 +28,8 @@ export function useInitialTimelinePosition(
       anchorIndex < 0
         ? { kind: "tail" }
         : {
-            kind: "item",
             index: anchorIndex,
+            kind: "item",
             viewOffset: searchWindow === null ? initialHistoryRestore.viewportOffsetPx : 0,
             viewPosition: 0,
           },

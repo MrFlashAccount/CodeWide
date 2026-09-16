@@ -9,7 +9,7 @@ import type {
 } from "./projectManagementContract";
 import type { SidebarProject } from "./sidebarProjects";
 
-export function useProjectManagement({ projects, servers, errors }: ProjectManagementProps) {
+export function useProjectManagement({ errors, projects, servers }: ProjectManagementProps) {
   const [pending, setPending] = useState<string | null>(null);
   const { fontScale } = useWindowDimensions();
   const rowIconSize = inlineIconMetrics("body", fontScale).glyph;
@@ -21,64 +21,79 @@ export function useProjectManagement({ projects, servers, errors }: ProjectManag
   const discovered = projects
     .filter((project) => !project.pinned)
     .sort((left, right) => right.lastUsedAt - left.lastUsedAt);
-  const toggleRecent = useEvent(() => setRecentExpanded(!recentExpanded));
-  const toggleOther = useEvent(() => setOtherExpanded(!otherExpanded));
+  const toggleRecent = useEvent(() => {
+    setRecentExpanded(!recentExpanded);
+  });
+  const toggleOther = useEvent(() => {
+    setOtherExpanded(!otherExpanded);
+  });
   const sections: ProjectManagerSection[] = [
-    { title: "Pinned", projects: pinned, expanded: true, onToggle: undefined },
+    { expanded: true, onToggle: undefined, projects: pinned, title: "Pinned" },
     {
-      title: "Recent",
-      projects: discovered.slice(0, 8),
       expanded: recentExpanded,
       onToggle: toggleRecent,
+      projects: discovered.slice(0, 8),
+      title: "Recent",
     },
     {
-      title: "Other",
-      projects: discovered.slice(8),
       expanded: otherExpanded,
       onToggle: toggleOther,
+      projects: discovered.slice(8),
+      title: "Other",
     },
   ];
   const rows: ProjectManagerItem[] = [];
   if (choosingServer) {
     rows.push({
-      kind: "section",
       key: "section:servers",
-      section: { title: "Add on server", projects: [], expanded: true, onToggle: undefined },
+      kind: "section",
+      section: { expanded: true, onToggle: undefined, projects: [], title: "Add on server" },
     });
-    for (const server of servers) rows.push({ kind: "server", key: `server:${server.id}`, server });
+    for (const server of servers) {
+      rows.push({ key: `server:${server.id}`, kind: "server", server });
+    }
   }
   for (const section of sections) {
-    if (section.projects.length === 0) continue;
-    rows.push({ kind: "section", key: `section:${section.title}`, section });
+    if (section.projects.length === 0) {
+      continue;
+    }
+    rows.push({ key: `section:${section.title}`, kind: "section", section });
     if (section.expanded) {
-      for (const project of section.projects)
-        rows.push({ kind: "project", key: project.key, project });
+      for (const project of section.projects) {
+        rows.push({ key: project.key, kind: "project", project });
+      }
     }
   }
   if (projects.length === 0 && errors.length === 0) {
     rows.push({
-      kind: "message",
-      key: "empty",
-      message: "Add a folder to pin your first project.",
       error: false,
+      key: "empty",
+      kind: "message",
+      message: "Add a folder to pin your first project.",
     });
   }
-  errors.forEach((message, index) =>
-    rows.push({ kind: "message", key: `error:${index}`, message, error: true }),
-  );
-  if (error !== null)
-    rows.push({ kind: "message", key: "action-error", message: error, error: true });
-  const change = useEvent(async (project: SidebarProject, action: () => Promise<void>) => {
-    if (pending !== null) return;
+  errors.forEach((message, index) => {
+    rows.push({ error: true, key: `error:${String(index)}`, kind: "message", message });
+  });
+  if (error !== null) {
+    rows.push({ error: true, key: "action-error", kind: "message", message: error });
+  }
+  const change = useEvent((project: SidebarProject, action: () => Promise<void>): void => {
+    if (pending !== null) {
+      return;
+    }
     setPending(project.key);
     setError(null);
-    try {
-      await action();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update pinned projects");
-    }
-    setPending(null);
+    action().then(
+      () => {
+        setPending(null);
+      },
+      (error: unknown) => {
+        setError(error instanceof Error ? error.message : "Could not update pinned projects");
+        setPending(null);
+      },
+    );
   });
-  return { pending, rowIconSize, choosingServer, setChoosingServer, pinned, rows, change };
+  return { change, choosingServer, pending, pinned, rowIconSize, rows, setChoosingServer };
 }
 export type ProjectManagementState = ReturnType<typeof useProjectManagement>;

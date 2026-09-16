@@ -3,19 +3,19 @@ import { colors, controlSize, radii, spacing } from "../../theme";
 
 export const styles = StyleSheet.create({
   composerContextChip: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: colors.surfaceContainerHigh,
+    borderColor: colors.border,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    flexDirection: "row",
     flexGrow: 0,
     flexShrink: 0,
-    alignSelf: "flex-start",
+    gap: spacing.compact,
     minHeight: controlSize.compact,
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xxs,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.compact,
-    borderRadius: radii.medium,
-    backgroundColor: colors.surfaceContainerHigh,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   disabled: { opacity: 0.42 },
 });

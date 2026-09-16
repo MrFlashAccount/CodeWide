@@ -10,11 +10,14 @@ export function parseThreadDeepLink(raw: string): ThreadDeepLink | null {
   if (
     (url.protocol !== "codewide:" && url.protocol !== "codexremote:") ||
     url.hostname !== "thread"
-  )
+  ) {
     return null;
+  }
   const connectionId = url.searchParams.get("connectionId");
   const threadId = url.searchParams.get("threadId");
-  if (!validId(connectionId) || !validId(threadId)) return null;
+  if (!validId(connectionId) || !validId(threadId)) {
+    return null;
+  }
   return { connectionId, threadId };
 }
 

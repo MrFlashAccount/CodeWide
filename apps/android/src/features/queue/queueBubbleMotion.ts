@@ -28,15 +28,15 @@ export function useQueueBubbleMotion(props: AnimatedQueueBubbleProps) {
     index,
     itemCount,
     measuredHeight,
+    onDelete,
+    onReorder,
+    onSteer,
     reorderEnabled,
     steerEnabled,
     swipeDismissDistance,
     targetOpacity,
     targetScale,
     targetY,
-    onDelete,
-    onReorder,
-    onSteer,
   } = props;
 
   const layoutY = useSharedValue(targetY + STACK_HEIGHT + ENTRY_OFFSET);
@@ -67,7 +67,9 @@ export function useQueueBubbleMotion(props: AnimatedQueueBubbleProps) {
     }
   });
   const reorderItem = useEvent((offset: number) => {
-    if (offset !== 0) void onReorder(offset);
+    if (offset !== 0) {
+      onReorder(offset).catch(() => undefined);
+    }
   });
 
   useEffect(() => {
@@ -111,10 +113,15 @@ export function useQueueBubbleMotion(props: AnimatedQueueBubbleProps) {
     dismissOpacity.set(withDelay(170, withTiming(0, { duration: 100, easing: SWIPE_EASING })));
     swipeX.set(
       withTiming(direction * distance, { duration: 330, easing: SWIPE_EASING }, (finished) => {
-        if (!finished) return;
+        if (finished !== true) {
+          return;
+        }
         runOnJS(playCommitHaptic)();
-        if (direction < 0) runOnJS(deleteItem)();
-        else runOnJS(steerItem)();
+        if (direction < 0) {
+          runOnJS(deleteItem)();
+        } else {
+          runOnJS(steerItem)();
+        }
       }),
     );
   };
@@ -134,9 +141,13 @@ export function useQueueBubbleMotion(props: AnimatedQueueBubbleProps) {
     })
     .onUpdate((event) => {
       const rawTranslation = swipeStartX.get() + event.translationX;
-      if (rawTranslation <= -8 && deleteEnabled) swipeDirection.set(-1);
-      else if (rawTranslation >= 8 && steerEnabled) swipeDirection.set(1);
-      else if (Math.abs(rawTranslation) < 8) swipeDirection.set(0);
+      if (rawTranslation <= -8 && deleteEnabled) {
+        swipeDirection.set(-1);
+      } else if (rawTranslation >= 8 && steerEnabled) {
+        swipeDirection.set(1);
+      } else if (Math.abs(rawTranslation) < 8) {
+        swipeDirection.set(0);
+      }
       const direction = swipeDirection.get();
       if (direction === 0 || Math.sign(rawTranslation) !== direction) {
         swipeX.set(0);
@@ -154,13 +165,15 @@ export function useQueueBubbleMotion(props: AnimatedQueueBubbleProps) {
         hapticPlayed.set(true);
         runOnJS(playTargetHaptic)();
       }
-      if (!nextArmed) hapticPlayed.set(false);
+      if (!nextArmed) {
+        hapticPlayed.set(false);
+      }
     })
     .onEnd((event, success) => {
       const direction = swipeDirection.get();
       const rawTranslation = swipeStartX.get() + event.translationX;
       const velocityCommit =
-        Math.abs(event.velocityX) >= 1_600 && Math.sign(event.velocityX) === direction;
+        Math.abs(event.velocityX) >= 1600 && Math.sign(event.velocityX) === direction;
       if (success && direction !== 0 && (swipeArmed.get() || velocityCommit)) {
         commitSwipe(direction);
         return;
@@ -172,7 +185,9 @@ export function useQueueBubbleMotion(props: AnimatedQueueBubbleProps) {
       swipeX.set(withSpring(0, QUEUE_SPRING_SNAPPY));
     })
     .onFinalize((_event, success) => {
-      if (!success) swipeX.set(withSpring(0, QUEUE_SPRING_SNAPPY));
+      if (!success) {
+        swipeX.set(withSpring(0, QUEUE_SPRING_SNAPPY));
+      }
       swipeDirection.set(0);
       swipeStartX.set(swipeX.get());
       swipeArmed.set(false);
@@ -193,24 +208,28 @@ export function useQueueBubbleMotion(props: AnimatedQueueBubbleProps) {
       dragY.set(event.translationY);
     })
     .onEnd((event, success) => {
-      if (!success) return;
+      if (!success) {
+        return;
+      }
       const rowHeight = Math.max(STACK_HEIGHT, measuredHeight) + CARD_GAP;
       const requestedOffset = Math.round(-event.translationY / rowHeight);
       const offset = Math.max(-index, Math.min(itemCount - index - 1, requestedOffset));
-      if (offset !== 0) runOnJS(reorderItem)(offset);
+      if (offset !== 0) {
+        runOnJS(reorderItem)(offset);
+      }
     })
     .onFinalize(() => {
       dragY.set(withSpring(0, QUEUE_SPRING_SNAPPY));
       dragging.set(false);
     });
   return {
-    cardWidth,
     cardStyle,
-    steerRevealStyle,
-    deleteRevealStyle,
-    steerItem,
+    cardWidth,
     deleteItem,
+    deleteRevealStyle,
     reorderGesture,
+    steerItem,
+    steerRevealStyle,
     swipeGesture,
     swipeStyle,
   };

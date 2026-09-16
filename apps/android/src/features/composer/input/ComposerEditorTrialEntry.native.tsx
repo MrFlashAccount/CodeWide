@@ -6,7 +6,7 @@ import { AppListRow } from "../../../ui/AppListRow";
 import { listRowHeight } from "../../../ui/AppListRow.types";
 import { AppText } from "../../../ui/Typography";
 
-const ComposerEditorTrial = lazy(() => import("./ComposerEditorTrial.native"));
+const ComposerEditorTrial = lazy(async () => import("./ComposerEditorTrial.native"));
 
 export function ComposerEditorTrialEntry() {
   const fullscreen = useAppFullscreenOverlay();
@@ -19,10 +19,10 @@ export function ComposerEditorTrialEntry() {
   }
   return (
     <AppListRow
-      title="Try Markdown composer"
       description="Experimental editor · local preview, no sending"
-      onPress={open}
       fixedHeight={listRowHeight.double}
+      onPress={open}
+      title="Try Markdown composer"
     />
   );
 }

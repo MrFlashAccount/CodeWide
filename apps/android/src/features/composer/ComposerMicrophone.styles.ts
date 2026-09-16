@@ -3,11 +3,11 @@ import { touchTarget } from "../../theme";
 
 export const styles = StyleSheet.create({
   composerIcon: {
-    width: touchTarget,
-    height: touchTarget,
-    flexShrink: 0,
     alignItems: "center",
+    flexShrink: 0,
+    height: touchTarget,
     justifyContent: "center",
+    width: touchTarget,
   },
   disabled: { opacity: 0.42 },
 });

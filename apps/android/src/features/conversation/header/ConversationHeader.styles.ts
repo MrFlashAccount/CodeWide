@@ -3,19 +3,16 @@ import { colors, layoutSize, radii, spacing, touchTarget, typeScale } from "../.
 import { conversationChromeEdgeInset } from "../../../ui/conversation-chrome-layout";
 
 export const styles = StyleSheet.create({
-  headerIcon: {
-    width: touchTarget,
-    height: touchTarget,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radii.large,
-  },
   conversationHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 0,
     minHeight: layoutSize.header,
     paddingHorizontal: conversationChromeEdgeInset,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 0,
+  },
+  conversationHeaderTitle: {
+    flexShrink: 1,
+    minWidth: 0,
   },
   conversationIdentity: {
     flex: 1,
@@ -25,19 +22,22 @@ export const styles = StyleSheet.create({
     marginLeft: spacing.xs,
     transform: [{ translateY: spacing.optical }],
   },
-  conversationTitleRow: {
-    minWidth: 0,
-    maxWidth: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-  },
   conversationTitle: {
     color: colors.text,
     ...typeScale.title,
   },
-  conversationHeaderTitle: {
+  conversationTitleRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    maxWidth: "100%",
     minWidth: 0,
-    flexShrink: 1,
+  },
+  headerIcon: {
+    alignItems: "center",
+    borderRadius: radii.large,
+    height: touchTarget,
+    justifyContent: "center",
+    width: touchTarget,
   },
 });

@@ -15,19 +15,19 @@ export function InlineIcon({
   const metrics = inlineIconMetrics(role, fontScale);
   return (
     <View
-      testID="inline-icon-slot"
       style={{
-        width: metrics.slot,
-        height: metrics.slot,
-        flexShrink: 0,
         alignItems: "center",
+        flexShrink: 0,
+        height: metrics.slot,
         justifyContent: "center",
+        width: metrics.slot,
       }}
+      testID="inline-icon-slot"
     >
       <Ionicons
         {...props}
-        size={metrics.glyph}
         allowFontScaling={false}
+        size={metrics.glyph}
         style={{ includeFontPadding: false, lineHeight: metrics.glyph, textAlign: "center" }}
       />
     </View>
@@ -35,27 +35,27 @@ export function InlineIcon({
 }
 
 /** Emoji use the same slot across fonts instead of contributing variable inline advance. */
-export function InlineEmoji({ value, role }: { value: string; role: InlineIconRole }) {
+export function InlineEmoji({ role, value }: { role: InlineIconRole; value: string }) {
   const { fontScale } = useWindowDimensions();
   const metrics = inlineIconMetrics(role, fontScale);
   return (
     <View
-      testID="inline-emoji-slot"
       style={{
-        width: metrics.slot,
-        height: metrics.slot,
-        flexShrink: 0,
         alignItems: "center",
+        flexShrink: 0,
+        height: metrics.slot,
         justifyContent: "center",
+        width: metrics.slot,
       }}
+      testID="inline-emoji-slot"
     >
       <Text
         allowFontScaling={false}
         style={{
           fontFamily: "sans-serif",
           fontSize: metrics.glyph,
-          lineHeight: metrics.slot,
           includeFontPadding: false,
+          lineHeight: metrics.slot,
           textAlign: "center",
         }}
       >

@@ -1,5 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useMemo } from "react";
+import type { Ionicons } from "@expo/vector-icons";
 import type { RemoteProject } from "../../data/remote-projects";
 import { partitionDiscoveredProjects, projectIncludesDirectory } from "../../data/remote-projects";
 import { listRowPosition, type AppListRowProps } from "../../ui/AppListRow.types";
@@ -37,9 +36,10 @@ export function useProjectPickerRows(
   normalizedQuery: string,
   expandedSections: ReadonlySet<ProjectSectionId>,
 ) {
-  const { recent: recentProjects, other: otherProjects } = useMemo(
-    () => partitionDiscoveredProjects(projects, discoveredProjects, RECENT_PROJECT_LIMIT),
-    [discoveredProjects, projects],
+  const { other: otherProjects, recent: recentProjects } = partitionDiscoveredProjects(
+    projects,
+    discoveredProjects,
+    RECENT_PROJECT_LIMIT,
   );
   const unpinnedProjects = [...recentProjects, ...otherProjects];
   const searchProjects =
@@ -67,7 +67,7 @@ export function useProjectPickerRows(
         project,
       });
     }
-    if (searchProjects.length === 0)
+    if (searchProjects.length === 0) {
       projectRows.push({
         compact: true,
         icon: "search-outline",
@@ -75,6 +75,7 @@ export function useProjectPickerRows(
         kind: "empty",
         text: "No matching projects",
       });
+    }
   } else {
     projectRows.push({
       count: projects.length,
@@ -93,7 +94,7 @@ export function useProjectPickerRows(
         project,
       });
     }
-    if (projects.length === 0)
+    if (projects.length === 0) {
       projectRows.push({
         compact: true,
         icon: "pin-outline",
@@ -101,6 +102,7 @@ export function useProjectPickerRows(
         kind: "empty",
         text: "Add a folder to pin it here",
       });
+    }
     if (unpinnedProjects.length > 0) {
       const recentExpanded = expandedSections.has("recent");
       projectRows.push({
@@ -147,5 +149,5 @@ export function useProjectPickerRows(
     }
     projectRows.push({ id: "server-default", kind: "server-default" });
   }
-  return { unpinnedProjects, projectRows };
+  return { projectRows, unpinnedProjects };
 }

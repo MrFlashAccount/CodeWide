@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { sourceObjectDeclaration } from "./source-contract";
+import { sourceHasJsxElement, sourceObjectDeclaration } from "./source-contract";
 
 const browser = readFileSync(
   new URL("../src/features/ports/browser/InternalBrowser.native.tsx", import.meta.url),
@@ -80,15 +80,18 @@ const ownerBrowserDevToolsPaneNative = readFileSync(
 
 describe("internal browser", () => {
   it("owns navigation and Chromium developer tools independently of localhost tunnels", () => {
-    expect(browser).toContain('originWhitelist = ["http://*", "https://*"]');
+    expect(browser).toContain('const DEFAULT_ORIGIN_WHITELIST = ["http://*", "https://*"]');
+    expect(browser).toContain("originWhitelist = DEFAULT_ORIGIN_WHITELIST");
     expect(browser).toContain(
       'accessibilityLabel={devToolsOpen ? "Close Chromium DevTools" : "Open Chromium DevTools"}',
     );
     expect(ownerBrowserDevTools).toContain("startNativeBrowserDevToolsBridge()");
     expect(ownerBrowserBack).toContain('BackHandler.addEventListener("hardwareBackPress"');
-    expect(ownerBrowserBack).toContain("if (devToolsUrl !== null) closeDevTools()");
-    expect(ownerBrowserBack).toContain("else if (canGoBack) webView.current?.goBack()");
-    expect(ownerBrowserBack).toContain("else header.onClose()");
+    expect(ownerBrowserBack).toContain("devToolsUrl !== null");
+    expect(ownerBrowserBack).toContain("closeDevTools()");
+    expect(ownerBrowserBack).toContain("canGoBack");
+    expect(ownerBrowserBack).toContain("webView.current?.goBack()");
+    expect(ownerBrowserBack).toContain("header.onClose()");
     expect(ownerBrowserDevTools).toContain("if (bridgeStarted.current)");
     expect(ownerBrowserDevToolsPaneNative).toContain('testID="chromium-devtools-webview"');
     expect(browser).not.toContain("startNativeBrowserTracing()");
@@ -112,18 +115,22 @@ describe("internal browser", () => {
     expect(portForwarding).not.toContain("Linking.openURL");
     expect(ownerForwardedLoopbackBrowser).toContain('testID="forwarded-loopback-browser"');
     expect(ownerBrowserNavigation).toContain("setLoopbackBrowser({");
-    expect(ownerForwardedLoopbackBrowser).toContain(
-      'header={{ title, closeLabel: "Close browser", onClose }}',
-    );
+    expect(
+      sourceHasJsxElement(ownerForwardedLoopbackBrowser, "InternalBrowser", [
+        'closeLabel: "Close browser"',
+        "title",
+        "onClose",
+      ]),
+    ).toBe(true);
     expect(screen).not.toContain("Linking.openURL(forwardedLoopbackUrl");
   });
 
   it("merges fullscreen identity and browser navigation into one toolbar", () => {
     expect(browser).toContain("header?: InternalBrowserHeader");
     expect(browser).toContain("accessibilityLabel={header.closeLabel}");
-    expect(browser).toContain('<Ionicons name="close"');
-    expect(browser).toContain('<BrowserButton\n            label="Back"');
-    expect(browser).toContain('<BrowserButton\n              label="Reload"');
+    expect(sourceHasJsxElement(browser, "Ionicons", ['name="close"'])).toBe(true);
+    expect(sourceHasJsxElement(browser, "BrowserButton", ['label="Back"'])).toBe(true);
+    expect(sourceHasJsxElement(browser, "BrowserButton", ['label="Reload"'])).toBe(true);
     expect(browser).toContain("<BrowserAddressBar");
     expect(browser).toContain("onEditingChange={setAddressEditing}");
     expect(browser).not.toContain("locationTitle");

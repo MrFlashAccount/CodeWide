@@ -19,10 +19,10 @@ export function useReviewFeature(
   useContentReviewRuntime({
     attach: attachContentReview,
     attachmentId: contentReviewAttachmentId,
-    thread: remoteThread ?? null,
-    voiceScope: `${composerScope}\u0000review`,
     resources: appVoiceInputRuntime.resources,
+    thread: remoteThread ?? null,
     voiceController,
+    voiceScope: `${composerScope}\u0000review`,
     ...(onStartVoiceTranscription === undefined ? {} : { startVoice: onStartVoiceTranscription }),
   });
 }

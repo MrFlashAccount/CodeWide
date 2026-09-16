@@ -36,8 +36,6 @@ export default function V1SearchRoute(): React.JSX.Element {
     return (
       <RouteUnavailable
         message="Open search again to start a new session."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           router.dismissTo("/v1");
         }}
@@ -51,8 +49,6 @@ export default function V1SearchRoute(): React.JSX.Element {
   };
   return (
     <GlobalSearchScreen
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={close}
       onOpenThread={resources.list.openSearchThread}
       projects={resources.project.projectWorkspace.searchProjects}

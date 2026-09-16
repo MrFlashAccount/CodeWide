@@ -1,5 +1,5 @@
 /** V1 UnknownProtocolBlock owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
@@ -16,34 +16,36 @@ export function UnknownProtocolBlock({
   onFixUnsupportedBlock,
 }: {
   block: RenderBlock;
-  onFixUnsupportedBlock?(block: RenderBlock): Promise<void>;
+  onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 }) {
   const insideBubbleSurface = useInsideBubbleSurface();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rawType = typeof block.raw.type === "string" ? block.raw.type : block.kind;
   const fix = async () => {
-    if (onFixUnsupportedBlock === undefined || busy) return;
+    if (onFixUnsupportedBlock === undefined || busy) {
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       await onFixUnsupportedBlock(block);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not create renderer fix thread");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not create renderer fix thread");
       setBusy(false);
     }
   };
   return (
     <View style={[styles.unknownCard, insideBubbleSurface && styles.bubbleNestedSurface]}>
-      <Ionicons name="cube-outline" size={iconSize.action} color={colors.amber} />
+      <Ionicons color={colors.amber} name="cube-outline" size={iconSize.action} />
       <View style={styles.flex}>
         <Text style={styles.unknownText}>Unsupported · {rawType}</Text>
         {error !== null && <Text style={styles.errorText}>{error}</Text>}
       </View>
       <CopyButton getText={() => protocolCopyText(block)} />
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={`Fix unsupported block ${rawType} in new thread`}
+        accessibilityRole="button"
         disabled={busy || onFixUnsupportedBlock === undefined}
         onPress={() => void fix()}
         style={[
@@ -52,9 +54,9 @@ export function UnknownProtocolBlock({
         ]}
       >
         <InlineIcon
+          color={colors.onPrimary}
           name={busy ? "hourglass-outline" : "construct-outline"}
           role="label"
-          color={colors.onPrimary}
         />
         <Text style={styles.unknownFixText}>{busy ? "Starting" : "Fix"}</Text>
       </Pressable>

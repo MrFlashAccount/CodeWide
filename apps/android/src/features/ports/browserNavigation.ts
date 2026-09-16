@@ -6,9 +6,13 @@ export function useBrowserNavigation() {
   const [loopbackBrowser, setLoopbackBrowser] = useState<{ title: string; url: string } | null>(
     null,
   );
-  const openBrowser = useEvent((title: string, url: string) => setLoopbackBrowser({ title, url }));
-  const closeBrowser = useEvent(() => setLoopbackBrowser(null));
-  return { loopbackBrowser, openBrowser, closeBrowser };
+  const openBrowser = useEvent((title: string, url: string) => {
+    setLoopbackBrowser({ title, url });
+  });
+  const closeBrowser = useEvent(() => {
+    setLoopbackBrowser(null);
+  });
+  return { closeBrowser, loopbackBrowser, openBrowser };
 }
 
 import { nativePortForwardingStore } from "../../data/native-port-forwarding-store";
@@ -23,8 +27,8 @@ export function useLoopbackNavigation(
   const openLoopbackLink = useEvent(async (target: LoopbackLinkTarget) => {
     const profile = await nativePortForwardingStore.ensureStarted({
       connectionId: activeConnectionId,
+      label: `localhost:${String(target.remotePort)}`,
       remotePort: target.remotePort,
-      label: `localhost:${target.remotePort}`,
     });
     onOpenBrowser(profile.label, forwardedLoopbackUrl(target, profile));
   });

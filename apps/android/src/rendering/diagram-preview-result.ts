@@ -1,12 +1,12 @@
 interface DiagramPreview {
+  readonly height: number;
   readonly uri: string;
   readonly width: number;
-  readonly height: number;
 }
 
 export type DiagramPreviewResult =
-  | { readonly status: "ready"; readonly preview: DiagramPreview }
-  | { readonly status: "error"; readonly message: string };
+  | { readonly preview: DiagramPreview; readonly status: "ready" }
+  | { readonly message: string; readonly status: "error" };
 
 export function parseDiagramPreviewResult(serialized: string): DiagramPreviewResult {
   const value: unknown = JSON.parse(serialized);
@@ -17,7 +17,7 @@ export function parseDiagramPreviewResult(serialized: string): DiagramPreviewRes
     if (!("message" in value) || typeof value.message !== "string" || value.message.trim() === "") {
       throw new Error("Invalid diagram renderer error");
     }
-    return { status: "error", message: value.message };
+    return { message: value.message, status: "error" };
   }
   if (
     value.type !== "preview" ||
@@ -36,7 +36,7 @@ export function parseDiagramPreviewResult(serialized: string): DiagramPreviewRes
     throw new Error("Invalid diagram renderer response");
   }
   return {
+    preview: { height: value.height, uri: value.uri, width: value.width },
     status: "ready",
-    preview: { uri: value.uri, width: value.width, height: value.height },
   };
 }

@@ -10,19 +10,20 @@ export function renderToolImage(
   item: Record<string, unknown>,
   type: string,
   index: number,
-  getTransferAccess: (() => Promise<{ baseUrl: string; authorization: string }>) | undefined,
+  key: string,
+  getTransferAccess: (() => Promise<{ authorization: string; baseUrl: string }>) | undefined,
   renderFallback: (value: unknown) => ReactElement,
 ) {
   const projectedAsset = privateImageAssetProjection(item.codewideAsset);
   if (projectedAsset !== null && getTransferAccess !== undefined) {
     return (
       <ScopedPrivateAssetImage
-        key={index}
-        previewId={`tool-asset:${projectedAsset.id}`}
-        label={`Tool image ${index + 1}`}
-        reference={`private-asset:${projectedAsset.id}`}
-        source={{ kind: "content", id: projectedAsset.id }}
         getTransferAccess={getTransferAccess}
+        key={key}
+        label={`Tool image ${String(index + 1)}`}
+        previewId={`tool-asset:${projectedAsset.id}`}
+        reference={`private-asset:${projectedAsset.id}`}
+        source={{ id: projectedAsset.id, kind: "content" }}
       />
     );
   }
@@ -33,16 +34,16 @@ export function renderToolImage(
     const rawUri = typeof item.imageUrl === "string" ? item.imageUrl : String(item.image_url);
     const uri = safeImageUri(rawUri);
     return uri === null ? (
-      <Text key={index} selectable style={styles.rawLink}>
+      <Text key={key} selectable style={styles.rawLink}>
         {rawUri}
       </Text>
     ) : (
       <OpenableImage
-        key={index}
-        previewId={`tool-image:${index}:${uri}`}
-        label={`Tool image ${index + 1}`}
-        source={{ uri }}
+        key={key}
+        label={`Tool image ${String(index + 1)}`}
+        previewId={`tool-image:${String(index)}:${uri}`}
         reference={uri}
+        source={{ uri }}
       />
     );
   }
@@ -53,11 +54,11 @@ export function renderToolImage(
       renderFallback(item)
     ) : (
       <OpenableImage
-        key={index}
-        previewId={`mcp-image:${index}`}
-        label={`MCP image ${index + 1}`}
+        key={key}
+        label={`MCP image ${String(index + 1)}`}
+        previewId={`mcp-image:${String(index)}`}
+        reference={`MCP image ${String(index + 1)}`}
         source={{ uri }}
-        reference={`MCP image ${index + 1}`}
       />
     );
   }

@@ -23,13 +23,9 @@ export default function V1SettingsRoute(): React.JSX.Element {
     <SubscribedConnectionSettings
       accountRateLimitsDatabase={resources.runtime.accountRateLimits}
       connections={resources.list.settingsConnections}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onAddServer={() => {
         router.push("/v1/settings/servers/new");
       }}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={() => {
         router.dismissTo("/v1");
       }}

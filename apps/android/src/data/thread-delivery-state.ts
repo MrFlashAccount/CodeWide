@@ -44,11 +44,14 @@ export function pendingDeliveryStateFromCompanion(
       return "failed";
     case "delivered":
       return "appServerAccepted";
+    default:
+      throw new Error("Unsupported delivery state");
   }
 }
 
 export function deliveryProgressRank(state: PendingDeliveryState): number {
-  switch (normalizePendingDeliveryState(state)) {
+  const normalized = normalizePendingDeliveryState(state);
+  switch (normalized) {
     case "queued":
       return 0;
     case "sending":
@@ -61,25 +64,27 @@ export function deliveryProgressRank(state: PendingDeliveryState): number {
       return 4;
     case "appServerAccepted":
       return 5;
+    default:
+      throw new Error("Unsupported delivery progress state");
   }
 }
 
 export type QueuedPrompt = {
-  commandId: string;
-  text: string;
   attachments: RemoteFileAttachment[];
+  commandId: string;
   createdAt: number;
-  state: "queued" | "uncertain" | "failed";
   lastError: string | null;
+  state: "queued" | "uncertain" | "failed";
+  text: string;
 };
 
 import type { ThreadSettings } from "./turn-controls-types";
 export type SendMode =
   | { type: "start" }
   | { type: "queue" }
-  | { type: "steer"; expectedTurnId: string };
+  | { expectedTurnId: string; type: "steer" };
 export type TurnSendOptions = ThreadSettings & {
-  skills?: Array<{ name: string; path: string }>;
   attachments?: RemoteFileAttachment[];
+  skills?: Array<{ name: string; path: string }>;
   workspaceRequestId?: string;
 };

@@ -1,7 +1,7 @@
 import { act, render } from "@testing-library/react-native";
-import { CodeReviewEditor } from "../src/rendering/CodeReviewEditor.native";
-import { CODE_REVIEW_BRIDGE_VERSION } from "../src/rendering/code-review-bridge";
-import type { CodeReviewLineReference } from "../src/rendering/code-review";
+import { CodeReviewEditor } from "../src/features/review/editor/CodeReviewEditor.native";
+import { CODE_REVIEW_BRIDGE_VERSION } from "../src/features/review/editor/editorBridge";
+import type { CodeReviewLineReference } from "../src/features/review/comments/reviewComment";
 import { latestWebViewProps, webViewPostedMessages } from "./mocks/ReactNativeWebView";
 
 const firstLine: CodeReviewLineReference = { path: "example.ts", line: 7, side: "new" };
@@ -10,9 +10,18 @@ const secondLine: CodeReviewLineReference = { path: "example.ts", line: 12, side
 function documentRequestId(): number {
   for (const serialized of webViewPostedMessages) {
     const message: unknown = JSON.parse(serialized);
-    if (message !== null && typeof message === "object" && "command" in message && message.command === "document"
-      && "payload" in message && message.payload !== null && typeof message.payload === "object"
-      && "requestId" in message.payload && typeof message.payload.requestId === "number") return message.payload.requestId;
+    if (
+      message !== null &&
+      typeof message === "object" &&
+      "command" in message &&
+      message.command === "document" &&
+      "payload" in message &&
+      message.payload !== null &&
+      typeof message.payload === "object" &&
+      "requestId" in message.payload &&
+      typeof message.payload.requestId === "number"
+    )
+      return message.payload.requestId;
   }
   throw new Error("Editor did not publish its document request");
 }
@@ -23,23 +32,58 @@ it("routes voice and draft events only to the selected review input, including d
   const onCommentDraftChange = jest.fn();
   const onCommentSelectionChange = jest.fn();
   const props = {
-    document: null, loading: false, loadError: null, files: [], workspaceRevision: "test-workspace",
-    selectedPath: firstLine.path, sidebarOpen: false, compact: false, wrapLines: false,
-    mode: "source" as const, comments: [], revealReference: null, commentDraft: "",
-    voicePhase: "idle" as const, voicePermissionGranted: true, voiceRetryAvailable: false, voiceError: null,
-    onLinePress: jest.fn(), onCommentDraftChange, onCommentSelectionChange,
-    onCommentSubmit: jest.fn(), onVoicePress, onFileSelect: jest.fn(),
+    document: null,
+    loading: false,
+    loadError: null,
+    files: [],
+    workspaceRevision: "test-workspace",
+    selectedPath: firstLine.path,
+    sidebarOpen: false,
+    compact: false,
+    wrapLines: false,
+    mode: "source" as const,
+    comments: [],
+    revealReference: null,
+    commentDraft: "",
+    voicePhase: "idle" as const,
+    voicePermissionGranted: true,
+    voiceRetryAvailable: false,
+    voiceError: null,
+    onLinePress: jest.fn(),
+    onCommentDraftChange,
+    onCommentSelectionChange,
+    onCommentSubmit: jest.fn(),
+    onVoicePress,
+    onFileSelect: jest.fn(),
   };
   const view = render(<CodeReviewEditor {...props} selectedReference={firstLine} />);
-  act(() => latestWebViewProps?.onMessage?.({ nativeEvent: { data: JSON.stringify({ version: CODE_REVIEW_BRIDGE_VERSION, sequence: 1, type: "ready" }) } }));
+  act(() =>
+    latestWebViewProps?.onMessage?.({
+      nativeEvent: {
+        data: JSON.stringify({ version: CODE_REVIEW_BRIDGE_VERSION, sequence: 1, type: "ready" }),
+      },
+    }),
+  );
   const requestId = documentRequestId();
   let sequence = 1;
   function deliver(type: "voiceAction" | "draftChanged", reference: unknown) {
     sequence += 1;
-    act(() => latestWebViewProps?.onMessage?.({ nativeEvent: { data: JSON.stringify({
-      version: CODE_REVIEW_BRIDGE_VERSION, sequence, type, requestId, reference,
-      draft: "dictated review", selectionStart: 0, selectionEnd: 0,
-    }) } }));
+    act(() =>
+      latestWebViewProps?.onMessage?.({
+        nativeEvent: {
+          data: JSON.stringify({
+            version: CODE_REVIEW_BRIDGE_VERSION,
+            sequence,
+            type,
+            requestId,
+            reference,
+            draft: "dictated review",
+            selectionStart: 0,
+            selectionEnd: 0,
+          }),
+        },
+      }),
+    );
   }
   deliver("voiceAction", firstLine);
   expect(onVoicePress).toHaveBeenCalledTimes(1);

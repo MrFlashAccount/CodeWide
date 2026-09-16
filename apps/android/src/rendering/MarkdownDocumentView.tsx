@@ -1,5 +1,5 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { useEvent } from "../react/useEvent";
@@ -16,25 +16,25 @@ import { RichMarkdownDocumentBlockView } from "./RichMarkdown";
 
 /** Owns the document viewport; offscreen blocks do not create native text/layout work. */
 export function MarkdownDocumentView({
+  footer,
+  maxWidth,
+  onScroll,
+  reviewTarget,
   segments,
   target,
-  reviewTarget,
-  maxWidth,
   textScale,
-  onScroll,
-  footer,
 }: {
+  footer: ReactNode;
+  maxWidth?: number;
+  onScroll: () => void;
+  reviewTarget?: ContentReviewTarget;
   segments: readonly string[];
   target: MarkdownLineTarget | null;
-  reviewTarget?: ContentReviewTarget;
-  maxWidth?: number;
   textScale: number;
-  onScroll(): void;
-  footer: ReactNode;
 }) {
   const list = useRef<LegendListRef>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
-  const blocks = useMemo(() => markdownDocumentBlocks(segments), [segments]);
+  const blocks = markdownDocumentBlocks(segments);
   const initialIndex = markdownDocumentTargetIndex(blocks, segments, target);
   const contentWidth = Math.max(
     1,
@@ -47,15 +47,28 @@ export function MarkdownDocumentView({
   }, [contentWidth, textScale]);
   return (
     <View
+      onLayout={({ nativeEvent }) => {
+        setViewportWidth(Math.floor(nativeEvent.layout.width));
+      }}
       style={styles.root}
-      onLayout={({ nativeEvent }) => setViewportWidth(Math.floor(nativeEvent.layout.width))}
     >
       {viewportWidth > 0 && (
         <RichContentWidthProvider width={contentWidth}>
           <LegendList
-            ref={list}
             data={blocks}
+            drawDistance={300}
+            estimatedItemSize={240}
+            initialScrollIndex={initialIndex}
+            keyboardShouldPersistTaps="handled"
             keyExtractor={documentBlockKey}
+            ListFooterComponent={
+              <View style={[styles.block, maxWidth === undefined ? null : { maxWidth }]}>
+                {footer}
+              </View>
+            }
+            onScroll={scroll}
+            recycleItems={false}
+            ref={list}
             renderItem={({ item }) => (
               <View style={[styles.block, maxWidth === undefined ? null : { maxWidth }]}>
                 <RichMarkdownDocumentBlockView
@@ -64,18 +77,7 @@ export function MarkdownDocumentView({
                 />
               </View>
             )}
-            initialScrollIndex={initialIndex}
-            estimatedItemSize={240}
-            drawDistance={300}
-            recycleItems={false}
-            onScroll={scroll}
             scrollEventThrottle={96}
-            keyboardShouldPersistTaps="handled"
-            ListFooterComponent={
-              <View style={[styles.block, maxWidth === undefined ? null : { maxWidth }]}>
-                {footer}
-              </View>
-            }
             style={styles.root}
           />
         </RichContentWidthProvider>
@@ -89,15 +91,15 @@ function documentBlockKey(block: MarkdownDocumentBlock): string {
 }
 
 const styles = StyleSheet.create({
+  block: {
+    alignSelf: "center",
+    paddingBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    width: "100%",
+  },
   root: {
     flex: 1,
     minHeight: 0,
     width: "100%",
-  },
-  block: {
-    width: "100%",
-    alignSelf: "center",
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
   },
 });

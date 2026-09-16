@@ -15,9 +15,13 @@ export function selectLiveTurnPlan(
   thread: Thread | null | undefined,
   turnId: string | null,
 ): LiveTurnPlan | null {
-  if (thread === null || thread === undefined || turnId === null) return null;
+  if (thread === null || thread === undefined || turnId === null) {
+    return null;
+  }
   const turn = thread.turns.find((candidate) => candidate.id === turnId);
-  if (turn === undefined || turn.status !== "inProgress") return null;
+  if (turn === undefined || turn.status !== "inProgress") {
+    return null;
+  }
   const plan = projectedTurnMetadata(turn)?.plan;
   return plan === undefined || plan.steps.length === 0 ? null : plan;
 }

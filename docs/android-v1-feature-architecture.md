@@ -100,8 +100,11 @@ apps/android/src/                                  existing anchor
 │   │   └── changePresentation.ts                  scope/diff/source preferences and recorded-turn changes
 │   ├── review/ [E/M]                              review interaction ← screen review + CodeReviewWorkspace
 │   │   ├── ReviewFeature.tsx                      review session surface
-│   │   ├── reviewSubmission.ts                    serialize/submit result; composer admits attachment
-│   │   └── CodeReviewWorkspace.tsx [M]            workspace ← rendering/CodeReviewWorkspace.tsx
+│   │   ├── comments/                              line comment, voice and attachment serialization owners
+│   │   ├── editor/                                native/web editor adapters and typed bridge
+│   │   │   └── webview/                           browser-only Pierre entry, patch adapter and HTML source
+│   │   ├── resources/                             changed-file projection, loading and path policy
+│   │   └── workspace/                             CodeReviewWorkspace composition and view state
 │   ├── drawing/ [E/M]                             drawing/annotation interaction ← screen + ui/DrawingWorkspace
 │   │   ├── DrawingFeature.tsx                     drawing session and accepted-close flow
 │   │   └── drawingAttachment.ts                   snapshot/PNG conversion and result handoff

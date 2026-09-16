@@ -16,7 +16,7 @@ import { AnimatedNumber, integerNumberFormat } from "../../ui/AnimatedNumber";
 import { AppText as Text } from "../../ui/Typography";
 import { AccountUsageRow } from "./AccountUsageRow";
 
-import { styles } from "./UsagePopover.styles";
+import { styles } from "./UsageMenu.styles";
 
 /** Presents the existing account snapshots and stale/error states without creating another cache. */
 export function AccountUsageSection({
@@ -45,19 +45,19 @@ export function AccountUsageSection({
     false;
   return accountSources !== undefined && accountProfiles.length > 0 ? (
     <View
-      testID="usage-accounts-section"
       style={[styles.section, hasContext && styles.dividedSection]}
+      testID="usage-accounts-section"
     >
       <View style={styles.weeklyTitle}>
-        <Ionicons name="people-outline" size={iconSize.inline} color={colors.textMuted} />
+        <Ionicons color={colors.textMuted} name="people-outline" size={iconSize.inline} />
         <Text accessibilityRole="header" style={styles.title}>
           Accounts
         </Text>
         {(loading || refreshing) && (
           <ActivityIndicator
             accessibilityLabel="Refreshing account usage"
-            size="small"
             color={colors.textMuted}
+            size="small"
           />
         )}
       </View>
@@ -69,9 +69,13 @@ export function AccountUsageSection({
         return (
           <AccountUsageRow
             key={account.id}
-            testID={`usage-account-${profile.id}`}
             label={account.label}
             plan={account.detail}
+            reset={
+              profile.enabled && !profileStale && resetAt !== null
+                ? { absolute: formatDeviceDateTime(resetAt), relative: relativeResetTime(resetAt) }
+                : null
+            }
             status={
               !profile.enabled
                 ? "disabled"
@@ -83,11 +87,7 @@ export function AccountUsageSection({
                     ? "active"
                     : "inactive"
             }
-            reset={
-              profile.enabled && !profileStale && resetAt !== null
-                ? { absolute: formatDeviceDateTime(resetAt), relative: relativeResetTime(resetAt) }
-                : null
-            }
+            testID={`usage-account-${profile.id}`}
           >
             {!profile.enabled || profileStale || profileWeekly === null ? (
               <Text style={[styles.secondaryValue, styles.unavailable]}>
@@ -101,10 +101,10 @@ export function AccountUsageSection({
               </Text>
             ) : (
               <AnimatedNumber
-                value={Math.round(profileWeekly.remainingPercent)}
                 format={integerNumberFormat}
-                suffix="% left"
                 style={styles.accountValue}
+                suffix="% left"
+                value={Math.round(profileWeekly.remainingPercent)}
               />
             )}
           </AccountUsageRow>
@@ -120,19 +120,19 @@ export function AccountUsageSection({
     </View>
   ) : aggregateAccounts ? (
     <View
-      testID="usage-accounts-section"
       style={[styles.section, hasContext && styles.dividedSection]}
+      testID="usage-accounts-section"
     >
       <View style={styles.weeklyTitle}>
-        <Ionicons name="people-outline" size={17} color={colors.textMuted} />
+        <Ionicons color={colors.textMuted} name="people-outline" size={17} />
         <Text accessibilityRole="header" style={styles.title}>
           Accounts
         </Text>
         {(loading || refreshing) && (
           <ActivityIndicator
             accessibilityLabel="Refreshing account usage"
-            size="small"
             color={colors.textMuted}
+            size="small"
           />
         )}
       </View>
@@ -146,20 +146,20 @@ export function AccountUsageSection({
     </View>
   ) : accountSources !== undefined ? (
     <View
-      testID="usage-weekly-section"
       style={[styles.section, hasContext && styles.dividedSection]}
+      testID="usage-weekly-section"
     >
       <View style={styles.weeklyHeader}>
         <View style={styles.weeklyTitle}>
-          <Ionicons name="calendar-clear-outline" size={iconSize.inline} color={colors.textMuted} />
+          <Ionicons color={colors.textMuted} name="calendar-clear-outline" size={iconSize.inline} />
           <Text accessibilityRole="header" style={styles.title}>
             Weekly
           </Text>
           {(loading || refreshing) && (
             <ActivityIndicator
               accessibilityLabel="Refreshing weekly usage"
-              size="small"
               color={colors.textMuted}
+              size="small"
             />
           )}
         </View>
@@ -172,17 +172,17 @@ export function AccountUsageSection({
           </Text>
         ) : (
           <AnimatedNumber
-            accessibilityLabel={`${Math.round(weekly.remainingPercent)} percent of weekly usage remaining`}
-            value={Math.round(weekly.remainingPercent)}
+            accessibilityLabel={`${String(Math.round(weekly.remainingPercent))} percent of weekly usage remaining`}
             format={integerNumberFormat}
-            suffix="% left"
             style={styles.weeklyValue}
+            suffix="% left"
+            value={Math.round(weekly.remainingPercent)}
           />
         )}
       </View>
       {weekly?.window.resetsAt !== null && weekly?.window.resetsAt !== undefined && (
-        <View testID="usage-reset-time" style={styles.resetRow}>
-          <Ionicons name="refresh-outline" size={iconSize.indicator} color={colors.textDim} />
+        <View style={styles.resetRow} testID="usage-reset-time">
+          <Ionicons color={colors.textDim} name="refresh-outline" size={iconSize.indicator} />
           <Text numberOfLines={1} style={[styles.meta, styles.grow]}>
             {formatDeviceDateTime(weekly.window.resetsAt)} ·{" "}
             {relativeResetTime(weekly.window.resetsAt)}

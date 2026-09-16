@@ -3,9 +3,9 @@ import type { Personality } from "@codewide/codex-protocol/v0.147.0";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { View } from "react-native";
-import { type TurnControlsValue } from "../../../data/turn-controls-types";
+import type { TurnControlsValue } from "../../../data/turn-controls-types";
 import { useTurnControlsRow } from "../../../data/use-workspace-resource-row";
-import { type WorkspaceResourceDatabase } from "../../../data/workspace-resource-database";
+import type { WorkspaceResourceDatabase } from "../../../data/workspace-resource-database";
 import { useAsyncResource } from "../../../rendering/async-resource-store";
 import { colors } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
@@ -20,51 +20,51 @@ import {
 import { styles } from "./ComposerControlChips.styles";
 
 export function ComposerControlChips({
-  resources,
-  resourceId,
   cwd,
-  remoteThread,
-  newChat,
-  readOnly,
-  selectedModel,
-  selectedEffort,
-  selectedPersonality,
-  selectedPermissions,
   error,
   load,
-  onQuickOpen,
-  onFallback,
+  newChat,
   onClose,
-  onSelectModel,
+  onFallback,
+  onQuickOpen,
   onSelectEffort,
-  onSelectPersonality,
+  onSelectModel,
   onSelectPermissions,
+  onSelectPersonality,
+  readOnly,
+  remoteThread,
+  resourceId,
+  resources,
+  selectedEffort,
+  selectedModel,
+  selectedPermissions,
+  selectedPersonality,
 }: {
-  resources: WorkspaceResourceDatabase | null;
-  resourceId: string | null;
   cwd: string;
-  remoteThread: Thread | null | undefined;
-  newChat: boolean;
-  readOnly: boolean;
-  selectedModel: string | null;
-  selectedEffort: string | null;
-  selectedPersonality: Personality | null;
-  selectedPermissions: string | null;
   error: string | null;
   load?: (cwd: string) => Promise<TurnControlsValue>;
-  onQuickOpen(scope: "model-menu" | "permissions-menu"): void;
-  onFallback(page: "model" | "permissions"): void;
-  onClose(scope: "model-menu" | "permissions-menu"): void;
-  onSelectModel(model: string, effort: string): void;
-  onSelectEffort(effort: string): void;
-  onSelectPersonality(personality: Personality | null): void;
-  onSelectPermissions(permissions: string): void;
+  newChat: boolean;
+  onClose: (scope: "model-menu" | "permissions-menu") => void;
+  onFallback: (page: "model" | "permissions") => void;
+  onQuickOpen: (scope: "model-menu" | "permissions-menu") => void;
+  onSelectEffort: (effort: string) => void;
+  onSelectModel: (model: string, effort: string) => void;
+  onSelectPermissions: (permissions: string | null) => void;
+  onSelectPersonality: (personality: Personality | null) => void;
+  readOnly: boolean;
+  remoteThread: Thread | null | undefined;
+  resourceId: string | null;
+  resources: WorkspaceResourceDatabase | null;
+  selectedEffort: string | null;
+  selectedModel: string | null;
+  selectedPermissions: string | null;
+  selectedPersonality: Personality | null;
 }) {
   const resource = useTurnControlsRow(resources, resourceId);
   useAsyncResource<TurnControlsValue>(
     load === undefined || resourceId === null ? null : "conversation-turn-controls",
     resourceId ?? "inactive",
-    async () => (load === undefined ? EMPTY_TURN_CONTROLS : await load(cwd)),
+    async () => (load === undefined ? EMPTY_TURN_CONTROLS : load(cwd)),
   );
   const controls = resource?.value ?? EMPTY_TURN_CONTROLS;
   const loading = resource?.status === "loading" && resource.value === null;
@@ -75,10 +75,10 @@ export function ComposerControlChips({
     remoteThread === null || remoteThread === undefined
       ? null
       : projectedThreadExecutionSettings(remoteThread);
-  const { model: effectiveModel, effort: effectiveEffort } = composerModelSettings(
+  const { effort: effectiveEffort, model: effectiveModel } = composerModelSettings(
     newChat,
     serverExecution,
-    { model: selectedModel, effort: selectedEffort },
+    { effort: selectedEffort, model: selectedModel },
     controls,
   );
   const effectivePermissions =
@@ -97,8 +97,8 @@ export function ComposerControlChips({
   return (
     <>
       {readOnly ? (
-        <View testID="readonly-model-chip" style={styles.composerContextChip}>
-          <InlineIcon name="sparkles-outline" role="label" color={colors.textMuted} />
+        <View style={styles.composerContextChip} testID="readonly-model-chip">
+          <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
           <ComposerContextLabel
             loading={modelPending}
             testID="composer-model-label"
@@ -108,10 +108,27 @@ export function ComposerControlChips({
       ) : (
         <ModelThinkingMenu
           accessibilityLabel={`Model and thinking: ${modelLabel}, ${effectiveEffort ?? "not specified"}`}
-          triggerStyle={styles.composerContextChip}
+          error={effectiveError}
+          loading={loading}
+          models={controls.models}
+          onClose={() => {
+            onClose("model-menu");
+          }}
+          onFallbackPress={() => {
+            onFallback("model");
+          }}
+          onOpen={() => {
+            onQuickOpen("model-menu");
+          }}
+          onSelectEffort={onSelectEffort}
+          onSelectModel={onSelectModel}
+          onSelectPersonality={onSelectPersonality}
+          selectedEffort={effectiveEffort}
+          selectedModel={effectiveModel}
+          selectedPersonality={selectedPersonality}
           triggerChildren={
             <>
-              <InlineIcon name="sparkles-outline" role="label" color={colors.textMuted} />
+              <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
               <ComposerContextLabel
                 loading={modelPending}
                 testID="composer-model-label"
@@ -119,23 +136,12 @@ export function ComposerControlChips({
               />
             </>
           }
-          models={controls.models}
-          loading={loading}
-          error={effectiveError}
-          selectedModel={effectiveModel}
-          selectedEffort={effectiveEffort}
-          selectedPersonality={selectedPersonality}
-          onOpen={() => onQuickOpen("model-menu")}
-          onClose={() => onClose("model-menu")}
-          onFallbackPress={() => onFallback("model")}
-          onSelectModel={onSelectModel}
-          onSelectEffort={onSelectEffort}
-          onSelectPersonality={onSelectPersonality}
+          triggerStyle={styles.composerContextChip}
         />
       )}
       {readOnly ? (
-        <View testID="readonly-permissions-chip" style={styles.composerContextChip}>
-          <InlineIcon name="shield-checkmark-outline" role="label" color={colors.textMuted} />
+        <View style={styles.composerContextChip} testID="readonly-permissions-chip">
+          <InlineIcon color={colors.textMuted} name="shield-checkmark-outline" role="label" />
           <ComposerContextLabel
             loading={permissionsPending}
             testID="composer-permissions-label"
@@ -145,10 +151,23 @@ export function ComposerControlChips({
       ) : (
         <PermissionsMenu
           accessibilityLabel={`Permissions: ${permissionLabel}`}
-          triggerStyle={styles.composerContextChip}
+          error={effectiveError}
+          loading={loading}
+          onClose={() => {
+            onClose("permissions-menu");
+          }}
+          onFallbackPress={() => {
+            onFallback("permissions");
+          }}
+          onOpen={() => {
+            onQuickOpen("permissions-menu");
+          }}
+          onSelectPermissions={onSelectPermissions}
+          permissions={controls.permissions}
+          selectedPermissions={effectivePermissions}
           triggerChildren={
             <>
-              <InlineIcon name="shield-checkmark-outline" role="label" color={colors.textMuted} />
+              <InlineIcon color={colors.textMuted} name="shield-checkmark-outline" role="label" />
               <ComposerContextLabel
                 loading={permissionsPending}
                 testID="composer-permissions-label"
@@ -156,14 +175,7 @@ export function ComposerControlChips({
               />
             </>
           }
-          permissions={controls.permissions}
-          loading={loading}
-          error={effectiveError}
-          selectedPermissions={effectivePermissions}
-          onOpen={() => onQuickOpen("permissions-menu")}
-          onClose={() => onClose("permissions-menu")}
-          onFallbackPress={() => onFallback("permissions")}
-          onSelectPermissions={onSelectPermissions}
+          triggerStyle={styles.composerContextChip}
         />
       )}
     </>

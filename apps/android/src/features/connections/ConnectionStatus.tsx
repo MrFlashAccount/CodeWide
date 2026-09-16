@@ -16,16 +16,16 @@ import { styles } from "./ConnectionRowEditor.styles";
 
 export function ConnectionStatus({
   connection,
-  secureLive,
-  diagnosticExpanded,
-  setDiagnosticExpanded,
   copyDiagnostic,
+  diagnosticExpanded,
+  secureLive,
+  setDiagnosticExpanded,
 }: {
   connection: StoredConnection;
-  secureLive: boolean;
+  copyDiagnostic: () => Promise<void>;
   diagnosticExpanded: boolean;
+  secureLive: boolean;
   setDiagnosticExpanded: (update: (value: boolean) => boolean) => void;
-  copyDiagnostic(): Promise<void>;
 }) {
   return (
     <>
@@ -33,7 +33,7 @@ export function ConnectionStatus({
         <View style={styles.connectionStateRow}>
           <View style={styles.connectionStateIcon}>
             {connection.enabled && connectionActivity(connection.state) !== null ? (
-              <ConnectionActivityIndicator status={connection.state} size={iconSize.indicator} />
+              <ConnectionActivityIndicator size={iconSize.indicator} status={connection.state} />
             ) : (
               <View
                 style={[
@@ -63,7 +63,7 @@ export function ConnectionStatus({
       {connection.lastError !== null && connection.state !== "live" && (
         <View style={styles.connectionDiagnostic}>
           <View style={styles.connectionDiagnosticHeader}>
-            <Ionicons name="warning-outline" size={iconSize.inline} color={colors.red} />
+            <Ionicons color={colors.red} name="warning-outline" size={iconSize.inline} />
             <Text selectable style={styles.connectionDiagnosticSummary}>
               {connectionDiagnosticSummary(connection.lastError)}
             </Text>
@@ -76,7 +76,9 @@ export function ConnectionStatus({
             )}
             <Pressable
               accessibilityLabel={`${diagnosticExpanded ? "Hide" : "Show"} error details for ${connection.displayName}`}
-              onPress={() => setDiagnosticExpanded((value) => !value)}
+              onPress={() => {
+                setDiagnosticExpanded((value) => !value);
+              }}
             >
               <Text style={styles.rawLink}>
                 {diagnosticExpanded ? "Hide details" : "Error details"}

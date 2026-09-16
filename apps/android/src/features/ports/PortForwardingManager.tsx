@@ -11,7 +11,7 @@ import { ForwardingRow } from "./ForwardingRow";
 import { ManualPortForm } from "./ManualPortForm";
 import { usePortActions } from "./portActions";
 import { usePortForm } from "./portForm";
-import { type PortForwardingManagerProps, type ServiceSegment } from "./portForwardingContract";
+import type { PortForwardingManagerProps, ServiceSegment } from "./portForwardingContract";
 import {
   emptySegmentSubtitle,
   emptySegmentTitle,
@@ -31,23 +31,24 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
   const portActions = usePortActions(props);
   const [segment, setSegment] = useState<ServiceSegment>("active");
   const [query, setQuery] = useState("");
-  if (portForm.form !== null)
+  if (portForm.form !== null) {
     return (
       <ManualPortForm
-        serverName={props.serverName}
-        form={portForm.form}
-        submitting={portForm.submitting}
         error={portForm.formError}
-        onChange={portForm.setForm}
+        form={portForm.form}
         onBack={portForm.closeForm}
+        onChange={portForm.setForm}
         onSubmit={() => void portForm.submit()}
+        serverName={props.serverName}
+        submitting={portForm.submitting}
         {...(portForm.form.id === null ? {} : { onRemove: () => void portForm.removeCurrent() })}
       />
     );
+  }
 
-  const { rows, counts, groups } = projectPortList(props, segment, query);
+  const { counts, groups, rows } = projectPortList(props, segment, query);
   return (
-    <View testID="port-forwarding-manager" style={styles.root}>
+    <View style={styles.root} testID="port-forwarding-manager">
       <View style={styles.header}>
         <View style={styles.titleBlock}>
           <Text style={styles.title}>Ports</Text>
@@ -61,42 +62,47 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
         <View accessibilityRole="tablist" style={styles.segments}>
           {(["active", "available", "excluded"] as const).map((value) => (
             <Pressable
-              key={value}
               accessibilityRole="tab"
               accessibilityState={{ selected: segment === value }}
-              onPress={() => setSegment(value)}
+              key={value}
+              onPress={() => {
+                setSegment(value);
+              }}
               style={[styles.segment, segment === value && styles.segmentSelected]}
             >
               <Text
                 style={[styles.segmentText, segment === value && styles.segmentTextSelected]}
-              >{`${segmentTitle(value)} ${counts[value]}`}</Text>
+              >{`${segmentTitle(value)} ${String(counts[value])}`}</Text>
             </Pressable>
           ))}
         </View>
         <View style={styles.searchField}>
-          <Ionicons name="search" size={iconSize.inline} color={colors.textDim} />
+          <Ionicons color={colors.textDim} name="search" size={iconSize.inline} />
           <TextInput
             accessibilityLabel="Filter ports"
-            value={query}
             onChangeText={setQuery}
             placeholder="Name, category or port"
             placeholderTextColor={colors.textDim}
             style={styles.searchInput}
+            value={query}
           />
           {query !== "" && (
-            <Pressable accessibilityLabel="Clear port filter" onPress={() => setQuery("")}>
-              <Ionicons name="close-circle" size={iconSize.inline} color={colors.textDim} />
+            <Pressable
+              accessibilityLabel="Clear port filter"
+              onPress={() => {
+                setQuery("");
+              }}
+            >
+              <Ionicons color={colors.textDim} name="close-circle" size={iconSize.inline} />
             </Pressable>
           )}
         </View>
       </View>
 
       <LegendList
-        style={styles.list}
+        contentContainerStyle={styles.listContent}
         data={rows}
         drawDistance={360}
-        keyExtractor={serviceRowKey}
-        recycleItems
         getFixedItemSize={(entry) =>
           entry.type === "group"
             ? GROUP_HEIGHT
@@ -110,109 +116,115 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
                 ? controlSize.regular
                 : 0)
         }
+        keyExtractor={serviceRowKey}
         nestedScrollEnabled
-        contentContainerStyle={styles.listContent}
+        recycleItems
         showsVerticalScrollIndicator={false}
+        style={styles.list}
         {...(props.renderScrollComponent === undefined
           ? {}
           : { renderScrollComponent: props.renderScrollComponent })}
+        ListFooterComponent={
+          segment === "available" && query === "" ? (
+            <AppListRow
+              description="Enter a localhost port manually"
+              leading={<ServiceIcon name="keypad-outline" />}
+              onPress={portForm.openManual}
+              title="Port not listed"
+            />
+          ) : null
+        }
         ListHeaderComponent={
           <>
             {portActions.actionError !== null && <InlineError value={portActions.actionError} />}
             {props.discoveryStatus === "loading" && props.discoveredPorts.length === 0 && (
               <InfoRow
                 icon="scan-outline"
-                title="Looking for open ports…"
-                subtitle="Reading localhost listeners"
                 loading
+                subtitle="Reading localhost listeners"
+                title="Looking for open ports…"
               />
             )}
             {props.discoveryStatus === "error" && (
               <InfoRow
                 icon="alert-circle-outline"
-                title="Could not scan ports"
                 subtitle={props.discoveryError ?? "Waiting for automatic discovery"}
+                title="Could not scan ports"
               />
             )}
             {props.discoveryStatus === "ready" && groups.length === 0 && (
               <InfoRow
                 icon={segment === "excluded" ? "ban-outline" : "checkmark-circle-outline"}
-                title={emptySegmentTitle(segment)}
                 subtitle={
                   query === ""
                     ? emptySegmentSubtitle(segment)
                     : "Try another name, category or port"
                 }
+                title={emptySegmentTitle(segment)}
               />
             )}
           </>
         }
-        renderItem={({ item: entry, index }) =>
+        renderItem={({ index, item: entry }) =>
           entry.type === "group" ? (
             <View style={styles.groupCell}>
               <SectionLabel value={entry.group} />
             </View>
           ) : entry.type === "candidate" ? (
             <CandidateRow
-              key={entry.candidate.forwardingKey}
               candidate={entry.candidate}
-              position={serviceRowPosition(rows, index)}
-              pending={portActions.pendingPort === entry.candidate.port}
-              onPress={() => void portActions.choosePort(entry.candidate)}
+              key={entry.candidate.forwardingKey}
               onExclude={() => void portActions.excludePort(entry.candidate)}
+              onPress={() => void portActions.choosePort(entry.candidate)}
+              pending={portActions.pendingPort === entry.candidate.port}
+              position={serviceRowPosition(rows, index)}
             />
           ) : (
             <ForwardingRow
               key={entry.profile.id}
-              position={serviceRowPosition(rows, index)}
-              profile={entry.profile}
               kind={entry.kind}
-              pending={portActions.pendingId === entry.profile.id}
-              webMenuVisible={portActions.webMenuId === entry.profile.id}
-              onToggleWebMenu={() =>
-                portActions.setWebMenuId((current) =>
-                  current === entry.profile.id ? null : entry.profile.id,
+              onEdit={() => {
+                portForm.openEdit(entry.profile);
+              }}
+              onInclude={() =>
+                void portActions.runProfileAction(entry.profile.id, async () =>
+                  props.onSetPreference(entry.profile.id, "included"),
                 )
               }
-              onEdit={() => portForm.openEdit(entry.profile)}
-              onOpen={() => props.onOpen(entry.profile)}
-              onStart={() =>
-                void portActions.runProfileAction(entry.profile.id, () =>
-                  props.onStart(entry.profile.id),
-                )
-              }
-              onStop={() =>
-                void portActions.runProfileAction(entry.profile.id, () =>
-                  props.onStop(entry.profile.id),
-                )
-              }
+              onOpen={() => {
+                props.onOpen(entry.profile);
+              }}
               onReconnect={() =>
-                void portActions.runProfileAction(entry.profile.id, () =>
+                void portActions.runProfileAction(entry.profile.id, async () =>
                   props.onReconnect(entry.profile.id),
                 )
               }
               onRemove={() =>
-                void portActions.runProfileAction(entry.profile.id, () =>
+                void portActions.runProfileAction(entry.profile.id, async () =>
                   props.onRemove(entry.profile.id),
                 )
               }
-              onInclude={() =>
-                void portActions.runProfileAction(entry.profile.id, () =>
-                  props.onSetPreference(entry.profile.id, "included"),
+              onStart={() =>
+                void portActions.runProfileAction(entry.profile.id, async () =>
+                  props.onStart(entry.profile.id),
                 )
               }
+              onStop={() =>
+                void portActions.runProfileAction(entry.profile.id, async () =>
+                  props.onStop(entry.profile.id),
+                )
+              }
+              onToggleWebMenu={() => {
+                portActions.setWebMenuId((current) =>
+                  current === entry.profile.id ? null : entry.profile.id,
+                );
+              }}
+              pending={portActions.pendingId === entry.profile.id}
+              position={serviceRowPosition(rows, index)}
+              profile={entry.profile}
+              webMenuVisible={portActions.webMenuId === entry.profile.id}
             />
           )
-        }
-        ListFooterComponent={
-          segment === "available" && query === "" ? (
-            <AppListRow
-              title="Port not listed"
-              description="Enter a localhost port manually"
-              onPress={portForm.openManual}
-              leading={<ServiceIcon name="keypad-outline" />}
-            />
-          ) : null
         }
       />
     </View>

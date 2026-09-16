@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -22,12 +22,16 @@ const TURNS_BY_ID: TableDefinition<&[u8], u64> = TableDefinition::new("rollout_t
 const REMOVED_TURNS: TableDefinition<&[u8], u8> = TableDefinition::new("rollout_removed_turns");
 const TURN_SUMMARIES: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("rollout_turn_summaries");
+const ROLLOUT_CONTENT: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_content");
+const ROLLOUT_CONTENT_BY_FILE: TableDefinition<&[u8], u8> =
+    TableDefinition::new("rollout_content_by_file");
 const REPLAY: TableDefinition<u64, &[u8]> = TableDefinition::new("sync_replay");
 const OUTBOX: TableDefinition<&str, &[u8]> = TableDefinition::new("command_outbox");
 const THREAD_USAGE: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_usage");
 const THREAD_METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_metadata");
 const THREADS_BY_PARENT: TableDefinition<&[u8], u8> = TableDefinition::new("threads_by_parent");
 const SCHEMA_VERSION: u32 = 7;
+const ROLLOUT_LOGIC_VERSION: u64 = 2;
 const FILE_STATE_VERSION: u8 = 2;
 const FILE_STATE_V1_BYTES: usize = 65;
 const FILE_STATE_BYTES: usize = 73;
@@ -171,11 +175,46 @@ pub struct TurnRef {
     pub completed: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RecordRef {
     pub offset: u64,
     pub length: u32,
     pub record_type: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum RolloutContentField {
+    CommandAggregatedOutput,
+    ExecCommandAggregatedOutput,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RolloutContentLocator {
+    pub(crate) source_path: PathBuf,
+    pub(crate) file_id: [u8; 32],
+    pub(crate) record: RecordRef,
+    pub(crate) thread_id: Option<String>,
+    pub(crate) turn_id: Option<String>,
+    pub(crate) item_id: String,
+    pub(crate) field: RolloutContentField,
+    pub(crate) content_type: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RolloutContentEntry {
+    pub(crate) digest: [u8; 32],
+    pub(crate) locator: RolloutContentLocator,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RolloutBatch<'a> {
+    pub(crate) records: &'a [(Vec<u8>, Vec<u8>)],
+    pub(crate) turns: &'a [TurnRef],
+    pub(crate) turn_summaries: &'a [(u64, Vec<u8>)],
+    pub(crate) removed_turns: &'a [u64],
+    pub(crate) content: &'a [RolloutContentEntry],
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -430,10 +469,10 @@ impl IndexStore {
             if meta
                 .get("rollout_logic_version")?
                 .map(|entry| entry.value())
-                != Some(1)
+                != Some(ROLLOUT_LOGIC_VERSION)
             {
                 rebuild_rollout_index = true;
-                meta.insert("rollout_logic_version", 1)?;
+                meta.insert("rollout_logic_version", ROLLOUT_LOGIC_VERSION)?;
             }
         }
         if rebuild_rollout_index {
@@ -448,6 +487,8 @@ impl IndexStore {
             write.delete_table(TURNS)?;
             write.delete_table(TURNS_BY_ID)?;
             write.delete_table(TURN_SUMMARIES)?;
+            write.delete_table(ROLLOUT_CONTENT)?;
+            write.delete_table(ROLLOUT_CONTENT_BY_FILE)?;
         }
         {
             write.open_table(FILES)?;
@@ -456,6 +497,8 @@ impl IndexStore {
             write.open_table(TURNS_BY_ID)?;
             write.open_table(REMOVED_TURNS)?;
             write.open_table(TURN_SUMMARIES)?;
+            write.open_table(ROLLOUT_CONTENT)?;
+            write.open_table(ROLLOUT_CONTENT_BY_FILE)?;
             write.open_table(REPLAY)?;
             write.open_table(OUTBOX)?;
             write.open_table(THREAD_USAGE)?;
@@ -680,6 +723,25 @@ impl IndexStore {
             .collect()
     }
 
+    /// Resolves canonical rollout records that were proven to contain the
+    /// requested digest while indexing their source JSONL.
+    pub(crate) fn rollout_content(
+        &self,
+        digest: &[u8; 32],
+    ) -> Result<Vec<RolloutContentLocator>, StoreError> {
+        let start = rollout_content_key(digest, &[0; 32], 0);
+        let end = rollout_content_key(digest, &[u8::MAX; 32], u64::MAX);
+        let read = self.database.begin_read()?;
+        let table = read.open_table(ROLLOUT_CONTENT)?;
+        table
+            .range(start.as_slice()..=end.as_slice())?
+            .map(|entry| {
+                let (_key, value) = entry?;
+                serde_json::from_slice(value.value()).map_err(StoreError::from)
+            })
+            .collect()
+    }
+
     /// Commits rollout references and their exact source checkpoint atomically.
     ///
     /// # Errors
@@ -693,7 +755,17 @@ impl IndexStore {
         turn_summaries: &[(u64, Vec<u8>)],
         file_state: FileState,
     ) -> Result<(), StoreError> {
-        self.commit_rollout_batch(file_id, records, turns, turn_summaries, &[], file_state)
+        self.commit_rollout_batch(
+            file_id,
+            RolloutBatch {
+                records,
+                turns,
+                turn_summaries,
+                removed_turns: &[],
+                content: &[],
+            },
+            file_state,
+        )
     }
 
     /// Atomically publishes source progress and logical rollback tombstones.
@@ -701,16 +773,13 @@ impl IndexStore {
     pub(crate) fn commit_rollout_batch(
         &self,
         file_id: &[u8; 32],
-        records: &[(Vec<u8>, Vec<u8>)],
-        turns: &[TurnRef],
-        turn_summaries: &[(u64, Vec<u8>)],
-        removed_turns: &[u64],
+        batch: RolloutBatch<'_>,
         file_state: FileState,
     ) -> Result<(), StoreError> {
         let write = self.database.begin_write()?;
         {
             let mut table = write.open_table(RECORDS)?;
-            for (key, value) in records {
+            for (key, value) in batch.records {
                 table.insert(key.as_slice(), value.as_slice())?;
             }
         }
@@ -719,7 +788,7 @@ impl IndexStore {
             let mut by_id = write.open_table(TURNS_BY_ID)?;
             let mut removed = write.open_table(REMOVED_TURNS)?;
             let mut summaries = write.open_table(TURN_SUMMARIES)?;
-            for offset in removed_turns {
+            for offset in batch.removed_turns {
                 let key = offset_key(file_id, *offset);
                 if let Some(value) = table.remove(key.as_slice())? {
                     let turn = TurnRef::decode(value.value())?;
@@ -728,7 +797,7 @@ impl IndexStore {
                 summaries.remove(key.as_slice())?;
                 removed.insert(key.as_slice(), 1)?;
             }
-            for turn in turns {
+            for turn in batch.turns {
                 let key = offset_key(file_id, turn.start_offset);
                 if removed.get(key.as_slice())?.is_some() {
                     continue;
@@ -742,12 +811,31 @@ impl IndexStore {
         {
             let mut table = write.open_table(TURN_SUMMARIES)?;
             let removed = write.open_table(REMOVED_TURNS)?;
-            for (start_offset, summary) in turn_summaries {
+            for (start_offset, summary) in batch.turn_summaries {
                 let key = offset_key(file_id, *start_offset);
                 if removed.get(key.as_slice())?.is_some() {
                     continue;
                 }
                 table.insert(key.as_slice(), summary.as_slice())?;
+            }
+        }
+        {
+            let mut by_digest = write.open_table(ROLLOUT_CONTENT)?;
+            let mut by_file = write.open_table(ROLLOUT_CONTENT_BY_FILE)?;
+            for entry in batch.content {
+                let primary_key = rollout_content_key(
+                    &entry.digest,
+                    &entry.locator.file_id,
+                    entry.locator.record.offset,
+                );
+                let reverse_key = rollout_content_reverse_key(
+                    &entry.locator.file_id,
+                    &entry.digest,
+                    entry.locator.record.offset,
+                );
+                let encoded = serde_json::to_vec(&entry.locator)?;
+                by_digest.insert(primary_key.as_slice(), encoded.as_slice())?;
+                by_file.insert(reverse_key.as_slice(), 1)?;
             }
         }
         {
@@ -778,6 +866,37 @@ impl IndexStore {
         id_end.push(u8::MAX);
 
         let write = self.database.begin_write()?;
+        {
+            let mut reverse_start = Vec::with_capacity(72);
+            reverse_start.extend_from_slice(file_id);
+            reverse_start.extend_from_slice(&[0; 32]);
+            reverse_start.extend_from_slice(&0_u64.to_be_bytes());
+            let mut reverse_end = Vec::with_capacity(72);
+            reverse_end.extend_from_slice(file_id);
+            reverse_end.extend_from_slice(&[u8::MAX; 32]);
+            reverse_end.extend_from_slice(&u64::MAX.to_be_bytes());
+            let mut reverse = write.open_table(ROLLOUT_CONTENT_BY_FILE)?;
+            // The keys form the stable deletion snapshot required to update
+            // both derived indexes in one transaction.
+            let keys = reverse
+                .range(reverse_start.as_slice()..=reverse_end.as_slice())?
+                .map(|entry| entry.map(|(key, _value)| key.value().to_vec()))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut by_digest = write.open_table(ROLLOUT_CONTENT)?;
+            for key in keys {
+                if key.len() != 72 {
+                    return Err(StoreError::CorruptedIndex(
+                        "invalid rollout content key".into(),
+                    ));
+                }
+                let digest: [u8; 32] = key[32..64].try_into().map_err(|_| {
+                    StoreError::CorruptedIndex("invalid rollout content key".into())
+                })?;
+                let offset = read_u64(&key[64..72])?;
+                by_digest.remove(rollout_content_key(&digest, file_id, offset).as_slice())?;
+                reverse.remove(key.as_slice())?;
+            }
+        }
         {
             let mut removed = write.open_table(REMOVED_TURNS)?;
             removed.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
@@ -2318,6 +2437,22 @@ fn unix_time_ms() -> u64 {
 fn offset_key(file_id: &[u8; 32], offset: u64) -> Vec<u8> {
     let mut key = Vec::with_capacity(40);
     key.extend_from_slice(file_id);
+    key.extend_from_slice(&offset.to_be_bytes());
+    key
+}
+
+fn rollout_content_key(digest: &[u8; 32], file_id: &[u8; 32], offset: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(72);
+    key.extend_from_slice(digest);
+    key.extend_from_slice(file_id);
+    key.extend_from_slice(&offset.to_be_bytes());
+    key
+}
+
+fn rollout_content_reverse_key(file_id: &[u8; 32], digest: &[u8; 32], offset: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(72);
+    key.extend_from_slice(file_id);
+    key.extend_from_slice(digest);
     key.extend_from_slice(&offset.to_be_bytes());
     key
 }

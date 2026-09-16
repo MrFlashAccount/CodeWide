@@ -13,15 +13,15 @@ import {
 import { useRemoteProjectCatalog } from "./useRemoteProjectCatalog";
 /** Project commands retain the original thread/detail and workspace authorities. */
 export type ActiveProjectCapability = {
-  readonly native: boolean;
+  addProject: (connectionId: string, path: string) => Promise<RemoteProject>;
   readonly connections: StoredConnection[];
+  deleteThread: (connectionId: string, threadId: string) => Promise<void>;
+  inspectWorkspace: (connectionId: string, workspace: string) => Promise<WorkspaceSupport | null>;
+  listProjects: (connectionId: string) => Promise<RemoteProject[]>;
+  readonly native: boolean;
+  readDirectory: (connectionId: string, path: string) => Promise<RemoteDirectoryEntry[]>;
+  startThread: (connectionId: string, cwd?: string) => Promise<string>;
   readonly threadDetails: ThreadDetailDatabase | null;
-  listProjects(connectionId: string): Promise<RemoteProject[]>;
-  addProject(connectionId: string, path: string): Promise<RemoteProject>;
-  readDirectory(connectionId: string, path: string): Promise<RemoteDirectoryEntry[]>;
-  inspectWorkspace(connectionId: string, workspace: string): Promise<WorkspaceSupport | null>;
-  startThread(connectionId: string, cwd?: string): Promise<string>;
-  deleteThread(connectionId: string, threadId: string): Promise<void>;
 };
 /** Active project reads and empty-thread changes retain their existing scoped resources. */
 export function useActiveProjectSelection(
@@ -39,7 +39,7 @@ export function useActiveProjectSelection(
     remote.listProjects,
   );
 
-  const { projectsByConnection, errorsByConnection: projectErrorsByConnection } = projectCatalog;
+  const { errorsByConnection: projectErrorsByConnection, projectsByConnection } = projectCatalog;
 
   const workspaceSupportResource = useAsyncResource<WorkspaceSupport | null>(
     remote.native && newChatDraft?.cwd !== null && newChatDraft?.cwd !== undefined
@@ -49,7 +49,7 @@ export function useActiveProjectSelection(
     async () =>
       newChatDraft?.cwd === null || newChatDraft?.cwd === undefined
         ? null
-        : await remote.inspectWorkspace(newChatDraft.connectionId, newChatDraft.cwd),
+        : remote.inspectWorkspace(newChatDraft.connectionId, newChatDraft.cwd),
   );
 
   const activeWorkspaceSupport =
@@ -73,7 +73,9 @@ export function useActiveProjectSelection(
       changeDraftProject(newChatDraft.id, cwd);
       return;
     }
-    if (!remote.native || activeConnectionId === "" || activeRemoteThreadId === null) return;
+    if (!remote.native || activeConnectionId === "" || activeRemoteThreadId === null) {
+      return;
+    }
     if (
       (remote.threadDetails?.getThread(activeConnectionId, activeRemoteThreadId)?.turns.length ??
         0) > 0 ||
@@ -81,7 +83,10 @@ export function useActiveProjectSelection(
     ) {
       throw new Error("Project can only be changed before the first message");
     }
-    if ((cwd ?? null) === (activeStoredThread?.cwd || null)) return;
+    const activeCwd = activeStoredThread?.cwd;
+    if ((cwd ?? null) === (activeCwd === undefined || activeCwd === "" ? null : activeCwd)) {
+      return;
+    }
     const previousThreadId = activeRemoteThreadId;
     const nextThreadId = await remote.startThread(activeConnectionId, cwd ?? undefined);
     setActiveThreadId(threadSelectionKey({ id: nextThreadId, serverId: activeConnectionId }));
@@ -89,23 +94,27 @@ export function useActiveProjectSelection(
   });
 
   const addActiveProject = useEvent(async (path: string): Promise<RemoteProject> => {
-    if (!remote.native || activeConnectionId === "") throw new Error("No server selected");
+    if (!remote.native || activeConnectionId === "") {
+      throw new Error("No server selected");
+    }
     const project = await remote.addProject(activeConnectionId, path);
     projectCatalog.mergeProject(activeConnectionId, project);
     return project;
   });
 
   const readActiveDirectory = useEvent(async (path: string): Promise<RemoteDirectoryEntry[]> => {
-    if (!remote.native || activeConnectionId === "") throw new Error("No server selected");
-    return await remote.readDirectory(activeConnectionId, path);
+    if (!remote.native || activeConnectionId === "") {
+      throw new Error("No server selected");
+    }
+    return remote.readDirectory(activeConnectionId, path);
   });
   return {
-    activeWorkspaceSupport,
-    activeProjects,
     activeDiscoveredProjects,
     activeProjectError,
-    changeEmptyThreadProject,
+    activeProjects,
+    activeWorkspaceSupport,
     addActiveProject,
+    changeEmptyThreadProject,
     readActiveDirectory,
   };
 }

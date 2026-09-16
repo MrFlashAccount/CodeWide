@@ -6,16 +6,16 @@ export type SearchComposerMentions = (query: MentionQuery) => Promise<readonly C
 export type SuggestionState =
   | { readonly status: "closed" }
   | {
-      readonly status: "loading";
-      readonly query: MentionQuery;
       readonly items: readonly ComposerMention[];
+      readonly query: MentionQuery;
+      readonly status: "loading";
     }
   | {
-      readonly status: "ready";
-      readonly query: MentionQuery;
       readonly items: readonly ComposerMention[];
+      readonly query: MentionQuery;
+      readonly status: "ready";
     }
-  | { readonly status: "error"; readonly query: MentionQuery };
+  | { readonly query: MentionQuery; readonly status: "error" };
 
 /** An input owns its search lifetime. Late results cannot reopen a dismissed popup. */
 export class ComposerSuggestions {
@@ -30,22 +30,29 @@ export class ComposerSuggestions {
       current.status !== "error" &&
       current.query.indicator === query.indicator &&
       current.query.text === query.text
-    )
+    ) {
       return;
+    }
     const items =
       (current.status === "ready" || current.status === "loading") &&
       current.query.indicator === query.indicator
         ? current.items
         : [];
     const request = ++this.request;
-    if (this.timer !== null) clearTimeout(this.timer);
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+    }
     // Keep the existing menu while a query settles; do not publish closed/loading
     // flashes for native selection events that repeat the same mention.
-    this.state$.set({ value: { status: "loading", query, items } });
+    this.state$.set({ value: { items, query, status: "loading" } });
     this.timer = setTimeout(
       () => {
         this.timer = null;
-        void this.resolve(request, query, search);
+        this.resolve(request, query, search).catch(() => {
+          if (request === this.request) {
+            this.state$.set({ value: { query, status: "error" } });
+          }
+        });
       },
       query.text.length === 0 ? 0 : 120,
     );
@@ -53,7 +60,9 @@ export class ComposerSuggestions {
 
   close(): void {
     this.request += 1;
-    if (this.timer !== null) clearTimeout(this.timer);
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+    }
     this.timer = null;
     this.state$.set({ value: { status: "closed" } });
   }
@@ -65,9 +74,13 @@ export class ComposerSuggestions {
   ): Promise<void> {
     try {
       const items = await search(query);
-      if (request === this.request) this.state$.set({ value: { status: "ready", query, items } });
+      if (request === this.request) {
+        this.state$.set({ value: { items, query, status: "ready" } });
+      }
     } catch {
-      if (request === this.request) this.state$.set({ value: { status: "error", query } });
+      if (request === this.request) {
+        this.state$.set({ value: { query, status: "error" } });
+      }
     }
   }
 }

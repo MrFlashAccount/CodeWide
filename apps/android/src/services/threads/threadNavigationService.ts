@@ -1,4 +1,5 @@
 import { KeyboardController } from "react-native-keyboard-controller";
+import { appLogger } from "../../observability/logger";
 import type { ThreadDetailDatabase } from "../../data/thread-detail-database";
 import type { ThreadUiStateDatabase } from "../../data/thread-ui-state-database";
 import { recordTiming } from "../../data/operational-metrics";
@@ -97,16 +98,15 @@ export function useThreadNavigationService(
       current.connectionId.value !== params.connectionId.value ||
       current.threadId.value !== params.threadId.value;
     // Observer attachment is background work and this handler consumes every rejection.
-    void remote
-      .observeThread(params.connectionId.value, params.threadId.value)
-      .catch((error: unknown) => {
-        // WHY: V1 observer failures remain a bounded development warning during route migration.
-        // oxlint-disable-next-line eslint/no-console
-        console.warn(
-          "Could not attach thread observer:",
-          error instanceof Error ? error.message : "unknown error",
-        );
+    void remote.observeThread(params.connectionId.value, params.threadId.value).catch(() => {
+      appLogger.warn({
+        event: "thread.observer.attach_failed",
+        fields: {
+          connectionId: params.connectionId.value,
+          threadId: params.threadId.value,
+        },
       });
+    });
     if (changed) {
       void KeyboardController.dismiss({ animated: false, keepFocus: false }).catch(() => undefined);
       remote.threadDetails?.chat.beginPresentation(
@@ -131,11 +131,10 @@ export function useThreadNavigationService(
         );
       }
       if (__DEV__) {
-        // WHY: This development-only timing probe preserves the existing navigation trace.
-        // oxlint-disable-next-line eslint/no-console
-        console.log(
-          `[CodeWide perf] thread_selection_next_frame_ms=${String(Math.round(elapsed))}`,
-        );
+        appLogger.info({
+          event: "thread.selection_next_frame",
+          fields: { durationMs: Math.round(elapsed) },
+        });
       }
     });
   });
@@ -192,16 +191,15 @@ export function useThreadNavigationService(
       return undefined;
     }
     // Observer preloading is background work and this handler consumes every rejection.
-    void remote
-      .observeThread(params.connectionId.value, params.threadId.value, false)
-      .catch((error: unknown) => {
-        // WHY: V1 preload failures remain a bounded development warning during route migration.
-        // oxlint-disable-next-line eslint/no-console
-        console.warn(
-          "Could not preload thread observer:",
-          error instanceof Error ? error.message : "unknown error",
-        );
+    void remote.observeThread(params.connectionId.value, params.threadId.value, false).catch(() => {
+      appLogger.warn({
+        event: "thread.observer_preload.failed",
+        fields: {
+          connectionId: params.connectionId.value,
+          threadId: params.threadId.value,
+        },
       });
+    });
     const uiState = remote.threadUiStateDatabase.get(
       params.connectionId.value,
       params.threadId.value,

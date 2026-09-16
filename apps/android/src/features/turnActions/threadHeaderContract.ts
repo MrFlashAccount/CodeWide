@@ -2,15 +2,15 @@ import type { ThreadForkOptions } from "../../data/thread-fork";
 
 /** Thread identity, state, and mutation actions exposed to its header. */
 export type ThreadHeaderProps = {
-  threadId: string;
   archived: boolean;
+  onArchive?: () => Promise<void>;
+  onCompact?: () => Promise<void>;
+  onDelete?: () => Promise<void>;
+  onFork?: (options: ThreadForkOptions) => Promise<void>;
+  onOpenMenu?: () => void;
+  onRenameRequest: () => void;
+  onTogglePin?: () => Promise<void>;
+  onUnarchive?: () => Promise<void>;
   pinned: boolean;
-  onOpenMenu?(): void;
-  onRenameRequest(): void;
-  onArchive?(): Promise<void>;
-  onUnarchive?(): Promise<void>;
-  onCompact?(): Promise<void>;
-  onFork?(options: ThreadForkOptions): Promise<void>;
-  onDelete?(): Promise<void>;
-  onTogglePin?(): Promise<void>;
+  threadId: string;
 };

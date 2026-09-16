@@ -6,21 +6,26 @@ import type { TimelineItem } from "./timelineTypes";
 
 export function timelineSearchText(item: TimelineItem): string {
   const cached = timelineSearchTextCache.get(item);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    return cached;
+  }
   const value =
     item.kind === "turn"
       ? [
           ...item.turn.items.map((rawItem) => {
-            if (rawItem.type === "userMessage")
+            if (rawItem.type === "userMessage") {
               return rawItem.content
                 .map((content) =>
-                  "text" in content ? content.text : boundedJsonStringify(content, 8_192),
+                  "text" in content ? content.text : boundedJsonStringify(content, 8192),
                 )
                 .join("\n");
-            if (rawItem.type === "agentMessage") return rawItem.text;
+            }
+            if (rawItem.type === "agentMessage") {
+              return rawItem.text;
+            }
             return boundedJsonStringify(rawItem, 16_384);
           }),
-          boundedJsonStringify(projectedTurnMetadata(item.turn) ?? {}, 8_192),
+          boundedJsonStringify(projectedTurnMetadata(item.turn) ?? {}, 8192),
         ].join("\n")
       : item.kind === "optimistic"
         ? item.text
@@ -32,7 +37,7 @@ export function timelineSearchText(item: TimelineItem): string {
 import { useRef } from "react";
 import { useEvent } from "../../../react/useEvent";
 import { useConversationRef, useConversationState } from "../../../ui/use-conversation-scope";
-import { SearchConversationWindow } from "../../search/search-conversation-window";
+import type { SearchConversationWindow } from "../../search/search-conversation-window";
 
 export function useTimelineSearchState(
   composerScope: string,
@@ -54,7 +59,7 @@ export function useTimelineSearchState(
 
   const searchOriginOffsetRef = useConversationRef<number | null>(composerScope, () => null);
 
-  const searchTimelineScope = `${composerScope}:search:${searchWindow?.target.hit.messageId ?? "live"}`;
+  const searchTimelineScope = `${composerScope}:search:${String(searchWindow?.target.hit.messageId ?? "live")}`;
 
   const focusedSearchMessageRef = useRef<SearchConversationWindow | null>(null);
 
@@ -64,32 +69,34 @@ export function useTimelineSearchState(
     (window: SearchConversationWindow) => window === searchWindow,
   );
   return {
-    threadSearchVisible,
-    threadSearch,
-    threadSearchMatch,
-    timelineIndexRetryTimerRef,
+    focusedSearchMessageRef,
+    isCurrentSearchWindow,
+    positionedSearchWindowRef,
     searchOriginOffsetRef,
     searchTimelineScope,
-    focusedSearchMessageRef,
-    positionedSearchWindowRef,
-    isCurrentSearchWindow,
-    setThreadSearchVisible,
     setThreadSearch,
     setThreadSearchMatch,
+    setThreadSearchVisible,
+    threadSearch,
+    threadSearchMatch,
+    threadSearchVisible,
+    timelineIndexRetryTimerRef,
   };
 }
 
 import { useDeferredValue } from "react";
-import { View } from "react-native";
+import type { View } from "react-native";
 import { spacing } from "../../../theme";
-import { useTimelineViewportState } from "./timelineViewport";
+import type { useTimelineViewportState } from "./timelineViewport";
 
 export function useTimelineSearchProjection(threadSearch: string, timeline: TimelineItem[]) {
   const deferredThreadSearch = useDeferredValue(threadSearch);
 
   const threadSearchMatches = (() => {
     const query = deferredThreadSearch.trim().toLocaleLowerCase();
-    if (query === "") return [];
+    if (query === "") {
+      return [];
+    }
     return timeline.flatMap((item, index) =>
       timelineSearchText(item).toLocaleLowerCase().includes(query) ? [index] : [],
     );
@@ -102,30 +109,30 @@ export function useTimelineSearchProjection(threadSearch: string, timeline: Time
         timeline[index] === undefined ? [] : [timeline[index]],
       )
     : timeline;
-  return { threadSearchMatches, threadSearchActive, displayedTimeline };
+  return { displayedTimeline, threadSearchActive, threadSearchMatches };
 }
 
 export function useTimelineSearchActions({
-  focusedSearchMessageRef,
-  positionedSearchWindowRef,
-  isCurrentSearchWindow,
-  searchOriginOffsetRef,
-  timelineIndexRetryTimerRef,
-  threadSearchMatch,
-  setThreadSearch,
-  setThreadSearchVisible,
-  setThreadSearchMatch,
-  timelineViewportRef,
-  timelineRef,
-  lastTimelineOffsetYRef,
-  timelineContentHeightRef,
-  timelineViewportHeightRef,
-  scrollOffsetRef,
-  searchWindow,
-  timelineModelReady,
-  threadSearchMatches,
-  threadSearchActive,
   displayedTimeline,
+  focusedSearchMessageRef,
+  isCurrentSearchWindow,
+  lastTimelineOffsetYRef,
+  positionedSearchWindowRef,
+  scrollOffsetRef,
+  searchOriginOffsetRef,
+  searchWindow,
+  setThreadSearch,
+  setThreadSearchMatch,
+  setThreadSearchVisible,
+  threadSearchActive,
+  threadSearchMatch,
+  threadSearchMatches,
+  timelineContentHeightRef,
+  timelineIndexRetryTimerRef,
+  timelineModelReady,
+  timelineRef,
+  timelineViewportHeightRef,
+  timelineViewportRef,
 }: Pick<
   ReturnType<typeof useTimelineSearchState>,
   | "focusedSearchMessageRef"
@@ -153,28 +160,35 @@ export function useTimelineSearchActions({
   }) {
   const focusSearchMessage = useEvent((node: View) => {
     const window = searchWindow;
-    if (window === null || focusedSearchMessageRef.current === window) return;
+    if (window === null || focusedSearchMessageRef.current === window) {
+      return;
+    }
     requestAnimationFrame(() => {
       const viewport = timelineViewportRef.current;
       if (
         viewport === null ||
         !isCurrentSearchWindow(window) ||
         focusedSearchMessageRef.current === window
-      )
+      ) {
         return;
-      viewport.measureInWindow((_x, viewportY) =>
+      }
+      viewport.measureInWindow((_x, viewportY) => {
         node.measureInWindow((_nodeX, nodeY) => {
-          if (!isCurrentSearchWindow(window) || focusedSearchMessageRef.current === window) return;
+          if (!isCurrentSearchWindow(window) || focusedSearchMessageRef.current === window) {
+            return;
+          }
           focusedSearchMessageRef.current = window;
-          void timelineRef.current?.scrollToOffset({
-            offset: Math.max(
-              0,
-              (lastTimelineOffsetYRef.current ?? 0) + nodeY - viewportY - spacing.md,
-            ),
-            animated: false,
-          });
-        }),
-      );
+          Promise.resolve(
+            timelineRef.current?.scrollToOffset({
+              animated: false,
+              offset: Math.max(
+                0,
+                (lastTimelineOffsetYRef.current ?? 0) + nodeY - viewportY - spacing.md,
+              ),
+            }),
+          ).catch(() => undefined);
+        });
+      });
     });
   });
 
@@ -185,35 +199,47 @@ export function useTimelineSearchActions({
       timelineRef.current === null ||
       positionedSearchWindowRef.current === searchWindow ||
       focusedSearchMessageRef.current === searchWindow
-    )
+    ) {
       return;
+    }
     const index = displayedTimeline.findIndex(
       (item) => item.kind === "turn" && item.id === searchWindow.target.hit.turnId,
     );
-    if (index < 0) return;
+    if (index < 0) {
+      return;
+    }
     positionedSearchWindowRef.current = searchWindow;
-    void timelineRef.current.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    Promise.resolve(
+      timelineRef.current.scrollToIndex({ animated: false, index, viewPosition: 0 }),
+    ).catch(() => undefined);
   });
 
   const scrollToThreadSearchIndex = useEvent((index: number) => {
-    void timelineRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
+    Promise.resolve(
+      timelineRef.current?.scrollToIndex({ animated: true, index, viewPosition: 0.3 }),
+    ).catch(() => undefined);
   });
 
   const restoreThreadSearchOrigin = useEvent(() => {
     const offset = searchOriginOffsetRef.current;
-    if (offset === null) return;
+    if (offset === null) {
+      return;
+    }
     searchOriginOffsetRef.current = null;
-    if (timelineIndexRetryTimerRef.current !== null)
+    if (timelineIndexRetryTimerRef.current !== null) {
       clearTimeout(timelineIndexRetryTimerRef.current);
+    }
     timelineIndexRetryTimerRef.current = setTimeout(() => {
       timelineIndexRetryTimerRef.current = null;
-      timelineRef.current?.scrollToOffset({
-        offset: Math.max(
-          0,
-          timelineContentHeightRef.current - timelineViewportHeightRef.current - offset,
-        ),
-        animated: false,
-      });
+      Promise.resolve(
+        timelineRef.current?.scrollToOffset({
+          animated: false,
+          offset: Math.max(
+            0,
+            timelineContentHeightRef.current - timelineViewportHeightRef.current - offset,
+          ),
+        }),
+      ).catch(() => undefined);
     }, 96);
   });
 
@@ -233,18 +259,20 @@ export function useTimelineSearchActions({
   });
 
   const moveThreadSearch = useEvent((delta: -1 | 1) => {
-    if (threadSearchMatches.length === 0) return;
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
     const next =
       (threadSearchMatch + delta + threadSearchMatches.length) % threadSearchMatches.length;
     setThreadSearchMatch(next);
     scrollToThreadSearchIndex(next);
   });
   return {
+    closeThreadSearch,
     focusSearchMessage,
+    moveThreadSearch,
     positionSearchTurn,
     scrollToThreadSearchIndex,
     updateThreadSearch,
-    closeThreadSearch,
-    moveThreadSearch,
   };
 }

@@ -5,12 +5,12 @@ type Turn = Thread["turns"][number];
 export const LIVE_ACTIVITY_WINDOW = 16;
 
 export type TurnRenderWindow = {
-  userItemIndexes: number[];
-  preTurnActivityIndexes: number[];
+  collapsedActivityIndexes: number[];
   compactionIndexes: number[];
   latestAgentIndex: number;
-  collapsedActivityIndexes: number[];
   liveActivityIndexes: number[];
+  preTurnActivityIndexes: number[];
+  userItemIndexes: number[];
 };
 
 function isTurnActivityItem(item: Turn["items"][number]): boolean {
@@ -24,11 +24,15 @@ function isTurnActivityItem(item: Turn["items"][number]): boolean {
  * the remainder of a long-running tool call.
  */
 export function isAgentMessageStillStreaming(turn: Turn, itemId: string): boolean {
-  if (turn.status !== "inProgress") return false;
+  if (turn.status !== "inProgress") {
+    return false;
+  }
   const itemIndex = turn.items.findIndex(
     (item) => item.id === itemId && item.type === "agentMessage",
   );
-  if (itemIndex < 0) return false;
+  if (itemIndex < 0) {
+    return false;
+  }
   return !turn.items.slice(itemIndex + 1).some((item) => item.type !== "userMessage");
 }
 
@@ -53,12 +57,15 @@ export function selectTurnRenderWindow(
 
   for (let index = 0; index < turn.items.length; index += 1) {
     const item = turn.items[index];
-    if (item?.type === "userMessage") userItemIndexes.push(index);
-    else if (item !== undefined && !hiddenPlaceholderIndexes.has(index)) {
+    if (item?.type === "userMessage") {
+      userItemIndexes.push(index);
+    } else if (item !== undefined && !hiddenPlaceholderIndexes.has(index)) {
       latestNonUserIndex = index;
       if (item.type === "agentMessage" && item.text.trim() !== "") {
         latestAgentIndex = index;
-        if (item.phase === "final_answer") explicitFinalAgentIndex = index;
+        if (item.phase === "final_answer") {
+          explicitFinalAgentIndex = index;
+        }
       }
     }
   }
@@ -70,14 +77,19 @@ export function selectTurnRenderWindow(
   const materializedIndexes: number[] = [];
   for (let index = 0; index < turn.items.length; index += 1) {
     const item = turn.items[index];
-    if (item === undefined || hiddenPlaceholderIndexes.has(index) || !isTurnActivityItem(item))
+    if (item === undefined || hiddenPlaceholderIndexes.has(index) || !isTurnActivityItem(item)) {
       continue;
+    }
     // Thinking is ephemeral presentation state, not historical activity. Keep
     // the underlying item in storage, but only materialize it while it is the
     // newest thing in an active turn. The first tool or agent message that
     // follows it removes it from the render window without mutating history.
-    if (item.type === "reasoning" && (turn.status !== "inProgress" || index !== latestNonUserIndex))
+    if (
+      item.type === "reasoning" &&
+      (turn.status !== "inProgress" || index !== latestNonUserIndex)
+    ) {
       continue;
+    }
     materializedIndexes.push(index);
   }
 
@@ -102,14 +114,14 @@ export function selectTurnRenderWindow(
 
   if (turn.status !== "inProgress") {
     return {
-      userItemIndexes,
-      preTurnActivityIndexes,
-      compactionIndexes,
-      latestAgentIndex,
       collapsedActivityIndexes: materializedIndexes.filter(
         (index) => index !== latestAgentIndex && !separatedIndexSet.has(index),
       ),
+      compactionIndexes,
+      latestAgentIndex,
       liveActivityIndexes: [],
+      preTurnActivityIndexes,
+      userItemIndexes,
     };
   }
 
@@ -133,12 +145,12 @@ export function selectTurnRenderWindow(
   const liveIndexSet = new Set(liveActivityIndexes);
 
   return {
-    userItemIndexes,
-    preTurnActivityIndexes,
+    collapsedActivityIndexes: activityIndexes.filter((index) => !liveIndexSet.has(index)),
     compactionIndexes,
     latestAgentIndex,
-    collapsedActivityIndexes: activityIndexes.filter((index) => !liveIndexSet.has(index)),
     liveActivityIndexes,
+    preTurnActivityIndexes,
+    userItemIndexes,
   };
 }
 
@@ -152,9 +164,13 @@ function matchingAgentPlaceholderIndexes(turn: Turn): Set<number> {
   const placeholderIndex = turn.items.findIndex(
     (item) => item.type === "agentMessage" && item.id === placeholderId,
   );
-  if (placeholderIndex === -1) return hidden;
+  if (placeholderIndex === -1) {
+    return hidden;
+  }
   const placeholder = turn.items[placeholderIndex];
-  if (placeholder?.type !== "agentMessage") return hidden;
+  if (placeholder?.type !== "agentMessage") {
+    return hidden;
+  }
   const hasCanonicalMatch = turn.items.some(
     (item, index) =>
       index !== placeholderIndex &&
@@ -163,6 +179,8 @@ function matchingAgentPlaceholderIndexes(turn: Turn): Set<number> {
       (item.text === placeholder.text ||
         (item.phase === "final_answer" && placeholder.phase === "final_answer")),
   );
-  if (hasCanonicalMatch) hidden.add(placeholderIndex);
+  if (hasCanonicalMatch) {
+    hidden.add(placeholderIndex);
+  }
   return hidden;
 }

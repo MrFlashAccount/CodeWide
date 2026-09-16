@@ -9,25 +9,35 @@ let generation = 0;
 const listeners = new Set<() => void>();
 
 function publish(next: boolean): void {
-  if (reducedMotion === next) return;
+  if (reducedMotion === next) {
+    return;
+  }
   reducedMotion = next;
-  listeners.forEach((listener) => listener());
+  listeners.forEach((listener) => {
+    listener();
+  });
 }
 
 function start(): void {
-  if (nativeSubscription !== null) return;
+  if (nativeSubscription !== null) {
+    return;
+  }
   generation += 1;
   const currentGeneration = generation;
   nativeSubscription = AccessibilityInfo.addEventListener("reduceMotionChanged", publish);
   void AccessibilityInfo.isReduceMotionEnabled()
     .then((enabled) => {
-      if (currentGeneration === generation) publish(enabled);
+      if (currentGeneration === generation) {
+        publish(enabled);
+      }
     })
     .catch(() => undefined);
 }
 
 function stop(): void {
-  if (nativeSubscription === null) return;
+  if (nativeSubscription === null) {
+    return;
+  }
   generation += 1;
   nativeSubscription.remove();
   nativeSubscription = null;
@@ -38,7 +48,9 @@ function subscribe(listener: () => void): () => void {
   start();
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0) stop();
+    if (listeners.size === 0) {
+      stop();
+    }
   };
 }
 

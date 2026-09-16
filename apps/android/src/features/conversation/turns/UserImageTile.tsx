@@ -1,5 +1,5 @@
 import { View } from "react-native";
-import { type UserMessageAttachment } from "../../../rendering/user-message-attachments";
+import type { UserMessageAttachment } from "../../../rendering/user-message-attachments";
 import { AppText as Text } from "../../../ui/Typography";
 import {
   OpenableImage,
@@ -13,7 +13,7 @@ export function renderUserImageTile(
   attachment: UserMessageAttachment,
   index: number,
   attachmentCount: number,
-  getTransferAccess: (() => Promise<{ baseUrl: string; authorization: string }>) | undefined,
+  getTransferAccess: (() => Promise<{ authorization: string; baseUrl: string }>) | undefined,
 ) {
   const hero = attachmentCount === 1 || (attachmentCount % 2 === 1 && index === 0);
   const containerStyle = hero ? styles.userImageGalleryHero : styles.userImageGalleryTile;
@@ -22,19 +22,19 @@ export function renderUserImageTile(
     if (getTransferAccess !== undefined) {
       return (
         <ScopedPrivateAssetImage
-          key={source.asset.id}
-          previewId={`user-private-image:${source.asset.id}`}
-          label={attachment.name}
-          reference={`private-asset:${source.asset.id}`}
-          source={{ kind: "content", id: source.asset.id }}
-          getTransferAccess={getTransferAccess}
           containerStyle={containerStyle}
+          getTransferAccess={getTransferAccess}
+          key={source.asset.id}
+          label={attachment.name}
           order={index}
+          previewId={`user-private-image:${source.asset.id}`}
+          reference={`private-asset:${source.asset.id}`}
+          source={{ id: source.asset.id, kind: "content" }}
         />
       );
     }
     return (
-      <View key={index} style={[styles.userImage, containerStyle]}>
+      <View key={source.asset.id} style={[styles.userImage, containerStyle]}>
         <Text style={styles.menuNotice}>Attached image</Text>
       </View>
     );
@@ -42,14 +42,14 @@ export function renderUserImageTile(
   if (source.type === "url") {
     return (
       <OpenableImage
+        containerStyle={containerStyle}
         key={source.url}
-        previewId={`user-image:${index}:${source.url}`}
         label={attachment.name}
+        order={index}
+        previewId={`user-image:${String(index)}:${source.url}`}
+        reference={source.url}
         source={{ uri: source.url }}
         variant="user"
-        containerStyle={containerStyle}
-        order={index}
-        reference={source.url}
       />
     );
   }
@@ -60,36 +60,29 @@ export function renderUserImageTile(
       </View>
     ) : (
       <ScopedRemoteImage
+        containerStyle={containerStyle}
+        getTransferAccess={getTransferAccess}
         key={source.path}
-        previewId={`user-local-image:${index}:${source.path}`}
+        order={index}
         path={source.path}
-        getTransferAccess={getTransferAccess}
-        containerStyle={containerStyle}
-        order={index}
+        previewId={`user-local-image:${String(index)}:${source.path}`}
       />
     );
   }
-  if (source.type === "scoped") {
-    return getTransferAccess === undefined ? (
-      <View key={`${source.rootId}:${source.path}`} style={[styles.userImage, containerStyle]}>
-        <Text style={styles.menuNotice}>{attachment.name}</Text>
-      </View>
-    ) : (
-      <ScopedPrivateAssetImage
-        key={`${source.rootId}:${source.path}`}
-        previewId={`user-scoped-image:${source.rootId}:${source.path}`}
-        label={attachment.name}
-        reference={`scoped:${source.rootId}:${source.path}`}
-        source={{ kind: "scoped", rootId: source.rootId, path: source.path }}
-        getTransferAccess={getTransferAccess}
-        containerStyle={containerStyle}
-        order={index}
-      />
-    );
-  }
-  return (
-    <View key={index} style={[styles.userImage, containerStyle]}>
-      <Text style={styles.menuNotice}>Image preview unavailable</Text>
+  return getTransferAccess === undefined ? (
+    <View key={`${source.rootId}:${source.path}`} style={[styles.userImage, containerStyle]}>
+      <Text style={styles.menuNotice}>{attachment.name}</Text>
     </View>
+  ) : (
+    <ScopedPrivateAssetImage
+      containerStyle={containerStyle}
+      getTransferAccess={getTransferAccess}
+      key={`${source.rootId}:${source.path}`}
+      label={attachment.name}
+      order={index}
+      previewId={`user-scoped-image:${source.rootId}:${source.path}`}
+      reference={`scoped:${source.rootId}:${source.path}`}
+      source={{ kind: "scoped", path: source.path, rootId: source.rootId }}
+    />
   );
 }

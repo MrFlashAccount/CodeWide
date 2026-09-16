@@ -2,28 +2,28 @@ import type { RemoteFileAttachment } from "@codewide/sync-client";
 
 /** Speech-recognition event emitted by the native voice transport. */
 export type NativeVoiceEvent = {
-  type: "ready" | "speechStart" | "speechEnd" | "partial" | "final" | "error";
   text?: string;
+  type: "ready" | "speechStart" | "speechEnd" | "partial" | "final" | "error";
 };
 
 /** Base64-encoded PCM audio frame captured by the native microphone. */
 export type PcmAudioChunk = {
-  encoding?: "pcm_s16le";
   data: string;
-  sampleRate: number;
-  numChannels: number;
-  samplesPerChannel: number;
+  encoding?: "pcm_s16le";
   level: number;
+  numChannels: number;
+  sampleRate: number;
+  samplesPerChannel: number;
 };
 
 /** Base64-encoded Opus audio frame captured by the native microphone. */
 export type OpusAudioChunk = {
-  encoding: "opus";
   data: string;
-  sampleRate: number;
-  numChannels: number;
-  samplesPerChannel: number;
+  encoding: "opus";
   level: number;
+  numChannels: number;
+  sampleRate: number;
+  samplesPerChannel: number;
 };
 
 /** Audio frame accepted by the voice-upload boundary. */
@@ -31,20 +31,20 @@ export type CapturedAudioChunk = PcmAudioChunk | OpusAudioChunk;
 
 /** Native PCM capture parameters selected for the active microphone session. */
 export type PcmCaptureInfo = {
+  automaticGainControl: boolean;
+  noiseSuppressor: boolean;
   sampleRate: number;
   source: "voice_recognition" | "voice_communication" | "mic";
-  noiseSuppressor: boolean;
-  automaticGainControl: boolean;
 };
 
 /** Validated server configuration passed into the native connection runtime. */
 export type NativeConnectionConfig = {
   connectionId: string;
-  savedServerId: string;
-  endpoint: string;
-  tlsPinSha256: string | null;
-  enabled: boolean;
   deviceId: string | null;
+  enabled: boolean;
+  endpoint: string;
+  savedServerId: string;
+  tlsPinSha256: string | null;
 };
 
 /** Local endpoint credentials for the embedded browser DevTools bridge. */
@@ -63,19 +63,19 @@ export type NativeBrowserTrace = {
 
 /** Native representation of one configured port-forwarding profile. */
 export type NativePortForwardProfile = {
-  id: string;
   connectionId: string;
+  enabled: boolean;
+  error: string | null;
+  id: string;
   label: string;
+  localPort: number | null;
+  preference: NativePortForwardingPreference;
+  preferredLocalPort: number | null;
+  previewUrl: string | null;
   remoteHost: "127.0.0.1";
   remotePort: number;
-  preferredLocalPort: number | null;
   serviceKey: string | null;
-  preference: NativePortForwardingPreference;
-  localPort: number | null;
-  enabled: boolean;
   status: "stopped" | "connecting" | "live" | "unavailable" | "error";
-  previewUrl: string | null;
-  error: string | null;
   updatedAt: number;
 };
 
@@ -84,39 +84,37 @@ export type NativePortForwardingPreference = "automatic" | "included" | "exclude
 
 /** Port inventory or profile mutation emitted by the native forwarding runtime. */
 export type NativePortForwardEvent =
-  | { type: "inventory" | "inventoryError"; connectionId: string }
-  | { type: "profile"; profile: NativePortForwardProfile }
-  | { type: "removed"; id: string };
+  | { connectionId: string; type: "inventory" | "inventoryError" }
+  | { profile: NativePortForwardProfile; type: "profile" }
+  | { id: string; type: "removed" };
 
 /** Lifecycle or output event emitted for one native terminal session. */
 export type NativeTerminalEvent = {
-  sessionId: string;
-  connectionId: string;
-  threadId: string;
-  type: "connecting" | "open" | "output" | "closed" | "error" | "removed";
-  data?: string;
   code?: number;
+  connectionId: string;
+  data?: string;
   message?: string;
   offset?: number;
+  sessionId: string;
+  threadId: string;
+  type: "connecting" | "open" | "output" | "closed" | "error" | "removed";
 };
 
 /** Bounded terminal output page returned by the native transport. */
 export type NativeTerminalOutput = {
   data: string;
-  nextOffset: number;
-  hasMore: boolean;
   finished: boolean;
+  hasMore: boolean;
+  nextOffset: number;
 };
 
 /** Listening port discovered by the Companion through native transport. */
 export type NativeDiscoveredPort = {
-  port: number;
-  name: string;
-  group: string;
-  details: string;
-  process: string | null;
-  pid: number | null;
   cwd: string | null;
+  defaultForwardingEnabled: boolean;
+  details: string;
+  forwardingKey: string;
+  group: string;
   kind:
     | "docker"
     | "hermes"
@@ -128,25 +126,27 @@ export type NativeDiscoveredPort = {
     | "zrok"
     | "process"
     | "system";
-  forwardingKey: string;
-  defaultForwardingEnabled: boolean;
+  name: string;
+  pid: number | null;
+  port: number;
+  process: string | null;
 };
 
 /** Correlation metadata returned when native transport accepts a command. */
 export type NativeCommandDelivery = {
-  connectionId: string;
+  attachments: RemoteFileAttachment[];
+  attempts: number;
   commandId: string;
+  connectionId: string;
+  createdAt: number;
+  lastError: string | null;
   method: string;
-  threadId: string | null;
+  state: "queued" | "sending" | "accepted" | "uncertain" | "failed" | "delivered";
   targetCommandId: string | null;
   text: string;
-  attachments: RemoteFileAttachment[];
-  workspaceRequestId?: string | null;
-  state: "queued" | "sending" | "accepted" | "uncertain" | "failed" | "delivered";
-  attempts: number;
-  lastError: string | null;
-  createdAt: number;
+  threadId: string | null;
   updatedAt: number;
+  workspaceRequestId?: string | null;
 };
 
 /** Stable application projection of the native microphone permission. */

@@ -1,5 +1,5 @@
 /** V1 Card owner, extracted without changing interaction or resource lifetime. */
-import { Ionicons } from "@expo/vector-icons";
+import type { Ionicons } from "@expo/vector-icons";
 import { useContext, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
@@ -17,23 +17,23 @@ import {
 } from "./turnContexts";
 
 export function Card({
-  title,
-  icon,
-  status,
-  headerMeta,
-  copyText,
-  collapsible = false,
-  initiallyExpanded = true,
   children,
+  collapsible = false,
+  copyText,
+  headerMeta,
+  icon,
+  initiallyExpanded = true,
+  status,
+  title,
 }: {
-  title: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  status?: string;
-  headerMeta?: ReactNode;
-  copyText?: () => string;
-  collapsible?: boolean;
-  initiallyExpanded?: boolean;
   children: ReactNode;
+  collapsible?: boolean;
+  copyText?: () => string;
+  headerMeta?: ReactNode;
+  icon: keyof typeof Ionicons.glyphMap;
+  initiallyExpanded?: boolean;
+  status?: string;
+  title: string;
 }) {
   const insideBubbleSurface = useInsideBubbleSurface();
   const itemKey = useContext(ExpansionItemKeyContext);
@@ -44,30 +44,32 @@ export function Card({
   const visiblyExpanded = forceExpanded || expanded;
   return (
     <View
-      testID="protocol-card"
       collapsable={false}
       style={[styles.card, insideBubbleSurface && styles.bubbleNestedSurface]}
+      testID="protocol-card"
     >
-      <View testID="protocol-card-header" collapsable={false} style={styles.cardHeader}>
+      <View collapsable={false} style={styles.cardHeader} testID="protocol-card-header">
         <Pressable
-          accessibilityRole={collapsible ? "button" : undefined}
           accessibilityLabel={
             collapsible ? `${visiblyExpanded ? "Collapse" : "Expand"} ${title}` : undefined
           }
+          accessibilityRole={collapsible ? "button" : undefined}
           disabled={!collapsible}
           hitSlop={collapsible ? 10 : undefined}
-          onPress={() => setExpanded(!visiblyExpanded)}
+          onPress={() => {
+            setExpanded(!visiblyExpanded);
+          }}
           style={styles.cardHeaderToggle}
         >
-          <View testID="protocol-card-icon" style={styles.cardIconSlot}>
-            <InlineIcon name={icon} role="label" color={colors.textMuted} />
+          <View style={styles.cardIconSlot} testID="protocol-card-icon">
+            <InlineIcon color={colors.textMuted} name={icon} role="label" />
           </View>
           {isRunning ? (
             <WaveText
-              key="running-title"
-              text={title}
-              style={styles.cardTitle}
               containerStyle={styles.cardTitleWave}
+              key="running-title"
+              style={styles.cardTitle}
+              text={title}
             />
           ) : (
             <Text key="settled-title" numberOfLines={1} style={styles.cardTitle}>
@@ -76,10 +78,10 @@ export function Card({
           )}
           <View style={styles.flex} />
           {headerMeta}
-          {status && !isRunning && (
-            <View accessible accessibilityLabel={`Status ${status}`} style={styles.cardStatusIcon}>
+          {typeof status === "string" && status !== "" && !isRunning && (
+            <View accessibilityLabel={`Status ${status}`} accessible style={styles.cardStatusIcon}>
               {status === "failed" || status === "error" ? (
-                <InlineIcon name="alert-circle" role="label" color={colors.red} />
+                <InlineIcon color={colors.red} name="alert-circle" role="label" />
               ) : (
                 <View style={styles.cardStatusDot} />
               )}
@@ -87,9 +89,9 @@ export function Card({
           )}
           {collapsible && (
             <InlineIcon
+              color={colors.textDim}
               name={visiblyExpanded ? "chevron-up" : "chevron-down"}
               role="label"
-              color={colors.textDim}
             />
           )}
         </Pressable>
@@ -107,15 +109,13 @@ export function usePersistentExpansion(
   // ExpansionItemKey already includes the connection/thread/turn identity.
   // The bounded external cache survives LegendList recycling without a broad
   // React context update whenever an unrelated live turn changes.
-  const [value, setValueState] = useState(
-    () => persistentExpansionStates.get(localKey) ?? initialValue,
-  );
-  const setValue = (next: boolean | ((current: boolean) => boolean)) => {
-    setValueState((current) => {
+  const [value, setValue] = useState(() => persistentExpansionStates.get(localKey) ?? initialValue);
+  const persistValue = (next: boolean | ((current: boolean) => boolean)) => {
+    setValue((current) => {
       const resolved = typeof next === "function" ? next(current) : next;
       writePersistentExpansionState(localKey, resolved);
       return resolved;
     });
   };
-  return [value, setValue];
+  return [value, persistValue];
 }

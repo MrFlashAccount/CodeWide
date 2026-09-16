@@ -14,7 +14,9 @@ export function threadListAccountUsageSources(
 ): AccountUsageSource[] {
   const result: AccountUsageSource[] = [];
   for (const server of servers) {
-    if (selectedServerId !== null && server.id !== selectedServerId) continue;
+    if (selectedServerId !== null && server.id !== selectedServerId) {
+      continue;
+    }
     result.push({
       id: server.id,
       name: server.name,

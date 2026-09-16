@@ -1,6 +1,6 @@
 export type TimelineInitialPosition =
   | { kind: "tail" }
-  | { kind: "item"; index: number; viewOffset?: number; viewPosition?: number };
+  | { index: number; kind: "item"; viewOffset?: number; viewPosition?: number };
 
 export type LegendInitialPositionProps =
   | { initialScrollAtEnd: true }
@@ -10,7 +10,9 @@ export type LegendInitialPositionProps =
 export function legendInitialPositionProps(
   position: TimelineInitialPosition,
 ): LegendInitialPositionProps {
-  if (position.kind === "tail") return { initialScrollAtEnd: true };
+  if (position.kind === "tail") {
+    return { initialScrollAtEnd: true };
+  }
   return {
     initialScrollIndex: {
       index: position.index,

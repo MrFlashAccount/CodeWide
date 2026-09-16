@@ -2,40 +2,40 @@ import { StyleSheet } from "react-native";
 import { colors, spacing, typeScale } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  turnGroup: { gap: spacing.xxs },
-  userTurnCluster: {
-    width: "100%",
-    alignItems: "stretch",
-    gap: spacing.optical,
-  },
-  userMessageRow: {
-    width: "100%",
-    minWidth: 0,
-    flexDirection: "column",
-    alignItems: "flex-end",
-    gap: spacing.xxs,
-  },
   agentMessageRow: {
-    width: "100%",
-    minWidth: 0,
-    flexDirection: "row",
     alignItems: "stretch",
-    justifyContent: "flex-start",
+    flexDirection: "row",
     gap: 0,
-  },
-  userMessageContent: {
+    justifyContent: "flex-start",
     minWidth: 0,
-    gap: spacing.compact,
-  },
-  userMessageBlock: { minWidth: 0 },
-  messageTime: {
-    flexShrink: 0,
-    color: colors.textDim,
-    ...typeScale.caption,
-    paddingHorizontal: spacing.sm,
+    width: "100%",
   },
   agentPlaceholder: {
     color: colors.textDim,
     ...typeScale.label,
+  },
+  messageTime: {
+    color: colors.textDim,
+    flexShrink: 0,
+    ...typeScale.caption,
+    paddingHorizontal: spacing.sm,
+  },
+  turnGroup: { gap: spacing.xxs },
+  userMessageBlock: { minWidth: 0 },
+  userMessageContent: {
+    gap: spacing.compact,
+    minWidth: 0,
+  },
+  userMessageRow: {
+    alignItems: "flex-end",
+    flexDirection: "column",
+    gap: spacing.xxs,
+    minWidth: 0,
+    width: "100%",
+  },
+  userTurnCluster: {
+    alignItems: "stretch",
+    gap: spacing.optical,
+    width: "100%",
   },
 });

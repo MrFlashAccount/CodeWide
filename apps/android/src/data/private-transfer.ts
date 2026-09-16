@@ -1,26 +1,27 @@
 import { cachedAttachmentFetch } from "../native/attachment-cache/cached-transfer";
 import { companionHttpUrl } from "./companion-http-url";
 import type { StoredConnection } from "./connection-profile-types";
+import { unknownRecord } from "./unknownRecord";
 
-export type TransferAccess = { baseUrl: string; authorization: string; cacheScope?: string };
+export type TransferAccess = { authorization: string; baseUrl: string; cacheScope?: string };
 export type GetTransferAccess = (forceRefresh?: boolean) => Promise<TransferAccess>;
 
 export type PrivateAssetSource =
-  | { kind: "direct"; uri: string; headers?: Record<string, string> }
+  | { headers?: Record<string, string>; kind: "direct"; uri: string }
   | { kind: "path"; path: string }
-  | { kind: "content"; id: string }
+  | { id: string; kind: "content" }
   | { kind: "remote"; url: string }
-  | { kind: "scoped"; rootId: string; path: string; cacheRevision?: string };
+  | { cacheRevision?: string; kind: "scoped"; path: string; rootId: string };
 
 export type PrivateAssetTextResult = {
-  text: string;
   contentType: string | null;
-  totalBytes: number | null;
   nextOffset: number;
+  text: string;
+  totalBytes: number | null;
   truncated: boolean;
 };
 
-type TransferRequest = { uri: string; init?: RequestInit };
+type TransferRequest = { init?: RequestInit; uri: string };
 
 /**
  * The only authenticated HTTP boundary for private data. Callers describe a
@@ -39,7 +40,9 @@ export async function fetchAuthenticatedTransfer(
       ...request.init,
       headers: mergeHeaders({ authorization: access.authorization }, request.init?.headers),
     });
-    if (attempt === 0 && isAuthorizationStatus(response.status)) continue;
+    if (attempt === 0 && isAuthorizationStatus(response.status)) {
+      continue;
+    }
     return response;
   }
   throw new Error("Private transfer authorization did not recover");
@@ -51,16 +54,18 @@ export async function fetchPrivateAsset(
   init: RequestInit = {},
 ): Promise<Response> {
   if (source.kind === "direct") {
-    return await cachedAttachmentFetch(
+    return cachedAttachmentFetch(
       source.uri,
       {
         ...init,
         headers: mergeHeaders(source.headers, init.headers),
       },
-      { scope: "direct", identity: source.uri },
+      { identity: source.uri, scope: "direct" },
     );
   }
-  if (getAccess === null) throw new Error("Private asset access is unavailable");
+  if (getAccess === null) {
+    throw new Error("Private asset access is unavailable");
+  }
   const resolved =
     source.kind === "remote" ? await materializeRemoteAsset(source.url, getAccess) : source;
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -71,9 +76,11 @@ export async function fetchPrivateAsset(
         ...init,
         headers: mergeHeaders({ authorization: access.authorization }, init.headers),
       },
-      { scope: access.cacheScope ?? access.baseUrl, identity: privateAssetCacheKey(resolved) },
+      { identity: privateAssetCacheKey(resolved), scope: access.cacheScope ?? access.baseUrl },
     );
-    if (attempt === 0 && isAuthorizationStatus(response.status)) continue;
+    if (attempt === 0 && isAuthorizationStatus(response.status)) {
+      continue;
+    }
     return response;
   }
   throw new Error("Private attachment authorization did not recover");
@@ -85,9 +92,9 @@ export async function fetchScopedUpload(
   getAccess: GetTransferAccess,
   init: RequestInit,
 ): Promise<Response> {
-  return await fetchAuthenticatedTransfer(getAccess, (access) => ({
-    uri: scopedTransferUrl(access, "/v1/files/upload", rootId, path),
+  return fetchAuthenticatedTransfer(getAccess, (access) => ({
     init,
+    uri: scopedTransferUrl(access, "/v1/files/upload", rootId, path),
   }));
 }
 
@@ -95,15 +102,15 @@ export async function readPrivateAssetText(
   source: PrivateAssetSource,
   getAccess: GetTransferAccess | null,
   options: {
-    offset?: number;
-    limit?: number;
     accept?: string;
+    limit?: number;
+    offset?: number;
     signal?: AbortSignal;
   } = {},
 ): Promise<PrivateAssetTextResult> {
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
   const limit = options.limit === undefined ? null : Math.max(1, Math.floor(options.limit));
-  const range = limit === null ? null : `bytes=${offset}-${offset + limit - 1}`;
+  const range = limit === null ? null : `bytes=${String(offset)}-${String(offset + limit - 1)}`;
   const response = await fetchPrivateAsset(source, getAccess, {
     headers: {
       ...(options.accept === undefined ? {} : { accept: options.accept }),
@@ -112,10 +119,12 @@ export async function readPrivateAssetText(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!response.ok) {
+    if (response.status === 404 && source.kind === "path") {
+      throw new Error("File was deleted");
+    }
     const detail = (await response.text()).slice(0, 240).trim();
-    if (response.status === 404 && source.kind === "path") throw new Error("File was deleted");
     throw new Error(
-      `Private content unavailable (${response.status})${detail === "" ? "" : `: ${detail}`}`,
+      `Private content unavailable (${String(response.status)})${detail === "" ? "" : `: ${detail}`}`,
     );
   }
   const text = await response.text();
@@ -124,10 +133,10 @@ export async function readPrivateAssetText(
   const totalBytes = rangeInfo?.total ?? parseContentLength(response.headers.get("content-length"));
   const nextOffset = rangeInfo?.endExclusive ?? offset + encodedBytes;
   return {
-    text,
     contentType: response.headers.get("content-type"),
-    totalBytes,
     nextOffset,
+    text,
+    totalBytes,
     truncated: totalBytes !== null && nextOffset < totalBytes,
   };
 }
@@ -140,28 +149,35 @@ export async function resolvePrivateAssetRequest(
   getAccess: GetTransferAccess,
   forceRefresh = false,
 ): Promise<{
-  uri: string;
-  headers: Record<string, string>;
-  cacheScope: string;
   cacheIdentity: string;
+  cacheScope: string;
+  headers: Record<string, string>;
+  uri: string;
 }> {
   const resolved =
     source.kind === "remote" ? await materializeRemoteAsset(source.url, getAccess) : source;
   const access = await getAccess(forceRefresh);
   return {
-    uri: privateAssetUrl(resolved, access),
-    headers: { authorization: access.authorization },
-    cacheScope: access.cacheScope ?? access.baseUrl,
     cacheIdentity: privateAssetCacheKey(resolved),
+    cacheScope: access.cacheScope ?? access.baseUrl,
+    headers: { authorization: access.authorization },
+    uri: privateAssetUrl(resolved, access),
   };
 }
 
 export function privateAssetCacheKey(source: PrivateAssetSource): string {
-  if (source.kind === "direct") return `direct:${source.uri}`;
-  if (source.kind === "path") return `path:${source.path}`;
-  if (source.kind === "content") return `content:${source.id}`;
-  if (source.kind === "scoped")
+  if (source.kind === "direct") {
+    return `direct:${source.uri}`;
+  }
+  if (source.kind === "path") {
+    return `path:${source.path}`;
+  }
+  if (source.kind === "content") {
+    return `content:${source.id}`;
+  }
+  if (source.kind === "scoped") {
     return `scoped:${source.rootId}:${source.path}:${source.cacheRevision ?? "0"}`;
+  }
   return `remote:${source.url}`;
 }
 
@@ -183,38 +199,46 @@ function privateAssetUrl(
   access: TransferAccess,
 ): string {
   if (source.kind === "path") {
-    if (!source.path.startsWith("/") || source.path.includes("\0"))
+    if (!source.path.startsWith("/") || source.path.includes("\0")) {
       throw new Error("Private file path must be absolute");
+    }
     const url = companionUrl(access, "/v1/files/preview");
     url.search = new URLSearchParams({ path: source.path }).toString();
     return url.toString();
   }
   if (source.kind === "content") {
-    if (!/^[a-f0-9]{64}$/u.test(source.id)) throw new Error("Private asset reference is invalid");
+    if (!/^[a-f0-9]{64}$/u.test(source.id)) {
+      throw new Error("Private asset reference is invalid");
+    }
     return companionUrl(access, `/v1/content/${source.id}`).toString();
   }
   const url = new URL(scopedTransferUrl(access, "/v1/files/download", source.rootId, source.path));
-  if (source.cacheRevision !== undefined) url.searchParams.set("v", source.cacheRevision);
+  if (source.cacheRevision !== undefined) {
+    url.searchParams.set("v", source.cacheRevision);
+  }
   return url.toString();
 }
 
 async function materializeRemoteAsset(
   url: string,
   getAccess: GetTransferAccess,
-): Promise<{ kind: "content"; id: string }> {
+): Promise<{ id: string; kind: "content" }> {
   const response = await fetchAuthenticatedTransfer(getAccess, (access) => ({
-    uri: companionUrl(access, "/v1/media/materialize").toString(),
     init: {
-      method: "POST",
-      headers: { "content-type": "application/json" },
       body: JSON.stringify({ url }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
     },
+    uri: companionUrl(access, "/v1/media/materialize").toString(),
   }));
-  if (!response.ok) throw new Error(`Private asset materialization failed (${response.status})`);
-  const body = (await response.json()) as { id?: unknown };
-  if (typeof body.id !== "string" || !/^[a-f0-9]{64}$/u.test(body.id))
+  if (!response.ok) {
+    throw new Error(`Private asset materialization failed (${String(response.status)})`);
+  }
+  const body = unknownRecord(await response.json());
+  if (body === null || typeof body.id !== "string" || !/^[a-f0-9]{64}$/u.test(body.id)) {
     throw new Error("Private asset response is invalid");
-  return { kind: "content", id: body.id };
+  }
+  return { id: body.id, kind: "content" };
 }
 
 function companionUrl(access: TransferAccess, path: string): URL {
@@ -222,8 +246,12 @@ function companionUrl(access: TransferAccess, path: string): URL {
 }
 
 function validateScopedPath(rootId: string, path: string): void {
-  if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(rootId)) throw new Error("Invalid file root id");
-  if (path.length === 0 || path.includes("\0")) throw new Error("Remote path is invalid");
+  if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(rootId)) {
+    throw new Error("Invalid file root id");
+  }
+  if (path.length === 0 || path.includes("\0")) {
+    throw new Error("Remote path is invalid");
+  }
 }
 
 function isAuthorizationStatus(status: number): boolean {
@@ -232,12 +260,16 @@ function isAuthorizationStatus(status: number): boolean {
 
 function mergeHeaders(base: HeadersInit | undefined, override: HeadersInit | undefined): Headers {
   const headers = new Headers(base);
-  new Headers(override).forEach((value, key) => headers.set(key, value));
+  new Headers(override).forEach((value, key) => {
+    headers.set(key, value);
+  });
   return headers;
 }
 
 function parseContentLength(value: string | null): number | null {
-  if (value === null) return null;
+  if (value === null) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
@@ -245,25 +277,30 @@ function parseContentLength(value: string | null): number | null {
 function parseContentRange(
   value: string | null,
 ): { endExclusive: number; total: number | null } | null {
-  if (value === null) return null;
+  if (value === null) {
+    return null;
+  }
   const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/u.exec(value);
-  if (match === null) return null;
+  if (match === null) {
+    return null;
+  }
   const end = Number(match[2]);
   const total = match[3] === "*" ? null : Number(match[3]);
   if (
     !Number.isSafeInteger(end) ||
     end < 0 ||
     (total !== null && (!Number.isSafeInteger(total) || total < 0))
-  )
+  ) {
     return null;
+  }
   return { endExclusive: end + 1, total };
 }
 
 /** Existing profile and native HTTP authorization owners used by private consumers. */
 export type PrivateTransferAuthority = {
-  currentConnections(): StoredConnection[];
-  nativeCompanionHttpOrigin(connectionId: string, endpoint: string): Promise<string>;
-  scopedHttpAuthorization(connection: StoredConnection, forceRefresh: boolean): Promise<string>;
+  currentConnections: () => StoredConnection[];
+  nativeCompanionHttpOrigin: (connectionId: string, endpoint: string) => Promise<string>;
+  scopedHttpAuthorization: (connection: StoredConnection, forceRefresh: boolean) => Promise<string>;
 };
 
 /** Returns qualified access without retaining credentials in the feature. */
@@ -277,11 +314,13 @@ export function createPrivateTransferAccess({
     forceRefresh = false,
   ): Promise<TransferAccess> => {
     const connection = currentConnections().find((candidate) => candidate.id === connectionId);
-    if (connection === undefined) throw new Error("Connection not found");
+    if (connection === undefined) {
+      throw new Error("Connection not found");
+    }
     const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
     return {
-      baseUrl: companionHttpUrl(origin, "/"),
       authorization: await scopedHttpAuthorization(connection, forceRefresh),
+      baseUrl: companionHttpUrl(origin, "/"),
       cacheScope: connection.id,
     };
   };

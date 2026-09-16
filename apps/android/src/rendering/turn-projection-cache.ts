@@ -11,9 +11,9 @@ export function turnProjectionTopologyRevision(turn: Pick<Turn, "items" | "statu
     tail?.type === "agentMessage"
       ? `${tail.id}\u0000${tail.type}\u0000${tail.phase ?? ""}\u0000${textEdgeRevision(tail.text)}`
       : `${tail?.id ?? ""}\u0000${tail?.type ?? ""}`;
-  return `${turn.status}\u0000${turn.items.length}\u0000${tailRevision}`;
+  return `${turn.status}\u0000${String(turn.items.length)}\u0000${tailRevision}`;
 }
 
 function textEdgeRevision(value: string): string {
-  return `${value.length}:${value.slice(0, 48)}:${value.slice(-48)}`;
+  return `${String(value.length)}:${value.slice(0, 48)}:${value.slice(-48)}`;
 }

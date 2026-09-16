@@ -12,6 +12,7 @@ import { nativeCodeLanguageForPath } from "../../rendering/native-code-block";
 import { NativeCodeBlock } from "../../rendering/NativeCodeBlock";
 import { RichContentWidthProvider } from "../../rendering/RichContentLayout";
 import { RichMarkdown } from "../../rendering/RichMarkdown";
+import { occurrenceKey, textFingerprint } from "../../rendering/listKey";
 import { colors, iconSize, spacing } from "../../theme";
 import { AppSheetScrollView } from "../../ui/AppSheet";
 import { AppText as Text } from "../../ui/Typography";
@@ -50,6 +51,7 @@ export function AttachmentDocumentPreview({
     retryPreview,
     setDocumentViewportWidth,
   } = preview;
+  const segmentOccurrences = new Map<string, number>();
   return (
     <>
       {document !== null && (
@@ -137,18 +139,21 @@ export function AttachmentDocumentPreview({
                   width={documentViewportWidth > 0 ? documentViewportWidth : null}
                 >
                   <MarkdownLocalLinkProvider onOpen={openNestedDocument}>
-                    {documentResult.segments.map((segment, index) => (
-                      <RichMarkdown
-                        key={index}
-                        reviewPathPrefix={`segment-${index}`}
-                        reviewTarget={{
-                          id: `markdown-document:${document.request.path}`,
-                          label: document.request.name,
-                          reference: document.request.path,
-                        }}
-                        source={segment}
-                      />
-                    ))}
+                    {documentResult.segments.map((segment, index) => {
+                      const key = occurrenceKey(segmentOccurrences, textFingerprint(segment));
+                      return (
+                        <RichMarkdown
+                          key={key}
+                          reviewPathPrefix={`segment-${String(index)}`}
+                          reviewTarget={{
+                            id: `markdown-document:${document.request.path}`,
+                            label: document.request.name,
+                            reference: document.request.path,
+                          }}
+                          source={segment}
+                        />
+                      );
+                    })}
                   </MarkdownLocalLinkProvider>
                 </RichContentWidthProvider>
               )}

@@ -2,34 +2,34 @@ import { StyleSheet } from "react-native";
 import { controlSize, radii } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  pressed: { opacity: 0.68 },
-  messageActionRail: {
-    width: controlSize.compact,
-    minHeight: controlSize.compact,
-    flexShrink: 0,
-    alignSelf: "flex-start",
-    alignItems: "flex-start",
-  },
-  messageActionButton: {
-    width: controlSize.compact,
-    height: controlSize.compact,
-    flexShrink: 0,
-    alignItems: "flex-start",
-    justifyContent: "center",
-    borderRadius: radii.pill,
-  },
   copyButton: {
-    width: controlSize.compact,
-    height: controlSize.compact,
     alignItems: "center",
-    justifyContent: "center",
     borderRadius: radii.medium,
+    height: controlSize.compact,
+    justifyContent: "center",
+    width: controlSize.compact,
   },
   copyButtonCompact: {
-    width: controlSize.compact,
-    height: controlSize.compact,
     alignItems: "center",
-    justifyContent: "center",
     borderRadius: radii.small,
+    height: controlSize.compact,
+    justifyContent: "center",
+    width: controlSize.compact,
   },
+  messageActionButton: {
+    alignItems: "flex-start",
+    borderRadius: radii.pill,
+    flexShrink: 0,
+    height: controlSize.compact,
+    justifyContent: "center",
+    width: controlSize.compact,
+  },
+  messageActionRail: {
+    alignItems: "flex-start",
+    alignSelf: "flex-start",
+    flexShrink: 0,
+    minHeight: controlSize.compact,
+    width: controlSize.compact,
+  },
+  pressed: { opacity: 0.68 },
 });

@@ -1,41 +1,49 @@
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 
 export type ToolCallProtocolBlockInput = {
   block: RenderBlock;
-  getTransferAccess?(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
+  getTransferAccess?: (
+    forceRefresh?: boolean,
+  ) => Promise<{ authorization: string; baseUrl: string }>;
 };
 
 export type ToolCallProtocolDetailsInput = {
   block: RenderBlock;
-  getTransferAccess?(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
+  getTransferAccess?: (
+    forceRefresh?: boolean,
+  ) => Promise<{ authorization: string; baseUrl: string }>;
 };
 
 export type ToolCallResultContentInput = {
   block: RenderBlock;
+  getTransferAccess?: (
+    forceRefresh?: boolean,
+  ) => Promise<{ authorization: string; baseUrl: string }>;
   section: string;
-  getTransferAccess?(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
 };
 
 export type ToolRichContentInput = {
+  getTransferAccess?: (
+    forceRefresh?: boolean,
+  ) => Promise<{ authorization: string; baseUrl: string }>;
   items: unknown[];
   section: string;
-  getTransferAccess?(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
 };
 
-export type ToolResourceLinkInput = { uri: string; label: string };
+export type ToolResourceLinkInput = { label: string; uri: string };
 
 export type LazyJsonProtocolBodyInput = {
-  value: unknown;
   section?: string;
+  value: unknown;
 };
 
 export type ProtocolBodyInput = {
   body: string;
   code: boolean;
+  codeVariant?: "code" | "diff" | "terminal";
   collapsible: boolean;
   expandedMaxHeight?: number;
-  section?: string;
   language?: string;
-  codeVariant?: "code" | "diff" | "terminal";
+  section?: string;
   showCopyAction?: boolean;
 };

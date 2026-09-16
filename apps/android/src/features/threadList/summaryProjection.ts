@@ -18,14 +18,17 @@ export class ThreadListProjection {
     summaries: readonly StoredThreadSummary[],
     pendingRequests: readonly PendingServerRequest[],
   ): StoredThreadSummary[] {
-    if (summaries === this.summaries && pendingRequests === this.pendingRequests) return this.value;
+    if (summaries === this.summaries && pendingRequests === this.pendingRequests) {
+      return this.value;
+    }
     this.summaries = replaceEqualDeep(this.summaries, summaries);
     this.pendingRequests = pendingRequests;
     this.value = replaceEqualDeep(
       this.value,
       projectThreadHotStates(
         this.summaries.filter(
-          (thread) => thread.deleteCommandId == null && thread.parentThreadId == null,
+          (thread) =>
+            typeof thread.deleteCommandId !== "string" && typeof thread.parentThreadId !== "string",
         ),
         pendingRequests,
       ).sort(compareThreadSummaryRecency),
@@ -38,9 +41,13 @@ function compareThreadSummaryRecency(
   left: StoredThreadSummary,
   right: StoredThreadSummary,
 ): number {
-  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+  if (left.pinned !== right.pinned) {
+    return left.pinned ? -1 : 1;
+  }
   const leftRecency = left.recencyAt ?? left.updatedAt;
   const rightRecency = right.recencyAt ?? right.updatedAt;
-  if (leftRecency !== rightRecency) return rightRecency - leftRecency;
+  if (leftRecency !== rightRecency) {
+    return rightRecency - leftRecency;
+  }
   return left.remoteThreadId.localeCompare(right.remoteThreadId);
 }

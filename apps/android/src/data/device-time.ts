@@ -1,15 +1,11 @@
 import { NativeModules, Platform } from "react-native";
+import { unknownRecord } from "./unknownRecord";
 
 import {
   formatDateTimeForDevice,
   formatTimeForDevice,
   type DeviceTimePreferences,
 } from "./device-time-format";
-
-type NativeTimeConfiguration = {
-  localeTag?: unknown;
-  uses24HourClock?: unknown;
-};
 
 export function formatDeviceTime(
   timestampSeconds: number,
@@ -26,8 +22,10 @@ export function formatDeviceDateTime(
 }
 
 function readDeviceTimePreferences(): DeviceTimePreferences {
-  if (Platform.OS !== "android") return {};
-  const configuration = NativeModules.CodeWideNative as NativeTimeConfiguration | undefined;
+  if (Platform.OS !== "android") {
+    return {};
+  }
+  const configuration = unknownRecord(NativeModules.CodeWideNative);
   const locale =
     typeof configuration?.localeTag === "string" && configuration.localeTag !== ""
       ? configuration.localeTag

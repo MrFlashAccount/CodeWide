@@ -11,30 +11,33 @@ import { useRemoteProjectCatalog } from "./useRemoteProjectCatalog";
 import { useSidebarProjectOrder } from "./useSidebarProjectOrder";
 /** Existing project reads and mutations with the catalog's unread projection. */
 export type ProjectWorkspaceCapability = {
-  readonly native: boolean;
+  addProject: (connectionId: string, path: string) => Promise<RemoteProject>;
   readonly connections: StoredConnection[];
-  readonly threadSummaryDatabase: ThreadSummaryDatabase | null;
-  listProjects(connectionId: string): Promise<RemoteProject[]>;
-  addProject(connectionId: string, path: string): Promise<RemoteProject>;
-  setProjectPinned(
+  listProjects: (connectionId: string) => Promise<RemoteProject[]>;
+  readonly native: boolean;
+  // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+  // oxlint-disable-next-line eslint/max-params
+  setProjectPinned: (
     connectionId: string,
     path: string,
     name: string,
     pinned: boolean,
-  ): Promise<RemoteProject>;
+  ) => Promise<RemoteProject>;
+  readonly threadSummaryDatabase: ThreadSummaryDatabase | null;
 };
 /** Catalog selection and mutations preserve shared catalog/order resources. */
+// WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+// oxlint-disable-next-line eslint/max-params
 export function useProjectWorkspace(
   remote: ProjectWorkspaceCapability,
   servers: ThreadListServer[],
   serverScope: ServerScope,
-  newThreadVisible: boolean,
   searchVisible: boolean,
 ) {
   const projectOrder = useSidebarProjectOrder();
 
   const projectCatalogConnections =
-    newThreadVisible || searchVisible || serverScope.kind === "all"
+    searchVisible || serverScope.kind === "all"
       ? remote.connections
       : remote.connections.filter((connection) => serverScopeIncludes(serverScope, connection.id));
 
@@ -67,17 +70,17 @@ export function useProjectWorkspace(
         projectOrder.order,
       ).map((project) => ({
         id: project.key,
-        serverId: project.connectionId,
-        path: project.path,
         name: project.name,
-        subtitle: project.subtitle,
+        path: project.path,
         pinned: project.pinned,
+        serverId: project.connectionId,
+        subtitle: project.subtitle,
       }))
     : [];
 
   const sidebarProjectErrors = sidebarServers.flatMap((server) => {
     const error = projectErrorsByConnection[server.id];
-    return error == null ? [] : [`${server.name}: ${error}`];
+    return error === null || error === undefined ? [] : [`${server.name}: ${error}`];
   });
 
   const toggleSidebarProject = useEvent(async (project: SidebarProject) => {
@@ -108,15 +111,15 @@ export function useProjectWorkspace(
     (serverId: string): string | null => projectsByConnection[serverId]?.[0]?.path ?? null,
   );
   return {
-    projectsByConnection,
-    sidebarServers,
+    addSidebarProject,
     availableSidebarProjects,
+    defaultProjectCwd,
+    moveSidebarProject,
     pinnedSidebarProjects,
+    projectsByConnection,
     searchProjects,
     sidebarProjectErrors,
+    sidebarServers,
     toggleSidebarProject,
-    moveSidebarProject,
-    addSidebarProject,
-    defaultProjectCwd,
   };
 }

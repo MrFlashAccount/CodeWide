@@ -1,26 +1,33 @@
-/* eslint-disable react-hooks/exhaustive-deps, react-hooks/rules-of-hooks, react-hooks/use-memo */
-import { useCallback } from "react";
-import * as React from "react";
-
+import { useConstant } from "./useConstant";
 import { useLatest } from "./useLatest";
 
-const noop = (..._args: any[]) => {};
-const noopcb = () => noop;
-const emptyArray: Readonly<never[]> = [];
-const useEffectEvent = "useEffectEvent" in React ? React.useEffectEvent : noopcb;
+type EventCallback = (...args: never[]) => unknown;
+type OptionalEventCallback<Callback extends EventCallback> = (
+  ...args: Parameters<Callback>
+) => ReturnType<Callback> | undefined;
 
 /** Returns a stable callback that always invokes the latest supplied implementation. */
-export function useEvent<T extends (...args: any[]) => any>(cb: T | undefined | null | false): T {
-  const ref = useLatest<T | undefined | null | false>(cb);
-  const dontCallInRenderGuard = useEffectEvent(noop);
-  // @ts-expect-error We know that ref.current is T after the nullish guard.
-  return useCallback<T>((...args: Parameters<T>) => {
-    dontCallInRenderGuard();
-
-    if (ref.current === null || ref.current === false || ref.current === undefined) {
-      return;
-    }
-
-    return ref.current(...args);
-  }, emptyArray);
+export function useEvent<Callback extends EventCallback>(callback: Callback): Callback;
+/** Returns a stable optional callback whose absent implementation resolves to `undefined`. */
+export function useEvent<Callback extends EventCallback>(
+  callback: Callback | undefined | null | false,
+): OptionalEventCallback<Callback>;
+/** Implements both callback-presence overloads with one stable retained dispatcher. */
+export function useEvent<Callback extends EventCallback>(
+  callback: Callback | undefined | null | false,
+): OptionalEventCallback<Callback> {
+  const ref = useLatest(callback);
+  return useConstant<OptionalEventCallback<Callback>>(
+    () =>
+      (...args: Parameters<Callback>): ReturnType<Callback> | undefined => {
+        const current = ref.current;
+        if (current === null || current === false || current === undefined) {
+          return undefined;
+        }
+        const result: unknown = current(...args);
+        // WHY: Parameters and ReturnType come from the same retained callback; TypeScript cannot preserve that relationship through a generic invocation.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+        return result as ReturnType<Callback>;
+      },
+  );
 }

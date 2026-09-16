@@ -1,7 +1,7 @@
 import type { RefObject } from "react";
 import { useEffect } from "react";
 import { BackHandler, Platform } from "react-native";
-import { WebView } from "react-native-webview";
+import type { WebView } from "react-native-webview";
 import type { InternalBrowserHeader } from "./browserContract";
 
 export function useBrowserBack(
@@ -12,13 +12,21 @@ export function useBrowserBack(
   webView: RefObject<WebView | null>,
 ) {
   useEffect(() => {
-    if (Platform.OS !== "android" || header === undefined) return;
+    if (Platform.OS !== "android" || header === undefined) {
+      return undefined;
+    }
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (devToolsUrl !== null) closeDevTools();
-      else if (canGoBack) webView.current?.goBack();
-      else header.onClose();
+      if (devToolsUrl !== null) {
+        closeDevTools();
+      } else if (canGoBack) {
+        webView.current?.goBack();
+      } else {
+        header.onClose();
+      }
       return true;
     });
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+    };
   }, [closeDevTools, devToolsUrl, header, canGoBack, webView]);
 }

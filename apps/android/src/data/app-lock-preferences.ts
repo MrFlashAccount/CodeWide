@@ -9,13 +9,16 @@ const DEFAULT_APP_LOCK_PREFERENCES: AppLockPreferences = {
 };
 
 export function decodeAppLockPreferences(value: string | null | undefined): AppLockPreferences {
-  if (value === null || value === undefined) return DEFAULT_APP_LOCK_PREFERENCES;
+  if (value === null || value === undefined) {
+    return DEFAULT_APP_LOCK_PREFERENCES;
+  }
   try {
     const candidate: unknown = JSON.parse(value);
-    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+    const record = unknownRecord(candidate);
+    if (record === null) {
       return DEFAULT_APP_LOCK_PREFERENCES;
     }
-    return { enabled: (candidate as Record<string, unknown>).enabled === true };
+    return { enabled: record.enabled === true };
   } catch {
     return DEFAULT_APP_LOCK_PREFERENCES;
   }
@@ -24,3 +27,4 @@ export function decodeAppLockPreferences(value: string | null | undefined): AppL
 export function encodeAppLockPreferences(preferences: AppLockPreferences): string {
   return JSON.stringify({ enabled: preferences.enabled });
 }
+import { unknownRecord } from "./unknownRecord";

@@ -10,5 +10,5 @@ export function SelectableThreadRow({
 }) {
   const selectionKey = threadSelectionKey(thread);
   const selected = selectedThreadKey === selectionKey;
-  return <ThreadRow {...row} thread={thread} selected={selected} />;
+  return <ThreadRow {...row} selected={selected} thread={thread} />;
 }

@@ -12,19 +12,19 @@ type ThreadListView =
 
 /** The scoped list owns its recoverable and loading boundaries on both layouts. */
 export function ThreadListFeature({
-  view,
-  scopeKey,
   onDismiss,
+  scopeKey,
+  view,
 }: {
-  view: ThreadListView;
-  scopeKey: string;
   onDismiss?: () => void;
+  scopeKey: string;
+  view: ThreadListView;
 }) {
   return (
     <RecoverableRenderBoundary
-      scope="surface"
       label="Chat list"
       resetKey={`${view.mode}-chat-list:${scopeKey}`}
+      scope="surface"
       {...(onDismiss === undefined ? {} : { onDismiss })}
     >
       <Suspense fallback={<ThreadListSuspenseFallback />}>

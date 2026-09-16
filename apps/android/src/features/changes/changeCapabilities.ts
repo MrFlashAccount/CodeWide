@@ -5,7 +5,7 @@ import type {
   ThreadChangeScope,
   ThreadResourcesValue,
 } from "../../data/thread-resource-types";
-import type { CodeReviewComment } from "../../rendering/code-review";
+import type { CodeReviewComment } from "../review/comments/reviewComment";
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
@@ -13,15 +13,13 @@ import type { ChangesPreferences, useChangeResourcePresentation } from "./change
 
 /** Presentation intents receive only the selected resource and admitted review capability. */
 export type ChangePresentationCapabilities = ReturnType<typeof useChangeResourcePresentation> & {
-  cwd: string;
-  remoteThread: Thread | null | undefined;
-  changesPreferences: ChangesPreferences;
-  setChangesPreferences(next: ChangesPreferences): void;
   appVoiceInputRuntime: AppVoiceInputRuntime;
+  attachCodeReview: (comments: readonly CodeReviewComment[]) => Promise<boolean>;
+  changesPreferences: ChangesPreferences;
+  cwd: string;
   getStableTransferAccess: GetTransferAccess;
-  attachCodeReview(comments: readonly CodeReviewComment[]): Promise<boolean>;
-  onLoadTurnChanges:
-    | ((target: TurnChangesTarget) => Promise<readonly TurnChangedFile[]>)
+  onLoadThreadChangeDiff:
+    | ((path: string, scope?: ThreadChangeScope) => Promise<ThreadChangeDiffValue>)
     | undefined;
   onLoadThreadResources:
     | ((
@@ -29,7 +27,9 @@ export type ChangePresentationCapabilities = ReturnType<typeof useChangeResource
         kind?: "all" | "changes" | "attachments",
       ) => Promise<ThreadResourcesValue>)
     | undefined;
-  onLoadThreadChangeDiff:
-    | ((path: string, scope?: ThreadChangeScope) => Promise<ThreadChangeDiffValue>)
+  onLoadTurnChanges:
+    | ((target: TurnChangesTarget) => Promise<readonly TurnChangedFile[]>)
     | undefined;
+  remoteThread: Thread | null | undefined;
+  setChangesPreferences: (next: ChangesPreferences) => void;
 };

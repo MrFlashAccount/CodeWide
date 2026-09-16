@@ -32,13 +32,11 @@ const setProjectPinned = features.projects.setProjectPinned.bind(features.projec
 export function useWorkspaceProjectBindings({
   connections,
   list,
-  newThreadActive,
   runtime,
   searchActive,
 }: {
   connections: WorkspaceBindingContext["connections"];
   list: ReturnType<typeof useWorkspaceListBindings>;
-  newThreadActive: boolean;
   runtime: WorkspaceBindingContext["runtime"];
   searchActive: boolean;
 }): WorkspaceProjectBindings {
@@ -62,7 +60,6 @@ export function useWorkspaceProjectBindings({
     },
     list.servers,
     list.serverScope,
-    newThreadActive,
     searchActive,
   );
   const sidebarCatalogState = sidebarListState(

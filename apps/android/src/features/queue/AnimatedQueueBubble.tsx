@@ -10,16 +10,16 @@ import { styles } from "./InlineQueueOverlay.styles";
 import { useQueueBubbleMotion } from "./queueBubbleMotion";
 
 export function AnimatedQueueBubble(props: AnimatedQueueBubbleProps): React.JSX.Element {
-  const { children, deleteEnabled, expanded, failed, index, raised, steerEnabled, onMeasure } =
+  const { children, deleteEnabled, expanded, failed, index, onMeasure, raised, steerEnabled } =
     props;
   const {
-    cardWidth,
     cardStyle,
-    steerRevealStyle,
-    deleteRevealStyle,
-    steerItem,
+    cardWidth,
     deleteItem,
+    deleteRevealStyle,
     reorderGesture,
+    steerItem,
+    steerRevealStyle,
     swipeGesture,
     swipeStyle,
   } = useQueueBubbleMotion(props);
@@ -40,11 +40,11 @@ export function AnimatedQueueBubble(props: AnimatedQueueBubbleProps): React.JSX.
           accessibilityLabel="Steer queued prompt"
           disabled={!steerEnabled}
           onPress={() => {
-            void steerItem();
+            steerItem().catch(() => undefined);
           }}
           style={[styles.swipeActionContent, styles.steerSwipeActionContent]}
         >
-          <InlineIcon name="navigate-outline" role="label" color={colors.onPrimary} />
+          <InlineIcon color={colors.onPrimary} name="navigate-outline" role="label" />
           <Text style={[styles.swipeActionText, styles.steerSwipeActionText]}>Steer</Text>
         </Pressable>
       </Reanimated.View>
@@ -56,11 +56,11 @@ export function AnimatedQueueBubble(props: AnimatedQueueBubbleProps): React.JSX.
           accessibilityLabel="Delete queued prompt"
           disabled={!deleteEnabled}
           onPress={() => {
-            void deleteItem();
+            deleteItem().catch(() => undefined);
           }}
           style={[styles.swipeActionContent, styles.deleteSwipeActionContent]}
         >
-          <InlineIcon name="trash-outline" role="label" color={colors.text} />
+          <InlineIcon color={colors.text} name="trash-outline" role="label" />
           <Text style={styles.swipeActionText}>Delete</Text>
         </Pressable>
       </Reanimated.View>

@@ -1,4 +1,4 @@
-import { CodeReviewWorkspace } from "../review/CodeReviewWorkspace";
+import { CodeReviewWorkspace } from "../review/workspace/CodeReviewWorkspace";
 import { useDocumentDownload } from "../../rendering/DocumentPreviewHost";
 import type { CodeDocumentRouteRequest } from "../../services/changes/changesRouteSession";
 
@@ -27,8 +27,6 @@ export function RouteCodeDocumentReview({
       getTransferAccess={request.getTransferAccess}
       onAttach={request.attachCodeReview}
       onClose={onClose}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onDownload={() => void download(document)}
       thread={request.thread}
       voiceRuntime={request.voiceRuntime}

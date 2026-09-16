@@ -4,61 +4,55 @@ import { Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ComposerAccessoryTray.styles";
-import { type ComposerAccessoryAction } from "./composerTypes";
+import type { ComposerAccessoryAction } from "./composerTypes";
 
 export const COMPOSER_ACCESSORY_ACTIONS: ReadonlyArray<{
-  id: ComposerAccessoryAction;
   icon: keyof typeof Ionicons.glyphMap;
+  id: ComposerAccessoryAction;
   label: string;
 }> = [
-  { id: "files", icon: "attach-outline", label: "File" },
-  { id: "drawing", icon: "brush-outline", label: "Drawing" },
-  { id: "terminal", icon: "terminal-outline", label: "Terminal" },
-  { id: "ports", icon: "git-network-outline", label: "Port forward" },
-  { id: "skills", icon: "extension-puzzle-outline", label: "Skill" },
-  { id: "goal", icon: "flag-outline", label: "Goal" },
+  { icon: "attach-outline", id: "files", label: "File" },
+  { icon: "brush-outline", id: "drawing", label: "Drawing" },
+  { icon: "extension-puzzle-outline", id: "skills", label: "Skill" },
+  { icon: "flag-outline", id: "goal", label: "Goal" },
 ];
 
 export function ComposerAccessoryTray({
   fileEnabled,
-  terminalEnabled,
-  portForwardEnabled,
+  goalEnabled,
   onSelect,
 }: {
   fileEnabled: boolean;
-  terminalEnabled: boolean;
-  portForwardEnabled: boolean;
-  onSelect(action: ComposerAccessoryAction): void;
+  goalEnabled: boolean;
+  onSelect: (action: ComposerAccessoryAction) => void;
 }) {
   const enabled = (action: ComposerAccessoryAction) =>
-    action === "files" || action === "drawing"
-      ? fileEnabled
-      : action === "terminal"
-        ? terminalEnabled
-        : action !== "ports" || portForwardEnabled;
+    action === "files" || action === "drawing" ? fileEnabled : action !== "goal" || goalEnabled;
   return (
     <View
-      testID="composer-accessory-tray"
       accessibilityLabel="Composer actions"
       style={styles.composerAccessoryTray}
+      testID="composer-accessory-tray"
     >
       {COMPOSER_ACCESSORY_ACTIONS.map((action) => {
         const actionEnabled = enabled(action.id);
         return (
           <Pressable
-            key={action.id}
-            accessibilityRole="button"
             accessibilityLabel={action.label}
+            accessibilityRole="button"
             accessibilityState={{ disabled: !actionEnabled }}
             disabled={!actionEnabled}
-            onPress={() => onSelect(action.id)}
+            key={action.id}
+            onPress={() => {
+              onSelect(action.id);
+            }}
             style={({ pressed }) => [
               styles.composerAccessoryAction,
               pressed && styles.pressed,
               !actionEnabled && styles.disabled,
             ]}
           >
-            <Ionicons name={action.icon} size={iconSize.action} color={colors.text} />
+            <Ionicons color={colors.text} name={action.icon} size={iconSize.action} />
             <Text numberOfLines={1} style={styles.composerAccessoryLabel}>
               {action.label}
             </Text>
@@ -72,24 +66,18 @@ export function ComposerAccessoryTray({
 import type { Dispatch, SetStateAction } from "react";
 import { Platform } from "react-native";
 import { useEvent } from "../../react/useEvent";
-import { type ActionMenuItem } from "../../ui/ActionMenu";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
 type ComposerAccessoryCapabilities = {
   fileAttachmentEnabled: boolean;
-  newChat: boolean;
-  draftConnectionId: string | null;
-  draftThreadId: string | null;
-  portForwardingConnectionId: string | null;
+  goalEnabled: boolean;
+  openComposerFeature: (action: ComposerAccessoryAction) => void;
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
-  openComposerFeature(action: ComposerAccessoryAction): void;
 };
 export function useComposerAccessoryActions({
   fileAttachmentEnabled,
-  newChat,
-  draftConnectionId,
-  draftThreadId,
-  portForwardingConnectionId,
-  setComposerTrayVisible,
+  goalEnabled,
   openComposerFeature,
+  setComposerTrayVisible,
 }: ComposerAccessoryCapabilities) {
   const openAccessoryAction = useEvent((action: ComposerAccessoryAction) => {
     setComposerTrayVisible(false);
@@ -99,44 +87,21 @@ export function useComposerAccessoryActions({
   const useAnchoredComposerMenu = Platform.OS === "android";
 
   const anchoredComposerActions: ActionMenuItem[] = [
-    { id: "files", label: "Attach file", icon: "attach-outline", disabled: !fileAttachmentEnabled },
-    { id: "drawing", label: "Drawing", icon: "brush-outline", disabled: !fileAttachmentEnabled },
-    {
-      id: "terminal",
-      label: "Terminal",
-      icon: "terminal-outline",
-      disabled:
-        newChat ||
-        Platform.OS !== "android" ||
-        draftConnectionId === null ||
-        draftThreadId === null,
-    },
-    {
-      id: "ports",
-      label: "Port forward",
-      icon: "git-network-outline",
-      disabled: portForwardingConnectionId === null,
-    },
-    { id: "skills", label: "Skills", icon: "sparkles-outline" },
-    { id: "goal", label: "Goal", icon: "flag-outline" },
+    { disabled: !fileAttachmentEnabled, icon: "attach-outline", id: "files", label: "Attach file" },
+    { disabled: !fileAttachmentEnabled, icon: "brush-outline", id: "drawing", label: "Drawing" },
+    { icon: "sparkles-outline", id: "skills", label: "Skills" },
+    { disabled: !goalEnabled, icon: "flag-outline", id: "goal", label: "Goal" },
   ];
 
   const handleAnchoredComposerAction = useEvent((id: string) => {
-    if (
-      id === "files" ||
-      id === "drawing" ||
-      id === "terminal" ||
-      id === "ports" ||
-      id === "skills" ||
-      id === "goal"
-    ) {
+    if (id === "files" || id === "drawing" || id === "skills" || id === "goal") {
       openAccessoryAction(id);
     }
   });
   return {
-    useAnchoredComposerMenu,
     anchoredComposerActions,
     handleAnchoredComposerAction,
     openAccessoryAction,
+    useAnchoredComposerMenu,
   };
 }

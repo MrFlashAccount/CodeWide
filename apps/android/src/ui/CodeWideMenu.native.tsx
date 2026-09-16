@@ -23,32 +23,32 @@ import { colors, radii, spacing, typeScale, iconSize, typeWeight } from "../them
 import type { ActionMenuIconName } from "./ActionMenu.types";
 
 export type CodeWideMenuAction = {
+  description?: string;
+  destructive?: boolean;
+  disabled?: boolean;
+  icon?: ActionMenuIconName | ImageSourcePropType;
   id: string;
   label: string;
-  description?: string;
-  icon?: ActionMenuIconName | ImageSourcePropType;
   section?: string;
-  disabled?: boolean;
-  destructive?: boolean;
   selected?: boolean;
 };
 
 function MenuIcon({
-  icon,
   color,
+  icon,
   size,
 }: {
-  icon: ActionMenuIconName | ImageSourcePropType;
   color: string;
+  icon: ActionMenuIconName | ImageSourcePropType;
   size: number;
 }) {
   if (typeof icon !== "string") {
-    return <Icon source={icon} size={size} tint={color} />;
+    return <Icon size={size} source={icon} tint={color} />;
   }
 
   return (
     <RNHostView matchContents>
-      <View pointerEvents="none" style={{ width: size, height: size }}>
+      <View pointerEvents="none" style={{ height: size, width: size }}>
         <Ionicons color={color} name={icon} size={size} />
       </View>
     </RNHostView>
@@ -60,9 +60,9 @@ type CodeWideMenuProps = {
   children: ReactElement;
   expanded: boolean;
   menuWidth?: number;
+  onDismiss: () => void;
+  onSelect: (id: string) => void;
   style?: StyleProp<ViewStyle>;
-  onDismiss(): void;
-  onSelect(id: string): void;
 };
 
 /**
@@ -77,9 +77,9 @@ export function CodeWideMenu({
   children,
   expanded,
   menuWidth = 264,
-  style,
   onDismiss,
   onSelect,
+  style,
 }: CodeWideMenuProps) {
   return (
     <Host colorScheme="dark" matchContents pointerEvents="box-none" style={style}>
@@ -118,30 +118,32 @@ export function CodeWideMenu({
                 )}
                 <DropdownMenuItem
                   elementColors={{
-                    textColor: action.destructive ? colors.red : colors.text,
-                    disabledTextColor: colors.textDim,
-                    leadingIconColor: action.destructive ? colors.red : colors.textMuted,
                     disabledLeadingIconColor: colors.textDim,
-                    trailingIconColor: colors.textMuted,
+                    disabledTextColor: colors.textDim,
                     disabledTrailingIconColor: colors.textDim,
+                    leadingIconColor: action.destructive === true ? colors.red : colors.textMuted,
+                    textColor: action.destructive === true ? colors.red : colors.text,
+                    trailingIconColor: colors.textMuted,
                   }}
                   enabled={action.disabled !== true}
                   modifiers={[width(menuWidth), height(action.description === undefined ? 50 : 64)]}
-                  onClick={() => onSelect(action.id)}
+                  onClick={() => {
+                    onSelect(action.id);
+                  }}
                 >
                   {action.icon !== undefined && (
                     <DropdownMenuItem.LeadingIcon>
                       <MenuIcon
+                        color={action.destructive === true ? colors.red : colors.textMuted}
                         icon={action.icon}
                         size={iconSize.action}
-                        color={action.destructive ? colors.red : colors.textMuted}
                       />
                     </DropdownMenuItem.LeadingIcon>
                   )}
                   <DropdownMenuItem.Text>
                     <Column>
                       <Text
-                        color={action.destructive ? colors.red : colors.text}
+                        color={action.destructive === true ? colors.red : colors.text}
                         maxLines={1}
                         style={styles.itemTitle}
                       >
@@ -162,7 +164,7 @@ export function CodeWideMenu({
                     <DropdownMenuItem.TrailingIcon>
                       <RNHostView matchContents>
                         <View pointerEvents="none" style={styles.selectionSlot}>
-                          {action.selected === true && (
+                          {action.selected && (
                             <Ionicons color={colors.text} name="checkmark" size={iconSize.action} />
                           )}
                         </View>
@@ -180,9 +182,15 @@ export function CodeWideMenu({
 }
 
 const styles = StyleSheet.create({
-  selectionSlot: {
-    width: iconSize.action,
-    height: iconSize.action,
+  itemDescription: {
+    fontFamily: "RobotoFlex-Regular",
+    ...typeScale.label,
+    fontWeight: typeWeight.regular,
+  },
+  itemTitle: {
+    fontFamily: "RobotoFlex-Medium",
+    ...typeScale.body,
+    fontWeight: typeWeight.medium,
   },
   sectionText: {
     fontFamily: "RobotoFlex-Medium",
@@ -190,14 +198,8 @@ const styles = StyleSheet.create({
     fontWeight: typeScale.label.fontWeight,
     lineHeight: typeScale.label.lineHeight,
   },
-  itemTitle: {
-    fontFamily: "RobotoFlex-Medium",
-    ...typeScale.body,
-    fontWeight: typeWeight.medium,
-  },
-  itemDescription: {
-    fontFamily: "RobotoFlex-Regular",
-    ...typeScale.label,
-    fontWeight: typeWeight.regular,
+  selectionSlot: {
+    height: iconSize.action,
+    width: iconSize.action,
   },
 });

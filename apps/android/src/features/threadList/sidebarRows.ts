@@ -14,11 +14,25 @@ export function sidebarRows<Thread extends { pinned: boolean }>(
   const rows: SidebarRow<Thread>[] = [];
   if (scope === "global") {
     rows.push({ kind: "header", title: "Pinned projects" });
-    for (const project of projects) rows.push({ kind: "project", project });
+    for (const project of projects) {
+      rows.push({ kind: "project", project });
+    }
   }
-  if (threads.some((thread) => thread.pinned)) rows.push({ kind: "header", title: "Pinned chats" });
-  for (const thread of threads) if (thread.pinned) rows.push({ kind: "thread", thread });
-  if (scope !== "archive") rows.push({ kind: "header", title: "Recent" });
-  for (const thread of threads) if (!thread.pinned) rows.push({ kind: "thread", thread });
+  if (threads.some((thread) => thread.pinned)) {
+    rows.push({ kind: "header", title: "Pinned chats" });
+  }
+  for (const thread of threads) {
+    if (thread.pinned) {
+      rows.push({ kind: "thread", thread });
+    }
+  }
+  if (scope !== "archive") {
+    rows.push({ kind: "header", title: "Recent" });
+  }
+  for (const thread of threads) {
+    if (!thread.pinned) {
+      rows.push({ kind: "thread", thread });
+    }
+  }
   return rows;
 }

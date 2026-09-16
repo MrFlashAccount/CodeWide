@@ -1,10 +1,10 @@
 /** Attachment display data; platform adapters own all icon rendering. */
 export interface AttachmentListRowProps {
-  title: string;
-  description: string;
   accessibilityLabel: string;
-  position: "only" | "first" | "middle" | "last";
+  description: string;
   leading: "image" | "audio" | "file";
+  onPress: () => void;
+  position: "only" | "first" | "middle" | "last";
+  title: string;
   trailing?: "open" | "download" | undefined;
-  onPress(): void;
 }

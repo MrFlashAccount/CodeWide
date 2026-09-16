@@ -89,7 +89,10 @@ export function SubagentConversation({
   // Read-only children have never admitted review uploads into a draft.
   const { openCodeDocument, presentTurnChanges } = useChangesFeature({
     appVoiceInputRuntime,
-    attachCodeReview: async () => false,
+    attachCodeReview: async () => {
+      await Promise.resolve();
+      return false;
+    },
     changesPreferences,
     currentChangePresentation,
     currentThreadResources,
@@ -101,7 +104,10 @@ export function SubagentConversation({
     remoteThread: thread,
     setChangesPreferences,
   });
-  useReviewFeature(scope, null, thread, appVoiceInputRuntime, null, undefined, async () => null);
+  useReviewFeature(scope, null, thread, appVoiceInputRuntime, null, undefined, async () => {
+    await Promise.resolve();
+    return null;
+  });
   const openTimelineDocument = useEvent(
     (request: Parameters<typeof routeNavigation.openDocument>[0]) => {
       if (request.kind === "text") {
@@ -136,17 +142,17 @@ export function SubagentConversation({
         <ReadOnlyComposerContext thread={thread}>
           <ComposerTerminalContextChip
             connectionId={connectionId}
-            threadId={thread.id}
             onOpen={openTerminal}
+            threadId={thread.id}
           />
           {details === null ? null : (
             <ComposerSubagentContextChip
-              database={summaries}
               connectionId={connectionId}
-              parentThreadId={thread.id}
+              database={summaries}
               onOpen={(children) => {
                 openChildren(children);
               }}
+              parentThreadId={thread.id}
             />
           )}
         </ReadOnlyComposerContext>

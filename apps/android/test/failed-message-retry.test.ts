@@ -147,9 +147,7 @@ describe("failed message retry", () => {
     const turnEnd = turnOwner.length;
     const turnSource = turnOwner.slice(turnStart, turnEnd);
     const userStart = turnSource.indexOf("{userBlocks.length > 0 && (");
-    const agentStart = turnSource.indexOf(
-      '<RecoverableRenderBoundary scope="bubble" label="Agent message"',
-    );
+    const agentStart = turnSource.indexOf('label="Agent message"');
     const userSource = turnSource.slice(userStart, agentStart);
 
     expect(turnStart).toBeGreaterThanOrEqual(0);
@@ -160,7 +158,7 @@ describe("failed message retry", () => {
     expect(ownerOptimisticTurn).toContain('testID="optimistic-turn-footer"');
     expect(ownerOptimisticTurn).toContain("style={[styles.turnFooter, styles.turnFooterEnd]}");
     expect(ownerTurnFooter).toContain(
-      "<MessageFooterRow time={completedAt === null ? null : formatClockTime(completedAt)}",
+      "time={completedAt === null ? null : formatClockTime(completedAt)}",
     );
   });
 

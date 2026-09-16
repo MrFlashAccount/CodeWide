@@ -30,14 +30,14 @@ export function DrawingWorkspace({
   editing,
   initialSnapshot,
   mode,
-  onCommit,
   onClose,
+  onCommit,
 }: {
   editing: boolean;
   initialSnapshot: Record<string, unknown> | null;
   mode: "drawing" | "image-annotation";
-  onCommit(value: DrawingCommit): Promise<boolean>;
-  onClose(): void;
+  onClose: () => void;
+  onCommit: (value: DrawingCommit) => Promise<boolean>;
 }) {
   "use no memo";
   // Quickdraw is an imperative WebView bridge; React Compiler cannot lower
@@ -48,9 +48,13 @@ export function DrawingWorkspace({
   const [error, setError] = useState<string | null>(null);
 
   const commit = useEvent(async (exportedPng?: string): Promise<void> => {
-    if (!ready || saving) return;
+    if (!ready || saving) {
+      return;
+    }
     const board = boardRef.current;
-    if (board === null) return;
+    if (board === null) {
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -59,38 +63,48 @@ export function DrawingWorkspace({
         exportedPng === undefined
           ? board.exportPng(
               mode === "image-annotation"
-                ? { background: false, scale: 1, margin: 0 }
-                : { scale: 2, margin: 24 },
+                ? { background: false, margin: 0, scale: 1 }
+                : { margin: 24, scale: 2 },
             )
           : Promise.resolve(exportedPng),
       ]);
-      if (pngDataUrl === null) throw new Error("Add something to the drawing before attaching it");
+      if (pngDataUrl === null) {
+        throw new Error("Add something to the drawing before attaching it");
+      }
       // The library interface has no index signature; this structural view keeps the same object.
       const storedSnapshot: { document: typeof snapshot.document } = snapshot;
-      if (await onCommit({ pngDataUrl, snapshot: storedSnapshot })) onClose();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save the drawing");
+      if (await onCommit({ pngDataUrl, snapshot: storedSnapshot })) {
+        onClose();
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not save the drawing");
     } finally {
       setSaving(false);
     }
   });
   const markReady = useEvent(() => {
-    if (mode === "image-annotation") boardRef.current?.setTool("draw");
+    if (mode === "image-annotation") {
+      boardRef.current?.setTool("draw");
+    }
     setReady(true);
   });
-  const reportError = useEvent((message: string) => setError(message));
+  const reportError = useEvent((message: string) => {
+    setError(message);
+  });
   // Always use the host-owned export settings. QuickDraw's toolbar export
   // otherwise adds its own background/margin and changes annotated pixels.
   const acceptToolbarSave = useEvent((_dataUrl: string) => {
-    void commit();
+    commit().catch((error: unknown) => {
+      setError(error instanceof Error ? error.message : "Could not save the drawing");
+    });
   });
 
   return (
-    <View testID="drawing-workspace" style={styles.root}>
+    <View style={styles.root} testID="drawing-workspace">
       <View style={styles.header}>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Close drawing"
+          accessibilityRole="button"
           disabled={saving}
           onPress={onClose}
           style={({ pressed }) => [
@@ -99,7 +113,7 @@ export function DrawingWorkspace({
             saving && styles.disabled,
           ]}
         >
-          <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
+          <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
         </Pressable>
         <View style={styles.titleBlock}>
           <Text numberOfLines={1} style={styles.title}>
@@ -114,8 +128,8 @@ export function DrawingWorkspace({
           </Text>
         </View>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel={editing ? "Save drawing" : "Attach drawing"}
+          accessibilityRole="button"
           accessibilityState={{ disabled: !ready || saving }}
           disabled={!ready || saving}
           hitSlop={controlHitSlop.compact}
@@ -127,7 +141,7 @@ export function DrawingWorkspace({
           ]}
         >
           {saving ? (
-            <ActivityIndicator size="small" color={colors.onPrimary} />
+            <ActivityIndicator color={colors.onPrimary} size="small" />
           ) : (
             <Text style={styles.saveText}>{editing ? "Save" : "Attach"}</Text>
           )}
@@ -135,34 +149,29 @@ export function DrawingWorkspace({
       </View>
       {error !== null && (
         <View style={styles.errorBar}>
-          <Ionicons name="alert-circle-outline" size={iconSize.inline} color={colors.red} />
+          <Ionicons color={colors.red} name="alert-circle-outline" size={iconSize.inline} />
           <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
       <View style={styles.board}>
         {!ready && (
           <ActivityIndicator
-            testID="drawing-loading"
-            size="large"
             color={colors.accent}
+            size="large"
             style={styles.loader}
+            testID="drawing-loading"
           />
         )}
         <Quickdraw
-          ref={boardRef}
-          theme="dark"
           grid={mode === "image-annotation" ? "none" : "dots"}
-          watermark={false}
-          onReady={markReady}
           onError={reportError}
+          onReady={markReady}
           onSave={acceptToolbarSave}
+          ref={boardRef}
           style={styles.quickdraw}
-          // WHY: persisted Quickdraw snapshots and generated image snapshots retain the library-owned
-          // document format. The durable store intentionally treats that third-party payload as opaque;
-          // rebuilding its full schema here would duplicate the bridge authority and change restoration.
-          {...(initialSnapshot === null
-            ? {}
-            : { snapshot: initialSnapshot as unknown as QuickdrawSnapshot })}
+          theme="dark"
+          watermark={false}
+          {...(initialSnapshot === null ? {} : { snapshot: quickdrawSnapshot(initialSnapshot) })}
           webviewProps={{ overScrollMode: "never", setSupportMultipleWindows: false }}
         />
       </View>
@@ -170,81 +179,88 @@ export function DrawingWorkspace({
   );
 }
 
+function quickdrawSnapshot(value: unknown): QuickdrawSnapshot {
+  // WHY: Quickdraw owns this opaque persisted format and provides no runtime decoder; the app only
+  // stores and restores the unchanged payload through the same library version.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return value as QuickdrawSnapshot;
+}
+
 const styles = StyleSheet.create({
-  root: {
+  board: {
     flex: 1,
-    backgroundColor: colors.background,
+    position: "relative",
+  },
+  disabled: { opacity: 0.45 },
+  errorBar: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceRaised,
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  errorText: {
+    color: colors.red,
+    flex: 1,
+    ...typeScale.label,
   },
   header: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    gap: spacing.sm,
     minHeight: layoutSize.header,
     paddingHorizontal: spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    backgroundColor: colors.surface,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
   },
   iconButton: {
-    width: touchTarget,
-    height: touchTarget,
-    borderRadius: radii.large,
     alignItems: "center",
+    borderRadius: radii.large,
+    height: touchTarget,
     justifyContent: "center",
+    width: touchTarget,
   },
-  titleBlock: {
+  loader: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 1,
+  },
+  pressed: { backgroundColor: colors.surfaceHover },
+  quickdraw: { flex: 1 },
+  root: {
+    backgroundColor: colors.background,
     flex: 1,
-    minWidth: 0,
   },
-  title: {
-    color: colors.text,
-    ...typeScale.title,
+  saveButton: {
+    alignItems: "center",
+    backgroundColor: colors.accent,
+    borderRadius: radii.small,
+    height: controlSize.compact,
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm,
+  },
+  savePressed: { opacity: 0.82 },
+  saveText: {
+    color: colors.onPrimary,
+    ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
   subtitle: {
     color: colors.textMuted,
     ...typeScale.label,
   },
-  saveButton: {
-    height: controlSize.compact,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radii.small,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.accent,
-  },
-  saveText: {
-    color: colors.onPrimary,
-    ...typeScale.label,
+  title: {
+    color: colors.text,
+    ...typeScale.title,
     fontWeight: typeWeight.semibold,
   },
-  errorBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.surfaceRaised,
-  },
-  errorText: {
+  titleBlock: {
     flex: 1,
-    color: colors.red,
-    ...typeScale.label,
+    minWidth: 0,
   },
-  board: {
-    flex: 1,
-    position: "relative",
-  },
-  quickdraw: { flex: 1 },
-  loader: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    zIndex: 1,
-  },
-  pressed: { backgroundColor: colors.surfaceHover },
-  savePressed: { opacity: 0.82 },
-  disabled: { opacity: 0.45 },
 });

@@ -1,8 +1,8 @@
 import { fromByteArray } from "base64-js";
 
 export type QuickdrawImageSource = {
-  uri: string;
   headers?: Record<string, string>;
+  uri: string;
 };
 
 export type QuickdrawImageSnapshot = {
@@ -19,8 +19,9 @@ export function createQuickdrawImageSnapshot(
   width: number,
   height: number,
 ): QuickdrawImageSnapshot {
-  if (!dataUrl.startsWith("data:image/"))
+  if (!dataUrl.startsWith("data:image/")) {
     throw new Error("Image annotation requires an embedded image");
+  }
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     throw new Error("Image annotation requires valid image dimensions");
   }
@@ -28,26 +29,26 @@ export function createQuickdrawImageSnapshot(
     document: {
       store: {
         [BACKGROUND_ASSET_ID]: {
-          id: BACKGROUND_ASSET_ID,
-          typeName: "asset",
-          src: dataUrl,
-          w: width,
           h: height,
+          id: BACKGROUND_ASSET_ID,
+          src: dataUrl,
+          typeName: "asset",
+          w: width,
         },
         [BACKGROUND_SHAPE_ID]: {
           id: BACKGROUND_SHAPE_ID,
-          typeName: "shape",
-          type: "image",
-          x: 0,
-          y: 0,
-          rot: 0,
-          z: -1,
           props: {
             assetId: BACKGROUND_ASSET_ID,
+            h: height,
             locked: true,
             w: width,
-            h: height,
           },
+          rot: 0,
+          type: "image",
+          typeName: "shape",
+          x: 0,
+          y: 0,
+          z: -1,
         },
       },
     },
@@ -59,29 +60,35 @@ export function imageDataUrl(bytes: Uint8Array, contentType: string | null, uri:
 }
 
 export function annotatedImageName(label: string, now = new Date()): string {
-  const stem =
-    label
-      .replace(/\.[a-zA-Z0-9]{1,10}$/u, "")
-      .replace(/[^a-zA-Z0-9._-]+/gu, "-")
-      .replace(/^-+|-+$/gu, "")
-      .slice(0, 80) || "image";
-  return `annotated-${stem}-${now.toISOString().replace(/[:.]/gu, "-")}.png`;
+  const sanitized = label
+    .replace(/\.[a-zA-Z0-9]{1,10}$/u, "")
+    .replaceAll(/[^a-zA-Z0-9._-]+/gu, "-")
+    .replaceAll(/^-+|-+$/gu, "")
+    .slice(0, 80);
+  const stem = sanitized === "" ? "image" : sanitized;
+  return `annotated-${stem}-${now.toISOString().replaceAll(/[:.]/gu, "-")}.png`;
 }
 
 function detectImageMimeType(bytes: Uint8Array, contentType: string | null, uri: string): string {
-  if (bytes.length >= 8 && bytes[0] === 0x89 && ascii(bytes, 1, 3) === "PNG") return "image/png";
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+  if (bytes.length >= 8 && bytes[0] === 0x89 && ascii(bytes, 1, 3) === "PNG") {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return "image/jpeg";
-  if (bytes.length >= 6 && (ascii(bytes, 0, 6) === "GIF87a" || ascii(bytes, 0, 6) === "GIF89a"))
+  }
+  if (bytes.length >= 6 && (ascii(bytes, 0, 6) === "GIF87a" || ascii(bytes, 0, 6) === "GIF89a")) {
     return "image/gif";
-  if (bytes.length >= 12 && ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP")
+  }
+  if (bytes.length >= 12 && ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP") {
     return "image/webp";
+  }
   if (
     bytes.length >= 12 &&
     ascii(bytes, 4, 4) === "ftyp" &&
     ["avif", "avis"].includes(ascii(bytes, 8, 4))
-  )
+  ) {
     return "image/avif";
+  }
 
   const normalizedContentType = contentType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   if (
@@ -92,10 +99,18 @@ function detectImageMimeType(bytes: Uint8Array, contentType: string | null, uri:
     return normalizedContentType;
   }
   const extension = /\.([a-zA-Z0-9]+)(?:[?#]|$)/u.exec(uri)?.[1]?.toLowerCase();
-  if (extension === "png") return "image/png";
-  if (extension === "gif") return "image/gif";
-  if (extension === "webp") return "image/webp";
-  if (extension === "avif") return "image/avif";
+  if (extension === "png") {
+    return "image/png";
+  }
+  if (extension === "gif") {
+    return "image/gif";
+  }
+  if (extension === "webp") {
+    return "image/webp";
+  }
+  if (extension === "avif") {
+    return "image/avif";
+  }
   return "image/jpeg";
 }
 

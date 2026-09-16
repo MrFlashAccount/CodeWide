@@ -14,98 +14,101 @@ import { styles } from "./ThreadActions.styles";
 export function ThreadHeaderMenu(props: ThreadHeaderProps) {
   const {
     archived,
-    pinned,
-    onOpenMenu,
-    onRenameRequest,
     onArchive,
-    onUnarchive,
     onCompact,
     onFork,
+    onOpenMenu,
+    onRenameRequest,
     onTogglePin,
+    onUnarchive,
+    pinned,
   } = props;
   const [webMenuVisible, setWebMenuVisible] = useState(false);
-  const { actions, run, handleAction } = useThreadHeaderActions(props);
+  const { actions, handleAction, run } = useThreadHeaderActions(props);
   if (Platform.OS === "web") {
     return (
       <>
         <Pressable
           accessibilityLabel="Thread menu"
-          onPress={() => setWebMenuVisible(true)}
+          onPress={() => {
+            setWebMenuVisible(true);
+          }}
           style={styles.headerIcon}
         >
-          <Ionicons name="ellipsis-vertical" size={iconSize.action} color={colors.text} />
+          <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
         </Pressable>
         {webMenuVisible && (
           <AppSheet
+            contentProps={{ enableDynamicSizing: true, index: 0 }}
             isOpen
             onOpenChange={setWebMenuVisible}
-            contentProps={{ index: 0, enableDynamicSizing: true }}
           >
             <Text style={styles.sheetTitle}>Thread</Text>
             <MenuAction
               icon="copy-outline"
-              title="Copy session ID"
-              subtitle=""
               onPress={() => {
                 setWebMenuVisible(false);
                 handleAction("copy-session-id");
               }}
+              subtitle=""
+              title="Copy session ID"
             />
             <MenuAction
               icon="pencil-outline"
-              title="Rename"
-              subtitle=""
               onPress={() => {
                 setWebMenuVisible(false);
                 onRenameRequest();
               }}
+              subtitle=""
+              title="Rename"
             />
             <MenuAction
               icon="push-pin"
-              title={pinned ? "Unpin thread" : "Pin thread"}
-              subtitle=""
               onPress={() => {
                 setWebMenuVisible(false);
                 run(onTogglePin, pinned ? "Unpin" : "Pin");
               }}
+              subtitle=""
+              title={pinned ? "Unpin thread" : "Pin thread"}
             />
             <MenuAction
               icon="git-branch-outline"
-              title="Fork thread"
-              subtitle=""
               onPress={() => {
                 setWebMenuVisible(false);
-                if (onFork !== undefined)
-                  run(() => onFork({ boundary: { kind: "all" }, ephemeral: false }), "Fork");
+                if (onFork !== undefined) {
+                  run(async () => onFork({ boundary: { kind: "all" }, ephemeral: false }), "Fork");
+                }
               }}
+              subtitle=""
+              title="Fork thread"
             />
             <MenuAction
               icon="contract-outline"
-              title="Compact context"
-              subtitle=""
               onPress={() => {
                 setWebMenuVisible(false);
                 run(onCompact, "Compact");
               }}
+              subtitle=""
+              title="Compact context"
             />
             <MenuAction
               icon={archived ? "archive" : "archive-outline"}
-              title={archived ? "Unarchive thread" : "Archive thread"}
-              subtitle=""
               onPress={() => {
                 setWebMenuVisible(false);
                 run(archived ? onUnarchive : onArchive, archived ? "Unarchive" : "Archive");
               }}
+              subtitle=""
+              title={archived ? "Unarchive thread" : "Archive thread"}
             />
             <MenuAction
               danger
               icon="trash-outline"
-              title="Delete thread"
-              subtitle=""
               onPress={() => {
                 setWebMenuVisible(false);
                 handleAction("delete");
               }}
+              subtitle=""
+              title="Delete thread"
             />
           </AppSheet>
         )}
@@ -120,14 +123,16 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
         ? {}
         : {
             onOpenChange: (open: boolean) => {
-              if (open) onOpenMenu();
+              if (open) {
+                onOpenMenu();
+              }
             },
           })}
       onSelect={handleAction}
       style={styles.headerMenuAnchor}
     >
-      <Pressable style={styles.headerIcon} accessibilityLabel="Thread menu">
-        <Ionicons name="ellipsis-vertical" size={iconSize.action} color={colors.text} />
+      <Pressable accessibilityLabel="Thread menu" style={styles.headerIcon}>
+        <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
       </Pressable>
     </ActionMenu>
   );

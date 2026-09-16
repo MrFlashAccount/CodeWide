@@ -1,9 +1,11 @@
-import { Button } from "heroui-native/button";
-import { SearchField } from "heroui-native/search-field";
-import { ActivityIndicator, View } from "react-native";
-import { colors } from "../../theme";
+import { AppButton as Button } from "../../presentation/controls/AppButton";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { useState } from "react";
+import { ActivityIndicator, Pressable, View } from "react-native";
+import { useEvent } from "../../react/useEvent";
+import { colors, controlHitSlop, iconSize } from "../../theme";
 import { AppSheet } from "../../ui/AppSheet";
-import { AppText as Text } from "../../ui/Typography";
+import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import type { ProjectPickerProps } from "./projectPickerContract";
 import { styles } from "./ProjectPickerSheet.styles";
 
@@ -12,47 +14,87 @@ import { ProjectPickerHeader } from "./ProjectPickerHeader";
 import { useProjectPickerSession } from "./projectPickerSession";
 
 export function ProjectPickerSheet(props: ProjectPickerProps) {
+  return <ProjectPickerSessionSheet key={props.visible ? "open" : "closed"} {...props} />;
+}
+
+function ProjectPickerSessionSheet(props: ProjectPickerProps) {
+  const [searchFocused, setSearchFocused] = useState(false);
   const state = useProjectPickerSession(props);
-  const { visible, busy, error, onClose, browseOnly = false } = props;
+  const { browseOnly = false, busy, error, onClose, visible } = props;
   const {
-    mode,
-    query,
-    setQuery,
-    directoryError,
-    adding,
-    projectActionError,
-    directory,
-    readError,
-    directoryLoading,
     addCurrentDirectory,
+    adding,
+    directory,
+    directoryError,
+    directoryLoading,
+    mode,
+    projectActionError,
+    query,
+    readError,
+    setQuery,
   } = state;
+  const changeOpen = useEvent((open: boolean) => {
+    if (!open) {
+      onClose();
+    }
+  });
+  const clearQuery = useEvent(() => {
+    setQuery("");
+  });
+  const focusSearch = useEvent(() => {
+    setSearchFocused(true);
+  });
+  const blurSearch = useEvent(() => {
+    setSearchFocused(false);
+  });
 
   return (
     <AppSheet
-      isOpen={visible}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
       contentProps={{
+        contentContainerClassName: "h-full",
         dismissLabel: "Close project picker",
-        performanceSurface: mode === "projects" ? "projects" : "folders",
-        index: 0,
-        snapPoints: ["62%", "92%"],
         enableDynamicSizing: false,
         enableOverDrag: false,
-        contentContainerClassName: "h-full",
+        index: 0,
+        performanceSurface: mode === "projects" ? "projects" : "folders",
+        snapPoints: ["62%", "92%"],
       }}
+      isOpen={visible}
+      onOpenChange={changeOpen}
     >
       <ProjectPickerHeader props={props} state={state} />
-      <SearchField value={query} onChange={setQuery} style={styles.searchField}>
-        <SearchField.Group>
-          <SearchField.SearchIcon />
-          <SearchField.Input
-            placeholder={mode === "projects" ? "Search projects" : "Filter folders"}
-          />
-          <SearchField.ClearButton />
-        </SearchField.Group>
-      </SearchField>
+      <View style={[styles.searchField, searchFocused ? styles.searchFieldFocused : undefined]}>
+        <Ionicons
+          color={colors.textMuted}
+          name="search"
+          pointerEvents="none"
+          size={iconSize.inline}
+          style={styles.searchIcon}
+        />
+        <TextInput
+          accessibilityLabel="Search"
+          accessibilityRole="search"
+          onBlur={blurSearch}
+          onChangeText={setQuery}
+          onFocus={focusSearch}
+          placeholder={mode === "projects" ? "Search projects" : "Filter folders"}
+          placeholderTextColor={colors.textDim}
+          style={styles.searchInput}
+          value={query}
+          voiceInput={false}
+        />
+        {query === "" ? null : (
+          <Pressable
+            accessibilityLabel="Clear search"
+            accessibilityRole="button"
+            hitSlop={controlHitSlop.compact}
+            onPress={clearQuery}
+            style={styles.searchClear}
+          >
+            <Ionicons color={colors.textMuted} name="close" size={14} />
+          </Pressable>
+        )}
+      </View>
 
       <ProjectPickerContent props={props} state={state} />
 
@@ -64,7 +106,6 @@ export function ProjectPickerSheet(props: ProjectPickerProps) {
             </Text>
           ) : null}
           <Button
-            variant="primary"
             isDisabled={
               busy ||
               adding ||
@@ -72,14 +113,15 @@ export function ProjectPickerSheet(props: ProjectPickerProps) {
               readError !== null ||
               directory.status !== "ready"
             }
-            onPress={() => void addCurrentDirectory()}
+            onPress={addCurrentDirectory}
+            variant="primary"
           >
             {adding ? "Adding project…" : browseOnly ? "Add this folder" : "Use this folder"}
           </Button>
         </View>
       ) : (
         <View style={styles.footerStatus}>
-          {busy ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+          {busy ? <ActivityIndicator color={colors.accent} size="small" /> : null}
           {busy ? <Text style={styles.stateText}>Switching project…</Text> : null}
           {projectActionError !== null ? (
             <Text style={styles.errorText}>{projectActionError}</Text>

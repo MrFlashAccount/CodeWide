@@ -6,24 +6,26 @@ import type { VoiceBindingCapabilities } from "./voice/voiceBindingCapabilities"
 export function useVoiceBinding({
   captureDraftMutations,
   captureSend,
-  voiceController,
   composerScope,
   draft,
   draftSelectionRef,
-  remoteThread,
   onStartVoiceTranscription,
+  remoteThread,
+  voiceController,
 }: VoiceBindingCapabilities) {
   const bindVoiceController = () => {
     const send = captureSend();
     const { updateDraft } = captureDraftMutations();
-    if (voiceController === null) return;
+    if (voiceController === null) {
+      return;
+    }
     voiceController.bind({
       scope: composerScope,
-      source: () => draft,
       selection: () => draftSelectionRef.current,
+      send,
+      source: () => draft,
       thread: remoteThread,
       updateDraft,
-      send,
       ...(onStartVoiceTranscription === undefined
         ? {}
         : { startRemote: onStartVoiceTranscription }),
@@ -35,7 +37,9 @@ export function useVoiceBinding({
   const finishVoice = useEvent(
     async (sendAfter: boolean, preference: ComposerSendPreference = "start") => {
       const send = captureSend();
-      await voiceController?.finish(composerScope, sendAfter, (text) => send(text, preference));
+      await voiceController?.finish(composerScope, sendAfter, (text) => {
+        send(text, preference);
+      });
     },
   );
 
@@ -45,7 +49,9 @@ export function useVoiceBinding({
   });
 
   const toggleVoice = useEvent(async () => {
-    if (!microphoneAccess.allowCapture()) return;
+    if (!microphoneAccess.allowCapture()) {
+      return;
+    }
     bindVoiceController();
     await voiceController?.toggle(composerScope);
   });
@@ -53,11 +59,11 @@ export function useVoiceBinding({
   const discardVoice = useEvent(async () => {
     await voiceController?.discard(composerScope);
   });
-  return { microphoneAccess, finishVoice, retryVoice, toggleVoice, discardVoice };
+  return { discardVoice, finishVoice, microphoneAccess, retryVoice, toggleVoice };
 }
 
 import { useRef } from "react";
-import { View } from "react-native";
+import type { View } from "react-native";
 import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
 import { useScopedVoiceInputResource } from "../../ui/VoiceInputRuntime";
 
@@ -84,12 +90,12 @@ export function useComposerVoiceState(
 
   const microphoneButtonRef = useRef<View | null>(null);
   return {
-    voiceResource,
-    voicePhase,
+    microphoneButtonRef,
+    pendingVoiceSelection,
     voiceBackend,
     voiceError,
+    voicePhase,
+    voiceResource,
     voiceRetryAvailable,
-    pendingVoiceSelection,
-    microphoneButtonRef,
   };
 }

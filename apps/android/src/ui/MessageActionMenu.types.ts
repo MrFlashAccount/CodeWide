@@ -2,15 +2,15 @@ import type { ReactNode } from "react";
 
 export type MessageActionMenuRequest = {
   copyText: string;
-  onFork?(): Promise<void>;
-  onReview?(): Promise<void> | void;
+  onFork?: () => Promise<void>;
+  onReview?: () => Promise<void> | void;
 };
 
 type MessageActionMenuAnchor = {
+  height: number;
   pageX: number;
   pageY: number;
   width: number;
-  height: number;
 };
 
 export type OpenMessageActionMenu = (

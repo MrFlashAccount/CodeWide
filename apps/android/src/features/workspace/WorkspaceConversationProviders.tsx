@@ -33,7 +33,7 @@ export function WorkspaceConversationProviders({
   const voiceInputRuntime: AppVoiceInputRuntime = {
     controller: workspaceRuntime.voiceController,
     resources: runtime.resources,
-    scopePrefix: `${activeConnectionId || "local"}\u0000${composerThreadId ?? "workspace"}`,
+    scopePrefix: `${activeConnectionId === "" ? "local" : activeConnectionId}\u0000${composerThreadId ?? "workspace"}`,
     // The workspace provider never materializes a selected chat. Each
     // ConversationPane installs its own thread-scoped provider below Suspense.
     thread: null,

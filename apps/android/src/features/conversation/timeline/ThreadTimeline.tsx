@@ -1,7 +1,7 @@
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 import { projectedTurnMetadata } from "@codewide/sync-client";
 import { Ionicons } from "@expo/vector-icons";
-import { type LegendListRenderItemProps } from "@legendapp/list/react-native";
+import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { StyleSheet, View } from "react-native";
 import type { ThreadForkOptions } from "../../../data/thread-fork";
 import { useEvent } from "../../../react/useEvent";
@@ -17,7 +17,7 @@ import { OptimisticTurn } from "../turns/OptimisticTurn";
 import { formatTurnMeta } from "../turns/turnPresentation";
 import { TurnTimelineItem } from "../turns/TurnTimelineItem";
 import type { UseThreadTimelineProps } from "./ThreadTimeline.types";
-import { type TimelineItem } from "./timelineTypes";
+import type { TimelineItem } from "./timelineTypes";
 
 export function useThreadTimeline(props: UseThreadTimelineProps) {
   const renderTimelineItem = ({ item }: LegendListRenderItemProps<TimelineItem>) => {
@@ -42,8 +42,8 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
           item.id === props.searchWindow.target.hit.turnId
             ? {
                 itemId: props.searchWindow.messageItemId,
-                query: props.searchWindow.query,
                 onLayout: props.focusSearchMessage,
+                query: props.searchWindow.query,
               }
             : null
         }
@@ -51,11 +51,11 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
         <View style={styles.timelineRow}>
           {dateLabel === null ? null : <TimelineDateSeparator label={dateLabel} />}
           <RecoverableRenderBoundary
-            key={boundaryKey}
-            scope="bubble"
-            label="Conversation item"
             context={boundaryContext}
+            key={boundaryKey}
+            label="Conversation item"
             resetKey={boundaryKey}
+            scope="bubble"
           >
             <MarkdownLocalLinkProvider onOpen={props.openThreadDocumentLink}>
               <PrivateImageAccessProvider
@@ -69,13 +69,13 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                 >
                   {item.kind === "turn" && (
                     <TurnTimelineItem
-                      turn={item}
                       agentDateLabel={dateLabels?.agent ?? null}
-                      compact={props.timelineCompact}
                       animateLiveUpdates={props.animateLiveUpdates}
-                      usage={usage}
+                      compact={props.timelineCompact}
                       forceExpanded={props.threadSearchActive}
                       requestPrompt={item.turn.status === "inProgress" ? props.requestPrompt : null}
+                      turn={item}
+                      usage={usage}
                       {...(props.getTransferAccess === undefined
                         ? {}
                         : { getTransferAccess: props.getStableTransferAccess })}
@@ -110,6 +110,13 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                   {item.kind === "meta" && (
                     <View style={styles.turnMeta}>
                       <Ionicons
+                        color={
+                          item.status === "failed"
+                            ? colors.red
+                            : item.status === "inProgress"
+                              ? colors.amber
+                              : colors.green
+                        }
                         name={
                           item.status === "failed"
                             ? "close"
@@ -120,13 +127,6 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                                 : "checkmark"
                         }
                         size={iconSize.inline}
-                        color={
-                          item.status === "failed"
-                            ? colors.red
-                            : item.status === "inProgress"
-                              ? colors.amber
-                              : colors.green
-                        }
                       />
                       <Text style={styles.turnMetaText}>
                         {formatTurnMeta(item.status, item.durationMs, item.completedAt)}
@@ -143,8 +143,8 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
     return item.kind === "turn" ? (
       <ThreadNavigationRowCommitBoundary
         connectionId={item.connectionId}
-        threadId={item.threadId}
         rowKey={item.key}
+        threadId={item.threadId}
       >
         {row}
       </ThreadNavigationRowCommitBoundary>
@@ -156,16 +156,16 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
 }
 
 const styles = StyleSheet.create({
-  timelineRow: { width: "100%" },
   timelineItem: {
-    width: "100%",
-    maxWidth: 880,
     alignSelf: "center",
+    maxWidth: 880,
+    width: "100%",
   },
   timelineItemWide: { alignSelf: "flex-start" },
+  timelineRow: { width: "100%" },
   turnMeta: {
-    flexDirection: "row",
     alignItems: "center",
+    flexDirection: "row",
     gap: spacing.xxs,
     paddingHorizontal: spacing.xxs,
     paddingVertical: spacing.optical,
@@ -182,15 +182,21 @@ export function useThreadTimelineActions(
   onLoadTurnItems: ((turnId: string) => Promise<void>) | undefined,
 ) {
   const fixUnsupportedBlock = useEvent(async (block: RenderBlock) => {
-    if (onFixUnsupportedBlock === undefined) throw new Error("Renderer repair is unavailable");
+    if (onFixUnsupportedBlock === undefined) {
+      throw new Error("Renderer repair is unavailable");
+    }
     await onFixUnsupportedBlock(block);
   });
   const forkThroughTurn = useEvent(async (turnId: string) => {
-    if (onFork === undefined) throw new Error("Thread fork is unavailable");
+    if (onFork === undefined) {
+      throw new Error("Thread fork is unavailable");
+    }
     await onFork({ boundary: { kind: "through", turnId }, ephemeral: false });
   });
   const loadStableTurnItems = useEvent(async (turnId: string) => {
-    if (onLoadTurnItems === undefined) throw new Error("Turn activity is unavailable");
+    if (onLoadTurnItems === undefined) {
+      throw new Error("Turn activity is unavailable");
+    }
     await onLoadTurnItems(turnId);
   });
 

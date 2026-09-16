@@ -1,5 +1,5 @@
 /** V1 turnContexts owner, extracted without changing interaction or resource lifetime. */
-import { type TurnUsageProjection } from "@codewide/sync-client";
+import type { TurnUsageProjection } from "@codewide/sync-client";
 import { createContext } from "react";
 
 export const ForceExpandCardsContext = createContext(false);

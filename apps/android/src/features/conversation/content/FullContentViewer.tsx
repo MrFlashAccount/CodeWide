@@ -1,7 +1,7 @@
 import type { FullContentViewerProps } from "./FullContentViewer.types";
 import { renderFullContentViewerBody } from "./FullContentViewerBody";
 /** V1 FullContentViewer owner, extracted without changing interaction or resource lifetime. */
-import { type RenderBlock, type RenderContentReference } from "@codewide/renderers";
+import type { RenderBlock, RenderContentReference } from "@codewide/renderers";
 import { useContext, useId, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { readPrivateAssetText, type PrivateAssetTextResult } from "../../../data/private-transfer";
@@ -15,16 +15,20 @@ import { LargeContentViewerContext, type LargeContentViewerRequest } from "./con
 import { styles } from "./FullContentViewer.styles";
 import { useConversationRouteNavigation } from "../conversationRouteNavigation";
 
-export function nextRenderFrame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+export async function nextRenderFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      resolve();
+    });
+  });
 }
 
 export type LargeContentViewerSelection = LargeContentViewerRequest & {
-  offset: number;
-  nextOffset: number;
-  text: string | null;
-  loading: boolean;
   error: string | null;
+  loading: boolean;
+  nextOffset: number;
+  offset: number;
+  text: string | null;
 };
 
 export function LargeContentViewerHost({ children }: { children: ReactNode }) {
@@ -42,49 +46,53 @@ export function LargeContentViewerSession({
   onClose,
 }: {
   initialRequest: LargeContentViewerRequest;
-  onClose(): void;
+  onClose: () => void;
 }) {
   const resourceNamespace = useId();
-  const [selection, setSelection] = useState({ request: initialRequest, offset: 0 });
-  const resourceRevision = `${selection.request.reference.id}:${selection.request.reference.contentType}:${selection.offset}`;
+  const [selection, setSelection] = useState({ offset: 0, request: initialRequest });
+  const resourceRevision = `${selection.request.reference.id}:${selection.request.reference.contentType}:${String(selection.offset)}`;
   const content = useEphemeralAsyncResource<PrivateAssetTextResult>(
     `large-content:${resourceNamespace}`,
     resourceRevision,
     async (_publish, signal) =>
-      await readPrivateAssetText(
-        { kind: "content", id: selection.request.reference.id },
+      readPrivateAssetText(
+        { id: selection.request.reference.id, kind: "content" },
         selection.request.getTransferAccess,
         {
-          offset: selection.offset,
-          limit: CONTENT_VIEW_CHUNK_BYTES,
           accept: selection.request.reference.contentType,
+          limit: CONTENT_VIEW_CHUNK_BYTES,
+          offset: selection.offset,
           signal,
         },
       ),
   );
   const selected: LargeContentViewerSelection = {
     ...selection.request,
-    offset: selection.offset,
-    nextOffset: content.value?.nextOffset ?? selection.offset,
-    text: content.value?.text ?? null,
-    loading: content.status === "idle" || content.status === "loading",
     error: content.error,
+    loading: content.status === "idle" || content.status === "loading",
+    nextOffset: content.value?.nextOffset ?? selection.offset,
+    offset: selection.offset,
+    text: content.value?.text ?? null,
   };
   const load = (request: LargeContentViewerRequest, offset: number) => {
-    setSelection({ request, offset });
+    setSelection({ offset, request });
   };
   const request = {
-    pointer: selected.pointer,
-    reference: selected.reference,
-    presentation: selected.presentation,
     getTransferAccess: selected.getTransferAccess,
+    pointer: selected.pointer,
+    presentation: selected.presentation,
+    reference: selected.reference,
   };
   return (
     <FullContentViewer
-      selection={selected}
       onClose={onClose}
-      onPrevious={() => void load(request, Math.max(0, selected.offset - CONTENT_VIEW_CHUNK_BYTES))}
-      onNext={() => void load(request, selected.nextOffset)}
+      onNext={() => {
+        load(request, selected.nextOffset);
+      }}
+      onPrevious={() => {
+        load(request, Math.max(0, selected.offset - CONTENT_VIEW_CHUNK_BYTES));
+      }}
+      selection={selected}
     />
   );
 }
@@ -94,36 +102,45 @@ export function LargeContentControls({
   getTransferAccess,
 }: {
   block: RenderBlock;
-  getTransferAccess?(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
+  getTransferAccess?: (
+    forceRefresh?: boolean,
+  ) => Promise<{ authorization: string; baseUrl: string }>;
 }) {
   const open = useContext(LargeContentViewerContext);
   const references = (() => {
-    if (block.content === null) return [];
+    if (block.content === null) {
+      return [];
+    }
     const entries = Object.entries(block.content.fields);
-    if (block.content.whole !== null) entries.push(["/", block.content.whole]);
+    if (block.content.whole !== null) {
+      entries.push(["/", block.content.whole]);
+    }
     return entries;
   })();
-  if (references.length === 0) return null;
+  if (references.length === 0) {
+    return null;
+  }
   return (
     <View style={styles.largeContentControl}>
       <View style={styles.largeContentActions}>
         {references.slice(0, 8).map(([pointer, reference], index) => (
           <Pressable
-            key={`${pointer}:${reference.id}`}
             accessibilityRole="button"
             disabled={getTransferAccess === undefined || open === null}
+            key={`${pointer}:${reference.id}`}
             onPress={() => {
-              if (getTransferAccess !== undefined)
+              if (getTransferAccess !== undefined) {
                 open?.({
-                  pointer,
-                  reference,
-                  presentation: largeContentPresentation(pointer, reference),
                   getTransferAccess,
+                  pointer,
+                  presentation: largeContentPresentation(pointer, reference),
+                  reference,
                 });
+              }
             }}
             style={({ pressed }) => [styles.largeContentButton, pressed && styles.pressed]}
           >
-            <InlineIcon name="document-text-outline" role="label" color={colors.textMuted} />
+            <InlineIcon color={colors.textMuted} name="document-text-outline" role="label" />
             <Text numberOfLines={1} style={styles.largeContentButtonText}>
               {references.length === 1
                 ? "Open full content"
@@ -141,21 +158,24 @@ export function largeContentPresentation(
   pointer: string,
   reference: RenderContentReference,
 ): LargeContentViewerRequest["presentation"] {
-  if (reference.contentType.startsWith("text/markdown")) return "markdown";
+  if (reference.contentType.startsWith("text/markdown")) {
+    return "markdown";
+  }
   if (
     reference.contentType.startsWith("text/x-ansi") ||
     pointer === "/aggregatedOutput" ||
     pointer.endsWith("/aggregatedOutput")
-  )
+  ) {
     return "terminal";
+  }
   return "text";
 }
 
 export function FullContentViewer({
-  selection,
   onClose,
-  onPrevious,
   onNext,
+  onPrevious,
+  selection,
 }: FullContentViewerProps) {
   const [viewportHeight, setViewportHeight] = useState(0);
   const title =
@@ -166,29 +186,33 @@ export function FullContentViewer({
     selection.nextOffset < selection.reference.byteLength;
   const rangeEnd = Math.max(selection.offset, selection.nextOffset);
   return renderFullContentViewerBody({
-    selection,
+    formatContentBytes,
+    hasNext,
+    hasPrevious,
     onClose,
-    onPrevious,
     onNext,
-    viewportHeight,
+    onPrevious,
+    rangeEnd,
+    selection,
     setViewportHeight,
     title,
-    hasPrevious,
-    hasNext,
-    rangeEnd,
-    formatContentBytes,
+    viewportHeight,
   });
 }
 
 export function contentPointerLabel(pointer: string, index: number): string {
   const segment = pointer.split("/").filter(Boolean).at(-1);
   return segment === undefined
-    ? `content ${index + 1}`
+    ? `content ${String(index + 1)}`
     : segment.replaceAll("~1", "/").replaceAll("~0", "~");
 }
 
 export function formatContentBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024) {
+    return `${String(bytes)} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${String(Math.round(bytes / 1024))} KB`;
+  }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

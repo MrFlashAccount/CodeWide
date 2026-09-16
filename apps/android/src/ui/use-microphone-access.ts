@@ -28,52 +28,68 @@ export function useMicrophoneAccess() {
       );
     }
   });
+  const run = useEvent((operation: () => Promise<void>): void => {
+    operation().catch((error: unknown) => {
+      dialog.alert(
+        "Microphone access",
+        error instanceof Error ? error.message : "Microphone action failed.",
+      );
+    });
+  });
   const request = useEvent(async () => {
-    if (requesting.current) return;
+    if (requesting.current) {
+      return;
+    }
     requesting.current = true;
     let errorMessage: string | null = null;
     try {
-      if (getMicrophonePermission() === "blocked") await openSettings();
-      else {
+      if (getMicrophonePermission() === "blocked") {
+        await openSettings();
+      } else {
         const result = await requestMicrophonePermission();
-        if (result === "blocked")
+        if (result === "blocked") {
           dialog.alert(
             "Microphone access",
             "Allow microphone access in Android settings to use voice input.",
             [
-              { text: "Not now", style: "cancel" },
+              { style: "cancel", text: "Not now" },
               {
-                text: "Open settings",
                 onPress: () => {
-                  void openSettings();
+                  run(openSettings);
                 },
+                text: "Open settings",
               },
             ],
           );
+        }
       }
     } catch (error) {
       errorMessage =
         error instanceof Error ? error.message : "Could not request microphone access.";
     }
     requesting.current = false;
-    if (errorMessage !== null) dialog.alert("Microphone access", errorMessage);
+    if (errorMessage !== null) {
+      dialog.alert("Microphone access", errorMessage);
+    }
   });
   const allowCapture = useEvent(() => {
-    if (getMicrophonePermission() === "granted") return true;
+    if (getMicrophonePermission() === "granted") {
+      return true;
+    }
     dialog.alert(
       "Microphone access",
       "Allow microphone access to dictate text. Recording starts only when you tap the microphone.",
       [
-        { text: "Not now", style: "cancel" },
+        { style: "cancel", text: "Not now" },
         {
-          text: getMicrophonePermission() === "blocked" ? "Open settings" : "Allow access",
           onPress: () => {
-            void request();
+            run(request);
           },
+          text: getMicrophonePermission() === "blocked" ? "Open settings" : "Allow access",
         },
       ],
     );
     return false;
   });
-  return { granted: permission === "granted", allowCapture };
+  return { allowCapture, granted: permission === "granted", run };
 }

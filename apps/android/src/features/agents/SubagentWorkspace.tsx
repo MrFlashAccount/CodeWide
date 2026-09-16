@@ -21,18 +21,18 @@ export const SUBAGENT_ROW_HEIGHT =
 
 /** Composes the selectable subagent list and active subagent detail. */
 export function SubagentWorkspace({
-  subagents,
-  selected,
-  onSelect,
   onClose,
+  onSelect,
   renderDetail,
+  selected,
+  subagents,
 }: {
-  subagents: readonly StoredThreadSummary[];
+  onBack: () => void;
+  onClose: () => void;
+  onSelect: (summary: StoredThreadSummary) => void;
+  renderDetail: (compact: boolean) => ReactNode;
   selected: StoredThreadSummary | null;
-  onSelect(summary: StoredThreadSummary): void;
-  onBack(): void;
-  onClose(): void;
-  renderDetail(compact: boolean): ReactNode;
+  subagents: readonly StoredThreadSummary[];
 }) {
   const window = useWindowDimensions();
   const [measuredWidth, setMeasuredWidth] = useState(0);
@@ -46,49 +46,51 @@ export function SubagentWorkspace({
 
   return (
     <View
-      testID="subagent-workspace"
-      style={styles.workspace}
       onLayout={({ nativeEvent }) => {
         const next = Math.floor(nativeEvent.layout.width);
         setMeasuredWidth((current) => (current === next ? current : next));
       }}
+      style={styles.workspace}
+      testID="subagent-workspace"
     >
       {showMaster && (
-        <View testID="subagent-master-pane" style={[styles.master, { width: masterWidth }]}>
+        <View style={[styles.master, { width: masterWidth }]} testID="subagent-master-pane">
           <View style={styles.masterHeader}>
             <Pressable
               accessibilityLabel="Back to conversation"
               onPress={onClose}
               style={styles.iconButton}
             >
-              <Ionicons name="arrow-back" size={iconSize.navigation} color={colors.text} />
+              <Ionicons color={colors.text} name="arrow-back" size={iconSize.navigation} />
             </Pressable>
             <Text numberOfLines={1} style={[styles.headerTitle, styles.masterTitle]}>
               Subagents
             </Text>
             <Text
-              accessibilityLabel={`${subagents.length} ${subagents.length === 1 ? "subagent" : "subagents"}`}
+              accessibilityLabel={`${String(subagents.length)} ${subagents.length === 1 ? "subagent" : "subagents"}`}
               style={styles.headerCount}
             >
               {subagents.length}
             </Text>
           </View>
           <LegendList
-            data={subagents}
-            extraData={selected?.remoteThreadId ?? null}
-            recycleItems
-            estimatedItemSize={SUBAGENT_ROW_HEIGHT}
-            getFixedItemSize={() => SUBAGENT_ROW_HEIGHT}
-            drawDistance={360}
-            keyExtractor={(summary) => summary.remoteThreadId}
-            itemsAreEqual={subagentRowsEqual}
             contentContainerStyle={styles.listContent}
+            data={subagents}
+            drawDistance={360}
+            estimatedItemSize={SUBAGENT_ROW_HEIGHT}
+            extraData={selected?.remoteThreadId ?? null}
+            getFixedItemSize={() => SUBAGENT_ROW_HEIGHT}
+            itemsAreEqual={subagentRowsEqual}
+            keyExtractor={(summary) => summary.remoteThreadId}
             ListEmptyComponent={<EmptySubagents />}
+            recycleItems
             renderItem={({ item }) => (
               <SubagentRow
-                summary={item}
+                onPress={() => {
+                  onSelect(item);
+                }}
                 selected={item.remoteThreadId === selected?.remoteThreadId}
-                onPress={() => onSelect(item)}
+                summary={item}
               />
             )}
           />
@@ -96,8 +98,8 @@ export function SubagentWorkspace({
       )}
       {showDetail && (
         <View
-          testID="subagent-detail-pane"
           style={[styles.detail, !compact && styles.detailRaised]}
+          testID="subagent-detail-pane"
         >
           {selected === null ? <EmptySelection /> : renderDetail(compact)}
         </View>

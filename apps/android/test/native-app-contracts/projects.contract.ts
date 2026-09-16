@@ -35,7 +35,9 @@ it("keeps a server-scoped new chat local until the first send", () => {
   expect(ownerNewChatSubmission).toMatch(
     /await commands\.startThreadInWorkspace\(\s*draftChat\.connectionId,\s*draftChat\.cwd,\s*draftChat\.id,?\s*\)/u,
   );
-  expect(projectWorkspaceAdapter).toContain("startThread: (cwd) => startThread(connectionId, cwd)");
+  expect(projectWorkspaceAdapter).toContain(
+    "startThread: async (cwd) => startThread(connectionId, cwd)",
+  );
   expect(ownerNewChatSubmission).toContain("const commandId = await commands.sendText(");
   expect(ownerNewChatSubmission).toContain("{ ...options, workspaceRequestId: draftChat.id }");
   expect(newThreadServerSheet).toContain("function NewThreadServerSheet");

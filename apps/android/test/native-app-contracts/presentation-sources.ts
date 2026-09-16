@@ -16,8 +16,8 @@ export const conversationChromeLayout = readFileSync(
   new URL("../../src/ui/conversation-chrome-layout.ts", import.meta.url),
   "utf8",
 );
-export const heroUIRoot = readFileSync(
-  new URL("../../src/ui/HeroUIRoot.native.tsx", import.meta.url),
+export const appRootProviders = readFileSync(
+  new URL("../../src/ui/AppRootProviders.tsx", import.meta.url),
   "utf8",
 );
 export const waveText = readFileSync(new URL("../../src/ui/WaveText.tsx", import.meta.url), "utf8");
@@ -43,10 +43,6 @@ export const swipeDiscardAction = readFileSync(
 );
 export const messageActionMenu = readFileSync(
   new URL("../../src/ui/MessageActionMenu.native.tsx", import.meta.url),
-  "utf8",
-);
-export const heroUiRoot = readFileSync(
-  new URL("../../src/ui/HeroUIRoot.native.tsx", import.meta.url),
   "utf8",
 );
 export const appDialog = readFileSync(

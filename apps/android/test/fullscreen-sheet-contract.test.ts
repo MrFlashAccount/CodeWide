@@ -31,12 +31,9 @@ const fullscreenOverlay = readFileSync(
   new URL("../src/ui/AppFullscreenOverlay.tsx", import.meta.url),
   "utf8",
 );
-const heroUIRoot = readFileSync(
-  new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url),
-  "utf8",
-);
+const heroUIRoot = readFileSync(new URL("../src/ui/AppRootProviders.tsx", import.meta.url), "utf8");
 const codeReviewWorkspace = readFileSync(
-  new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url),
+  new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const imagePreviewHost = readFileSync(
@@ -255,7 +252,8 @@ describe("fullscreen workspace presentation", () => {
     expect(screen).not.toContain("keyboardScrollFrozen");
     expect(timelineList).not.toContain("freeze:");
     expect(timelineList).not.toContain("freeze=");
-    expect(viewportActions).toContain("if (fullscreenScrollOwnership.isCovered()) return;");
+    expect(viewportActions).toContain("fullscreenScrollOwnership.isCovered()");
+    expect(viewportActions).toContain("return;");
     expect(ownerTimelineViewport).toContain("followTail={ !props.fullscreenCovered &&");
     expect(ownerOverlayScrollOwnership).toContain("didClose: fullscreenScrollOwnership.didClose");
   });
@@ -264,7 +262,8 @@ describe("fullscreen workspace presentation", () => {
     expect(nativeFullscreenModal).toContain("hardwareAccelerated");
     expect(nativeFullscreenModal).toContain("setWindowReady(true)");
     expect(mermaid).toContain('androidLayerType="hardware"');
-    expect(compactSource(mermaid)).toContain('enabled={fullscreenReady} mode="fullscreen"');
+    expect(mermaid).toContain("enabled={fullscreenReady}");
+    expect(mermaid).toContain('mode="fullscreen"');
   });
 
   it("captures lifecycle before mounting and owns close/show centrally", () => {
@@ -274,10 +273,12 @@ describe("fullscreen workspace presentation", () => {
     expect(fullscreenOverlay).toContain("onShow={() => {");
     expect(fullscreenOverlay).toContain("entry.lifecycle?.didClose?.(entry.id)");
     expect(fullscreenOverlay).toContain("const active = entries.at(-1) ?? null;");
-    expect(fullscreenOverlay).toContain("if (active === null) return null;");
-    expect(nativeFullscreenModal).toContain("if (!isOpen) return null;");
-    expect(fullscreenOverlay).toContain(
-      "useLayoutEffect(() => () => host.dismissUnmountedScope(scope), [host, scope])",
+    expect(fullscreenOverlay).toContain("active === null");
+    expect(fullscreenOverlay).toContain("return null;");
+    expect(nativeFullscreenModal).toContain("!isOpen");
+    expect(nativeFullscreenModal).toContain("return null;");
+    expect(fullscreenOverlay).toMatch(
+      /useLayoutEffect\(\s*\(\) => \(\) => \{\s*host\.dismissUnmountedScope\(scope\);\s*\},\s*\[host, scope\],\s*\);/u,
     );
   });
 
@@ -313,7 +314,9 @@ describe("fullscreen workspace presentation", () => {
         ({ path, source }) =>
           /<Modal\b/u.test(source) &&
           !path.endsWith("AppFullscreenModal.tsx") &&
-          !path.endsWith("AppFullscreenModal.native.tsx"),
+          !path.endsWith("AppFullscreenModal.native.tsx") &&
+          !path.endsWith("AppModalDialog.tsx") &&
+          !path.endsWith("ContentMenu.tsx"),
       )
       .map(({ path }) => path.slice(sourceRoot.length + 1));
     const directFullscreenShellConsumers = productSources(sourceRoot)
@@ -336,7 +339,7 @@ describe("fullscreen workspace presentation", () => {
   });
 
   it("places Subagents after Attachments in the composer context strip", () => {
-    const start = contextStrip.indexOf('<ScrollView testID="composer-context-strip"');
+    const start = contextStrip.indexOf('testID="composer-context-strip"');
     const end = contextStrip.indexOf("</ScrollView>", start);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
@@ -345,7 +348,7 @@ describe("fullscreen workspace presentation", () => {
     expect(strip.indexOf("<ComposerSubagentContextChip")).toBeGreaterThan(
       strip.indexOf("<ThreadResourceContextChips"),
     );
-    expect(ownerComposerSubagentContextChip).toContain("Subagents: ${visible.length}");
+    expect(ownerComposerSubagentContextChip).toContain("Subagents: ${String(visible.length)}");
     const contextContent = sourceObjectDeclaration(contextStyles, "composerContextContent");
     expect(contextContent).toContain('alignItems: "center"');
     expect(contextContent).toContain("paddingHorizontal: conversationChromeEdgeInset");
@@ -356,13 +359,13 @@ describe("fullscreen workspace presentation", () => {
     expect(ownerComposerFeatureStyles).toContain(
       "minHeight: touchTarget + COMPOSER_CHIP_BOTTOM_INSET + spacing.compact",
     );
-    expect(ownerComposerFeatureStyles).toContain(
-      "paddingTop: COMPOSER_CHIP_BOTTOM_INSET, paddingBottom: spacing.compact",
-    );
+    const composerStyle = sourceObjectDeclaration(ownerComposerFeatureStyles, "composer");
+    expect(composerStyle).toContain("paddingTop: COMPOSER_CHIP_BOTTOM_INSET");
+    expect(composerStyle).toContain("paddingBottom: spacing.compact");
   });
 
   it("exposes live port forwarding as a direct composer chip", () => {
-    const start = contextStrip.indexOf('<ScrollView testID="composer-context-strip"');
+    const start = contextStrip.indexOf('testID="composer-context-strip"');
     const end = contextStrip.indexOf("</ScrollView>", start);
     const strip = toolsOwner;
     expect(strip).toContain("<ComposerPortContextChip");
@@ -382,7 +385,8 @@ describe("fullscreen workspace presentation", () => {
     expect(ownerPortsFeature).toContain(
       "<PortForwardingManager {...portForwarding} renderScrollComponent={AppSheetScrollView} />",
     );
-    expect(ownerComposerMenu).toContain('if (page === "ports") return "Ports";');
+    expect(ownerComposerMenu).toContain('page === "ports"');
+    expect(ownerComposerMenu).toContain('return "Ports";');
   });
 
   it("does not expose the non-descriptive no-prompts approval label", () => {
@@ -458,7 +462,7 @@ describe("fullscreen workspace presentation", () => {
     expect(subagentSheet).toContain("<RouteSubagentDetail");
     expect(fullscreenOverlay).toContain("fullscreen-overlay-suspense-fallback");
     expect(fullscreenOverlay).toContain('label="Fullscreen overlay content"');
-    expect(fullscreenOverlay).toContain("onDismiss={() => close(entry.id)}");
+    expect(fullscreenOverlay).toMatch(/onDismiss=\{\(\) => \{\s*close\(entry\.id\);\s*\}\}/u);
   });
 
   it("opens a concrete subagent from agent activity instead of expanding an empty card", () => {

@@ -16,7 +16,9 @@ export function useThreadListAccountRefresh(
           server.status === "live" ||
           server.status === "syncing"),
     );
-    await Promise.all(refreshableServers.map((server) => refreshAccountRateLimits(server.id)));
+    await Promise.all(
+      refreshableServers.map(async (server) => refreshAccountRateLimits(server.id)),
+    );
   });
   return { refreshThreadListAccountRateLimits };
 }

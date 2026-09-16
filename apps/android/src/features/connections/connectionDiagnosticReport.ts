@@ -25,6 +25,8 @@ export function connectionDiagnosticReport(input: ConnectionDiagnosticReportInpu
 }
 
 function formatTimestamp(timestamp: number | null): string {
-  if (timestamp === null || !Number.isFinite(timestamp)) return "unknown";
+  if (timestamp === null || !Number.isFinite(timestamp)) {
+    return "unknown";
+  }
   return new Date(timestamp).toISOString();
 }

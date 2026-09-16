@@ -67,7 +67,9 @@ it("preserves thread runtime integration contracts", () => {
   expect(threadDetailDatabase).toContain("newerBuffer: THREAD_HISTORY_PAGE_SIZE");
   expect(threadDetailDatabase).not.toContain("createSqliteSyncRuntime<ThreadDetailRow, string>");
   expect(threadDetailDatabase).not.toContain("collection.startSyncImmediate()");
-  expect(threadDetailDatabase).toContain("return detailStorage;");
+  expect(threadDetailDatabase).toContain(
+    "const ensureControls = (): SyncControls => detailStorage;",
+  );
   expect(threadDetailDatabase).toContain("if (!hasLoadedThread && startedThreadIds.size === 0)");
   const detailApplyEventsStart = threadDetailDatabase.indexOf(
     "async applyEvents(connectionId, events)",

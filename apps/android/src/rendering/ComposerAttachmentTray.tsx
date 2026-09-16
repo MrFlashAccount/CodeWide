@@ -23,36 +23,38 @@ import {
 import { PrivateImageAccessProvider, usePrivateAssetUri } from "./use-private-image-uri";
 
 interface ComposerAttachmentTrayProps {
-  readonly scope: string;
   readonly attachments: readonly StoredDraftAttachment[];
   readonly getAccess: GetTransferAccess;
-  onRemove(id: string): void;
+  onRemove: (id: string) => void;
+  readonly scope: string;
 }
 
 export function ComposerAttachmentTray(props: ComposerAttachmentTrayProps) {
   const uploads = useSelector(() => composerUploads.entries(props.scope));
   const managed = new Set(uploads.map((entry) => entry.attachment.id));
-  if (uploads.length === 0 && props.attachments.length === 0) return null;
+  if (uploads.length === 0 && props.attachments.length === 0) {
+    return null;
+  }
   return (
-    <PrivateImageAccessProvider scope={props.scope} getAccess={props.getAccess}>
+    <PrivateImageAccessProvider getAccess={props.getAccess} scope={props.scope}>
       <ScrollView
-        testID="composer-attachment-strip"
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.content}
+        horizontal
+        keyboardShouldPersistTaps="handled"
+        showsHorizontalScrollIndicator={false}
+        testID="composer-attachment-strip"
       >
         {props.attachments
           .filter((item) => !managed.has(item.id))
           .map((attachment) => (
-            <ComposerCard key={attachment.id} attachment={attachment} upload={null} owner={props} />
+            <ComposerCard attachment={attachment} key={attachment.id} owner={props} upload={null} />
           ))}
         {uploads.map((upload) => (
           <ComposerCard
-            key={upload.attachment.id}
             attachment={upload.attachment}
-            upload={upload}
+            key={upload.attachment.id}
             owner={props}
+            upload={upload}
           />
         ))}
       </ScrollView>
@@ -62,8 +64,8 @@ export function ComposerAttachmentTray(props: ComposerAttachmentTrayProps) {
 
 interface ComposerCardProps {
   readonly attachment: StoredDraftAttachment;
-  readonly upload: ComposerUpload | null;
   readonly owner: ComposerAttachmentTrayProps;
+  readonly upload: ComposerUpload | null;
 }
 
 type ComposerAttachmentOpenOptions = {
@@ -117,7 +119,9 @@ function openComposerAttachment(options: ComposerAttachmentOpenOptions): void {
     }
     return;
   }
-  if (!ready) return;
+  if (!ready) {
+    return;
+  }
   if (canRouteDocument && openRouteDocument !== null) {
     openRouteDocument(documentRequest);
   } else {
@@ -126,7 +130,7 @@ function openComposerAttachment(options: ComposerAttachmentOpenOptions): void {
 }
 
 function ComposerCard(props: ComposerCardProps) {
-  const { attachment, upload, owner } = props;
+  const { attachment, owner, upload } = props;
   const [failedUri, setFailedUri] = useState<string | null>(null);
   const openImage = useImagePreview();
   const openDocument = useDocumentPreview();
@@ -150,12 +154,12 @@ function ComposerCard(props: ComposerCardProps) {
   const uri = localUri ?? image.uri;
   const groupId = `composer:${owner.scope}`;
   const item = {
+    draft: { attachmentId: attachment.id, scope: owner.scope },
     id: attachment.id,
     label: attachment.name,
-    source: { uri: uri ?? "about:blank" },
-    reference: `scoped:${attachment.rootId}:${attachment.path}`,
     order: 0,
-    draft: { scope: owner.scope, attachmentId: attachment.id },
+    reference: `scoped:${attachment.rootId}:${attachment.path}`,
+    source: { uri: uri ?? "about:blank" },
   };
   useRegisterImagePreviewItem(attachment.kind === "image" && uri !== null ? groupId : null, item);
   const documentRequest = {
@@ -189,8 +193,7 @@ function ComposerCard(props: ComposerCardProps) {
   return (
     <AttachmentCard
       compact
-      video={video}
-      name={attachment.name}
+      excerpt={preview?.text ?? null}
       label={
         video
           ? "Video"
@@ -198,8 +201,9 @@ function ComposerCard(props: ComposerCardProps) {
             ? composerAttachmentPreviewKind(attachment)
             : "Drawing"
       }
+      name={attachment.name}
       uri={attachment.kind === "image" ? uri : null}
-      excerpt={preview?.text ?? null}
+      video={video}
       {...(preview === undefined ? {} : { bytes: preview.bytes })}
       {...(upload === null ? {} : { state: upload.state })}
       {...(ready || ((video || attachment.kind === "image") && uri !== null)
@@ -209,16 +213,20 @@ function ComposerCard(props: ComposerCardProps) {
         composerUploads.remove(owner.scope, attachment.id);
         owner.onRemove(attachment.id);
       }}
-      onRetry={() => composerUploads.retry(owner.scope, attachment.id)}
-      onThumbnailError={() => setFailedUri(localUri)}
+      onRetry={() => {
+        composerUploads.retry(owner.scope, attachment.id);
+      }}
+      onThumbnailError={() => {
+        setFailedUri(localUri);
+      }}
     />
   );
 }
 
 const styles = StyleSheet.create({
   content: {
+    gap: spacing.xs,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    gap: spacing.xs,
   },
 });

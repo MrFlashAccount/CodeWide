@@ -1,28 +1,28 @@
 import { threadSelectionKey } from "../../services/threads/threadRouteParams";
-import { type ThreadListItem } from "../threadList/threadListTypes";
+import type { ThreadListItem } from "../threadList/threadListTypes";
 import type { ActiveWorkspaceConversationProps } from "./ConversationWorkspace.types";
 
 /** Binds existing scoped owners in their original hook order; owns no replacement state. */
 export function useActiveConversationScope({
+  connections,
   destination,
+  loadedThreadSummaries,
   onClose,
   onExitSearchHistory,
   scopedThreads,
-  connections,
-  loadedThreadSummaries,
 }: {
+  connections: ActiveWorkspaceConversationProps["connections"];
   destination: ActiveWorkspaceConversationProps["destination"];
+  loadedThreadSummaries: ActiveWorkspaceConversationProps["loadedThreadSummaries"];
   onClose: ActiveWorkspaceConversationProps["onClose"];
   onExitSearchHistory: ActiveWorkspaceConversationProps["onExitSearchHistory"];
   scopedThreads: ActiveWorkspaceConversationProps["scopedThreads"];
-  connections: ActiveWorkspaceConversationProps["connections"];
-  loadedThreadSummaries: ActiveWorkspaceConversationProps["loadedThreadSummaries"];
 }) {
   const newChatDraft = destination.kind === "draft" ? destination.draft : null;
   const searchWindow = destination.kind === "thread" ? destination.searchWindow : null;
   const requestedThreadId =
     destination.kind === "thread"
-      ? threadSelectionKey({ serverId: destination.connectionId, id: destination.threadId })
+      ? threadSelectionKey({ id: destination.threadId, serverId: destination.connectionId })
       : null;
   const threadOpenGeneration = destination.generation;
   const closeActiveConversation = onClose;
@@ -57,19 +57,19 @@ export function useActiveConversationScope({
           ? null
           : {
               id: destination.threadId,
+              pinned: false,
+              preview: "",
               serverId: destination.connectionId,
               title: "Loading thread…",
-              preview: "",
-              pinned: false,
               unread: 0,
             }))
       : {
           id: newChatDraft.id,
-          serverId: newChatDraft.connectionId,
-          title: "New Chat",
-          preview: "",
-          time: "now",
           pinned: false,
+          preview: "",
+          serverId: newChatDraft.connectionId,
+          time: "now",
+          title: "New Chat",
           unread: 0,
         };
   const activeStoredThread =
@@ -80,21 +80,21 @@ export function useActiveConversationScope({
     ) ?? null;
   const activeCwd = newChatDraft?.cwd ?? activeStoredThread?.cwd ?? "/workspace";
   return {
-    newChatDraft,
-    searchWindow,
-    requestedThreadId,
-    threadOpenGeneration,
-    exitSearchHistory,
-    closeActiveConversation,
+    activeConnectionId,
+    activeConnectionState,
+    activeCwd,
+    activeRemoteThreadId,
+    activeStoredThread,
     activeThread,
     activeThreadId,
     activeThreadKey,
-    activeConnectionId,
-    activeConnectionState,
-    activeRemoteThreadId,
+    closeActiveConversation,
     composerThreadId,
+    exitSearchHistory,
+    newChatDraft,
+    requestedThreadId,
+    searchWindow,
+    threadOpenGeneration,
     visibleConversationThread,
-    activeStoredThread,
-    activeCwd,
   };
 }

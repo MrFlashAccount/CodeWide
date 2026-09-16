@@ -14,18 +14,18 @@ import type { TurnActionsWorkspaceCapabilities } from "../turnActions/workspaceC
 import type { ConversationWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Qualified owner capabilities consumed only by full conversation composition. */
 export type ConversationWorkspaceFeatures = {
-  projects: ProjectsWorkspaceCapabilities;
-  turnActions: TurnActionsWorkspaceCapabilities;
-  composer: ComposerWorkspaceCapabilities;
-  conversation: ConversationWorkspaceCapabilities;
-  queue: QueueWorkspaceCapabilities;
-  terminal: TerminalWorkspaceCapabilities;
-  goal: GoalWorkspaceCapabilities;
-  review: ReviewWorkspaceCapabilities;
   accounts: AccountsWorkspaceCapabilities;
-  ports: PortsWorkspaceCapabilities;
-  requests: RequestsWorkspaceCapabilities;
   agents: AgentsWorkspaceCapabilities;
   attachments: AttachmentsWorkspaceCapabilities;
   changes: ChangesWorkspaceCapabilities;
+  composer: ComposerWorkspaceCapabilities;
+  conversation: ConversationWorkspaceCapabilities;
+  goal: GoalWorkspaceCapabilities;
+  ports: PortsWorkspaceCapabilities;
+  projects: ProjectsWorkspaceCapabilities;
+  queue: QueueWorkspaceCapabilities;
+  requests: RequestsWorkspaceCapabilities;
+  review: ReviewWorkspaceCapabilities;
+  terminal: TerminalWorkspaceCapabilities;
+  turnActions: TurnActionsWorkspaceCapabilities;
 };

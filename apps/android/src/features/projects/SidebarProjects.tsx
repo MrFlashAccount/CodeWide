@@ -11,22 +11,26 @@ import { ProjectManagementRow, projectManagerItemHeight } from "./ProjectManagem
 import type { SidebarProject } from "./sidebarProjects";
 import { styles } from "./SidebarProjects.styles";
 
+// WHY: React Compiler cannot lower String.raw; this is the Unicode code point for its required backslash.
+const BACKSLASH_CODE_POINT = 92;
+const ARCHIVE_CRUMB = `${String.fromCodePoint(BACKSLASH_CODE_POINT)} Archive`;
+
 export function SidebarProjectRow({
-  project,
   onPress,
+  project,
 }: {
+  onPress: () => void;
   project: SidebarProject;
-  onPress(): void;
 }) {
   return (
     <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open project ${project.name}${project.serverLabel === null ? "" : `, ${project.serverLabel}`}${project.unread ? ", unread chats" : ""}`}
       accessibilityHint={project.path}
+      accessibilityLabel={`Open project ${project.name}${project.serverLabel === null ? "" : `, ${project.serverLabel}`}${project.unread ? ", unread chats" : ""}`}
+      accessibilityRole="button"
       onPress={onPress}
       style={({ pressed }) => [styles.project, styles.shortcut, pressed && styles.shortcutPressed]}
     >
-      <InlineIcon name="folder-outline" role="body" color={colors.textMuted} />
+      <InlineIcon color={colors.textMuted} name="folder-outline" role="body" />
       <View style={styles.shortcutIdentity}>
         <Text numberOfLines={1} style={styles.name}>
           {project.name}
@@ -36,37 +40,37 @@ export function SidebarProjectRow({
         )}
       </View>
       <View style={styles.unreadSlot}>
-        {project.unread && <View testID={`project-unread:${project.key}`} style={styles.unread} />}
+        {project.unread && <View style={styles.unread} testID={`project-unread:${project.key}`} />}
       </View>
     </Pressable>
   );
 }
 export function SidebarProjectHeader({
-  project,
-  serverName,
   archived,
   onBack,
   onRoot,
+  project,
+  serverName,
 }: {
+  archived: boolean;
+  onBack: () => void;
+  onRoot: () => void;
   project: SidebarProject;
   serverName: string;
-  archived: boolean;
-  onBack(): void;
-  onRoot(): void;
 }) {
   return (
-    <View testID="sidebar-project-breadcrumbs" style={styles.breadcrumbs}>
+    <View style={styles.breadcrumbs} testID="sidebar-project-breadcrumbs">
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={archived ? "Back to project chats" : "Back to projects"}
-        style={styles.back}
+        accessibilityRole="button"
         onPress={onBack}
+        style={styles.back}
       >
-        <Ionicons name="arrow-back" size={iconSize.inline} color={colors.text} />
+        <Ionicons color={colors.text} name="arrow-back" size={iconSize.inline} />
       </Pressable>
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={`Back to ${serverName} projects`}
+        accessibilityRole="button"
         onPress={onRoot}
         style={styles.serverCrumb}
       >
@@ -84,67 +88,72 @@ export function SidebarProjectHeader({
       </Text>
       {archived && (
         <Text numberOfLines={1} style={styles.archiveCrumb}>
-          {"\\ Archive"}
+          {ARCHIVE_CRUMB}
         </Text>
       )}
     </View>
   );
 }
 export function SidebarProjectsSheet(props: ProjectManagementProps) {
-  const { servers, onBrowse, onClose } = props;
+  const { onBrowse, onClose, servers } = props;
   const state = useProjectManagement(props);
-  const { pending, choosingServer, setChoosingServer, rows } = state;
+  const { choosingServer, pending, rows, setChoosingServer } = state;
 
   return (
     <AppSheet
-      isOpen
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
       contentProps={{
         dismissLabel: "Close project management",
+        enableDynamicSizing: false,
         performanceSurface: "projects",
         snapPoints: ["62%", "92%"],
-        enableDynamicSizing: false,
+      }}
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
       }}
     >
-      <View testID="project-management-header" style={styles.sheetHeader}>
+      <View style={styles.sheetHeader} testID="project-management-header">
         <Text accessibilityRole="header" style={styles.sheetTitle}>
           Manage Projects
         </Text>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Add project"
+          accessibilityRole="button"
           disabled={servers.length === 0 || pending !== null}
+          onPress={() => {
+            const only = servers[0];
+            if (servers.length === 1 && only !== undefined) {
+              onBrowse(only.id);
+            } else {
+              setChoosingServer(!choosingServer);
+            }
+          }}
           style={({ pressed }) => [
             styles.headerAction,
             pressed && styles.shortcutPressed,
             (servers.length === 0 || pending !== null) && styles.disabled,
           ]}
-          onPress={() => {
-            const only = servers[0];
-            if (servers.length === 1 && only !== undefined) onBrowse(only.id);
-            else setChoosingServer(!choosingServer);
-          }}
         >
-          <Ionicons name="add" size={20} color={colors.text} />
+          <Ionicons color={colors.text} name="add" size={20} />
         </Pressable>
       </View>
       <LegendList
-        testID="project-management-list"
-        style={styles.sheetList}
         contentContainerStyle={styles.sheetListContent}
         data={rows}
-        keyExtractor={(item) => item.key}
-        getItemType={(item) => item.kind}
-        getFixedItemSize={projectManagerItemHeight}
-        renderScrollComponent={AppSheetScrollView}
         drawDistance={320}
-        recycleItems
+        getFixedItemSize={projectManagerItemHeight}
+        getItemType={(item) => item.kind}
         keyboardShouldPersistTaps="handled"
-        renderItem={({ item, index }) => (
-          <ProjectManagementRow props={props} state={state} item={item} index={index} />
+        keyExtractor={(item) => item.key}
+        recycleItems
+        renderItem={({ index, item }) => (
+          <ProjectManagementRow index={index} item={item} props={props} state={state} />
         )}
+        renderScrollComponent={AppSheetScrollView}
+        style={styles.sheetList}
+        testID="project-management-list"
       />
     </AppSheet>
   );

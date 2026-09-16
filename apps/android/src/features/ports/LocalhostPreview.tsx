@@ -3,26 +3,26 @@ import type { TunnelValue } from "../../data/workspace-resource-database";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
-import { type TunnelRow } from "../../data/workspace-resource-database";
+import type { TunnelRow } from "../../data/workspace-resource-database";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { InternalBrowser } from "./browser/InternalBrowser";
 import { styles } from "./LocalhostPreview.styles";
 
 export function LocalhostPreview({
-  visible,
+  embedded = false,
   onClose,
   onCreate,
   onRevoke,
   resource,
-  embedded = false,
+  visible,
 }: {
-  visible: boolean;
-  onClose(): void;
-  onCreate?(port: number, ttlSeconds: number): Promise<TunnelValue>;
-  onRevoke?(tunnelId: string): Promise<void>;
-  resource: TunnelRow | null;
   embedded?: boolean;
+  onClose: () => void;
+  onCreate?: (port: number, ttlSeconds: number) => Promise<TunnelValue>;
+  onRevoke?: (tunnelId: string) => Promise<void>;
+  resource: TunnelRow | null;
+  visible: boolean;
 }) {
   const [target, setTarget] = useState("localhost:3000");
   const [ttl, setTtl] = useState("300");
@@ -33,16 +33,23 @@ export function LocalhostPreview({
   const close = () => {
     const active = tunnel;
     setError(null);
-    if (active !== null) void onRevoke?.(active.id).finally(onClose);
-    else onClose();
+    if (active !== null && onRevoke !== undefined) {
+      onRevoke(active.id).then(onClose, (error: unknown) => {
+        setError(error instanceof Error ? error.message : "Could not revoke localhost tunnel");
+      });
+    } else {
+      onClose();
+    }
   };
   const create = async () => {
-    if (onCreate === undefined) return;
+    if (onCreate === undefined) {
+      return;
+    }
     setError(null);
     try {
       await onCreate(localhostTargetPort(target), Number(ttl));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not open localhost preview");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not open localhost preview");
     }
   };
   const content = (
@@ -54,26 +61,21 @@ export function LocalhostPreview({
             onPress={close}
             style={styles.headerIcon}
           >
-            <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
+            <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
           </Pressable>
           <View style={styles.previewIdentity}>
             <Text numberOfLines={1} style={styles.conversationTitle}>
               Localhost preview
             </Text>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={styles.conversationSubtitle}>
+            <Text ellipsizeMode="tail" numberOfLines={1} style={styles.conversationSubtitle}>
               Explicit server-scoped tunnel
             </Text>
           </View>
-          {tunnel !== null && (
-            <View style={styles.livePill}>
-              <Text style={styles.livePillText}>● LIVE</Text>
-            </View>
-          )}
         </View>
       )}
       {tunnel === null ? (
         <View style={styles.previewSetup}>
-          <Ionicons name="globe-outline" size={iconSize.illustration} color={colors.accent} />
+          <Ionicons color={colors.accent} name="globe-outline" size={iconSize.illustration} />
           <Text style={styles.sheetTitle}>Open a bounded localhost tunnel</Text>
           <Text style={styles.menuNotice}>
             Only 127.0.0.1 on the selected Codex server is reachable. The tunnel expires
@@ -81,15 +83,15 @@ export function LocalhostPreview({
           </Text>
           <Text style={styles.fieldLabel}>Local service</Text>
           <TextInput
-            voiceInput={false}
             accessibilityLabel="Local service"
             autoCapitalize="none"
             autoCorrect={false}
-            value={target}
             onChangeText={setTarget}
             placeholder="localhost:3000"
             placeholderTextColor={colors.textDim}
             style={styles.fieldInput}
+            value={target}
+            voiceInput={false}
           />
           <Text style={styles.fieldLabel}>Keep open</Text>
           <View style={styles.tunnelTtlChoices}>
@@ -100,7 +102,9 @@ export function LocalhostPreview({
             ].map((choice) => (
               <Pressable
                 key={choice.value}
-                onPress={() => setTtl(choice.value)}
+                onPress={() => {
+                  setTtl(choice.value);
+                }}
                 style={[styles.tunnelTtlChip, ttl === choice.value && styles.tunnelTtlChipSelected]}
               >
                 <Text style={styles.composerContextText}>{choice.label}</Text>
@@ -110,14 +114,14 @@ export function LocalhostPreview({
           <TextInput
             accessibilityLabel="Tunnel TTL"
             keyboardType="number-pad"
-            value={ttl}
             onChangeText={setTtl}
             style={styles.fieldInput}
+            value={ttl}
           />
           {effectiveError !== null && <Text style={styles.errorText}>{effectiveError}</Text>}
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Open localhost tunnel"
+            accessibilityRole="button"
             disabled={loading}
             onPress={() => void create()}
             style={styles.primaryButton}
@@ -129,27 +133,27 @@ export function LocalhostPreview({
         <View style={styles.flex}>
           {error !== null && <Text style={styles.previewError}>{error}</Text>}
           <InternalBrowser
-            url={tunnel.url}
             headers={{ Authorization: tunnel.authorization }}
+            url={tunnel.url}
             {...(!embedded
               ? {
                   header: {
-                    title: "Localhost preview",
                     closeLabel: "Close localhost preview",
-                    status: "LIVE",
                     onClose: close,
+                    status: "LIVE",
+                    title: "Localhost preview",
                   },
                 }
               : {})}
-            originWhitelist={[new URL(tunnel.url).origin]}
-            onHttpError={(statusCode) =>
+            onError={setError}
+            onHttpError={(statusCode) => {
               setError(
                 statusCode === 502
                   ? "Nothing is listening on that local service"
-                  : `Preview returned HTTP ${statusCode}`,
-              )
-            }
-            onError={setError}
+                  : `Preview returned HTTP ${String(statusCode)}`,
+              );
+            }}
+            originWhitelist={[new URL(tunnel.url).origin]}
           />
         </View>
       )}
@@ -162,7 +166,9 @@ export function localhostTargetPort(rawTarget: string): number {
   const target = rawTarget.trim();
   if (/^\d+$/u.test(target)) {
     const port = Number(target);
-    if (Number.isSafeInteger(port) && port >= 1 && port <= 65_535) return port;
+    if (Number.isSafeInteger(port) && port >= 1 && port <= 65_535) {
+      return port;
+    }
   }
   let parsed: URL;
   try {
@@ -174,7 +180,8 @@ export function localhostTargetPort(rawTarget: string): number {
     throw new Error("Only an explicit localhost port can be opened");
   }
   const port = Number(parsed.port);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535)
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Port must be between 1 and 65535");
+  }
   return port;
 }

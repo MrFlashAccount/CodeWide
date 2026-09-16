@@ -23,32 +23,32 @@ import { styles } from "./ThreadSidebar.styles";
 
 export function ThreadSidebar(props: ThreadSidebarProps) {
   const {
+    archivedThreads,
     catalogState,
-    remote,
-    project,
-    projects,
-    onOpenProject,
-    projectLimit,
-    onLoadMoreProject,
+    filter,
     initialOffset,
+    mode,
+    onArchive,
+    onLoadMore,
+    onLoadMoreProject,
+    onMarkRead,
+    onNewThread,
     onOffsetChange,
-    width,
+    onOpenProject,
+    onPreload,
+    onSelect,
+    onTogglePin,
+    onUnarchive,
+    project,
+    projectLimit,
+    projects,
+    remote,
+    searchContent,
+    selectedThreadKey,
     servers,
     serverScope,
     threads,
-    archivedThreads,
-    mode,
-    filter,
-    selectedThreadKey,
-    searchContent,
-    onLoadMore,
-    onSelect,
-    onPreload,
-    onNewThread,
-    onTogglePin,
-    onArchive,
-    onUnarchive,
-    onMarkRead,
+    width,
   } = props;
 
   const projectSource = useProjectSidebarThreads(
@@ -77,7 +77,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
   );
 
   return (
-    <View testID="thread-list-pane" style={[styles.threadSidebar, { width }]}>
+    <View style={[styles.threadSidebar, { width }]} testID="thread-list-pane">
       <ThreadSidebarHeader props={props} setQuery={setQuery} />
       <View style={styles.threadListContentSurface}>
         {searchContent ??
@@ -88,70 +88,74 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
           ) : (
             <LegendList
               data={rows}
-              key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
               dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
-              initialScrollOffset={initialOffset}
-              onScroll={({ nativeEvent }) => onOffsetChange(nativeEvent.contentOffset.y)}
-              scrollEventThrottle={100}
-              getFixedItemSize={threadListRowHeight}
               drawDistance={320}
-              recycleItems
+              getFixedItemSize={threadListRowHeight}
               getItemType={(row) => row.kind}
+              initialScrollOffset={initialOffset}
               itemsAreEqual={threadListRowsEqual}
-              keyExtractor={sidebarRowKey}
+              key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
               keyboardShouldPersistTaps="handled"
-              onEndReached={project === null ? onLoadMore : projectSource.loadMore}
-              onEndReachedThreshold={0.4}
+              keyExtractor={sidebarRowKey}
               ListEmptyComponent={
                 <SidebarListFeedback
+                  archived={mode === "archived"}
                   key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                   state={project === null ? catalogState : projectSource.state}
-                  archived={mode === "archived"}
                 />
               }
               ListFooterComponent={
                 rows.length > 0 && mode === "active" && filtered.length === 0 ? (
                   <SidebarListFeedback
+                    archived={false}
                     key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                     state={project === null ? catalogState : projectSource.state}
-                    archived={false}
                   />
                 ) : null
               }
+              onEndReached={project === null ? onLoadMore : projectSource.loadMore}
+              onEndReachedThreshold={0.4}
+              onScroll={({ nativeEvent }) => {
+                onOffsetChange(nativeEvent.contentOffset.y);
+              }}
+              recycleItems
               renderItem={({ item }) =>
                 item.kind === "header" ? (
                   <SidebarSectionHeader title={item.title} />
                 ) : item.kind === "project" ? (
                   <SidebarProjectRow
-                    project={item.project}
                     onPress={() => {
                       setQuery("");
                       onOpenProject(item.project);
                     }}
+                    project={item.project}
                   />
                 ) : (
                   <SelectableThreadRow
+                    onArchive={async () => onArchive(item.thread)}
+                    onMarkRead={async () => onMarkRead(item.thread)}
+                    onPress={() => {
+                      onSelect(threadSelectionKey(item.thread));
+                    }}
+                    onPressIn={() => onPreload(threadSelectionKey(item.thread))}
+                    onTogglePin={async () => onTogglePin(item.thread)}
+                    onUnarchive={async () => onUnarchive(item.thread)}
                     selectedThreadKey={selectedThreadKey}
-                    thread={item.thread}
                     server={
                       serverScope.kind === "all" && servers.length > 1
                         ? servers.find((entry) => entry.id === item.thread.serverId)
                         : undefined
                     }
-                    onPressIn={() => onPreload(threadSelectionKey(item.thread))}
-                    onPress={() => onSelect(threadSelectionKey(item.thread))}
-                    onTogglePin={() => onTogglePin(item.thread)}
-                    onArchive={() => onArchive(item.thread)}
-                    onUnarchive={() => onUnarchive(item.thread)}
-                    onMarkRead={() => onMarkRead(item.thread)}
+                    thread={item.thread}
                   />
                 )
               }
+              scrollEventThrottle={100}
             />
           ))}
       </View>
       {searchContent === null && mode === "active" && (
-        <NewThreadFloatingButton projectName={project?.name ?? null} onPress={onNewThread} />
+        <NewThreadFloatingButton onPress={onNewThread} projectName={project?.name ?? null} />
       )}
     </View>
   );

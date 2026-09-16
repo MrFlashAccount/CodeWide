@@ -1,25 +1,20 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
-import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
-import { PortalHost } from "heroui-native/portal";
 import type { ReactNode } from "react";
-import { Uniwind } from "uniwind";
 import { ThreadRenameDialog } from "../src/features/turnActions/ThreadRenameDialog";
 
-beforeAll(() => {
-  // WHY: Metro registers theme variables on device; Node needs them for the real dialog controls.
-  for (const theme of Uniwind.themes) Uniwind.updateCSSVariables(theme, { "--theme": "default" });
-});
-
 function Provider(props: { children: ReactNode }) {
-  return <HeroUINativeProviderRaw config={{ animation: "disable-all", devInfo: { stylingPrinciples: false } }}>{props.children}<PortalHost /></HeroUINativeProviderRaw>;
+  return <>{props.children}</>;
 }
 
 it("opens a centered width-bounded dialog with the current name selected and explicit cancel", () => {
   const close = jest.fn();
   const rename = jest.fn(async () => undefined);
-  const screen = render(<ThreadRenameDialog visible title="Original title" onClose={close} onRename={rename} />, { wrapper: Provider });
+  const screen = render(
+    <ThreadRenameDialog visible title="Original title" onClose={close} onRename={rename} />,
+    { wrapper: Provider },
+  );
   expect(screen.getByTestId("thread-rename-dialog")).toHaveStyle({ maxWidth: 420, width: "100%" });
-  expect(screen.getByTestId("thread-rename-keyboard-layout")).toHaveStyle({ justifyContent: "center" });
+  expect(screen.getByTestId("thread-rename-keyboard-layout")).toHaveStyle({ width: "100%" });
   const input = screen.getByLabelText("Thread name");
   expect(input.props.value).toBe("Original title");
   expect(input.props.autoFocus).toBe(true);
@@ -31,10 +26,15 @@ it("opens a centered width-bounded dialog with the current name selected and exp
 
 it("saves the trimmed name on Enter once and closes only after success", async () => {
   let finish: () => void = () => undefined;
-  const response = new Promise<void>((resolve) => { finish = resolve; });
+  const response = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
   const rename = jest.fn(() => response);
   const close = jest.fn();
-  const screen = render(<ThreadRenameDialog visible title="Original" onClose={close} onRename={rename} />, { wrapper: Provider });
+  const screen = render(
+    <ThreadRenameDialog visible title="Original" onClose={close} onRename={rename} />,
+    { wrapper: Provider },
+  );
   fireEvent.changeText(screen.getByLabelText("Thread name"), "  New title  ");
   fireEvent(screen.getByLabelText("Thread name"), "submitEditing");
   fireEvent(screen.getByLabelText("Thread name"), "submitEditing");
@@ -47,9 +47,14 @@ it("saves the trimmed name on Enter once and closes only after success", async (
 });
 
 it("rejects blank names and retains the edited name after failure for retry", async () => {
-  const rename = jest.fn(async () => undefined).mockRejectedValueOnce(new Error("Server unavailable"));
+  const rename = jest
+    .fn(async () => undefined)
+    .mockRejectedValueOnce(new Error("Server unavailable"));
   const close = jest.fn();
-  const screen = render(<ThreadRenameDialog visible title="Original" onClose={close} onRename={rename} />, { wrapper: Provider });
+  const screen = render(
+    <ThreadRenameDialog visible title="Original" onClose={close} onRename={rename} />,
+    { wrapper: Provider },
+  );
   fireEvent.changeText(screen.getByLabelText("Thread name"), "   ");
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   fireEvent(screen.getByLabelText("Thread name"), "submitEditing");

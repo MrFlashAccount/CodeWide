@@ -4,8 +4,8 @@ import { controlSize, layoutSize, spacing } from "../theme";
 export const threadListLayout = {
   /** Cards and sidebar controls share the same outer edge. */
   edgeInset: spacing.xs,
-  rowContentHeight: layoutSize.row,
   projectRowHeight: controlSize.touch,
+  rowContentHeight: layoutSize.row,
   rowVerticalMargin: spacing.optical,
   sectionHeight: controlSize.compact,
 } as const;

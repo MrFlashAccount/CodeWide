@@ -1,37 +1,37 @@
 import type { CatalogSkill } from "./skill-catalog-types";
 
 export type TurnControlsValue = {
-  models: Array<{
-    id: string;
-    label: string;
-    defaultEffort: string;
-    efforts: string[];
-    supportsPersonality: boolean;
-    isDefault: boolean;
-  }>;
-  skills: CatalogSkill[];
-  permissions: Array<{ id: string; description: string | null; allowed: boolean }>;
   defaults: {
-    model: string | null;
     effort: string | null;
+    model: string | null;
     permissions: string | null;
   };
+  models: Array<{
+    defaultEffort: string;
+    efforts: string[];
+    id: string;
+    isDefault: boolean;
+    label: string;
+    supportsPersonality: boolean;
+  }>;
+  permissions: Array<{ allowed: boolean; description: string | null; id: string }>;
+  skills: CatalogSkill[];
 };
 
 export type TurnControlsRow = {
-  id: string;
   connectionId: string;
   cwd: string;
-  status: "loading" | "refreshing" | "ready" | "error";
-  value: TurnControlsValue | null;
   error: string | null;
+  id: string;
+  status: "loading" | "refreshing" | "ready" | "error";
   updatedAt: number;
+  value: TurnControlsValue | null;
 };
 
 import type { Personality } from "@codewide/codex-protocol/v0.147.0";
 export type ThreadSettings = {
-  model?: string | null;
   effort?: string | null;
-  personality?: Personality | null;
+  model?: string | null;
   permissions?: string | null;
+  personality?: Personality | null;
 };

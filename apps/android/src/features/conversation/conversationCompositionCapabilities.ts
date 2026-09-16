@@ -17,20 +17,20 @@ import type { MainThreadReadCapabilities } from "./mainThreadReadCapabilities";
 
 /** Composition connects independently-owned feature input and command contracts. */
 export type ConversationCompositionCapabilities = {
-  requests: ConversationRequestCapabilities;
-  surface: ConversationSurfaceCapabilities;
-  read: MainThreadReadCapabilities;
-  composer: ComposerWorkspaceCapabilities;
-  queue: QueueWorkspaceCapabilities;
-  projects: ProjectConversationCapabilities;
-  actions: ThreadConversationCapabilities;
   accounts: ConversationAccountCapabilities;
-  changes: ConversationChangeCapabilities;
-  attachments: ConversationAttachmentCapabilities;
+  actions: ThreadConversationCapabilities;
   agents: ConversationAgentCapabilities;
-  ports: ConversationPortCapabilities;
-  terminal: ConversationTerminalCapabilities;
-  goal: ConversationGoalCapabilities;
-  review: ConversationReviewCapabilities;
+  attachments: ConversationAttachmentCapabilities;
+  changes: ConversationChangeCapabilities;
+  composer: ComposerWorkspaceCapabilities;
   diagnostics: ConversationDiagnosticCapabilities;
+  goal: ConversationGoalCapabilities;
+  ports: ConversationPortCapabilities;
+  projects: ProjectConversationCapabilities;
+  queue: QueueWorkspaceCapabilities;
+  read: MainThreadReadCapabilities;
+  requests: ConversationRequestCapabilities;
+  review: ConversationReviewCapabilities;
+  surface: ConversationSurfaceCapabilities;
+  terminal: ConversationTerminalCapabilities;
 };

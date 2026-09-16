@@ -1,11 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LegendList } from "@legendapp/list/react-native";
-import { Button } from "heroui-native/button";
+import { AppButton as Button } from "../../presentation/controls/AppButton";
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { joinDirectoryPath } from "../../data/remote-projects";
+import { useEvent } from "../../react/useEvent";
 import { colors, controlSize, iconSize } from "../../theme";
 import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
 import { AppSheetScrollView } from "../../ui/AppSheet";
+import { useAppDialog } from "../../ui/AppDialog";
 import { AppText as Text } from "../../ui/Typography";
 import type { ProjectPickerProps } from "./projectPickerContract";
 import { EmptyState, PickerRow, ProjectChoiceRow, SectionLabel } from "./ProjectPickerRows";
@@ -19,35 +21,39 @@ export function ProjectPickerContent({
   props: ProjectPickerProps;
   state: ProjectPickerSession;
 }) {
-  const { cwd, busy, onSelect, onAddProject, onReadHomeDirectory, onManageProjects } = props;
+  const { busy, cwd, onAddProject, onManageProjects, onReadHomeDirectory, onSelect } = props;
+  const dialog = useAppDialog();
+  const selectProject = useEvent((path: string | null): void => {
+    onSelect(path).catch((error: unknown) => {
+      dialog.alert(
+        "Could not open project",
+        error instanceof Error ? error.message : "Could not open project",
+      );
+    });
+  });
   const {
-    mode,
-    requestedDirectory,
     adding,
-    pinningPath,
-    directoryPath,
     directory,
-    readError,
     directoryLoading,
-    normalizedQuery,
-    visibleDirectories,
-    toggleProjectSection,
-    projectRows,
+    directoryPath,
+    mode,
     navigate,
+    normalizedQuery,
+    pinningPath,
     pinProject,
+    projectRows,
+    readError,
+    requestedDirectory,
+    toggleProjectSection,
+    visibleDirectories,
   } = state;
   return (
     <View style={styles.listFrame}>
       {mode === "projects" ? (
         <LegendList
-          style={styles.projectScroll}
+          contentContainerStyle={styles.listContent}
           data={projectRows}
           drawDistance={360}
-          recycleItems
-          renderScrollComponent={AppSheetScrollView}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.listContent}
-          keyExtractor={(item) => item.id}
           getFixedItemSize={(item) =>
             item.kind === "project" || item.kind === "server-default"
               ? listRowHeight.double
@@ -57,17 +63,22 @@ export function ProjectPickerContent({
                   ? 92
                   : 150
           }
+          keyboardShouldPersistTaps="handled"
+          keyExtractor={(item) => item.id}
+          recycleItems
           renderItem={({ item }) => {
             if (item.kind === "section") {
               return item.sectionId === null ? (
-                <SectionLabel title={item.title} count={item.count} />
+                <SectionLabel count={item.count} title={item.title} />
               ) : (
                 <Pressable
-                  accessibilityLabel={`${item.title} projects, ${item.count}`}
+                  accessibilityLabel={`${item.title} projects, ${String(item.count)}`}
                   accessibilityRole="button"
                   accessibilityState={{ expanded: item.expanded }}
                   onPress={() => {
-                    if (item.sectionId !== null) toggleProjectSection(item.sectionId);
+                    if (item.sectionId !== null) {
+                      toggleProjectSection(item.sectionId);
+                    }
                   }}
                   style={styles.projectSectionToggle}
                 >
@@ -76,26 +87,29 @@ export function ProjectPickerContent({
                     <Text style={styles.sectionCount}>{item.count}</Text>
                   </View>
                   <Ionicons
+                    color={colors.textMuted}
                     name={item.expanded ? "chevron-up" : "chevron-down"}
                     size={iconSize.inline}
-                    color={colors.textMuted}
                   />
                 </Pressable>
               );
             }
-            if (item.kind === "empty")
-              return <EmptyState icon={item.icon} text={item.text} compact={item.compact} />;
+            if (item.kind === "empty") {
+              return <EmptyState compact={item.compact} icon={item.icon} text={item.text} />;
+            }
             if (item.kind === "server-default") {
               return (
                 <PickerRow
-                  icon="server-outline"
-                  title="Server default"
-                  subtitle="Let Codex choose the working directory"
-                  selected={false}
                   disabled={busy}
+                  icon="server-outline"
                   onPress={() => {
-                    if (!busy) void onSelect(null);
+                    if (!busy) {
+                      selectProject(null);
+                    }
                   }}
+                  selected={false}
+                  subtitle="Let Codex choose the working directory"
+                  title="Server default"
                 />
               );
             }
@@ -103,62 +117,55 @@ export function ProjectPickerContent({
               !item.pinned && onAddProject !== undefined && onManageProjects === undefined;
             return (
               <ProjectChoiceRow
-                position={item.position}
-                project={item.project}
-                cwd={cwd}
                 busy={busy || pinningPath !== null}
+                cwd={cwd}
+                onPin={canPin ? () => void pinProject(item.project) : undefined}
+                onSelect={selectProject}
                 pinned={item.pinned}
                 pinning={pinningPath === item.project.path}
-                onPin={canPin ? () => void pinProject(item.project) : undefined}
-                onSelect={onSelect}
+                position={item.position}
+                project={item.project}
               />
             );
           }}
+          renderScrollComponent={AppSheetScrollView}
+          style={styles.projectScroll}
         />
       ) : readError !== null ? (
         <View style={styles.centerState}>
           <Ionicons
+            color={colors.textDim}
             name="folder-open-outline"
             size={iconSize.illustration}
-            color={colors.textDim}
           />
           <Text style={styles.stateText}>Could not open this folder</Text>
           <Text accessibilityRole="alert" style={styles.errorText}>
             {readError}
           </Text>
           {onReadHomeDirectory !== undefined && requestedDirectory !== null ? (
-            <Button variant="secondary" onPress={() => navigate(null)}>
+            <Button
+              onPress={() => {
+                navigate(null);
+              }}
+              variant="secondary"
+            >
               Go to Home
             </Button>
           ) : null}
         </View>
       ) : directoryLoading || directory.status !== "ready" ? (
         <View style={styles.centerState}>
-          <ActivityIndicator size="small" color={colors.accent} />
+          <ActivityIndicator color={colors.accent} size="small" />
           <Text style={styles.stateText}>Opening folder…</Text>
         </View>
       ) : (
         <LegendList
-          data={visibleDirectories}
-          recycleItems
-          getFixedItemSize={() => listRowHeight.single}
-          renderScrollComponent={AppSheetScrollView}
-          style={styles.projectScroll}
-          drawDistance={360}
-          keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.listContent}
+          data={visibleDirectories}
+          drawDistance={360}
+          getFixedItemSize={() => listRowHeight.single}
+          keyboardShouldPersistTaps="handled"
           keyExtractor={(entry) => entry.fileName}
-          renderItem={({ item, index }) => (
-            <PickerRow
-              position={listRowPosition(index, visibleDirectories.length)}
-              icon="folder"
-              title={item.fileName}
-              selected={false}
-              disabled={adding}
-              chevron
-              onPress={() => navigate(joinDirectoryPath(directoryPath, item.fileName))}
-            />
-          )}
           ListEmptyComponent={
             <EmptyState
               icon="folder-open-outline"
@@ -167,6 +174,22 @@ export function ProjectPickerContent({
               }
             />
           }
+          recycleItems
+          renderItem={({ index, item }) => (
+            <PickerRow
+              chevron
+              disabled={adding}
+              icon="folder"
+              onPress={() => {
+                navigate(joinDirectoryPath(directoryPath, item.fileName));
+              }}
+              position={listRowPosition(index, visibleDirectories.length)}
+              selected={false}
+              title={item.fileName}
+            />
+          )}
+          renderScrollComponent={AppSheetScrollView}
+          style={styles.projectScroll}
         />
       )}
     </View>

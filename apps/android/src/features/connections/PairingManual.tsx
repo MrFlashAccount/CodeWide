@@ -9,22 +9,22 @@ import type { ConnectionSheetSessionProps } from "./connectionSheetContract";
 import type { PairingSession } from "./pairingSession";
 
 export function PairingManual({
-  emoji,
   displayName,
-  setEmoji,
-  setDisplayName,
+  emoji,
   endpoint,
-  setEndpoint,
-  token,
-  setToken,
-  tlsPinSha256,
-  setTlsPinSha256,
   error,
   localError,
-  onRetryStartup,
-  saving,
   localReady,
+  onRetryStartup,
   save,
+  saving,
+  setDisplayName,
+  setEmoji,
+  setEndpoint,
+  setTlsPinSha256,
+  setToken,
+  tlsPinSha256,
+  token,
 }: Pick<
   PairingSession,
   | "emoji"
@@ -48,65 +48,65 @@ export function PairingManual({
       </Text>
       <View style={styles.pairingIdentityFields}>
         <TextInput
-          voiceInput={false}
           accessibilityLabel="Server emoji"
-          value={emoji}
           onChangeText={setEmoji}
           style={styles.pairingEmojiInput}
+          value={emoji}
+          voiceInput={false}
         />
         <TextInput
           accessibilityLabel="Server name"
-          value={displayName}
           onChangeText={setDisplayName}
           placeholder="Home workstation"
           placeholderTextColor={colors.textDim}
           style={[styles.fieldInput, styles.flex]}
+          value={displayName}
         />
       </View>
       <Text style={styles.fieldLabel}>Secure endpoint</Text>
       <TextInput
         accessibilityLabel="Server endpoint"
-        value={endpoint}
-        onChangeText={setEndpoint}
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
+        onChangeText={setEndpoint}
         placeholder="wss://host.example/v1/sync"
         placeholderTextColor={colors.textDim}
         style={styles.fieldInput}
+        value={endpoint}
       />
       <Text style={styles.fieldLabel}>One-time pairing token</Text>
       <TextInput
         accessibilityLabel="One-time pairing token"
-        value={token}
-        onChangeText={setToken}
         autoCapitalize="none"
         autoCorrect={false}
-        secureTextEntry
+        onChangeText={setToken}
         placeholder="Paste token"
         placeholderTextColor={colors.textDim}
+        secureTextEntry
         style={styles.fieldInput}
+        value={token}
       />
       <Text style={styles.fieldLabel}>Companion identity pin (required)</Text>
       <TextInput
-        voiceInput={false}
         accessibilityLabel="TLS certificate pin"
-        value={tlsPinSha256}
-        onChangeText={setTlsPinSha256}
         autoCapitalize="none"
         autoCorrect={false}
+        onChangeText={setTlsPinSha256}
         placeholder="sha256/base64…"
         placeholderTextColor={colors.textDim}
         style={styles.fieldInput}
+        value={tlsPinSha256}
+        voiceInput={false}
       />
       <PairingSubmission
+        accessibilityLabel="Connect server manually"
         error={error}
         localError={localError}
-        onRetryStartup={onRetryStartup}
-        saving={saving}
         localReady={localReady}
+        onRetryStartup={onRetryStartup}
         save={save}
-        accessibilityLabel="Connect server manually"
+        saving={saving}
       />
     </View>
   );

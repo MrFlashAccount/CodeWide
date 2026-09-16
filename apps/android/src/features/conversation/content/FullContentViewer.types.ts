@@ -1,18 +1,18 @@
-import { type RenderContentReference } from "@codewide/renderers";
-import { type LargeContentViewerRequest } from "./contentViewerContext";
+import type { RenderContentReference } from "@codewide/renderers";
+import type { LargeContentViewerRequest } from "./contentViewerContext";
 
 export type FullContentViewerProps = {
+  onClose: () => void;
+  onNext: () => void;
+  onPrevious: () => void;
   selection: {
-    pointer: string;
-    reference: RenderContentReference;
-    presentation: LargeContentViewerRequest["presentation"];
-    offset: number;
-    nextOffset: number;
-    text: string | null;
-    loading: boolean;
     error: string | null;
+    loading: boolean;
+    nextOffset: number;
+    offset: number;
+    pointer: string;
+    presentation: LargeContentViewerRequest["presentation"];
+    reference: RenderContentReference;
+    text: string | null;
   };
-  onClose(): void;
-  onPrevious(): void;
-  onNext(): void;
 };

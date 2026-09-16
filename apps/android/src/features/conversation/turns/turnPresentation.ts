@@ -7,9 +7,14 @@ export function formatTurnMeta(
   durationMs: number | null,
   completedAt: number | null,
 ): string {
-  const label = status === "inProgress" ? "Running" : status[0]?.toUpperCase() + status.slice(1);
+  const label =
+    status === "inProgress" ? "Running" : status.charAt(0).toUpperCase() + status.slice(1);
   const parts = [label];
-  if (durationMs !== null) parts.push(formatDuration(durationMs));
-  if (completedAt !== null) parts.push(formatDeviceTime(completedAt));
+  if (durationMs !== null) {
+    parts.push(formatDuration(durationMs));
+  }
+  if (completedAt !== null) {
+    parts.push(formatDeviceTime(completedAt));
+  }
   return parts.join(" · ");
 }

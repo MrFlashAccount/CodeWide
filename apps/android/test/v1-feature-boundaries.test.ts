@@ -1,15 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { lintV1Source } from "./oxlint-fixture";
 
 const androidRoot = fileURLToPath(new URL("..", import.meta.url));
-const require = createRequire(new URL("../eslint.config.js", import.meta.url));
-const { ESLint } = require("eslint");
 
 describe("V1 feature gate coverage", () => {
   it("routes the required V1 gate through every quality owner", async () => {
@@ -20,10 +18,22 @@ describe("V1 feature gate coverage", () => {
     expect(manifest.scripts["lint:v1"]).toContain("lint:v1:dead-code");
     expect(manifest.scripts["lint:v1"]).toContain("lint:v1:dependencies");
     expect(manifest.scripts["lint:v1:source"]).toContain("lint:v1:hygiene");
-    expect(manifest.scripts["lint:v1:source"]).toContain("lint:v1:layout");
+    expect(manifest.scripts["lint:v1:source"]).toBe("pnpm lint:v1:hygiene");
 
     const hygiene = (await import(new URL("../oxlint.v1.config.mjs", import.meta.url))).default;
     expect(hygiene.rules["hygiene/require-type-assertion-justification"]).toBe("error");
+    expect(JSON.stringify(hygiene.rules["no-restricted-imports"])).toContain("useCallback");
+    expect(JSON.stringify(hygiene.rules["no-restricted-imports"])).toContain("useMemo");
+    const compilerOwnedAllocationRules = hygiene.overrides.find(({ files }) =>
+      files?.includes("app/v1/**/*.tsx"),
+    )?.rules;
+    expect(compilerOwnedAllocationRules).toMatchObject({
+      "react-doctor/context-provider-value-from-unmemoized-local-literal": "off",
+      "react-doctor/jsx-no-constructed-context-values": "off",
+      "react-doctor/jsx-no-new-array-as-prop": "off",
+      "react-doctor/jsx-no-new-function-as-prop": "off",
+      "react-doctor/jsx-no-new-object-as-prop": "off",
+    });
     expect(hygiene.ignorePatterns).not.toContain("app/legacy.tsx");
     expect(hygiene.ignorePatterns).toEqual(
       expect.arrayContaining(["src/boot/**", "src/presentation/**", "src/v2/**"]),
@@ -38,9 +48,8 @@ describe("V1 feature gate coverage", () => {
     );
   });
 
-  it("applies presentation, React, layout, style, and public-API rules to a V1 feature path", async () => {
-    const eslint = new ESLint({ cwd: androidRoot });
-    const results = await eslint.lintText(
+  it("applies presentation, React, layout, style, and public-API rules to a V1 feature path", () => {
+    const diagnostics = lintV1Source(
       `
       import { useState } from "react";
       import { StyleSheet, Text } from "react-native";
@@ -50,16 +59,37 @@ describe("V1 feature gate coverage", () => {
       }
       const styles = StyleSheet.create({ root: { color: "red", flex: 1 } });
     `,
-      { filePath: "src/features/workspace/WorkspaceScreen.tsx" },
+      "WorkspaceScreen.tsx",
     );
-    expect(results[0].messages).toEqual(
+    expect(diagnostics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ ruleId: "codewide-v1/imports-separated-from-code" }),
-        expect.objectContaining({ ruleId: "codewide-v1/require-public-export-jsdoc" }),
-        expect.objectContaining({ ruleId: "codewide-v1/stylesheet-properties-multiline" }),
-        expect.objectContaining({ ruleId: "codewide/presentation-tokens" }),
-        expect.objectContaining({ ruleId: "react-hooks/rules-of-hooks" }),
+        expect.objectContaining({ code: "codewide-v1(imports-separated-from-code)" }),
+        expect.objectContaining({ code: "codewide-v1(require-public-export-jsdoc)" }),
+        expect.objectContaining({ code: "codewide-v1(stylesheet-properties-multiline)" }),
+        expect.objectContaining({ code: "codewide-presentation(presentation-tokens)" }),
+        expect.objectContaining({ code: "react-hooks-js(rules-of-hooks)" }),
       ]),
+    );
+  });
+
+  it("rejects manual React memoization through named and namespace imports", () => {
+    const diagnostics = lintV1Source(
+      `
+      import React, { useMemo as memo } from "react";
+
+      export function MemoizedValues() {
+        const first = memo(() => ({}), []);
+        const second = React.useCallback(() => undefined, []);
+        return [first, second];
+      }
+    `,
+      "MemoizedValues.tsx",
+    );
+    expect(
+      diagnostics.filter(({ code }) => code === "codewide-v1(no-manual-react-memoization)"),
+    ).toHaveLength(2);
+    expect(diagnostics.filter(({ code }) => code === "eslint(no-restricted-imports)")).toHaveLength(
+      1,
     );
   });
 

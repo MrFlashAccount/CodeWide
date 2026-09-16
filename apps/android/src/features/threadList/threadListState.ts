@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useConstant } from "../../react/useConstant";
 import { ScrollOffsetMemory } from "./scrollOffsetMemory";
 import type { ThreadListFilter } from "./threadListFilters";
 import { THREAD_LIST_PAGE_SIZE, type ThreadListMode } from "./threadListModel";
@@ -7,7 +8,7 @@ import { THREAD_LIST_PAGE_SIZE, type ThreadListMode } from "./threadListModel";
 export function useThreadListState() {
   const [mobileThreadQuery, setMobileThreadQuery] = useState("");
 
-  const [mobileThreadOffset] = useState(() => new ScrollOffsetMemory());
+  const mobileThreadOffset = useConstant(() => new ScrollOffsetMemory());
 
   const [threadListMode, setThreadListMode] = useState<ThreadListMode>("active");
 
@@ -15,15 +16,15 @@ export function useThreadListState() {
 
   const [threadListLimit, setThreadListLimit] = useState(THREAD_LIST_PAGE_SIZE);
   return {
+    mobileThreadOffset,
     mobileThreadQuery,
     setMobileThreadQuery,
-    mobileThreadOffset,
-    threadListMode,
+    setThreadListFilter,
+    setThreadListLimit,
     setThreadListMode,
     threadListFilter,
-    setThreadListFilter,
     threadListLimit,
-    setThreadListLimit,
+    threadListMode,
   };
 }
 
@@ -33,11 +34,11 @@ export function useProjectListState() {
   const [projectListFilter, setProjectListFilter] = useState<ThreadListFilter>("all");
   const [projectListLimits, setProjectListLimits] = useState<Readonly<Record<string, number>>>({});
   return {
-    projectListMode,
-    setProjectListMode,
     projectListFilter,
-    setProjectListFilter,
     projectListLimits,
+    projectListMode,
+    setProjectListFilter,
     setProjectListLimits,
+    setProjectListMode,
   };
 }

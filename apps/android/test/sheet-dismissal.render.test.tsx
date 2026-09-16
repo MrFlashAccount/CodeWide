@@ -15,7 +15,6 @@ jest.mock("@expo/ui/jetpack-compose", () => {
     ModalBottomSheet: (props: { children?: ReactNode; onDismissRequest(): void }) => <View testID="native-sheet" {...props} />,
   };
 });
-jest.mock("heroui-native/portal", () => ({ PortalHost: () => null }));
 
 describe.each([["legacy", AppSheet], ["v2", PresentationSheetView]] as const)("%s sheet dismissal", (_name, Sheet) => {
   it("automatically exposes a content-free native diagnostic marker and updates it on page changes", () => {

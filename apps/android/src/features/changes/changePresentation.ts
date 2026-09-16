@@ -12,15 +12,15 @@ import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 type ChangesDisplayMode = "unified" | "split" | "source";
 
 export type ChangesPreferences = {
-  scope: ThreadChangeScope | null;
   mode: ChangesDisplayMode;
+  scope: ThreadChangeScope | null;
   wrapLines: boolean;
 };
 
 const changesPreferencesByThread = new Map<string, ChangesPreferences>();
 
 function readChangesPreferences(key: string): ChangesPreferences {
-  return changesPreferencesByThread.get(key) ?? { scope: null, mode: "unified", wrapLines: false };
+  return changesPreferencesByThread.get(key) ?? { mode: "unified", scope: null, wrapLines: false };
 }
 
 export function recordedTurnChangeResources(
@@ -34,18 +34,20 @@ export function recordedTurnChangeResources(
     if (existingIndex === undefined) {
       indexesByPath.set(file.path, resources.length);
       resources.push({
-        path: file.path,
-        kind: file.kind,
-        availability: file.kind === "delete" ? "deleted" : "unavailable",
         additions: file.additions,
+        availability: file.kind === "delete" ? "deleted" : "unavailable",
         deletions: file.deletions,
-        turnId: target.turnId,
         itemId: file.itemId,
+        kind: file.kind,
+        path: file.path,
+        turnId: target.turnId,
       });
       continue;
     }
     const existing = resources[existingIndex];
-    if (existing === undefined) continue;
+    if (existing === undefined) {
+      continue;
+    }
     existing.kind = file.kind;
     existing.availability = file.kind === "delete" ? "deleted" : "unavailable";
     existing.additions += file.additions;
@@ -62,20 +64,22 @@ export function recordedTurnChangeDiff(
 ): ThreadChangeDiffValue {
   const patches: ThreadChangeDiffValue["patches"] = [];
   for (const file of files) {
-    if (file.path !== path) continue;
+    if (file.path !== path) {
+      continue;
+    }
     patches.push({
-      turnId: target.turnId,
+      diff: file.patch,
       itemId: file.itemId,
       kind: file.kind,
-      diff: file.patch,
+      turnId: target.turnId,
     });
   }
   return {
-    threadId: target.threadId,
-    path,
     changeScope: "lastTurn",
     patches,
+    path,
     source: "",
+    threadId: target.threadId,
     truncated: false,
   };
 }
@@ -85,12 +89,12 @@ export function recordedTurnResourcesValue(
   files: readonly TurnChangedFile[],
 ): ThreadResourcesValue {
   return {
-    threadId: target.threadId,
-    revision: target.turnId,
+    attachments: [],
+    changes: recordedTurnChangeResources(target, files),
     changeScope: "lastTurn",
     changeScopes: [],
-    changes: recordedTurnChangeResources(target, files),
-    attachments: [],
+    revision: target.turnId,
+    threadId: target.threadId,
   };
 }
 
@@ -137,7 +141,7 @@ export function useChangeResourcePresentation(
       changesPreferences.scope !== null && scopes.includes(changesPreferences.scope)
         ? changesPreferences.scope
         : (resource?.changeScope ?? scopes[0] ?? "session");
-    return { resource, scopes, scope };
+    return { resource, scope, scopes };
   });
-  return { currentThreadResources, currentChangePresentation };
+  return { currentChangePresentation, currentThreadResources };
 }

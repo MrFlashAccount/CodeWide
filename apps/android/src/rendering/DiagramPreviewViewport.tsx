@@ -1,12 +1,4 @@
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { type LayoutChangeEvent, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { useEvent } from "../react/useEvent";
@@ -29,10 +21,14 @@ export function useDiagramPreviewViewportController(): DiagramPreviewViewportCon
   const checkVisibleDiagrams = useEvent(() => {
     frameRef.current = null;
     const viewportHeight = viewportHeightRef.current;
-    for (const observer of observersRef.current) observer(viewportHeight);
+    for (const observer of observersRef.current) {
+      observer(viewportHeight);
+    }
   });
   const schedule = useEvent(() => {
-    if (frameRef.current !== null) return;
+    if (frameRef.current !== null) {
+      return;
+    }
     frameRef.current = requestAnimationFrame(checkVisibleDiagrams);
   });
   const register = useEvent((observer: VisibilityObserver) => {
@@ -46,20 +42,23 @@ export function useDiagramPreviewViewportController(): DiagramPreviewViewportCon
     viewportHeightRef.current = viewportHeight;
     schedule();
   }, [schedule, viewportHeight]);
-  useEffect(() => {
-    return () => {
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-    };
-  }, []);
-  return useMemo(() => ({ register, schedule }), [register, schedule]);
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+      }
+    },
+    [],
+  );
+  return { register, schedule };
 }
 
 export function DiagramPreviewViewportProvider({
-  controller,
   children,
+  controller,
 }: {
-  readonly controller: DiagramPreviewViewportController;
   readonly children: ReactNode;
+  readonly controller: DiagramPreviewViewportController;
 }) {
   return (
     <DiagramPreviewViewportContext.Provider value={controller}>
@@ -71,13 +70,13 @@ export function DiagramPreviewViewportProvider({
 export function DiagramPreviewVisibility({
   children,
 }: {
-  readonly children: (state: { readonly near: boolean; readonly activated: boolean }) => ReactNode;
+  readonly children: (state: { readonly activated: boolean; readonly near: boolean }) => ReactNode;
 }) {
   const controller = useContext(DiagramPreviewViewportContext);
   const ref = useRef<View | null>(null);
   const [visibleState, setVisibleState] = useState(() => ({
-    near: controller === null,
     activated: controller === null,
+    near: controller === null,
   }));
   const checkVisibility = useEvent((viewportHeight: number) => {
     const preloadMargin = viewportHeight;
@@ -86,22 +85,24 @@ export function DiagramPreviewVisibility({
       setVisibleState((current) =>
         current.near === near && (current.activated || !near)
           ? current
-          : { near, activated: current.activated || near },
+          : { activated: current.activated || near, near },
       );
     });
   });
   useEffect(() => {
-    if (controller === null) return;
+    if (controller === null) {
+      return undefined;
+    }
     return controller.register(checkVisibility);
   }, [checkVisibility, controller]);
   const onLayout = useEvent((_event: LayoutChangeEvent) => {
     controller?.schedule();
   });
   return (
-    <View ref={ref} collapsable={false} onLayout={onLayout} style={styles.measurementRoot}>
+    <View collapsable={false} onLayout={onLayout} ref={ref} style={styles.measurementRoot}>
       {children({
-        near: controller === null || visibleState.near,
         activated: controller === null || visibleState.activated,
+        near: controller === null || visibleState.near,
       })}
     </View>
   );

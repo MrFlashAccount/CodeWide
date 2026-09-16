@@ -2,30 +2,19 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  userBubble: {
-    minWidth: 0,
-    alignSelf: "flex-end",
-    width: "auto",
-    maxWidth: "82%",
-    backgroundColor: colors.messageSurface,
-    borderRadius: radii.selected,
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.xs,
-  },
   agentMessage: {
     paddingHorizontal: spacing.optical,
     paddingVertical: spacing.xxs,
   },
   cardIconSlot: {
-    flexShrink: 0,
     alignItems: "center",
+    flexShrink: 0,
     justifyContent: "center",
   },
   cardTitle: {
-    minWidth: 0,
-    flexShrink: 1,
     color: colors.text,
+    flexShrink: 1,
+    minWidth: 0,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
@@ -34,16 +23,27 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
   },
   thinkingStatus: {
-    minWidth: 0,
-    minHeight: controlSize.compact,
-    flexDirection: "row",
     alignItems: "center",
+    flexDirection: "row",
     gap: spacing.compact,
+    minHeight: controlSize.compact,
+    minWidth: 0,
     paddingHorizontal: 0,
   },
   thinkingStatusInActivity: { paddingLeft: 0 },
   turnMetaText: {
     color: colors.textMuted,
     ...typeScale.caption,
+  },
+  userBubble: {
+    alignSelf: "flex-end",
+    backgroundColor: colors.messageSurface,
+    borderRadius: radii.selected,
+    maxWidth: "82%",
+    minWidth: 0,
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.xs,
+    width: "auto",
   },
 });

@@ -1,9 +1,9 @@
 type Direction = "older" | "newer";
 
 type ViewportFillCapabilities = {
-  loadPage(direction: Direction): Promise<boolean>;
-  afterLayout(): Promise<void>;
-  isCurrent(): boolean;
+  afterLayout: () => Promise<void>;
+  isCurrent: () => boolean;
+  loadPage: (direction: Direction) => Promise<boolean>;
 };
 
 // Invisible/filtered turns must not turn one layout event into an unbounded
@@ -26,9 +26,10 @@ export class ThreadHistoryViewportFill {
     this.capabilities = capabilities;
   }
 
-  reportViewport(viewportHeight: number, contentHeight: number): Promise<void> {
-    if (!Number.isFinite(viewportHeight) || !Number.isFinite(contentHeight))
-      return Promise.resolve();
+  async reportViewport(viewportHeight: number, contentHeight: number): Promise<void> {
+    if (!Number.isFinite(viewportHeight) || !Number.isFinite(contentHeight)) {
+      return;
+    }
     if (viewportHeight !== this.viewportHeight) {
       this.remaining = MAX_PAGES_PER_VIEWPORT_INTENT;
     }
@@ -38,9 +39,10 @@ export class ThreadHistoryViewportFill {
   }
 
   /** An explicit edge intent permits one page even when the viewport is full. */
-  load(direction: Direction): Promise<void> {
-    if (this.pending?.generation === this.generation && this.direction === direction)
+  async load(direction: Direction): Promise<void> {
+    if (this.pending?.generation === this.generation && this.direction === direction) {
       return this.pending.promise;
+    }
     this.cancel();
     this.direction = direction;
     this.remaining = MAX_PAGES_PER_VIEWPORT_INTENT;
@@ -52,22 +54,29 @@ export class ThreadHistoryViewportFill {
     this.remaining = 0;
   }
 
-  private run(forceFirstPage: boolean): Promise<void> {
-    if (this.pending?.generation === this.generation) return this.pending.promise;
+  private async run(forceFirstPage: boolean): Promise<void> {
+    if (this.pending?.generation === this.generation) {
+      return this.pending.promise;
+    }
     if (
       !forceFirstPage &&
       (this.remaining === 0 ||
         this.viewportHeight <= 0 ||
         this.contentHeight <= 0 ||
         this.contentHeight >= this.viewportHeight)
-    )
-      return Promise.resolve();
+    ) {
+      return;
+    }
     const generation = this.generation;
     const direction = this.direction;
     const operation = Promise.resolve()
-      .then(async () => await this.fill(generation, direction, forceFirstPage))
+      .then(async () => {
+        await this.fill(generation, direction, forceFirstPage);
+      })
       .finally(() => {
-        if (this.pending?.promise === operation) this.pending = null;
+        if (this.pending?.promise === operation) {
+          this.pending = null;
+        }
       });
     this.pending = { generation, promise: operation };
     return operation;
@@ -88,11 +97,15 @@ export class ThreadHistoryViewportFill {
           this.viewportHeight > 0 &&
           this.contentHeight > 0 &&
           this.contentHeight < this.viewportHeight;
-        if (!forceFirstPage && !needsContent) return;
+        if (!forceFirstPage && !needsContent) {
+          return;
+        }
         forceFirstPage = false;
         this.remaining -= 1;
         const progressed = await this.capabilities.loadPage(direction);
-        if (generation !== this.generation) return;
+        if (generation !== this.generation) {
+          return;
+        }
         if (!progressed) {
           this.remaining = 0;
           return;
@@ -101,9 +114,11 @@ export class ThreadHistoryViewportFill {
         // before deciding whether another page is necessary.
         await this.capabilities.afterLayout();
       }
-    } catch (cause) {
-      if (generation === this.generation) this.remaining = 0;
-      throw cause;
+    } catch (error) {
+      if (generation === this.generation) {
+        this.remaining = 0;
+      }
+      throw error;
     }
   }
 }

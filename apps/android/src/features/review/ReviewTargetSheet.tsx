@@ -10,15 +10,15 @@ import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography"
 import { styles } from "./ReviewTargetSheet.styles";
 
 export function ReviewSheet({
-  visible,
-  onClose,
   embedded = false,
+  onClose,
   onStartReview,
+  visible,
 }: {
-  visible: boolean;
-  onClose(): void;
   embedded?: boolean;
-  onStartReview?(target: ReviewTarget, delivery: ReviewDelivery): Promise<string>;
+  onClose: () => void;
+  onStartReview?: (target: ReviewTarget, delivery: ReviewDelivery) => Promise<string>;
+  visible: boolean;
 }) {
   const [targetType, setTargetType] = useState<ReviewTarget["type"]>("uncommittedChanges");
   const [targetValue, setTargetValue] = useState("");
@@ -30,8 +30,8 @@ export function ReviewSheet({
     let target: ReviewTarget;
     try {
       target = buildReviewTarget(targetType, targetValue);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Invalid review target");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Invalid review target");
       return;
     }
     setBusy(true);
@@ -43,7 +43,7 @@ export function ReviewSheet({
       return;
     }
     const operation = onStartReview(target, delivery);
-    void operation
+    operation
       .then(
         (reviewThreadId) => {
           setResult(
@@ -52,11 +52,17 @@ export function ReviewSheet({
               : "Inline review started",
           );
         },
-        (cause: unknown) => {
-          setError(cause instanceof Error ? cause.message : "Could not start review");
+        (error: unknown) => {
+          setError(error instanceof Error ? error.message : "Could not start review");
         },
       )
-      .then(() => setBusy(false));
+      .then(() => {
+        setBusy(false);
+      })
+      .catch((error: unknown) => {
+        setError(error instanceof Error ? error.message : "Could not start review");
+        setBusy(false);
+      });
   };
   const needsValue = targetType !== "uncommittedChanges";
   const content = (
@@ -68,40 +74,44 @@ export function ReviewSheet({
         </View>
       )}
       <AppSheetScrollView
-        style={styles.menuScroll}
         contentContainerStyle={styles.menuScrollContent}
         keyboardShouldPersistTaps="handled"
+        style={styles.menuScroll}
       >
         <Text style={styles.controlSectionLabel}>Review target</Text>
         <ControlOption
-          title="Uncommitted changes"
-          selected={targetType === "uncommittedChanges"}
           onPress={() => {
             setTargetType("uncommittedChanges");
             setTargetValue("");
           }}
+          selected={targetType === "uncommittedChanges"}
+          title="Uncommitted changes"
         />
         <ControlOption
-          title="Base branch"
+          onPress={() => {
+            setTargetType("baseBranch");
+          }}
           selected={targetType === "baseBranch"}
-          onPress={() => setTargetType("baseBranch")}
+          title="Base branch"
         />
         <ControlOption
-          title="Commit"
+          onPress={() => {
+            setTargetType("commit");
+          }}
           selected={targetType === "commit"}
-          onPress={() => setTargetType("commit")}
+          title="Commit"
         />
         <ControlOption
-          title="Custom instructions"
+          onPress={() => {
+            setTargetType("custom");
+          }}
           selected={targetType === "custom"}
-          onPress={() => setTargetType("custom")}
+          title="Custom instructions"
         />
         {needsValue && (
           <TextInput
-            voiceInput={targetType === "custom"}
             accessibilityLabel="Review target value"
             multiline={targetType === "custom"}
-            value={targetValue}
             onChangeText={setTargetValue}
             placeholder={
               targetType === "baseBranch"
@@ -112,21 +122,25 @@ export function ReviewSheet({
             }
             placeholderTextColor={colors.textDim}
             style={[styles.fieldInput, targetType === "custom" && { minHeight: 76 }]}
+            value={targetValue}
+            voiceInput={targetType === "custom"}
           />
         )}
         <Text style={styles.controlSectionLabel}>Delivery</Text>
         <SegmentedControl
           appearance="dark"
-          values={["Inline", "New thread"]}
+          onValueChange={(value) => {
+            setDelivery(value === "New thread" ? "detached" : "inline");
+          }}
           selectedIndex={delivery === "inline" ? 0 : 1}
-          onValueChange={(value) => setDelivery(value === "New thread" ? "detached" : "inline")}
           style={styles.modeSelector}
+          values={["Inline", "New thread"]}
         />
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Start review"
+          accessibilityRole="button"
           disabled={busy || (needsValue && targetValue.trim() === "")}
-          onPress={() => void start()}
+          onPress={start}
           style={[
             styles.primaryButton,
             (busy || (needsValue && targetValue.trim() === "")) && styles.disabled,
@@ -143,17 +157,19 @@ export function ReviewSheet({
     content
   ) : (
     <AppSheet
-      isOpen={visible}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
       contentProps={{
+        contentContainerClassName: "h-full",
         dismissLabel: "Close review controls",
-        index: 0,
-        snapPoints: ["55%", "90%"],
         enableDynamicSizing: false,
         enableOverDrag: false,
-        contentContainerClassName: "h-full",
+        index: 0,
+        snapPoints: ["55%", "90%"],
+      }}
+      isOpen={visible}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
       }}
     >
       {content}
@@ -163,9 +179,17 @@ export function ReviewSheet({
 
 function buildReviewTarget(type: ReviewTarget["type"], rawValue: string): ReviewTarget {
   const value = rawValue.trim();
-  if (type === "uncommittedChanges") return { type };
-  if (value === "") throw new Error("Review target is required");
-  if (type === "baseBranch") return { type, branch: value };
-  if (type === "commit") return { type, sha: value, title: null };
-  return { type, instructions: value };
+  if (type === "uncommittedChanges") {
+    return { type };
+  }
+  if (value === "") {
+    throw new Error("Review target is required");
+  }
+  if (type === "baseBranch") {
+    return { branch: value, type };
+  }
+  if (type === "commit") {
+    return { sha: value, title: null, type };
+  }
+  return { instructions: value, type };
 }

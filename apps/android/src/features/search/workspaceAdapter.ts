@@ -14,29 +14,30 @@ import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/wo
 import type { SearchWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts search intents using retained lower authorities. */
 export function createSearchWorkspaceAdapter({
-  getSummaries,
   getPendingRequests,
   getSession,
+  getSummaries,
   rpcAfterAttach,
 }: {
-  getSummaries(): ThreadSummaryDatabase | null;
-  getPendingRequests(): PendingRequestDatabase | null;
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
+  getPendingRequests: () => PendingRequestDatabase | null;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
+  getSummaries: () => ThreadSummaryDatabase | null;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): SearchWorkspaceCapabilities {
-  const searchThreads = async (query: string, connectionId: string | null = null) => {
-    return projectThreadHotStates(
+  const searchThreads = async (query: string, connectionId: string | null = null) =>
+    projectThreadHotStates(
       (await getSummaries()?.search(query, connectionId)) ?? [],
       getPendingRequests()?.collection.toArray ?? [],
     );
-  };
 
   const searchMessages = async (
     connectionId: string,
     query: MessageSearchQuery,
   ): Promise<MessageSearchPage> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     return parseMessageSearchPage(await rpcAfterAttach(session, "companion/search", query));
   };
 
@@ -45,10 +46,12 @@ export function createSearchWorkspaceAdapter({
     query: SearchContextQuery,
   ): Promise<SearchConversationPage> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     return parseSearchConversationPage(
       await rpcAfterAttach(session, "companion/search/window", query),
     );
   };
-  return { searchThreads, searchMessages, searchConversation };
+  return { searchConversation, searchMessages, searchThreads };
 }

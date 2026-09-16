@@ -5,15 +5,15 @@ import type { ThreadLoadStatus } from "./thread-load-status";
 import type { ThreadHistoryState } from "./thread-pagination";
 
 export type ThreadHistoryCursor = Omit<ThreadHistoryState, "status" | "error"> & {
-  id: string;
   connectionId: string;
-  threadId: string;
   generation: number;
+  id: string;
+  threadId: string;
 };
 
 export type ThreadHistoryActivity = {
-  status: ThreadLoadStatus;
   error: string | null;
+  status: ThreadLoadStatus;
 };
 
 export type ThreadHistoryRow = ThreadHistoryCursor &
@@ -22,15 +22,15 @@ export type ThreadHistoryRow = ThreadHistoryCursor &
   };
 
 export type ThreadHistoryModel = {
-  cursor$(id: string): Observable<ThreadHistoryCursor | null>;
-  activity$(id: string): Observable<ThreadHistoryActivity>;
-  get(id: string): ThreadHistoryRow | undefined;
-  put(row: Omit<ThreadHistoryRow, "updatedAt">): void;
-  delete(id: string): void;
-  close(): void;
+  activity$: (id: string) => Observable<ThreadHistoryActivity>;
+  close: () => void;
+  cursor$: (id: string) => Observable<ThreadHistoryCursor | null>;
+  delete: (id: string) => void;
+  get: (id: string) => ThreadHistoryRow | undefined;
+  put: (row: Omit<ThreadHistoryRow, "updatedAt">) => void;
 };
 
-const IDLE_ACTIVITY: ThreadHistoryActivity = { status: "idle", error: null };
+const IDLE_ACTIVITY: ThreadHistoryActivity = { error: null, status: "idle" };
 
 /** Keeps the remote cursor and transport activity in separate Legend nodes.
  * SQLite window membership belongs to ThreadChatModel and never passes through
@@ -73,34 +73,20 @@ export function createThreadHistoryModel(maxResidentRows = 72): ThreadHistoryMod
   };
 
   return {
-    cursor$,
     activity$,
-    get(id) {
-      const cursor = cursors.get(id)?.peek() ?? null;
-      if (cursor === null) return undefined;
-      return {
-        ...cursor,
-        ...(activities.get(id)?.peek() ?? IDLE_ACTIVITY),
-        updatedAt: updatedAt.get(id) ?? 0,
-      };
+    close() {
+      closed = true;
+      for (const node of cursors.values()) {
+        node.set(null);
+      }
+      for (const node of activities.values()) {
+        node.set(IDLE_ACTIVITY);
+      }
+      cursors.clear();
+      activities.clear();
+      updatedAt.clear();
     },
-    put(row) {
-      if (closed) return;
-      const { status, error, ...cursor } = row;
-      const cursorNode = cursor$(row.id);
-      const previousCursor = cursorNode.peek();
-      const nextCursor =
-        previousCursor === null ? cursor : replaceEqualDeep(previousCursor, cursor);
-      if (nextCursor !== previousCursor) cursorNode.set(nextCursor);
-
-      const activityNode = activity$(row.id);
-      const previousActivity = activityNode.peek();
-      const nextActivity = replaceEqualDeep(previousActivity, { status, error });
-      if (nextActivity !== previousActivity) activityNode.set(nextActivity);
-
-      updatedAt.set(row.id, Date.now());
-      prune();
-    },
+    cursor$,
     delete(id) {
       cursors.get(id)?.set(null);
       activities.get(id)?.set(IDLE_ACTIVITY);
@@ -108,13 +94,39 @@ export function createThreadHistoryModel(maxResidentRows = 72): ThreadHistoryMod
       activities.delete(id);
       updatedAt.delete(id);
     },
-    close() {
-      closed = true;
-      for (const node of cursors.values()) node.set(null);
-      for (const node of activities.values()) node.set(IDLE_ACTIVITY);
-      cursors.clear();
-      activities.clear();
-      updatedAt.clear();
+    get(id) {
+      const cursor = cursors.get(id)?.peek() ?? null;
+      if (cursor === null) {
+        return undefined;
+      }
+      return {
+        ...cursor,
+        ...(activities.get(id)?.peek() ?? IDLE_ACTIVITY),
+        updatedAt: updatedAt.get(id) ?? 0,
+      };
+    },
+    put(row) {
+      if (closed) {
+        return;
+      }
+      const { error, status, ...cursor } = row;
+      const cursorNode = cursor$(row.id);
+      const previousCursor = cursorNode.peek();
+      const nextCursor =
+        previousCursor === null ? cursor : replaceEqualDeep(previousCursor, cursor);
+      if (nextCursor !== previousCursor) {
+        cursorNode.set(nextCursor);
+      }
+
+      const activityNode = activity$(row.id);
+      const previousActivity = activityNode.peek();
+      const nextActivity = replaceEqualDeep(previousActivity, { error, status });
+      if (nextActivity !== previousActivity) {
+        activityNode.set(nextActivity);
+      }
+
+      updatedAt.set(row.id, Date.now());
+      prune();
     },
   };
 }

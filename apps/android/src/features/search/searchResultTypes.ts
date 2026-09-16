@@ -1,4 +1,4 @@
-import { type MessageSearchHit, type MessageSearchPage } from "../../data/message-search";
+import type { MessageSearchHit, MessageSearchPage } from "../../data/message-search";
 
 export interface SearchResultTarget {
   readonly connectionId: string;
@@ -6,5 +6,5 @@ export interface SearchResultTarget {
 }
 
 export type ServerSearchResult =
-  | { readonly status: "ready"; readonly connectionId: string; readonly page: MessageSearchPage }
-  | { readonly status: "error"; readonly connectionId: string; readonly message: string };
+  | { readonly connectionId: string; readonly page: MessageSearchPage; readonly status: "ready" }
+  | { readonly connectionId: string; readonly message: string; readonly status: "error" };

@@ -2,35 +2,35 @@
 import { ActivityIndicator, View } from "react-native";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 
-export function CalmSpinner({ size, color }: { size: number; color: string; durationMs: number }) {
+export function CalmSpinner({ color, size }: { color: string; durationMs: number; size: number }) {
   const reducedMotion = useReducedMotionPreference();
   if (reducedMotion) {
     return (
       <View
-        testID="calm-running-spinner"
         style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: 1.25,
           borderColor: color,
+          borderRadius: size / 2,
           borderTopColor: "transparent",
+          borderWidth: 1.25,
+          height: size,
           opacity: 0.72,
+          width: size,
         }}
+        testID="calm-running-spinner"
       />
     );
   }
   return (
     <ActivityIndicator
-      testID="calm-running-spinner"
       animating
       color={color}
       size={size}
       style={{
-        width: size,
         height: size,
         opacity: 0.72,
+        width: size,
       }}
+      testID="calm-running-spinner"
     />
   );
 }

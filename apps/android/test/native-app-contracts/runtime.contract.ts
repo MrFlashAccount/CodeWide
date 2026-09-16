@@ -2,7 +2,6 @@ import { expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { sourceObjectDeclaration } from "../source-contract";
 import {
-  legacyRemoteStore,
   ownerWorkspaceRuntime,
   voiceWorkspace,
   sessionOwner,
@@ -16,11 +15,9 @@ import {
 } from "./runtime-sources";
 
 it("preserves runtime integration contracts", () => {
-  expect(legacyRemoteStore).toContain("PRAGMA busy_timeout = 5000");
   expect(ownerWorkspaceRuntime).toContain("new NativeEngineSupervisor");
   expect(voiceWorkspace).not.toContain("new MultiConnectionSupervisor");
   expect(voiceWorkspace).not.toContain("nativeJsSyncSocketFactory");
-  expect(legacyRemoteStore).toContain("finalizeUnusedStatementsBeforeClosing: false");
   expect(voiceWorkspace).toContain("await listNativeCommands()");
   expect(voiceWorkspace).not.toContain("commandDeliveries");
   expect(voiceWorkspace).not.toContain("applyHostQueue(connectionId, commands)");
@@ -53,18 +50,8 @@ it("preserves runtime integration contracts", () => {
   expect(connectionProfileDatabase).toContain("await SecureStore.getItemAsync(tokenKey(row.id))");
   expect(connectionProfileDatabase).toContain('toStoredConnection(row, "")');
   expect(ownerConnectionRuntime).toContain("NATIVE_CREDENTIAL_MIGRATION_KEY");
-  expect(ownerConnectionRuntime).toContain(
-    "profiles.importLegacy(await legacyStore.listConnections())",
-  );
-  expect(ownerConnectionRuntime).toContain("if (!connectionMigrationComplete)");
-  expect(ownerConnectionRuntime).toContain("if (initialProfiles.length === 0)");
+  expect(ownerConnectionRuntime).not.toContain("LegacyRemoteStore");
   expect(voiceWorkspace).not.toContain("SqliteRemoteStore");
-  expect(ownerConnectionRuntime).toContain("LegacyRemoteStore.open()");
-  expect(legacyRemoteStore).toContain(
-    "Read-only adapter for the pre-TanStack Expo-SQLite database",
-  );
-  expect(legacyRemoteStore).not.toContain("CREATE VIRTUAL TABLE");
-  expect(legacyRemoteStore).not.toContain("PRAGMA user_version");
   expect(voiceWorkspace).not.toContain("store.hydrateThreadRuntimeMetadata");
   expect(voiceWorkspace).not.toContain("await store.getThread(");
   expect(voiceWorkspace).not.toContain("applyAncillaryEvents");
@@ -93,7 +80,6 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain("mirrorQueuedCommands");
   expect(voiceWorkspace).not.toContain("sameConnections(");
   expect(ownerWorkspaceRuntime).toContain("supervisor.replaceConnections(initialProfiles)");
-  expect(legacyRemoteStore).toContain("readonly #tokenCache = new Map<string, string>()");
   for (const owner of ["LocalhostPreview", "ForwardedLoopbackBrowser"]) {
     const styles = readFileSync(
       new URL(`../../src/features/ports/${owner}.styles.ts`, import.meta.url),
@@ -111,7 +97,9 @@ it("preserves runtime integration contracts", () => {
     new URL("../../src/ui/ResourceContextChip.styles.ts", import.meta.url),
     "utf8",
   );
-  expect(resourceContextStyles).toMatch(/composerContextText: \{\s*flexGrow: 0,\s*flexShrink: 0/);
+  const composerContextText = sourceObjectDeclaration(resourceContextStyles, "composerContextText");
+  expect(composerContextText).toContain("flexGrow: 0");
+  expect(composerContextText).toContain("flexShrink: 0");
   expect(voiceWorkspace).not.toContain("const changedThreads = new Set<string>();");
   expect(privateAsset).toContain('source.kind === "path"');
   expect(privateAsset).toContain('source.kind === "content"');
@@ -130,7 +118,8 @@ it("preserves runtime integration contracts", () => {
   expect(sessionOwner).toMatch(
     /if\s*\(\s*!forceRefresh\s*&&\s*existingMint !== undefined\s*&&\s*existingMint\.credentialKey === credentialKey\s*\)/u,
   );
-  expect(sessionOwner).toContain("if (forceRefresh) httpSessions.delete(connection.id)");
+  expect(sessionOwner).toContain("if (forceRefresh)");
+  expect(sessionOwner).toContain("httpSessions.delete(connection.id);");
   expect(privateAsset).toContain("getAccess(attempt > 0)");
   expect(remoteWorkspace).not.toContain("liveEventQueueRef");
   expect(remoteWorkspace).not.toContain("subscribeThreadEvents");

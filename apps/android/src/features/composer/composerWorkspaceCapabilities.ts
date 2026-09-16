@@ -11,9 +11,29 @@ import type {
 import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
 /** Qualified capabilities consumed by the composer owner in conversation composition. */
 export type ComposerWorkspaceCapabilities = {
-  onSend: ((text: string, mode: SendMode, options: TurnSendOptions) => Promise<string>) | undefined;
-  onRetryFailedMessage: ((commandId: string) => Promise<void>) | undefined;
+  controlsResourceId: string | null;
   loadDraft: ((connectionId: string, threadId: string) => Promise<string>) | undefined;
+  onInterrupt: ((turnId: string) => Promise<void>) | undefined;
+  onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
+  onRetryFailedMessage: ((commandId: string) => Promise<void>) | undefined;
+  onSend: ((text: string, mode: SendMode, options: TurnSendOptions) => Promise<string>) | undefined;
+  onStartVoiceTranscription:
+    | ((
+        listener: (event: VoiceTranscriptionEvent) => void,
+        options?: VoiceTranscriptionOptions,
+      ) => Promise<VoiceTranscriptionSession>)
+    | undefined;
+  onUpdateSettings: ((settings: ThreadSettings) => Promise<void>) | undefined;
+  removeDraftAttachment:
+    | ((connectionId: string, threadId: string, attachmentId: string) => Promise<void>)
+    | undefined;
+  saveComposerPreferences:
+    | ((
+        connectionId: string,
+        threadId: string,
+        preferences: StoredComposerPreferences,
+      ) => Promise<void>)
+    | undefined;
   saveDraft: ((connectionId: string, threadId: string, text: string) => Promise<void>) | undefined;
   saveDraftAttachments:
     | ((
@@ -30,26 +50,6 @@ export type ComposerWorkspaceCapabilities = {
         isCurrent: () => boolean,
       ) => Promise<void>)
     | undefined;
-  removeDraftAttachment:
-    | ((connectionId: string, threadId: string, attachmentId: string) => Promise<void>)
-    | undefined;
-  saveComposerPreferences:
-    | ((
-        connectionId: string,
-        threadId: string,
-        preferences: StoredComposerPreferences,
-      ) => Promise<void>)
-    | undefined;
-  onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
-  onUpdateSettings: ((settings: ThreadSettings) => Promise<void>) | undefined;
-  onInterrupt: ((turnId: string) => Promise<void>) | undefined;
-  workspaceResources: WorkspaceResourceDatabase | null;
-  controlsResourceId: string | null;
   voiceController: VoiceInputController | null;
-  onStartVoiceTranscription:
-    | ((
-        listener: (event: VoiceTranscriptionEvent) => void,
-        options?: VoiceTranscriptionOptions,
-      ) => Promise<VoiceTranscriptionSession>)
-    | undefined;
+  workspaceResources: WorkspaceResourceDatabase | null;
 };

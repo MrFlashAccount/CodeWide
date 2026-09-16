@@ -16,7 +16,7 @@ export const timelineRowCache = new WeakMap<
 >();
 
 export const optimisticTimelineRowCache = new WeakMap<
-  object,
+  ProjectedThreadChatDelivery,
   Extract<TimelineItem, { kind: "optimistic" }>
 >();
 
@@ -25,19 +25,21 @@ export function projectOptimisticTimelineItem(
   composerScope: string,
 ): Extract<TimelineItem, { kind: "optimistic" }> {
   const cached = optimisticTimelineRowCache.get(delivery);
-  if (cached?.scope === composerScope) return cached;
+  if (cached?.scope === composerScope) {
+    return cached;
+  }
   const item: Extract<TimelineItem, { kind: "optimistic" }> = {
+    attachments: delivery.attachments,
+    id: delivery.commandId,
     kind: "optimistic",
     scope: composerScope,
-    id: delivery.commandId,
     text: delivery.text,
-    attachments: delivery.attachments ?? [],
     ...(delivery.workspaceRequestId === undefined
       ? {}
       : { workspaceRequestId: delivery.workspaceRequestId }),
-    status: normalizePendingDeliveryState(delivery.state),
-    lastError: delivery.lastError,
     createdAt: delivery.createdAt,
+    lastError: delivery.lastError,
+    status: normalizePendingDeliveryState(delivery.state),
   };
   optimisticTimelineRowCache.set(delivery, item);
   return item;
@@ -51,14 +53,16 @@ export function projectTimelineTurns(
 ): Extract<TimelineItem, { kind: "turn" }>[] {
   return turns.map((rawTurn) => {
     const cached = timelineRowCache.get(rawTurn);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      return cached;
+    }
     const item: Extract<TimelineItem, { kind: "turn" }> = {
-      kind: "turn",
+      connectionId,
       id: rawTurn.id,
       key: `${composerScope}\u0000${rawTurn.id}`,
-      connectionId,
-      threadId,
+      kind: "turn",
       scope: composerScope,
+      threadId,
       turn: rawTurn,
     };
     timelineRowCache.set(rawTurn, item);
@@ -67,8 +71,12 @@ export function projectTimelineTurns(
 }
 
 export function timelineItemKey(item: TimelineItem): string {
-  if (item.kind === "turn") return remoteTurnTimelineKey(item.scope, item.id, item.turn.items);
-  if (item.kind === "optimistic") return optimisticTimelineKey(item.scope, item.id);
+  if (item.kind === "turn") {
+    return remoteTurnTimelineKey(item.scope, item.id, item.turn.items);
+  }
+  if (item.kind === "optimistic") {
+    return optimisticTimelineKey(item.scope, item.id);
+  }
   return `turn-meta-${item.key}`;
 }
 
@@ -79,7 +87,9 @@ export function projectTimelineDateLabels(
   const labels = new Map<TimelineItem, TimelineTurnDateLabels>();
   const dates = new TimelineDateSequence(includesBeginning);
   for (const item of items) {
-    if (item.kind === "meta") continue;
+    if (item.kind === "meta") {
+      continue;
+    }
     const timestampMs = timelineItemTimestampMs(item);
     const before =
       item.kind === "optimistic" || item.turn.items.some((entry) => entry.type === "userMessage")
@@ -90,41 +100,47 @@ export function projectTimelineDateLabels(
       item.kind === "turn"
         ? dates.next(completedAt === null ? timestampMs : protocolTimestampMs(completedAt))
         : null;
-    if (before !== null || agent !== null) labels.set(item, { before, agent });
+    if (before !== null || agent !== null) {
+      labels.set(item, { agent, before });
+    }
   }
   return labels;
 }
 
 export function timelineItemTimestampMs(item: TimelineItem): number | null {
-  if (item.kind === "optimistic") return Number.isFinite(item.createdAt) ? item.createdAt : null;
-  if (item.kind !== "turn") return null;
+  if (item.kind === "optimistic") {
+    return Number.isFinite(item.createdAt) ? item.createdAt : null;
+  }
+  if (item.kind !== "turn") {
+    return null;
+  }
   return protocolTimestampMs(item.turn.startedAt);
 }
 
-export const timelineSearchTextCache = new WeakMap<object, string>();
+export const timelineSearchTextCache = new WeakMap<TimelineItem, string>();
 
 import type { ProjectedThreadChatTimelineEntry } from "../../../data/thread-chat-projection";
 import { measureThreadNavigationWork } from "../../../data/thread-navigation-metrics";
 import { mergeProjectedThreadPartitions } from "../../../data/thread-partitions";
 
 export function projectConversationTimeline({
-  remoteThread,
-  remoteSealedTurns,
-  remoteLiveTurns,
-  timelineEntries,
   composerScope,
-  serverId,
   draftConnectionId,
   draftThreadId,
+  remoteLiveTurns,
+  remoteSealedTurns,
+  remoteThread,
+  serverId,
+  timelineEntries,
 }: {
-  remoteThread: Thread | null | undefined;
-  remoteSealedTurns: readonly Thread["turns"][number][] | undefined;
-  remoteLiveTurns: readonly Thread["turns"][number][] | undefined;
-  timelineEntries: readonly ProjectedThreadChatTimelineEntry[] | undefined;
   composerScope: string;
-  serverId: string;
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  remoteLiveTurns: readonly Thread["turns"][number][] | undefined;
+  remoteSealedTurns: readonly Thread["turns"][number][] | undefined;
+  remoteThread: Thread | null | undefined;
+  serverId: string;
+  timelineEntries: readonly ProjectedThreadChatTimelineEntry[] | undefined;
 }) {
   const timelineRemoteThreadId = remoteThread?.id;
 
@@ -176,16 +192,21 @@ export function projectConversationTimeline({
           draftThreadId,
           "project_model_timeline",
           () =>
-            timelineEntries.map((entry) =>
-              entry.kind === "turn"
-                ? projectTimelineTurns(
-                    [entry.turn],
-                    composerScope,
-                    serverId,
-                    timelineRemoteThreadId,
-                  )[0]!
-                : projectOptimisticTimelineItem(entry.delivery, composerScope),
-            ),
+            timelineEntries.map((entry) => {
+              if (entry.kind !== "turn") {
+                return projectOptimisticTimelineItem(entry.delivery, composerScope);
+              }
+              const projected = projectTimelineTurns(
+                [entry.turn],
+                composerScope,
+                serverId,
+                timelineRemoteThreadId,
+              )[0];
+              if (projected === undefined) {
+                throw new Error("A timeline turn projection produced no row");
+              }
+              return projected;
+            }),
           { values: { itemCount: timelineEntries.length } },
         );
 
@@ -194,7 +215,9 @@ export function projectConversationTimeline({
     draftThreadId,
     "assemble_timeline",
     () => {
-      if (modelTimeline !== null) return modelTimeline;
+      if (modelTimeline !== null) {
+        return modelTimeline;
+      }
       const partitioned = remoteSealedTurns !== undefined && remoteLiveTurns !== undefined;
       return remoteThread === null || remoteThread === undefined
         ? []
@@ -204,9 +227,9 @@ export function projectConversationTimeline({
     },
     {
       values: {
-        sealedItemCount: sealedTimeline.length,
-        liveItemCount: liveTimeline.length,
         fullItemCount: fullTimeline.length,
+        liveItemCount: liveTimeline.length,
+        sealedItemCount: sealedTimeline.length,
       },
     },
   );

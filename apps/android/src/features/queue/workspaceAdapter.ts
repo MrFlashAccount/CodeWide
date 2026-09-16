@@ -15,8 +15,8 @@ export function createQueueWorkspaceAdapter({
   getSession,
   rpcAfterAttach,
 }: {
-  getDetails(): ThreadDetailDatabase | null;
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
+  getDetails: () => ThreadDetailDatabase | null;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): QueueWorkspaceCapabilities {
   const listQueuedPrompts = async (
@@ -24,7 +24,9 @@ export function createQueueWorkspaceAdapter({
     threadId: string,
   ): Promise<QueuedPrompt[]> => {
     const details = getDetails();
-    if (details === null) return [];
+    if (details === null) {
+      return [];
+    }
     const session = getSession(connectionId);
     if (session !== undefined) {
       try {
@@ -32,7 +34,9 @@ export function createQueueWorkspaceAdapter({
           threadId,
         });
         const commands = parseHostQueueSnapshot(mirrored.data);
-        if (commands === null) throw new Error("Companion queue snapshot is invalid");
+        if (commands === null) {
+          throw new Error("Companion queue snapshot is invalid");
+        }
         const nativeCommands = await listNativeCommands();
         const pending = new Set(
           nativeCommands
@@ -54,13 +58,13 @@ export function createQueueWorkspaceAdapter({
     return details
       .listQueued(connectionId, threadId)
       .filter(({ state }) => state !== "delivered")
-      .map(({ commandId, text, attachments, createdAt, state, lastError }) => ({
-        commandId,
-        text,
+      .map(({ attachments, commandId, createdAt, lastError, state, text }) => ({
         attachments,
+        commandId,
         createdAt,
-        state: state === "failed" || state === "uncertain" ? state : "queued",
         lastError,
+        state: state === "failed" || state === "uncertain" ? state : "queued",
+        text,
       }));
   };
 
@@ -71,15 +75,20 @@ export function createQueueWorkspaceAdapter({
     attachments: RemoteFileAttachment[],
   ): Promise<void> => {
     const normalized = text.trim();
-    if (normalized.length < 1 && attachments.length === 0)
+    if (normalized.length < 1 && attachments.length === 0) {
       throw new Error("Queued message cannot be empty");
-    if (normalized.length > MAX_TURN_TEXT_CHARS)
-      throw new Error(`Queued message exceeds ${MAX_TURN_TEXT_CHARS} characters`);
+    }
+    if (normalized.length > MAX_TURN_TEXT_CHARS) {
+      throw new Error(`Queued message exceeds ${String(MAX_TURN_TEXT_CHARS)} characters`);
+    }
     const details = getDetails();
-    if (details === null) throw new Error("Local timeline database is not ready");
+    if (details === null) {
+      throw new Error("Local timeline database is not ready");
+    }
     const mutation = details.planQueuedEdit(connectionId, commandId, normalized, attachments);
-    if (mutation === null)
+    if (mutation === null) {
       throw new Error("Queued prompt is already dispatching or no longer exists");
+    }
     await runOptimisticPendingMutation(details, mutation, async () => {
       await enqueueNativeCommand(
         connectionId,
@@ -87,8 +96,8 @@ export function createQueueWorkspaceAdapter({
         "companion/queue/edit",
         {
           commandId,
-          text: normalized,
           input: queuedInputPayload(normalized, attachments),
+          text: normalized,
         },
       );
     });
@@ -96,10 +105,13 @@ export function createQueueWorkspaceAdapter({
 
   const cancelQueuedPrompt = async (connectionId: string, commandId: string): Promise<void> => {
     const details = getDetails();
-    if (details === null) throw new Error("Local timeline database is not ready");
+    if (details === null) {
+      throw new Error("Local timeline database is not ready");
+    }
     const mutation = details.planQueuedRemoval(connectionId, commandId);
-    if (mutation === null)
+    if (mutation === null) {
       throw new Error("Queued prompt is already dispatching or no longer exists");
+    }
     await runOptimisticPendingMutation(details, mutation, async () => {
       await enqueueNativeCommand(
         connectionId,
@@ -117,17 +129,21 @@ export function createQueueWorkspaceAdapter({
     direction: -1 | 1,
   ): Promise<void> => {
     const details = getDetails();
-    if (details === null) throw new Error("Local timeline database is not ready");
+    if (details === null) {
+      throw new Error("Local timeline database is not ready");
+    }
     const mutation = details.planQueuedMove(connectionId, threadId, commandId, direction);
-    if (mutation === null) return;
+    if (mutation === null) {
+      return;
+    }
     await runOptimisticPendingMutation(details, mutation, async () => {
       await enqueueNativeCommand(
         connectionId,
         `queue-move-${randomUUID()}`,
         "companion/queue/move",
         {
-          commandId,
           beforeCommandId: mutation.beforeCommandId ?? null,
+          commandId,
         },
       );
     });
@@ -149,9 +165,9 @@ export function createQueueWorkspaceAdapter({
     );
   };
   return {
-    listQueuedPrompts,
-    editQueuedPrompt,
     cancelQueuedPrompt,
+    editQueuedPrompt,
+    listQueuedPrompts,
     moveQueuedPrompt,
     steerQueuedPrompt,
   };

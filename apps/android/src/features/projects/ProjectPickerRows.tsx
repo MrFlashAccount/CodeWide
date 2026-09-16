@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Button } from "heroui-native/button";
+import { AppButton as Button } from "../../presentation/controls/AppButton";
 import { ActivityIndicator, View } from "react-native";
 import type { RemoteProject } from "../../data/remote-projects";
 import { projectIncludesDirectory } from "../../data/remote-projects";
@@ -10,7 +10,7 @@ import { listRowHeight, type AppListRowProps } from "../../ui/AppListRow.types";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ProjectPickerSheet.styles";
 
-export function SectionLabel({ title, count }: { title: string; count: number }) {
+export function SectionLabel({ count, title }: { count: number; title: string }) {
   return (
     <View style={styles.sectionLabel}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -19,100 +19,102 @@ export function SectionLabel({ title, count }: { title: string; count: number })
   );
 }
 export function ProjectChoiceRow({
-  project,
-  cwd,
   busy,
+  cwd,
+  onPin,
+  onSelect,
   pinned = false,
   pinning = false,
   position = "only",
-  onPin,
-  onSelect,
+  project,
 }: {
-  project: RemoteProject;
-  cwd: string;
   busy: boolean;
+  cwd: string;
+  onPin?: (() => void) | undefined;
+  onSelect: (cwd: string | null) => void;
   pinned?: boolean;
   pinning?: boolean;
   position?: AppListRowProps["position"];
-  onPin?: (() => void) | undefined;
-  onSelect(cwd: string | null): Promise<void>;
+  project: RemoteProject;
 }) {
   const selected = projectIncludesDirectory(project, cwd);
   return (
     <PickerRow
-      position={position}
-      icon={pinned ? "pin" : "folder-outline"}
-      title={project.name}
-      subtitle={project.path}
-      selected={selected}
-      disabled={busy}
       action={
         onPin === undefined
           ? undefined
           : {
-              label: "Pin",
               accessibilityLabel: `Pin ${project.name}`,
+              label: "Pin",
               loading: pinning,
               onPress: onPin,
             }
       }
+      disabled={busy}
+      icon={pinned ? "pin" : "folder-outline"}
       onPress={() => {
-        if (!busy && !selected) void onSelect(project.path);
+        if (!busy && !selected) {
+          onSelect(project.path);
+        }
       }}
+      position={position}
+      selected={selected}
+      subtitle={project.path}
+      title={project.name}
     />
   );
 }
 export function PickerRow({
-  icon,
-  title,
-  subtitle,
-  selected,
-  disabled,
-  chevron = false,
   action,
-  position = "only",
+  chevron = false,
+  disabled,
+  icon,
   onPress,
+  position = "only",
+  selected,
+  subtitle,
+  title,
 }: {
-  icon: ComposeIconName;
-  title: string;
-  subtitle?: string;
-  selected: boolean;
-  disabled: boolean;
-  chevron?: boolean;
-  position?: AppListRowProps["position"];
   action?:
     | {
-        label: string;
         accessibilityLabel: string;
+        label: string;
         loading: boolean;
-        onPress(): void;
+        onPress: () => void;
       }
     | undefined;
-  onPress(): void;
+  chevron?: boolean;
+  disabled: boolean;
+  icon: ComposeIconName;
+  onPress: () => void;
+  position?: AppListRowProps["position"];
+  selected: boolean;
+  subtitle?: string;
+  title: string;
 }) {
   return (
     <AppListRow
       title={title}
       {...(subtitle === undefined ? {} : { description: subtitle })}
-      selected={selected}
       disabled={disabled}
+      fixedHeight={subtitle === undefined ? listRowHeight.single : listRowHeight.double}
+      leadingIcon={{ color: colors.textMuted, name: icon, size: iconSize.action }}
       onPress={onPress}
       position={position}
-      fixedHeight={subtitle === undefined ? listRowHeight.single : listRowHeight.double}
-      leadingIcon={{ name: icon, size: iconSize.action, color: colors.textMuted }}
+      selected={selected}
       {...(action !== undefined
         ? {
             trailing: (
               <Button
-                size="sm"
-                variant="outline"
                 accessibilityLabel={action.accessibilityLabel}
                 isDisabled={disabled || action.loading}
-                style={styles.rowAction}
                 onPress={action.onPress}
+                size="sm"
+                style={styles.rowAction}
+                variant="outline"
               >
                 {action.loading ? (
-                  <ActivityIndicator size="small" color={colors.text} />
+                  <ActivityIndicator color={colors.text} size="small" />
                 ) : (
                   action.label
                 )}
@@ -122,9 +124,9 @@ export function PickerRow({
         : chevron
           ? {
               trailingIcon: {
+                color: colors.textDim,
                 name: "chevron-forward",
                 size: iconSize.inline,
-                color: colors.textDim,
               },
             }
           : {})}
@@ -132,17 +134,17 @@ export function PickerRow({
   );
 }
 export function EmptyState({
+  compact = false,
   icon,
   text,
-  compact = false,
 }: {
+  compact?: boolean;
   icon: keyof typeof Ionicons.glyphMap;
   text: string;
-  compact?: boolean;
 }) {
   return (
     <View style={[styles.emptyState, compact && styles.emptyStateCompact]}>
-      <Ionicons name={icon} size={iconSize.illustration} color={colors.textDim} />
+      <Ionicons color={colors.textDim} name={icon} size={iconSize.illustration} />
       <Text style={styles.stateText}>{text}</Text>
     </View>
   );

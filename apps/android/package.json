@@ -20,9 +20,8 @@
     "lint:v1": "pnpm lint:v1:source && pnpm lint:v1:dead-code && pnpm lint:v1:dependencies",
     "lint:v1:hygiene": "node scripts/validate-v1-hygiene.mjs",
     "lint:v1:hygiene:all": "oxlint --config oxlint.v1.config.mjs --tsconfig tsconfig.json --type-aware --type-check --deny-warnings --report-unused-disable-directives --no-error-on-unmatched-pattern app/legacy.tsx app/v1 src",
-    "lint:v1:layout": "eslint app/legacy.tsx app/v1 src --ignore-pattern src/boot/** --ignore-pattern src/presentation/** --ignore-pattern src/v2/** --max-warnings=0",
-    "lint:v1:source": "pnpm lint:v1:hygiene && pnpm lint:v1:layout",
-    "lint:v1:dead-code": "knip --config knip.v1.config.mjs --workspace @codewide/android --include files,exports,nsExports,types,nsTypes,duplicates,unresolved,cycles --treat-config-hints-as-errors",
+    "lint:v1:source": "pnpm lint:v1:hygiene",
+    "lint:v1:dead-code": "knip --config knip.v1.config.mjs --workspace @codewide/android --include files,exports,nsExports,types,nsTypes,duplicates,unresolved,cycles,dependencies,devDependencies --treat-config-hints-as-errors",
     "lint:v2": "oxlint --config oxlint.v2.config.mjs --tsconfig tsconfig.v2.json --type-aware --type-check --deny-warnings --report-unused-disable-directives --no-error-on-unmatched-pattern app src/boot src/presentation src/v2",
     "lint:v2:dead-code": "knip --config knip.v2.config.mjs --workspace @codewide/android --include files,exports,nsExports,types,nsTypes,duplicates,unresolved,cycles --treat-config-hints-as-errors",
     "lint:v2:dependencies": "node scripts/validate-v2-dependencies.mjs",
@@ -56,7 +55,6 @@
     "@codewide/tanstack-db-sqlite": "workspace:*",
     "@expo/ui": "57.0.9",
     "@expo/vector-icons": "^15.1.1",
-    "@gorhom/bottom-sheet": "5.2.14",
     "@legendapp/list": "3.3.5",
     "@legendapp/state": "2.1.15",
     "@native-html/render": "1.0.3",
@@ -70,15 +68,12 @@
     "@tanstack/react-db": "0.1.95",
     "base64-js": "1.5.1",
     "chii": "1.15.5",
-    "diff": "8.0.2",
     "expo": "57.0.11",
-    "expo-blur": "57.0.2",
     "expo-camera": "~57.0.3",
     "expo-clipboard": "~57.0.1",
     "expo-constants": "57.0.9",
     "expo-crypto": "~57.0.1",
     "expo-dev-client": "~57.0.11",
-    "expo-document-picker": "~57.0.1",
     "expo-file-system": "~57.0.2",
     "expo-font": "~57.0.1",
     "expo-haptics": "57.0.1",
@@ -88,12 +83,10 @@
     "expo-router": "57.0.11",
     "expo-secure-store": "~57.0.1",
     "expo-splash-screen": "~57.0.5",
-    "expo-sqlite": "~57.0.1",
     "expo-status-bar": "57.0.1",
     "expo-system-ui": "~57.0.2",
     "expo-updates": "~57.0.13",
     "expo-video": "~57.0.3",
-    "heroui-native": "1.0.8",
     "mermaid": "11.16.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -108,14 +101,9 @@
     "react-native-web": "^0.21.2",
     "react-native-webview": "13.16.1",
     "react-native-worklets": "0.10.1",
-    "svgbob-wasm": "1.0.0",
-    "tailwind-merge": "3.6.0",
-    "tailwind-variants": "3.3.1",
-    "tailwindcss": "4.3.3",
-    "uniwind": "1.10.1"
+    "svgbob-wasm": "1.0.0"
   },
   "devDependencies": {
-    "@babel/eslint-parser": "7.29.7",
     "@babel/plugin-transform-dynamic-import": "7.27.1",
     "@react-native/eslint-plugin": "0.86.2",
     "@react-native/jest-preset": "0.86.2",
@@ -129,10 +117,8 @@
     "babel-preset-expo": "57.0.6",
     "dependency-cruiser": "18.2.0",
     "esbuild": "0.28.2",
-    "eslint": "9.39.2",
     "eslint-plugin-expo": "1.1.0",
     "eslint-plugin-react-hooks": "7.1.1",
-    "expo-atlas": "^0.4.3",
     "jest": "29.7.0",
     "knip": "6.32.2",
     "oxfmt": "0.64.0",
@@ -149,7 +135,9 @@
   "expo": {
     "autolinking": {
       "android": {
-        "buildFromSource": ["expo-ui"]
+        "buildFromSource": [
+          "expo-ui"
+        ]
       }
     },
     "doctor": {

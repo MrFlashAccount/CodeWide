@@ -2,7 +2,7 @@
 import { useCameraPermissions } from "expo-camera";
 import * as Clipboard from "expo-clipboard";
 import { useState } from "react";
-import { type ConnectionInput } from "../../data/connection-validation";
+import type { ConnectionInput } from "../../data/connection-validation";
 import { useAppFullscreenOverlay } from "../../ui/AppFullscreenOverlay";
 import { pairingEndpointLabel, pairingParseResult } from "./pairing";
 import { humanPairingError } from "./pairingError";
@@ -13,13 +13,13 @@ import type { ConnectionSheetSessionProps } from "./connectionSheetContract";
 
 /** Owns pairing form reset, retained scanner callbacks and save completion for one mounted session. */
 export function usePairingSession({
-  visible,
   initialCode,
-  localReady,
   localError,
-  onSave,
+  localReady,
   onClose,
+  onSave,
   setSaving,
+  visible,
 }: ConnectionSheetSessionProps) {
   const openIdentity = visible ? (initialCode === null ? "manual" : `code:${initialCode}`) : null;
   const initialPairing = initialCode === null ? null : pairingParseResult(initialCode);
@@ -95,13 +95,15 @@ export function usePairingSession({
     fullscreenOverlay.present(({ close: closeScanner }) => (
       <PairingQrScanner
         initialPermission={permission}
-        requestPermission={requestCameraPermission}
         onClose={closeScanner}
         onScan={(raw) => {
           const message = consumeCode(raw);
-          if (message === null) closeScanner();
+          if (message === null) {
+            closeScanner();
+          }
           return message;
         }}
+        requestPermission={requestCameraPermission}
       />
     ));
   });
@@ -122,12 +124,14 @@ export function usePairingSession({
     try {
       await onSave(input);
       setMode("success");
-      await new Promise<void>((resolve) => setTimeout(resolve, 650));
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 650);
+      });
       setSaving(false);
       onClose();
       return;
-    } catch (cause) {
-      setError(humanPairingError(cause));
+    } catch (error) {
+      setError(humanPairingError(error));
     }
     setSaving(false);
   });
@@ -137,25 +141,25 @@ export function usePairingSession({
       ? null
       : Math.max(0, Math.ceil((expiresAt - pairingParsedAt) / 60_000));
   return {
-    mode,
-    setMode,
     displayName,
-    setDisplayName,
     emoji,
-    setEmoji,
     endpoint,
+    endpointLabel,
+    error,
+    minutesLeft,
+    mode,
+    openPairingScanner,
+    pasteCode,
+    save,
+    setDisplayName,
+    setEmoji,
     setEndpoint,
-    token,
+    setError,
+    setMode,
+    setTlsPinSha256,
     setToken,
     tlsPinSha256,
-    setTlsPinSha256,
-    error,
-    setError,
-    pasteCode,
-    openPairingScanner,
-    save,
-    endpointLabel,
-    minutesLeft,
+    token,
   };
 }
 

@@ -110,11 +110,11 @@ it.each([listRowHeight.single, listRowHeight.double])(
 
 it("clips the Compose surface to the grouped bottom corners of the last row", () => {
   const view = render(<AppListRow title="Last option" position="last" />);
-  const modifiers = view.getByTestId("native-list-item").props.dataSet.modifiers;
-  expect(modifiers).toContain(
-    JSON.stringify(
-      clip(Shapes.RoundedCorner({ bottomStart: radii.medium, bottomEnd: radii.medium })),
-    ),
+  const modifiers = JSON.parse(
+    view.getByTestId("native-list-item").props.dataSet.modifiers,
+  );
+  expect(modifiers).toContainEqual(
+    clip(Shapes.RoundedCorner({ bottomStart: radii.medium, bottomEnd: radii.medium })),
   );
 });
 

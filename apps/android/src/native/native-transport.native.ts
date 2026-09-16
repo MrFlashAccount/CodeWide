@@ -37,52 +37,102 @@ export type {
 } from "./native-transport-contract";
 import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
 import type { RemoteFileAttachment } from "@codewide/sync-client";
+import { appLogger } from "../observability/logger";
+import { unknownRecord } from "../data/unknownRecord";
 
 type NativeAudioEvent = CapturedAudioChunk & {
-  type: "started" | "chunk" | "stopped" | "error";
   error?: string;
+  type: "started" | "chunk" | "stopped" | "error";
 };
 
 type NativeBridge = {
-  microphonePermissionGranted?: boolean;
-  refreshMicrophonePermission?(): void;
-  claimPairing(
+  addListener: (eventName: string) => void;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  claimPairing: (
     savedServerId: string,
     endpoint: string,
     pairingToken: string,
     deviceName: string,
     tlsPinSha256: string,
-  ): Promise<{ deviceId: string; capabilityToken: string }>;
-  saveConnectionCredentials(
+  ) => Promise<{ capabilityToken: string; deviceId: string }>;
+  closeTerminal?: (sessionId: string) => void;
+  companionHttpOrigin: (connectionId: string) => Promise<string>;
+  configureFullscreenWindow?: (reactTag: number) => void;
+  deleteConnectionCredentials: (connectionId: string) => Promise<void>;
+  discoverPorts?: (connectionId: string) => Promise<string>;
+  engineAcknowledgeCommandReceipt?: (connectionId: string, commandId: string) => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  engineEnqueueCommand: (
+    connectionId: string,
+    commandId: string,
+    method: string,
+    paramsJson: string,
+  ) => Promise<string>;
+  engineListCommands: () => Promise<string>;
+  engineRetryCommand?: (connectionId: string, commandId: string) => Promise<string>;
+  listConnectionConfigs: () => Promise<NativeConnectionConfig[]>;
+  listPortForwards?: (connectionId: string) => Promise<string>;
+  microphonePermissionGranted?: boolean;
+  mintStoredSession: (connectionId: string) => Promise<{ expiresAt: number; sessionToken: string }>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  openTerminal?: (
+    sessionId: string,
+    connectionId: string,
+    threadId: string,
+    cwd: string | null,
+    cols: number,
+    rows: number,
+  ) => Promise<void>;
+  purgeLegacyDerivedStorage?: () => Promise<number>;
+  readTerminalOutput?: (sessionId: string, offset: number, maxBytes: number) => Promise<string>;
+  refreshMicrophonePermission?: () => void;
+  removeListeners: (count: number) => void;
+  removePortForward: (profileId: string) => Promise<void>;
+  resetSocket: (connectionId: string, reason: string) => void;
+  resizeTerminal?: (sessionId: string, cols: number, rows: number) => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  saveConnectionCredentials: (
     connectionId: string,
     endpoint: string,
     token: string | null,
     tlsPinSha256: string | null,
     enabled: boolean,
-  ): Promise<void>;
-  saveConnectionCredentialsV2?(
+  ) => Promise<void>;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  saveConnectionCredentialsV2?: (
     connectionId: string,
     endpoint: string,
     token: string | null,
     tlsPinSha256: string | null,
     enabled: boolean,
     deviceId: string,
-  ): Promise<void>;
-  listConnectionConfigs(): Promise<NativeConnectionConfig[]>;
-  purgeLegacyDerivedStorage?(): Promise<number>;
-  startBrowserDevToolsBridge?(): Promise<NativeBrowserDevToolsBridge>;
-  stopBrowserDevToolsBridge?(): void;
-  startBrowserTracing?(): Promise<void>;
-  stopBrowserTracing?(): Promise<NativeBrowserTrace>;
-  deleteConnectionCredentials(connectionId: string): Promise<void>;
-  setConnectionEnabled(connectionId: string, enabled: boolean): Promise<void>;
-  mintStoredSession(connectionId: string): Promise<{ sessionToken: string; expiresAt: number }>;
-  companionHttpOrigin(connectionId: string): Promise<string>;
-  resetSocket(connectionId: string, reason: string): void;
-  wakeSocket(connectionId: string): void;
-  listPortForwards?(connectionId: string): Promise<string>;
-  discoverPorts?(connectionId: string): Promise<string>;
-  upsertPortForward(
+  ) => Promise<void>;
+  setConnectionEnabled: (connectionId: string, enabled: boolean) => Promise<void>;
+  setVoiceAuraOrigin?: (reactTag: number | null) => void;
+  setVoiceAuraState?: (active: boolean, level: number, reducedMotion: boolean) => void;
+  setVoiceAuraTarget?: (reactTag: number | null) => void;
+  startBrowserDevToolsBridge?: () => Promise<NativeBrowserDevToolsBridge>;
+  startBrowserTracing?: () => Promise<void>;
+  startLegacyRuntimeResources?: () => Promise<void>;
+  // Native-22 and older resolve void/null. Native-23 adds capture diagnostics;
+  // audio chunks themselves remain the source of truth for the PCM format.
+  startPcmCapture: () => Promise<PcmCaptureInfo | null>;
+  startPortForward: (profileId: string) => Promise<string>;
+  startVoiceInput: (localeTag: string | null) => Promise<void>;
+  stopBrowserDevToolsBridge?: () => void;
+  stopBrowserTracing?: () => Promise<NativeBrowserTrace>;
+  stopLegacyRuntimeResources?: () => Promise<void>;
+  stopPcmCapture: () => void;
+  stopPortForward: (profileId: string) => Promise<string>;
+  stopVoiceInput: () => void;
+  // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+  // oxlint-disable-next-line eslint/max-params
+  upsertPortForward: (
     connectionId: string,
     profileId: string,
     label: string,
@@ -90,62 +140,34 @@ type NativeBridge = {
     preferredLocalPort: number | null,
     serviceKey: string | null,
     preference: NativePortForwardingPreference,
-  ): Promise<string>;
-  startPortForward(profileId: string): Promise<string>;
-  stopPortForward(profileId: string): Promise<string>;
-  removePortForward(profileId: string): Promise<void>;
-  openTerminal?(
-    sessionId: string,
-    connectionId: string,
-    threadId: string,
-    cwd: string | null,
-    cols: number,
-    rows: number,
-  ): Promise<void>;
-  writeTerminal?(sessionId: string, base64: string): Promise<void>;
-  resizeTerminal?(sessionId: string, cols: number, rows: number): Promise<void>;
-  readTerminalOutput?(sessionId: string, offset: number, maxBytes: number): Promise<string>;
-  closeTerminal?(sessionId: string): void;
-  startLegacyRuntimeResources?: () => Promise<void>;
-  stopLegacyRuntimeResources?: () => Promise<void>;
-  engineEnqueueCommand(
-    connectionId: string,
-    commandId: string,
-    method: string,
-    paramsJson: string,
-  ): Promise<string>;
-  engineListCommands(): Promise<string>;
-  engineRetryCommand?(connectionId: string, commandId: string): Promise<string>;
-  engineAcknowledgeCommandReceipt?(connectionId: string, commandId: string): Promise<void>;
-  startVoiceInput(localeTag: string | null): Promise<void>;
-  stopVoiceInput(): void;
-  setVoiceAuraState?(active: boolean, level: number, reducedMotion: boolean): void;
-  setVoiceAuraTarget?(reactTag: number | null): void;
-  configureFullscreenWindow?(reactTag: number): void;
-  setVoiceAuraOrigin?(reactTag: number | null): void;
-  // Native-22 and older resolve void/null. Native-23 adds capture diagnostics;
-  // audio chunks themselves remain the source of truth for the PCM format.
-  startPcmCapture(): Promise<PcmCaptureInfo | null>;
-  stopPcmCapture(): void;
-  addListener(eventName: string): void;
-  removeListeners(count: number): void;
+  ) => Promise<string>;
+  wakeSocket: (connectionId: string) => void;
+  writeTerminal?: (sessionId: string, base64: string) => Promise<void>;
 };
 
+// WHY: React Native owns this same-binary registry and exposes no generated TypeScript contract for the registered module.
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion
 const bridge = NativeModules.CodeWideNative as NativeBridge | undefined;
-const emitter = bridge === undefined ? null : new NativeEventEmitter(NativeModules.CodeWideNative);
+const emitter = bridge === undefined ? null : new NativeEventEmitter(bridge);
 
 let microphonePermission: MicrophonePermission =
   bridge?.microphonePermissionGranted === true ? "granted" : "denied";
 const microphonePermissionListeners = new Set<() => void>();
 
 function publishMicrophonePermission(next: MicrophonePermission): void {
-  if (microphonePermission === next) return;
+  if (microphonePermission === next) {
+    return;
+  }
   microphonePermission = next;
-  for (const notify of microphonePermissionListeners) notify();
+  for (const notify of microphonePermissionListeners) {
+    notify();
+  }
 }
 
 emitter?.addListener("CodeWideMicrophonePermission", (granted: unknown) => {
-  if (typeof granted !== "boolean") return;
+  if (typeof granted !== "boolean") {
+    return;
+  }
   publishMicrophonePermission(
     granted ? "granted" : microphonePermission === "blocked" ? "blocked" : "denied",
   );
@@ -177,14 +199,15 @@ export async function requestMicrophonePermission(): Promise<MicrophonePermissio
 }
 
 export async function claimNativePairing(input: {
-  savedServerId: string;
+  deviceName: string;
   endpoint: string;
   pairingToken: string;
-  deviceName: string;
+  savedServerId: string;
   tlsPinSha256: string;
-}): Promise<{ deviceId: string; capabilityToken: string }> {
-  if (bridge === undefined || Platform.OS !== "android")
+}): Promise<{ capabilityToken: string; deviceId: string }> {
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native secure pairing is unavailable in this build");
+  }
   const claimed = await bridge.claimPairing(
     input.savedServerId,
     input.endpoint,
@@ -192,21 +215,23 @@ export async function claimNativePairing(input: {
     input.deviceName,
     input.tlsPinSha256,
   );
-  if (typeof claimed.deviceId !== "string" || typeof claimed.capabilityToken !== "string")
+  if (typeof claimed.deviceId !== "string" || typeof claimed.capabilityToken !== "string") {
     throw new Error("Native pairing returned an invalid security state");
+  }
   return claimed;
 }
 
 export async function saveNativeConnectionCredentials(input: {
   connectionId: string;
-  endpoint: string;
-  token?: string;
-  tlsPinSha256?: string;
-  enabled: boolean;
   deviceId?: string;
+  enabled: boolean;
+  endpoint: string;
+  tlsPinSha256?: string;
+  token?: string;
 }): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native credential storage is unavailable in this build");
+  }
   if (input.deviceId !== undefined && bridge.saveConnectionCredentialsV2 !== undefined) {
     await bridge.saveConnectionCredentialsV2(
       input.connectionId,
@@ -228,16 +253,21 @@ export async function saveNativeConnectionCredentials(input: {
 }
 
 export async function listNativeConnectionConfigs(): Promise<NativeConnectionConfig[]> {
-  if (bridge === undefined || Platform.OS !== "android") return [];
+  if (bridge === undefined || Platform.OS !== "android") {
+    return [];
+  }
   const raw = await bridge.listConnectionConfigs();
-  if (!Array.isArray(raw)) throw new Error("Native connection config projection is invalid");
+  if (!Array.isArray(raw)) {
+    throw new Error("Native connection config projection is invalid");
+  }
   return raw.map((value) => {
-    const candidate = value as Partial<NativeConnectionConfig>;
+    const candidate = unknownRecord(value);
+    if (candidate === null) {
+      throw new Error("Native connection config projection is invalid");
+    }
     const savedServerId = candidate.savedServerId ?? candidate.connectionId;
     const deviceId = candidate.deviceId ?? null;
     if (
-      value === null ||
-      typeof value !== "object" ||
       typeof candidate.connectionId !== "string" ||
       candidate.connectionId.length < 1 ||
       typeof savedServerId !== "string" ||
@@ -249,9 +279,17 @@ export async function listNativeConnectionConfigs(): Promise<NativeConnectionCon
         deviceId === null ||
         (typeof deviceId === "string" && /^device-[a-f0-9]{64}$/u.test(deviceId))
       )
-    )
+    ) {
       throw new Error("Native connection config projection is invalid");
-    return { ...candidate, savedServerId, deviceId } as NativeConnectionConfig;
+    }
+    return {
+      connectionId: candidate.connectionId,
+      deviceId,
+      enabled: candidate.enabled,
+      endpoint: candidate.endpoint,
+      savedServerId,
+      tlsPinSha256: candidate.tlsPinSha256,
+    };
   });
 }
 
@@ -259,8 +297,9 @@ export async function nativeCompanionHttpOrigin(
   connectionId: string,
   _endpoint: string,
 ): Promise<string> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native pinned HTTP transport is unavailable in this build");
+  }
   const origin = await bridge.companionHttpOrigin(connectionId);
   if (!/^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{43}$/u.test(origin)) {
     throw new Error("Native pinned HTTP transport returned an invalid origin");
@@ -275,8 +314,9 @@ export async function purgeLegacyDerivedStorage(): Promise<number> {
     bridge === undefined ||
     Platform.OS !== "android" ||
     bridge.purgeLegacyDerivedStorage === undefined
-  )
+  ) {
     return 0;
+  }
   const reclaimedBytes = await bridge.purgeLegacyDerivedStorage();
   return Number.isFinite(reclaimedBytes) && reclaimedBytes >= 0 ? reclaimedBytes : 0;
 }
@@ -289,20 +329,26 @@ export async function startNativeBrowserDevToolsBridge(): Promise<NativeBrowserD
   ) {
     throw new Error("This app build does not include Chromium DevTools");
   }
-  const result = await bridge.startBrowserDevToolsBridge();
+  const result = unknownRecord(await bridge.startBrowserDevToolsBridge());
   if (
     result === null ||
-    typeof result !== "object" ||
     result.host !== "127.0.0.1" ||
+    typeof result.port !== "number" ||
     !Number.isInteger(result.port) ||
     result.port < 1 ||
     result.port > 65_535 ||
     typeof result.token !== "string" ||
     !/^[a-f0-9]{64}$/u.test(result.token) ||
     typeof result.tracingSupported !== "boolean"
-  )
+  ) {
     throw new Error("Native Chromium DevTools bridge returned an invalid endpoint");
-  return result;
+  }
+  return {
+    host: "127.0.0.1",
+    port: result.port,
+    token: result.token,
+    tracingSupported: result.tracingSupported,
+  };
 }
 
 export function stopNativeBrowserDevToolsBridge(): void {
@@ -310,8 +356,9 @@ export function stopNativeBrowserDevToolsBridge(): void {
     bridge === undefined ||
     Platform.OS !== "android" ||
     typeof bridge.stopBrowserDevToolsBridge !== "function"
-  )
+  ) {
     return;
+  }
   bridge.stopBrowserDevToolsBridge();
 }
 
@@ -334,23 +381,24 @@ export async function stopNativeBrowserTracing(): Promise<NativeBrowserTrace> {
   ) {
     throw new Error("Native WebView performance tracing is unavailable in this build");
   }
-  const result = await bridge.stopBrowserTracing();
+  const result = unknownRecord(await bridge.stopBrowserTracing());
   if (
     result === null ||
-    typeof result !== "object" ||
     typeof result.path !== "string" ||
     result.path === "" ||
+    typeof result.size !== "number" ||
     !Number.isFinite(result.size) ||
     result.size < 0
   ) {
     throw new Error("Native WebView performance trace result is invalid");
   }
-  return result;
+  return { path: result.path, size: result.size };
 }
 
 export async function deleteNativeConnection(connectionId: string): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native connection storage is unavailable");
+  }
   await bridge.deleteConnectionCredentials(connectionId);
 }
 
@@ -358,28 +406,33 @@ export async function setNativeConnectionEnabled(
   connectionId: string,
   enabled: boolean,
 ): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native connection lifecycle is unavailable in this build");
+  }
   await bridge.setConnectionEnabled(connectionId, enabled);
 }
 
 export async function mintNativeSession(
   connectionId: string,
-): Promise<{ sessionToken: string; expiresAt: number }> {
-  if (bridge === undefined || Platform.OS !== "android")
+): Promise<{ expiresAt: number; sessionToken: string }> {
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native session proof is unavailable in this build");
-  return await bridge.mintStoredSession(connectionId);
+  }
+  return bridge.mintStoredSession(connectionId);
 }
 
 /** Permanently disables the service-owned session and removes its credentials. */
 export function reconnectNativeConnection(connectionId: string): void {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native remote transport is unavailable");
+  }
   bridge.resetSocket(connectionId, "user_reconnect");
 }
 
 export function wakeNativeConnection(connectionId: string): void {
-  if (bridge === undefined || Platform.OS !== "android") return;
+  if (bridge === undefined || Platform.OS !== "android") {
+    return;
+  }
   bridge.wakeSocket(connectionId);
 }
 
@@ -393,10 +446,13 @@ export async function listNativePortForwards(
     bridge === undefined ||
     Platform.OS !== "android" ||
     typeof bridge.listPortForwards !== "function"
-  )
+  ) {
     return [];
-  const value = JSON.parse(await bridge.listPortForwards(connectionId)) as unknown;
-  if (!Array.isArray(value)) throw new Error("Native port-forward projection is invalid");
+  }
+  const value: unknown = JSON.parse(await bridge.listPortForwards(connectionId));
+  if (!Array.isArray(value)) {
+    throw new Error("Native port-forward projection is invalid");
+  }
   return value.map(parseNativePortForwardProfile);
 }
 
@@ -410,26 +466,29 @@ export async function discoverNativePorts(
   ) {
     return { ports: [], scannedAt: Date.now() };
   }
-  const value = JSON.parse(await bridge.discoverPorts(connectionId)) as unknown;
-  if (value === null || typeof value !== "object" || Array.isArray(value))
+  const value: unknown = JSON.parse(await bridge.discoverPorts(connectionId));
+  const row = unknownRecord(value);
+  if (row === null) {
     throw new Error("Native port discovery projection is invalid");
-  const row = value as { ports?: unknown; scannedAt?: unknown };
-  if (!Array.isArray(row.ports) || typeof row.scannedAt !== "number")
+  }
+  if (!Array.isArray(row.ports) || typeof row.scannedAt !== "number") {
     throw new Error("Native port discovery projection is invalid");
+  }
   return { ports: row.ports.map(parseNativeDiscoveredPort), scannedAt: row.scannedAt };
 }
 
 export async function upsertNativePortForward(input: {
   connectionId: string;
-  profileId: string;
   label: string;
-  remotePort: number;
-  preferredLocalPort: number | null;
-  serviceKey?: string | null;
   preference?: NativePortForwardingPreference;
+  preferredLocalPort: number | null;
+  profileId: string;
+  remotePort: number;
+  serviceKey?: string | null;
 }): Promise<NativePortForwardProfile> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native port forwarding is available on Android only");
+  }
   return parseNativePortForwardProfile(
     JSON.parse(
       await bridge.upsertPortForward(
@@ -446,45 +505,52 @@ export async function upsertNativePortForward(input: {
 }
 
 export async function startNativePortForward(profileId: string): Promise<NativePortForwardProfile> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native port forwarding is available on Android only");
+  }
   return parseNativePortForwardProfile(JSON.parse(await bridge.startPortForward(profileId)));
 }
 
 export async function stopNativePortForward(profileId: string): Promise<NativePortForwardProfile> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native port forwarding is available on Android only");
+  }
   return parseNativePortForwardProfile(JSON.parse(await bridge.stopPortForward(profileId)));
 }
 
 export async function removeNativePortForward(profileId: string): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native port forwarding is available on Android only");
+  }
   await bridge.removePortForward(profileId);
 }
 
 export function subscribeNativePortForwards(
   listener: (event: NativePortForwardEvent) => void,
 ): () => void {
-  if (emitter === null || Platform.OS !== "android") return () => {};
+  if (emitter === null || Platform.OS !== "android") {
+    return () => {};
+  }
   const subscription = emitter.addListener("CodeWidePortForwardEvent", (raw: unknown) => {
     try {
-      const value = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
+      const value: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
       listener(parseNativePortForwardEvent(value));
-    } catch (error) {
-      console.warn("Ignored invalid native port-forward event", error);
+    } catch {
+      appLogger.warn({ event: "native.port_forward_event.invalid" });
     }
   });
-  return () => subscription.remove();
+  return () => {
+    subscription.remove();
+  };
 }
 
 export async function openNativeTerminal(input: {
-  sessionId: string;
-  connectionId: string;
-  threadId: string;
-  cwd: string | null;
   cols: number;
+  connectionId: string;
+  cwd: string | null;
   rows: number;
+  sessionId: string;
+  threadId: string;
 }): Promise<void> {
   if (
     bridge === undefined ||
@@ -541,10 +607,11 @@ export async function readNativeTerminalOutput(
   ) {
     throw new Error("This app build does not include resumable terminal output");
   }
-  const value = JSON.parse(await bridge.readTerminalOutput(sessionId, offset, maxBytes)) as unknown;
-  if (value === null || typeof value !== "object" || Array.isArray(value))
+  const value: unknown = JSON.parse(await bridge.readTerminalOutput(sessionId, offset, maxBytes));
+  const row = unknownRecord(value);
+  if (row === null) {
     throw new Error("Native terminal output is invalid");
-  const row = value as Partial<NativeTerminalOutput>;
+  }
   if (
     typeof row.data !== "string" ||
     typeof row.nextOffset !== "number" ||
@@ -552,48 +619,61 @@ export async function readNativeTerminalOutput(
     row.nextOffset < offset ||
     typeof row.hasMore !== "boolean" ||
     typeof row.finished !== "boolean"
-  )
+  ) {
     throw new Error("Native terminal output is invalid");
-  return row as NativeTerminalOutput;
+  }
+  return {
+    data: row.data,
+    finished: row.finished,
+    hasMore: row.hasMore,
+    nextOffset: row.nextOffset,
+  };
 }
 
 export function closeNativeTerminal(sessionId: string): void {
   bridge?.closeTerminal?.(sessionId);
 }
 
-export function startLegacyNativeRuntimeResources(): Promise<void> {
+export async function startLegacyNativeRuntimeResources(): Promise<void> {
   return bridge?.startLegacyRuntimeResources?.() ?? Promise.resolve();
 }
 
-export function stopLegacyNativeRuntimeResources(): Promise<void> {
+export async function stopLegacyNativeRuntimeResources(): Promise<void> {
   return bridge?.stopLegacyRuntimeResources?.() ?? Promise.resolve();
 }
 
 export function subscribeNativeTerminal(
   listener: (event: NativeTerminalEvent) => void,
 ): () => void {
-  if (emitter === null || Platform.OS !== "android") return () => {};
+  if (emitter === null || Platform.OS !== "android") {
+    return () => {};
+  }
   const subscription = emitter.addListener("CodeWideTerminalEvent", (raw: unknown) => {
     try {
-      const value = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
+      const value: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
       listener(parseNativeTerminalEvent(value));
-    } catch (error) {
-      console.warn("Ignored invalid native terminal event", error);
+    } catch {
+      appLogger.warn({ event: "native.terminal_event.invalid" });
     }
   });
-  return () => subscription.remove();
+  return () => {
+    subscription.remove();
+  };
 }
 
 function parseNativeTerminalEvent(value: unknown): NativeTerminalEvent {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
+  const row = unknownRecord(value);
+  if (row === null) {
     throw new Error("Native terminal event is invalid");
-  const row = value as Partial<NativeTerminalEvent>;
+  }
   if (
+    typeof row.connectionId !== "string" ||
+    row.connectionId.length === 0 ||
     typeof row.sessionId !== "string" ||
     row.sessionId.length === 0 ||
     typeof row.threadId !== "string" ||
     row.threadId.length === 0 ||
-    !["connecting", "open", "output", "closed", "error", "removed"].includes(row.type ?? "") ||
+    !isNativeTerminalEventType(row.type) ||
     !(row.data === undefined || typeof row.data === "string") ||
     !(row.code === undefined || (typeof row.code === "number" && Number.isInteger(row.code))) ||
     !(row.message === undefined || typeof row.message === "string") ||
@@ -601,18 +681,40 @@ function parseNativeTerminalEvent(value: unknown): NativeTerminalEvent {
       row.offset === undefined ||
       (typeof row.offset === "number" && Number.isSafeInteger(row.offset) && row.offset >= 0)
     )
-  )
+  ) {
     throw new Error("Native terminal event is invalid");
-  if (row.type === "output" && row.offset === undefined)
+  }
+  if (row.type === "output" && row.offset === undefined) {
     throw new Error("Native terminal output offset is missing");
-  return row as NativeTerminalEvent;
+  }
+  return {
+    connectionId: row.connectionId,
+    sessionId: row.sessionId,
+    threadId: row.threadId,
+    type: row.type,
+    ...(row.code === undefined ? {} : { code: row.code }),
+    ...(row.data === undefined ? {} : { data: row.data }),
+    ...(row.message === undefined ? {} : { message: row.message }),
+    ...(row.offset === undefined ? {} : { offset: row.offset }),
+  };
+}
+
+function isNativeTerminalEventType(value: unknown): value is NativeTerminalEvent["type"] {
+  return (
+    value === "connecting" ||
+    value === "open" ||
+    value === "output" ||
+    value === "closed" ||
+    value === "error" ||
+    value === "removed"
+  );
 }
 
 export function parseNativePortForwardProfile(value: unknown): NativePortForwardProfile {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  const row = unknownRecord(value);
+  if (row === null) {
     throw new Error("Native port-forward projection is invalid");
   }
-  const row = value as Partial<NativePortForwardProfile>;
   if (
     typeof row.id !== "string" ||
     row.id.length === 0 ||
@@ -627,10 +729,10 @@ export function parseNativePortForwardProfile(value: unknown): NativePortForward
       row.serviceKey === null ||
       (typeof row.serviceKey === "string" && /^[a-f0-9]{64}$/u.test(row.serviceKey))
     ) ||
-    !["automatic", "included", "excluded"].includes(row.preference ?? "") ||
+    !isPortForwardingPreference(row.preference) ||
     !(row.localPort === null || isPort(row.localPort)) ||
     typeof row.enabled !== "boolean" ||
-    !["stopped", "connecting", "live", "unavailable", "error"].includes(row.status ?? "") ||
+    !isPortForwardingStatus(row.status) ||
     // Native-136 uses raw loopback URLs; older shells retain the capability path.
     !(
       row.previewUrl === null ||
@@ -639,34 +741,58 @@ export function parseNativePortForwardProfile(value: unknown): NativePortForward
     ) ||
     !(row.error === null || typeof row.error === "string") ||
     typeof row.updatedAt !== "number"
-  )
+  ) {
     throw new Error("Native port-forward projection is invalid");
-  return row as NativePortForwardProfile;
+  }
+  return {
+    connectionId: row.connectionId,
+    enabled: row.enabled,
+    error: row.error,
+    id: row.id,
+    label: row.label,
+    localPort: row.localPort,
+    preference: row.preference,
+    preferredLocalPort: row.preferredLocalPort,
+    previewUrl: row.previewUrl,
+    remoteHost: row.remoteHost,
+    remotePort: row.remotePort,
+    serviceKey: row.serviceKey,
+    status: row.status,
+    updatedAt: row.updatedAt,
+  };
 }
 
 function parseNativePortForwardEvent(value: unknown): NativePortForwardEvent {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Native port-forward event is invalid");
   }
-  const type = Reflect.get(value, "type");
-  if (type === "profile")
-    return { type, profile: parseNativePortForwardProfile(Reflect.get(value, "profile")) };
-  const id = Reflect.get(value, "id");
-  if (type === "removed" && typeof id === "string" && id.length > 0) return { type, id };
-  const connectionId = Reflect.get(value, "connectionId");
+  const type = "type" in value ? value.type : undefined;
+  if (type === "profile") {
+    return {
+      profile: parseNativePortForwardProfile("profile" in value ? value.profile : undefined),
+      type,
+    };
+  }
+  const id = "id" in value ? value.id : undefined;
+  if (type === "removed" && typeof id === "string" && id.length > 0) {
+    return { id, type };
+  }
+  const connectionId = "connectionId" in value ? value.connectionId : undefined;
   if (
     (type === "inventory" || type === "inventoryError") &&
     typeof connectionId === "string" &&
     connectionId.length > 0
-  )
-    return { type, connectionId };
+  ) {
+    return { connectionId, type };
+  }
   throw new Error("Native port-forward event is invalid");
 }
 
 function parseNativeDiscoveredPort(value: unknown): NativeDiscoveredPort {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
+  const row = unknownRecord(value);
+  if (row === null) {
     throw new Error("Native discovered port is invalid");
-  const row = value as Partial<NativeDiscoveredPort>;
+  }
   if (
     !isPort(row.port) ||
     typeof row.name !== "string" ||
@@ -680,54 +806,118 @@ function parseNativeDiscoveredPort(value: unknown): NativeDiscoveredPort {
       (typeof row.pid === "number" && Number.isSafeInteger(row.pid) && row.pid > 0)
     ) ||
     !(row.cwd === null || typeof row.cwd === "string") ||
-    ![
-      "docker",
-      "hermes",
-      "kubernetes",
-      "minikube",
-      "vite",
-      "node",
-      "python",
-      "zrok",
-      "process",
-      "system",
-    ].includes(row.kind ?? "") ||
+    !isDiscoveredPortKind(row.kind) ||
     typeof row.forwardingKey !== "string" ||
     !/^[a-f0-9]{64}$/u.test(row.forwardingKey) ||
     typeof row.defaultForwardingEnabled !== "boolean"
-  )
+  ) {
     throw new Error("Native discovered port is invalid");
-  return row as NativeDiscoveredPort;
+  }
+  return {
+    cwd: row.cwd,
+    defaultForwardingEnabled: row.defaultForwardingEnabled,
+    details: row.details,
+    forwardingKey: row.forwardingKey,
+    group: row.group,
+    kind: row.kind,
+    name: row.name,
+    pid: row.pid,
+    port: row.port,
+    process: row.process,
+  };
 }
 
 function isPort(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 65_535;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 65_535;
 }
 
+function isPortForwardingPreference(value: unknown): value is NativePortForwardingPreference {
+  return value === "automatic" || value === "included" || value === "excluded";
+}
+
+function isPortForwardingStatus(value: unknown): value is NativePortForwardProfile["status"] {
+  return (
+    value === "stopped" ||
+    value === "connecting" ||
+    value === "live" ||
+    value === "unavailable" ||
+    value === "error"
+  );
+}
+
+function isDiscoveredPortKind(value: unknown): value is NativeDiscoveredPort["kind"] {
+  return (
+    value === "docker" ||
+    value === "hermes" ||
+    value === "kubernetes" ||
+    value === "minikube" ||
+    value === "vite" ||
+    value === "node" ||
+    value === "python" ||
+    value === "zrok" ||
+    value === "process" ||
+    value === "system"
+  );
+}
+
+function parseNativeEnvelope(raw: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(raw);
+  const envelope = unknownRecord(value);
+  if (envelope === null) {
+    throw new Error("Native command response is invalid");
+  }
+  return envelope;
+}
+
+function nativeEnvelopeError(
+  envelope: Readonly<Record<string, unknown>>,
+  fallback: string,
+): string {
+  return typeof envelope.message === "string" ? envelope.message : fallback;
+}
+
+function isNativeCommandDeliveryState(value: unknown): value is NativeCommandDelivery["state"] {
+  return (
+    value === "queued" ||
+    value === "sending" ||
+    value === "accepted" ||
+    value === "uncertain" ||
+    value === "failed" ||
+    value === "delivered"
+  );
+}
+
+// WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
+// oxlint-disable-next-line eslint/max-params
 export async function enqueueNativeCommand(
   connectionId: string,
   commandId: string,
   method: NativeCommandMethod,
   params: Record<string, unknown>,
 ): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native durable command queue is unavailable");
+  }
   const raw = await bridge.engineEnqueueCommand(
     connectionId,
     commandId,
     method,
     JSON.stringify(params),
   );
-  const envelope = JSON.parse(raw) as { ok?: boolean; message?: string };
-  if (envelope.ok !== true) throw new Error(envelope.message ?? "Could not persist native command");
+  const envelope = parseNativeEnvelope(raw);
+  if (envelope.ok !== true) {
+    throw new Error(nativeEnvelopeError(envelope, "Could not persist native command"));
+  }
 }
 
 export async function listNativeCommands(): Promise<NativeCommandDelivery[]> {
-  if (bridge === undefined || Platform.OS !== "android") return [];
+  if (bridge === undefined || Platform.OS !== "android") {
+    return [];
+  }
   const raw = await bridge.engineListCommands();
-  const envelope = JSON.parse(raw) as { ok?: boolean; result?: unknown; message?: string };
+  const envelope = parseNativeEnvelope(raw);
   if (envelope.ok !== true || !Array.isArray(envelope.result)) {
-    throw new Error(envelope.message ?? "Could not read native commands");
+    throw new Error(nativeEnvelopeError(envelope, "Could not read native commands"));
   }
   return envelope.result.map(parseNativeCommandDelivery);
 }
@@ -736,13 +926,17 @@ export async function retryNativeCommand(
   connectionId: string,
   commandId: string,
 ): Promise<NativeCommandDelivery> {
-  if (bridge === undefined || Platform.OS !== "android")
+  if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native durable command queue is unavailable");
-  if (bridge.engineRetryCommand === undefined)
+  }
+  if (bridge.engineRetryCommand === undefined) {
     throw new Error("Retry requires the latest Android app version");
+  }
   const raw = await bridge.engineRetryCommand(connectionId, commandId);
-  const envelope = JSON.parse(raw) as { ok?: boolean; result?: unknown; message?: string };
-  if (envelope.ok !== true) throw new Error(envelope.message ?? "Could not retry message");
+  const envelope = parseNativeEnvelope(raw);
+  if (envelope.ok !== true) {
+    throw new Error(nativeEnvelopeError(envelope, "Could not retry message"));
+  }
   return parseNativeCommandDelivery(envelope.result);
 }
 
@@ -759,28 +953,29 @@ export async function acknowledgeNativeCommandReceipt(
     bridge === undefined ||
     Platform.OS !== "android" ||
     bridge.engineAcknowledgeCommandReceipt === undefined
-  )
+  ) {
     return;
+  }
   await bridge.engineAcknowledgeCommandReceipt(connectionId, commandId);
 }
 
 export function parseNativeCommandDelivery(value: unknown): NativeCommandDelivery {
-  if (value === null || typeof value !== "object")
+  const row = unknownRecord(value);
+  if (row === null) {
     throw new Error("Native command projection is invalid");
-  const row = value as Partial<NativeCommandDelivery>;
+  }
   const attachments = Array.isArray(row.attachments)
-    ? row.attachments.filter(
-        (attachment): attachment is RemoteFileAttachment =>
-          attachment !== null &&
-          typeof attachment === "object" &&
-          typeof attachment.id === "string" &&
-          typeof attachment.rootId === "string" &&
-          typeof attachment.path === "string" &&
-          typeof attachment.name === "string" &&
-          (attachment.kind === "image" ||
-            attachment.kind === "audio" ||
-            attachment.kind === "file"),
-      )
+    ? row.attachments.filter((attachment: unknown): attachment is RemoteFileAttachment => {
+        const record = unknownRecord(attachment);
+        return (
+          record !== null &&
+          typeof record.id === "string" &&
+          typeof record.rootId === "string" &&
+          typeof record.path === "string" &&
+          typeof record.name === "string" &&
+          (record.kind === "image" || record.kind === "audio" || record.kind === "file")
+        );
+      })
     : [];
   if (
     typeof row.connectionId !== "string" ||
@@ -789,45 +984,79 @@ export function parseNativeCommandDelivery(value: unknown): NativeCommandDeliver
     !(row.threadId === null || typeof row.threadId === "string") ||
     !(row.targetCommandId === null || typeof row.targetCommandId === "string") ||
     typeof row.text !== "string" ||
-    !["queued", "sending", "accepted", "uncertain", "failed", "delivered"].includes(
-      row.state ?? "",
-    ) ||
+    !isNativeCommandDeliveryState(row.state) ||
     typeof row.attempts !== "number" ||
     typeof row.createdAt !== "number" ||
     typeof row.updatedAt !== "number" ||
-    !(row.lastError === null || typeof row.lastError === "string")
-  )
+    !(row.lastError === null || typeof row.lastError === "string") ||
+    !(
+      row.workspaceRequestId === undefined ||
+      row.workspaceRequestId === null ||
+      typeof row.workspaceRequestId === "string"
+    )
+  ) {
     throw new Error("Native command projection is invalid");
-  return { ...(row as NativeCommandDelivery), attachments };
+  }
+  return {
+    attachments,
+    attempts: row.attempts,
+    commandId: row.commandId,
+    connectionId: row.connectionId,
+    createdAt: row.createdAt,
+    lastError: row.lastError,
+    method: row.method,
+    state: row.state,
+    targetCommandId: row.targetCommandId,
+    text: row.text,
+    threadId: row.threadId,
+    updatedAt: row.updatedAt,
+    ...(row.workspaceRequestId === undefined ? {} : { workspaceRequestId: row.workspaceRequestId }),
+  };
 }
 
 export async function startVoiceRecognition(
   onEvent: (event: NativeVoiceEvent) => void,
   localeTag: string | null = null,
 ): Promise<() => void> {
-  if (bridge === undefined || emitter === null || Platform.OS !== "android")
+  if (bridge === undefined || emitter === null || Platform.OS !== "android") {
     throw new Error("Native voice input is unavailable");
-  if (getMicrophonePermission() !== "granted") throw new Error("Microphone permission is required");
+  }
+  if (getMicrophonePermission() !== "granted") {
+    throw new Error("Microphone permission is required");
+  }
   let armed = false;
   let stopped = false;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   const pendingEvents: NativeVoiceEvent[] = [];
   const cleanup = (stopNative: boolean) => {
-    if (stopped) return;
+    if (stopped) {
+      return;
+    }
     stopped = true;
-    if (watchdog !== undefined) clearTimeout(watchdog);
+    if (watchdog !== undefined) {
+      clearTimeout(watchdog);
+    }
     watchdog = undefined;
-    if (stopNative) bridge.stopVoiceInput();
+    if (stopNative) {
+      bridge.stopVoiceInput();
+    }
     subscription.remove();
   };
   const deliver = (event: NativeVoiceEvent) => {
-    if (stopped) return;
+    if (stopped) {
+      return;
+    }
     onEvent(event);
-    if (event.type === "final" || event.type === "error") cleanup(true);
+    if (event.type === "final" || event.type === "error") {
+      cleanup(true);
+    }
   };
   const subscription = emitter.addListener("CodeWideVoiceEvent", (event: NativeVoiceEvent) => {
-    if (!armed) pendingEvents.push(event);
-    else deliver(event);
+    if (!armed) {
+      pendingEvents.push(event);
+    } else {
+      deliver(event);
+    }
   });
   try {
     await bridge.startVoiceInput(localeTag);
@@ -835,13 +1064,21 @@ export async function startVoiceRecognition(
     cleanup(false);
     throw error;
   }
-  watchdog = setTimeout(() => deliver({ type: "error", text: "timeout" }), 30_000);
+  watchdog = setTimeout(() => {
+    deliver({ text: "timeout", type: "error" });
+  }, 30_000);
   setTimeout(() => {
-    if (stopped) return;
+    if (stopped) {
+      return;
+    }
     armed = true;
-    for (const event of pendingEvents.splice(0)) deliver(event);
+    for (const event of pendingEvents.splice(0)) {
+      deliver(event);
+    }
   }, 0);
-  return () => cleanup(true);
+  return () => {
+    cleanup(true);
+  };
 }
 
 export function cancelVoiceRecognition(): void {
@@ -853,20 +1090,28 @@ export function setNativeVoiceAuraState(
   level: number,
   reducedMotion: boolean,
 ): void {
-  if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraState === undefined)
+  if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraState === undefined) {
     return;
+  }
   bridge.setVoiceAuraState(active, Math.max(0, Math.min(1, level)), reducedMotion);
 }
 
 /** Capture the pressed microphone's native center before focus/keyboard changes. */
 export function setNativeVoiceAuraOrigin(reactTag: number | null): void {
-  if (bridge === undefined || Platform.OS !== "android") return;
+  if (bridge === undefined || Platform.OS !== "android") {
+    return;
+  }
   bridge.setVoiceAuraOrigin?.(reactTag);
 }
 
 export function setNativeVoiceAuraTarget(reactTag: number | null): void {
-  if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraTarget === undefined)
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    bridge.setVoiceAuraTarget === undefined
+  ) {
     return;
+  }
   bridge.setVoiceAuraTarget(reactTag);
 }
 
@@ -877,17 +1122,22 @@ export function configureNativeFullscreenWindow(reactTag: number): void {
 export async function startPcmCapture(
   onChunk: (chunk: CapturedAudioChunk) => void,
   onError: (message: string) => void,
-): Promise<{ stop(): Promise<void>; info: PcmCaptureInfo | null }> {
-  if (bridge === undefined || emitter === null || Platform.OS !== "android")
+): Promise<{ info: PcmCaptureInfo | null; stop: () => Promise<void> }> {
+  if (bridge === undefined || emitter === null || Platform.OS !== "android") {
     throw new Error("Native audio capture is unavailable");
-  if (getMicrophonePermission() !== "granted") throw new Error("Microphone permission is required");
+  }
+  if (getMicrophonePermission() !== "granted") {
+    throw new Error("Microphone permission is required");
+  }
   let stopped = false;
   let stopPromise: Promise<void> | null = null;
   let resolveStopped: (() => void) | null = null;
   const subscription = emitter.addListener("CodeWideAudioEvent", (event: NativeAudioEvent) => {
-    if (event.type === "chunk") onChunk(event);
-    else if (event.type === "error") onError(event.error ?? "audio_capture_failed");
-    else if (event.type === "stopped") {
+    if (event.type === "chunk") {
+      onChunk(event);
+    } else if (event.type === "error") {
+      onError(event.error ?? "audio_capture_failed");
+    } else if (event.type === "stopped") {
       stopped = true;
       subscription.remove();
       resolveStopped?.();
@@ -897,18 +1147,28 @@ export async function startPcmCapture(
     const capture = await bridge.startPcmCapture();
     const info = isPcmCaptureInfo(capture) ? capture : null;
     if (info !== null) {
-      console.info(
-        `CodeWide microphone: ${info.sampleRate} Hz, ${info.source}, ` +
-          `noiseSuppressor=${info.noiseSuppressor}, automaticGainControl=${info.automaticGainControl}`,
-      );
+      appLogger.info({
+        event: "microphone.capture_started",
+        fields: {
+          automaticGainControl: info.automaticGainControl,
+          noiseSuppressor: info.noiseSuppressor,
+          sampleRate: info.sampleRate,
+          source: info.source,
+        },
+      });
     } else {
-      console.info("CodeWide microphone started with a legacy native capture bridge");
+      appLogger.info({ event: "microphone.legacy_capture_started" });
     }
     return {
       info,
       stop: async () => {
-        if (stopped) return;
-        if (stopPromise !== null) return await stopPromise;
+        if (stopped) {
+          return;
+        }
+        if (stopPromise !== null) {
+          await stopPromise;
+          return;
+        }
         stopPromise = new Promise<void>((resolve) => {
           resolveStopped = resolve;
         });
@@ -916,20 +1176,23 @@ export async function startPcmCapture(
         await stopPromise;
       },
     };
-  } catch (cause) {
+  } catch (error) {
     stopped = true;
     subscription.remove();
-    throw cause;
+    throw error;
   }
 }
 
 function isPcmCaptureInfo(value: unknown): value is PcmCaptureInfo {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const info = value as Partial<PcmCaptureInfo>;
+  const info = unknownRecord(value);
+  if (info === null) {
+    return false;
+  }
   return (
+    typeof info.sampleRate === "number" &&
     Number.isSafeInteger(info.sampleRate) &&
-    (info.sampleRate ?? 0) >= 8_000 &&
-    (info.sampleRate ?? 0) <= 96_000 &&
+    info.sampleRate >= 8000 &&
+    info.sampleRate <= 96_000 &&
     (info.source === "voice_recognition" ||
       info.source === "voice_communication" ||
       info.source === "mic") &&

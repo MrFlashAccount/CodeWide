@@ -1,9 +1,10 @@
-import { Button } from "heroui-native/button";
-import { Dialog } from "heroui-native/dialog";
+import { AppButton as Button } from "../../presentation/controls/AppButton";
 import { StyleSheet, View } from "react-native";
 
+import { AppModalDialog } from "../../presentation/overlay/AppModalDialog";
 import { useEvent } from "../../react/useEvent";
-import { spacing } from "../theme";
+import { colors, spacing, typeScale } from "../theme";
+import { ProductText as Text } from "../presentation/text/ProductText";
 import type { AppDialogAction, AppDialogSurfaceProps } from "./AppDialog.types";
 
 interface DialogActionButtonProps {
@@ -25,30 +26,24 @@ function DialogActionButton(props: DialogActionButtonProps): React.JSX.Element {
 
 export function AppDialogSurface(props: AppDialogSurfaceProps): React.JSX.Element {
   const { isOpen, onAction, onDismiss, request } = props;
-  const openChange = useEvent((open: boolean) => {
-    if (!open) onDismiss();
-  });
   return (
-    <Dialog isOpen={isOpen} onOpenChange={openChange}>
-      <Dialog.Portal style={styles.portal}>
-        <Dialog.Overlay blurViewProps={{ intensity: 34 }} variant="blur" />
-        {request === null ? null : (
-          <Dialog.Content style={styles.content}>
-            <View style={styles.copy}>
-              <Dialog.Title>{request.title}</Dialog.Title>
-              {request.message === undefined ? null : (
-                <Dialog.Description>{request.message}</Dialog.Description>
-              )}
-            </View>
-            <View style={styles.actions}>
-              {request.actions.map((action) => (
-                <DialogActionButton action={action} key={action.text} onAction={onAction} />
-              ))}
-            </View>
-          </Dialog.Content>
-        )}
-      </Dialog.Portal>
-    </Dialog>
+    <AppModalDialog contentStyle={styles.content} onDismiss={onDismiss} open={isOpen}>
+      {request === null ? null : (
+        <>
+          <View style={styles.copy}>
+            <Text style={styles.title}>{request.title}</Text>
+            {request.message === undefined ? null : (
+              <Text style={styles.message}>{request.message}</Text>
+            )}
+          </View>
+          <View style={styles.actions}>
+            {request.actions.map((action) => (
+              <DialogActionButton action={action} key={action.text} onAction={onAction} />
+            ))}
+          </View>
+        </>
+      )}
+    </AppModalDialog>
   );
 }
 
@@ -62,20 +57,12 @@ const styles = StyleSheet.create({
     minWidth: 88,
   },
   content: {
-    alignSelf: "center",
     gap: spacing.lg,
-    maxWidth: 420,
-    width: "92%",
   },
   copy: {
     gap: spacing.xs,
     paddingRight: spacing.xxs,
   },
-  portal: {
-    alignItems: "center",
-    inset: 0,
-    justifyContent: "center",
-    padding: spacing.md,
-    position: "absolute",
-  },
+  message: { color: colors.textMuted, ...typeScale.body },
+  title: { color: colors.text, ...typeScale.title },
 });

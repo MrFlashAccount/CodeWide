@@ -11,16 +11,16 @@ import { useConversationRouteNavigation } from "../conversation/conversationRout
 import { commitDrawing, type DrawingAdmission } from "./drawingAttachment";
 
 type DrawingCapabilities = Omit<DrawingAdmission, "stageAttachment"> & {
-  captureStageAttachment(): DrawingAdmission["stageAttachment"];
+  captureStageAttachment: () => DrawingAdmission["stageAttachment"];
   composerScope: string;
   fileAttachmentEnabled: boolean;
-  readDrawingAttachments(attachmentId: string | undefined): readonly StoredDraftAttachment[];
-  hideComposerTray(): void;
+  hideComposerTray: () => void;
+  readDrawingAttachments: (attachmentId: string | undefined) => readonly StoredDraftAttachment[];
 };
 
 /** A drawing session retains the opening composer's admission until accepted or closed. */
 export function useDrawingFeature(capabilities: DrawingCapabilities) {
-  const { composerScope, fileAttachmentEnabled, readDrawingAttachments, hideComposerTray } =
+  const { composerScope, fileAttachmentEnabled, hideComposerTray, readDrawingAttachments } =
     capabilities;
   const navigation = useConversationRouteNavigation();
 
@@ -37,22 +37,26 @@ export function useDrawingFeature(capabilities: DrawingCapabilities) {
       initialSnapshot: Record<string, unknown> | null;
       mode: "drawing" | "image-annotation";
       name?: string | null;
-      onAttached?(): void;
+      onAttached?: () => void;
     },
   ) => {
     navigation.openDrawing({
+      commit: async (value) => {
+        const committed = await commitDrawing(admission, attachment, mode, name, value);
+        if (committed) {
+          onAttached?.();
+        }
+        return committed;
+      },
       editing: attachment !== null,
       initialSnapshot,
       mode,
-      commit: async (value) => {
-        const committed = await commitDrawing(admission, attachment, mode, name, value);
-        if (committed) onAttached?.();
-        return committed;
-      },
     });
   };
   const openDrawing = useEvent(() => {
-    if (!fileAttachmentEnabled) return;
+    if (!fileAttachmentEnabled) {
+      return;
+    }
     hideComposerTray();
     const admission = {
       available: capabilities.available,
@@ -80,8 +84,9 @@ export function useDrawingFeature(capabilities: DrawingCapabilities) {
         !admission.available ||
         admission.draftThreadId === null ||
         (attachment === null && !fileAttachmentEnabled)
-      )
+      ) {
         throw new Error("File attachments are unavailable");
+      }
       const editor =
         attachment !== null && isQuickdrawDraftAttachment(attachment) ? attachment.editor : null;
       const snapshot = editor?.snapshot ?? (await loadQuickdrawImageSnapshot(item.source));
@@ -94,5 +99,5 @@ export function useDrawingFeature(capabilities: DrawingCapabilities) {
       });
     },
   );
-  return { openDrawing, annotateImage };
+  return { annotateImage, openDrawing };
 }

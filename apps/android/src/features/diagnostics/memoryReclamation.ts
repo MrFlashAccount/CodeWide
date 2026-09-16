@@ -8,23 +8,23 @@ import { delay } from "./performanceDelay";
 export const MEMORY_RECLAMATION_SETTLE_MS = 400;
 
 export type MemoryReclamationStage = {
-  id: string;
   action: MemoryReclamationActionResult | null;
   checkpoint: MemoryCheckpoint;
+  id: string;
 };
 
 export type MemoryCheckpointDelta = {
-  totalPssBytes: number;
-  procRssBytes: number | null;
-  smapsPssBytes: number | null;
+  graphicsPssBytes: number;
+  javaHeapPssBytes: number;
   javaUsedBytes: number;
   nativeAllocatedBytes: number;
   nativeCommittedBytes: number;
   nativeFreeBytes: number;
-  javaHeapPssBytes: number;
   nativeHeapPssBytes: number;
-  graphicsPssBytes: number;
   privateOtherPssBytes: number;
+  procRssBytes: number | null;
+  smapsPssBytes: number | null;
+  totalPssBytes: number;
 };
 
 export async function collectMemoryReclamationStage(
@@ -33,7 +33,7 @@ export async function collectMemoryReclamationStage(
 ): Promise<MemoryReclamationStage> {
   const result = await action();
   await delay(MEMORY_RECLAMATION_SETTLE_MS);
-  return { id, action: result, checkpoint: await captureMemoryCheckpoint() };
+  return { action: result, checkpoint: await captureMemoryCheckpoint(), id };
 }
 
 export function memoryStageDeltas(stages: MemoryReclamationStage[]) {
@@ -41,13 +41,13 @@ export function memoryStageDeltas(stages: MemoryReclamationStage[]) {
   return stages.map((stage, index) => {
     const previous = stages[index - 1];
     return {
-      id: stage.id,
+      fromBaseline:
+        baseline === undefined ? null : memoryCheckpointDelta(stage.checkpoint, baseline),
       fromPrevious:
         previous === undefined
           ? null
           : memoryCheckpointDelta(stage.checkpoint, previous.checkpoint),
-      fromBaseline:
-        baseline === undefined ? null : memoryCheckpointDelta(stage.checkpoint, baseline),
+      id: stage.id,
     };
   });
 }
@@ -57,17 +57,17 @@ export function memoryCheckpointDelta(
   previous: MemoryCheckpoint,
 ): MemoryCheckpointDelta {
   return {
-    totalPssBytes: current.totalPssBytes - previous.totalPssBytes,
-    procRssBytes: nullableDelta(current.procRssBytes, previous.procRssBytes),
-    smapsPssBytes: nullableDelta(current.smapsPssBytes, previous.smapsPssBytes),
+    graphicsPssBytes: current.graphicsPssBytes - previous.graphicsPssBytes,
+    javaHeapPssBytes: current.javaHeapPssBytes - previous.javaHeapPssBytes,
     javaUsedBytes: current.javaUsedBytes - previous.javaUsedBytes,
     nativeAllocatedBytes: current.nativeAllocatedBytes - previous.nativeAllocatedBytes,
     nativeCommittedBytes: current.nativeCommittedBytes - previous.nativeCommittedBytes,
     nativeFreeBytes: current.nativeFreeBytes - previous.nativeFreeBytes,
-    javaHeapPssBytes: current.javaHeapPssBytes - previous.javaHeapPssBytes,
     nativeHeapPssBytes: current.nativeHeapPssBytes - previous.nativeHeapPssBytes,
-    graphicsPssBytes: current.graphicsPssBytes - previous.graphicsPssBytes,
     privateOtherPssBytes: current.privateOtherPssBytes - previous.privateOtherPssBytes,
+    procRssBytes: nullableDelta(current.procRssBytes, previous.procRssBytes),
+    smapsPssBytes: nullableDelta(current.smapsPssBytes, previous.smapsPssBytes),
+    totalPssBytes: current.totalPssBytes - previous.totalPssBytes,
   };
 }
 

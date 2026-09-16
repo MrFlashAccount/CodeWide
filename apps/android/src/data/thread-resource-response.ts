@@ -10,10 +10,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 export type ThreadResourceLoadKind = "all" | "changes" | "attachments";
 
 export type ThreadResourcesPatch = Pick<ThreadResourcesValue, "threadId" | "revision"> & {
+  attachments: ThreadResourcesValue["attachments"] | undefined;
+  changes: ThreadResourcesValue["changes"] | undefined;
   changeScope: ThreadResourcesValue["changeScope"] | undefined;
   changeScopes: ThreadResourcesValue["changeScopes"] | undefined;
-  changes: ThreadResourcesValue["changes"] | undefined;
-  attachments: ThreadResourcesValue["attachments"] | undefined;
 };
 
 export function parseThreadResourcesPatch(
@@ -31,7 +31,7 @@ export function parseThreadResourcesPatch(
   }
   const changes: ThreadResourcesValue["changes"] = [];
   if (Array.isArray(source.changes)) {
-    const limit = Math.min(source.changes.length, 5_000);
+    const limit = Math.min(source.changes.length, 5000);
     for (let index = 0; index < limit; index += 1) {
       const entry: unknown = source.changes[index];
 
@@ -44,23 +44,24 @@ export function parseThreadResourcesPatch(
         typeof item.deletions !== "number" ||
         typeof item.turnId !== "string" ||
         typeof item.itemId !== "string"
-      )
+      ) {
         continue;
+      }
       changes.push({
-        path: item.path,
-        kind: item.kind,
-        availability: parseChangeAvailability(item.availability, item.kind),
         additions: Math.max(0, Math.trunc(item.additions)),
-        deletions: Math.max(0, Math.trunc(item.deletions)),
+        availability: parseChangeAvailability(item.availability, item.kind),
         binary: item.binary === true,
-        turnId: item.turnId,
+        deletions: Math.max(0, Math.trunc(item.deletions)),
         itemId: item.itemId,
+        kind: item.kind,
+        path: item.path,
+        turnId: item.turnId,
       });
     }
   }
   const attachments: ThreadResourcesValue["attachments"] = [];
   if (Array.isArray(source.attachments)) {
-    const limit = Math.min(source.attachments.length, 5_000);
+    const limit = Math.min(source.attachments.length, 5000);
     for (let index = 0; index < limit; index += 1) {
       const entry: unknown = source.attachments[index];
 
@@ -75,17 +76,18 @@ export function parseThreadResourcesPatch(
         (item.origin !== "user" && item.origin !== "agent") ||
         typeof item.turnId !== "string" ||
         typeof item.itemId !== "string"
-      )
+      ) {
         continue;
+      }
       attachments.push({
-        key: item.key,
-        name: item.name,
-        kind: item.kind,
-        path: item.path,
-        url: item.url,
-        origin: item.origin,
-        turnId: item.turnId,
         itemId: item.itemId,
+        key: item.key,
+        kind: item.kind,
+        name: item.name,
+        origin: item.origin,
+        path: item.path,
+        turnId: item.turnId,
+        url: item.url,
       });
     }
   }
@@ -97,20 +99,24 @@ export function parseThreadResourcesPatch(
     if (Array.isArray(source.changeScopes)) {
       for (const scope of source.changeScopes) {
         const parsed = parseThreadChangeScope(scope);
-        if (parsed !== null && !changeScopes.includes(parsed)) changeScopes.push(parsed);
+        if (parsed !== null && !changeScopes.includes(parsed)) {
+          changeScopes.push(parsed);
+        }
       }
     } else {
       changeScopes.push(changeScope);
     }
-    if (!changeScopes.includes(changeScope)) changeScopes.unshift(changeScope);
+    if (!changeScopes.includes(changeScope)) {
+      changeScopes.unshift(changeScope);
+    }
   }
   return {
-    threadId: expectedThreadId,
-    revision: source.revision,
+    attachments: kind === "changes" ? undefined : attachments,
+    changes: kind === "attachments" ? undefined : changes,
     changeScope: changeScope ?? undefined,
     changeScopes: changeScopes ?? undefined,
-    changes: kind === "attachments" ? undefined : changes,
-    attachments: kind === "changes" ? undefined : attachments,
+    revision: source.revision,
+    threadId: expectedThreadId,
   };
 }
 
@@ -119,12 +125,12 @@ export function mergeThreadResources(
   patch: ThreadResourcesPatch,
 ): ThreadResourcesValue {
   return {
-    threadId: patch.threadId,
-    revision: patch.revision,
+    attachments: patch.attachments ?? previous?.attachments ?? [],
+    changes: patch.changes ?? previous?.changes ?? [],
     changeScope: patch.changeScope ?? previous?.changeScope ?? "session",
     changeScopes: patch.changeScopes ?? previous?.changeScopes ?? [patch.changeScope ?? "session"],
-    changes: patch.changes ?? previous?.changes ?? [],
-    attachments: patch.attachments ?? previous?.attachments ?? [],
+    revision: patch.revision,
+    threadId: patch.threadId,
   };
 }
 
@@ -141,8 +147,9 @@ export function parseThreadChangeDiff(
     typeof source.path !== "string" ||
     typeof source.truncated !== "boolean" ||
     !Array.isArray(source.patches)
-  )
+  ) {
     throw new Error("Companion returned an invalid thread change diff");
+  }
   const patches: ThreadChangeDiffValue["patches"] = [];
   {
     const limit = Math.min(source.patches.length, 10_000);
@@ -156,13 +163,14 @@ export function parseThreadChangeDiff(
         typeof patch.itemId !== "string" ||
         (patch.kind !== "add" && patch.kind !== "delete" && patch.kind !== "update") ||
         typeof patch.diff !== "string"
-      )
+      ) {
         continue;
+      }
       patches.push({
-        turnId: patch.turnId,
+        diff: patch.diff,
         itemId: patch.itemId,
         kind: patch.kind,
-        diff: patch.diff,
+        turnId: patch.turnId,
       });
     }
   }
@@ -180,11 +188,11 @@ export function parseThreadChangeDiff(
   }
   const scopedSource = typeof source.source === "string" ? source.source : null;
   return {
-    threadId: expectedThreadId,
-    path: source.path,
     changeScope,
     patches,
+    path: source.path,
     source: scopedSource,
+    threadId: expectedThreadId,
     truncated: source.truncated,
   };
 }
@@ -203,6 +211,8 @@ function parseChangeAvailability(
   value: unknown,
   kind: unknown,
 ): ThreadResourcesValue["changes"][number]["availability"] {
-  if (value === "available" || value === "deleted" || value === "unavailable") return value;
+  if (value === "available" || value === "deleted" || value === "unavailable") {
+    return value;
+  }
   return kind === "delete" ? "deleted" : "unknown";
 }

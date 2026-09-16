@@ -1,3 +1,4 @@
+import { appLogger } from "../observability/logger";
 /**
  * Crosses the only durable acceptance boundary for a client command.
  *
@@ -10,14 +11,14 @@ export async function commitNativeThenProject<T>(
   persistNative: () => Promise<T>,
   projectUi: (accepted: T) => Promise<unknown>,
   onProjectionError: (cause: unknown) => void = (cause) => {
-    console.error("Accepted native command could not be projected immediately", cause);
+    appLogger.errorCaught({ error: cause, event: "native_command.projection.failed" });
   },
 ): Promise<T> {
   const accepted = await persistNative();
   try {
     await projectUi(accepted);
-  } catch (cause) {
-    onProjectionError(cause);
+  } catch (error) {
+    onProjectionError(error);
   }
   return accepted;
 }

@@ -16,23 +16,23 @@ import type { usePaginationTrim, useTimelineViewportState } from "./timeline/tim
 
 /** Authoritative data and navigation capabilities required by the read surface. */
 export type ConversationReadSurfaceProps = {
-  thread: ThreadListItem;
-  server: ThreadListServer | undefined;
-  remoteThread: Thread;
-  compact: boolean;
-  onBack: (() => void) | undefined;
-  onOpenSubagentThread(threadId: string): void;
-  getTransferAccess: GetTransferAccess | undefined;
-  getStableTransferAccess: GetTransferAccess;
-  onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
-  openThreadDocumentLink(href: string): boolean;
-  openCodeDocument(request: DocumentPreviewRequest): void;
-  presentTurnChanges(target: TurnChangesTarget, files: readonly TurnChangedFile[]): void;
-  footerContent: ReactElement;
-  reviewContent: ReactElement;
   appVoiceInputRuntime: AppVoiceInputRuntime;
-  viewport: ReturnType<typeof useTimelineViewportState>;
-  overlayState: ReturnType<typeof useOverlayScrollState>;
+  compact: boolean;
+  footerContent: ReactElement;
+  getStableTransferAccess: GetTransferAccess;
+  getTransferAccess: GetTransferAccess | undefined;
+  onBack: (() => void) | undefined;
+  onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
+  onOpenSubagentThread: (threadId: string) => void;
+  openCodeDocument: (request: DocumentPreviewRequest) => void;
+  openThreadDocumentLink: (href: string) => boolean;
   overlay: ReturnType<typeof useOverlayScrollOwnership>;
+  overlayState: ReturnType<typeof useOverlayScrollState>;
   pagination: ReturnType<typeof usePaginationTrim>;
+  presentTurnChanges: (target: TurnChangesTarget, files: readonly TurnChangedFile[]) => void;
+  remoteThread: Thread;
+  reviewContent: ReactElement;
+  server: ThreadListServer | undefined;
+  thread: ThreadListItem;
+  viewport: ReturnType<typeof useTimelineViewportState>;
 };

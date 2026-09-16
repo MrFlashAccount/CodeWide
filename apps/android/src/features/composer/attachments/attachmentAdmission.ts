@@ -16,20 +16,20 @@ import { useAppDialog } from "../../../ui/AppDialog";
 import type { AttachmentAdmissionCapabilities } from "./attachmentCapabilities";
 
 export function useAttachmentAdmission({
+  attachmentCount,
+  captureDraftMutations,
   composerScope,
   composerUploadScope,
+  dismissComposerKeyboardForOverlay,
   draftConnectionId,
   draftThreadId,
-  getTransferAccess,
-  getStableTransferAccess,
-  queuedComposerEdit,
-  upsertDraftAttachment,
-  latestAttachmentsRef,
-  captureDraftMutations,
   fileTransferController,
-  attachmentCount,
+  getStableTransferAccess,
+  getTransferAccess,
+  latestAttachmentsRef,
+  queuedComposerEdit,
   setComposerTrayVisible,
-  dismissComposerKeyboardForOverlay,
+  upsertDraftAttachment,
 }: AttachmentAdmissionCapabilities) {
   const dialog = useAppDialog();
   const fileAttachmentEnabled =
@@ -49,8 +49,9 @@ export function useAttachmentAdmission({
         draftThreadId === null ||
         getTransferAccess === undefined ||
         (queuedComposerEdit === null && upsertDraftAttachment === undefined)
-      )
+      ) {
         return false;
+      }
       if (
         existing === null &&
         composerUploads.count(composerUploadScope, latestAttachmentsRef.current.latest) >=
@@ -58,28 +59,43 @@ export function useAttachmentAdmission({
       ) {
         dialog.alert(
           "Too many attachments",
-          `A message can contain at most ${MAX_TURN_ATTACHMENTS} attachments.`,
+          `A message can contain at most ${String(MAX_TURN_ATTACHMENTS)} attachments.`,
         );
         return false;
       }
       const path = existing?.path ?? attachmentUploadPath(draftThreadId, selected.name);
       const attachment: StoredDraftAttachment = {
         id: existing?.id ?? randomUUID(),
-        rootId: existing?.rootId ?? ATTACHMENT_ROOT_ID,
-        path,
-        name: selected.name,
         kind: fileMediaKind(selected.name, selected.mimeType) ?? "file",
+        name: selected.name,
+        path,
+        rootId: existing?.rootId ?? ATTACHMENT_ROOT_ID,
         ...(editor === undefined ? {} : { editor }),
       };
       composerUploads.stage({
-        scope: composerUploadScope,
         attachment,
+        commit: async (ready, isCurrent) => {
+          if (queuedComposerEdit !== null) {
+            if (isCurrent()) {
+              updateAttachments([
+                ...latestAttachmentsRef.current.latest.filter(
+                  (candidate) => candidate.id !== ready.id,
+                ),
+                ready,
+              ]);
+            }
+            return;
+          }
+          await upsertDraftAttachment?.(draftConnectionId, draftThreadId, ready, isCurrent);
+        },
         preview: {
-          uri: selectedUploadUri(selected),
-          text: null,
           bytes: selected.size,
           mimeType: selected.mimeType,
+          text: null,
+          uri: selectedUploadUri(selected),
         },
+        readText: async () => selectedUploadText(selected),
+        scope: composerUploadScope,
         start: (progress) =>
           startUpload(
             getTransferAccess,
@@ -89,20 +105,6 @@ export function useAttachmentAdmission({
             existing !== null,
             progress,
           ),
-        readText: () => selectedUploadText(selected),
-        commit: async (ready, isCurrent) => {
-          if (queuedComposerEdit !== null) {
-            if (isCurrent())
-              updateAttachments([
-                ...latestAttachmentsRef.current.latest.filter(
-                  (candidate) => candidate.id !== ready.id,
-                ),
-                ready,
-              ]);
-            return;
-          }
-          await upsertDraftAttachment?.(draftConnectionId, draftThreadId, ready, isCurrent);
-        },
       });
       return true;
     };
@@ -119,8 +121,9 @@ export function useAttachmentAdmission({
         fileTransferController === null ||
         getTransferAccess === undefined ||
         draftThreadId === null
-      )
+      ) {
         return null;
+      }
       let uploaded: StoredDraftAttachment | null = null;
       const commitUploaded =
         onUploaded ??
@@ -135,28 +138,28 @@ export function useAttachmentAdmission({
       const remotePath = attachmentUploadPath(draftThreadId, selected.name);
       try {
         await fileTransferController.start({
-          scope: composerScope,
-          mode: "upload",
-          rootId: ATTACHMENT_ROOT_ID,
-          remotePath,
-          overwrite: false,
-          upload: selected,
           directory: null,
           getAccess: getStableTransferAccess,
+          mode: "upload",
           onUploaded: (attachment) => {
             uploaded = attachment;
             commitUploaded(attachment);
           },
+          overwrite: false,
+          remotePath,
+          rootId: ATTACHMENT_ROOT_ID,
+          scope: composerScope,
+          upload: selected,
         });
         return uploaded;
-      } catch (cause) {
+      } catch (error) {
         dialog.alert(
           "Could not attach file",
-          cause instanceof Error ? cause.message : "File upload failed",
+          error instanceof Error ? error.message : "File upload failed",
           offerRetry
             ? [
-                { text: "Cancel", style: "cancel" },
-                { text: "Retry", onPress: () => void uploadSelectedAttachment(selected) },
+                { style: "cancel", text: "Cancel" },
+                { onPress: () => void uploadSelectedAttachment(selected), text: "Retry" },
               ]
             : [{ text: "OK" }],
         );
@@ -168,21 +171,25 @@ export function useAttachmentAdmission({
   const pickComposerAttachment = useEvent(async () => {
     const stageAttachment = captureStageAttachment();
     setComposerTrayVisible(false);
-    if (!fileAttachmentEnabled) return;
+    if (!fileAttachmentEnabled) {
+      return;
+    }
     dismissComposerKeyboardForOverlay();
-    const selected = await pickUploadFile().catch((cause): null => {
+    const selected = await pickUploadFile().catch((error: unknown): null => {
       dialog.alert(
         "Could not choose file",
-        cause instanceof Error ? cause.message : "System file picker failed",
+        error instanceof Error ? error.message : "System file picker failed",
       );
       return null;
     });
-    if (selected !== null) stageAttachment(selected);
+    if (selected !== null) {
+      stageAttachment(selected);
+    }
   });
   return {
-    fileAttachmentEnabled,
     captureStageAttachment,
     captureUploadAttachment,
+    fileAttachmentEnabled,
     pickComposerAttachment,
   };
 }

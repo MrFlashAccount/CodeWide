@@ -17,39 +17,17 @@ type Props = Pick<
   | "microphoneAccess"
 >;
 export function ComposerMicrophone({
-  microphoneButtonRef,
   editingQueuedMessage,
-  voicePhase,
-  voiceRetryAvailable,
-  retryVoice,
-  toggleVoice,
   finishVoice,
   microphoneAccess,
+  microphoneButtonRef,
+  retryVoice,
+  toggleVoice,
+  voicePhase,
+  voiceRetryAvailable,
 }: Props) {
   return (
     <Pressable
-      ref={microphoneButtonRef}
-      accessibilityRole="button"
-      hitSlop={6}
-      disabled={editingQueuedMessage || (voicePhase === "finishing" && !voiceRetryAvailable)}
-      onPressIn={() => {
-        if (voicePhase === "idle")
-          setNativeVoiceAuraOrigin(findNodeHandle(microphoneButtonRef.current));
-      }}
-      onPress={() =>
-        void (voiceRetryAvailable
-          ? retryVoice()
-          : voicePhase === "idle"
-            ? toggleVoice()
-            : finishVoice(false))
-      }
-      style={[
-        styles.composerIcon,
-        (editingQueuedMessage ||
-          (voicePhase === "idle" && !microphoneAccess.granted && !voiceRetryAvailable) ||
-          (voicePhase === "finishing" && !voiceRetryAvailable)) &&
-          styles.disabled,
-      ]}
       accessibilityLabel={
         voiceRetryAvailable
           ? "Retry voice transcription"
@@ -59,16 +37,39 @@ export function ComposerMicrophone({
               : "Allow microphone access"
             : "Stop voice input and insert transcript"
       }
+      accessibilityRole="button"
+      disabled={editingQueuedMessage || (voicePhase === "finishing" && !voiceRetryAvailable)}
+      hitSlop={6}
+      onPress={() =>
+        void (voiceRetryAvailable
+          ? retryVoice()
+          : voicePhase === "idle"
+            ? toggleVoice()
+            : finishVoice(false))
+      }
+      onPressIn={() => {
+        if (voicePhase === "idle") {
+          setNativeVoiceAuraOrigin(findNodeHandle(microphoneButtonRef.current));
+        }
+      }}
+      ref={microphoneButtonRef}
+      style={[
+        styles.composerIcon,
+        (editingQueuedMessage ||
+          (voicePhase === "idle" && !microphoneAccess.granted && !voiceRetryAvailable) ||
+          (voicePhase === "finishing" && !voiceRetryAvailable)) &&
+          styles.disabled,
+      ]}
     >
       {voicePhase === "starting" ? (
-        <ActivityIndicator size="small" color={colors.textMuted} />
+        <ActivityIndicator color={colors.textMuted} size="small" />
       ) : (
         <Ionicons
+          color={voiceRetryAvailable || voicePhase === "idle" ? colors.text : colors.red}
           name={
             voiceRetryAvailable ? "refresh" : voicePhase === "idle" ? "mic-outline" : "stop-circle"
           }
           size={iconSize.action}
-          color={voiceRetryAvailable || voicePhase === "idle" ? colors.text : colors.red}
         />
       )}
     </Pressable>

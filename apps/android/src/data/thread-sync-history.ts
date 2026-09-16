@@ -25,11 +25,11 @@ type HistoryAuthority = Pick<
 };
 /** Source-qualified paging and canonical tail installation use one captured authority. */
 export function createThreadSyncHistory({
+  captureThreadHistoryRead,
   getDetails,
   getSession,
-  rpcAfterAttach,
-  captureThreadHistoryRead,
   readThread,
+  rpcAfterAttach,
 }: HistoryAuthority) {
   const loadCanonicalThreadTail = async (
     connectionId: string,
@@ -37,21 +37,25 @@ export function createThreadSyncHistory({
     details: ThreadDetailDatabase,
   ): Promise<void> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const isCurrent = captureThreadHistoryRead(connectionId, session, details);
     const startedAt = performance.now();
     const page = parseThreadTurnsListPage(
       await rpcAfterAttach<unknown>(session, "thread/turns/list", {
-        threadId,
         cursor: null,
+        itemsView: "summary",
         limit: THREAD_RESIDENT_TURN_LIMIT,
         sortDirection: "desc",
-        itemsView: "summary",
+        threadId,
       }),
       null,
     );
     recordTiming("history_page_rpc_ms", performance.now() - startedAt);
-    if (!isCurrent()) throw new Error("History read was superseded");
+    if (!isCurrent()) {
+      throw new Error("History read was superseded");
+    }
     await details.mergeTailTurns(
       connectionId,
       threadId,
@@ -68,17 +72,21 @@ export function createThreadSyncHistory({
     expectedHistoryEpoch: number,
   ): Promise<ThreadTurnPage> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const threadDetails = getDetails();
-    if (threadDetails === null) throw new Error("Thread history database is not available");
+    if (threadDetails === null) {
+      throw new Error("Thread history database is not available");
+    }
     const isCurrent = captureThreadHistoryRead(connectionId, session, threadDetails);
     const startedAt = performance.now();
     const page = parseThreadTurnsListPage(
       await rpcAfterAttach<unknown>(session, "thread/turns/list", {
-        threadId,
         cursor,
         limit: THREAD_HISTORY_PAGE_SIZE,
         sortDirection: "desc",
+        threadId,
         // Summary is the modern fast path: user prompt + final answer. Full
         // activity is loaded for one turn only when the user expands it.
         itemsView: "summary",
@@ -87,7 +95,9 @@ export function createThreadSyncHistory({
     );
     recordTiming("history_page_rpc_ms", performance.now() - startedAt);
     const turns = [...page.turns].reverse();
-    if (!isCurrent()) throw new Error("History read was superseded");
+    if (!isCurrent()) {
+      throw new Error("History read was superseded");
+    }
     const persisted = await threadDetails.prependTurns(
       connectionId,
       threadId,
@@ -96,12 +106,14 @@ export function createThreadSyncHistory({
       page.nextCursor,
       isCurrent,
     );
-    if (!persisted.accepted) throw new Error("Backend history page was not persisted");
+    if (!persisted.accepted) {
+      throw new Error("Backend history page was not persisted");
+    }
     return {
-      turns,
-      nextCursor: page.nextCursor,
       acceptedHistory: true,
       extendedHistory: persisted.extendedMinimum,
+      nextCursor: page.nextCursor,
+      turns,
     };
   };
 
@@ -112,34 +124,42 @@ export function createThreadSyncHistory({
     expectedHistoryEpoch: number,
   ): Promise<ThreadRemoteNewerResult> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const threadDetails = getDetails();
-    if (threadDetails === null) throw new Error("Thread history database is not available");
+    if (threadDetails === null) {
+      throw new Error("Thread history database is not available");
+    }
     const isCurrent = captureThreadHistoryRead(connectionId, session, threadDetails);
     const startedAt = performance.now();
     const requestedSourceWitness = threadDetails.historySourceWitness(connectionId, threadId);
     const loaded = await readThreadHistoryPage({
       isCurrent,
-      async repair() {
-        await readThread(connectionId, threadId, undefined, true, true);
-      },
       async read() {
         return parseThreadTurnsAfterPage(
           await rpcAfterAttach<unknown>(session, "companion/thread/history/after", {
-            threadId,
             afterTurnId,
             limit: THREAD_HISTORY_PAGE_SIZE,
             sourceWitness: requestedSourceWitness,
+            threadId,
           }),
           afterTurnId,
           THREAD_HISTORY_PAGE_SIZE,
         );
       },
+      async repair() {
+        await readThread(connectionId, threadId, undefined, true, true);
+      },
     });
-    if (loaded.status === "superseded") return loaded;
+    if (loaded.status === "superseded") {
+      return loaded;
+    }
     const page = loaded.page;
     recordTiming("history_page_rpc_ms", performance.now() - startedAt);
-    if (!isCurrent()) return { status: "superseded" };
+    if (!isCurrent()) {
+      return { status: "superseded" };
+    }
     const persisted = await threadDetails.appendTurnsAfter(
       connectionId,
       threadId,
@@ -150,11 +170,13 @@ export function createThreadSyncHistory({
       isCurrent,
       requestedSourceWitness,
     );
-    if (!persisted.accepted || !isCurrent()) return { status: "superseded" };
+    if (!persisted.accepted || !isCurrent()) {
+      return { status: "superseded" };
+    }
     return {
-      status: "persisted",
-      lastTurnId: page.turns.at(-1)?.id ?? afterTurnId,
       hasMore: page.hasMore,
+      lastTurnId: page.turns.at(-1)?.id ?? afterTurnId,
+      status: "persisted",
     };
   };
 
@@ -165,34 +187,42 @@ export function createThreadSyncHistory({
     expectedHistoryEpoch: number,
   ): Promise<ThreadRemoteOlderResult> => {
     const session = getSession(connectionId);
-    if (session === undefined) throw new Error("Connection is not enabled");
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
     const threadDetails = getDetails();
-    if (threadDetails === null) throw new Error("Thread history database is not available");
+    if (threadDetails === null) {
+      throw new Error("Thread history database is not available");
+    }
     const isCurrent = captureThreadHistoryRead(connectionId, session, threadDetails);
     const startedAt = performance.now();
     const requestedSourceWitness = threadDetails.historySourceWitness(connectionId, threadId);
     const loaded = await readThreadHistoryPage({
       isCurrent,
-      async repair() {
-        await readThread(connectionId, threadId, undefined, true, true);
-      },
       async read() {
         return parseThreadHistorySummaryPage(
           await rpcAfterAttach<unknown>(session, "companion/thread/history/before", {
-            threadId,
             beforeTurnId,
             limit: THREAD_HISTORY_PAGE_SIZE,
             sourceWitness: requestedSourceWitness,
+            threadId,
           }),
           beforeTurnId,
           THREAD_HISTORY_PAGE_SIZE,
         );
       },
+      async repair() {
+        await readThread(connectionId, threadId, undefined, true, true);
+      },
     });
-    if (loaded.status === "superseded") return loaded;
+    if (loaded.status === "superseded") {
+      return loaded;
+    }
     const page = loaded.page;
     recordTiming("history_page_rpc_ms", performance.now() - startedAt);
-    if (!isCurrent()) return { status: "superseded" };
+    if (!isCurrent()) {
+      return { status: "superseded" };
+    }
     const persisted = await threadDetails.prependTurnsBefore(
       connectionId,
       threadId,
@@ -204,12 +234,14 @@ export function createThreadSyncHistory({
       isCurrent,
       requestedSourceWitness,
     );
-    if (!persisted.accepted || !isCurrent()) return { status: "superseded" };
+    if (!persisted.accepted || !isCurrent()) {
+      return { status: "superseded" };
+    }
     return {
-      status: "persisted",
-      oldestTurnId: page.turns[0]?.id ?? beforeTurnId,
       hasMore: page.hasMore,
+      oldestTurnId: page.turns[0]?.id ?? beforeTurnId,
+      status: "persisted",
     };
   };
-  return { loadCanonicalThreadTail, loadOlderTurns, loadNewerTurns, loadTurnsBefore };
+  return { loadCanonicalThreadTail, loadNewerTurns, loadOlderTurns, loadTurnsBefore };
 }

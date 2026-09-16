@@ -27,8 +27,6 @@ export default function V1DrawingRoute(): React.JSX.Element {
     return (
       <RouteUnavailable
         message="This drawing session has expired or was already completed."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           recoverUnavailableRoute(router, "/v1");
         }}
@@ -51,11 +49,7 @@ export default function V1DrawingRoute(): React.JSX.Element {
       editing={session.request.editing}
       initialSnapshot={session.request.initialSnapshot}
       mode={session.request.mode}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={close}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onCommit={async (value) => drawingRouteSessions.commit(session.id, value)}
     />
   );

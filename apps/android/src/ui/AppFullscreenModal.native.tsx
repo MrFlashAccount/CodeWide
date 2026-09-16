@@ -1,5 +1,4 @@
-import { PortalHost } from "heroui-native/portal";
-import { useEffect, useId, useRef, useState, type ComponentRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { findNodeHandle, Modal, StyleSheet } from "react-native";
 import { SafeAreaView, type Edge } from "react-native-safe-area-context";
 
@@ -11,17 +10,19 @@ import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 
 const FULLSCREEN_SAFE_AREA_EDGES: readonly Edge[] = ["top", "right", "bottom", "left"];
 export function AppFullscreenModal({
+  children,
   isOpen,
   onClose,
   onShow,
-  children,
 }: {
-  isOpen: boolean;
-  onClose(): void;
-  onShow?(): void;
   children: ReactNode;
+  isOpen: boolean;
+  onClose: () => void;
+  onShow?: () => void;
 }) {
-  if (!isOpen) return null;
+  if (!isOpen) {
+    return null;
+  }
   return (
     <VisibleFullscreenModal onClose={onClose} {...(onShow === undefined ? {} : { onShow })}>
       {children}
@@ -30,51 +31,54 @@ export function AppFullscreenModal({
 }
 
 function VisibleFullscreenModal({
+  children,
   onClose,
   onShow,
-  children,
 }: {
-  onClose(): void;
-  onShow?(): void;
   children: ReactNode;
+  onClose: () => void;
+  onShow?: () => void;
 }) {
-  const portalHostName = `fullscreen-modal-${useId()}`;
   const [windowReady, setWindowReady] = useState(false);
   const rootRef = useRef<ComponentRef<typeof SafeAreaView> | null>(null);
   const registerVoiceAuraTarget = () => {
     const reactTag = findNodeHandle(rootRef.current);
-    if (reactTag !== null) setNativeVoiceAuraTarget(reactTag);
+    if (reactTag !== null) {
+      setNativeVoiceAuraTarget(reactTag);
+    }
   };
-  useEffect(() => () => setNativeVoiceAuraTarget(null), []);
+  useEffect(
+    () => () => {
+      setNativeVoiceAuraTarget(null);
+    },
+    [],
+  );
 
   return (
-    <RecoverableRenderBoundary scope="dialog" label="Fullscreen modal" onDismiss={onClose}>
+    <RecoverableRenderBoundary label="Fullscreen modal" onDismiss={onClose} scope="dialog">
       <Modal
-        visible
-        hardwareAccelerated
         animationType="slide"
-        presentationStyle="fullScreen"
-        statusBarTranslucent={false}
+        hardwareAccelerated
+        onRequestClose={onClose}
         onShow={() => {
           setWindowReady(true);
           requestAnimationFrame(registerVoiceAuraTarget);
           onShow?.();
         }}
-        onRequestClose={onClose}
+        presentationStyle="fullScreen"
+        statusBarTranslucent={false}
+        visible
       >
         <SafeAreaView
-          ref={rootRef}
           collapsable={false}
-          testID="fullscreen-modal-safe-area"
           edges={FULLSCREEN_SAFE_AREA_EDGES}
-          style={styles.root}
           onLayout={registerVoiceAuraTarget}
+          ref={rootRef}
+          style={styles.root}
+          testID="fullscreen-modal-safe-area"
         >
           <FullscreenWindowReadyProvider ready={windowReady}>
-            <OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>
-              {children}
-              <PortalHost name={portalHostName} />
-            </OverlaySurfaceProvider>
+            <OverlaySurfaceProvider surface="fullscreen-modal">{children}</OverlaySurfaceProvider>
           </FullscreenWindowReadyProvider>
         </SafeAreaView>
       </Modal>
@@ -84,9 +88,9 @@ function VisibleFullscreenModal({
 
 const styles = StyleSheet.create({
   root: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 0,
     backgroundColor: colors.background,
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
   },
 });

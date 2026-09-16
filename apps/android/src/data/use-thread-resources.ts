@@ -8,14 +8,16 @@ export function useThreadResources(
   model: ThreadResourcesModel | null,
   resourceId: string | null,
   loader?: () => Promise<unknown>,
-  options: { suspense?: boolean; revision?: string } = {},
+  options: { revision?: string; suspense?: boolean } = {},
 ): ThreadResourcesRow | null {
   const ready$ =
     model === null || resourceId === null || loader === undefined
       ? null
       : model.resource(resourceId, options.revision ?? "default", loader);
   useEffect(() => {
-    if (model === null || resourceId === null) return;
+    if (model === null || resourceId === null) {
+      return undefined;
+    }
     return model.retain(resourceId);
   }, [model, resourceId]);
   useSelector(() => (options.suspense === true && ready$ !== null ? ready$.get() : true), {

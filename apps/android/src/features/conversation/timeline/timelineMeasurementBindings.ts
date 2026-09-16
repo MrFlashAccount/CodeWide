@@ -20,11 +20,11 @@ export function useTimelineMeasurementBindings(props: TimelineViewportProps) {
           props.draftThreadId,
           "timeline_first_draw",
           {
-            values: {
-              nativeListDrawMs: elapsedTimeInMs,
-              itemCount: props.displayedTimeline.length,
-            },
             tags: { status: props.historyViewport.readStatus() },
+            values: {
+              itemCount: props.displayedTimeline.length,
+              nativeListDrawMs: elapsedTimeInMs,
+            },
           },
         );
       }
@@ -35,8 +35,8 @@ export function useTimelineMeasurementBindings(props: TimelineViewportProps) {
           "timeline_first_draw",
           {
             values: {
-              nativeListDrawMs: elapsedTimeInMs,
               itemCount: props.displayedTimeline.length,
+              nativeListDrawMs: elapsedTimeInMs,
             },
           },
         );
@@ -62,19 +62,19 @@ export function useTimelineMeasurementBindings(props: TimelineViewportProps) {
         props.draftThreadId,
         "timeline_content_size_changed",
         {
-          values: {
-            heightPx: height,
-            viewportHeightPx: timelineViewportHeightRef.current,
-            itemCount: props.displayedTimeline.length,
-          },
           tags: {
             positioned: props.timelinePositioned ? "true" : "false",
             status: props.historyViewport.readStatus(),
+          },
+          values: {
+            heightPx: height,
+            itemCount: props.displayedTimeline.length,
+            viewportHeightPx: timelineViewportHeightRef.current,
           },
         },
       );
     }
     props.scheduleUnreadAgentVisibilityCheck();
   });
-  return { onLoad, onLayout, onContentSizeChange };
+  return { onContentSizeChange, onLayout, onLoad };
 }

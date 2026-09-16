@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { formatClockTime } from "../../../data/device-time";
-import { type GetTransferAccess } from "../../../data/private-transfer";
+import type { GetTransferAccess } from "../../../data/private-transfer";
 import { Bubble, BubbleContent } from "../../../rendering/Bubble";
 import { ImagePreviewGroup } from "../../../rendering/ImagePreviewHost";
 import { colors } from "../../../theme";
@@ -11,14 +11,14 @@ import { CalmSpinner } from "../../../ui/CalmSpinner";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary";
 import { AppText as Text } from "../../../ui/Typography";
-import { type TimelineItem } from "../timeline/timelineTypes";
+import type { TimelineItem } from "../timeline/timelineTypes";
 import { styles } from "./OptimisticTurn.styles";
 import { UserMessageContent } from "./UserMessageContent";
 
 export interface OptimisticTurnProps {
-  item: Extract<TimelineItem, { kind: "optimistic" }>;
-  onRetry?(commandId: string): Promise<void>;
   getTransferAccess?: GetTransferAccess;
+  item: Extract<TimelineItem, { kind: "optimistic" }>;
+  onRetry?: (commandId: string) => Promise<void>;
 }
 
 export function OptimisticTurn(props: OptimisticTurnProps) {
@@ -40,24 +40,26 @@ export function OptimisticTurn(props: OptimisticTurnProps) {
   const [retrying, setRetrying] = useState(false);
   const dialog = useAppDialog();
   const retry = () => {
-    if (onRetry === undefined || retrying) return;
+    if (onRetry === undefined || retrying) {
+      return;
+    }
     setRetrying(true);
-    void onRetry(item.id).catch((cause: unknown) => {
+    void onRetry(item.id).catch((error: unknown) => {
       setRetrying(false);
       dialog.alert(
         "Retry failed",
-        cause instanceof Error ? cause.message : "Could not retry message",
+        error instanceof Error ? error.message : "Could not retry message",
       );
     });
   };
   return (
-    <View testID="turn-group" style={styles.turnGroup}>
+    <View style={styles.turnGroup} testID="turn-group">
       <View style={styles.userTurnCluster}>
         <RecoverableRenderBoundary
-          scope="bubble"
-          label="Pending user message"
           context={`Delivery: ${item.id}`}
+          label="Pending user message"
           resetKey={`${item.scope}:${item.id}`}
+          scope="bubble"
         >
           <ImagePreviewGroup id={`${item.scope}:${item.id}:user`}>
             <View
@@ -65,23 +67,23 @@ export function OptimisticTurn(props: OptimisticTurnProps) {
               style={styles.userMessageRow}
             >
               <Bubble
-                variant="user"
-                testID="user-bubble"
-                errorLabel="Pending user message"
                 errorContext={`Delivery: ${item.id}`}
+                errorLabel="Pending user message"
                 errorResetKey={`${item.scope}:${item.id}`}
+                testID="user-bubble"
+                variant="user"
               >
                 <BubbleContent>
                   <UserMessageContent
-                    content={item.text === "" ? [] : [{ type: "text", text: item.text }]}
+                    content={item.text === "" ? [] : [{ text: item.text, type: "text" }]}
                     localAttachments={item.attachments}
                     pendingText={!failed}
                     {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
                   />
                 </BubbleContent>
               </Bubble>
-              <Text testID="user-message-time" style={styles.messageTime}>
-                {formatClockTime(item.createdAt / 1_000)}
+              <Text style={styles.messageTime} testID="user-message-time">
+                {formatClockTime(item.createdAt / 1000)}
               </Text>
             </View>
           </ImagePreviewGroup>
@@ -89,8 +91,8 @@ export function OptimisticTurn(props: OptimisticTurnProps) {
         {failed ? (
           <View
             accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}
-            testID="optimistic-turn-footer"
             style={[styles.turnFooter, styles.turnFooterEnd]}
+            testID="optimistic-turn-footer"
           >
             <View style={[styles.turnStatusDot, styles.turnStatusFailed]} />
             <Text style={styles.turnMetaText}>{deliveryLabel}</Text>
@@ -107,9 +109,9 @@ export function OptimisticTurn(props: OptimisticTurnProps) {
                 ]}
               >
                 {retrying ? (
-                  <CalmSpinner size={9} color={colors.textMuted} durationMs={1_400} />
+                  <CalmSpinner color={colors.textMuted} durationMs={1400} size={9} />
                 ) : (
-                  <InlineIcon name="refresh" role="label" color={colors.accent} />
+                  <InlineIcon color={colors.accent} name="refresh" role="label" />
                 )}
                 <Text style={styles.retryMessageText}>Retry</Text>
               </Pressable>

@@ -10,9 +10,9 @@ import { styles } from "./ThreadRow.styles";
 import type { ThreadRowProps } from "./threadRowContract";
 
 export function ThreadRowContent({
-  thread,
-  server,
   selected,
+  server,
+  thread,
 }: Pick<ThreadRowProps, "thread" | "server" | "selected">) {
   return (
     <>
@@ -28,19 +28,19 @@ export function ThreadRowContent({
             {thread.state === "running" ? (
               <RunningThreadTitle value={thread.title} />
             ) : (
-              <ThreadTitle value={thread.title} running={false} />
+              <ThreadTitle running={false} value={thread.title} />
             )}
           </View>
-          {thread.state !== undefined && thread.state !== null && thread.state !== "running" && (
+          {thread.state !== undefined && thread.state !== "running" && (
             <View
-              accessible
               accessibilityLabel={`Thread ${thread.state}`}
+              accessible
               style={styles.threadStatusIcon}
             >
               <Ionicons
+                color={thread.state === "failed" ? colors.red : colors.amber}
                 name={thread.state === "approval" ? "shield-checkmark" : "alert-circle"}
                 size={iconSize.inline}
-                color={thread.state === "failed" ? colors.red : colors.amber}
               />
             </View>
           )}
@@ -48,19 +48,19 @@ export function ThreadRowContent({
             {thread.unread > 0 && (
               <View style={styles.unreadSlot}>
                 <View
+                  accessibilityLabel={`${String(thread.unread)} unread ${thread.unread === 1 ? "message" : "messages"}`}
                   accessible
-                  accessibilityLabel={`${thread.unread} unread ${thread.unread === 1 ? "message" : "messages"}`}
                   style={styles.unreadDot}
                 />
               </View>
             )}
-            <Text testID="thread-time" numberOfLines={1} style={styles.threadTime}>
+            <Text numberOfLines={1} style={styles.threadTime} testID="thread-time">
               {thread.time ?? formatThreadTime(thread.timestamp ?? 0)}
             </Text>
           </View>
         </View>
         <View style={styles.threadPreviewLine}>
-          <Text testID="thread-preview" numberOfLines={1} style={styles.threadPreview}>
+          <Text numberOfLines={1} style={styles.threadPreview} testID="thread-preview">
             {plainThreadPreview(thread.preview)}
           </Text>
         </View>

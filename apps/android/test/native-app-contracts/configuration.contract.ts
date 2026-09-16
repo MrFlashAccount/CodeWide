@@ -116,11 +116,11 @@ it("keeps a dependency-light root crash recovery surface", () => {
   expect(appErrorBoundary).toContain("getDerivedStateFromError");
   expect(appErrorBoundary).toContain("componentDidCatch");
   expect(appErrorBoundary).toContain('testID="root-error-boundary"');
-  expect(appErrorBoundary).toContain("Updates.reloadAsync()");
+  expect(appErrorBoundary).toContain('await import("expo-updates")');
+  expect(appErrorBoundary).toContain("await reloadAsync()");
   expect(appErrorBoundary).toContain("DevSettings.reload()");
-  expect(appErrorBoundary).toContain("Clipboard.setStringAsync(report)");
-  expect(appErrorBoundary).toContain('require("expo-clipboard")');
-  expect(appErrorBoundary).toContain('require("expo-updates")');
+  expect(appErrorBoundary).toContain('await import("expo-clipboard")');
+  expect(appErrorBoundary).toContain("await setStringAsync(report)");
   expect(appErrorBoundary).not.toContain('import * as Clipboard from "expo-clipboard"');
   expect(appErrorBoundary).not.toContain('import * as Updates from "expo-updates"');
   expect(appErrorBoundary).not.toContain("op-sqlite");
@@ -166,12 +166,15 @@ it("keeps signed self-hosted updates enabled and applies them without a process 
   expect(otaPrefetch).toContain("Updates.checkForUpdateAsync()");
   expect(otaPrefetch).toContain("Updates.fetchUpdateAsync()");
   expect(otaPrefetch).toContain("Updates.reloadAsync()");
-  expect(otaPrefetch).toContain("const CHECK_INTERVAL_MS = 30 * 60 * 1_000");
-  expect(otaPrefetch).toContain("const RETRY_INTERVAL_MS = 30 * 1_000");
-  expect(otaPrefetch).toContain("if (!updateReady && !force && Date.now() < nextCheckAt) return");
-  expect(otaPrefetch).toContain('if (state === "active") void prefetch(true)');
+  expect(otaPrefetch).toMatch(/const CHECK_INTERVAL_MS = 30 \* 60 \* 1_?000/u);
+  expect(otaPrefetch).toMatch(/const RETRY_INTERVAL_MS = 30 \* 1_?000/u);
+  expect(otaPrefetch).toContain("if (!updateReady && !force && Date.now() < nextCheckAt)");
+  expect(otaPrefetch).toContain('if (state === "active")');
+  expect(otaPrefetch).toContain("startPrefetch(true);");
   expect(otaPrefetch).toContain("let nextCheckAt = Date.now() + RETRY_INTERVAL_MS");
-  expect(otaPrefetch).not.toMatch(/^\s*void prefetch\(true\);/mu);
+  expect(otaPrefetch.slice(0, otaPrefetch.indexOf("setInterval("))).not.toContain(
+    "startPrefetch(true);",
+  );
 });
 
 it("dispatches foreground attach off the UI thread without restoring every server", () => {

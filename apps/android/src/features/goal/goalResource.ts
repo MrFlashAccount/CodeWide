@@ -12,7 +12,7 @@ export function useGoalResource(
   useAsyncResource<ThreadGoal | null>(
     onGetGoal === undefined || goalResourceId === null ? null : "conversation-thread-goal",
     goalResourceId ?? "inactive",
-    async () => (onGetGoal === undefined ? null : await onGetGoal()),
+    async () => (onGetGoal === undefined ? null : onGetGoal()),
   );
 
   return goalResource;

@@ -69,8 +69,6 @@ export default function V1ThreadRoute(): React.JSX.Element {
     return (
       <RouteUnavailable
         message="This thread link is invalid."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           router.dismissTo("/v1");
         }}
@@ -84,8 +82,6 @@ export default function V1ThreadRoute(): React.JSX.Element {
     return (
       <RouteUnavailable
         message="The server for this thread is no longer available."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           router.dismissTo("/v1");
         }}
@@ -112,8 +108,6 @@ export default function V1ThreadRoute(): React.JSX.Element {
       <ActiveWorkspaceConversation
         connections={resources.connections}
         desktop={resources.desktop}
-        // WHY: The destination is derived from validated route params; React Compiler owns its render identity.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-object-as-prop
         destination={{
           connectionId,
           generation: threadRouteGeneration(params.value),
@@ -125,27 +119,17 @@ export default function V1ThreadRoute(): React.JSX.Element {
         fileTransferController={workspaceRuntime.fileTransferController}
         loadedThreadSummaries={resources.list.loadedThreadSummaries}
         native={workspaceRuntime.native}
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onChangeDraftProject={() => undefined}
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onChangeDraftWorkspaceMode={() => undefined}
         onClose={resources.list.closeActiveThread}
         onDraftAdmitted={closeDraft}
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onExitSearchHistory={closeSearchHistory}
         onFixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onManageProjects={() => {
           router.push("/v1/projects");
         }}
         onOpenBrowser={resources.openBrowser}
         onSelectThread={resources.list.selectThread}
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onShowActiveThreads={() => {
           resources.list.listState.setThreadListMode("active");
         }}

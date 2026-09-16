@@ -10,20 +10,20 @@ import { WaveText } from "../../ui/WaveText";
 import { styles } from "./SubagentWorkspace.styles";
 
 export function SubagentRow({
-  summary,
-  selected,
   onPress,
+  selected,
+  summary,
 }: {
-  summary: StoredThreadSummary;
+  onPress: () => void;
   selected: boolean;
-  onPress(): void;
+  summary: StoredThreadSummary;
 }) {
   const active = subagentIsActive(summary);
   const title = subagentDisplayName(summary);
   return (
     <Pressable
-      accessibilityRole="button"
       accessibilityLabel={`Open subagent ${title}`}
+      accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
       style={({ pressed }) => [
@@ -36,10 +36,10 @@ export function SubagentRow({
         <View style={styles.rowTitleLine}>
           {active ? (
             <WaveText
+              containerStyle={styles.rowTitleWave}
+              style={styles.rowTitle}
               testID={`subagent-active-${summary.remoteThreadId}`}
               text={title}
-              style={styles.rowTitle}
-              containerStyle={styles.rowTitleWave}
             />
           ) : (
             <Text numberOfLines={1} style={styles.rowTitle}>
@@ -48,14 +48,14 @@ export function SubagentRow({
           )}
           {summary.status.type === "systemError" && (
             <View accessibilityLabel="Subagent failed" style={styles.statusIcon}>
-              <Ionicons name="alert-circle" size={iconSize.inline} color={colors.red} />
+              <Ionicons color={colors.red} name="alert-circle" size={iconSize.inline} />
             </View>
           )}
           <View style={styles.rowMeta}>
             {summary.unread > 0 && (
               <View style={styles.unreadSlot}>
                 <View
-                  accessibilityLabel={`${summary.unread} unread ${summary.unread === 1 ? "message" : "messages"}`}
+                  accessibilityLabel={`${String(summary.unread)} unread ${summary.unread === 1 ? "message" : "messages"}`}
                   style={styles.unreadDot}
                 />
               </View>
@@ -65,7 +65,7 @@ export function SubagentRow({
             </Text>
           </View>
         </View>
-        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.preview}>
+        <Text ellipsizeMode="tail" numberOfLines={1} style={styles.preview}>
           {subagentPreview(summary)}
         </Text>
       </View>
@@ -73,15 +73,21 @@ export function SubagentRow({
   );
 }
 
+// WHY: This presenter owns the user-visible fallback order between role and lifecycle state;
+// changing that precedence would alter existing subagent labels.
+// oxlint-disable-next-line eslint/complexity
 export function subagentSubtitle(summary: StoredThreadSummary): string {
-  if (summary.status.type === "notLoaded") return summary.agentRole || "Subagent";
+  const role = summary.agentRole;
+  if (summary.status.type === "notLoaded") {
+    return role === null || role === undefined || role === "" ? "Subagent" : role;
+  }
   const state =
     summary.status.type === "active"
       ? "running"
       : summary.status.type === "systemError"
         ? "failed"
         : "idle";
-  return summary.agentRole ? `${summary.agentRole} · ${state}` : state;
+  return role === null || role === undefined || role === "" ? state : `${role} · ${state}`;
 }
 
 function subagentPreview(summary: StoredThreadSummary): string {
@@ -89,6 +95,9 @@ function subagentPreview(summary: StoredThreadSummary): string {
   return preview === "" ? subagentSubtitle(summary) : preview;
 }
 
+// WHY: This comparator is the memoization contract for one complete subagent row; all displayed
+// fields must remain in the same equality decision to prevent stale row content.
+// oxlint-disable-next-line eslint/complexity
 export function subagentRowsEqual(left: StoredThreadSummary, right: StoredThreadSummary): boolean {
   return (
     left === right ||

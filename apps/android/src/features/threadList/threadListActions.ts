@@ -17,16 +17,20 @@ export function useThreadListActions(
 
   const archiveListThread = useEvent(async (thread: ThreadListItem): Promise<void> => {
     await remote.archiveThread(thread.serverId, thread.id);
-    if (selectedThreadKey === threadSelectionKey(thread)) setActiveThreadId(null);
+    if (selectedThreadKey === threadSelectionKey(thread)) {
+      setActiveThreadId(null);
+    }
   });
 
   const unarchiveListThread = useEvent(async (thread: ThreadListItem): Promise<void> => {
     await remote.unarchiveThread(thread.serverId, thread.id);
-    if (selectedThreadKey === threadSelectionKey(thread)) setActiveThreadId(null);
+    if (selectedThreadKey === threadSelectionKey(thread)) {
+      setActiveThreadId(null);
+    }
   });
 
   const markListThreadRead = useEvent(async (thread: ThreadListItem): Promise<void> => {
     await remote.markThreadRead(thread.serverId, thread.id);
   });
-  return { toggleListThreadPin, archiveListThread, unarchiveListThread, markListThreadRead };
+  return { archiveListThread, markListThreadRead, toggleListThreadPin, unarchiveListThread };
 }

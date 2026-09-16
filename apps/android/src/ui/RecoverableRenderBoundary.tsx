@@ -8,6 +8,8 @@ import {
 } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 
+import { appLogger } from "../observability/logger";
+import { useEvent } from "../react/useEvent";
 import { colors, radii, spacing, typeScale, controlSize } from "../theme";
 import { AppText as Text } from "./AppText";
 import type { RecoverableRenderFailure, RecoverableRenderScope } from "./render-recovery-prompt";
@@ -16,38 +18,40 @@ type RecoveryHandler = (failure: RecoverableRenderFailure) => Promise<void>;
 
 const RenderRecoveryContext = createContext<RecoveryHandler | null>(null);
 
-export class RenderRecoveryProvider extends Component<{
+export function RenderRecoveryProvider({
+  children,
+  onFix,
+}: {
   children: ReactNode;
   onFix: RecoveryHandler;
-}> {
-  private fix: RecoveryHandler = async (failure) => await this.props.onFix(failure);
-
-  override render(): ReactNode {
-    return (
-      <RenderRecoveryContext.Provider value={this.fix}>
-        {this.props.children}
-      </RenderRecoveryContext.Provider>
-    );
-  }
+}): ReactNode {
+  const fix = useEvent(async (failure: RecoverableRenderFailure) => {
+    await onFix(failure);
+  });
+  return <RenderRecoveryContext.Provider value={fix}>{children}</RenderRecoveryContext.Provider>;
 }
 
 type BoundaryProps = {
   children: ReactNode;
-  scope: RecoverableRenderScope;
-  label: string;
   context?: string;
+  label: string;
+  onDismiss?: () => void;
   resetKey?: string;
-  onDismiss?(): void;
+  scope: RecoverableRenderScope;
 };
 
 type BoundaryState = {
-  error: Error | null;
   componentStack: string;
+  error: Error | null;
 };
 
 function normalizeError(value: unknown): Error {
-  if (value instanceof Error) return value;
-  if (typeof value === "string") return new Error(value);
+  if (value instanceof Error) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return new Error(value);
+  }
   try {
     return new Error(JSON.stringify(value));
   } catch {
@@ -59,45 +63,48 @@ class RecoverableRenderBoundaryImpl extends Component<
   BoundaryProps & { onFix: RecoveryHandler | null },
   BoundaryState
 > {
-  override state: BoundaryState = { error: null, componentStack: "" };
+  override state: BoundaryState = { componentStack: "", error: null };
 
   static getDerivedStateFromError(value: unknown): Partial<BoundaryState> {
     return { error: normalizeError(value) };
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error(
-      `CodeWide ${this.props.scope} render failed: ${this.props.label}`,
-      error,
-      info.componentStack,
-    );
+    appLogger.error({
+      err: error,
+      event: "render.recoverable.failed",
+      fields: {
+        componentStack: info.componentStack ?? "",
+        scope: this.props.scope,
+      },
+    });
+    // WHY: React exposes the component stack only through componentDidCatch, after derived state.
+    // oxlint-disable-next-line react/no-set-state
     this.setState({ componentStack: info.componentStack ?? "" });
   }
 
-  override componentDidUpdate(previous: BoundaryProps & { onFix: RecoveryHandler | null }): void {
-    if (this.state.error !== null && previous.resetKey !== this.props.resetKey) {
-      this.setState({ error: null, componentStack: "" });
-    }
-  }
-
-  private retry = (): void => {
-    this.setState({ error: null, componentStack: "" });
+  private readonly retry = (): void => {
+    // WHY: a class error boundary must clear its captured error to retry the owned subtree.
+    // oxlint-disable-next-line react/no-set-state
+    this.setState({ componentStack: "", error: null });
   };
 
   override render(): ReactNode {
-    if (this.state.error === null) return this.props.children;
+    if (this.state.error === null) {
+      return this.props.children;
+    }
     const failure: RecoverableRenderFailure = {
-      scope: this.props.scope,
-      label: this.props.label,
-      error: this.state.error,
       componentStack: this.state.componentStack,
+      error: this.state.error,
+      label: this.props.label,
+      scope: this.props.scope,
       ...(this.props.context === undefined ? {} : { context: this.props.context }),
     };
     return (
       <RenderFailureFallback
         failure={failure}
-        onRetry={this.retry}
         onFix={this.props.onFix}
+        onRetry={this.retry}
         {...(this.props.onDismiss === undefined ? {} : { onDismiss: this.props.onDismiss })}
       />
     );
@@ -107,35 +114,39 @@ class RecoverableRenderBoundaryImpl extends Component<
 /** Catches a local render failure and delegates recovery to the nearest owner. */
 export function RecoverableRenderBoundary(props: BoundaryProps) {
   const onFix = useContext(RenderRecoveryContext);
-  return <RecoverableRenderBoundaryImpl {...props} onFix={onFix} />;
+  return <RecoverableRenderBoundaryImpl key={props.resetKey} {...props} onFix={onFix} />;
 }
 
 function RenderFailureFallback({
   failure,
-  onRetry,
-  onFix,
   onDismiss,
+  onFix,
+  onRetry,
 }: {
   failure: RecoverableRenderFailure;
-  onRetry(): void;
+  onDismiss?: () => void;
   onFix: RecoveryHandler | null;
-  onDismiss?(): void;
+  onRetry: () => void;
 }) {
   const [fixing, setFixing] = useState(false);
   const [fixError, setFixError] = useState<string | null>(null);
   const fix = async () => {
-    if (onFix === null || fixing) return;
+    if (onFix === null || fixing) {
+      return;
+    }
     setFixing(true);
     setFixError(null);
     let completed = false;
     try {
       await onFix(failure);
       completed = true;
-    } catch (cause) {
-      setFixError(cause instanceof Error ? cause.message : "Could not create a repair chat");
+    } catch (error) {
+      setFixError(error instanceof Error ? error.message : "Could not create a repair chat");
     }
     setFixing(false);
-    if (completed) onDismiss?.();
+    if (completed) {
+      onDismiss?.();
+    }
   };
   return (
     <View
@@ -149,7 +160,7 @@ function RenderFailureFallback({
           : "This view could not be opened"}
       </Text>
       <Text numberOfLines={3} selectable style={styles.message}>
-        {failure.error.message || "Unknown React render error"}
+        {failure.error.message === "" ? "Unknown React render error" : failure.error.message}
       </Text>
       {fixError !== null && (
         <Text accessibilityLiveRegion="polite" style={styles.fixError}>
@@ -185,6 +196,22 @@ function RenderFailureFallback({
 }
 
 const styles = StyleSheet.create({
+  actions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  closeButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: controlSize.regular,
+    paddingHorizontal: spacing.sm,
+  },
+  dialogFailure: {
+    marginHorizontal: spacing.md,
+    marginVertical: spacing.lg,
+  },
   failure: {
     alignSelf: "stretch",
     backgroundColor: colors.surfaceContainerHigh,
@@ -193,28 +220,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
     padding: spacing.md,
   },
-  dialogFailure: {
-    marginHorizontal: spacing.md,
-    marginVertical: spacing.lg,
-  },
-  title: {
-    color: colors.text,
-    fontFamily: "RobotoFlex-SemiBold",
-    ...typeScale.body,
-  },
-  message: {
-    color: colors.textMuted,
-    ...typeScale.label,
-  },
   fixError: {
     color: colors.red,
     ...typeScale.label,
   },
-  actions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    marginTop: spacing.xs,
+  message: {
+    color: colors.textMuted,
+    ...typeScale.label,
   },
   primaryButton: {
     alignItems: "center",
@@ -238,15 +250,14 @@ const styles = StyleSheet.create({
     minHeight: controlSize.regular,
     paddingHorizontal: spacing.md,
   },
-  closeButton: {
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: controlSize.regular,
-    paddingHorizontal: spacing.sm,
-  },
   secondaryLabel: {
     color: colors.text,
     fontFamily: "RobotoFlex-Medium",
+    ...typeScale.body,
+  },
+  title: {
+    color: colors.text,
+    fontFamily: "RobotoFlex-SemiBold",
     ...typeScale.body,
   },
 });

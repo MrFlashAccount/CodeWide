@@ -9,7 +9,7 @@ function currentWindowLayout(): WindowLayoutSnapshot {
 class WindowLayoutStore {
   private snapshot = currentWindowLayout();
   private readonly listeners = new Set<() => void>();
-  private subscription: { remove(): void } | null = null;
+  private subscription: { remove: () => void } | null = null;
 
   readonly getSnapshot = (): WindowLayoutSnapshot => this.snapshot;
 
@@ -23,15 +23,20 @@ class WindowLayoutStore {
           next.height === this.snapshot.height &&
           next.scale === this.snapshot.scale &&
           next.fontScale === this.snapshot.fontScale
-        )
+        ) {
           return;
+        }
         this.snapshot = next;
-        for (const notify of this.listeners) notify();
+        for (const notify of this.listeners) {
+          notify();
+        }
       });
     }
     return () => {
       this.listeners.delete(listener);
-      if (this.listeners.size !== 0) return;
+      if (this.listeners.size !== 0) {
+        return;
+      }
       this.subscription?.remove();
       this.subscription = null;
     };

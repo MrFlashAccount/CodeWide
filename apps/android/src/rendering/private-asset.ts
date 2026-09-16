@@ -22,31 +22,34 @@ export async function materializePrivateAsset(
   getAccess: GetTransferAccess | null,
   recoverMissing?: () => Promise<void>,
   signal?: AbortSignal,
-): Promise<{ uri: string; headers: Record<string, string> }> {
+): Promise<{ headers: Record<string, string>; uri: string }> {
   if (source.kind === "direct") {
-    if (/^https?:/u.test(source.uri))
+    if (/^https?:/u.test(source.uri)) {
       return cachedAttachmentSource(
         source.uri,
         source.headers ?? {},
-        { scope: "direct", identity: source.uri },
+        { identity: source.uri, scope: "direct" },
         signal,
       );
+    }
     const uri = await materializePrivateImageUri(source.uri, source.headers);
     if (signal !== undefined) {
       checkAborted(signal);
       const release = retainCachedAttachment(uri);
       signal.addEventListener("abort", release, { once: true });
     }
-    return { uri, headers: {} };
+    return { headers: {}, uri };
   }
-  if (getAccess === null) throw new Error("Private asset access is unavailable");
+  if (getAccess === null) {
+    throw new Error("Private asset access is unavailable");
+  }
   return recoverPrivateAsset(
     async (refresh) => {
       const request = await resolvePrivateAssetRequest(source, getAccess, refresh);
       return cachedAttachmentSource(
         request.uri,
         request.headers,
-        { scope: request.cacheScope, identity: request.cacheIdentity },
+        { identity: request.cacheIdentity, scope: request.cacheScope },
         signal,
       );
     },

@@ -6,9 +6,9 @@ export const LIVE_TEXT_CACHE_MAX_ENTRIES = 12;
 export const LIVE_TEXT_CACHE_MAX_SOURCE_CHARS = 1024 * 1024;
 
 export type LiveTextProjection = {
-  source: string;
-  segments: readonly string[];
   remainder: string;
+  segments: readonly string[];
+  source: string;
 };
 
 export type LiveMarkdownProjection = LiveTextProjection & {
@@ -26,7 +26,9 @@ let liveTextProjectionSourceChars = 0;
 export function projectCachedLiveText(cacheKey: string, source: string): LiveTextProjection {
   const previous = liveTextProjectionCache.get(cacheKey) ?? null;
   const projection = projectLiveTextAppend(previous, source);
-  if (previous !== null) liveTextProjectionSourceChars -= previous.source.length;
+  if (previous !== null) {
+    liveTextProjectionSourceChars -= previous.source.length;
+  }
   liveTextProjectionCache.delete(cacheKey);
   liveTextProjectionCache.set(cacheKey, projection);
   liveTextProjectionSourceChars += projection.source.length;
@@ -34,10 +36,14 @@ export function projectCachedLiveText(cacheKey: string, source: string): LiveTex
     liveTextProjectionCache.size > LIVE_TEXT_CACHE_MAX_ENTRIES ||
     liveTextProjectionSourceChars > LIVE_TEXT_CACHE_MAX_SOURCE_CHARS
   ) {
-    const oldest = liveTextProjectionCache.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
+    const oldest = liveTextProjectionCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
     const evicted = liveTextProjectionCache.get(oldest);
-    if (evicted !== undefined) liveTextProjectionSourceChars -= evicted.source.length;
+    if (evicted !== undefined) {
+      liveTextProjectionSourceChars -= evicted.source.length;
+    }
     liveTextProjectionCache.delete(oldest);
   }
   return projection;
@@ -81,39 +87,51 @@ export function projectLiveTextAppend(
   previous: LiveTextProjection | null,
   source: string,
 ): LiveTextProjection {
-  if (previous?.source === source) return previous;
+  if (previous?.source === source) {
+    return previous;
+  }
   if (previous === null) {
-    return consume({ source: "", segments: [], remainder: "" }, source, source);
+    return consume({ remainder: "", segments: [], source: "" }, source, source);
   }
   if (looksAppendOnly(previous.source, source)) {
     return consume(previous, source.slice(previous.source.length), source);
   }
   const boundedDelta = boundedWindowAppend(previous.source, source);
-  if (boundedDelta !== null) return consume(previous, boundedDelta, source);
-  return consume({ source: "", segments: [], remainder: "" }, source, source);
+  if (boundedDelta !== null) {
+    return consume(previous, boundedDelta, source);
+  }
+  return consume({ remainder: "", segments: [], source: "" }, source, source);
 }
 
 function consume(previous: LiveTextProjection, delta: string, source: string): LiveTextProjection {
   const projected = projectMarkdownStream(previous.remainder, delta, false, {
-    targetSegmentChars: LIVE_TEXT_TARGET_SEGMENT_CHARS,
     maxSegmentChars: LIVE_TEXT_MAX_PENDING_CHARS,
+    targetSegmentChars: LIVE_TEXT_TARGET_SEGMENT_CHARS,
   });
   return {
-    source,
+    remainder: projected.remainder,
     segments:
       projected.segments.length === 0
         ? previous.segments
         : [...previous.segments, ...projected.segments],
-    remainder: projected.remainder,
+    source,
   };
 }
 
 function looksAppendOnly(previous: string, source: string): boolean {
-  if (source.length < previous.length) return false;
-  if (source.length === previous.length) return false;
-  if (previous.length === 0) return true;
+  if (source.length < previous.length) {
+    return false;
+  }
+  if (source.length === previous.length) {
+    return false;
+  }
+  if (previous.length === 0) {
+    return true;
+  }
   const marker = "\n… [earlier live output omitted] …\n";
-  if (source.includes(marker) !== previous.includes(marker)) return false;
+  if (source.includes(marker) !== previous.includes(marker)) {
+    return false;
+  }
   const sample = Math.min(64, previous.length);
   return (
     source.slice(0, sample) === previous.slice(0, sample) &&
@@ -124,11 +142,17 @@ function looksAppendOnly(previous: string, source: string): boolean {
 function boundedWindowAppend(previous: string, source: string): string | null {
   const marker = "\n… [earlier live output omitted] …\n";
   const markerIndex = source.indexOf(marker);
-  if (markerIndex < 0) return null;
+  if (markerIndex < 0) {
+    return null;
+  }
   const previousMarkerIndex = previous.indexOf(marker);
-  if (previousMarkerIndex >= 0 && previousMarkerIndex !== markerIndex) return null;
+  if (previousMarkerIndex >= 0 && previousMarkerIndex !== markerIndex) {
+    return null;
+  }
   const sample = Math.min(64, markerIndex);
-  if (source.slice(0, sample) !== previous.slice(0, sample)) return null;
+  if (source.slice(0, sample) !== previous.slice(0, sample)) {
+    return null;
+  }
   const oldTail = previous.slice(
     previousMarkerIndex < 0 ? markerIndex : markerIndex + marker.length,
   );
@@ -142,9 +166,12 @@ function suffixPrefixOverlap(previous: string, next: string): number {
   const prefix = new Uint32Array(source.length);
   for (let index = 1; index < source.length; index += 1) {
     let candidate = prefix[index - 1] ?? 0;
-    while (candidate > 0 && source[index] !== source[candidate])
+    while (candidate > 0 && source[index] !== source[candidate]) {
       candidate = prefix[candidate - 1] ?? 0;
-    if (source[index] === source[candidate]) candidate += 1;
+    }
+    if (source[index] === source[candidate]) {
+      candidate += 1;
+    }
     prefix[index] = Math.min(candidate, next.length);
   }
   return prefix[source.length - 1] ?? 0;

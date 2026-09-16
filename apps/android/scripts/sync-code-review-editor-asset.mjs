@@ -12,7 +12,9 @@ const htmlDestination = path.join(destinationDirectory, "code-review-editor.html
 
 await mkdir(destinationDirectory, { recursive: true });
 const buildResult = await build({
-  entryPoints: [path.join(androidRoot, "code-review-editor/entry.ts")],
+  entryPoints: [
+    path.join(androidRoot, "src/features/review/editor/webview/entry.web.ts"),
+  ],
   outfile: javascriptDestination,
   bundle: true,
   minify: true,
@@ -24,7 +26,10 @@ const buildResult = await build({
 });
 const javascript = await readFile(javascriptDestination);
 const assetVersion = createHash("sha256").update(javascript).digest("hex").slice(0, 16);
-const htmlTemplate = await readFile(path.join(androidRoot, "assets/code-review-editor.html"), "utf8");
+const htmlTemplate = await readFile(
+  path.join(androidRoot, "src/features/review/editor/webview/codeReviewEditor.html"),
+  "utf8",
+);
 const html = htmlTemplate.replace(
   'src="code-review-editor.js"',
   `src="code-review-editor.js?v=${assetVersion}"`,

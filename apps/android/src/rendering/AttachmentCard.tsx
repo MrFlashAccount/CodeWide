@@ -4,20 +4,21 @@ import { ActivityIndicator, Image, Pressable, StyleSheet, View } from "react-nat
 import type { ComposerUploadState } from "../data/composer-uploads";
 import { colors, iconSize, radii, spacing, touchTarget, typeScale } from "../theme";
 import { AppText as Text } from "../ui/Typography";
+import { percentageDimension } from "../ui/percentageDimension";
 
 export interface AttachmentCardProps {
-  readonly name: string;
-  readonly label: string;
-  readonly uri?: string | null;
-  readonly excerpt?: string | null;
   readonly bytes?: number;
-  readonly state?: ComposerUploadState;
   readonly compact?: boolean;
+  readonly excerpt?: string | null;
+  readonly label: string;
+  readonly name: string;
+  onOpen?: () => void;
+  onRemove?: () => void;
+  onRetry?: () => void;
+  onThumbnailError?: () => void;
+  readonly state?: ComposerUploadState;
+  readonly uri?: string | null;
   readonly video?: boolean;
-  onOpen?(): void;
-  onRemove?(): void;
-  onRetry?(): void;
-  onThumbnailError?(): void;
 }
 
 /** Shared file-card presentation; the caller owns upload and viewer capabilities. */
@@ -34,37 +35,37 @@ export function AttachmentCard(props: AttachmentCardProps) {
   const subtitle = failed
     ? "Upload failed"
     : busy
-      ? `${phase}${percent === null ? "…" : ` · ${percent}%`}`
+      ? `${phase}${percent === null ? "…" : ` · ${String(percent)}%`}`
       : `${state?.status === "ready" ? "Ready" : props.label}${props.bytes === undefined ? "" : ` · ${formatAttachmentBytes(props.bytes)}`}`;
   return (
-    <View style={[styles.card, props.compact && styles.compact]}>
+    <View style={[styles.card, props.compact === true && styles.compact]}>
       <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${props.name}`}
         accessibilityHint={subtitle}
+        accessibilityLabel={`Open ${props.name}`}
+        accessibilityRole="button"
         disabled={props.onOpen === undefined}
         onPress={props.onOpen}
         style={styles.open}
       >
         <View style={styles.thumbnail}>
-          {props.uri ? (
+          {props.uri !== null && props.uri !== undefined && props.uri !== "" ? (
             <Image
-              source={{ uri: props.uri }}
               accessibilityLabel={props.name}
-              resizeMode="cover"
               onError={props.onThumbnailError}
+              resizeMode="cover"
+              source={{ uri: props.uri }}
               style={styles.image}
             />
           ) : (
             <Ionicons
-              name={props.video ? "play-circle-outline" : "document-text-outline"}
-              size={iconSize.action}
               color={colors.accent}
+              name={props.video === true ? "play-circle-outline" : "document-text-outline"}
+              size={iconSize.action}
             />
           )}
           {busy && (
             <View style={styles.busy}>
-              <ActivityIndicator size="small" color={colors.accent} />
+              <ActivityIndicator color={colors.accent} size="small" />
             </View>
           )}
         </View>
@@ -72,7 +73,7 @@ export function AttachmentCard(props: AttachmentCardProps) {
           <Text numberOfLines={1} style={styles.name}>
             {props.name}
           </Text>
-          {props.excerpt && (
+          {props.excerpt !== undefined && props.excerpt !== "" && (
             <Text numberOfLines={2} style={styles.excerpt}>
               {props.excerpt}
             </Text>
@@ -87,35 +88,35 @@ export function AttachmentCard(props: AttachmentCardProps) {
           )}
           {busy && percent !== null && (
             <View
-              accessible
-              accessibilityRole="progressbar"
               accessibilityLabel={`${phase} ${props.name}`}
-              accessibilityValue={{ min: 0, max: 100, now: percent }}
+              accessibilityRole="progressbar"
+              accessibilityValue={{ max: 100, min: 0, now: percent }}
+              accessible
               style={styles.progressTrack}
             >
-              <View style={[styles.progressFill, { width: `${percent}%` }]} />
+              <View style={[styles.progressFill, { width: percentageDimension(percent) }]} />
             </View>
           )}
         </View>
       </Pressable>
       {failed && props.onRetry !== undefined && (
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel={`Retry ${props.name}`}
+          accessibilityRole="button"
           onPress={props.onRetry}
           style={styles.action}
         >
-          <Ionicons name="refresh" size={iconSize.inline} color={colors.red} />
+          <Ionicons color={colors.red} name="refresh" size={iconSize.inline} />
         </Pressable>
       )}
       {props.onRemove !== undefined && (
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel={`Remove ${props.name}`}
+          accessibilityRole="button"
           onPress={props.onRemove}
           style={styles.action}
         >
-          <Ionicons name="close" size={iconSize.inline} color={colors.textMuted} />
+          <Ionicons color={colors.textMuted} name="close" size={iconSize.inline} />
         </Pressable>
       )}
     </View>
@@ -130,87 +131,87 @@ const uploadPhaseLabels = {
 
 function formatAttachmentBytes(bytes: number): string {
   return bytes < 1024
-    ? `${bytes} B`
+    ? `${String(bytes)} B`
     : bytes < 1024 * 1024
-      ? `${Math.ceil(bytes / 1024)} KB`
+      ? `${String(Math.ceil(bytes / 1024))} KB`
       : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const styles = StyleSheet.create({
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainerHigh,
-    borderRadius: radii.small,
-    padding: spacing.xs,
-    gap: spacing.xs,
-    minWidth: 0,
-    alignSelf: "stretch",
-  },
-  compact: { width: 260 },
-  open: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    gap: spacing.xs,
-    minWidth: 0,
-  },
-  thumbnail: {
-    width: 56,
-    height: 56,
-    borderRadius: radii.compact,
-    overflow: "hidden",
+  action: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.surfaceContainerLowest,
-  },
-  image: {
-    width: "100%",
-    height: "100%",
+    minHeight: touchTarget,
+    minWidth: touchTarget,
   },
   busy: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
     alignItems: "center",
-    justifyContent: "center",
     backgroundColor: colors.scrim,
+    bottom: 0,
+    justifyContent: "center",
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
   },
+  card: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    backgroundColor: colors.surfaceContainerHigh,
+    borderRadius: radii.small,
+    flexDirection: "row",
+    gap: spacing.xs,
+    minWidth: 0,
+    padding: spacing.xs,
+  },
+  compact: { width: 260 },
   details: {
     flex: 1,
     gap: spacing.optical,
     minWidth: 0,
   },
+  error: { color: colors.red },
+  excerpt: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+  },
+  image: {
+    height: "100%",
+    width: "100%",
+  },
   name: {
     ...typeScale.label,
     color: colors.text,
   },
-  excerpt: {
-    ...typeScale.caption,
-    color: colors.textMuted,
+  open: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  progressFill: {
+    backgroundColor: colors.accent,
+    height: "100%",
+  },
+  progressTrack: {
+    backgroundColor: colors.surfaceContainerHighest,
+    borderRadius: radii.pill,
+    height: 3,
+    marginTop: spacing.optical,
+    overflow: "hidden",
   },
   subtitle: {
     ...typeScale.caption,
     color: colors.textMuted,
   },
-  error: { color: colors.red },
-  progressTrack: {
-    height: 3,
-    borderRadius: radii.pill,
-    overflow: "hidden",
-    backgroundColor: colors.surfaceContainerHighest,
-    marginTop: spacing.optical,
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: colors.accent,
-  },
-  action: {
-    minWidth: touchTarget,
-    minHeight: touchTarget,
+  thumbnail: {
     alignItems: "center",
+    backgroundColor: colors.surfaceContainerLowest,
+    borderRadius: radii.compact,
+    height: 56,
     justifyContent: "center",
+    overflow: "hidden",
+    width: 56,
   },
 });

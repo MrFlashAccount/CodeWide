@@ -10,27 +10,29 @@ import { styles } from "./SearchFilters.styles";
 interface FilterOption {
   readonly id: string;
   readonly label: string;
-  readonly subtitle?: string;
   readonly pinned?: boolean;
+  readonly subtitle?: string;
 }
 
 export interface SelectProps {
   readonly label: string;
-  readonly value: string;
-  readonly options: readonly FilterOption[];
   readonly onChange: (id: string) => void;
+  readonly options: readonly FilterOption[];
+  readonly value: string;
 }
 
 export function FilterSelect(props: SelectProps) {
   const [expanded, setExpanded] = useState(false);
-  const toggle = () => setExpanded(!expanded);
+  const toggle = () => {
+    setExpanded(!expanded);
+  };
   const selected = props.options.find((option) => option.id === props.value);
   return (
     <View style={styles.group}>
       <Text style={styles.label}>{props.label}</Text>
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel={`Search ${props.label.toLowerCase()}`}
+        accessibilityRole="button"
         accessibilityState={{ expanded }}
         onPress={toggle}
         style={styles.select}
@@ -39,13 +41,13 @@ export function FilterSelect(props: SelectProps) {
           {selected?.label ?? "Unavailable"}
         </Text>
         <Ionicons
+          color={colors.textMuted}
           name={expanded ? "chevron-up" : "chevron-down"}
           size={iconSize.inline}
-          color={colors.textMuted}
         />
       </Pressable>
       {expanded && (
-        <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={styles.options}>
+        <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={styles.options}>
           {props.options.map((option, index) => {
             const select = () => {
               props.onChange(option.id);
@@ -56,19 +58,19 @@ export function FilterSelect(props: SelectProps) {
                 key={option.id}
                 title={option.label}
                 {...(option.subtitle === undefined ? {} : { description: option.subtitle })}
-                onPress={select}
-                selected={props.value === option.id}
-                position={listRowPosition(index, props.options.length)}
-                multiline
                 accessibilityLabel={
                   option.pinned === true ? `${option.label}, pinned project` : option.label
                 }
+                multiline
+                onPress={select}
+                position={listRowPosition(index, props.options.length)}
+                selected={props.value === option.id}
                 {...(option.pinned === true
                   ? {
                       trailingIcon: {
+                        color: colors.textMuted,
                         name: "pin-outline",
                         size: iconSize.inline,
-                        color: colors.textMuted,
                       },
                     }
                   : {})}

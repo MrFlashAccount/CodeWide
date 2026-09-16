@@ -41,10 +41,10 @@ export function projectConversationPresentation(
 
   const liveTurnPlan = selectLiveTurnPlan(remoteThread, currentTurnId);
   return {
+    currentTurnId,
+    failureNotice,
+    liveTurnPlan,
     sessionCompactionCount,
     threadLifecycleActive,
-    failureNotice,
-    currentTurnId,
-    liveTurnPlan,
   };
 }

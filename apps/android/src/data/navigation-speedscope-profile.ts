@@ -1,7 +1,7 @@
 import type { ThreadNavigationProfile } from "./thread-navigation-metrics";
 
-type SpeedscopeFrame = { name: string; file?: string };
-type SpeedscopeEvent = { type: "O" | "C"; at: number; frame: number };
+type SpeedscopeFrame = { file?: string; name: string };
+type SpeedscopeEvent = { at: number; frame: number; type: "O" | "C" };
 
 /**
  * Projects CodeWide navigation telemetry into Speedscope's documented file
@@ -22,7 +22,7 @@ export function serializeNavigationSpeedscopeProfile(profile: ThreadNavigationPr
           formatDetails(record.values, record.tags),
         ),
       ) - 1;
-    stageEvents.push({ type: "O", at: start, frame }, { type: "C", at: end, frame });
+    stageEvents.push({ at: start, frame, type: "O" }, { at: end, frame, type: "C" });
     previousStageEnd = Math.max(previousStageEnd, end);
   }
 
@@ -30,15 +30,17 @@ export function serializeNavigationSpeedscopeProfile(profile: ThreadNavigationPr
   const measureWeights: number[] = [];
   for (const measure of profile.measures) {
     const duration = finiteNonNegative(measure.durationMs);
-    if (duration === 0) continue;
+    if (duration === 0) {
+      continue;
+    }
     const frame =
       frames.push(
         speedscopeFrame(
           measure.name,
           formatDetails(
             {
-              durationMs: duration,
               completedAtMs: finiteNonNegative(measure.elapsedMs),
+              durationMs: duration,
               ...measure.values,
             },
             measure.tags,
@@ -58,17 +60,17 @@ export function serializeNavigationSpeedscopeProfile(profile: ThreadNavigationPr
   // Serialize them as tiny, stable, non-overlapping markers instead.
   const orderedVisualEvents = profile.visualEvents
     .map((event, index) => ({ event, index }))
-    .sort(
-      (left, right) =>
-        finiteNonNegative(left.event.elapsedMs) - finiteNonNegative(right.event.elapsedMs) ||
-        left.index - right.index,
-    );
+    .sort((left, right) => {
+      const elapsedOrder =
+        finiteNonNegative(left.event.elapsedMs) - finiteNonNegative(right.event.elapsedMs);
+      return elapsedOrder !== 0 ? elapsedOrder : left.index - right.index;
+    });
   for (const { event } of orderedVisualEvents) {
     const start = Math.max(previousVisualEnd, finiteNonNegative(event.elapsedMs));
     const end = start + 0.01;
     const frame =
       frames.push(speedscopeFrame(event.name, formatDetails(event.values, event.tags))) - 1;
-    visualEvents.push({ type: "O", at: start, frame }, { type: "C", at: end, frame });
+    visualEvents.push({ at: start, frame, type: "O" }, { at: end, frame, type: "C" });
     previousVisualEnd = end;
   }
 
@@ -82,43 +84,43 @@ export function serializeNavigationSpeedscopeProfile(profile: ThreadNavigationPr
   const profiles: unknown[] = [];
   if (stageEvents.length > 0) {
     profiles.push({
-      type: "evented",
-      name: "Navigation stages",
-      unit: "milliseconds",
-      startValue: 0,
       endValue,
       events: stageEvents,
+      name: "Navigation stages",
+      startValue: 0,
+      type: "evented",
+      unit: "milliseconds",
     });
   }
   if (measureSamples.length > 0) {
     profiles.push({
-      type: "sampled",
-      name: "Measured work",
-      unit: "milliseconds",
-      startValue: 0,
       endValue: measureWeights.reduce((total, duration) => total + duration, 0),
+      name: "Measured work",
       samples: measureSamples,
+      startValue: 0,
+      type: "sampled",
+      unit: "milliseconds",
       weights: measureWeights,
     });
   }
   if (visualEvents.length > 0) {
     profiles.push({
-      type: "evented",
-      name: "Visible UI states",
-      unit: "milliseconds",
-      startValue: 0,
       endValue,
       events: visualEvents,
+      name: "Visible UI states",
+      startValue: 0,
+      type: "evented",
+      unit: "milliseconds",
     });
   }
 
   return JSON.stringify({
     $schema: "https://www.speedscope.app/file-format-schema.json",
+    activeProfileIndex: 0,
     exporter: "CodeWide",
     name: `Navigation ${profile.threadId}`,
-    activeProfileIndex: 0,
-    shared: { frames },
     profiles,
+    shared: { frames },
   });
 }
 
@@ -127,12 +129,12 @@ function readableName(value: string): string {
 }
 
 function speedscopeFrame(name: string, file: string | undefined): SpeedscopeFrame {
-  return file === undefined ? { name } : { name, file };
+  return file === undefined ? { name } : { file, name };
 }
 
 function formatDuration(value: number): string {
   const duration = finiteNonNegative(value);
-  return duration >= 100 ? `${Math.round(duration)} ms` : `${duration.toFixed(1)} ms`;
+  return duration >= 100 ? `${String(Math.round(duration))} ms` : `${duration.toFixed(1)} ms`;
 }
 
 function formatDetails(

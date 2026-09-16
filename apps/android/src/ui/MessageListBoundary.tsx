@@ -6,17 +6,21 @@ import { colors, radii, spacing, touchTarget, typeScale } from "../theme";
 export type MessageListState =
   | { status: "loading" }
   | { status: "ready" }
-  | { status: "error"; message: string; retry(): Promise<void> };
+  | { message: string; retry: () => Promise<void>; status: "error" };
 
 interface MessageListBoundaryProps {
-  state: MessageListState;
   children: ReactNode;
+  state: MessageListState;
 }
 
 /** Only the transcript waits for history; surrounding controls keep their owners. */
-export function MessageListBoundary(props: MessageListBoundaryProps) {
-  if (props.state.status === "ready") return props.children;
-  if (props.state.status === "error") return <MessageListError state={props.state} />;
+export function MessageListBoundary(props: MessageListBoundaryProps): ReactNode {
+  if (props.state.status === "ready") {
+    return props.children;
+  }
+  if (props.state.status === "error") {
+    return <MessageListError state={props.state} />;
+  }
   return <MessageListSkeleton />;
 }
 
@@ -24,8 +28,8 @@ export function MessageListSkeleton() {
   return (
     <View
       accessibilityLabel="Loading messages"
-      testID="message-list-skeleton"
       style={styles.content}
+      testID="message-list-skeleton"
     >
       <View style={styles.user} />
       <View style={styles.answer}>
@@ -66,36 +70,18 @@ function MessageListError(props: MessageListErrorProps) {
 }
 
 const styles = StyleSheet.create({
+  answer: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.bubble,
+    gap: spacing.sm,
+    padding: spacing.md,
+    width: "88%",
+  },
   content: {
     flex: 1,
-    padding: spacing.lg,
     gap: spacing.lg,
     justifyContent: "flex-end",
-  },
-  user: {
-    alignSelf: "flex-end",
-    width: "55%",
-    height: touchTarget,
-    borderRadius: radii.bubble,
-    backgroundColor: colors.surface,
-  },
-  answer: {
-    width: "88%",
-    padding: spacing.md,
-    gap: spacing.sm,
-    borderRadius: radii.bubble,
-    backgroundColor: colors.surface,
-  },
-  line: {
-    height: spacing.sm,
-    borderRadius: radii.small,
-    backgroundColor: colors.border,
-  },
-  shortLine: {
-    width: "60%",
-    height: spacing.sm,
-    borderRadius: radii.small,
-    backgroundColor: colors.border,
+    padding: spacing.lg,
   },
   error: {
     ...typeScale.body,
@@ -105,8 +91,26 @@ const styles = StyleSheet.create({
     ...typeScale.body,
     color: colors.text,
   },
+  line: {
+    backgroundColor: colors.border,
+    borderRadius: radii.small,
+    height: spacing.sm,
+  },
   retry: {
-    minHeight: touchTarget,
     justifyContent: "center",
+    minHeight: touchTarget,
+  },
+  shortLine: {
+    backgroundColor: colors.border,
+    borderRadius: radii.small,
+    height: spacing.sm,
+    width: "60%",
+  },
+  user: {
+    alignSelf: "flex-end",
+    backgroundColor: colors.surface,
+    borderRadius: radii.bubble,
+    height: touchTarget,
+    width: "55%",
   },
 });

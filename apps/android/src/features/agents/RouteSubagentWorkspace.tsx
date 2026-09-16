@@ -59,13 +59,9 @@ export function RouteSubagentWorkspace({
     <SubagentWorkspace
       onBack={onBack}
       onClose={onClose}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onSelect={(summary) => {
         onSelect(summary.remoteThreadId);
       }}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       renderDetail={(compact) =>
         selected === null ? null : (
           <RouteSubagentDetailBoundary

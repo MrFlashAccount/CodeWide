@@ -6,30 +6,30 @@ import type { SkillPickerRowProps } from "./SkillPickerRow.types";
 import { listRowHeight } from "./AppListRow.types";
 
 /** Only the row is native; the parent retains React-side list virtualization. */
-export function SkillPickerRow({ title, description, onPress }: SkillPickerRowProps) {
+export function SkillPickerRow({ description, onPress, title }: SkillPickerRowProps) {
   const press = useEvent(onPress);
   return (
     <Host
       colorScheme="dark"
       matchContents={false}
-      style={{ width: "100%", height: listRowHeight.double }}
+      style={{ height: listRowHeight.double, width: "100%" }}
     >
       <ListItem
-        modifiers={[fillMaxWidth(), height(listRowHeight.double), clickable(press)]}
         colors={{
           containerColor: colors.surfaceContainer,
           contentColor: colors.text,
           supportingContentColor: colors.textMuted,
         }}
+        modifiers={[fillMaxWidth(), height(listRowHeight.double), clickable(press)]}
       >
         <ListItem.HeadlineContent>
           <Text
             maxLines={1}
             overflow="ellipsis"
             style={{
+              fontFamily: "RobotoFlex-Regular",
               fontSize: typeScale.body.fontSize,
               lineHeight: typeScale.body.lineHeight,
-              fontFamily: "RobotoFlex-Regular",
             }}
           >
             {title}
@@ -41,9 +41,9 @@ export function SkillPickerRow({ title, description, onPress }: SkillPickerRowPr
               maxLines={1}
               overflow="ellipsis"
               style={{
+                fontFamily: "RobotoFlex-Regular",
                 fontSize: typeScale.label.fontSize,
                 lineHeight: typeScale.label.lineHeight,
-                fontFamily: "RobotoFlex-Regular",
               }}
             >
               {description}

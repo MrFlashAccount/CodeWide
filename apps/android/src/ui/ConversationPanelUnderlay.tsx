@@ -3,15 +3,15 @@ import { StyleSheet, View, type ColorValue, type StyleProp, type ViewStyle } fro
 import { colors } from "../theme";
 
 interface ConversationPanelUnderlayProps {
-  surfaceColor?: ColorValue;
   style?: StyleProp<ViewStyle>;
+  surfaceColor?: ColorValue;
 }
 
 /** Opaque chrome surface that keeps scrolling content visually stable. */
 export function ConversationPanelUnderlay(
   props: ConversationPanelUnderlayProps,
 ): React.JSX.Element {
-  const { surfaceColor = colors.conversationSurface, style } = props;
+  const { style, surfaceColor = colors.conversationSurface } = props;
   return (
     <View
       accessible={false}

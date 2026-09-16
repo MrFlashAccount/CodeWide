@@ -113,8 +113,6 @@ function ReviewStartController(props: ReviewStartControllerProps): React.JSX.Ele
       onDeliveryChange={setDelivery}
       onSubmit={submit}
       onTargetChange={setTarget}
-      // WHY: This is a render prop; repository callback policy delegates its identity to React Compiler instead of stabilizing it with useEvent/useCallback.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       renderCustomTargetInput={renderCustomTargetInput}
       target={target}
     />

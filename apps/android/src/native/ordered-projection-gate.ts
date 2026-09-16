@@ -1,10 +1,10 @@
 export type ProjectionWork = {
-  recovery: boolean;
-  apply(): Promise<void>;
-  acknowledge(): void;
+  acknowledge: () => void;
+  apply: () => Promise<void>;
   /** Merge adjacent work that has not started yet. The running projection is
    * never mutated; only its queued successor is coalesced. */
-  mergeWith?(newer: ProjectionWork): ProjectionWork | null;
+  mergeWith?: (newer: ProjectionWork) => ProjectionWork | null;
+  recovery: boolean;
 };
 
 /**
@@ -29,14 +29,23 @@ export class OrderedProjectionGate {
   enqueue(work: ProjectionWork): void {
     const pending = this.#queue.at(-1);
     const merged = pending?.mergeWith?.(work) ?? null;
-    if (merged === null) this.#queue.push(work);
-    else this.#queue[this.#queue.length - 1] = merged;
-    if (!this.#running) void this.#drain();
+    if (merged === null) {
+      this.#queue.push(work);
+    } else {
+      this.#queue[this.#queue.length - 1] = merged;
+    }
+    if (!this.#running) {
+      this.#drain().catch(this.#onFailure);
+    }
   }
 
   async settled(): Promise<void> {
-    if (!this.#running && this.#queue.length === 0) return;
-    await new Promise<void>((resolve) => this.#idleWaiters.add(resolve));
+    if (!this.#running && this.#queue.length === 0) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.#idleWaiters.add(resolve);
+    });
   }
 
   get blocked(): boolean {
@@ -44,29 +53,40 @@ export class OrderedProjectionGate {
   }
 
   async #drain(): Promise<void> {
-    if (this.#running) return;
+    if (this.#running) {
+      return;
+    }
     this.#running = true;
     try {
       while (this.#queue.length > 0) {
-        const work = this.#queue.shift()!;
-        if (this.#blocked && !work.recovery) continue;
+        const work = this.#queue.shift();
+        if (work === undefined) {
+          continue;
+        }
+        if (this.#blocked && !work.recovery) {
+          continue;
+        }
         try {
           await work.apply();
           work.acknowledge();
-          if (work.recovery) this.#blocked = false;
-        } catch (cause: unknown) {
+          if (work.recovery) {
+            this.#blocked = false;
+          }
+        } catch (error: unknown) {
           this.#blocked = true;
-          this.#onFailure(cause);
+          this.#onFailure(error);
         }
       }
     } finally {
       this.#running = false;
       if (this.#queue.length > 0) {
-        void this.#drain();
-        return;
+        this.#drain().catch(this.#onFailure);
+      } else {
+        for (const resolve of this.#idleWaiters) {
+          resolve();
+        }
+        this.#idleWaiters.clear();
       }
-      for (const resolve of this.#idleWaiters) resolve();
-      this.#idleWaiters.clear();
     }
   }
 }

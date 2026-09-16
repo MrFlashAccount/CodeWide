@@ -3,44 +3,44 @@ import type { ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 
 type ModelControl = {
-  id: string;
-  label: string;
   defaultEffort: string;
   efforts: string[];
+  id: string;
+  label: string;
   supportsPersonality: boolean;
 };
 
 type PermissionControl = {
-  id: string;
-  description: string | null;
   allowed: boolean;
+  description: string | null;
+  id: string;
 };
 
 type TriggerProps = {
   accessibilityLabel: string;
+  onClose: () => void;
+  onFallbackPress: () => void;
+  onOpen: () => void;
   triggerChildren: ReactNode;
   triggerStyle: StyleProp<ViewStyle>;
-  onOpen(): void;
-  onClose(): void;
-  onFallbackPress(): void;
 };
 
 export type ModelThinkingMenuProps = TriggerProps & {
-  models: readonly ModelControl[];
-  loading: boolean;
   error: string | null;
-  selectedModel: string | null;
+  loading: boolean;
+  models: readonly ModelControl[];
+  onSelectEffort: (effort: string) => void;
+  onSelectModel: (model: string, effort: string) => void;
+  onSelectPersonality: (personality: Personality | null) => void;
   selectedEffort: string | null;
+  selectedModel: string | null;
   selectedPersonality: Personality | null;
-  onSelectModel(model: string, effort: string): void;
-  onSelectEffort(effort: string): void;
-  onSelectPersonality(personality: Personality | null): void;
 };
 
 export type PermissionsMenuProps = TriggerProps & {
-  permissions: readonly PermissionControl[];
-  loading: boolean;
   error: string | null;
+  loading: boolean;
+  onSelectPermissions: (permissions: string | null) => void;
+  permissions: readonly PermissionControl[];
   selectedPermissions: string | null;
-  onSelectPermissions(permissions: string | null): void;
 };

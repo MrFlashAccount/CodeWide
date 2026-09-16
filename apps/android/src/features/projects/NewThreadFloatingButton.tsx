@@ -4,11 +4,11 @@ import { colors, iconSize } from "../../theme";
 import { styles } from "./NewThreadFloatingButton.styles";
 
 export function NewThreadFloatingButton({
-  projectName,
   onPress,
+  projectName,
 }: {
+  onPress: () => void;
   projectName: string | null;
-  onPress(): void;
 }) {
   return (
     <Pressable
@@ -17,7 +17,7 @@ export function NewThreadFloatingButton({
       onPress={onPress}
       style={({ pressed }) => [styles.newThreadFab, pressed && styles.pressed]}
     >
-      <Ionicons name="create-outline" size={iconSize.navigation} color={colors.onPrimary} />
+      <Ionicons color={colors.onPrimary} name="create-outline" size={iconSize.navigation} />
     </Pressable>
   );
 }

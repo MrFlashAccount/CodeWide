@@ -20,19 +20,19 @@ import { TurnFooter } from "./TurnFooter";
 import { styles } from "./TurnTimelineItem.styles";
 
 export function TurnTimelineItem({
-  turn,
   agentDateLabel = null,
-  compact,
   animateLiveUpdates,
-  usage = null,
+  compact,
   forceExpanded = false,
-  requestPrompt,
   getTransferAccess,
+  latestAgentRef,
   onFixUnsupportedBlock,
   onForkThroughTurn,
-  onLoadItems,
-  latestAgentRef,
   onLatestAgentLayout,
+  onLoadItems,
+  requestPrompt,
+  turn,
+  usage = null,
 }: TurnTimelineItemProps) {
   const beginContentReview = useContentReview();
   const searchFocus = useContext(SearchMessageFocus);
@@ -47,61 +47,61 @@ export function TurnTimelineItem({
   return (
     <TurnUsageContext.Provider value={usage}>
       <PrivateAssetRecoveryProvider
-        {...(onLoadItems === undefined ? {} : { recover: () => onLoadItems(turn.id) })}
+        {...(onLoadItems === undefined ? {} : { recover: async () => onLoadItems(turn.id) })}
       >
-        <View testID="turn-group" style={styles.turnGroup}>
+        <View style={styles.turnGroup} testID="turn-group">
           {presentation.userBlocks.length > 0 &&
             renderUserTurnBody(turn, presentation.userBlocks, getTransferAccess)}
           {presentation.compactionBlocks.length > 0 && (
             <PreTurnLifecycleRows
               blocks={presentation.compactionBlocks}
-              turnStatus={presentation.rawTurn.status}
               turnKey={turn.key}
+              turnStatus={presentation.rawTurn.status}
               {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
               {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
             />
           )}
           {agentDateLabel === null ? null : <TimelineDateSeparator label={agentDateLabel} />}
           <RecoverableRenderBoundary
-            scope="bubble"
-            label="Agent message"
             context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
+            label="Agent message"
             resetKey={`${turn.key}:agent`}
+            scope="bubble"
           >
             <ImagePreviewGroup id={`${turn.key}:agent`}>
               <View style={styles.agentMessageRow}>
                 <Bubble
-                  variant="agent"
-                  fill={presentation.agentBubbleFill}
                   animateLayout={presentation.rawTurn.status === "inProgress" && animateLiveUpdates}
-                  testID="codex-bubble"
                   errorContext={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
                   errorResetKey={`${turn.key}:agent`}
+                  fill={presentation.agentBubbleFill}
                   footer={
                     <TurnFooter
-                      status={presentation.rawTurn.status}
-                      durationMs={presentation.rawTurn.durationMs}
-                      completedAt={presentation.rawTurn.completedAt}
-                      usage={usage}
-                      diff={projectedTurnMetadata(presentation.rawTurn)?.diff ?? ""}
                       changesTarget={{
                         connectionId: turn.connectionId,
                         threadId: turn.threadId,
                         turnId: turn.id,
                       }}
+                      completedAt={presentation.rawTurn.completedAt}
+                      diff={projectedTurnMetadata(presentation.rawTurn)?.diff ?? ""}
+                      durationMs={presentation.rawTurn.durationMs}
+                      status={presentation.rawTurn.status}
+                      usage={usage}
                     />
                   }
+                  testID="codex-bubble"
+                  variant="agent"
                 >
                   {renderAgentTurnBody(turn, presentation, {
+                    animateLiveUpdates,
                     compact,
                     forceExpanded,
-                    animateLiveUpdates,
-                    requestPrompt,
                     getTransferAccess,
-                    onFixUnsupportedBlock,
-                    onLoadItems,
                     latestAgentRef,
+                    onFixUnsupportedBlock,
                     onLatestAgentLayout,
+                    onLoadItems,
+                    requestPrompt,
                   })}
                 </Bubble>
                 {presentation.showMessageActions && (
@@ -109,12 +109,12 @@ export function TurnTimelineItem({
                     request={{
                       copyText: presentation.copyText,
                       ...(presentation.canForkThrough && onForkThroughTurn !== undefined
-                        ? { onFork: () => onForkThroughTurn(turn.id) }
+                        ? { onFork: async () => onForkThroughTurn(turn.id) }
                         : {}),
                       ...(presentation.canReviewResponse && agentReviewTarget !== null
                         ? {
-                            onReview: async () => {
-                              await beginContentReview({
+                            onReview: () => {
+                              beginContentReview({
                                 kind: "response",
                                 target: agentReviewTarget,
                               });

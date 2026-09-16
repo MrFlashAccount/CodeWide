@@ -15,7 +15,11 @@ use serde_json::Value;
 
 use crate::{
     history::{HistoryError, SummaryProjectionState, summary_projection_state_from_file},
-    store::{FileState, IndexStore, IndexedThreadMetadata, StoreError, TurnRef},
+    rollout_content,
+    store::{
+        FileState, IndexStore, IndexedThreadMetadata, RecordRef, RolloutBatch, RolloutContentEntry,
+        StoreError, TurnRef,
+    },
 };
 
 const WRITE_BATCH_RECORDS: usize = 4_096;
@@ -236,6 +240,7 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
         active_projection(store, &file_id, reader.get_ref(), state.indexed_bytes)?;
     let mut summary_batch = Vec::new();
     let mut removed_turns = Vec::new();
+    let mut content_batch = Vec::new();
     let modified_at = modified_seconds(&metadata);
 
     loop {
@@ -248,13 +253,13 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
         if line.last() != Some(&b'\n') {
             break;
         }
-        let length = u32::try_from(bytes).map_err(|_| IndexError::RecordTooLarge(offset))?;
-        let key = record_key(&file_id, offset);
-        let value = record_value(offset, length, classify_record(&line));
+        let record = source_record(offset, bytes, &line)?;
+        let length = record.length;
         if let Some(metadata) = thread_metadata_from_record(path, modified_at, &line) {
             store.put_thread_metadata(&metadata)?;
         }
-        batch.push((key, value));
+        batch.push(indexed_record(&file_id, record));
+        index_content(&mut content_batch, path, file_id, record, &line);
         let boundary = task_boundary(&line, offset)?;
         collect_rollback_removals(
             reader.get_ref(),
@@ -285,16 +290,20 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
             remember_active_summary(active_summary.as_ref(), &mut summary_batch)?;
             store.commit_rollout_batch(
                 &file_id,
-                &batch,
-                &turn_batch,
-                &summary_batch,
-                &removed_turns,
+                pending_rollout_batch(
+                    &batch,
+                    &turn_batch,
+                    &summary_batch,
+                    &removed_turns,
+                    &content_batch,
+                ),
                 state,
             )?;
             batch.clear();
             turn_batch.clear();
             summary_batch.clear();
             removed_turns.clear();
+            content_batch.clear();
         }
     }
     if !batch.is_empty() {
@@ -304,10 +313,13 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
         remember_active_summary(active_summary.as_ref(), &mut summary_batch)?;
         store.commit_rollout_batch(
             &file_id,
-            &batch,
-            &turn_batch,
-            &summary_batch,
-            &removed_turns,
+            pending_rollout_batch(
+                &batch,
+                &turn_batch,
+                &summary_batch,
+                &removed_turns,
+                &content_batch,
+            ),
             state,
         )?;
         checkpoint_dirty = false;
@@ -319,10 +331,13 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
         remember_active_summary(active_summary.as_ref(), &mut summary_batch)?;
         store.commit_rollout_batch(
             &file_id,
-            &batch,
-            &turn_batch,
-            &summary_batch,
-            &removed_turns,
+            pending_rollout_batch(
+                &batch,
+                &turn_batch,
+                &summary_batch,
+                &removed_turns,
+                &content_batch,
+            ),
             state,
         )?;
     }
@@ -573,6 +588,7 @@ fn index_prefix_range(
     let mut summary_batch = Vec::new();
     let mut active_summary = None;
     let mut removed_turns = Vec::new();
+    let mut content_batch = Vec::new();
     let modified_at = modified_seconds(metadata);
 
     while offset < previous_from {
@@ -591,14 +607,13 @@ fn index_prefix_range(
             )
             .into());
         }
-        let length = u32::try_from(bytes).map_err(|_| IndexError::RecordTooLarge(offset))?;
+        let record = source_record(offset, bytes, &line)?;
+        let length = record.length;
         if let Some(metadata) = thread_metadata_from_record(path, modified_at, &line) {
             store.put_thread_metadata(&metadata)?;
         }
-        batch.push((
-            record_key(file_id, offset),
-            record_value(offset, length, classify_record(&line)),
-        ));
+        batch.push(indexed_record(file_id, record));
+        index_content(&mut content_batch, path, *file_id, record, &line);
         let boundary = task_boundary(&line, offset)?;
         collect_rollback_removals(file, offset, boundary.as_ref(), &mut removed_turns)?;
         update_summary_index(
@@ -623,16 +638,20 @@ fn index_prefix_range(
             // is durable. Rows written before it remain invisible after a crash.
             store.commit_rollout_batch(
                 file_id,
-                &batch,
-                &turn_batch,
-                &summary_batch,
-                &removed_turns,
+                pending_rollout_batch(
+                    &batch,
+                    &turn_batch,
+                    &summary_batch,
+                    &removed_turns,
+                    &content_batch,
+                ),
                 *state,
             )?;
             batch.clear();
             turn_batch.clear();
             summary_batch.clear();
             removed_turns.clear();
+            content_batch.clear();
         }
     }
     if offset != previous_from {
@@ -649,10 +668,13 @@ fn index_prefix_range(
     state.records = state.records.saturating_add(indexed_records);
     store.commit_rollout_batch(
         file_id,
-        &batch,
-        &turn_batch,
-        &summary_batch,
-        &removed_turns,
+        pending_rollout_batch(
+            &batch,
+            &turn_batch,
+            &summary_batch,
+            &removed_turns,
+            &content_batch,
+        ),
         *state,
     )?;
     Ok(indexed_records)
@@ -1222,6 +1244,49 @@ fn record_key(file_id: &[u8; 32], sequence: u64) -> Vec<u8> {
     key.extend_from_slice(file_id);
     key.extend_from_slice(&sequence.to_be_bytes());
     key
+}
+
+fn source_record(offset: u64, bytes: usize, line: &[u8]) -> Result<RecordRef, IndexError> {
+    Ok(RecordRef {
+        offset,
+        length: u32::try_from(bytes).map_err(|_| IndexError::RecordTooLarge(offset))?,
+        record_type: classify_record(line),
+    })
+}
+
+fn indexed_record(file_id: &[u8; 32], record: RecordRef) -> (Vec<u8>, Vec<u8>) {
+    (
+        record_key(file_id, record.offset),
+        record_value(record.offset, record.length, record.record_type),
+    )
+}
+
+fn index_content(
+    content: &mut Vec<RolloutContentEntry>,
+    path: &Path,
+    file_id: [u8; 32],
+    record: RecordRef,
+    line: &[u8],
+) {
+    content.extend(rollout_content::entries_from_record(
+        path, file_id, record, line,
+    ));
+}
+
+fn pending_rollout_batch<'a>(
+    records: &'a [(Vec<u8>, Vec<u8>)],
+    turns: &'a [TurnRef],
+    turn_summaries: &'a [(u64, Vec<u8>)],
+    removed_turns: &'a [u64],
+    content: &'a [RolloutContentEntry],
+) -> RolloutBatch<'a> {
+    RolloutBatch {
+        records,
+        turns,
+        turn_summaries,
+        removed_turns,
+        content,
+    }
 }
 
 fn record_value(offset: u64, length: u32, record_type: u8) -> Vec<u8> {

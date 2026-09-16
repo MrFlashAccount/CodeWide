@@ -3,6 +3,7 @@ import { renderToolImage } from "./toolImages";
 /** V1 ToolContent owner, extracted without changing interaction or resource lifetime. */
 import { Linking, Pressable, View } from "react-native";
 import { isSafeHttpUrl } from "../../../rendering/http-link";
+import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { colors } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
@@ -23,66 +24,73 @@ export function renderToolRichItems(
   section: string,
   getTransferAccess: ToolContentProps["getTransferAccess"],
   {
-    ProtocolBody,
+    containsTerminalControlSequences,
     LazyJsonProtocolBody,
+    maxHeight,
+    ProtocolBody,
     ToolResourceLink,
     toolTextNeedsCodeViewport,
-    containsTerminalControlSequences,
-    maxHeight,
   }: {
-    ProtocolBody: ComponentType<ProtocolBodyProps>;
+    containsTerminalControlSequences: (value: string) => boolean;
     LazyJsonProtocolBody: ComponentType<LazyJsonBodyProps>;
-    ToolResourceLink: ComponentType<ToolResourceLinkProps>;
-    toolTextNeedsCodeViewport(value: string): boolean;
-    containsTerminalControlSequences(value: string): boolean;
     maxHeight: number;
+    ProtocolBody: ComponentType<ProtocolBodyProps>;
+    ToolResourceLink: ComponentType<ToolResourceLinkProps>;
+    toolTextNeedsCodeViewport: (value: string) => boolean;
   },
 ) {
+  const occurrences = new Map<string, number>();
   return (
     <View style={styles.protocolBody}>
       {items.map((raw, index) => {
-        if (!isProtocolRecord(raw))
-          return <LazyJsonProtocolBody key={index} value={raw} section={`${section}:${index}`} />;
+        const key = occurrenceKey(occurrences, toolRichItemIdentity(raw));
+        if (!isProtocolRecord(raw)) {
+          return (
+            <LazyJsonProtocolBody key={key} section={`${section}:${String(index)}`} value={raw} />
+          );
+        }
         const item = raw;
         const type = typeof item.type === "string" ? item.type : "unknown";
         if (type === "text" && typeof item.text === "string") {
           const terminal = containsTerminalControlSequences(item.text);
           return terminal || toolTextNeedsCodeViewport(item.text) ? (
             <ProtocolBody
-              key={index}
               body={item.text}
               code
               collapsible
               expandedMaxHeight={maxHeight}
-              section={`${section}:${index}`}
+              key={key}
+              section={`${section}:${String(index)}`}
               {...(terminal ? { codeVariant: "terminal" as const } : {})}
             />
           ) : (
-            <View key={index} style={styles.toolMarkdownResult}>
+            <View key={key} style={styles.toolMarkdownResult}>
               <RichMarkdown source={item.text} />
             </View>
           );
         }
-        if ((type === "inputText" || type === "input_text") && typeof item.text === "string")
+        if ((type === "inputText" || type === "input_text") && typeof item.text === "string") {
           return (
             <ProtocolBody
-              key={index}
               body={item.text}
               code
               collapsible
               expandedMaxHeight={maxHeight}
-              section={`${section}:${index}`}
+              key={key}
+              section={`${section}:${String(index)}`}
             />
           );
-        const image = renderToolImage(item, type, index, getTransferAccess, (value) => (
-          <LazyJsonProtocolBody key={index} value={value} section={`${section}:${index}`} />
+        }
+        const image = renderToolImage(item, type, index, key, getTransferAccess, (value) => (
+          <LazyJsonProtocolBody key={key} section={`${section}:${String(index)}`} value={value} />
         ));
-        if (image !== null) return image;
-        if (type === "resource_link" && typeof item.uri === "string")
+        if (image !== null) {
+          return image;
+        }
+        if (type === "resource_link" && typeof item.uri === "string") {
           return (
             <ToolResourceLink
-              key={index}
-              uri={item.uri}
+              key={key}
               label={
                 typeof item.title === "string"
                   ? item.title
@@ -90,34 +98,64 @@ export function renderToolRichItems(
                     ? item.name
                     : "Resource"
               }
+              uri={item.uri}
             />
           );
+        }
         if (type === "resource") {
           const resource = recordValue(item.resource);
-          if (typeof resource.text === "string")
-            return <RichMarkdown key={index} source={resource.text} />;
-          if (typeof resource.uri === "string")
-            return <ToolResourceLink key={index} uri={resource.uri} label="Embedded resource" />;
+          if (typeof resource.text === "string") {
+            return <RichMarkdown key={key} source={resource.text} />;
+          }
+          if (typeof resource.uri === "string") {
+            return <ToolResourceLink key={key} label="Embedded resource" uri={resource.uri} />;
+          }
         }
         if (type === "inputAudio" || type === "audio") {
           const uri = typeof item.audioUrl === "string" ? item.audioUrl : null;
           const canOpen = uri !== null && isSafeHttpUrl(uri);
           return (
             <Pressable
-              key={index}
               disabled={!canOpen}
+              key={key}
               onPress={canOpen ? () => void Linking.openURL(uri) : undefined}
               style={styles.attachmentChip}
             >
-              <InlineIcon name="volume-medium-outline" role="label" color={colors.textMuted} />
-              <Text selectable numberOfLines={1} style={styles.attachmentText}>
+              <InlineIcon color={colors.textMuted} name="volume-medium-outline" role="label" />
+              <Text numberOfLines={1} selectable style={styles.attachmentText}>
                 {uri ?? "Audio output"}
               </Text>
             </Pressable>
           );
         }
-        return <LazyJsonProtocolBody key={index} value={item} section={`${section}:${index}`} />;
+        return (
+          <LazyJsonProtocolBody key={key} section={`${section}:${String(index)}`} value={item} />
+        );
       })}
     </View>
   );
+}
+
+function toolRichItemIdentity(value: unknown): string {
+  if (!isProtocolRecord(value)) {
+    return `${typeof value}:${textFingerprint(String(value))}`;
+  }
+  const type = typeof value.type === "string" ? value.type : "record";
+  for (const field of [
+    "id",
+    "uri",
+    "url",
+    "imageUrl",
+    "image_url",
+    "text",
+    "data",
+    "name",
+  ] as const) {
+    const fieldValue = value[field];
+    if (typeof fieldValue === "string") {
+      return `${type}:${field}:${textFingerprint(fieldValue)}`;
+    }
+  }
+  const asset = recordValue(value.codewideAsset);
+  return typeof asset.id === "string" ? `${type}:asset:${asset.id}` : type;
 }

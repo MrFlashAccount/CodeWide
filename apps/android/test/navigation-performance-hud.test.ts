@@ -1,18 +1,39 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const hud = readFileSync(new URL("../src/ui/NavigationPerformanceHud.tsx", import.meta.url), "utf8");
-const nativeRoot = readFileSync(new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url), "utf8");
+const hud = readFileSync(
+  new URL("../src/ui/NavigationPerformanceHud.tsx", import.meta.url),
+  "utf8",
+);
+const nativeRoot = readFileSync(new URL("../src/ui/AppRootProviders.tsx", import.meta.url), "utf8");
 const generationHost = readFileSync(
   new URL("../src/boot/UiGenerationDiagnosticsHost.tsx", import.meta.url),
   "utf8",
 );
 const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
-const performanceModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt", import.meta.url), "utf8");
+const performanceModule = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
-const ownerThreadNavigationCommit = readFileSync(new URL("../src/features/diagnostics/ThreadNavigationCommit.tsx", import.meta.url), "utf8");
-const ownerNavigationActions = readFileSync(new URL("../src/services/threads/threadNavigationService.ts", import.meta.url), "utf8");
-const ownerThreadTimelineNavigationCommit = readFileSync(new URL("../src/features/conversation/timeline/ThreadTimelineNavigationCommit.tsx", import.meta.url), "utf8");
+const ownerThreadNavigationCommit = readFileSync(
+  new URL("../src/features/diagnostics/ThreadNavigationCommit.tsx", import.meta.url),
+  "utf8",
+);
+const ownerNavigationActions = readFileSync(
+  new URL("../src/services/threads/threadNavigationService.ts", import.meta.url),
+  "utf8",
+);
+const ownerThreadTimelineNavigationCommit = readFileSync(
+  new URL(
+    "../src/features/conversation/timeline/ThreadTimelineNavigationCommit.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("navigation performance HUD", () => {
   it("profiles virtualized chat navigation without rendering message content", () => {
@@ -21,7 +42,8 @@ describe("navigation performance HUD", () => {
     expect(generationHost).toContain('props.generation === "v2"');
     expect(generationHost).toContain("<LegacyNavigationPerformanceHud />");
     expect(generationHost).toContain("<NavigationDiagnosticsFeature");
-    expect(hud).toContain("if (!metrics.enabled) return null");
+    expect(hud).toContain("!metrics.enabled");
+    expect(hud).toContain("return null;");
     expect(hud).toContain('testID="navigation-performance-hud"');
     expect(hud).toContain('accessibilityLabel="Open navigation performance tools"');
     expect(hud).toContain("setMenuOpen((open) => !open)");
@@ -32,11 +54,17 @@ describe("navigation performance HUD", () => {
     expect(hud).toContain("serializeNavigationSpeedscopeProfile(profile)");
     expect(hud).toContain("<SpeedscopeProfileViewer");
     expect(hud).toContain('kind: "codewide-navigation-profile"');
-    expect(ownerThreadNavigationCommit).toContain("recordThreadNavigationRowCommit(connectionId, threadId, rowKey)");
+    expect(ownerThreadNavigationCommit).toContain(
+      "recordThreadNavigationRowCommit(connectionId, threadId, rowKey)",
+    );
     expect(ownerNavigationActions).toContain("beginNavigationFrameTrace(navigationId)");
     expect(ownerThreadTimelineNavigationCommit).toContain("endNavigationFrameTrace(completed.id)");
-    expect(performanceModule).toContain("fun beginNavigationTrace(traceId: String, promise: Promise)");
-    expect(performanceModule).toContain("fun endNavigationTrace(traceId: String, promise: Promise)");
+    expect(performanceModule).toContain(
+      "fun beginNavigationTrace(traceId: String, promise: Promise)",
+    );
+    expect(performanceModule).toContain(
+      "fun endNavigationTrace(traceId: String, promise: Promise)",
+    );
     expect(performanceModule).toContain("activeNavigationTrace?.frames?.record");
     expect(performanceModule).toContain("HermesSamplingProfiler.enable()");
     expect(performanceModule).toContain("HermesSamplingProfiler.dumpSampledTraceToFile");

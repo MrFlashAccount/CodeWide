@@ -14,15 +14,15 @@ import {
 import { styles } from "./ConversationHistoryStatus.styles";
 
 export function ConversationHistorySubtitle({
+  cwd,
   model,
   resourceId,
   server,
-  cwd,
 }: {
+  cwd: string;
   model: ThreadHistoryModel | null;
   resourceId: string | null;
   server: ThreadListServer | undefined;
-  cwd: string;
 }) {
   const activity = useThreadHistoryActivity(model, resourceId);
   const connecting = server?.status === "connecting";
@@ -38,10 +38,10 @@ export function ConversationHistorySubtitle({
       : colors.textMuted;
   return (
     <Text
-      testID="conversation-subtitle"
-      numberOfLines={1}
       ellipsizeMode="middle"
+      numberOfLines={1}
       style={[styles.conversationSubtitle, { color }]}
+      testID="conversation-subtitle"
     >
       {text}
     </Text>
@@ -49,49 +49,55 @@ export function ConversationHistorySubtitle({
 }
 
 export function ConversationBackendRefreshIndicator({
-  model,
   connectionId,
+  model,
   threadId,
 }: {
-  model: ThreadChatModel | null;
   connectionId: string | null;
+  model: ThreadChatModel | null;
   threadId: string | null;
 }) {
   const refreshing = useSelector(() => {
-    if (model === null || connectionId === null || threadId === null) return false;
+    if (model === null || connectionId === null || threadId === null) {
+      return false;
+    }
     return model.window$(connectionId, threadId).backendRefreshing.get();
   });
-  if (!refreshing) return null;
+  if (!refreshing) {
+    return null;
+  }
   return (
     <ActivityIndicator
-      testID="conversation-backend-refresh-indicator"
       accessibilityLabel="Updating conversation from server"
-      size="small"
       color={colors.amber}
+      size="small"
       style={styles.conversationBackendRefreshIndicator}
+      testID="conversation-backend-refresh-indicator"
     />
   );
 }
 
 export function ThreadHistoryLoadingIndicator({
+  hasTimeline,
   model,
   resourceId,
-  hasTimeline,
 }: {
+  hasTimeline: boolean;
   model: ThreadHistoryModel | null;
   resourceId: string | null;
-  hasTimeline: boolean;
 }) {
   const activity = useThreadHistoryActivity(model, resourceId);
-  if (!hasTimeline || activity.status !== "loading-history") return null;
+  if (!hasTimeline || activity.status !== "loading-history") {
+    return null;
+  }
   return (
     <View
       pointerEvents="none"
-      testID="history-loading-indicator"
       style={styles.historyLoadingIndicator}
+      testID="history-loading-indicator"
     >
       <View style={styles.historyLoadingIndicatorPill}>
-        <ActivityIndicator size="small" color={colors.textMuted} />
+        <ActivityIndicator color={colors.textMuted} size="small" />
       </View>
     </View>
   );
@@ -110,7 +116,7 @@ export function ThreadHistoryEmptyState({
   const initialLoading = !threadSearchActive && activity.status === "initial-loading";
   return (
     <>
-      {initialLoading ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+      {initialLoading ? <ActivityIndicator color={colors.accent} size="small" /> : null}
       <Text style={styles.emptyText}>
         {threadSearchActive
           ? "No matches"

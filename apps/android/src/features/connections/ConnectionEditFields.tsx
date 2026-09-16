@@ -7,68 +7,68 @@ import type { ConnectionEditor } from "./connectionEditor";
 import type { ConnectionEditorProps } from "./connectionEditorContract";
 
 export function ConnectionEditFields({
-  connection,
-  name,
-  setName,
-  emoji,
-  setEmoji,
-  endpoint,
-  setEndpoint,
-  replacementToken,
-  setReplacementToken,
-  tlsPinSha256,
-  setTlsPinSha256,
-  saving,
-  error,
   cancelEditing,
+  connection,
+  emoji,
+  endpoint,
+  error,
+  name,
+  replacementToken,
   save,
+  saving,
+  setEmoji,
+  setEndpoint,
+  setName,
+  setReplacementToken,
+  setTlsPinSha256,
+  tlsPinSha256,
 }: Omit<ConnectionEditor, "editing" | "setEditing"> & Pick<ConnectionEditorProps, "connection">) {
   return (
     <View style={styles.connectionEditorForm}>
       <View style={styles.connectionIdentityFields}>
         <TextInput
-          voiceInput={false}
           accessibilityLabel={`Emoji for ${connection.displayName}`}
-          value={emoji}
           onChangeText={setEmoji}
           style={styles.connectionEmojiInput}
+          value={emoji}
+          voiceInput={false}
         />
         <TextInput
           accessibilityLabel={`Name for ${connection.displayName}`}
-          value={name}
           onChangeText={setName}
           style={[styles.fieldInput, styles.flex]}
+          value={name}
         />
       </View>
       <Text style={styles.fieldLabel}>Secure endpoint</Text>
       <TextInput
-        voiceInput={false}
         accessibilityLabel={`Endpoint for ${connection.displayName}`}
-        value={endpoint}
-        onChangeText={setEndpoint}
         autoCapitalize="none"
         autoCorrect={false}
+        onChangeText={setEndpoint}
         style={styles.fieldInput}
+        value={endpoint}
+        voiceInput={false}
       />
       <Text style={styles.fieldLabel}>Replacement capability (leave blank to keep current)</Text>
       <TextInput
         accessibilityLabel={`Replacement capability for ${connection.displayName}`}
-        value={replacementToken}
-        onChangeText={setReplacementToken}
         autoCapitalize="none"
         autoCorrect={false}
+        onChangeText={setReplacementToken}
         secureTextEntry
         style={styles.fieldInput}
+        value={replacementToken}
       />
       <Text style={styles.fieldLabel}>Companion identity pin (required)</Text>
       <TextInput
-        voiceInput={false}
         accessibilityLabel={`TLS pin for ${connection.displayName}`}
-        value={tlsPinSha256}
-        onChangeText={setTlsPinSha256}
         autoCapitalize="none"
         autoCorrect={false}
+        onChangeText={setTlsPinSha256}
         style={styles.fieldInput}
+        value={tlsPinSha256}
+        voiceInput={false}
       />
       {error !== null && <Text style={styles.errorText}>{error}</Text>}
       <View style={styles.sheetActions}>

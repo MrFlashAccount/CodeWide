@@ -2,9 +2,9 @@
 import { Pressable } from "react-native";
 import type { ThreadResourcesModel } from "../../data/thread-resources-model";
 import { useThreadResources } from "../../data/use-thread-resources";
-import {
-  type ThreadChangeScope,
-  type ThreadResourcesValue,
+import type {
+  ThreadChangeScope,
+  ThreadResourcesValue,
 } from "../../data/workspace-resource-database";
 import { changeScopeMenuActions, changeScopeTitle } from "../../rendering/change-menu";
 import { colors } from "../../theme";
@@ -12,31 +12,31 @@ import { ActionMenu } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { ComposerContextCount, ComposerContextLabel } from "../../ui/ResourceContextChip";
-import { type ChangesPreferences } from "./changePresentation";
+import type { ChangesPreferences } from "./changePresentation";
 import { styles } from "./ThreadResourceContextChips.styles";
 
 export function ThreadResourceContextChips({
+  load,
   model,
+  onOpen,
+  onPreferencesChange,
+  preferences,
   resourceId,
   revision,
-  load,
-  preferences,
-  onPreferencesChange,
-  onOpen,
 }: {
-  model: ThreadResourcesModel | null;
-  resourceId: string | null;
-  revision: string;
-  load(
+  load: (
     scope?: ThreadChangeScope,
     kind?: "all" | "changes" | "attachments",
-  ): Promise<ThreadResourcesValue>;
+  ) => Promise<ThreadResourcesValue>;
+  model: ThreadResourcesModel | null;
+  onOpen: (kind: "changes" | "attachments") => void;
+  onPreferencesChange: (preferences: ChangesPreferences) => void;
   preferences: ChangesPreferences;
-  onPreferencesChange(preferences: ChangesPreferences): void;
-  onOpen(kind: "changes" | "attachments"): void;
+  resourceId: string | null;
+  revision: string;
 }) {
   const dialog = useAppDialog();
-  const resource = useThreadResources(model, resourceId, () => load(), { revision });
+  const resource = useThreadResources(model, resourceId, async () => load(), { revision });
   const pending = (kind: "changes" | "attachments") =>
     resource === null ||
     (resource.pendingKinds === undefined
@@ -44,7 +44,7 @@ export function ThreadResourceContextChips({
       : resource.pendingKinds.includes(kind));
   const ready = (kind: "changes" | "attachments") =>
     resource?.readyKinds === undefined
-      ? resource?.value != null
+      ? resource?.value !== null && resource?.value !== undefined
       : resource.readyKinds.includes(kind);
   const changesPending = pending("changes");
   const attachmentsPending = pending("attachments");
@@ -75,23 +75,27 @@ export function ThreadResourceContextChips({
       ? "Changes unavailable"
       : changesEmpty
         ? "No changes"
-        : `Changes · ${changeCount}`;
+        : `Changes · ${String(changeCount)}`;
   const attachmentsLabel = attachmentsInitialLoading
     ? "Loading attachments…"
     : attachmentsUnavailable
       ? "Attachments unavailable"
       : attachmentsEmpty
         ? "No attachments"
-        : `Attachments · ${attachmentCount}`;
+        : `Attachments · ${String(attachmentCount)}`;
   const selectScope = (id: string) => {
-    if (!id.startsWith("scope:")) return;
-    const scope = id.slice("scope:".length) as ThreadChangeScope;
-    if (!changeScopes.includes(scope)) return;
+    if (!id.startsWith("scope:")) {
+      return;
+    }
+    const scope = threadChangeScope(id.slice("scope:".length));
+    if (scope === null || !changeScopes.includes(scope)) {
+      return;
+    }
     onPreferencesChange({ ...preferences, scope });
-    void load(scope, "changes").catch((cause) => {
+    void load(scope, "changes").catch((error: unknown) => {
       dialog.alert(
         "Changes unavailable",
-        cause instanceof Error ? cause.message : "Could not load changes",
+        error instanceof Error ? error.message : "Could not load changes",
       );
     });
   };
@@ -101,21 +105,23 @@ export function ThreadResourceContextChips({
         <ActionMenu
           accessibilityLabel="Choose changes scope"
           actions={changeScopeMenuActions(changeScopes, changeScope)}
-          trigger="long-press"
-          placement="top"
           align="start"
           onSelect={selectScope}
+          placement="top"
+          trigger="long-press"
         >
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel={`${changesLabel}, ${changeScopeTitle(changeScope)}. Long press to choose changes scope.`}
-            onPress={() => onOpen("changes")}
+            accessibilityRole="button"
+            onPress={() => {
+              onOpen("changes");
+            }}
             style={styles.composerContextChip}
           >
             <InlineIcon
+              color={changesEmpty ? colors.textDim : colors.textMuted}
               name="git-compare-outline"
               role="label"
-              color={changesEmpty ? colors.textDim : colors.textMuted}
             />
             {changesInitialLoading || changesEmpty ? (
               <ComposerContextLabel
@@ -126,8 +132,8 @@ export function ThreadResourceContextChips({
             ) : (
               <ComposerContextCount
                 label="Changes"
-                value={changeCount}
                 testID="composer-changes-label"
+                value={changeCount}
               />
             )}
           </Pressable>
@@ -135,17 +141,19 @@ export function ThreadResourceContextChips({
       )}
       {!attachmentsUnavailable && (
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel={attachmentsLabel}
+          accessibilityRole="button"
           accessibilityState={{ disabled: attachmentsEmpty }}
           disabled={attachmentsEmpty}
-          onPress={() => onOpen("attachments")}
+          onPress={() => {
+            onOpen("attachments");
+          }}
           style={[styles.composerContextChip, attachmentsEmpty && styles.disabled]}
         >
           <InlineIcon
+            color={attachmentsEmpty ? colors.textDim : colors.textMuted}
             name="attach-outline"
             role="label"
-            color={attachmentsEmpty ? colors.textDim : colors.textMuted}
           />
           {attachmentsInitialLoading || attachmentsEmpty ? (
             <ComposerContextLabel
@@ -156,12 +164,25 @@ export function ThreadResourceContextChips({
           ) : (
             <ComposerContextCount
               label="Attachments"
-              value={attachmentCount}
               testID="composer-attachments-label"
+              value={attachmentCount}
             />
           )}
         </Pressable>
       )}
     </>
   );
+}
+
+function threadChangeScope(value: string): ThreadChangeScope | null {
+  switch (value) {
+    case "session":
+    case "lastTurn":
+    case "staged":
+    case "unstaged":
+    case "branch":
+      return value;
+    default:
+      return null;
+  }
 }

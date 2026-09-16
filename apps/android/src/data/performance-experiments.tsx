@@ -13,8 +13,8 @@ const DEFAULT_SNAPSHOT: PerformanceExperimentSnapshot = Object.freeze({
   disableTextShimmer: false,
   hideThreadLists: false,
   plainTextMarkdown: false,
-  skipMarkdownLayout: false,
   reduceCustomMotion: false,
+  skipMarkdownLayout: false,
 });
 
 let snapshot = DEFAULT_SNAPSHOT;
@@ -23,7 +23,9 @@ const PerformanceExperimentContext = createContext<PerformanceExperimentSnapshot
 
 export function subscribePerformanceExperiments(listener: () => void): () => void {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function performanceExperimentSnapshot(): PerformanceExperimentSnapshot {
@@ -35,15 +37,23 @@ export function performanceExperimentEnabled(id: PerformanceExperimentId): boole
 }
 
 export function setPerformanceExperiment(id: PerformanceExperimentId, enabled: boolean): void {
-  if (snapshot[id] === enabled) return;
+  if (snapshot[id] === enabled) {
+    return;
+  }
   snapshot = Object.freeze({ ...snapshot, [id]: enabled });
-  listeners.forEach((listener) => listener());
+  listeners.forEach((listener) => {
+    listener();
+  });
 }
 
 export function resetPerformanceExperiments(): void {
-  if (Object.values(snapshot).every((enabled) => !enabled)) return;
+  if (Object.values(snapshot).every((enabled) => !enabled)) {
+    return;
+  }
   snapshot = DEFAULT_SNAPSHOT;
-  listeners.forEach((listener) => listener());
+  listeners.forEach((listener) => {
+    listener();
+  });
 }
 
 export function PerformanceExperimentProvider({ children }: { children: ReactNode }) {

@@ -31,8 +31,6 @@ export default function V1BrowserRoute(): React.JSX.Element {
     return (
       <RouteUnavailable
         message="This forwarded browser session has expired."
-        // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-        // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
         onBack={() => {
           router.dismissTo("/v1");
         }}
@@ -47,8 +45,6 @@ export default function V1BrowserRoute(): React.JSX.Element {
   return (
     <ForwardedLoopbackBrowser
       bottomInset={resources.insets.bottom}
-      // WHY: This callback stays render-local; repository policy delegates ordinary JSX callback memoization to React Compiler.
-      // oxlint-disable-next-line react-doctor/jsx-no-new-function-as-prop
       onClose={close}
       title={session.title}
       topInset={resources.insets.top}

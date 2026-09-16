@@ -2,7 +2,8 @@ import * as Clipboard from "expo-clipboard";
 import { useRef, useState } from "react";
 import { operationalMetricsSnapshot } from "../../data/operational-metrics";
 import { performanceExperimentSnapshot } from "../../data/performance-experiments";
-import { getWindowFrameReport, usePerformanceMetrics } from "../../native/performance-metrics";
+import type { usePerformanceMetrics } from "../../native/performance-metrics";
+import { getWindowFrameReport } from "../../native/performance-metrics";
 import { useEvent } from "../../react/useEvent";
 
 export function useSnapshotDiagnosticAction(
@@ -13,7 +14,9 @@ export function useSnapshotDiagnosticAction(
   const [copyPending, setCopyPending] = useState(false);
   const copyInFlight = useRef(false);
   const copySnapshot = useEvent(async () => {
-    if (copyInFlight.current) return;
+    if (copyInFlight.current) {
+      return;
+    }
     copyInFlight.current = true;
     setCopyPending(true);
     setError(null);
@@ -21,35 +24,37 @@ export function useSnapshotDiagnosticAction(
       await Clipboard.setStringAsync(
         JSON.stringify(
           {
-            version: 1,
             collectedAt: new Date().toISOString(),
+            experiments: performanceExperimentSnapshot(),
+            frameReport: await getWindowFrameReport(),
             native: {
               available: metrics.available,
-              enabled: metrics.enabled,
               current: metrics.current,
+              enabled: metrics.enabled,
+              historyCapacity: metrics.historyCapacity,
+              historySamples: metrics.historySamples,
               peakCpuPercent: metrics.peakCpuPercent,
               peakPssBytes: metrics.peakPssBytes,
               sessionJankPercent: metrics.sessionJankPercent,
               totalDroppedFrameEstimate: metrics.totalDroppedFrameEstimate,
-              historySamples: metrics.historySamples,
-              historyCapacity: metrics.historyCapacity,
             },
             streaming: operationalMetricsSnapshot(),
-            experiments: performanceExperimentSnapshot(),
-            frameReport: await getWindowFrameReport(),
+            version: 1,
           },
           null,
           2,
         ),
       );
       setSnapshotCopied(true);
-      setTimeout(() => setSnapshotCopied(false), 2_000);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not copy diagnostics");
+      setTimeout(() => {
+        setSnapshotCopied(false);
+      }, 2000);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not copy diagnostics");
     }
     // Both outcomes reach cleanup; React Compiler cannot lower a finally clause here.
     copyInFlight.current = false;
     setCopyPending(false);
   });
-  return { snapshotCopied, copyPending, copySnapshot };
+  return { copyPending, copySnapshot, snapshotCopied };
 }

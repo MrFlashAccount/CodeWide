@@ -23,18 +23,18 @@ export function useConnectionProjection(
       return state === undefined
         ? {
             ...profile,
-            state: profile.enabled ? ("connecting" as const) : ("offline" as const),
             lastError: null,
             lastErrorAt: null,
+            state: profile.enabled ? ("connecting" as const) : ("offline" as const),
           }
         : {
             ...profile,
             // `live` is a user-visible claim that foreground RPC is available. The
             // native engine publishes both axes; never promote a stale or partial
             // transport state to Live when it cannot serve a request.
-            state: connectionDisplayState(state),
             lastError: state.lastError,
             lastErrorAt: state.lastErrorAt,
+            state: connectionDisplayState(state),
           };
     });
   })();

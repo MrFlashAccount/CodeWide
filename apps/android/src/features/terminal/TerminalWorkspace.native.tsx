@@ -17,36 +17,40 @@ export const MAX_TABS = 8;
 /** Hosts native terminal sessions for the active server and thread. */
 export function TerminalWorkspace({
   connectionId,
-  threadId,
   cwd,
   onMinimize,
+  threadId,
 }: {
   connectionId: string;
-  threadId: string;
   cwd: string | null;
-  onMinimize(): void;
+  onMinimize: () => void;
+  threadId: string;
 }) {
   const workspace = useInteractiveTerminalWorkspace(connectionId, threadId);
   const active =
     workspace.tabs.find(({ id }) => id === workspace.activeId) ?? workspace.tabs[0] ?? null;
-  const createTab = () => createInteractiveTerminalTab({ connectionId, threadId, cwd });
+  const createTab = (): void => {
+    createInteractiveTerminalTab({ connectionId, cwd, threadId });
+  };
 
   return (
-    <View testID="terminal-workspace" style={styles.root}>
+    <View style={styles.root} testID="terminal-workspace">
       <View style={styles.header}>
         <ScrollView
+          contentContainerStyle={styles.tabList}
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabList}
           style={styles.tabScroll}
         >
           {workspace.tabs.map((tab) => (
             <View key={tab.id} style={[styles.tab, tab.id === active?.id && styles.activeTab]}>
               <Pressable
+                accessibilityLabel={tab.title}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: tab.id === active?.id }}
-                accessibilityLabel={tab.title}
-                onPress={() => selectInteractiveTerminalTab(connectionId, threadId, tab.id)}
+                onPress={() => {
+                  selectInteractiveTerminalTab(connectionId, threadId, tab.id);
+                }}
                 style={styles.tabSelect}
               >
                 <View style={[styles.statusDot, statusDotStyle(tab.status)]} />
@@ -58,20 +62,22 @@ export function TerminalWorkspace({
                 </Text>
               </Pressable>
               <Pressable
-                accessibilityRole="button"
                 accessibilityLabel={`Close ${tab.title}`}
+                accessibilityRole="button"
                 hitSlop={8}
-                onPress={() => closeInteractiveTerminalTab(connectionId, threadId, tab.id)}
+                onPress={() => {
+                  closeInteractiveTerminalTab(connectionId, threadId, tab.id);
+                }}
                 style={({ pressed }) => [styles.tabClose, pressed && styles.pressed]}
               >
-                <Ionicons name="close" size={iconSize.inline} color={colors.textMuted} />
+                <Ionicons color={colors.textMuted} name="close" size={iconSize.inline} />
               </Pressable>
             </View>
           ))}
         </ScrollView>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="New terminal tab"
+          accessibilityRole="button"
           accessibilityState={{ disabled: workspace.tabs.length >= MAX_TABS }}
           disabled={workspace.tabs.length >= MAX_TABS}
           onPress={createTab}
@@ -81,28 +87,28 @@ export function TerminalWorkspace({
             workspace.tabs.length >= MAX_TABS && styles.disabled,
           ]}
         >
-          <Ionicons name="add" size={iconSize.action} color={colors.text} />
+          <Ionicons color={colors.text} name="add" size={iconSize.action} />
         </Pressable>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Minimize terminal"
+          accessibilityRole="button"
           onPress={onMinimize}
           style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
         >
-          <Ionicons name="chevron-down" size={iconSize.navigation} color={colors.text} />
+          <Ionicons color={colors.text} name="chevron-down" size={iconSize.navigation} />
         </Pressable>
       </View>
 
       {active === null ? (
         <View style={styles.empty}>
-          <Ionicons name="terminal-outline" size={iconSize.illustration} color={colors.textMuted} />
+          <Ionicons color={colors.textMuted} name="terminal-outline" size={iconSize.illustration} />
           <Text style={styles.emptyTitle}>No terminal tabs</Text>
           <Pressable
             accessibilityRole="button"
             onPress={createTab}
             style={({ pressed }) => [styles.createButton, pressed && styles.pressed]}
           >
-            <Ionicons name="add" size={iconSize.action} color={colors.onPrimary} />
+            <Ionicons color={colors.onPrimary} name="add" size={iconSize.action} />
             <Text style={styles.createButtonText}>New terminal</Text>
           </Pressable>
         </View>
@@ -114,7 +120,11 @@ export function TerminalWorkspace({
 }
 
 export function statusDotStyle(status: InteractiveTerminalTab["status"]) {
-  if (status === "open") return styles.statusLive;
-  if (status === "error") return styles.statusError;
+  if (status === "open") {
+    return styles.statusLive;
+  }
+  if (status === "error") {
+    return styles.statusError;
+  }
   return styles.statusIdle;
 }

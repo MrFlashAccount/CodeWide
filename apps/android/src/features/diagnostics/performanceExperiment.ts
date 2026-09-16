@@ -10,7 +10,7 @@ import {
 import { getPerformanceMetricsSnapshot } from "../../native/performance-metrics";
 import { delay } from "./performanceDelay";
 
-const EXPERIMENT_PHASE_MS = 7_000;
+const EXPERIMENT_PHASE_MS = 7000;
 
 export const STAGE_METRICS: ReadonlyArray<{ id: TimingMetric; label: string }> = [
   { id: "live_event_ingress_ms", label: "Native callback → JS" },
@@ -27,34 +27,34 @@ export const STAGE_METRICS: ReadonlyArray<{ id: TimingMetric; label: string }> =
 ];
 
 export const EXPERIMENTS: ReadonlyArray<{
+  description: string;
   id: PerformanceExperimentId;
   title: string;
-  description: string;
 }> = [
   {
+    description: "Isolate the native text shader without stopping other animations.",
     id: "disableTextShimmer",
     title: "Disable text shimmer",
-    description: "Isolate the native text shader without stopping other animations.",
   },
   {
+    description: "Bypass Markdown AST and rich renderers.",
     id: "plainTextMarkdown",
     title: "Plain-text Markdown",
-    description: "Bypass Markdown AST and rich renderers.",
   },
   {
+    description: "Bypass the extra width-classification parse.",
     id: "skipMarkdownLayout",
     title: "Skip Markdown layout parse",
-    description: "Bypass the extra width-classification parse.",
   },
   {
+    description: "Replace both virtualized lists with a static placeholder.",
     id: "hideThreadLists",
     title: "Pause thread lists",
-    description: "Replace both virtualized lists with a static placeholder.",
   },
   {
+    description: "Stop shimmer, custom spinners and voice aura animation.",
     id: "reduceCustomMotion",
     title: "Disable custom animations",
-    description: "Stop shimmer, custom spinners and voice aura animation.",
   },
 ];
 
@@ -65,8 +65,8 @@ type ExperimentWindow = {
 };
 
 export type ExperimentResult = {
-  id: PerformanceExperimentId;
   baseline: ExperimentWindow;
+  id: PerformanceExperimentId;
   variant: ExperimentWindow;
 };
 
@@ -82,7 +82,7 @@ function measureWindow(
   for (const { id } of STAGE_METRICS) {
     const beforeTotal = before.timings[id]?.totalMs ?? 0;
     const afterTotal = after.timings[id]?.totalMs ?? 0;
-    stages[id] = Math.max(0, afterTotal - beforeTotal) / (EXPERIMENT_PHASE_MS / 1_000);
+    stages[id] = Math.max(0, afterTotal - beforeTotal) / (EXPERIMENT_PHASE_MS / 1000);
   }
   return {
     cpuPercent: average(points.map((point) => point.cpuPercent)),
@@ -96,23 +96,31 @@ export async function collectExperiment(
   isCurrent: () => boolean,
 ): Promise<ExperimentResult | null> {
   setPerformanceExperiment(id, false);
-  await delay(1_100);
-  if (!isCurrent()) return null;
+  await delay(1100);
+  if (!isCurrent()) {
+    return null;
+  }
   const baselineStart = currentPerformanceSampleAt();
   const baselineOperational = operationalMetricsSnapshot();
   await delay(EXPERIMENT_PHASE_MS);
-  if (!isCurrent()) return null;
+  if (!isCurrent()) {
+    return null;
+  }
   const baseline = measureWindow(baselineStart, baselineOperational, operationalMetricsSnapshot());
 
   setPerformanceExperiment(id, true);
-  await delay(1_100);
-  if (!isCurrent()) return null;
+  await delay(1100);
+  if (!isCurrent()) {
+    return null;
+  }
   const variantStart = currentPerformanceSampleAt();
   const variantOperational = operationalMetricsSnapshot();
   await delay(EXPERIMENT_PHASE_MS);
-  if (!isCurrent()) return null;
+  if (!isCurrent()) {
+    return null;
+  }
   const variant = measureWindow(variantStart, variantOperational, operationalMetricsSnapshot());
-  return { id, baseline, variant };
+  return { baseline, id, variant };
 }
 
 function currentPerformanceSampleAt(): number {

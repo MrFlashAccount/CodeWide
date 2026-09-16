@@ -30,48 +30,49 @@ import { createTurnActionsWorkspaceAdapter } from "../turnActions/workspaceAdapt
 /** Constructs stable feature capabilities over the existing module-lifetime runtime. */
 function createWorkspaceFeatures() {
   const connections = createConnectionsWorkspaceAdapter({
-    getProfiles: () => workspaceRuntime.snapshot.connectionProfiles,
-    getConnectionState: () => workspaceRuntime.snapshot.connectionState,
-    getThreadUiState: () => workspaceRuntime.snapshot.threadUiState,
-    getAccountRateLimits: () => workspaceRuntime.snapshot.accountRateLimits,
-    getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
-    forgetObservedThread: workspaceThreadSync.forgetObservedThread,
-    invalidateCatalog: workspaceCatalog.invalidateConnection,
     closeCatalogWindows: workspaceCatalog.closeCatalogWindows,
     currentConnections: currentConnections,
     forgetHttpAuthorization: forgetHttpAuthorization,
+    forgetObservedThread: workspaceThreadSync.forgetObservedThread,
+    getAccountRateLimits: () => workspaceRuntime.snapshot.accountRateLimits,
+    getConnectionState: () => workspaceRuntime.snapshot.connectionState,
+    getProfiles: () => workspaceRuntime.snapshot.connectionProfiles,
+    getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+    getThreadUiState: () => workspaceRuntime.snapshot.threadUiState,
+    invalidateCatalog: workspaceCatalog.invalidateConnection,
   });
   const search = createSearchWorkspaceAdapter({
-    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
     rpcAfterAttach: rpcAfterAttach,
   });
   const projects = createProjectsWorkspaceAdapter({
-    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
     getDetails: () => workspaceRuntime.snapshot.threadDetails,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
-    rpcAfterAttach: rpcAfterAttach,
+    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
     loadTurnControls: loadTurnControls,
+    rpcAfterAttach: rpcAfterAttach,
   });
   const turnActions = createTurnActionsWorkspaceAdapter({
-    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
     getDetails: () => workspaceRuntime.snapshot.threadDetails,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
+    getThreadUiState: () => workspaceRuntime.snapshot.threadUiState,
     rpcAfterAttach: rpcAfterAttach,
   });
   const composer = createComposerWorkspaceAdapter({
     getThreadUiState: () => workspaceRuntime.snapshot.threadUiState,
     loadTurnControls: loadTurnControls,
-    sendText: commandDelivery.sendText,
     retryFailedMessage: commandDelivery.retryFailedMessage,
+    sendText: commandDelivery.sendText,
     startVoiceTranscription: startVoiceTranscription,
   });
   const conversation = createConversationWorkspaceAdapter({
     getThreadUiState: () => workspaceRuntime.snapshot.threadUiState,
-    readThread: workspaceThreadSync.readThread,
-    observeThread: workspaceThreadSync.observeThread,
     loadTurnItems: workspaceThreadSync.loadTurnItems,
+    observeThread: workspaceThreadSync.observeThread,
+    readThread: workspaceThreadSync.readThread,
   });
   const queue = createQueueWorkspaceAdapter({
     getDetails: () => workspaceRuntime.snapshot.threadDetails,
@@ -95,12 +96,12 @@ function createWorkspaceFeatures() {
   const accounts = createAccountsWorkspaceAdapter({
     getAccountRateLimits: () => workspaceRuntime.snapshot.accountRateLimits,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
-    rpcAfterAttach: rpcAfterAttach,
     refreshAccountRateLimits: refreshAccountRateLimits,
+    rpcAfterAttach: rpcAfterAttach,
   });
   const ports = createPortsWorkspaceAdapter({
-    getResources: () => workspaceRuntime.resourceDatabase,
     currentConnections: currentConnections,
+    getResources: () => workspaceRuntime.resourceDatabase,
     scopedHttpAuthorization: scopedHttpAuthorization,
   });
   const requests = createRequestsWorkspaceAdapter({
@@ -109,26 +110,26 @@ function createWorkspaceFeatures() {
   const agents = { refreshSubagents: workspaceCatalog.refreshSubagents };
   const attachments = { transferAccess: transferAccess };
   const changes = {
-    loadThreadResources: workspaceThreadResources.loadThreadResources,
     loadThreadChangeDiff: workspaceThreadResources.loadThreadChangeDiff,
+    loadThreadResources: workspaceThreadResources.loadThreadResources,
   };
   return {
-    connections,
-    search,
-    projects,
-    turnActions,
-    composer,
-    conversation,
-    queue,
-    terminal,
-    goal,
-    review,
     accounts,
-    ports,
-    requests,
     agents,
     attachments,
     changes,
+    composer,
+    connections,
+    conversation,
+    goal,
+    ports,
+    projects,
+    queue,
+    requests,
+    review,
+    search,
+    terminal,
+    turnActions,
   };
 }
 export const workspaceFeatures = createWorkspaceFeatures();

@@ -11,13 +11,13 @@ export function PairingChoose({
   error,
   openPairingScanner,
   pasteCode,
-  setMode,
   setError,
+  setMode,
 }: Pick<PairingSession, "error" | "openPairingScanner" | "pasteCode" | "setMode" | "setError">) {
   return (
     <View style={styles.pairingBody}>
       <View style={styles.pairingHeroIcon}>
-        <Ionicons name="link" size={iconSize.illustration} color={colors.primary} />
+        <Ionicons color={colors.primary} name="link" size={iconSize.illustration} />
       </View>
       <Text style={styles.pairingLead}>
         Connect this phone to Codex running on another machine.
@@ -28,33 +28,33 @@ export function PairingChoose({
       </Text>
       <View style={styles.pairingActionStack}>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Scan pairing QR"
+          accessibilityRole="button"
           onPress={() => void openPairingScanner()}
           style={styles.pairingPrimaryAction}
         >
-          <Ionicons name="qr-code-outline" size={iconSize.navigation} color={colors.onPrimary} />
+          <Ionicons color={colors.onPrimary} name="qr-code-outline" size={iconSize.navigation} />
           <Text style={styles.pairingPrimaryText}>Scan QR code</Text>
         </Pressable>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel="Paste connection link"
+          accessibilityRole="button"
           onPress={() => void pasteCode()}
           style={styles.pairingSecondaryAction}
         >
-          <Ionicons name="clipboard-outline" size={iconSize.action} color={colors.text} />
+          <Ionicons color={colors.text} name="clipboard-outline" size={iconSize.action} />
           <Text style={styles.pairingSecondaryText}>Paste connection link</Text>
         </Pressable>
       </View>
       {error !== null && (
         <View style={styles.pairingError}>
-          <Ionicons name="alert-circle-outline" size={iconSize.action} color={colors.red} />
+          <Ionicons color={colors.red} name="alert-circle-outline" size={iconSize.action} />
           <Text style={[styles.errorText, styles.flex]}>{error}</Text>
         </View>
       )}
       <Pressable
-        accessibilityRole="button"
         accessibilityLabel="Open manual server setup"
+        accessibilityRole="button"
         onPress={() => {
           setMode("manual");
           setError(null);
@@ -62,10 +62,10 @@ export function PairingChoose({
         style={styles.pairingTextAction}
       >
         <Text style={styles.pairingTextActionLabel}>Advanced manual setup</Text>
-        <Ionicons name="chevron-forward" size={iconSize.inline} color={colors.textMuted} />
+        <Ionicons color={colors.textMuted} name="chevron-forward" size={iconSize.inline} />
       </Pressable>
       <View style={styles.pairingSafety}>
-        <Ionicons name="shield-checkmark-outline" size={iconSize.inline} color={colors.green} />
+        <Ionicons color={colors.green} name="shield-checkmark-outline" size={iconSize.inline} />
         <Text style={styles.pairingSafetyText}>
           One-time code · device-bound credentials · revocable access
         </Text>

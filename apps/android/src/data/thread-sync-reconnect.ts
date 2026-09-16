@@ -1,3 +1,4 @@
+import { appLogger } from "../observability/logger";
 import { accountRateLimitsStale } from "./account-rate-limits";
 import type { AccountRateLimitsDatabase } from "./account-rate-limits-database";
 import type { createAccountRateLimitsLoader } from "./account-rate-limits-loader";
@@ -9,37 +10,41 @@ import type { ThreadDetailDatabase } from "./thread-detail-database";
 import type { createThreadSyncRuntime } from "./thread-sync-runtime";
 /** Reconnect invalidates old history authority before scheduling independent live repair. */
 export function createThreadSyncReconnect({
-  sync,
+  accountRateLimits,
   catalog,
   details,
-  accountRateLimits,
   refreshAccountRateLimits,
+  sync,
 }: {
+  accountRateLimits: Pick<AccountRateLimitsDatabase, "get">;
+  catalog: Pick<ReturnType<typeof createCatalogRuntime>, "refreshThreadCatalog">;
+  details: Pick<ThreadDetailDatabase, "invalidateHistoryExhaustion">;
+  refreshAccountRateLimits: ReturnType<typeof createAccountRateLimitsLoader>;
   sync: Pick<
     ReturnType<typeof createThreadSyncRuntime>,
     "invalidateHistoryReads" | "desiredThreadId" | "readThread"
   >;
-  catalog: Pick<ReturnType<typeof createCatalogRuntime>, "refreshThreadCatalog">;
-  details: Pick<ThreadDetailDatabase, "invalidateHistoryExhaustion">;
-  accountRateLimits: Pick<AccountRateLimitsDatabase, "get">;
-  refreshAccountRateLimits: ReturnType<typeof createAccountRateLimitsLoader>;
 }): (row: ConnectionStateRow) => void {
   return (row) => {
     sync.invalidateHistoryReads(row.connectionId);
     details.invalidateHistoryExhaustion(row.connectionId);
     recordConnectionUsability(row);
     if (row.state === "live" && row.rpcAvailable) {
-      void flushTelemetry();
+      flushTelemetry().catch(() => undefined);
       const desiredThreadId = sync.desiredThreadId(row.connectionId);
       if (desiredThreadId !== undefined) {
-        void sync
-          .readThread(row.connectionId, desiredThreadId, undefined, true)
-          .catch((cause: unknown) => {
-            console.warn("Thread sync failed after reconnect", cause);
+        void sync.readThread(row.connectionId, desiredThreadId, undefined, true).catch(() => {
+          appLogger.warn({
+            event: "thread.reconnect_sync.failed",
+            fields: { connectionId: row.connectionId, threadId: desiredThreadId },
           });
+        });
       }
-      void catalog.refreshThreadCatalog(row.connectionId).catch((cause: unknown) => {
-        console.warn("Thread catalog repair failed after connection became live", cause);
+      void catalog.refreshThreadCatalog(row.connectionId).catch(() => {
+        appLogger.warn({
+          event: "thread_catalog.reconnect_repair.failed",
+          fields: { connectionId: row.connectionId },
+        });
       });
       if (accountRateLimitsStale(accountRateLimits.get(row.connectionId))) {
         void refreshAccountRateLimits(row.connectionId).catch(() => undefined);

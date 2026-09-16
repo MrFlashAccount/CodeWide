@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import type { useRouter } from "expo-router";
 
 import type { ConversationRouteNavigation } from "../../../../../src/features/conversation/conversationRouteNavigation";
@@ -121,32 +120,16 @@ export function useThreadRouteNavigation(
       pathname: "/v1/threads/[connectionId]/[threadId]/changes/turns/[turnId]",
     });
   });
-  // WHY: Context consumers require one stable provider value around the stable useEvent capabilities.
-  // oxlint-disable-next-line react-doctor/react-compiler-no-manual-memoization
-  return useMemo(
-    () => ({
-      openAgents,
-      openAttachments,
-      openChanges,
-      openCodeDocument,
-      openContent,
-      openDocument,
-      openDrawing,
-      openTerminal,
-      openTool,
-      openTurnChanges,
-    }),
-    [
-      openAgents,
-      openAttachments,
-      openChanges,
-      openCodeDocument,
-      openContent,
-      openDocument,
-      openDrawing,
-      openTerminal,
-      openTool,
-      openTurnChanges,
-    ],
-  );
+  return {
+    openAgents,
+    openAttachments,
+    openChanges,
+    openCodeDocument,
+    openContent,
+    openDocument,
+    openDrawing,
+    openTerminal,
+    openTool,
+    openTurnChanges,
+  };
 }

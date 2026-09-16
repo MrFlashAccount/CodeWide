@@ -3,30 +3,30 @@ import { colors, controlSize, radii, spacing, touchTarget, typeScale } from "../
 
 export const styles = StyleSheet.create({
   voiceCapture: {
+    alignItems: "center",
     flex: 1,
+    flexDirection: "row",
+    gap: spacing.inputInset,
     minHeight: touchTarget,
     paddingLeft: spacing.xxs,
     paddingVertical: spacing.xxs,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.inputInset,
-  },
-  voiceMeter: {
-    height: controlSize.compact,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs,
-  },
-  voiceMeterBar: {
-    width: 3,
-    minHeight: 4,
-    maxHeight: 24,
-    borderRadius: radii.compact,
-    backgroundColor: colors.accent,
   },
   voiceCaptureLabel: {
     color: colors.textMuted,
     ...typeScale.voiceLabel,
     fontVariant: ["tabular-nums"],
+  },
+  voiceMeter: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xxs,
+    height: controlSize.compact,
+  },
+  voiceMeterBar: {
+    backgroundColor: colors.accent,
+    borderRadius: radii.compact,
+    maxHeight: 24,
+    minHeight: 4,
+    width: 3,
   },
 });

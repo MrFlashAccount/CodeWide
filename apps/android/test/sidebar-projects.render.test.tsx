@@ -3,15 +3,14 @@ import { act, fireEvent, within } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Text, View } from "react-native";
-import { Uniwind } from "uniwind";
 import {
   SidebarProjectHeader,
   SidebarProjectRow,
   SidebarProjectsSheet,
 } from "../src/features/projects/SidebarProjects";
-import { colors } from "../src/theme";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
+import { colors } from "../src/theme";
 import { management, project, render } from "./sidebar-projects.fixture";
 
 // WHY: Node cannot mount the native bottom-sheet window. Keep the product
@@ -24,14 +23,6 @@ jest.mock("@expo/ui/community/bottom-sheet", () => {
     BottomSheetScrollView: ScrollView,
   };
 });
-jest.mock("heroui-native/portal", () => ({ PortalHost: () => null }));
-
-beforeAll(() => {
-  // WHY: Node does not run Metro's CSS registration; retain HeroUI's declared default theme.
-  for (const theme of Uniwind.themes)
-    Uniwind.updateCSSVariables(theme, { "--theme": "default", "--color-muted": colors.textMuted });
-});
-
 function ProjectNavigation() {
   const [open, setOpen] = useState(false);
   return (

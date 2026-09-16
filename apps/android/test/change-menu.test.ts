@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { changeScopeMenuActions, codeReviewMenuActions } from "../src/rendering/change-menu";
+import { codeReviewMenuActions } from "../src/features/review/workspace/codeReviewMenu";
+import { changeScopeMenuActions } from "../src/rendering/change-menu";
 
 const scopes = ["session", "lastTurn", "staged", "unstaged", "branch"] as const;
 
@@ -16,7 +17,14 @@ describe("Changes menus", () => {
   });
 
   it("keeps layout and display controls in the code review menu", () => {
-    expect(codeReviewMenuActions(scopes, "branch", "split", true)).toEqual([
+    expect(
+      codeReviewMenuActions({
+        mode: "split",
+        scopes,
+        selectedScope: "branch",
+        wrapLines: true,
+      }),
+    ).toEqual([
       { id: "scope:session", section: "Changes", label: "Session", selected: false },
       { id: "scope:lastTurn", section: "Changes", label: "Last turn", selected: false },
       { id: "scope:staged", section: "Changes", label: "Staged", selected: false },

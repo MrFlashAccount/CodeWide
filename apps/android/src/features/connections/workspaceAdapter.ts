@@ -26,31 +26,30 @@ import {
 import type { ConnectionsWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts connections intents using retained lower authorities. */
 export function createConnectionsWorkspaceAdapter({
-  getProfiles,
-  getConnectionState,
-  getThreadUiState,
-  getAccountRateLimits,
-  getSession,
-  forgetObservedThread,
-  invalidateCatalog,
   closeCatalogWindows,
   currentConnections,
   forgetHttpAuthorization,
+  forgetObservedThread,
+  getAccountRateLimits,
+  getConnectionState,
+  getProfiles,
+  getSession,
+  getThreadUiState,
+  invalidateCatalog,
 }: {
-  getProfiles(): ConnectionProfileDatabase | null;
-  getConnectionState(): ConnectionStateModel | null;
-  getThreadUiState(): ThreadUiStateDatabase | null;
-  getAccountRateLimits(): AccountRateLimitsDatabase | null;
-  getSession(connectionId: string): WorkspaceSyncSession | undefined;
-  forgetObservedThread(connectionId: string): void;
-  invalidateCatalog(connectionId: string): void;
-  closeCatalogWindows(connectionId: string): void;
+  closeCatalogWindows: (connectionId: string) => void;
   currentConnections: () => StoredConnection[];
   forgetHttpAuthorization: (connectionId: string) => void;
+  forgetObservedThread: (connectionId: string) => void;
+  getAccountRateLimits: () => AccountRateLimitsDatabase | null;
+  getConnectionState: () => ConnectionStateModel | null;
+  getProfiles: () => ConnectionProfileDatabase | null;
+  getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
+  getThreadUiState: () => ThreadUiStateDatabase | null;
+  invalidateCatalog: (connectionId: string) => void;
 }): ConnectionsWorkspaceCapabilities {
-  const refreshConnectionProfiles = async (): Promise<StoredConnection[]> => {
-    return await requireConnectionProfileDatabase(getProfiles()).hydrate();
-  };
+  const refreshConnectionProfiles = async (): Promise<StoredConnection[]> =>
+    requireConnectionProfileDatabase(getProfiles()).hydrate();
   const addConnection = async (input: ConnectionInput) => {
     // Pairing consumes a one-time host token. Prove that the durable local
     // projection is available before crossing that irreversible boundary.
@@ -61,19 +60,19 @@ export function createConnectionsWorkspaceAdapter({
     const validated = validateConnectionInput(input);
     const connectionId = `saved-server-${randomUUID()}`;
     const claimed = await claimNativePairing({
-      savedServerId: connectionId,
+      deviceName: "CodeWide Android",
       endpoint: validated.endpoint,
       pairingToken: validated.token,
-      deviceName: "CodeWide Android",
+      savedServerId: connectionId,
       tlsPinSha256: validated.tlsPinSha256,
     });
     const nativeCredentials = {
       connectionId,
-      endpoint: validated.endpoint,
-      token: claimed.capabilityToken,
-      enabled: true,
-      tlsPinSha256: validated.tlsPinSha256,
       deviceId: claimed.deviceId,
+      enabled: true,
+      endpoint: validated.endpoint,
+      tlsPinSha256: validated.tlsPinSha256,
+      token: claimed.capabilityToken,
     };
     try {
       await saveNativeConnectionCredentials(nativeCredentials);
@@ -85,7 +84,7 @@ export function createConnectionsWorkspaceAdapter({
       await refreshConnectionProfiles();
       getConnectionState()?.setState(connection.id, "connecting", null, false);
       return connection;
-    } catch (cause) {
+    } catch (error) {
       // A successful claim cannot be rolled back. Retain/retry the native
       // capability, then rebuild the disposable UI projection from Kotlin.
       // This also recovers a write that committed before reporting an error.
@@ -104,7 +103,7 @@ export function createConnectionsWorkspaceAdapter({
         // Preserve the original pairing failure below. Startup reconciliation
         // gets another chance if the native credential write did persist.
       }
-      throw cause;
+      throw error;
     }
   };
 
@@ -129,19 +128,28 @@ export function createConnectionsWorkspaceAdapter({
     const profiles = requireConnectionProfileDatabase(getProfiles());
     await setNativeConnectionEnabled(connectionId, enabled);
     await profiles.setEnabled(connectionId, enabled);
-    if (!enabled) getSession(connectionId)?.stop();
-    if (!enabled) forgetObservedThread(connectionId);
-    if (!enabled) closeCatalogWindows(connectionId);
+    if (!enabled) {
+      getSession(connectionId)?.stop();
+    }
+    if (!enabled) {
+      forgetObservedThread(connectionId);
+    }
+    if (!enabled) {
+      closeCatalogWindows(connectionId);
+    }
     await refreshConnectionProfiles();
     getConnectionState()?.setState(connectionId, enabled ? "connecting" : "offline", null, false);
   };
 
   const reconnectConnection = async (connectionId: string): Promise<void> => {
-    const connection = currentConnections().find((candidate) => candidate.id === connectionId);
-    if (connection === undefined || !connection.enabled)
-      throw new Error("Connection is disabled or missing");
-    getConnectionState()?.setState(connectionId, "connecting", null, false);
-    reconnectNativeConnection(connectionId);
+    await Promise.resolve().then(() => {
+      const connection = currentConnections().find((candidate) => candidate.id === connectionId);
+      if (connection === undefined || !connection.enabled) {
+        throw new Error("Connection is disabled or missing");
+      }
+      getConnectionState()?.setState(connectionId, "connecting", null, false);
+      reconnectNativeConnection(connectionId);
+    });
   };
 
   const updateConnectionProfile = async (
@@ -170,7 +178,9 @@ export function createConnectionsWorkspaceAdapter({
       ...(updated.tlsPinSha256 === undefined ? {} : { tlsPinSha256: updated.tlsPinSha256 }),
     });
     await profiles.update(connectionId, updated);
-    if (enabled) wakeNativeConnection(connectionId);
+    if (enabled) {
+      wakeNativeConnection(connectionId);
+    }
     forgetHttpAuthorization(connectionId);
     await refreshConnectionProfiles();
     getConnectionState()?.setState(connectionId, "connecting", null, false);
@@ -183,16 +193,18 @@ export function createConnectionsWorkspaceAdapter({
   return {
     addConnection,
     deleteConnection,
-    setConnectionEnabled,
-    reconnectConnection,
-    updateConnectionProfile,
-    updateConnection,
     moveConnection,
+    reconnectConnection,
+    setConnectionEnabled,
+    updateConnection,
+    updateConnectionProfile,
   };
 }
 function requireConnectionProfileDatabase(
   database: ConnectionProfileDatabase | null,
 ): ConnectionProfileDatabase {
-  if (database === null) throw new Error("Local connection profiles are not ready");
+  if (database === null) {
+    throw new Error("Local connection profiles are not ready");
+  }
   return database;
 }

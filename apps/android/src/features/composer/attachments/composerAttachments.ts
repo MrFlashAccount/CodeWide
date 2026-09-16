@@ -6,86 +6,86 @@ import { useLargePasteActions } from "./largePaste";
 import { useReviewAdmission } from "./reviewAdmission";
 /** Composes the existing ComposerAttachments owners without adding state or lifecycle policy. */
 export function useComposerAttachments({
+  attachmentCount,
+  captureDraftMutations,
   composerScope,
   composerUploadScope,
-  draftConnectionId,
-  draftThreadId,
-  getTransferAccess,
-  getStableTransferAccess,
-  queuedComposerEdit,
-  upsertDraftAttachment,
-  latestAttachmentsRef,
-  captureDraftMutations,
-  fileTransferController,
-  attachmentCount,
-  setComposerTrayVisible,
-  dismissComposerKeyboardForOverlay,
   contentReviewAttachmentId,
-  setContentReviewAttachmentId,
-  latestDraftRef,
+  dismissComposerKeyboardForOverlay,
+  draftConnectionId,
   draftSelectionRef,
-  voiceController,
-  setPastedAttachmentPending,
-  pastedAttachmentPendingRef,
+  draftThreadId,
+  fileTransferController,
+  getStableTransferAccess,
+  getTransferAccess,
   largePasteOperationRef,
-  updateAttachments,
+  latestAttachmentsRef,
+  latestDraftRef,
+  pastedAttachmentPendingRef,
+  queuedComposerEdit,
   removeDraftAttachment,
+  setComposerTrayVisible,
+  setContentReviewAttachmentId,
+  setPastedAttachmentPending,
+  updateAttachments,
+  upsertDraftAttachment,
+  voiceController,
 }: {
+  attachmentCount: Parameters<typeof useAttachmentAdmission>[0]["attachmentCount"];
+  captureDraftMutations: Parameters<typeof useLargePasteActions>[0]["captureDraftMutations"];
   composerScope: Parameters<typeof useAttachmentRemoval>[0]["composerScope"];
   composerUploadScope: Parameters<typeof useAttachmentRemoval>[0]["composerUploadScope"];
-  draftConnectionId: Parameters<typeof useAttachmentRemoval>[0]["draftConnectionId"];
-  draftThreadId: Parameters<typeof useAttachmentRemoval>[0]["draftThreadId"];
-  getTransferAccess: Parameters<typeof useAttachmentAdmission>[0]["getTransferAccess"];
-  getStableTransferAccess: Parameters<typeof useAttachmentAdmission>[0]["getStableTransferAccess"];
-  queuedComposerEdit: Parameters<typeof useAttachmentRemoval>[0]["queuedComposerEdit"];
-  upsertDraftAttachment: Parameters<typeof useAttachmentAdmission>[0]["upsertDraftAttachment"];
-  latestAttachmentsRef: Parameters<typeof useAttachmentRemoval>[0]["latestAttachmentsRef"];
-  captureDraftMutations: Parameters<typeof useLargePasteActions>[0]["captureDraftMutations"];
-  fileTransferController: Parameters<typeof useAttachmentAdmission>[0]["fileTransferController"];
-  attachmentCount: Parameters<typeof useAttachmentAdmission>[0]["attachmentCount"];
-  setComposerTrayVisible: Parameters<typeof useAttachmentAdmission>[0]["setComposerTrayVisible"];
-  dismissComposerKeyboardForOverlay: Parameters<
-    typeof useAttachmentAdmission
-  >[0]["dismissComposerKeyboardForOverlay"];
   contentReviewAttachmentId: Parameters<
     typeof useAttachmentRemoval
   >[0]["contentReviewAttachmentId"];
-  setContentReviewAttachmentId: Parameters<
-    typeof useAttachmentRemoval
-  >[0]["setContentReviewAttachmentId"];
-  latestDraftRef: Parameters<typeof useLargePasteActions>[0]["latestDraftRef"];
+  dismissComposerKeyboardForOverlay: Parameters<
+    typeof useAttachmentAdmission
+  >[0]["dismissComposerKeyboardForOverlay"];
+  draftConnectionId: Parameters<typeof useAttachmentRemoval>[0]["draftConnectionId"];
   draftSelectionRef: Parameters<typeof useLargePasteActions>[0]["draftSelectionRef"];
-  voiceController: Parameters<typeof useLargePasteActions>[0]["voiceController"];
-  setPastedAttachmentPending: Parameters<
-    typeof useLargePasteActions
-  >[0]["setPastedAttachmentPending"];
+  draftThreadId: Parameters<typeof useAttachmentRemoval>[0]["draftThreadId"];
+  fileTransferController: Parameters<typeof useAttachmentAdmission>[0]["fileTransferController"];
+  getStableTransferAccess: Parameters<typeof useAttachmentAdmission>[0]["getStableTransferAccess"];
+  getTransferAccess: Parameters<typeof useAttachmentAdmission>[0]["getTransferAccess"];
+  largePasteOperationRef: Parameters<typeof useLargePasteActions>[0]["largePasteOperationRef"];
+  latestAttachmentsRef: Parameters<typeof useAttachmentRemoval>[0]["latestAttachmentsRef"];
+  latestDraftRef: Parameters<typeof useLargePasteActions>[0]["latestDraftRef"];
   pastedAttachmentPendingRef: Parameters<
     typeof useLargePasteActions
   >[0]["pastedAttachmentPendingRef"];
-  largePasteOperationRef: Parameters<typeof useLargePasteActions>[0]["largePasteOperationRef"];
-  updateAttachments: Parameters<typeof useAttachmentRemoval>[0]["updateAttachments"];
+  queuedComposerEdit: Parameters<typeof useAttachmentRemoval>[0]["queuedComposerEdit"];
   removeDraftAttachment: Parameters<typeof useAttachmentRemoval>[0]["removeDraftAttachment"];
+  setComposerTrayVisible: Parameters<typeof useAttachmentAdmission>[0]["setComposerTrayVisible"];
+  setContentReviewAttachmentId: Parameters<
+    typeof useAttachmentRemoval
+  >[0]["setContentReviewAttachmentId"];
+  setPastedAttachmentPending: Parameters<
+    typeof useLargePasteActions
+  >[0]["setPastedAttachmentPending"];
+  updateAttachments: Parameters<typeof useAttachmentRemoval>[0]["updateAttachments"];
+  upsertDraftAttachment: Parameters<typeof useAttachmentAdmission>[0]["upsertDraftAttachment"];
+  voiceController: Parameters<typeof useLargePasteActions>[0]["voiceController"];
 }) {
   const {
-    fileAttachmentEnabled,
     captureStageAttachment,
     captureUploadAttachment,
+    fileAttachmentEnabled,
     pickComposerAttachment,
   } = useAttachmentAdmission({
+    attachmentCount,
+    captureDraftMutations,
     composerScope,
     composerUploadScope,
+    dismissComposerKeyboardForOverlay,
     draftConnectionId,
     draftThreadId,
-    getTransferAccess,
-    getStableTransferAccess,
-    queuedComposerEdit,
-    upsertDraftAttachment,
-    latestAttachmentsRef,
-    captureDraftMutations,
     fileTransferController,
-    attachmentCount,
+    getStableTransferAccess,
+    getTransferAccess,
+    latestAttachmentsRef,
+    queuedComposerEdit,
     setComposerTrayVisible,
-    dismissComposerKeyboardForOverlay,
+    upsertDraftAttachment,
   });
   const reviewAdmission = useReviewAdmission(
     composerScope,
@@ -94,7 +94,7 @@ export function useComposerAttachments({
     captureUploadAttachment,
     setContentReviewAttachmentId,
   );
-  const admitContentReview = useEvent((selected: SelectedUpload) =>
+  const admitContentReview = useEvent(async (selected: SelectedUpload) =>
     reviewAdmission.admitContentReview(selected, () => latestAttachmentsRef.current.latest),
   );
   const { readDrawingAttachments } = useDrawingAttachmentRead(
@@ -102,38 +102,38 @@ export function useComposerAttachments({
     latestAttachmentsRef,
   );
   const { handleComposerLargePaste } = useLargePasteActions({
-    composerScope,
-    draftConnectionId,
-    draftThreadId,
-    latestDraftRef,
-    draftSelectionRef,
-    voiceController,
     captureDraftMutations,
     captureStageAttachment,
-    setPastedAttachmentPending,
-    pastedAttachmentPendingRef,
+    composerScope,
+    draftConnectionId,
+    draftSelectionRef,
+    draftThreadId,
     largePasteOperationRef,
+    latestDraftRef,
+    pastedAttachmentPendingRef,
+    setPastedAttachmentPending,
+    voiceController,
   });
   const { removeComposerAttachment } = useAttachmentRemoval({
+    composerScope,
     composerUploadScope,
-    queuedComposerEdit,
-    updateAttachments,
-    latestAttachmentsRef,
+    contentReviewAttachmentId,
     draftConnectionId,
     draftThreadId,
+    latestAttachmentsRef,
+    queuedComposerEdit,
     removeDraftAttachment,
-    contentReviewAttachmentId,
     setContentReviewAttachmentId,
-    composerScope,
+    updateAttachments,
   });
   return {
-    reviewAdmission,
     admitContentReview,
-    fileAttachmentEnabled,
-    readDrawingAttachments,
     captureStageAttachment,
-    pickComposerAttachment,
-    removeComposerAttachment,
+    fileAttachmentEnabled,
     handleComposerLargePaste,
+    pickComposerAttachment,
+    readDrawingAttachments,
+    removeComposerAttachment,
+    reviewAdmission,
   };
 }

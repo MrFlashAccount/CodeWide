@@ -11,7 +11,7 @@ import {
 export async function loadQuickdrawImageSnapshot(
   source: QuickdrawImageSource,
 ): Promise<QuickdrawImageSnapshot> {
-  const [{ width, height }, dataUrl] = await Promise.all([
+  const [{ height, width }, dataUrl] = await Promise.all([
     source.headers === undefined
       ? Image.getSize(source.uri)
       : Image.getSizeWithHeaders(source.uri, source.headers),
@@ -21,7 +21,9 @@ export async function loadQuickdrawImageSnapshot(
 }
 
 async function readImageDataUrl(source: QuickdrawImageSource): Promise<string> {
-  if (source.uri.startsWith("data:image/")) return source.uri;
+  if (source.uri.startsWith("data:image/")) {
+    return source.uri;
+  }
   if (source.uri.startsWith("file:") || source.uri.startsWith("content:")) {
     const bytes = await new File(source.uri).bytes();
     return imageDataUrl(bytes, null, source.uri);
@@ -30,7 +32,9 @@ async function readImageDataUrl(source: QuickdrawImageSource): Promise<string> {
     source.uri,
     source.headers === undefined ? {} : { headers: source.headers },
   );
-  if (!response.ok) throw new Error(`Image could not be opened (${response.status})`);
+  if (!response.ok) {
+    throw new Error(`Image could not be opened (${String(response.status)})`);
+  }
   return imageDataUrl(
     new Uint8Array(await response.arrayBuffer()),
     response.headers.get("content-type"),

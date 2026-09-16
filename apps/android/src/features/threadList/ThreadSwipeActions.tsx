@@ -1,5 +1,5 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { colors, iconSize, layoutSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
@@ -19,15 +19,15 @@ export function ThreadSwipeActions({ children }: { children: ReactNode }) {
 }
 
 export function ThreadSwipeAction({
-  label,
   icon,
-  tone,
+  label,
   onPress,
+  tone,
 }: {
-  label: string;
   icon: keyof typeof Ionicons.glyphMap | "push-pin";
+  label: string;
+  onPress?: () => void;
   tone: "neutral" | "accent" | "danger";
-  onPress?(): void;
 }) {
   const foreground =
     tone === "neutral"
@@ -50,9 +50,9 @@ export function ThreadSwipeAction({
       ]}
     >
       {icon === "push-pin" ? (
-        <MaterialIcons name="push-pin" size={iconSize.action} color={foreground} />
+        <MaterialIcons color={foreground} name="push-pin" size={iconSize.action} />
       ) : (
-        <Ionicons name={icon} size={iconSize.action} color={foreground} />
+        <Ionicons color={foreground} name={icon} size={iconSize.action} />
       )}
       <Text style={[styles.swipeActionText, { color: foreground }]}>{label}</Text>
     </Pressable>
@@ -60,6 +60,17 @@ export function ThreadSwipeAction({
 }
 
 const styles = StyleSheet.create({
+  swipeAction: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    gap: spacing.xxs,
+    justifyContent: "center",
+    width: THREAD_SWIPE_ACTION_WIDTH,
+  },
+  swipeActionAccent: { backgroundColor: colors.primary },
+  swipeActionDanger: { backgroundColor: colors.errorContainer },
+  swipeActionNeutral: { backgroundColor: colors.surfaceContainerHigh },
+  swipeActionPressed: { opacity: 0.72 },
   swipeActionsRight: {
     flexDirection: "row",
     height: "100%",
@@ -73,17 +84,6 @@ const styles = StyleSheet.create({
     paddingLeft: THREAD_SWIPE_UNDERLAY_OVERLAP,
     width: THREAD_SWIPE_ACTIONS_WIDTH + THREAD_SWIPE_UNDERLAY_OVERLAP,
   },
-  swipeAction: {
-    alignSelf: "stretch",
-    width: THREAD_SWIPE_ACTION_WIDTH,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.xxs,
-  },
-  swipeActionNeutral: { backgroundColor: colors.surfaceContainerHigh },
-  swipeActionAccent: { backgroundColor: colors.primary },
-  swipeActionDanger: { backgroundColor: colors.errorContainer },
-  swipeActionPressed: { opacity: 0.72 },
   swipeActionText: {
     ...typeScale.label,
     fontWeight: typeWeight.semibold,

@@ -7,37 +7,39 @@ import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AccountPoolFeature.styles";
 
 export function AccountLoginSheet({
-  userCode,
-  codeCopied,
-  loginActionBusy,
   closeAccountLogin,
+  codeCopied,
   copyAccountCode,
+  loginActionBusy,
   openAccountSignIn,
+  userCode,
 }: {
-  userCode: string;
+  closeAccountLogin: () => void;
   codeCopied: boolean;
+  copyAccountCode: () => Promise<void>;
   loginActionBusy: boolean;
-  closeAccountLogin(): void;
-  copyAccountCode(): Promise<void>;
-  openAccountSignIn(): Promise<void>;
+  openAccountSignIn: () => Promise<void>;
+  userCode: string;
 }) {
   return (
     <AppSheet
-      isOpen
-      onOpenChange={(open) => {
-        if (!open) closeAccountLogin();
-      }}
       contentProps={{
         dismissLabel: "Close Codex account sign-in",
-        index: 0,
         enableDynamicSizing: true,
         enableOverDrag: false,
+        index: 0,
+      }}
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) {
+          closeAccountLogin();
+        }
       }}
     >
       <View style={styles.accountLoginSheet}>
         <View style={styles.accountLoginHeader}>
           <View style={styles.accountLoginIcon}>
-            <Ionicons name="people-outline" size={iconSize.action} color={colors.primary} />
+            <Ionicons color={colors.primary} name="people-outline" size={iconSize.action} />
           </View>
           <View style={styles.flex}>
             <Text style={styles.accountLoginTitle}>Connect Codex account</Text>
@@ -54,15 +56,15 @@ export function AccountLoginSheet({
             </Text>
           </View>
           <Pressable
-            accessibilityRole="button"
             accessibilityLabel="Copy one-time Codex sign-in code"
+            accessibilityRole="button"
             onPress={() => void copyAccountCode()}
             style={[styles.accountLoginCopyButton, codeCopied && styles.accountLoginCopyButtonDone]}
           >
             <Ionicons
+              color={codeCopied ? colors.green : colors.text}
               name={codeCopied ? "checkmark" : "copy-outline"}
               size={iconSize.inline}
-              color={codeCopied ? colors.green : colors.text}
             />
             <Text
               style={[styles.accountLoginCopyLabel, codeCopied && styles.accountLoginCopyLabelDone]}
@@ -86,9 +88,9 @@ export function AccountLoginSheet({
           ]}
         >
           {loginActionBusy ? (
-            <ActivityIndicator size="small" color={colors.onPrimary} />
+            <ActivityIndicator color={colors.onPrimary} size="small" />
           ) : (
-            <Ionicons name="open-outline" size={iconSize.action} color={colors.onPrimary} />
+            <Ionicons color={colors.onPrimary} name="open-outline" size={iconSize.action} />
           )}
           <Text style={styles.primaryButtonText}>
             {loginActionBusy ? "Opening…" : "Open sign-in"}

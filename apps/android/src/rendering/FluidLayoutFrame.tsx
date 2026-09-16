@@ -10,7 +10,9 @@ interface FluidLayoutProps extends ViewProps {
 }
 
 const NativeFrame =
-  Platform.OS === "android" && UIManager.getViewManagerConfig("CodeWideFluidLayout") != null
+  // WHY: OTA JavaScript can run on an older native shell where the typed view manager is absent at runtime.
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
+  Platform.OS === "android" && UIManager.getViewManagerConfig("CodeWideFluidLayout") !== null
     ? requireNativeComponent<FluidLayoutProps>("CodeWideFluidLayout")
     : null;
 

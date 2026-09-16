@@ -23,8 +23,12 @@ export function applyThreadSummaryMetadata(
   thread: Thread | null,
   summary: StoredThreadSummary | null,
 ): Thread | null {
-  if (thread === null || summary === null || summary.remoteThreadId !== thread.id) return thread;
-  if (threadMetadataMatchesSummary(thread, summary)) return thread;
+  if (thread === null || summary === null || summary.remoteThreadId !== thread.id) {
+    return thread;
+  }
+  if (threadMetadataMatchesSummary(thread, summary)) {
+    return thread;
+  }
   const cached = metadataProjectionCache.get(thread);
   if (
     cached !== undefined &&
@@ -34,14 +38,14 @@ export function applyThreadSummaryMetadata(
   }
   const value: Thread = {
     ...thread,
-    name: summary.name,
-    preview: summary.preview,
-    cwd: summary.cwd,
-    updatedAt: summary.updatedAt,
-    recencyAt: summary.recencyAt,
-    parentThreadId: summary.parentThreadId,
     agentNickname: summary.agentNickname ?? null,
     agentRole: summary.agentRole ?? null,
+    cwd: summary.cwd,
+    name: summary.name,
+    parentThreadId: summary.parentThreadId,
+    preview: summary.preview,
+    recencyAt: summary.recencyAt,
+    updatedAt: summary.updatedAt,
   };
   metadataProjectionCache.set(thread, { summary, value });
   return value;

@@ -6,7 +6,9 @@ export function visibleRatioWithinViewport(
   viewportY: number,
   viewportHeight: number,
 ): number {
-  if (itemHeight <= 0 || viewportHeight <= 0) return 0;
+  if (itemHeight <= 0 || viewportHeight <= 0) {
+    return 0;
+  }
   const visibleTop = Math.max(itemY, viewportY);
   const visibleBottom = Math.min(itemY + itemHeight, viewportY + viewportHeight);
   const visibleHeight = Math.max(0, visibleBottom - visibleTop);
@@ -29,7 +31,11 @@ export function claimUnreadReceipt(
   acknowledgedReceiptKey: string | null,
   requestedReceiptKey: string,
 ): string | null {
-  if (currentReceiptKey !== requestedReceiptKey) return null;
-  if (acknowledgedReceiptKey === requestedReceiptKey) return null;
+  if (currentReceiptKey !== requestedReceiptKey) {
+    return null;
+  }
+  if (acknowledgedReceiptKey === requestedReceiptKey) {
+    return null;
+  }
   return requestedReceiptKey;
 }

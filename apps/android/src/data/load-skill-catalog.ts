@@ -7,15 +7,15 @@ import {
 import type { CatalogSkill, InstalledSkillPlugin, SkillPlugin } from "./skill-catalog-types";
 
 type SkillCatalogReader = {
-  skills(): Promise<unknown>;
-  installedPlugins(): Promise<unknown>;
-  plugin(input: InstalledSkillPlugin): Promise<unknown>;
+  installedPlugins: () => Promise<unknown>;
+  plugin: (input: InstalledSkillPlugin) => Promise<unknown>;
+  skills: () => Promise<unknown>;
 };
 
 async function readPluginMembership(
   reader: SkillCatalogReader,
   signal: AbortSignal,
-): Promise<{ paths: Map<string, SkillPlugin>; complete: boolean }> {
+): Promise<{ complete: boolean; paths: Map<string, SkillPlugin> }> {
   const paths = new Map<string, SkillPlugin>();
   const ambiguous = new Set<string>();
   const plugins = parseInstalledSkillPlugins(await reader.installedPlugins());
@@ -24,7 +24,9 @@ async function readPluginMembership(
   const worker = async () => {
     while (!signal.aborted && next < plugins.length) {
       const plugin = plugins[next++];
-      if (plugin === undefined) return;
+      if (plugin === undefined) {
+        return;
+      }
       try {
         for (const path of parsePluginSkillPaths(await reader.plugin(plugin))) {
           const previous = paths.get(path);
@@ -43,13 +45,13 @@ async function readPluginMembership(
     }
   };
   await Promise.all([worker(), worker(), worker(), worker()]);
-  return { paths, complete };
+  return { complete, paths };
 }
 
 /** Decoration has its own budget so it cannot consume the controls loader's 12s deadline. */
 export async function loadSkillCatalog(
   reader: SkillCatalogReader,
-  metadataBudgetMs = 3_000,
+  metadataBudgetMs = 3000,
 ): Promise<CatalogSkill[]> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -3,14 +3,14 @@ import { colors, spacing, typeScale } from "../../../theme";
 
 export const styles = StyleSheet.create({
   agentMarkdownDocument: {
-    minWidth: 0,
-    maxWidth: "100%",
     alignSelf: "flex-start",
     gap: spacing.xxs,
+    maxWidth: "100%",
+    minWidth: 0,
   },
   agentMarkdownDocumentFill: {
-    width: "100%",
     alignSelf: "stretch",
+    width: "100%",
   },
   errorText: {
     color: colors.red,

@@ -1,4 +1,4 @@
-import { type RenderBlock } from "@codewide/renderers";
+import type { RenderBlock } from "@codewide/renderers";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { formatDuration } from "../../../ui/number-format";
 import { AppText as Text } from "../../../ui/Typography";
@@ -13,15 +13,15 @@ import { ProtocolBody } from "./ToolContent";
 export function renderProtocolFallback(
   block: RenderBlock,
   displayTitle: string,
-  getTransferAccess: (() => Promise<{ baseUrl: string; authorization: string }>) | undefined,
+  getTransferAccess: (() => Promise<{ authorization: string; baseUrl: string }>) | undefined,
 ) {
   return (
     <Card
-      title={displayTitle}
       icon={protocolIcon(block.kind)}
+      title={displayTitle}
       {...(block.status === null ? {} : { status: block.status })}
-      copyText={() => protocolCopyText(block)}
       collapsible={block.collapsible}
+      copyText={() => protocolCopyText(block)}
       initiallyExpanded={
         !isToolActivityKind(block.kind) &&
         (block.status === "inProgress" || block.status === "running")

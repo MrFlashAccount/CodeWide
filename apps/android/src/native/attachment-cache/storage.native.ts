@@ -15,12 +15,16 @@ const KEY = /^[a-f0-9]{64}$/u;
 /** Only digests and byte/access counters are persisted alongside attachment bytes. */
 export class ExpoAttachmentStorage implements AttachmentStorage {
   private root(): string {
-    if (cacheDirectory === null) throw new Error("Attachment cache is unavailable");
+    if (cacheDirectory === null) {
+      throw new Error("Attachment cache is unavailable");
+    }
     return `${cacheDirectory}codewide-attachments-v1/`;
   }
 
   uri(key: string): string {
-    if (!KEY.test(key)) throw new Error("Invalid attachment cache key");
+    if (!KEY.test(key)) {
+      throw new Error("Invalid attachment cache key");
+    }
     return `${this.root()}${key}.bin`;
   }
 
@@ -30,9 +34,13 @@ export class ExpoAttachmentStorage implements AttachmentStorage {
     const names = await readDirectoryAsync(this.root());
     const valid = new Set<string>();
     for (const name of names) {
-      if (!name.endsWith(".json")) continue;
+      if (!name.endsWith(".json")) {
+        continue;
+      }
       const key = name.slice(0, -5);
-      if (!KEY.test(key)) continue;
+      if (!KEY.test(key)) {
+        continue;
+      }
       try {
         const value: unknown = JSON.parse(await readAsStringAsync(`${this.root()}${name}`));
         const entry = parseEntry(value, key);
@@ -46,10 +54,14 @@ export class ExpoAttachmentStorage implements AttachmentStorage {
       }
     }
     for (const name of names) {
-      if (!valid.has(name)) await deleteAsync(`${this.root()}${name}`, { idempotent: true });
+      if (!valid.has(name)) {
+        await deleteAsync(`${this.root()}${name}`, { idempotent: true });
+      }
     }
     // The obsolete image cache has no retention owner. A cold runtime holds no URIs into it.
-    await deleteAsync(`${cacheDirectory}codex-remote-private-images-v2`, { idempotent: true });
+    await deleteAsync(`${String(cacheDirectory)}codex-remote-private-images-v2`, {
+      idempotent: true,
+    });
     return restored;
   }
 
@@ -72,7 +84,9 @@ export class ExpoAttachmentStorage implements AttachmentStorage {
 }
 
 function parseEntry(value: unknown, key: string): CachedAttachment | null {
-  if (value === null || typeof value !== "object") return null;
+  if (value === null || typeof value !== "object") {
+    return null;
+  }
   const bytes: unknown = Reflect.get(value, "bytes");
   const touchedAt: unknown = Reflect.get(value, "touchedAt");
   if (
@@ -81,7 +95,8 @@ function parseEntry(value: unknown, key: string): CachedAttachment | null {
     bytes < 0 ||
     typeof touchedAt !== "number" ||
     !Number.isFinite(touchedAt)
-  )
+  ) {
     return null;
-  return { key, bytes, touchedAt };
+  }
+  return { bytes, key, touchedAt };
 }

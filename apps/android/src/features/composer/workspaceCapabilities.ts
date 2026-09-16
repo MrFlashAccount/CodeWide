@@ -12,52 +12,61 @@ import type { VoiceTranscriptionListener } from "../../data/voice-transport";
 import type { TurnControlsValue } from "../../data/workspace-resource-database";
 /** Qualified composer operations; transport and persisted state stay with their existing lower owners. */
 export type ComposerWorkspaceCapabilities = {
-  loadDraft(connectionId: string, threadId: string): Promise<string>;
-  saveDraft(connectionId: string, threadId: string, text: string): Promise<void>;
-  loadDraftAttachments(connectionId: string, threadId: string): Promise<StoredDraftAttachment[]>;
-  saveDraftAttachments(
+  loadComposerPreferences: (
     connectionId: string,
     threadId: string,
-    attachments: StoredDraftAttachment[],
-  ): Promise<void>;
-  upsertDraftAttachment(
+  ) => Promise<StoredComposerPreferences | null>;
+  loadDraft: (connectionId: string, threadId: string) => Promise<string>;
+  loadDraftAttachments: (
     connectionId: string,
     threadId: string,
-    attachment: StoredDraftAttachment,
-    isCurrent: () => boolean,
-  ): Promise<void>;
-  removeDraftAttachment(
+  ) => Promise<StoredDraftAttachment[]>;
+  loadTurnControls: (connectionId: string, cwd: string) => Promise<TurnControlsValue>;
+  removeDraftAttachment: (
     connectionId: string,
     threadId: string,
     attachmentId: string,
-  ): Promise<void>;
-  loadComposerPreferences(
-    connectionId: string,
-    threadId: string,
-  ): Promise<StoredComposerPreferences | null>;
-  saveComposerPreferences(
+  ) => Promise<void>;
+  retryFailedMessage: (connectionId: string, commandId: string) => Promise<void>;
+  saveComposerPreferences: (
     connectionId: string,
     threadId: string,
     preferences: StoredComposerPreferences,
-  ): Promise<void>;
-  updateThreadSettings(
+  ) => Promise<void>;
+  saveDraft: (connectionId: string, threadId: string, text: string) => Promise<void>;
+  saveDraftAttachments: (
     connectionId: string,
     threadId: string,
-    settings: ThreadSettings,
-  ): Promise<void>;
-  sendText(
+    attachments: StoredDraftAttachment[],
+  ) => Promise<void>;
+  // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+  // oxlint-disable-next-line eslint/max-params
+  sendText: (
     connectionId: string,
     threadId: string,
     text: string,
     mode?: SendMode,
     options?: TurnSendOptions,
-  ): Promise<string>;
-  retryFailedMessage(connectionId: string, commandId: string): Promise<void>;
-  loadTurnControls(connectionId: string, cwd: string): Promise<TurnControlsValue>;
-  startVoiceTranscription(
+  ) => Promise<string>;
+  // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+  // oxlint-disable-next-line eslint/max-params
+  startVoiceTranscription: (
     connectionId: string,
     threadId: string,
     listener: VoiceTranscriptionListener,
     options?: VoiceTranscriptionOptions,
-  ): Promise<VoiceTranscriptionSession>;
+  ) => Promise<VoiceTranscriptionSession>;
+  updateThreadSettings: (
+    connectionId: string,
+    threadId: string,
+    settings: ThreadSettings,
+  ) => Promise<void>;
+  // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
+  // oxlint-disable-next-line eslint/max-params
+  upsertDraftAttachment: (
+    connectionId: string,
+    threadId: string,
+    attachment: StoredDraftAttachment,
+    isCurrent: () => boolean,
+  ) => Promise<void>;
 };

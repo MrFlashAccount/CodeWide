@@ -7,8 +7,8 @@ import { listRowHeight, type AppListRowProps } from "./AppListRow.types";
 
 const contentStyles = StyleSheet.create({
   actions: {
-    flexDirection: "row",
     alignItems: "center",
+    flexDirection: "row",
   },
   primary: {
     flex: 1,
@@ -25,14 +25,14 @@ export function AppListRowContent(props: AppListRowProps) {
       style={[
         styles.surface,
         styles[position],
-        props.selected && styles.selected,
-        props.disabled && styles.disabled,
+        props.selected === true && styles.selected,
+        props.disabled === true && styles.disabled,
       ]}
     >
       <View style={contentStyles.actions}>
         <Pressable
-          testID={props.testID}
-          accessible={props.onPress !== undefined}
+          accessibilityHint={props.accessibilityHint}
+          accessibilityLabel={props.accessibilityLabel ?? props.title}
           accessibilityRole={
             props.onPress === undefined
               ? undefined
@@ -40,37 +40,42 @@ export function AppListRowContent(props: AppListRowProps) {
                 ? "button"
                 : "radio"
           }
-          accessibilityLabel={props.accessibilityLabel ?? props.title}
-          accessibilityHint={props.accessibilityHint}
           accessibilityState={{
-            disabled: props.disabled ?? false,
             busy: props.trailingBusy === true,
+            disabled: props.disabled ?? false,
             ...(props.selected === undefined ? {} : { checked: props.selected }),
           }}
-          disabled={props.disabled || props.onPress === undefined}
+          accessible={props.onPress !== undefined}
+          disabled={props.disabled === true || props.onPress === undefined}
           onPress={props.onPress}
           style={({ pressed }) => [
             styles.row,
             contentStyles.primary,
-            { minHeight: props.description ? listRowHeight.double : listRowHeight.single },
+            {
+              minHeight:
+                props.description === undefined || props.description === ""
+                  ? listRowHeight.single
+                  : listRowHeight.double,
+            },
             props.fixedHeight === undefined ? undefined : { height: props.fixedHeight },
             pressed && styles.pressed,
           ]}
+          testID={props.testID}
         >
           {props.leading !== undefined && <View style={styles.slot}>{props.leading}</View>}
           {props.leadingIcon !== undefined && (
             <View style={styles.slot}>
               <Ionicons
+                color={props.leadingIcon.color ?? colors.textMuted}
                 name={props.leadingIcon.name}
                 size={props.leadingIcon.size ?? iconSize.inline}
-                color={props.leadingIcon.color ?? colors.textMuted}
               />
             </View>
           )}
           <View style={styles.text}>
             <AppText
-              numberOfLines={props.multiline ? 2 : 1}
-              style={[styles.title, props.danger && styles.danger]}
+              numberOfLines={props.multiline === true ? 2 : 1}
+              style={[styles.title, props.danger === true && styles.danger]}
             >
               {props.title}
             </AppText>
@@ -79,13 +84,13 @@ export function AppListRowContent(props: AppListRowProps) {
                 {props.descriptionLeading}
                 {props.descriptionIcon !== undefined && (
                   <Ionicons
+                    color={props.descriptionIcon.color ?? colors.textMuted}
                     name={props.descriptionIcon.name}
                     size={props.descriptionIcon.size ?? iconSize.inline}
-                    color={props.descriptionIcon.color ?? colors.textMuted}
                   />
                 )}
                 <AppText
-                  numberOfLines={props.multiline ? 2 : 1}
+                  numberOfLines={props.multiline === true ? 2 : 1}
                   style={[styles.description, styles.supportingText]}
                 >
                   {props.description}
@@ -97,16 +102,16 @@ export function AppListRowContent(props: AppListRowProps) {
             <View style={styles.slot}>
               {props.trailingIcon !== undefined && (
                 <Ionicons
+                  color={props.trailingIcon.color ?? colors.textMuted}
                   name={props.trailingIcon.name}
                   size={props.trailingIcon.size ?? iconSize.inline}
-                  color={props.trailingIcon.color ?? colors.textMuted}
                 />
               )}
               {props.trailingBusy === true && (
-                <ActivityIndicator size="small" color={colors.textMuted} />
+                <ActivityIndicator color={colors.textMuted} size="small" />
               )}
               {props.selected === true && (
-                <Ionicons name="checkmark" size={iconSize.inline} color={colors.text} />
+                <Ionicons color={colors.text} name="checkmark" size={iconSize.inline} />
               )}
             </View>
           )}
@@ -117,7 +122,7 @@ export function AppListRowContent(props: AppListRowProps) {
           <View style={[styles.slot, contentStyles.secondary]}>
             {props.trailing}
             {props.selected === true && (
-              <Ionicons name="checkmark" size={iconSize.inline} color={colors.text} />
+              <Ionicons color={colors.text} name="checkmark" size={iconSize.inline} />
             )}
           </View>
         )}

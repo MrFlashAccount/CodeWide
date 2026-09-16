@@ -1,10 +1,11 @@
+import { unknownRecord } from "./unknownRecord";
 import type { FsReadDirectoryEntry } from "@codewide/codex-protocol/v0.147.0/v2";
 
 export type RemoteProject = {
-  path: string;
-  name: string;
   addedAt: number;
   lastUsedAt: number;
+  name: string;
+  path: string;
   pinned: boolean;
 };
 
@@ -19,18 +20,20 @@ export function partitionDiscoveredProjects(
   pinned: readonly RemoteProject[],
   discovered: readonly RemoteProject[],
   recentLimit: number,
-): { recent: RemoteProject[]; other: RemoteProject[] } {
+): { other: RemoteProject[]; recent: RemoteProject[] } {
   const pinnedPaths = new Set(pinned.map(({ path }) => normalizeDirectoryPath(path)));
   const seen = new Set<string>();
   const unpinned = discovered.filter((project) => {
     const path = normalizeDirectoryPath(project.path);
-    if (pinnedPaths.has(path) || seen.has(path)) return false;
+    if (pinnedPaths.has(path) || seen.has(path)) {
+      return false;
+    }
     seen.add(path);
     return true;
   });
   return {
-    recent: unpinned.slice(0, recentLimit),
     other: unpinned.slice(recentLimit),
+    recent: unpinned.slice(0, recentLimit),
   };
 }
 
@@ -40,7 +43,9 @@ export function projectIncludesDirectory(project: RemoteProject, path: string): 
 
 export function parseRemoteProjects(value: unknown): RemoteProject[] {
   const source = record(value);
-  if (!Array.isArray(source?.data)) throw new Error("Companion returned an invalid project list");
+  if (!Array.isArray(source?.data)) {
+    throw new Error("Companion returned an invalid project list");
+  }
   return source.data.map((item) => parseRemoteProject(item));
 }
 
@@ -69,8 +74,9 @@ export function directoryCrumbs(path: string, home: string | null): PathCrumb[] 
 
 export function parseRemoteDirectory(value: unknown): RemoteDirectoryEntry[] {
   const source = record(value);
-  if (!Array.isArray(source?.entries))
+  if (!Array.isArray(source?.entries)) {
     throw new Error("Companion returned an invalid directory listing");
+  }
   return source.entries.flatMap((item) => {
     const entry = record(item);
     if (
@@ -81,15 +87,18 @@ export function parseRemoteDirectory(value: unknown): RemoteDirectoryEntry[] {
       entry.fileName === "." ||
       entry.fileName === ".." ||
       /[\\/]/u.test(entry.fileName)
-    )
+    ) {
       return [];
+    }
     return [{ fileName: entry.fileName, isDirectory: entry.isDirectory, isFile: entry.isFile }];
   });
 }
 
 export function pathCrumbs(path: string): PathCrumb[] {
   const normalized = normalizeDirectoryPath(path);
-  if (normalized === "") return [];
+  if (normalized === "") {
+    return [];
+  }
   if (/^[A-Za-z]:\\/u.test(normalized)) {
     const root = normalized.slice(0, 3);
     const segments = normalized.slice(3).split("\\").filter(Boolean);
@@ -119,16 +128,20 @@ export function parentDirectoryPath(path: string): string | null {
 
 export function joinDirectoryPath(parent: string, child: string): string {
   const separator = /^[A-Za-z]:\\/u.test(parent) || parent.includes("\\") ? "\\" : "/";
-  if (parent.endsWith(separator)) return `${parent}${child}`;
+  if (parent.endsWith(separator)) {
+    return `${parent}${child}`;
+  }
   return `${parent}${separator}${child}`;
 }
 
 export function normalizeDirectoryPath(path: string): string {
   const trimmed = path.trim();
-  if (trimmed === "") return "";
+  if (trimmed === "") {
+    return "";
+  }
   if (/^[A-Za-z]:[\\/]/u.test(trimmed)) {
-    const slashes = trimmed.replaceAll("/", "\\").replace(/\\{2,}/gu, "\\");
-    return /^[A-Za-z]:\\$/u.test(slashes) ? slashes : slashes.replace(/\\+$/gu, "");
+    const slashes = trimmed.replaceAll("/", "\\").replaceAll(/\\{2,}/gu, "\\");
+    return /^[A-Za-z]:\\$/u.test(slashes) ? slashes : slashes.replaceAll(/\\+$/gu, "");
   }
   const root =
     trimmed.startsWith("//") && !trimmed.startsWith("///")
@@ -138,8 +151,8 @@ export function normalizeDirectoryPath(path: string): string {
         : "";
   const body = trimmed
     .slice(root.length)
-    .replace(/\/{2,}/gu, "/")
-    .replace(/\/+$/gu, "");
+    .replaceAll(/\/{2,}/gu, "/")
+    .replaceAll(/\/+$/gu, "");
   return root + body;
 }
 
@@ -151,19 +164,18 @@ function parseRemoteProject(value: unknown): RemoteProject {
     typeof project.name !== "string" ||
     typeof project.addedAt !== "number" ||
     typeof project.lastUsedAt !== "number"
-  )
+  ) {
     throw new Error("Companion returned an invalid project");
+  }
   return {
-    path: normalizeDirectoryPath(project.path),
-    name: project.name,
     addedAt: project.addedAt,
     lastUsedAt: project.lastUsedAt,
+    name: project.name,
+    path: normalizeDirectoryPath(project.path),
     pinned: project.pinned !== false,
   };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return unknownRecord(value);
 }

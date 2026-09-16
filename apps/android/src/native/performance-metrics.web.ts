@@ -11,19 +11,25 @@ import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-met
 
 const snapshot: PerformanceMetricsSnapshot = {
   available: false,
+  current: null,
   enabled: false,
-  samplePeriodMs: 1_000,
   historyCapacity: 0,
   historySamples: 0,
   peakCpuPercent: 0,
   peakPssBytes: 0,
+  recent: [],
+  samplePeriodMs: 1000,
+  sessionJankPercent: 0,
+  totalDroppedFrameEstimate: 0,
   totalFrames: 0,
   totalJankFrames: 0,
-  totalDroppedFrameEstimate: 0,
-  sessionJankPercent: 0,
-  current: null,
-  recent: [],
 };
+
+// WHY: Unsupported web diagnostics must reject asynchronously instead of throwing before callers receive a Promise.
+// oxlint-disable-next-line typescript/require-await
+async function androidOnly(message: string): Promise<never> {
+  throw new Error(message);
+}
 
 export function subscribePerformanceMetrics(_listener: () => void): () => void {
   return () => undefined;
@@ -41,28 +47,35 @@ export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
   return snapshot;
 }
 
-export async function setPerformanceMonitoringEnabled(_enabled: boolean): Promise<void> {}
+export async function setPerformanceMonitoringEnabled(_enabled: boolean): Promise<void> {
+  await Promise.resolve();
+}
 
 export async function getWindowFrameReport(): Promise<WindowFrameReport | null> {
+  await Promise.resolve();
   return null;
 }
 
 export async function beginNavigationFrameTrace(_traceId: string): Promise<boolean> {
+  await Promise.resolve();
   return false;
 }
 
 export async function endNavigationFrameTrace(
   _traceId: string,
 ): Promise<ThreadNavigationFrameProfile | null> {
+  await Promise.resolve();
   return null;
 }
 
 export async function captureHermesHeapSnapshot(): Promise<HermesHeapSnapshot> {
-  throw new Error("Hermes heap capture is available only in the Android app");
+  const unavailable = await androidOnly("Hermes heap capture is available only in the Android app");
+  return unavailable;
 }
 
 export async function captureMemoryReport(): Promise<string> {
-  throw new Error("Memory report is available only in the Android app");
+  const unavailable = await androidOnly("Memory report is available only in the Android app");
+  return unavailable;
 }
 
 export function memoryReclamationExperimentAvailable(): boolean {
@@ -70,29 +83,35 @@ export function memoryReclamationExperimentAvailable(): boolean {
 }
 
 export async function captureMemoryCheckpoint(): Promise<MemoryCheckpoint> {
-  throw new Error("Memory experiment is available only in the Android app");
+  const unavailable = await androidOnly("Memory experiment is available only in the Android app");
+  return unavailable;
 }
 
 export async function clearNativeCodeMemoryCache(): Promise<MemoryReclamationActionResult> {
-  throw new Error("Memory experiment is available only in the Android app");
+  const unavailable = await androidOnly("Memory experiment is available only in the Android app");
+  return unavailable;
 }
 
 export async function clearImageMemoryCache(): Promise<MemoryReclamationActionResult> {
-  throw new Error("Memory experiment is available only in the Android app");
+  const unavailable = await androidOnly("Memory experiment is available only in the Android app");
+  return unavailable;
 }
 
 export async function collectJavaGarbage(): Promise<MemoryReclamationActionResult> {
-  throw new Error("Memory experiment is available only in the Android app");
+  const unavailable = await androidOnly("Memory experiment is available only in the Android app");
+  return unavailable;
 }
 
 export async function collectHermesGarbage(): Promise<MemoryReclamationActionResult> {
-  throw new Error("Memory experiment is available only in the Android app");
+  const unavailable = await androidOnly("Memory experiment is available only in the Android app");
+  return unavailable;
 }
 
 export async function purgeNativeAllocator(
   _exhaustive: boolean,
 ): Promise<MemoryReclamationActionResult> {
-  throw new Error("Memory experiment is available only in the Android app");
+  const unavailable = await androidOnly("Memory experiment is available only in the Android app");
+  return unavailable;
 }
 
 export type {

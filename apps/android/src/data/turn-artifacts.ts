@@ -4,10 +4,10 @@ type ArtifactReference =
   | { readonly savedPath: string }
   | {
       readonly codewideAsset: {
-        readonly version: 1;
-        readonly id: string;
         readonly byteLength: number;
         readonly contentType: string;
+        readonly id: string;
+        readonly version: 1;
       };
     }
   | { readonly uri: string };
@@ -18,37 +18,61 @@ export function compactTurnArtifactReferences(turn: unknown): readonly ArtifactR
   const seen = new Set<string>();
   const append = (value: unknown): void => {
     const reference = artifactReference(value);
-    if (reference === null) return;
+    if (reference === null) {
+      return;
+    }
     const key =
       "savedPath" in reference
         ? `path:${reference.savedPath}`
         : "uri" in reference
           ? `uri:${reference.uri}`
           : `content:${reference.codewideAsset.id}`;
-    if (seen.has(key)) return;
+    if (seen.has(key)) {
+      return;
+    }
     seen.add(key);
     references.push(reference);
   };
-  if (!isRecord(turn)) return references;
-  if (isRecord(turn.codewide) && Array.isArray(turn.codewide.artifacts)) {
-    for (const reference of turn.codewide.artifacts) append(reference);
+  if (!isRecord(turn)) {
+    return references;
   }
-  if (!Array.isArray(turn.items)) return references;
+  if (isRecord(turn.codewide) && Array.isArray(turn.codewide.artifacts)) {
+    for (const reference of turn.codewide.artifacts) {
+      append(reference);
+    }
+  }
+  if (!Array.isArray(turn.items)) {
+    return references;
+  }
   for (const item of turn.items) {
-    if (!isRecord(item)) continue;
-    if (item.type === "imageGeneration") append(item);
-    if (item.type !== "dynamicToolCall" && item.type !== "mcpToolCall") continue;
+    if (!isRecord(item)) {
+      continue;
+    }
+    if (item.type === "imageGeneration") {
+      append(item);
+    }
+    if (item.type !== "dynamicToolCall" && item.type !== "mcpToolCall") {
+      continue;
+    }
     for (const content of [
       item.content,
       item.contentItems,
       item.output,
       isRecord(item.result) ? item.result.content : null,
     ]) {
-      if (!Array.isArray(content)) continue;
+      if (!Array.isArray(content)) {
+        continue;
+      }
       for (const part of content) {
-        if (!isRecord(part)) continue;
-        if (part.codewideAsset !== undefined) append({ codewideAsset: part.codewideAsset });
-        if (part.type === "resource_link") append({ uri: part.uri });
+        if (!isRecord(part)) {
+          continue;
+        }
+        if (part.codewideAsset !== undefined) {
+          append({ codewideAsset: part.codewideAsset });
+        }
+        if (part.type === "resource_link") {
+          append({ uri: part.uri });
+        }
       }
     }
   }
@@ -56,11 +80,19 @@ export function compactTurnArtifactReferences(turn: unknown): readonly ArtifactR
 }
 
 function artifactReference(value: unknown): ArtifactReference | null {
-  if (!isRecord(value)) return null;
-  if (absolutePath(value.savedPath)) return { savedPath: value.savedPath };
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (absolutePath(value.savedPath)) {
+    return { savedPath: value.savedPath };
+  }
   const asset = privateImageAssetProjection(value.codewideAsset);
-  if (asset !== null) return { codewideAsset: { version: 1, ...asset } };
-  if (absolutePath(value.uri)) return { uri: value.uri };
+  if (asset !== null) {
+    return { codewideAsset: { version: 1, ...asset } };
+  }
+  if (absolutePath(value.uri)) {
+    return { uri: value.uri };
+  }
   if (
     typeof value.uri === "string" &&
     value.uri.startsWith("sandbox:") &&

@@ -27,17 +27,17 @@ import { styles } from "./ImageProtocolBlock.styles";
 import { protocolCopyText } from "./protocolCopyText";
 
 export function OpenableImage({
+  containerStyle,
+  download,
+  groupId,
   label,
+  link,
+  onError,
+  order,
+  previewId,
+  reference,
   source,
   variant = "generated",
-  containerStyle,
-  previewId,
-  groupId,
-  order,
-  reference,
-  link,
-  download,
-  onError,
 }: OpenableImageProps) {
   const openImagePreview = useImagePreview();
   const inheritedGroupId = useImagePreviewGroup();
@@ -52,8 +52,8 @@ export function OpenableImage({
   const previewItem = {
     id: resolvedPreviewId,
     label,
-    source: resolvedSource ?? source,
     reference: reference ?? source.uri,
+    source: resolvedSource ?? source,
     ...(link === undefined ? {} : { link }),
     ...(download === undefined ? {} : { download }),
     ...(order === undefined ? {} : { order }),
@@ -64,27 +64,27 @@ export function OpenableImage({
     containerStyle,
   ];
   return renderOpenableImageFrame({
-    label,
-    variant,
-    privateImage,
-    resolvedSource,
-    previewItem,
     imageContainerStyle,
-    setRetryRevision,
-    openImagePreview,
-    resolvedGroupId,
+    label,
     onError,
+    openImagePreview,
+    previewItem,
+    privateImage,
+    resolvedGroupId,
+    resolvedSource,
+    setRetryRevision,
+    variant,
   });
 }
 
 export function ImageProtocolBlock(props: ImageProtocolBlockInput) {
   return (
     <Card
-      title={props.block.title}
       icon="image-outline"
+      title={props.block.title}
       {...(props.block.status === null ? {} : { status: props.block.status })}
-      copyText={() => protocolCopyText(props.block)}
       collapsible
+      copyText={() => protocolCopyText(props.block)}
       initiallyExpanded={props.block.status === "inProgress" || props.block.status === "running"}
     >
       <ImageProtocolContent
@@ -121,24 +121,24 @@ export function ImageProtocolContent(props: ImageProtocolContentInput) {
         <Text style={styles.menuNotice}>Image attached to this response</Text>
       ) : projectedAsset !== null && props.getTransferAccess !== undefined ? (
         <ScopedPrivateAssetImage
-          previewId={props.block.key}
-          label={props.block.title}
-          reference={`private-asset:${projectedAsset.id}`}
-          source={{ kind: "content", id: projectedAsset.id }}
           getTransferAccess={props.getTransferAccess}
+          label={props.block.title}
+          previewId={props.block.key}
+          reference={`private-asset:${projectedAsset.id}`}
+          source={{ id: projectedAsset.id, kind: "content" }}
         />
       ) : localPath !== null && props.getTransferAccess !== undefined ? (
         <ScopedRemoteImage
-          previewId={props.block.key}
-          path={localPath}
           getTransferAccess={props.getTransferAccess}
+          path={localPath}
+          previewId={props.block.key}
         />
       ) : remoteResult !== null ? (
         <OpenableImage
-          previewId={props.block.key}
           label={props.block.title}
-          source={{ uri: remoteResult }}
+          previewId={props.block.key}
           reference={remoteResult}
+          source={{ uri: remoteResult }}
         />
       ) : (
         <Text style={styles.menuNotice}>
@@ -156,10 +156,10 @@ export function ImageProtocolContent(props: ImageProtocolContentInput) {
 export function ScopedRemoteImage(props: ScopedRemoteImageInput) {
   return (
     <ScopedPrivateAssetImage
-      source={{ kind: "path", path: props.path }}
+      getTransferAccess={props.getTransferAccess}
       label={`Image ${basename(props.path)}`}
       reference={props.path}
-      getTransferAccess={props.getTransferAccess}
+      source={{ kind: "path", path: props.path }}
       {...(props.previewId === undefined ? {} : { previewId: props.previewId })}
       {...(props.groupId === undefined ? {} : { groupId: props.groupId })}
       {...(props.order === undefined ? {} : { order: props.order })}
@@ -177,43 +177,48 @@ export function ScopedPrivateAssetImage(props: ScopedPrivateAssetImageInput) {
     return (
       <View style={[styles.userImage, props.containerStyle]}>
         <Pressable
-          accessibilityRole="button"
           accessibilityLabel={`Retry ${props.label}`}
-          onPress={() => setAttempt((current) => current + 1)}
+          accessibilityRole="button"
+          onPress={() => {
+            setAttempt((current) => current + 1);
+          }}
         >
           <Text style={styles.menuNotice}>Image preview failed · Retry</Text>
         </Pressable>
       </View>
     );
   }
-  if (privateImage.source === null)
+  if (privateImage.source === null) {
     return (
       <View style={[styles.userImage, props.containerStyle]}>
         <ActivityIndicator color={colors.textMuted} />
       </View>
     );
+  }
   return (
     <OpenableImage
-      previewId={props.previewId ?? props.reference}
       label={props.label}
+      previewId={props.previewId ?? props.reference}
+      reference={props.reference}
       source={privateImage.source}
       variant="user"
-      reference={props.reference}
       {...(source.kind !== "path"
         ? {}
         : {
-            download: () =>
+            download: async () =>
               downloadDocument({
+                getTransferAccess: props.getTransferAccess,
                 kind: "image",
                 name: basename(source.path),
                 path: source.path,
-                getTransferAccess: props.getTransferAccess,
               }),
           })}
       {...(props.groupId === undefined ? {} : { groupId: props.groupId })}
       {...(props.order === undefined ? {} : { order: props.order })}
       {...(props.containerStyle === undefined ? {} : { containerStyle: props.containerStyle })}
-      onError={() => setAttempt((current) => current + 1)}
+      onError={() => {
+        setAttempt((current) => current + 1);
+      }}
     />
   );
 }

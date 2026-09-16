@@ -2,42 +2,42 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, spacing, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  preTurnLifecycleList: {
-    width: "100%",
-    minWidth: 0,
+  preTurnLifecycleDetail: {
     alignSelf: "stretch",
-    gap: spacing.xxs,
-    paddingVertical: spacing.optical,
-  },
-  preTurnLifecycleRow: {
+    minWidth: 0,
     width: "100%",
-    minHeight: controlSize.compact,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.xs,
   },
   preTurnLifecycleIcon: {
-    width: 16,
-    height: 18,
     alignItems: "center",
-    justifyContent: "center",
     flexShrink: 0,
+    height: 18,
+    justifyContent: "center",
+    width: 16,
+  },
+  preTurnLifecycleList: {
+    alignSelf: "stretch",
+    gap: spacing.xxs,
+    minWidth: 0,
+    paddingVertical: spacing.optical,
+    width: "100%",
+  },
+  preTurnLifecycleRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.xs,
+    width: "100%",
   },
   preTurnLifecycleText: {
-    minWidth: 0,
-    flexShrink: 1,
     color: colors.textMuted,
+    flexShrink: 1,
+    minWidth: 0,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
   preTurnLifecycleWave: {
-    minWidth: 0,
     flexShrink: 1,
-  },
-  preTurnLifecycleDetail: {
-    width: "100%",
     minWidth: 0,
-    alignSelf: "stretch",
   },
 });

@@ -7,35 +7,35 @@
  */
 export const darkScheme = {
   background: "#0F0F0F",
+  code: "#121212",
+  error: "#F05D65",
+  errorContainer: "#3B2022",
   onBackground: "#F2F2F2",
-  surface: "#181818",
+  onErrorContainer: "#FFDAD6",
+  onPrimary: "#111111",
+  onPrimaryContainer: "#F2F2F2",
+  onSecondaryContainer: "#F2F2F2",
   onSurface: "#F2F2F2",
-  surfaceContainerLowest: "#0F0F0F",
-  surfaceContainerLow: "#181818",
-  surfaceContainer: "#202020",
-  surfaceContainerHigh: "#272727",
-  surfaceContainerHighest: "#2B2B2B",
   onSurfaceVariant: "#B8B8B8",
+  onTertiaryContainer: "#F2F2F2",
   outline: "#2E2E2E",
   outlineVariant: "#2E2E2E",
   primary: "#E6E6E6",
-  primaryPressed: "#B8B8B8",
-  onPrimary: "#111111",
   primaryContainer: "#272727",
-  onPrimaryContainer: "#F2F2F2",
+  primaryPressed: "#B8B8B8",
+  scrim: "rgba(0, 0, 0, 0.72)",
   secondaryContainer: "#272727",
-  onSecondaryContainer: "#F2F2F2",
-  tertiaryContainer: "#202020",
-  onTertiaryContainer: "#F2F2F2",
-  error: "#F05D65",
-  errorContainer: "#3B2022",
-  onErrorContainer: "#FFDAD6",
   success: "#35C778",
   successContainer: "#173526",
+  surface: "#181818",
+  surfaceContainer: "#202020",
+  surfaceContainerHigh: "#272727",
+  surfaceContainerHighest: "#2B2B2B",
+  surfaceContainerLow: "#181818",
+  surfaceContainerLowest: "#0F0F0F",
+  tertiaryContainer: "#202020",
   warning: "#E9872C",
   warningContainer: "#3A2818",
-  code: "#121212",
-  scrim: "rgba(0, 0, 0, 0.72)",
 } as const;
 
 // V1 remains dark-first. Components consume semantic aliases below; the
@@ -44,78 +44,78 @@ const scheme = darkScheme;
 
 export const colors = {
   ...scheme,
-  text: scheme.onSurface,
-  textMuted: scheme.onSurfaceVariant,
-  textDim: "#858585",
   accent: scheme.primary,
-  accentPressed: scheme.primaryPressed,
   accentMuted: scheme.primaryContainer,
-  green: scheme.success,
+  accentPressed: scheme.primaryPressed,
   amber: scheme.warning,
-  red: scheme.error,
   border: scheme.outlineVariant,
   borderSoft: "#242424",
-  surfaceRaised: scheme.surfaceContainer,
-  surfaceHover: scheme.surfaceContainerHigh,
-  threadListSurface: scheme.background,
   conversationSurface: scheme.surface,
+  green: scheme.success,
   messageSurface: scheme.background,
+  red: scheme.error,
+  surfaceHover: scheme.surfaceContainerHigh,
+  surfaceRaised: scheme.surfaceContainer,
+  text: scheme.onSurface,
+  textDim: "#858585",
+  textMuted: scheme.onSurfaceVariant,
+  threadListSurface: scheme.background,
 } as const;
 
 export const spacing = {
-  optical: 2,
-  xxs: 4,
   compact: 6,
-  xs: 8,
   inputInset: 10,
-  sm: 12,
-  md: 16,
   lg: 24,
+  md: 16,
+  optical: 2,
+  sm: 12,
   xl: 32,
+  xs: 8,
+  xxs: 4,
 } as const;
 
 export const radii = {
-  compact: 4,
-  small: 8,
-  selected: 16,
-  medium: 16,
   bubble: 24,
   bubbleTail: 8,
-  large: 24,
-  menu: 30, // HeroUI --radius-3xl with CodeWide's 10dp base radius.
+  compact: 4,
   composer: 24,
+  large: 24,
+  medium: 16,
+  menu: 30, // Menu surfaces use the established 30dp rounded shape.
   pill: 999,
+  selected: 16,
+  small: 8,
 } as const;
 
 export const typeWeight = {
-  regular: "400",
   medium: "500",
+  regular: "400",
   semibold: "600",
 } as const;
 
 export const typeTracking = { caps: 0.7, pairingCode: 1.5 } as const;
 
 export const typeScale = {
-  heading: { fontSize: 22, lineHeight: 28, fontWeight: typeWeight.semibold },
-  title: { fontSize: 16, lineHeight: 22, fontWeight: typeWeight.semibold },
-  body: { fontSize: 14, lineHeight: 20, fontWeight: typeWeight.regular },
-  label: { fontSize: 12, lineHeight: 16, fontWeight: typeWeight.medium },
-  caption: { fontSize: 10, lineHeight: 14, fontWeight: typeWeight.medium },
-  code: { fontSize: 13, lineHeight: 20, fontWeight: typeWeight.regular, fontFamily: "monospace" },
-  composerInput: { fontSize: 15, lineHeight: 21, fontWeight: typeWeight.regular },
-  voiceLabel: { fontSize: 13, lineHeight: 20, fontWeight: typeWeight.medium },
+  body: { fontSize: 14, fontWeight: typeWeight.regular, lineHeight: 20 },
+  caption: { fontSize: 10, fontWeight: typeWeight.medium, lineHeight: 14 },
+  code: { fontFamily: "monospace", fontSize: 13, fontWeight: typeWeight.regular, lineHeight: 20 },
+  composerInput: { fontSize: 15, fontWeight: typeWeight.regular, lineHeight: 21 },
   emoji: { fontSize: 22, lineHeight: 28 },
+  heading: { fontSize: 22, fontWeight: typeWeight.semibold, lineHeight: 28 },
+  label: { fontSize: 12, fontWeight: typeWeight.medium, lineHeight: 16 },
+  title: { fontSize: 16, fontWeight: typeWeight.semibold, lineHeight: 22 },
+  voiceLabel: { fontSize: 13, fontWeight: typeWeight.medium, lineHeight: 20 },
 } as const;
 
 export const touchTarget = 48;
 
 /** Glyph size is independent of the surrounding touch target. */
 export const iconSize = {
+  action: 20,
+  illustration: 32,
   indicator: 12,
   inline: 16,
-  action: 20,
   navigation: 24,
-  illustration: 32,
 } as const;
 
 /** Compact controls retain explicit hit slop when their visual bounds are below 48dp. */
@@ -127,10 +127,10 @@ export const controlSize = {
 
 /** Panel and list geometry is independent of button size. Text-bearing rows may grow. */
 export const layoutSize = {
-  header: 56,
-  row: 64,
-  metadataRow: 24,
   attachmentTile: 200,
+  header: 56,
+  metadataRow: 24,
+  row: 64,
 } as const;
 
 /** Extra target area for isolated compact controls; never replaces adequate parent bounds. */

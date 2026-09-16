@@ -3,9 +3,9 @@ import { useSelector } from "@legendapp/state/react";
 import { useEffect } from "react";
 
 export type AsyncResourceSnapshot<T> = {
+  error: string | null;
   status: "idle" | "loading" | "ready" | "error";
   value: T | null;
-  error: string | null;
 };
 
 type Loader<T> = (publish: (value: T) => void, signal: AbortSignal) => Promise<T>;
@@ -13,16 +13,16 @@ type Loader<T> = (publish: (value: T) => void, signal: AbortSignal) => Promise<T
 const MAX_RESIDENT_RESOURCES = 256;
 const MAX_RESIDENT_RESOURCE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_RESOURCE_BYTES = 512;
-const AUTO_RETRY_BASE_MS = 1_000;
+const AUTO_RETRY_BASE_MS = 1000;
 const MAX_AUTO_RETRY_ATTEMPTS = 5;
-const EMPTY_SNAPSHOT: AsyncResourceSnapshot<never> = { status: "idle", value: null, error: null };
+const EMPTY_SNAPSHOT: AsyncResourceSnapshot<never> = { error: null, status: "idle", value: null };
 const resources = new Map<string, AsyncResource<unknown>>();
 let residentResourceBytes = 0;
 
 export type AsyncResourceHandle<T> = {
+  read: () => Promise<T>;
+  retain: () => () => void;
   readonly snapshot$: Observable<AsyncResourceSnapshot<T>>;
-  retain(): () => void;
-  read(): Promise<T>;
 };
 
 class AsyncResource<T> implements AsyncResourceHandle<T> {
@@ -60,9 +60,9 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
     this.weight = initialValue === null ? 0 : estimateWeight(initialValue);
     residentResourceBytes += this.weight;
     this.snapshot$ = observable<AsyncResourceSnapshot<T>>({
+      error: null,
       status: "loading",
       value: initialValue,
-      error: null,
     });
     this.load();
   }
@@ -70,7 +70,9 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
   retain(): () => void {
     this.retainCount += 1;
     this.touch();
-    if (this.snapshot$.peek().status === "error") this.scheduleRetry();
+    if (this.snapshot$.peek().status === "error") {
+      this.scheduleRetry();
+    }
     return () => {
       this.retainCount = Math.max(0, this.retainCount - 1);
       if (this.retainCount === 0 && this.retryTimer !== null) {
@@ -96,13 +98,19 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
   }
 
   /** Shares the model-owned request with a dependent progressive resource. */
+  // WHY: Callers pass this Promise to React.use; async would wrap the cached Promise on every read.
+  // oxlint-disable-next-line typescript/promise-function-async
   read(): Promise<T> {
-    if (this.promise === null) throw new Error("Resource request was not initialized");
+    if (this.promise === null) {
+      throw new Error("Resource request was not initialized");
+    }
     return this.promise;
   }
 
   dispose(): void {
-    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+    }
     this.retryTimer = null;
     this.controller.abort();
     this.loader = null;
@@ -121,38 +129,46 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
 
   private load(): void {
     const loader = this.loader;
-    if (loader === null || this.loading || this.controller.signal.aborted) return;
+    if (loader === null || this.loading || this.controller.signal.aborted) {
+      return;
+    }
     this.loading = true;
     const previous = this.snapshot$.peek();
     if (previous.status === "error") {
-      this.update({ status: "loading", value: previous.value, error: null });
+      this.update({ error: null, status: "loading", value: previous.value });
     }
-    const operation = Promise.resolve().then(() =>
+    const operation = Promise.resolve().then(async () =>
       loader((value) => {
-        if (!this.controller.signal.aborted) this.update({ status: "loading", value, error: null });
+        if (!this.controller.signal.aborted) {
+          this.update({ error: null, status: "loading", value });
+        }
       }, this.controller.signal),
     );
     this.promise = operation;
     void operation
       .then((value) => {
-        if (this.controller.signal.aborted) return;
+        if (this.controller.signal.aborted) {
+          return;
+        }
         this.loading = false;
         this.retryAttempt = 0;
         this.retryable = true;
         // A ready revision is immutable. Retain its result, not the loader's
         // captured source (which may contain an entire base64 image or thread).
         this.loader = null;
-        this.update({ status: "ready", value, error: null });
+        this.update({ error: null, status: "ready", value });
       })
-      .catch((cause: unknown) => {
-        if (this.controller.signal.aborted) return;
+      .catch((error: unknown) => {
+        if (this.controller.signal.aborted) {
+          return;
+        }
         this.loading = false;
-        this.retryable = isRetryableResourceFailure(cause);
+        this.retryable = isRetryableResourceFailure(error);
         const current = this.snapshot$.peek();
         this.update({
+          error: error instanceof Error ? error.message : "Resource unavailable",
           status: "error",
           value: current.value,
-          error: cause instanceof Error ? cause.message : "Resource unavailable",
         });
         this.scheduleRetry();
       });
@@ -166,19 +182,22 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
       this.loading ||
       this.controller.signal.aborted ||
       this.retainCount === 0
-    )
+    ) {
       return;
+    }
     const delay = AUTO_RETRY_BASE_MS * 2 ** this.retryAttempt;
     this.retryAttempt += 1;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
-      if (this.retainCount > 0) this.load();
+      if (this.retainCount > 0) {
+        this.load();
+      }
     }, delay);
   }
 
   private touch(): void {
     resources.delete(this.cacheKey);
-    resources.set(this.cacheKey, this as unknown as AsyncResource<unknown>);
+    resources.set(this.cacheKey, eraseResourceType(this));
   }
 }
 
@@ -226,7 +245,9 @@ function useAsyncResourceLifetime<T>(
           preservePrevious,
         );
   useEffect(() => {
-    if (resource === null) return;
+    if (resource === null) {
+      return undefined;
+    }
     return resource.retain();
   }, [resource]);
   return useSelector(() => (resource === null ? getEmptySnapshot<T>() : resource.snapshot$.get()));
@@ -242,15 +263,21 @@ export function getAsyncResource<T>(
 ): AsyncResourceHandle<T> {
   const cacheKey = asyncResourceCacheKey(key, revision);
   const current = resources.get(cacheKey);
-  if (current !== undefined) return current as unknown as AsyncResource<T>;
+  if (current !== undefined) {
+    return restoreResourceType<T>(current);
+  }
   let initialValue: T | null = null;
   if (preservePrevious) {
     for (const previous of resources.values()) {
-      if (previous.key !== key) continue;
+      if (previous.key !== key) {
+        continue;
+      }
       // WHY: the caller-owned resource key has one value contract across its
       // revisions; the heterogeneous cache necessarily erases that type.
-      const snapshot = previous.snapshot$.peek() as AsyncResourceSnapshot<T>;
-      if (snapshot.value !== null) initialValue = snapshot.value;
+      const snapshot = restoreResourceType<T>(previous).snapshot$.peek();
+      if (snapshot.value !== null) {
+        initialValue = snapshot.value;
+      }
     }
   }
   const resource = new AsyncResource<T>(
@@ -262,26 +289,44 @@ export function getAsyncResource<T>(
     cancelWhenUnobserved,
     initialValue,
   );
-  resources.set(cacheKey, resource as unknown as AsyncResource<unknown>);
+  resources.set(cacheKey, eraseResourceType(resource));
   pruneResources(cacheKey);
   return resource;
+}
+
+function eraseResourceType<Value>(resource: AsyncResource<Value>): AsyncResource<unknown> {
+  const erased: unknown = resource;
+  // WHY: the cache erases value types by key while the resource preserves its own loader and snapshot contract internally.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return erased as AsyncResource<unknown>;
+}
+
+function restoreResourceType<Value>(resource: AsyncResource<unknown>): AsyncResource<Value> {
+  const erased: unknown = resource;
+  // WHY: callers use the same cache key with one value contract across revisions; the heterogeneous map cannot encode that key-to-type relation.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return erased as AsyncResource<Value>;
 }
 
 function pruneResources(protectedCacheKey: string | null = null): void {
   if (
     resources.size <= MAX_RESIDENT_RESOURCES &&
     residentResourceBytes <= MAX_RESIDENT_RESOURCE_BYTES
-  )
+  ) {
     return;
+  }
   for (const [key, resource] of resources) {
-    if (key === protectedCacheKey || resource.isObserved()) continue;
+    if (key === protectedCacheKey || resource.isObserved()) {
+      continue;
+    }
     resources.delete(key);
     resource.dispose();
     if (
       resources.size <= MAX_RESIDENT_RESOURCES &&
       residentResourceBytes <= MAX_RESIDENT_RESOURCE_BYTES
-    )
+    ) {
       return;
+    }
   }
 }
 
@@ -290,8 +335,10 @@ function defaultResourceWeight(): number {
 }
 
 function isRetryableResourceFailure(cause: unknown): boolean {
-  if (!(cause instanceof Error) || cause.name === "AbortError") return false;
-  const explicitStatus = Reflect.get(cause, "status");
+  if (!(cause instanceof Error) || cause.name === "AbortError") {
+    return false;
+  }
+  const explicitStatus: unknown = Reflect.get(cause, "status");
   const status =
     typeof explicitStatus === "number" && Number.isInteger(explicitStatus)
       ? explicitStatus
@@ -304,7 +351,9 @@ function isRetryableResourceFailure(cause: unknown): boolean {
 
 function httpStatusFromMessage(message: string): number | null {
   const match = /\((\d{3})\)/u.exec(message);
-  if (match === null) return null;
+  if (match === null) {
+    return null;
+  }
   const status = Number(match[1]);
   return status >= 100 && status <= 599 ? status : null;
 }
