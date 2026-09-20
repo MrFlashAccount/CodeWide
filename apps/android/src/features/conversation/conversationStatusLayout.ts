@@ -22,12 +22,13 @@ export function conversationStatusLayout(
   timelineRead: ReturnType<typeof useConversationTimelineRead>,
 ): ConversationStatusLayout {
   const searchActive = timelineRead.timelineSearchProjectionBinding.threadSearchActive;
-  const liveTurnPlanVisible =
-    timelineRead.conversationPresentationBinding.liveTurnPlan !== null &&
-    timelineRead.timelinePositioned &&
-    !searchActive;
   const currentGoal = scoped.goalResource?.goal ?? null;
-  const liveStatusVisible = liveTurnPlanVisible;
+  const liveStatusVisible = shouldShowConversationStatus({
+    hasGoal: currentGoal !== null,
+    hasLiveTurnPlan: timelineRead.conversationPresentationBinding.liveTurnPlan !== null,
+    searchActive,
+    timelinePositioned: timelineRead.timelinePositioned,
+  });
   const inlineQueueMaxHeight = Math.max(
     controlSize.touch * INLINE_QUEUE_MIN_ROWS,
     scoped.activation.conversationPaneGeometryBinding.conversationPaneHeight -
@@ -40,4 +41,19 @@ export function conversationStatusLayout(
       ),
   );
   return { currentGoal, inlineQueueMaxHeight, liveStatusVisible };
+}
+
+/** Keeps the shared status surface visible for either of its independent contents. */
+export function shouldShowConversationStatus({
+  hasGoal,
+  hasLiveTurnPlan,
+  searchActive,
+  timelinePositioned,
+}: {
+  readonly hasGoal: boolean;
+  readonly hasLiveTurnPlan: boolean;
+  readonly searchActive: boolean;
+  readonly timelinePositioned: boolean;
+}): boolean {
+  return (hasGoal || hasLiveTurnPlan) && timelinePositioned && !searchActive;
 }

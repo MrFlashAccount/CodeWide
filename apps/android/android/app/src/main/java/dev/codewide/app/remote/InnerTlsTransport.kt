@@ -91,13 +91,20 @@ internal object InnerTlsTransport {
   }
 
   fun url(endpoint: String, url: String): String {
+    val endpointUri = URI(endpoint)
     val uri = URI(url)
     val scheme = when (uri.scheme) {
       "ws", "wss" -> "wss"
       "http", "https" -> "https"
       else -> error("Unsupported companion URL scheme")
     }
-    return URI(scheme, uri.rawAuthority, uri.rawPath, uri.rawQuery, uri.rawFragment).toString()
+    val routePrefix = relayRoutePrefix(endpointUri)
+    val innerPath = if (routePrefix != null && uri.rawPath.startsWith("$routePrefix/")) {
+      uri.rawPath.removePrefix(routePrefix)
+    } else {
+      uri.rawPath
+    }
+    return URI(scheme, uri.rawAuthority, innerPath, uri.rawQuery, uri.rawFragment).toString()
   }
 
   fun openSocket(
@@ -123,8 +130,15 @@ internal object InnerTlsTransport {
 
   private fun tunnelUrl(endpoint: String, path: String): String {
     val uri = URI(endpoint)
-    return URI(uri.scheme, uri.rawAuthority, path, null, null).toString()
+    val routePrefix = relayRoutePrefix(uri)
+    val carrierPath = if (routePrefix == null) path else "$routePrefix$path"
+    return URI(uri.scheme, uri.rawAuthority, carrierPath, null, null).toString()
   }
+
+  private fun relayRoutePrefix(uri: URI): String? =
+    RELAY_SYNC_PATH.matchEntire(uri.path)?.groupValues?.get(1)?.let { routeId -> "/c/$routeId" }
+
+  private val RELAY_SYNC_PATH = Regex("^/c/([a-f0-9]{64})/v1/sync$")
 }
 
 private class TunnelSocketFactory(

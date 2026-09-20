@@ -13,6 +13,7 @@ export const COMPOSER_ACCESSORY_ACTIONS: ReadonlyArray<{
 }> = [
   { icon: "attach-outline", id: "files", label: "File" },
   { icon: "brush-outline", id: "drawing", label: "Drawing" },
+  { icon: "terminal-outline", id: "terminal", label: "Terminal" },
   { icon: "extension-puzzle-outline", id: "skills", label: "Skill" },
   { icon: "flag-outline", id: "goal", label: "Goal" },
 ];
@@ -21,13 +22,19 @@ export function ComposerAccessoryTray({
   fileEnabled,
   goalEnabled,
   onSelect,
+  terminalEnabled,
 }: {
   fileEnabled: boolean;
   goalEnabled: boolean;
   onSelect: (action: ComposerAccessoryAction) => void;
+  terminalEnabled: boolean;
 }) {
   const enabled = (action: ComposerAccessoryAction) =>
-    action === "files" || action === "drawing" ? fileEnabled : action !== "goal" || goalEnabled;
+    action === "files" || action === "drawing"
+      ? fileEnabled
+      : action === "terminal"
+        ? terminalEnabled
+        : action !== "goal" || goalEnabled;
   return (
     <View
       accessibilityLabel="Composer actions"
@@ -72,12 +79,14 @@ type ComposerAccessoryCapabilities = {
   goalEnabled: boolean;
   openComposerFeature: (action: ComposerAccessoryAction) => void;
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
+  terminalEnabled: boolean;
 };
 export function useComposerAccessoryActions({
   fileAttachmentEnabled,
   goalEnabled,
   openComposerFeature,
   setComposerTrayVisible,
+  terminalEnabled,
 }: ComposerAccessoryCapabilities) {
   const openAccessoryAction = useEvent((action: ComposerAccessoryAction) => {
     setComposerTrayVisible(false);
@@ -89,12 +98,24 @@ export function useComposerAccessoryActions({
   const anchoredComposerActions: ActionMenuItem[] = [
     { disabled: !fileAttachmentEnabled, icon: "attach-outline", id: "files", label: "Attach file" },
     { disabled: !fileAttachmentEnabled, icon: "brush-outline", id: "drawing", label: "Drawing" },
+    {
+      disabled: !terminalEnabled || Platform.OS !== "android",
+      icon: "terminal-outline",
+      id: "terminal",
+      label: "Terminal",
+    },
     { icon: "sparkles-outline", id: "skills", label: "Skills" },
     { disabled: !goalEnabled, icon: "flag-outline", id: "goal", label: "Goal" },
   ];
 
   const handleAnchoredComposerAction = useEvent((id: string) => {
-    if (id === "files" || id === "drawing" || id === "skills" || id === "goal") {
+    if (
+      id === "files" ||
+      id === "drawing" ||
+      id === "terminal" ||
+      id === "skills" ||
+      id === "goal"
+    ) {
       openAccessoryAction(id);
     }
   });
@@ -102,6 +123,7 @@ export function useComposerAccessoryActions({
     anchoredComposerActions,
     handleAnchoredComposerAction,
     openAccessoryAction,
+    terminalEnabled: terminalEnabled && Platform.OS === "android",
     useAnchoredComposerMenu,
   };
 }

@@ -1,4 +1,7 @@
-import type { GetAccountRateLimitsResponse } from "@codewide/codex-protocol/v0.147.0/v2";
+import type {
+  ConsumeAccountRateLimitResetCreditOutcome,
+  GetAccountRateLimitsResponse,
+} from "@codewide/codex-protocol/v0.147.0/v2";
 
 export type AccountPoolProfile = {
   active: boolean;
@@ -20,6 +23,11 @@ export type AccountPoolSnapshot = {
   allExhausted: boolean;
   nextResetAt: number | null;
   profiles: AccountPoolProfile[];
+};
+
+export type AccountResetCreditConsumption = {
+  accountPool: AccountPoolSnapshot;
+  outcome: ConsumeAccountRateLimitResetCreditOutcome;
 };
 
 export type AccountLoginStart = {

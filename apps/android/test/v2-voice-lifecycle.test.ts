@@ -36,7 +36,7 @@ describe("V2 Voice lifecycle", () => {
     );
     const foregroundService = readFileSync(
       new URL(
-        "../android/app/src/main/java/dev/codewide/app/remote/V2VoiceCaptureForegroundService.kt",
+        "../android/app/src/main/java/dev/codewide/app/remote/VoiceCaptureForegroundService.kt",
         import.meta.url,
       ),
       "utf8",
@@ -50,11 +50,11 @@ describe("V2 Voice lifecycle", () => {
       '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>',
     );
     expect(manifest).toContain(
-      'android:name="dev.codewide.app.remote.V2VoiceCaptureForegroundService"',
+      'android:name="dev.codewide.app.remote.VoiceCaptureForegroundService"',
     );
     expect(manifest).toContain('android:foregroundServiceType="microphone"');
     expect(foregroundService).toContain("ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE");
-    expect(captureModule.indexOf("V2VoiceCaptureForegroundService.acquire")).toBeLessThan(
+    expect(captureModule.indexOf("VoiceCaptureForegroundService.acquire")).toBeLessThan(
       captureModule.indexOf("val created = AudioRecord("),
     );
     expect(nativeTransport.indexOf("abortableStart(capture.prepare(id)")).toBeLessThan(
@@ -67,9 +67,9 @@ describe("V2 Voice lifecycle", () => {
     expect(nativeTransport.indexOf("PermissionsAndroid.request")).toBeLessThan(
       nativeTransport.indexOf("abortableStart(capture.prepare(id)"),
     );
-    expect(captureModule).toContain("V2VoiceCaptureForegroundService.release(pending.token)");
+    expect(captureModule).toContain("VoiceCaptureForegroundService.release(pending.token)");
     expect(captureModule).toContain('putDouble("level", level)');
-    expect(captureModule).toContain("VoiceAuraRenderEffect(context)");
+    expect(captureModule).toContain("VoiceAuraOverlay(context)");
     expect(nativeTransport).toContain('report({ level, type: "level" })');
     expect(nativeTransport).toContain('input.signal.addEventListener("abort", abortStart');
     expect(nativeTransport).toContain('channel.close(1000, "voice_finished")');

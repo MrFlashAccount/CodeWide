@@ -91,6 +91,12 @@ const ownerAgentTurnBody = compactSource(
     "utf8",
   ),
 );
+const ownerVirtualizedAgentTurnBody = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/VirtualizedAgentTurnBody.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("Yoga-owned bubble layout", () => {
   it("keeps bubble geometry declarative", () => {
@@ -102,6 +108,24 @@ describe("Yoga-owned bubble layout", () => {
     expect(bubble).toContain('maxWidth: "82%"');
     expect(bubble).toContain('alignSelf: "flex-start"');
     expect(bubble).toContain('alignSelf: "flex-end"');
+  });
+
+  it("keeps the bubble bottom inset equal to its horizontal inset", () => {
+    for (const surface of ["agentSurface", "userSurface"]) {
+      const style = sourceObjectDeclaration(compactSource(bubble), surface);
+      expect(style).toContain("paddingBottom: spacing.sm");
+      expect(style).toContain("paddingHorizontal: spacing.sm");
+    }
+    expect(ownerUserMessageContentStyles).not.toContain("userMessageAttachmentContent");
+  });
+
+  it("left-aligns agent file attachments in both renderer modes", () => {
+    expect(sourceObjectDeclaration(ownerTurnTimelineItemStyles, "agentAttachmentGrid")).toContain(
+      'alignSelf: "flex-start"',
+    );
+    for (const owner of [ownerAgentTurnBody, ownerVirtualizedAgentTurnBody]) {
+      expect(owner).toContain("<MessageAttachmentGrid style={styles.agentAttachmentGrid}>");
+    }
   });
 
   it("contains every bubble failure inside the shared bubble surface", () => {
@@ -216,8 +240,9 @@ describe("Yoga-owned bubble layout", () => {
 
   it("stretches copyable code through completed and streaming Markdown wrappers", () => {
     expect(ownerAgentTurnBody).toContain(
-      'fill={richMarkdownLayout(part.block.body) === "fill"}',
+      'fill={richMarkdownLayout(renderBlockBody(part.block)) === "fill"}',
     );
+    expect(ownerAgentTurnBody).toContain('return block.body ?? "";');
     expect(ownerAgentResponseMarkdown).toContain(
       "const documentStyle = [styles.agentMarkdownDocument, fill && styles.agentMarkdownDocumentFill]",
     );

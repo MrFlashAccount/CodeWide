@@ -2,7 +2,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { LegendList } from "@legendapp/list/react-native";
 import { lazy, Suspense } from "react";
 import { Pressable, View } from "react-native";
-import { colors, controlSize, iconSize, spacing } from "../../theme";
+import {
+  ThreadListHeaderAction,
+  ThreadListHeaderRow,
+} from "../../presentation/navigation/ThreadListHeader";
+import { colors, controlHitSlop, controlSize, iconSize, spacing } from "../../theme";
 import { ContentMenu } from "../../ui/ContentMenu";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
@@ -18,50 +22,30 @@ const SearchCalendar = lazy(async () => import("./SearchCalendar"));
 export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
   return (
     <View style={styles.root} testID="sidebar-search">
-      <View style={styles.header} testID="search-top-input">
-        <View style={styles.searchBar} testID="expanded-thread-search-field">
-          <InlineIcon color={colors.textMuted} name="search" role="body" />
-          <TextInput
-            accessibilityLabel="Search all messages"
-            autoFocus={props.autoFocus}
-            compact
-            onChangeText={props.setText}
-            onFocus={props.didFocus}
-            onSubmitEditing={props.search}
-            placeholder="Search messages"
-            returnKeyType="search"
-            style={styles.input}
-            value={props.text}
-          />
-          <Pressable
-            accessibilityLabel="Close search"
-            accessibilityRole="button"
-            onPress={props.close}
-            style={styles.icon}
-          >
-            <Ionicons color={colors.textMuted} name="close" size={iconSize.action} />
-          </Pressable>
-        </View>
+      <ThreadListHeaderRow testID="global-search-header-row">
+        <ThreadListHeaderAction
+          accessibilityLabel="Back to threads"
+          iconSize={iconSize.navigation}
+          name="arrow-back"
+          onPress={props.close}
+        />
+        <Text numberOfLines={1} style={styles.screenTitle}>
+          Search
+        </Text>
         <ContentMenu
           align="end"
           onOpenChange={props.setFilters}
           open={props.filters}
           placement="bottom"
           trigger={
-            <Pressable
+            <ThreadListHeaderAction
               accessibilityLabel="Search filters"
-              accessibilityRole="button"
-              accessibilityState={{ expanded: props.filters }}
+              accessibilityState={{ expanded: props.filters, selected: props.filterCount > 0 }}
+              name={props.filterCount > 0 ? "filter" : "filter-outline"}
               onPress={props.toggleFilters}
-              style={styles.filterButton}
             >
-              <Ionicons
-                color={props.filterCount > 0 ? colors.text : colors.textMuted}
-                name="options-outline"
-                size={iconSize.action}
-              />
               {props.filterCount > 0 && <View style={styles.filterDot} />}
-            </Pressable>
+            </ThreadListHeaderAction>
           }
           width={Math.min(320, props.window.width - spacing.lg * 2)}
         >
@@ -101,6 +85,35 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
             </Pressable>
           </View>
         </ContentMenu>
+      </ThreadListHeaderRow>
+      <View style={styles.header} testID="search-top-input">
+        <View style={styles.searchBar} testID="expanded-thread-search-field">
+          <InlineIcon color={colors.textMuted} name="search" role="body" />
+          <TextInput
+            accessibilityLabel="Search all messages"
+            accessibilityRole="search"
+            autoFocus={props.autoFocus}
+            compact
+            onChangeText={props.setText}
+            onFocus={props.didFocus}
+            onSubmitEditing={props.search}
+            placeholder="Search messages"
+            returnKeyType="search"
+            style={styles.input}
+            value={props.text}
+          />
+          {props.text !== "" && (
+            <Pressable
+              accessibilityLabel="Clear search query"
+              accessibilityRole="button"
+              hitSlop={controlHitSlop.regular}
+              onPress={props.clear}
+              style={({ pressed }) => [styles.clearButton, pressed && styles.iconButtonPressed]}
+            >
+              <Ionicons color={colors.textMuted} name="close" size={iconSize.action} />
+            </Pressable>
+          )}
+        </View>
       </View>
       {props.calendar !== null && (
         <Suspense fallback={null}>

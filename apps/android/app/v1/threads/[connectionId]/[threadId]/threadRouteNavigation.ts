@@ -5,6 +5,8 @@ import { changesRouteSessions } from "../../../../../src/services/changes/change
 import { composerToolRouteSessions } from "../../../../../src/services/composer/composerToolRouteSession";
 import { contentRouteSessions } from "../../../../../src/services/content/contentRouteSession";
 import { documentRouteService } from "../../../../../src/services/documents/documentRouteService";
+import { agentRouteSessions } from "../../../../../src/services/agents/agentRouteSession";
+import { attachmentRouteSessions } from "../../../../../src/services/attachments/attachmentRouteSession";
 import { drawingRouteSessions } from "../../../../../src/services/drawing/drawingRouteSession";
 import { terminalRouteSessions } from "../../../../../src/services/terminal/terminalRouteSession";
 import { useEvent } from "../../../../../src/react/useEvent";
@@ -28,60 +30,55 @@ const TOOL_PATHS = {
 export function useThreadRouteNavigation(
   router: ReturnType<typeof useRouter>,
   thread: V1ThreadRouteParams,
+  globalSearchSessionId: string | null = null,
 ): ConversationRouteNavigation {
   const connectionId = thread.connectionId.value;
   const threadId = thread.threadId.value;
   const owner = threadRouteSessionOwner(thread);
-  const openAgents = useEvent<ConversationRouteNavigation["openAgents"]>(
-    (initialThreadId, parentThreadId) => {
-      const parentParams =
-        parentThreadId === undefined || parentThreadId === threadId
-          ? {}
-          : { parentAgentThreadId: parentThreadId };
-      if (initialThreadId === null) {
-        router.push({
-          params: { connectionId, threadId, ...parentParams },
-          pathname: "/v1/threads/[connectionId]/[threadId]/agents",
-        });
-        return;
-      }
-      router.push({
-        params: { agentThreadId: initialThreadId, connectionId, threadId, ...parentParams },
-        pathname: "/v1/threads/[connectionId]/[threadId]/agents/[agentThreadId]",
-      });
-    },
-  );
-  const openAttachments = useEvent<ConversationRouteNavigation["openAttachments"]>(() => {
+  const routeParams = {
+    connectionId,
+    ...(globalSearchSessionId === null ? {} : { globalSearchSessionId }),
+    threadId,
+  };
+  const openAgents = useEvent<ConversationRouteNavigation["openAgents"]>((request) => {
+    const session = agentRouteSessions.open(owner, request);
     router.push({
-      params: { connectionId, threadId },
+      params: { ...routeParams, sessionId: session.id },
+      pathname: "/v1/threads/[connectionId]/[threadId]/agents",
+    });
+  });
+  const openAttachments = useEvent<ConversationRouteNavigation["openAttachments"]>((request) => {
+    const session = attachmentRouteSessions.open(owner, request);
+    router.push({
+      params: { ...routeParams, sessionId: session.id },
       pathname: "/v1/threads/[connectionId]/[threadId]/attachments",
     });
   });
   const openChanges = useEvent<ConversationRouteNavigation["openChanges"]>((request) => {
     const session = changesRouteSessions.open(owner, request);
     router.push({
-      params: { connectionId, sessionId: session.id, threadId },
+      params: { ...routeParams, sessionId: session.id },
       pathname: "/v1/threads/[connectionId]/[threadId]/changes",
     });
   });
   const openCodeDocument = useEvent<ConversationRouteNavigation["openCodeDocument"]>((request) => {
     const session = changesRouteSessions.open(owner, request);
     router.push({
-      params: { connectionId, sessionId: session.id, threadId },
+      params: { ...routeParams, sessionId: session.id },
       pathname: "/v1/threads/[connectionId]/[threadId]/documents/[sessionId]",
     });
   });
   const openContent = useEvent<ConversationRouteNavigation["openContent"]>((request) => {
     const session = contentRouteSessions.open(owner, request);
     router.push({
-      params: { connectionId, sessionId: session.id, threadId },
+      params: { ...routeParams, sessionId: session.id },
       pathname: "/v1/threads/[connectionId]/[threadId]/content/[sessionId]",
     });
   });
   const openDocument = useEvent<ConversationRouteNavigation["openDocument"]>((request) => {
     const session = documentRouteService.open(owner, request);
     router.push({
-      params: { connectionId, sessionId: session.id, threadId },
+      params: { ...routeParams, sessionId: session.id },
       pathname: "/v1/threads/[connectionId]/[threadId]/documents/[sessionId]",
     });
   });
@@ -89,7 +86,7 @@ export function useThreadRouteNavigation(
     const result = drawingRouteSessions.open(owner, request);
     if (result.status === "admitted") {
       router.push({
-        params: { sessionId: result.session.id },
+        params: { ...routeParams, sessionId: result.session.id },
         pathname: "/v1/drawing/[sessionId]",
       });
     }
@@ -97,14 +94,14 @@ export function useThreadRouteNavigation(
   const openTerminal = useEvent<ConversationRouteNavigation["openTerminal"]>((request) => {
     const session = terminalRouteSessions.open(owner, request);
     router.push({
-      params: { connectionId, sessionId: session.id, threadId },
+      params: { ...routeParams, sessionId: session.id },
       pathname: "/v1/threads/[connectionId]/[threadId]/terminal",
     });
   });
   const openTool = useEvent<ConversationRouteNavigation["openTool"]>((request) => {
     const session = composerToolRouteSessions.open(owner, request);
     router.push({
-      params: { connectionId, sessionId: session.id, threadId },
+      params: { ...routeParams, sessionId: session.id },
       pathname: TOOL_PATHS[request.kind],
     });
   });
@@ -112,9 +109,8 @@ export function useThreadRouteNavigation(
     const session = changesRouteSessions.open(owner, request);
     router.push({
       params: {
-        connectionId,
+        ...routeParams,
         sessionId: session.id,
-        threadId,
         turnId: request.target.turnId,
       },
       pathname: "/v1/threads/[connectionId]/[threadId]/changes/turns/[turnId]",

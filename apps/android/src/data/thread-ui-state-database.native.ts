@@ -157,10 +157,9 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     }
     retainCounts.delete(id);
     if ((activeUses.get(id) ?? 0) > 0) {
-      releasePending.add(id);
       return;
     }
-    evictKey(id);
+    scheduleUnretainedEviction(id);
   };
 
   const get = (connectionId: string, threadId: string): ThreadUiStateRow | null =>

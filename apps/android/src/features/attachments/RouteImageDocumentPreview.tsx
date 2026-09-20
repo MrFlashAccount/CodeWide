@@ -28,7 +28,11 @@ export function RouteImageDocumentPreview({
     `route-image:${ownerId}:${privateAssetCacheKey(source)}`,
     revision,
     async (_publish, signal) =>
-      materializePrivateAsset(source, request.getTransferAccess, undefined, signal),
+      materializePrivateAsset(source, {
+        getAccess: request.getTransferAccess,
+        signal,
+        variant: "detail",
+      }),
   );
   const retry = useEvent(() => {
     setRevision((current) => current + 1);

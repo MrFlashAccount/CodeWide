@@ -30,12 +30,22 @@ import kotlin.math.roundToInt
 
 /** One temporary layout compiler, never one browser per mounted diagram. */
 class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJavaModule(context) {
-  private data class Job(val id: String, val source: String, val promise: Promise)
+  private enum class Engine(val wireName: String, val assetUrl: String, val renderFunction: String) {
+    ASCII("ascii", "file:///android_asset/ascii-diagram-renderer.html", "renderAsciiDiagram"),
+    MERMAID("mermaid", "file:///android_asset/mermaid-renderer.html", "renderMermaid");
+
+    companion object {
+      fun fromWireName(value: String): Engine? = entries.firstOrNull { it.wireName == value }
+    }
+  }
+
+  private data class Job(val id: String, val engine: Engine, val source: String, val promise: Promise)
   private val handler = Handler(Looper.getMainLooper())
   private val encoder = Executors.newSingleThreadExecutor()
   private val pending = ArrayDeque<Job>()
   private var active: Job? = null
   private var browser: WebView? = null
+  private var browserEngine: Engine? = null
   private var ready = false
   private var closed = false
   private val deadline = Runnable { fail("Diagram preview timed out") }
@@ -43,16 +53,18 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
   override fun getName() = "CodeWideDiagramPreview"
 
   @ReactMethod
-  fun render(id: String, source: String, promise: Promise) {
+  fun render(id: String, engineName: String, source: String, promise: Promise) {
     handler.post {
-      if (closed) promise.reject("DIAGRAM_CLOSED", "Diagram renderer is closed")
+      val engine = Engine.fromWireName(engineName)
+      if (engine == null) promise.reject("DIAGRAM_INVALID_ENGINE", "Unknown diagram renderer")
+      else if (closed) promise.reject("DIAGRAM_CLOSED", "Diagram renderer is closed")
       else {
-        val cached = cachedPreview(id, source)
+        val cached = cachedPreview(id, engine, source)
         if (cached != null) {
           promise.resolve(cached)
           return@post
         }
-        pending.addLast(Job(id, source, promise))
+        pending.addLast(Job(id, engine, source, promise))
         advance()
       }
     }
@@ -93,9 +105,11 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
       destroyBrowser()
       return
     }
+    val job = active ?: return
+    if (browserEngine != job.engine) destroyBrowser()
     handler.postDelayed(deadline, 30_000)
     try {
-      if (browser == null) createBrowser() else if (ready) renderActive()
+      if (browser == null) createBrowser(job.engine) else if (ready) renderActive()
     } catch (_: Exception) {
       fail("Could not initialize diagram renderer")
     }
@@ -104,9 +118,10 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
   // WHY: JavaScript runs only bundled renderer assets. All non-asset requests
   // and navigations are blocked; diagram text is passed as a quoted JSON value.
   @SuppressLint("SetJavaScriptEnabled")
-  private fun createBrowser() {
+  private fun createBrowser(engine: Engine) {
     val view = WebView(reactApplicationContext)
     browser = view
+    browserEngine = engine
     view.settings.javaScriptEnabled = true
     view.settings.allowFileAccess = true
     view.settings.allowContentAccess = false
@@ -126,14 +141,16 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
         return true
       }
     }
-    view.addJavascriptInterface(object {
+    val bridge = object {
       @JavascriptInterface
       fun postMessage(message: String) { handler.post { receive(view, message) } }
-    }, "CodeWideDiagramPreview")
+    }
+    view.addJavascriptInterface(bridge, "CodeWideDiagramPreview")
+    view.addJavascriptInterface(bridge, "ReactNativeWebView")
     // Detached preview compilation must not depend on an animation frame or
     // on the measured size/lifetime of a particular React card.
     view.layout(0, 0, 1024, 1024)
-    view.loadUrl("file:///android_asset/mermaid-renderer.html")
+    view.loadUrl(engine.assetUrl)
   }
 
   private fun renderActive() {
@@ -144,10 +161,13 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
       View.MeasureSpec.makeMeasureSpec(PREVIEW_MAX_HEIGHT, View.MeasureSpec.EXACTLY),
     )
     view.layout(0, 0, PREVIEW_MAX_WIDTH, PREVIEW_MAX_HEIGHT)
-    browser?.evaluateJavascript(
-      "window.renderMermaid(${JSONObject.quote(job.source)},${JSONObject.quote(job.id)},'preview');true;",
-      null,
-    )
+    val render = "window.${job.engine.renderFunction}(${JSONObject.quote(job.source)},${JSONObject.quote(job.id)},'preview')"
+    val command = if (job.engine == Engine.ASCII) {
+      """(async()=>{if(typeof window.diagramUseV1AsciiPresentation!=='function')throw new Error('Bundled diagram presentation did not initialize');await window.diagramUseV1AsciiPresentation();await $render;})().catch(error=>window.ReactNativeWebView.postMessage(JSON.stringify({type:'error',requestId:${JSONObject.quote(job.id)},message:error instanceof Error?error.message:String(error)})));true;"""
+    } else {
+      "$render;true;"
+    }
+    view.evaluateJavascript(command, null)
   }
 
   private fun receive(sender: WebView, message: String) {
@@ -185,7 +205,7 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
     val scale = min(PREVIEW_MAX_WIDTH / sourceWidth, PREVIEW_MAX_HEIGHT / sourceHeight)
     val width = (sourceWidth * scale).roundToInt().coerceAtLeast(1)
     val height = (sourceHeight * scale).roundToInt().coerceAtLeast(1)
-    val output = previewFile(job.source)
+    val output = previewFile(job.engine, job.source)
     if (output.isFile && output.length() > 0) {
       completePreview(view, job, output, width, height)
       return
@@ -237,14 +257,15 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
     advance()
   }
 
-  private fun previewFile(source: String): File {
-    val digest = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8))
+  private fun previewFile(engine: Engine, source: String): File {
+    val cacheInput = "${engine.wireName}\u0000$source"
+    val digest = MessageDigest.getInstance("SHA-256").digest(cacheInput.toByteArray(Charsets.UTF_8))
       .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
     return File(File(reactApplicationContext.cacheDir, PREVIEW_CACHE_DIRECTORY), "$digest.png")
   }
 
-  private fun cachedPreview(id: String, source: String): String? {
-    val output = previewFile(source)
+  private fun cachedPreview(id: String, engine: Engine, source: String): String? {
+    val output = previewFile(engine, source)
     if (!output.isFile || output.length() <= 0) return null
     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(output.absolutePath, options)
@@ -274,9 +295,11 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
   private fun destroyBrowser() {
     handler.removeCallbacks(deadline)
     browser?.removeJavascriptInterface("CodeWideDiagramPreview")
+    browser?.removeJavascriptInterface("ReactNativeWebView")
     browser?.stopLoading()
     browser?.destroy()
     browser = null
+    browserEngine = null
     ready = false
   }
 
@@ -286,8 +309,16 @@ class DiagramPreviewModule(context: ReactApplicationContext) : ReactContextBaseJ
     const val PREVIEW_CAPTURE_DELAY_MS = 32L
     // Rendering geometry is part of the cache format. A version bump prevents
     // corrected previews from reusing PNGs captured by the old inline layout.
-    const val PREVIEW_CACHE_DIRECTORY = "diagram-previews-v2"
-    val ASSETS = setOf("mermaid-renderer.html", "mermaid.min.js", "panzoom.min.js", "diagram-preview.js")
+    const val PREVIEW_CACHE_DIRECTORY = "diagram-previews-v5"
+    val ASSETS = setOf(
+      "mermaid-renderer.html",
+      "mermaid.min.js",
+      "ascii-diagram-renderer.html",
+      "svgbob-wasm.js",
+      "panzoom.min.js",
+      "diagram-preview.js",
+      "fonts/DejaVuSansMono.ttf",
+    )
       .map { "file:///android_asset/$it" }.toSet()
   }
 }

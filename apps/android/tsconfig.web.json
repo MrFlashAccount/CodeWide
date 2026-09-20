@@ -15,7 +15,11 @@
     ],
     "customConditions": [
       "browser"
-    ]
+    ],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@legendapp/list/react-native": ["./.expo/types/legend-list-native.d.ts"]
+    }
   },
   "files": [],
   "exclude": [

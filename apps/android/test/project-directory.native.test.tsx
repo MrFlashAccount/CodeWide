@@ -5,7 +5,44 @@ import { ProjectPickerSheet } from "../src/features/projects/ProjectPickerSheet"
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
 
-// WHY: The native sheet window is unavailable in Node; directory navigation and resources stay real.
+// WHY: The native Compose sheet and list hosts are unavailable in Node; project navigation stays real.
+jest.mock("@expo/ui/jetpack-compose", () => {
+  const React = jest.requireActual<typeof import("react")>("react");
+  const {
+    Pressable: NativePressable,
+    Text: NativeText,
+    View,
+  } = jest.requireActual<typeof import("react-native")>("react-native");
+  const Host = ({ children }: { readonly children?: ReactNode }) => <View>{children}</View>;
+  const Slot = ({ children }: { readonly children?: ReactNode }) => <View>{children}</View>;
+  const ListItem = Object.assign(Slot, {
+    HeadlineContent: Slot,
+    LeadingContent: Slot,
+    SupportingContent: Slot,
+    TrailingContent: Slot,
+  });
+  const ModalBottomSheet = React.forwardRef(function MockModalBottomSheet(
+    { children }: { readonly children?: ReactNode },
+    ref,
+  ) {
+    React.useImperativeHandle(ref, () => ({ hide: async () => undefined }), []);
+    return <View>{children}</View>;
+  });
+  return {
+    Box: Slot,
+    CircularProgressIndicator: Slot,
+    Host,
+    Icon: Slot,
+    ListItem,
+    ModalBottomSheet,
+    NativePressable,
+    RNHostView: Host,
+    Row: Slot,
+    Text: NativeText,
+  };
+});
+
+// WHY: Non-Android resolution still requires the external community sheet to be inert in Node.
 jest.mock("@expo/ui/community/bottom-sheet", () => {
   const { View, ScrollView } = jest.requireActual<typeof import("react-native")>("react-native");
   return {

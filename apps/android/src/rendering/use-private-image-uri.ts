@@ -1,23 +1,59 @@
 import { createContext, createElement, type ReactNode, useContext } from "react";
 
-import type { GetTransferAccess, PrivateAssetSource } from "../data/private-transfer";
+import type {
+  GetTransferAccess,
+  PrivateAssetImageVariant,
+  PrivateAssetSource,
+} from "../data/private-transfer";
 import { materializePrivateAsset } from "./private-asset";
-import { useEphemeralAsyncResource } from "./async-resource-store";
+import { useAsyncResource } from "./async-resource-store";
 import { privateImageResourceKey } from "./private-image-resource-key";
 import { incrementMetric, recordTiming } from "../data/operational-metrics";
 
 type ResolvedImageSource = { headers?: Record<string, string>; uri: string };
-type PrivateImageSource = {
+type PrivateImageLoadState = {
   failed: boolean;
-  headers?: Record<string, string>;
+  headers: Record<string, string> | undefined;
   source: ResolvedImageSource | null;
   uri: string | null;
+};
+
+export type PrivateImageDetailRequest = {
+  accessScope: string;
+  getAccess: GetTransferAccess;
+  resourceKey: string;
+  revision: number;
+  source: Exclude<PrivateAssetSource, { kind: "direct" }>;
+};
+
+type PrivateImageSource = {
+  detail: PrivateImageDetailRequest | null;
+  failed: boolean;
+  headers: Record<string, string> | undefined;
+  source: ResolvedImageSource | null;
+  uri: string | null;
+};
+type PrivateImageOptions = {
+  access?: GetTransferAccess | undefined;
+  accessScope?: string | undefined;
+  revision?: number | undefined;
+  variant?: PrivateAssetImageVariant | undefined;
 };
 const PrivateImageAccessContext = createContext<GetTransferAccess | null>(null);
 const PrivateFileAccessScopeContext = createContext("none");
 const PrivateAssetRecoveryContext = createContext<(() => Promise<void>) | null>(null);
-const EMPTY_PRIVATE_IMAGE: PrivateImageSource = { failed: false, source: null, uri: null };
-const FAILED_PRIVATE_IMAGE: PrivateImageSource = { failed: true, source: null, uri: null };
+const EMPTY_PRIVATE_IMAGE: PrivateImageLoadState = {
+  failed: false,
+  headers: undefined,
+  source: null,
+  uri: null,
+};
+const FAILED_PRIVATE_IMAGE: PrivateImageLoadState = {
+  failed: true,
+  headers: undefined,
+  source: null,
+  uri: null,
+};
 
 export function PrivateImageAccessProvider({
   children,
@@ -55,61 +91,158 @@ export function usePrivateImageUri(
   revision = 0,
 ): PrivateImageSource {
   const source = sourceUri === null ? null : imageAssetSource(sourceUri, sourceHeaders);
-  return usePrivateAssetUri(source, revision);
+  return usePrivateAssetUri(source, { revision });
 }
 
 export function usePrivateAssetUri(
   source: PrivateAssetSource | null,
-  revision = 0,
-  accessOverride?: GetTransferAccess,
+  options: PrivateImageOptions = {},
 ): PrivateImageSource {
+  const {
+    access: accessOverride,
+    accessScope: accessScopeOverride,
+    revision = 0,
+    variant = "preview",
+  } = options;
   const inheritedAccess = useContext(PrivateImageAccessContext);
   const recoverMissing = useContext(PrivateAssetRecoveryContext);
   const getAccess = accessOverride ?? inheritedAccess;
-  const accessScope = usePrivateFileAccessScope();
-  const key =
-    source === null
-      ? null
-      : `private-asset:${accessScope}:${String(revision)}:${privateImageResourceKey(source)}`;
-  const resource = useEphemeralAsyncResource<PrivateImageSource>(
-    key,
-    key ?? "none",
-    async (_publish, signal) => {
-      if (source === null) {
-        return EMPTY_PRIVATE_IMAGE;
-      }
-      const materialize = materializePrivateAsset(
-        source,
+  const inheritedAccessScope = usePrivateFileAccessScope();
+  const accessScope = accessScopeOverride ?? inheritedAccessScope;
+  const identity = privateImageIdentity({ accessScope, revision, source, variant });
+  const resource = useAsyncResource<PrivateImageLoadState>(
+    identity.key,
+    identity.key ?? "none",
+    async (_publish, signal) =>
+      loadPrivateImage({
         getAccess,
-        recoverMissing ?? undefined,
+        recoverMissing: recoverMissing ?? undefined,
         signal,
-      );
-      const materializeStartedAt = performance.now();
-      return materialize.then(
-        (resolved) => {
-          if (!signal.aborted) {
-            recordTiming("image_materialize_ms", performance.now() - materializeStartedAt);
-          }
-          return {
-            failed: false,
-            headers: resolved.headers,
-            source: { headers: resolved.headers, uri: resolved.uri },
-            uri: resolved.uri,
-          };
-        },
-        (error: unknown) => {
-          if (!(error instanceof Error && error.name === "AbortError")) {
-            incrementMetric("image_failures");
-          }
-          throw error instanceof Error ? error : new Error("Private image request failed");
-        },
-      );
-    },
+        source,
+        variant,
+      }),
   );
-  if (resource.status === "error") {
+  const state = currentPrivateImageState(resource.status, resource.value);
+  const detail = privateImageDetailRequest({
+    accessScope,
+    getAccess,
+    revision,
+    source,
+    sourceKey: identity.sourceKey,
+    variant,
+  });
+  return {
+    detail,
+    failed: state.failed,
+    headers: state.headers,
+    source: state.source,
+    uri: state.uri,
+  };
+}
+
+function currentPrivateImageState(
+  status: string,
+  value: PrivateImageLoadState | null,
+): PrivateImageLoadState {
+  if (status === "error") {
     return FAILED_PRIVATE_IMAGE;
   }
-  return resource.value ?? EMPTY_PRIVATE_IMAGE;
+  return value ?? EMPTY_PRIVATE_IMAGE;
+}
+
+function privateImageIdentity({
+  accessScope,
+  revision,
+  source,
+  variant,
+}: {
+  accessScope: string;
+  revision: number;
+  source: PrivateAssetSource | null;
+  variant: PrivateAssetImageVariant;
+}): { key: string | null; sourceKey: string | null } {
+  if (source === null) {
+    return { key: null, sourceKey: null };
+  }
+  const sourceKey = privateImageResourceKey(source);
+  return {
+    key: `private-asset:${accessScope}:${String(revision)}:${variant}:${sourceKey}`,
+    sourceKey,
+  };
+}
+
+function privateImageDetailRequest({
+  accessScope,
+  getAccess,
+  revision,
+  source,
+  sourceKey,
+  variant,
+}: {
+  accessScope: string;
+  getAccess: GetTransferAccess | null;
+  revision: number;
+  source: PrivateAssetSource | null;
+  sourceKey: string | null;
+  variant: PrivateAssetImageVariant;
+}): PrivateImageDetailRequest | null {
+  if (
+    variant !== "preview" ||
+    source === null ||
+    source.kind === "direct" ||
+    getAccess === null ||
+    sourceKey === null
+  ) {
+    return null;
+  }
+  return {
+    accessScope,
+    getAccess,
+    resourceKey: `${accessScope}:${String(revision)}:${sourceKey}`,
+    revision,
+    source,
+  };
+}
+
+async function loadPrivateImage({
+  getAccess,
+  recoverMissing,
+  signal,
+  source,
+  variant,
+}: {
+  getAccess: GetTransferAccess | null;
+  recoverMissing?: (() => Promise<void>) | undefined;
+  signal: AbortSignal;
+  source: PrivateAssetSource | null;
+  variant: PrivateAssetImageVariant;
+}): Promise<PrivateImageLoadState> {
+  if (source === null) {
+    return EMPTY_PRIVATE_IMAGE;
+  }
+  const startedAt = performance.now();
+  try {
+    const resolved = await materializePrivateAsset(source, {
+      getAccess,
+      recoverMissing,
+      signal,
+      variant,
+    });
+    if (!signal.aborted) {
+      recordTiming("image_materialize_ms", performance.now() - startedAt);
+    }
+    return {
+      failed: false,
+      headers: resolved.headers,
+      source: { headers: resolved.headers, uri: resolved.uri },
+      uri: resolved.uri,
+    };
+  } catch (error) {
+    if (!(error instanceof Error && error.name === "AbortError")) {
+      incrementMetric("image_failures");
+    }
+    throw error instanceof Error ? error : new Error("Private image request failed");
+  }
 }
 
 function imageAssetSource(uri: string, headers?: Record<string, string>): PrivateAssetSource {

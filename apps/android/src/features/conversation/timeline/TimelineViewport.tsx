@@ -1,19 +1,65 @@
 import { ThreadTimelineList } from "../../../rendering/ThreadTimelineList";
+import { useEvent } from "../../../react/useEvent";
+import type { ReactElement } from "react";
 import {
   conversationBottomContentInset,
   conversationTopContentInset,
 } from "../../../ui/conversation-chrome-layout";
 import { AppText as Text } from "../../../ui/Typography";
 import { useTimelineGestureBindings } from "./timelineGestureBindings";
+import { TIMELINE_TAIL_MODE_THRESHOLD_RATIO } from "./historyAnchor";
+import { useTimelineJumpExecution } from "./timelineJump";
 import { useTimelineMeasurementBindings } from "./timelineMeasurementBindings";
 import { timelineItemKey } from "./timelineProjection";
+import {
+  projectTimelineRows,
+  timelineRowItem,
+  timelineRowKey,
+  timelineRowSizeEstimate,
+  type TimelineRow,
+} from "./timelineRows";
 import { styles } from "./TimelineViewport.styles";
 import type { TimelineViewportProps } from "./TimelineViewportContract";
 
-export function TimelineViewport(props: TimelineViewportProps) {
-  const { timelineRef } = props;
+export function TimelineViewport(props: TimelineViewportProps): ReactElement {
+  const {
+    completeTimelineJump,
+    fullscreenCovered,
+    latestUnreadAgentRef,
+    persistTimelineAtEnd,
+    scrollOffsetRef,
+    timelineJumpRequest,
+    timelineRef,
+    timelineViewportRef,
+  } = props;
+  const timelineRows = projectTimelineRows(props.displayedTimeline, {
+    enabled: true,
+    latestUnreadAgentTurnId: props.latestUnreadAgentTurnId,
+    searchMessageItemId: props.searchMessageItemId,
+    threadSearchActive: props.threadSearchActive,
+  });
+  const onFirstVisibleItemChanged = useEvent(
+    ({ item: row }: { index: number; item: TimelineRow; key: string }) => {
+      const item = timelineRowItem(row);
+      props.onTimelineFirstVisibleItemChanged({
+        index: row.timelineIndex,
+        item,
+        key: timelineItemKey(item),
+      });
+    },
+  );
   const gestures = useTimelineGestureBindings(props);
   const measurement = useTimelineMeasurementBindings(props);
+  useTimelineJumpExecution({
+    completeTimelineJump,
+    fullscreenCovered,
+    latestUnreadAgentRef,
+    persistTimelineAtEnd,
+    scrollOffsetRef,
+    timelineJumpRequest,
+    timelineRef,
+    timelineViewportRef,
+  });
   return (
     <ThreadTimelineList
       automaticallyAdjustContentInsets={false}
@@ -29,22 +75,23 @@ export function TimelineViewport(props: TimelineViewportProps) {
         },
       ]}
       contentInsetAdjustmentBehavior="never"
-      data={props.displayedTimeline}
+      data={timelineRows}
       extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}`}
-      followTail={
-        !props.fullscreenCovered &&
-        props.historyViewport.containsLatest &&
-        !props.awayFromLatest &&
-        !props.threadSearchActive
+      getItemType={(row) =>
+        row.kind === "turnSlice"
+          ? row.parts.length === 1 && row.parts[0]?.kind === "markdownBlock"
+            ? `markdown:${row.parts[0].block.node.type}`
+            : "turnSlice"
+          : row.item.kind
       }
-      getItemType={(item) => item.kind}
-      initialPosition={props.timelineInitialPosition}
+      initialScrollAtEnd={!props.timelinePositioned}
+      itemSizeEstimate={timelineRowSizeEstimate(timelineRows)}
       key={props.composerScope}
       keyboardDismissMode="interactive"
       keyboardLiftBehavior="always"
       keyboardOffset={props.conversationInsets.bottom}
       keyboardShouldPersistTaps="handled"
-      keyExtractor={timelineItemKey}
+      keyExtractor={timelineRowKey}
       ListEmptyComponent={props.emptyContent}
       ListFooterComponent={props.footerContent}
       ListHeaderComponent={
@@ -56,12 +103,14 @@ export function TimelineViewport(props: TimelineViewportProps) {
           </Text>
         ) : null
       }
-      measurementRevision={props.windowLayout.measurementRevision}
+      maintainScrollAtEnd
+      maintainScrollAtEndThreshold={TIMELINE_TAIL_MODE_THRESHOLD_RATIO}
+      maintainVisibleContentPosition
       nestedScrollEnabled
       onContentSizeChange={measurement.onContentSizeChange}
       onEndReached={props.loadNewerAtTimelineEnd}
       onEndReachedThreshold={0.5}
-      onFirstVisibleItemChanged={props.onTimelineFirstVisibleItemChanged}
+      onFirstVisibleItemChanged={onFirstVisibleItemChanged}
       onLayout={measurement.onLayout}
       onLoad={measurement.onLoad}
       onMomentumScrollBegin={gestures.onMomentumScrollBegin}

@@ -6,7 +6,7 @@ import type { ThreadResourcesValue } from "../src/data/workspace-resource-databa
 const EMPTY: ThreadResourcesValue = {
   threadId: "thread-1",
   revision: "initial",
-  changeScope: "branch",
+  changeScope: "session",
   changeScopes: ["session", "lastTurn", "branch"],
   changes: [],
   attachments: [],
@@ -106,5 +106,22 @@ describe("thread resource stream projection", () => {
     }, 4);
 
     expect(projected).toBe(staged);
+  });
+
+  it("does not add live step changes to the branch comparison", () => {
+    const branch = { ...EMPTY, changeScope: "branch" as const };
+    const projected = projectThreadResourcePatch(branch, "/workspace/repo", {
+      version: 1,
+      threadId: "thread-1",
+      operation: {
+        kind: "fileChanges",
+        turnId: "turn-1",
+        itemId: "item-1",
+        changes: [{ path: "file.ts", kind: { type: "update", move_path: null }, diff: "+new" }],
+      },
+    }, 5);
+
+    expect(projected).toBe(branch);
+    expect(projected.changes).toEqual([]);
   });
 });

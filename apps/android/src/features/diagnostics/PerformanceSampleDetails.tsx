@@ -32,9 +32,9 @@ export function renderPerformanceSampleDetails(
           value={percent(current.cpuPercent)}
         />
         <MetricTile
-          detail={`peak ${bytes(state.metrics.peakPssBytes)}`}
-          label="Memory PSS"
-          value={bytes(current.pssBytes)}
+          detail={`PSS sample ${bytes(current.pssBytes)}`}
+          label="Memory RSS"
+          value={bytes(current.rssBytes)}
         />
         <MetricTile
           detail={`${String(current.renderedFrames)} frames / sample`}

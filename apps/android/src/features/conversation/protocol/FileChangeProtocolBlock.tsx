@@ -5,7 +5,6 @@ import { Pressable, View } from "react-native";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
 import { projectFileChange } from "../../../rendering/file-change-rendering";
 import { nativeCodeLanguageForPath } from "../../../rendering/native-code-block";
-import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
 import { NativeCodeBlock } from "../../../rendering/NativeCodeBlock";
 import { colors } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
@@ -15,6 +14,7 @@ import { CopyButton } from "../turns/MessageActionRail";
 import { ThreadCwdContext } from "../turns/turnContexts";
 import { styles } from "./FileChangeProtocolBlock.styles";
 import { protocolCopyText } from "./protocolCopyText";
+import { nextFileChangeItemKey } from "./protocolItemIdentity";
 import { TOOL_RESULT_MAX_HEIGHT } from "./ToolContent";
 
 export function FileChangeProtocolBlock({ block }: { block: RenderBlock }) {
@@ -49,7 +49,7 @@ export function FileChangeProtocolDetails({ block }: { block: RenderBlock }) {
         changes.map((change, index) => {
           const diff = typeof change.diff === "string" ? change.diff : "";
           const path = typeof change.path === "string" ? change.path : `File ${String(index + 1)}`;
-          const key = occurrenceKey(occurrences, `${path}\u0000${textFingerprint(diff)}`);
+          const key = nextFileChangeItemKey(occurrences, path);
           return <DiffFile diff={diff} key={key} kind={change.kind} path={path} />;
         })
       )}

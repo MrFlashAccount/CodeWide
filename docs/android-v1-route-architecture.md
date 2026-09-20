@@ -24,7 +24,7 @@ The persistent V1 shell is split by cohesive responsibility:
 - `V1WorkspaceRouteModel.ts` validates the current thread URL and adapts Router commands;
 - `V1WorkspaceRouteComposition.tsx` binds workspace resources and route intents;
 - `V1WorkspaceThreadList.tsx` adapts route resources to the shared thread-list widget;
-- `V1WorkspaceShell.tsx` owns the persistent responsive chrome, providers and `Slot`.
+- `V1WorkspaceShell.tsx` owns the persistent responsive chrome, providers and inner `Stack`.
 
 `CodeWideScreen`, `WorkspaceScreen`, `WorkspaceOverlays`, `ThreadNavigationModel` and
 `features/navigation/**` no longer exist. There is no second selected-destination state.
@@ -41,7 +41,7 @@ app/v1/
 │   ├── controls/{model,permissions,skills}.tsx
 │   ├── content/[sessionId].tsx
 │   └── documents/[sessionId].tsx
-├── search.tsx                                     /v1/search
+├── search.tsx                                     /v1/search marker; search renders in the list pane
 ├── projects/
 │   ├── index.tsx
 │   └── add/[connectionId].tsx
@@ -53,7 +53,7 @@ app/v1/
 └── threads/[connectionId]/[threadId]/
     ├── _layout.tsx
     ├── index.tsx
-    ├── agents/{index,[agentThreadId]}.tsx
+    ├── agents/{index,[agentThreadId]}.tsx            fullscreen workspace; detail path compatibility
     ├── attachments/index.tsx
     ├── changes/{index,turns/[turnId]}.tsx
     ├── controls/{model,permissions,skills}.tsx
@@ -67,22 +67,38 @@ boot owner. `/servers` remains the V2 aggregate route and is not part of V1.
 
 ## Route semantics
 
-| Intent | Operation | Contract |
-| --- | --- | --- |
-| Open V1 | redirect to `/v1` | All is the V1 root destination |
-| Select the first desktop thread | commit-time selection from `/v1` | avoids render-time navigation while retaining immediate publication |
-| Select a thread | `push` from All, otherwise `replace` | one peer conversation destination is retained |
-| Open a thread child | `push` | Back returns to the owning thread |
-| Close a route surface | `back` or `dismissTo` its stable parent | UI close and system Back share Router history |
-| Delete the active thread | `dismissTo('/v1')` | no invalid active-thread route remains |
-| Open a search result | `push` with an opaque search-window id | query and project data stay outside the URL |
-| Open browser, drawing, content or document | `push` with an opaque session id | private resources and callbacks stay in bounded services |
-| Navigate within a WebView | widget-owned history | page history stays separate from application navigation |
+| Intent                                     | Operation                                                                                                     | Contract                                                                                                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Open V1                                    | redirect to `/v1`                                                                                             | All is the V1 root destination                                                                                                                   |
+| Select the first desktop thread            | commit-time selection from `/v1`                                                                              | avoids render-time navigation while retaining immediate publication                                                                              |
+| Select a thread                            | `push` from All, otherwise `replace`                                                                          | one peer conversation destination is retained without bulk native-stack removal                                                                  |
+| Open a thread child                        | `push`; controls/lists use transparent sheets, content workspaces use an opaque fullscreen `transparentModal` | Back returns to the still-mounted owning thread; Android never detaches the covered Fabric screen                                                |
+| Close a route surface                      | `back`, with stable-parent replacement for direct entry                                                       | UI close and system Back share Router history                                                                                                    |
+| Delete the active thread                   | `dismissTo('/v1')`                                                                                            | no invalid active-thread route remains                                                                                                           |
+| Open global search                         | desktop `push`; mobile collapses peer history before `push`, with an opaque search-session id                 | search replaces the left list pane while the current desktop chat remains on the right; mobile retains no covered conversation                   |
+| Toggle Global Voice Mode                   | activate the app-level live-assistant/stop control without navigation                                         | the process-lifetime supervisor continues across routes and app backgrounding; only explicit Stop or terminal failure releases it                |
+| Open a search result                       | desktop collapses peer history and `push`es; mobile `push`, with opaque session/window ids                    | desktop keeps search on the left without retaining its previous chat; mobile Back returns to search; query and project data stay outside the URL |
+| Open browser, drawing, content or document | `push` with an opaque session id and fullscreen modal presentation                                            | private resources and callbacks stay in bounded services; root modals carry the owning thread identity                                           |
+| Navigate within a WebView                  | widget-owned history                                                                                          | page history stays separate from application navigation                                                                                          |
 
 Main-thread navigation publishes immediately and retains cached content or the local skeleton while
 history hydrates progressively. It does not use a Transition. Subagent selection continues through
 its existing Transition. The workspace runtime, databases, native conversation host, voice
 controller and Terminal store outlive route children.
+
+`RouteFullscreenOverlay` keeps fullscreen content owned by its Expo Router destination while
+projecting the rendered workspace into the application-level `AppFullscreenOverlayHost`. The host
+sits above the responsive split shell, so Changes, documents, large content, browser, drawing,
+subagents and Terminal cover both panes. Overlay close and system Back dismiss the owning route;
+route teardown closes the overlay without navigating a second time.
+
+## Global Voice non-route boundary
+
+Global Voice is deliberately not an Expo Router destination. `V1WorkspaceRouteComposition` obtains the process-lifetime `GlobalSupervisorFeatureContract` from `createWorkspaceFeatures` and passes one `{ active, onToggle }` control into both responsive thread-list headers. The inactive live-assistant signal starts or recovers the supervisor; the same control becomes an active Stop action until the activation ends.
+
+The control owns no independent selected-chat state. Cross-chat targets are always qualified by both V1 `connectionId` and `threadId`; the current route is never ambient authority. The bound supervisor thread is a system thread and is rejected by ordinary direct-route admission as well as excluded from every ordinary list/count/default surface. Navigation, Back, route unmount and app backgrounding are not lifecycle signals for the supervisor.
+
+The feature model owns the binding, capability and activation discriminated unions. Android foreground-service ownership keeps an explicitly started microphone session eligible while the app is backgrounded. Explicit Stop, home-session loss, permission revocation or terminal realtime close converges on teardown before the activation returns to idle/failed state. Lock-screen start/recovery, wake word and notification controls remain outside this contract.
 
 ## Server scope
 
@@ -118,8 +134,8 @@ resources.
 
 1. Main-thread header and composer never wait for complete history; composer restoration precedes
    editing.
-2. Desktop sidebar identity stays mounted across thread routes; mobile Back returns to All.
-3. Search windows cannot leak into another thread.
+2. Desktop sidebar identity stays mounted across thread routes; selected-row identity comes from the active qualified route; mobile Back returns to All.
+3. Global search occupies the list pane, keeps the desktop conversation pane mounted and survives the mobile result round trip. Search windows cannot leak into another thread.
 4. Subagent selection retains its Transition and carries the immediate parent agent explicitly for
    nested agent routes.
 5. Code documents open in the real readonly review workspace with line/column reveal, source assets,

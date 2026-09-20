@@ -10,10 +10,10 @@ import type { useComposerInteractions } from "../composer/composerInteractions";
 import type { useComposerState } from "../composer/composerState";
 import type { useConversationActivation } from "./conversationActivation";
 import type { ConversationCompositionCapabilities } from "./conversationCompositionCapabilities";
-import type { useConversationScopeFeatures } from "./conversationScopeFeatures";
 import type { useConversationTools } from "./ConversationTools";
 import type { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
 import type { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
+import { ConversationComposerSlot } from "./ConversationComposerSlot";
 
 export function createConversationComposerContent({
   activation,
@@ -25,7 +25,6 @@ export function createConversationComposerContent({
   getStableTransferAccess,
   goalContent,
   goalInputs,
-  goalResource,
   overlayScrollOwnershipBinding,
   readInputs,
   surfaceInputs,
@@ -41,7 +40,6 @@ export function createConversationComposerContent({
   getStableTransferAccess: ReturnType<typeof useDocumentTransferAccess>;
   goalContent: ReactNode;
   goalInputs: ConversationCompositionCapabilities["goal"];
-  goalResource: ReturnType<typeof useConversationScopeFeatures>["goalResource"];
   overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
   readInputs: MainThreadReadCapabilities;
   surfaceInputs: ConversationSurfaceCapabilities;
@@ -55,103 +53,105 @@ export function createConversationComposerContent({
     toolsBinding.toolContextChips,
   );
   const composerContent = (
-    <ComposerFeature
-      activatePrimaryAction={composerDelivery.composerDeliveryBinding.activatePrimaryAction}
-      anchoredComposerActions={
-        composerDelivery.composerAccessoryActionsBinding.anchoredComposerActions
-      }
-      attachments={composerStateBinding.composerEditingBinding.attachments}
-      cancelQueuedComposerEdit={composerCommands.queueEditActionsBinding.cancelQueuedComposerEdit}
-      closeGoalAttachment={composerStateBinding.composerMenuStateBinding.closeGoalAttachment}
-      closeQuickControlMenu={composerCommands.composerControlActionsBinding.closeQuickControlMenu}
-      composerDiscardEnabled={composerDelivery.composerDeliveryBinding.composerDiscardEnabled}
-      composerInputRef={composerStateBinding.composerEditingBinding.composerInputRef}
-      composerScope={activation.composerScope}
-      composerTrayVisible={composerStateBinding.composerMenuStateBinding.composerTrayVisible}
-      composerUploadScope={composerStateBinding.composerEditingBinding.composerUploadScope}
-      controlError={composerStateBinding.composerEditingBinding.controlError}
-      controlsResourceId={composerInputs.controlsResourceId}
-      currentTurnId={timelineRead.conversationPresentationBinding.currentTurnId}
-      cwd={surfaceInputs.cwd}
-      deliveryActions={composerDelivery.composerDeliveryBinding.deliveryActions}
-      discardComposer={composerDelivery.composerDeliveryBinding.discardComposer}
-      dismissComposerKeyboardForOverlay={
-        overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay
-      }
-      draft={composerStateBinding.composerEditingBinding.draft}
-      draftConnectionId={activation.draftConnectionId}
-      draftSelectionRef={composerStateBinding.composerEditingBinding.draftSelectionRef}
-      draftThreadId={activation.draftThreadId}
-      editingQueuedMessage={composerDelivery.composerDeliveryBinding.editingQueuedMessage}
-      fileAttachmentEnabled={composerCommands.composerAttachmentsBinding.fileAttachmentEnabled}
-      finishVoice={composerDelivery.composerDeliveryBinding.finishVoice}
-      getStableTransferAccess={getStableTransferAccess}
-      getTransferAccess={attachmentsInputs.getTransferAccess}
-      goalAttachmentVisible={composerStateBinding.composerMenuStateBinding.goalAttachmentVisible}
-      goalResource={goalResource}
-      handleAnchoredComposerAction={
-        composerDelivery.composerAccessoryActionsBinding.handleAnchoredComposerAction
-      }
-      handleComposerLargePaste={
-        composerCommands.composerAttachmentsBinding.handleComposerLargePaste
-      }
-      handleComposerMarkdownChange={
-        composerStateBinding.composerEditingBinding.handleComposerMarkdownChange
-      }
-      handleComposerTextChange={
-        composerStateBinding.composerEditingBinding.handleComposerTextChange
-      }
-      handleDeliveryAction={composerDelivery.composerDeliveryBinding.handleDeliveryAction}
-      microphoneAccess={composerDelivery.composerDeliveryBinding.microphoneAccess}
-      microphoneButtonRef={composerStateBinding.composerVoiceStateBinding.microphoneButtonRef}
-      newChat={surfaceInputs.newChat}
-      onClearGoal={goalInputs.onClearGoal}
-      onLoadControls={composerInputs.onLoadControls}
-      onSetGoal={goalInputs.onSetGoal}
-      openAccessoryAction={composerDelivery.composerAccessoryActionsBinding.openAccessoryAction}
-      openControls={composerCommands.composerControlActionsBinding.openControls}
-      openQuickControlMenu={composerCommands.composerControlActionsBinding.openQuickControlMenu}
-      pastedAttachmentPending={composerStateBinding.largePasteStateBinding.pastedAttachmentPending}
-      pendingVoiceSelection={composerStateBinding.composerVoiceStateBinding.pendingVoiceSelection}
-      queuedComposerEdit={composerStateBinding.queueEditStateBinding.queuedComposerEdit}
-      queuedComposerEditBusy={composerStateBinding.queueEditStateBinding.queuedComposerEditBusy}
-      queuedComposerEditError={composerStateBinding.queueEditStateBinding.queuedComposerEditError}
-      readOnly={surfaceInputs.readOnly}
-      remoteThread={readInputs.remoteThread}
-      removeComposerAttachment={
-        composerCommands.composerAttachmentsBinding.removeComposerAttachment
-      }
-      retryVoice={composerDelivery.composerDeliveryBinding.retryVoice}
-      searchComposerSuggestions={
-        composerStateBinding.composerEditingBinding.searchComposerSuggestions
-      }
-      selectComposerMention={composerStateBinding.composerEditingBinding.selectComposerMention}
-      selectedEffort={composerStateBinding.composerEditingBinding.selectedEffort}
-      selectedModel={composerStateBinding.composerEditingBinding.selectedModel}
-      selectedPermissions={composerStateBinding.composerEditingBinding.selectedPermissions}
-      selectedPersonality={composerStateBinding.composerEditingBinding.selectedPersonality}
-      selectEffort={composerStateBinding.composerEditingBinding.selectEffort}
-      selectModel={composerStateBinding.composerEditingBinding.selectModel}
-      selectPermissions={composerStateBinding.composerEditingBinding.selectPermissions}
-      sendDisabled={composerDelivery.composerDeliveryBinding.sendDisabled}
-      setComposerTrayVisible={composerStateBinding.composerMenuStateBinding.setComposerTrayVisible}
-      setSelectedPersonality={composerStateBinding.composerEditingBinding.setSelectedPersonality}
-      steerComposer={composerDelivery.composerDeliveryBinding.steerComposer}
-      stoppingResponse={composerDelivery.composerDeliveryBinding.stoppingResponse}
-      threadLifecycleActive={timelineRead.conversationPresentationBinding.threadLifecycleActive}
-      toggleVoice={composerDelivery.composerDeliveryBinding.toggleVoice}
-      toolContextChips={toolContextChips}
-      useAnchoredComposerMenu={
-        composerDelivery.composerAccessoryActionsBinding.useAnchoredComposerMenu
-      }
-      voiceBackend={composerStateBinding.composerVoiceStateBinding.voiceBackend}
-      voiceController={composerInputs.voiceController}
-      voiceError={composerStateBinding.composerVoiceStateBinding.voiceError}
-      voicePhase={composerStateBinding.composerVoiceStateBinding.voicePhase}
-      voiceResource={composerStateBinding.composerVoiceStateBinding.voiceResource}
-      voiceRetryAvailable={composerStateBinding.composerVoiceStateBinding.voiceRetryAvailable}
-      workspaceResources={composerInputs.workspaceResources}
-    />
+    <ConversationComposerSlot state={readInputs.composerState}>
+      <ComposerFeature
+        activatePrimaryAction={composerDelivery.composerDeliveryBinding.activatePrimaryAction}
+        anchoredComposerActions={
+          composerDelivery.composerAccessoryActionsBinding.anchoredComposerActions
+        }
+        attachments={composerStateBinding.composerEditingBinding.attachments}
+        cancelQueuedComposerEdit={composerCommands.queueEditActionsBinding.cancelQueuedComposerEdit}
+        closeGoalAttachment={composerStateBinding.composerMenuStateBinding.closeGoalAttachment}
+        closeQuickControlMenu={composerCommands.composerControlActionsBinding.closeQuickControlMenu}
+        composerDiscardEnabled={composerDelivery.composerDeliveryBinding.composerDiscardEnabled}
+        composerInputRef={composerStateBinding.composerEditingBinding.composerInputRef}
+        composerScope={activation.composerScope}
+        composerTrayVisible={composerStateBinding.composerMenuStateBinding.composerTrayVisible}
+        composerUploadScope={composerStateBinding.composerEditingBinding.composerUploadScope}
+        controlError={composerStateBinding.composerEditingBinding.controlError}
+        controlsResourceId={composerInputs.controlsResourceId}
+        currentTurnId={timelineRead.conversationPresentationBinding.currentTurnId}
+        cwd={surfaceInputs.cwd}
+        deliveryActions={composerDelivery.composerDeliveryBinding.deliveryActions}
+        discardComposer={composerDelivery.composerDeliveryBinding.discardComposer}
+        dismissComposerKeyboardForOverlay={
+          overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay
+        }
+        draft={composerStateBinding.composerEditingBinding.draft}
+        draftConnectionId={activation.draftConnectionId}
+        draftSelectionRef={composerStateBinding.composerEditingBinding.draftSelectionRef}
+        draftThreadId={activation.draftThreadId}
+        editingQueuedMessage={composerDelivery.composerDeliveryBinding.editingQueuedMessage}
+        fileAttachmentEnabled={composerCommands.composerAttachmentsBinding.fileAttachmentEnabled}
+        finishVoice={composerDelivery.composerDeliveryBinding.finishVoice}
+        getStableTransferAccess={getStableTransferAccess}
+        getTransferAccess={attachmentsInputs.getTransferAccess}
+        goalAttachmentVisible={composerStateBinding.composerMenuStateBinding.goalAttachmentVisible}
+        handleAnchoredComposerAction={
+          composerDelivery.composerAccessoryActionsBinding.handleAnchoredComposerAction
+        }
+        handleComposerLargePaste={
+          composerCommands.composerAttachmentsBinding.handleComposerLargePaste
+        }
+        handleComposerTextChange={
+          composerStateBinding.composerEditingBinding.handleComposerTextChange
+        }
+        handleDeliveryAction={composerDelivery.composerDeliveryBinding.handleDeliveryAction}
+        microphoneAccess={composerDelivery.composerDeliveryBinding.microphoneAccess}
+        microphoneButtonRef={composerStateBinding.composerVoiceStateBinding.microphoneButtonRef}
+        newChat={surfaceInputs.newChat}
+        onLoadControls={composerInputs.onLoadControls}
+        onSetGoal={goalInputs.onSetGoal}
+        openAccessoryAction={composerDelivery.composerAccessoryActionsBinding.openAccessoryAction}
+        openControls={composerCommands.composerControlActionsBinding.openControls}
+        openQuickControlMenu={composerCommands.composerControlActionsBinding.openQuickControlMenu}
+        pastedAttachmentPending={
+          composerStateBinding.largePasteStateBinding.pastedAttachmentPending
+        }
+        pendingVoiceSelection={composerStateBinding.composerVoiceStateBinding.pendingVoiceSelection}
+        queuedComposerEdit={composerStateBinding.queueEditStateBinding.queuedComposerEdit}
+        queuedComposerEditBusy={composerStateBinding.queueEditStateBinding.queuedComposerEditBusy}
+        queuedComposerEditError={composerStateBinding.queueEditStateBinding.queuedComposerEditError}
+        readOnly={surfaceInputs.readOnly}
+        remoteThread={readInputs.remoteThread}
+        removeComposerAttachment={
+          composerCommands.composerAttachmentsBinding.removeComposerAttachment
+        }
+        retryVoice={composerDelivery.composerDeliveryBinding.retryVoice}
+        searchComposerSuggestions={
+          composerStateBinding.composerEditingBinding.searchComposerSuggestions
+        }
+        selectComposerMention={composerStateBinding.composerEditingBinding.selectComposerMention}
+        selectedEffort={composerStateBinding.composerEditingBinding.selectedEffort}
+        selectedModel={composerStateBinding.composerEditingBinding.selectedModel}
+        selectedPermissions={composerStateBinding.composerEditingBinding.selectedPermissions}
+        selectedPersonality={composerStateBinding.composerEditingBinding.selectedPersonality}
+        selectEffort={composerStateBinding.composerEditingBinding.selectEffort}
+        selectModel={composerStateBinding.composerEditingBinding.selectModel}
+        selectPermissions={composerStateBinding.composerEditingBinding.selectPermissions}
+        sendDisabled={composerDelivery.composerDeliveryBinding.sendDisabled}
+        setComposerTrayVisible={
+          composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
+        }
+        setSelectedPersonality={composerStateBinding.composerEditingBinding.setSelectedPersonality}
+        steerComposer={composerDelivery.composerDeliveryBinding.steerComposer}
+        stoppingResponse={composerDelivery.composerDeliveryBinding.stoppingResponse}
+        terminalEnabled={composerDelivery.composerAccessoryActionsBinding.terminalEnabled}
+        threadLifecycleActive={timelineRead.conversationPresentationBinding.threadLifecycleActive}
+        toggleVoice={composerDelivery.composerDeliveryBinding.toggleVoice}
+        toolContextChips={toolContextChips}
+        useAnchoredComposerMenu={
+          composerDelivery.composerAccessoryActionsBinding.useAnchoredComposerMenu
+        }
+        voiceBackend={composerStateBinding.composerVoiceStateBinding.voiceBackend}
+        voiceController={composerInputs.voiceController}
+        voiceError={composerStateBinding.composerVoiceStateBinding.voiceError}
+        voicePhase={composerStateBinding.composerVoiceStateBinding.voicePhase}
+        voiceResource={composerStateBinding.composerVoiceStateBinding.voiceResource}
+        voiceRetryAvailable={composerStateBinding.composerVoiceStateBinding.voiceRetryAvailable}
+        workspaceResources={composerInputs.workspaceResources}
+      />
+    </ConversationComposerSlot>
   );
   return { composerContent };
 }

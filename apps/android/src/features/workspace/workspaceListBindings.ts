@@ -1,6 +1,6 @@
 import type { StoredConnection } from "../../data/connection-profile-types";
 import { useConstant } from "../../react/useConstant";
-import { workspaceRuntime } from "../../data/workspace-runtime";
+import { useEvent } from "../../react/useEvent";
 import { useServerScope } from "../../services/servers/serverScope";
 import {
   useThreadNavigationService,
@@ -25,13 +25,11 @@ import type { WorkspaceBindingContext } from "./workspaceBindingContract";
 export function useWorkspaceListBindings({
   connections,
   desktop,
-  runtime,
   threadListSources,
   threadRouter,
 }: {
   connections: WorkspaceBindingContext["connections"];
   desktop: WorkspaceBindingContext["desktop"];
-  runtime: WorkspaceBindingContext["runtime"];
   threadListSources: ThreadListSources;
   threadRouter: V1ThreadRouter;
 }) {
@@ -42,9 +40,13 @@ export function useWorkspaceListBindings({
   });
   const serverProjection = useConstant(() => new ThreadServerProjection());
   const servers = serverProjection.project(connections);
-  const server = useServerScope(connections, () => {
-    listState.setThreadListLimit(THREAD_LIST_PAGE_SIZE);
-  });
+  const server = useServerScope(
+    connections,
+    () => {
+      listState.setThreadListLimit(THREAD_LIST_PAGE_SIZE);
+    },
+    threadRouter.currentThread === null,
+  );
   const settingsConnections: StoredConnection[] = connections;
   const {
     archivedThreads,
@@ -67,15 +69,15 @@ export function useWorkspaceListBindings({
   );
   const navigation = useThreadNavigationService(
     {
-      native: workspaceRuntime.native,
       observeThread: features.conversation.observeThread,
       searchConversation: features.search.searchConversation,
-      threadDetails: runtime.threadDetails,
-      threadUiStateDatabase: runtime.threadUiState,
     },
     threadRouter,
-    server.selectConnection,
   );
+  const selectThread = useEvent((selectionKey: string | null): void => {
+    server.consumeDesktopDefaultThread();
+    navigation.selectThread(selectionKey);
+  });
   const selectedThreadKey =
     threadRouter.currentThread === null
       ? null
@@ -100,5 +102,6 @@ export function useWorkspaceListBindings({
     settingsConnections,
     threadSummaryView,
     ...navigation,
+    selectThread,
   };
 }

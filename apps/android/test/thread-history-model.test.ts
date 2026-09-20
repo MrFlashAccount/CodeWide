@@ -7,7 +7,6 @@ function row(overrides: Partial<Parameters<ReturnType<typeof createThreadHistory
     id: "server\u0000thread",
     connectionId: "server",
     threadId: "thread",
-    generation: 1,
     historyEpoch: 2,
     status: "ready" as const,
     nextCursor: "older",

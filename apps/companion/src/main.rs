@@ -166,6 +166,7 @@ enum Command {
         #[command(flatten)]
         control: ControlOptions,
     },
+    Relay(RelayOptions),
     Telemetry(Box<TelemetryOptions>),
     Vcs(VcsOptions),
 }
@@ -293,6 +294,33 @@ struct ControlOptions {
     token_file: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct RelayOptions {
+    #[command(subcommand)]
+    command: RelayCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RelayCommand {
+    Pair {
+        relay_address: String,
+        #[command(flatten)]
+        control: ControlOptions,
+    },
+    Status {
+        #[command(flatten)]
+        control: ControlOptions,
+    },
+    Enable {
+        #[command(flatten)]
+        control: ControlOptions,
+    },
+    Disable {
+        #[command(flatten)]
+        control: ControlOptions,
+    },
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
@@ -341,7 +369,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             enable_mutations,
             sync_v2_mode,
         } => {
-            serve(ServeOptions {
+            Box::pin(serve(ServeOptions {
                 listen,
                 control_endpoint: control_endpoint.unwrap_or_else(default_control_endpoint),
                 state_path: state,
@@ -354,7 +382,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 insecure_http,
                 enable_mutations,
                 sync_v2_mode,
-            })
+            }))
             .await?;
         }
         Command::Identity { identity_dir } => {
@@ -467,6 +495,62 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let body = control_request(reqwest::Method::DELETE, &path, None, control).await?;
             println!("{body}");
         }
+        Command::Relay(options) => match options.command {
+            RelayCommand::Pair {
+                relay_address,
+                control,
+            } => {
+                let mut bundle = String::new();
+                if std::io::stdin().is_terminal() {
+                    eprint!("Relay invitation bundle: ");
+                    std::io::stderr().flush()?;
+                }
+                std::io::stdin().read_line(&mut bundle)?;
+                let invitation = serde_json::from_str(bundle.trim())?;
+                let body = serde_json::to_string(&codewide_companion::relay::RelayPairCommand {
+                    relay_address,
+                    invitation,
+                })?;
+                println!(
+                    "{}",
+                    control_request(
+                        reqwest::Method::POST,
+                        "/v1/relay/pair",
+                        Some(&body),
+                        control,
+                    )
+                    .await?
+                );
+            }
+            RelayCommand::Status { control } => {
+                println!(
+                    "{}",
+                    control_request(reqwest::Method::GET, "/v1/relay", None, control).await?
+                );
+            }
+            RelayCommand::Enable { control } => {
+                let body =
+                    serde_json::to_string(&codewide_companion::relay::RelayEnabledCommand {
+                        enabled: true,
+                    })?;
+                println!(
+                    "{}",
+                    control_request(reqwest::Method::PATCH, "/v1/relay", Some(&body), control,)
+                        .await?
+                );
+            }
+            RelayCommand::Disable { control } => {
+                let body =
+                    serde_json::to_string(&codewide_companion::relay::RelayEnabledCommand {
+                        enabled: false,
+                    })?;
+                println!(
+                    "{}",
+                    control_request(reqwest::Method::PATCH, "/v1/relay", Some(&body), control,)
+                        .await?
+                );
+            }
+        },
         Command::Telemetry(options) => match options.command {
             TelemetryCommand::Query {
                 control,
@@ -622,14 +706,22 @@ fn print_pairing(
     qr_output: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pairing = serde_json::from_str::<serde_json::Value>(body)?;
-    let Some(endpoint) = std::env::var_os("CODEWIDE_PUBLIC_ENDPOINT") else {
+    let configured_endpoint = match std::env::var_os("CODEWIDE_PUBLIC_ENDPOINT") {
+        Some(endpoint) => Some(endpoint.to_string_lossy().into_owned()),
+        None => codewide_companion::relay::RelayConfig::load(
+            &codewide_companion::relay::default_config_path(),
+        )?
+        .filter(codewide_companion::relay::RelayConfig::is_enabled)
+        .map(|config| config.public_endpoint()),
+    };
+    let Some(endpoint) = configured_endpoint else {
         println!("{pairing}");
         if !json_only {
             eprintln!("Set CODEWIDE_PUBLIC_ENDPOINT to print a connection link and QR code.");
         }
         return Ok(());
     };
-    let endpoint = validate_public_endpoint(&endpoint.to_string_lossy())?;
+    let endpoint = validate_public_endpoint(&endpoint)?;
     let pairing_token = pairing
         .get("pairingToken")
         .and_then(serde_json::Value::as_str)
@@ -840,13 +932,18 @@ fn validate_public_endpoint(raw: &str) -> Result<url::Url, Box<dyn std::error::E
         endpoint.host_str(),
         Some("localhost" | "127.0.0.1" | "::1" | "10.0.2.2")
     );
-    if endpoint.scheme() == "ws" && !local {
-        return Err("remote pairing endpoint must use WSS".into());
-    }
     if endpoint.path().is_empty() || endpoint.path() == "/" {
         endpoint.set_path("/v1/sync");
     }
-    if endpoint.path() != "/v1/sync"
+    let relay_route = endpoint
+        .path()
+        .strip_prefix("/c/")
+        .and_then(|path| path.strip_suffix("/v1/sync"))
+        .is_some_and(|route_id| codewide_relay::registry::validate_route_id(route_id).is_ok());
+    if endpoint.scheme() == "ws" && !local && !relay_route {
+        return Err("remote pairing endpoint must use WSS or an explicit relay route".into());
+    }
+    if (endpoint.path() != "/v1/sync" && !relay_route)
         || !endpoint.username().is_empty()
         || endpoint.password().is_some()
         || endpoint.query().is_some()
@@ -1141,6 +1238,12 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let inner_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     inner_listener.set_nonblocking(true)?;
     let inner_tls_target = inner_listener.local_addr()?;
+    let relay = codewide_companion::relay::RelayRuntime::start(
+        codewide_companion::relay::default_config_path(),
+        inner_tls_target,
+        bootstrap_tls_target,
+    )
+    .await?;
     let mut excluded_ports = HashSet::from([options.listen.port()]);
     excluded_ports.insert(bootstrap_tls_target.port());
     excluded_ports.insert(inner_tls_target.port());
@@ -1160,6 +1263,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         bootstrap_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(16))),
         inner_tls_target: Some(inner_tls_target),
         inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(256))),
+        relay: Some(relay),
         sync_v2,
         attachment_staging,
         workspace_upload_staging,

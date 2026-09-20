@@ -1,8 +1,9 @@
-import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, Platform, Pressable, View } from "react-native";
-import { colors, iconSize } from "../../theme";
+import { ActivityIndicator, Platform, View } from "react-native";
+import { useEvent } from "../../react/useEvent";
+import { colors } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { AppListRow } from "../../ui/AppListRow";
+import { AppListRowMenuTrigger } from "../../ui/AppListRowMenuTrigger";
 import { listRowHeight, type AppListRowProps } from "../../ui/AppListRow.types";
 import { AppText as Text } from "../../ui/Typography";
 import type { PortForwardingCandidate, PortForwardingProfile } from "./portForwardingContract";
@@ -19,11 +20,11 @@ export function ForwardingRow(props: {
   onRemove: () => void;
   onStart: () => void;
   onStop: () => void;
-  onToggleWebMenu: () => void;
+  onToggleActions: () => void;
   pending: boolean;
   position: NonNullable<AppListRowProps["position"]>;
   profile: PortForwardingProfile;
-  webMenuVisible: boolean;
+  webActionsVisible: boolean;
 }) {
   const { profile } = props;
   const live = profile.status === "live";
@@ -58,13 +59,6 @@ export function ForwardingRow(props: {
       : errored
         ? props.onReconnect
         : props.onStart;
-  const primaryId = excluded
-    ? "include"
-    : live || connecting
-      ? "stop"
-      : errored
-        ? "reconnect"
-        : "start";
   const primaryTitle = excluded
     ? "Include"
     : live || connecting
@@ -74,22 +68,30 @@ export function ForwardingRow(props: {
         : "Start";
   const actions: ActionMenuItem[] = [
     {
-      icon: live || connecting ? "stop-circle-outline" : "play-circle-outline",
-      id: primaryId,
+      icon: excluded
+        ? "add-circle-outline"
+        : live || connecting
+          ? "stop-circle-outline"
+          : errored
+            ? "refresh-outline"
+            : "play-circle-outline",
+      id: excluded ? "include" : live || connecting ? "stop" : errored ? "reconnect" : "start",
       label: primaryTitle,
     },
     { icon: "pencil-outline", id: "edit", label: "Edit" },
     { destructive: true, icon: "trash-outline", id: "remove", label: "Remove" },
   ];
-  const onAction = (id: string) => {
+  const selectAction = useEvent((id: string): void => {
     if (id === "edit") {
       props.onEdit();
-    } else if (id === "remove") {
-      props.onRemove();
-    } else {
-      primary();
+      return;
     }
-  };
+    if (id === "remove") {
+      props.onRemove();
+      return;
+    }
+    primary();
+  });
   return (
     <View testID={`forwarding-profile-${profile.id}`}>
       <AppListRow
@@ -104,37 +106,23 @@ export function ForwardingRow(props: {
           <>
             {(connecting || props.pending) && <ActivityIndicator color={color} size="small" />}
             {Platform.OS === "web" ? (
-              <Pressable
+              <AppListRowMenuTrigger
                 accessibilityLabel={`Forwarding actions ${profile.label}`}
-                accessibilityRole="button"
-                onPress={props.onToggleWebMenu}
-                style={styles.iconButton}
-              >
-                <Ionicons color={colors.textDim} name="ellipsis-vertical" size={iconSize.action} />
-              </Pressable>
+                onPress={props.onToggleActions}
+              />
             ) : (
               <ActionMenu
                 accessibilityLabel={`Forwarding actions ${profile.label}`}
                 actions={actions}
-                onSelect={onAction}
-                style={styles.menuAnchor}
+                onSelect={selectAction}
               >
-                <Pressable
-                  accessibilityLabel={`Forwarding actions ${profile.label}`}
-                  style={styles.iconButton}
-                >
-                  <Ionicons
-                    color={colors.textDim}
-                    name="ellipsis-vertical"
-                    size={iconSize.action}
-                  />
-                </Pressable>
+                <AppListRowMenuTrigger accessibilityLabel={`Forwarding actions ${profile.label}`} />
               </ActionMenu>
             )}
           </>
         }
       />
-      {Platform.OS === "web" && props.webMenuVisible && (
+      {Platform.OS === "web" && props.webActionsVisible && (
         <View style={styles.webActions}>
           <SmallAction
             label={`${primaryTitle} ${profile.label}`}

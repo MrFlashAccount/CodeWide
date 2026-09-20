@@ -2,6 +2,7 @@
 
 use std::{
     os::unix::fs::PermissionsExt,
+    process::Stdio,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -11,9 +12,56 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::{Value, json};
-use tokio::{net::UnixListener, process::Command};
+use tokio::{io::AsyncWriteExt, net::UnixListener, process::Command};
 
 const ADMIN_TOKEN: &str = "administrator-token-long-enough-for-cli-test";
+
+#[tokio::test]
+async fn relay_pair_sends_the_address_to_the_running_companion()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let endpoint = directory.path().join("control.sock");
+    let token_file = directory.path().join("host.token");
+    std::fs::write(&token_file, format!("{ADMIN_TOKEN}\n"))?;
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))?;
+    let listener = UnixListener::bind(&endpoint)?;
+    let router = Router::new().route("/v1/relay/pair", post(relay_pair_echo));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let mut child = Command::new(env!("CARGO_BIN_EXE_codewide-companion"))
+        .arg("relay")
+        .arg("pair")
+        .arg("203.0.113.10:8780")
+        .arg("--control-endpoint")
+        .arg(&endpoint)
+        .arg("--token-file")
+        .arg(&token_file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().ok_or("child stdin missing")?;
+    stdin
+        .write_all(
+            br#"{"version":4,"relayTlsPinSha256":"sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","routeId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","invitation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+"#,
+        )
+        .await?;
+    drop(stdin);
+    let output = child.wait_with_output().await?;
+    server.abort();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout)?,
+        json!({"configured": true, "enabled": true})
+    );
+    Ok(())
+}
 
 #[tokio::test]
 async fn native_cli_queries_structured_telemetry_filters() -> Result<(), Box<dyn std::error::Error>>
@@ -346,4 +394,17 @@ async fn telemetry_query_echo(headers: HeaderMap, uri: Uri) -> Json<Value> {
         Some("Bearer administrator-token-long-enough-for-cli-test")
     );
     Json(json!({ "query": uri.query().unwrap_or_default() }))
+}
+
+async fn relay_pair_echo(headers: HeaderMap, Json(command): Json<Value>) -> Json<Value> {
+    assert_eq!(
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer administrator-token-long-enough-for-cli-test")
+    );
+    assert_eq!(command["relayAddress"], "203.0.113.10:8780");
+    assert!(command["invitation"].get("relayAddress").is_none());
+    assert_eq!(command["invitation"]["version"], 4);
+    Json(json!({"configured": true, "enabled": true}))
 }

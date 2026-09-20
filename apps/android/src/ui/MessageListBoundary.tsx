@@ -24,7 +24,7 @@ export function MessageListBoundary(props: MessageListBoundaryProps): ReactNode 
   return <MessageListSkeleton />;
 }
 
-export function MessageListSkeleton() {
+function MessageListSkeleton() {
   return (
     <View
       accessibilityLabel="Loading messages"

@@ -13,7 +13,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import dev.codewide.app.rendering.VoiceAuraRenderEffect
+import dev.codewide.app.rendering.VoiceAuraOverlay
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -50,7 +50,7 @@ class V2VoiceCaptureModule(private val context: ReactApplicationContext) : React
   private var activeToken: String? = null
   private var pendingStart: PendingV2VoiceCapture? = null
   private var preparedCapture: PreparedV2VoiceCapture? = null
-  private val voiceAura = VoiceAuraRenderEffect(context)
+  private val voiceAura = VoiceAuraOverlay(context)
 
   override fun getName(): String = "CodeWideV2VoiceCapture"
 
@@ -68,7 +68,7 @@ class V2VoiceCaptureModule(private val context: ReactApplicationContext) : React
         generation += 1
         PreparedV2VoiceCapture(captureId, generation, token, promise).also { preparedCapture = it }
       }
-      V2VoiceCaptureForegroundService.acquire(context, token) { error ->
+      VoiceCaptureForegroundService.acquire(context, token) { error ->
         if (error === null) completePreparation(prepared) else failPreparation(prepared, error)
       }
     } catch (error: Throwable) {
@@ -118,7 +118,7 @@ class V2VoiceCaptureModule(private val context: ReactApplicationContext) : React
         true
       }
     }
-    if (ownsPreparation) prepared.promise.resolve(null) else V2VoiceCaptureForegroundService.release(prepared.token)
+    if (ownsPreparation) prepared.promise.resolve(null) else VoiceCaptureForegroundService.release(prepared.token)
   }
 
   private fun failPreparation(
@@ -144,7 +144,7 @@ class V2VoiceCaptureModule(private val context: ReactApplicationContext) : React
       }
     }
     if (!ownsStart) {
-      V2VoiceCaptureForegroundService.release(pending.token)
+      VoiceCaptureForegroundService.release(pending.token)
       return
     }
     var lease: V2VoiceRecorderLease? = null
@@ -196,7 +196,7 @@ class V2VoiceCaptureModule(private val context: ReactApplicationContext) : React
         }
       }
       lease?.release()
-      V2VoiceCaptureForegroundService.release(pending.token)
+      VoiceCaptureForegroundService.release(pending.token)
       deactivateVoiceAura()
       pending.promise.reject("V2_VOICE_CAPTURE_FAILED", error.message, error)
     }
@@ -235,7 +235,7 @@ class V2VoiceCaptureModule(private val context: ReactApplicationContext) : React
       }
       if (stoppedCurrent) deactivateVoiceAura()
       lease.release()
-      V2VoiceCaptureForegroundService.release(pending.token)
+      VoiceCaptureForegroundService.release(pending.token)
       emit(Arguments.createMap().apply {
         putString("captureId", pending.captureId)
         putString("type", "stopped")
@@ -255,12 +255,12 @@ class V2VoiceCaptureModule(private val context: ReactApplicationContext) : React
       value
     }
     stopped.recorder?.stop()
-    stopped.activeToken?.let(V2VoiceCaptureForegroundService::release)
+    stopped.activeToken?.let(VoiceCaptureForegroundService::release)
     if (stopped.pending !== null) {
-      V2VoiceCaptureForegroundService.release(stopped.pending.token)
+      VoiceCaptureForegroundService.release(stopped.pending.token)
       stopped.pending.promise.reject("V2_VOICE_CAPTURE_CANCELLED", "Voice capture start was cancelled")
     }
-    stopped.prepared?.token?.let(V2VoiceCaptureForegroundService::release)
+    stopped.prepared?.token?.let(VoiceCaptureForegroundService::release)
     if (stopped.prepared?.settled == false) {
       stopped.prepared.promise.reject("V2_VOICE_CAPTURE_CANCELLED", "Voice capture preparation was cancelled")
     }

@@ -84,13 +84,20 @@ function rendererCommand(
   requestId: number,
   mode: "inline" | "fullscreen",
 ): string {
-  return `(() => {
+  const prepareFont =
+    engine.kind === "ascii"
+      ? `if (typeof window.diagramUseV1AsciiPresentation !== 'function') throw new Error('Bundled diagram presentation did not initialize');
+    await window.diagramUseV1AsciiPresentation();`
+      : "";
+  return `(async () => {
     if (typeof window.${engine.renderFunction} !== 'function') {
-      window.ReactNativeWebView.postMessage(JSON.stringify({type:'error',requestId:${String(requestId)},message:'Bundled ${engine.title} renderer did not initialize'}));
-      return;
+      throw new Error('Bundled ${engine.title} renderer did not initialize');
     }
-    window.${engine.renderFunction}(${JSON.stringify(source)},${String(requestId)},${JSON.stringify(mode)});
-  })();true;`;
+    ${prepareFont}
+    await window.${engine.renderFunction}(${JSON.stringify(source)},${String(requestId)},${JSON.stringify(mode)});
+  })().catch((error) => {
+    window.ReactNativeWebView.postMessage(JSON.stringify({type:'error',requestId:${String(requestId)},message:error instanceof Error ? error.message : String(error)}));
+  });true;`;
 }
 
 export function MermaidDiagram({
@@ -134,7 +141,6 @@ function LocalDiagram({
 }) {
   const fullscreenOverlay = useAppFullscreenOverlay();
   const dialog = useAppDialog();
-  const inlineWebView = useRef<WebView>(null);
   const [copied, setCopied] = useState(false);
   const [renderedKey, setRenderedKey] = useState<string | null>(null);
   const tooLarge = source.length > MAX_SOURCE_CHARS;
@@ -200,27 +206,14 @@ function LocalDiagram({
               onPress={openFullscreen}
             />
           </View>
-          {engine.kind === "mermaid" ? (
-            <DiagramSvgPreview
-              onOpen={openFullscreen}
-              onSettled={() => {
-                setRenderedKey(renderKey);
-              }}
-              source={boundedSource}
-            />
-          ) : (
-            <DiagramSurface
-              engine={engine}
-              key={`${engine.kind}:inline:${boundedSource}`}
-              mode="inline"
-              onSettled={() => {
-                setRenderedKey(renderKey);
-              }}
-              source={boundedSource}
-              style={{ height: INLINE_MEDIA_PREVIEW_HEIGHT }}
-              webViewRef={inlineWebView}
-            />
-          )}
+          <DiagramSvgPreview
+            engine={engine.kind}
+            onOpen={openFullscreen}
+            onSettled={() => {
+              setRenderedKey(renderKey);
+            }}
+            source={boundedSource}
+          />
         </View>
       </NativeRevealSurface>
       {reveal && renderedKey !== renderKey && (

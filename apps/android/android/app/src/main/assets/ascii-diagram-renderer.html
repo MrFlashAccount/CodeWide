@@ -6,6 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'self'; base-uri 'none'; form-action 'none'">
   <style>
     @font-face { font-family: CodeWideDiagramMono; src: url('fonts/JetBrainsMonoNerdFontMono-Regular.ttf') format('truetype'); font-style: normal; font-weight: 400; font-display: block; }
+    @font-face { font-family: CodeWideV1AsciiMono; src: url('fonts/DejaVuSansMono.ttf') format('truetype'); font-style: normal; font-weight: 400; font-display: block; }
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; background: #171b20; color: #eef2f6; overflow: hidden; overscroll-behavior: none; }
@@ -13,6 +14,8 @@
     #root[data-mode="inline"] { height: 100%; box-sizing: border-box; padding: 10px; }
     #root[data-mode="inline"] #stage, #root[data-mode="inline"] #canvas { width: 100%; height: 100%; }
     #root[data-mode="inline"] #canvas svg { display: block; width: 100%; max-width: none; height: 100%; }
+    #root[data-mode="preview"] #stage, #root[data-mode="preview"] #canvas { width: 100%; height: 100%; }
+    #root[data-mode="preview"] #canvas svg { display: block; width: 100%; max-width: none; height: 100%; }
     #root[data-mode="fullscreen"] { touch-action: none; }
     #root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center; overflow: hidden; touch-action: none; }
     #root[data-mode="fullscreen"] #canvas { flex: 0 0 auto; touch-action: none; will-change: transform; transform-origin: 50% 50%; }
@@ -33,9 +36,57 @@
   let currentMode = 'inline';
   let currentRequestId = -1;
   let resizeFrame = null;
+  let useV1Presentation = false;
 
   function send(message) {
-    window.ReactNativeWebView.postMessage(JSON.stringify(message));
+    (window.CodeWideDiagramPreview || window.ReactNativeWebView).postMessage(JSON.stringify(message));
+  }
+
+  window.diagramUseV1AsciiPresentation = async function () {
+    useV1Presentation = true;
+    root.style.setProperty('--diagram-font-family', 'CodeWideV1AsciiMono');
+    const fonts = await document.fonts.load('13.333px CodeWideV1AsciiMono');
+    if (fonts.length === 0) throw new Error('Bundled diagram font is unavailable');
+  };
+
+  function hasDiagramGeometry(line) {
+    const trimmed = line.trim();
+    if (/[┌┐└┘├┤┬┴┼│─━┃╭╮╯╰╱╲]/u.test(line)) return true;
+    if (/(?:[-_=+|.']{2,}|<[-=]+|[-=]+>)/u.test(line)) return true;
+    if (/^[|+\/\\(`][\s\S]*[|+\/\\)'`]$/u.test(trimmed)) return true;
+    return /^[\s+|/\\_.',`()#*oOvV^<>-]+$/u.test(line) && /[+|/\\_.',`()#*oOvV^<>-]/u.test(line);
+  }
+
+  function quoteText(source, start, end) {
+    if (start >= end || source.slice(start, end).includes('"')) return source;
+    return source.slice(0, start) + '"' + source.slice(start, end) + '"' + source.slice(end);
+  }
+
+  function lastArrowIndex(line) {
+    let result = -1;
+    for (const character of '←→↑↓▲▼◀▶') result = Math.max(result, line.lastIndexOf(character));
+    return result;
+  }
+
+  // Svgbob assigns diagram meaning to ordinary label characters such as `_`,
+  // `|` and `o`. Its line-local verbatim syntax preserves those characters as
+  // text. V1 applies it only to labels that cannot affect connector geometry.
+  function protectV1Labels(source) {
+    return source.split('\n').map(function (line) {
+      const contentEnd = line.search(/\s*$/u);
+      if (contentEnd === 0 || line.includes('"')) return line;
+      const arrow = lastArrowIndex(line);
+      if (arrow >= 0) {
+        const labelStart = line.slice(arrow + 1, contentEnd).search(/\S/u);
+        const absoluteLabelStart = arrow + 1 + labelStart;
+        if (labelStart >= 0 && !hasDiagramGeometry(line.slice(absoluteLabelStart, contentEnd))) {
+          return quoteText(line, absoluteLabelStart, contentEnd);
+        }
+      }
+      if (hasDiagramGeometry(line)) return line;
+      const contentStart = line.search(/\S/u);
+      return contentStart < 0 ? line : quoteText(line, contentStart, contentEnd);
+    }).join('\n');
   }
 
   function reportSize(requestId, height) {
@@ -83,6 +134,25 @@
     return { width: Math.max(1, bounds.width), height: Math.max(1, bounds.height) };
   }
 
+  function fitV1Content(svg) {
+    if (!useV1Presentation) return;
+    const bounds = svg.getBBox();
+    const current = svg.viewBox && svg.viewBox.baseVal;
+    const currentX = current && current.width > 0 ? current.x : bounds.x;
+    const currentY = current && current.height > 0 ? current.y : bounds.y;
+    const currentRight = current && current.width > 0 ? current.x + current.width : bounds.x + bounds.width;
+    const currentBottom = current && current.height > 0 ? current.y + current.height : bounds.y + bounds.height;
+    const left = Math.min(currentX, bounds.x);
+    const top = Math.min(currentY, bounds.y);
+    const right = Math.max(currentRight, bounds.x + bounds.width);
+    const bottom = Math.max(currentBottom, bounds.y + bounds.height);
+    const width = Math.max(1, right - left);
+    const height = Math.max(1, bottom - top);
+    svg.setAttribute('viewBox', `${left} ${top} ${width} ${height}`);
+    svg.setAttribute('width', String(Math.ceil(width)));
+    svg.setAttribute('height', String(Math.ceil(height)));
+  }
+
   function themeSvg(svg) {
     svg.classList.add('svgbob');
     for (const element of svg.querySelectorAll('script, foreignObject, iframe, object, embed, image, use')) element.remove();
@@ -95,7 +165,7 @@
     style.textContent = `
       .svgbob { background: transparent; }
       .svgbob line, .svgbob path, .svgbob circle, .svgbob rect, .svgbob polygon { stroke: #9aa7b4; }
-      .svgbob text { fill: #eef2f6; font-family: CodeWideDiagramMono, monospace; font-size: 13.333px; white-space: pre; }
+      .svgbob text { fill: #eef2f6; font-family: var(--diagram-font-family, CodeWideDiagramMono), monospace; font-size: 13.333px; white-space: pre; }
       .svgbob rect.backdrop { fill: transparent; stroke: none; }
       .svgbob .filled { fill: #9aa7b4; }
       .svgbob .bg_filled, .svgbob .nofill { fill: #171b20; }
@@ -123,7 +193,12 @@
         const content = element.textContent || '';
         return { element, x, y, content };
       })
-      .filter(function (fragment) { return Number.isFinite(fragment.x) && Number.isFinite(fragment.y) && /[^\u0000-\u007f]/u.test(fragment.content); });
+      .filter(function (fragment) {
+        return Number.isFinite(fragment.x)
+          && Number.isFinite(fragment.y)
+          && /[^\u0000-\u007f]/u.test(fragment.content)
+          && (!useV1Presentation || /\p{L}/u.test(fragment.content));
+      });
     const parent = fragments.map(function (_, index) { return index; });
     function find(index) {
       if (parent[index] !== index) parent[index] = find(parent[index]);
@@ -211,10 +286,10 @@
 
   window.renderAsciiDiagram = async function (source, requestId, mode) {
     currentRequestId = requestId;
-    currentMode = mode === 'fullscreen' ? 'fullscreen' : 'inline';
+    currentMode = mode === 'fullscreen' ? 'fullscreen' : mode === 'preview' ? 'preview' : 'inline';
     root.dataset.mode = currentMode;
     try {
-      const svgSource = await window.renderSvgbob(source);
+      const svgSource = await window.renderSvgbob(useV1Presentation ? protectV1Labels(source) : source);
       const parsed = new DOMParser().parseFromString(svgSource, 'image/svg+xml');
       if (parsed.querySelector('parsererror')) throw new Error('Svgbob returned invalid SVG');
       const svg = parsed.documentElement;
@@ -224,6 +299,13 @@
       canvas.replaceChildren(document.importNode(svg, true));
       const rendered = canvas.querySelector('svg');
       if (!rendered) throw new Error('Svgbob returned no SVG');
+      fitV1Content(rendered);
+      if (currentMode === 'preview') {
+        const size = viewBoxSize(rendered);
+        rendered.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        send({ type: 'preview-ready', requestId, width: size.width, height: size.height });
+        return;
+      }
       if (currentMode === 'fullscreen') layoutFullscreen(rendered, requestId);
       else layoutInline(rendered, requestId);
     } catch (error) {

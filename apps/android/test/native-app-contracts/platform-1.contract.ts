@@ -28,7 +28,8 @@ it("preserves platform integration contracts — 2", () => {
   expect(timelineList).toContain("keyboardLiftBehavior={keyboardLiftBehavior}");
   expect(timelineList).toContain("keyboardOffset={keyboardOffset}");
   expect(timelineList).not.toContain("FlashList");
-  expect(timelineList).toContain("maintainVisibleContentPosition={{ data: true, size: true }}");
+  expect(timelineList).toContain("{...props}");
+  expect(timelineList).not.toContain("maintainVisibleContentPosition=");
   expect(timelineList).toContain("dataKey={renderRevision}");
   expect(screen).not.toContain("<ConversationPane\n        key={navigationKey}");
   expect(screen).not.toContain("const transitionConversationScope = useEffectEvent(() => {");
@@ -89,7 +90,7 @@ it("preserves platform integration contracts — 2", () => {
   expect(imagePreviewHost).toContain("Image decode failed");
   expect(screen).not.toContain("asyncResourceFunctionKey(getTransferAccess)");
   expect(privateImageUri).toContain(
-    "`private-asset:${accessScope}:${String(revision)}:${privateImageResourceKey(source)}`",
+    "`private-asset:${accessScope}:${String(revision)}:${variant}:${sourceKey}`",
   );
   expect(documentPreviewHost).toContain("readPrivateAssetText(");
   expect(screen).not.toContain("url.pathname = `/v1/content/${reference.id}`");

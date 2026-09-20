@@ -1,21 +1,20 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../src/components/navigation/RouteUnavailable";
-import { ForwardedLoopbackBrowser } from "../../../src/features/ports/ForwardedLoopbackBrowser";
+import { RouteFullscreenOverlay } from "../../../src/components/navigation/RouteFullscreenOverlay";
+import { BrowserWorkspace } from "../../../src/features/browser/BrowserWorkspace";
 import { browserRouteSessions } from "../../../src/services/browser/browserRouteSession";
 import {
   routeSessionIdParam,
   workspaceRouteSessionOwner,
 } from "../../../src/services/threads/threadRouteParams";
 import { useRouteSessionLifetime } from "../../../src/services/useRouteSessionLifetime";
-import { useWorkspaceRouteResources } from "../../../src/services/workspace/workspaceRouteResources";
 
-/** Presents a forwarded browser while WebView history remains inside the browser widget. */
+/** Presents a standalone browser while WebView history remains inside the browser feature. */
 export default function V1BrowserRoute(): React.JSX.Element {
   const router = useRouter();
   const { sessionId } = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const parsed = routeSessionIdParam(sessionId);
-  const resources = useWorkspaceRouteResources();
   const session =
     parsed.status === "valid"
       ? browserRouteSessions.get(parsed.value.value, workspaceRouteSessionOwner)
@@ -30,7 +29,7 @@ export default function V1BrowserRoute(): React.JSX.Element {
   if (session === null) {
     return (
       <RouteUnavailable
-        message="This forwarded browser session has expired."
+        message="This browser session has expired."
         onBack={() => {
           router.dismissTo("/v1");
         }}
@@ -43,12 +42,17 @@ export default function V1BrowserRoute(): React.JSX.Element {
     router.back();
   };
   return (
-    <ForwardedLoopbackBrowser
-      bottomInset={resources.insets.bottom}
-      onClose={close}
-      title={session.title}
-      topInset={resources.insets.top}
-      url={session.url}
+    <RouteFullscreenOverlay
+      onDismiss={close}
+      render={(closeOverlay) => (
+        <BrowserWorkspace
+          onClose={closeOverlay}
+          title={session.title}
+          url={session.url}
+          {...(session.headers === undefined ? {} : { headers: session.headers })}
+        />
+      )}
+      scope={`browser:${session.id}`}
     />
   );
 }

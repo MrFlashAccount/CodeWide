@@ -98,8 +98,9 @@ describe("Android release automation", () => {
     }
   });
 
-  it("runs the authoritative V2 gate before either dry-run can return", () => {
-    expect(releaseAndroid).toContain('await run("pnpm", ["validate:android:v2"]);');
+  it("runs the authoritative V1 gate before either dry-run can return", () => {
+    expect(releaseAndroid).toContain('await run("pnpm", ["validate:android:v1"]);');
+    expect(releaseAndroid).not.toContain('await run("pnpm", ["validate:android:v2"]);');
     expect(releaseAndroid).not.toContain(
       'await run("pnpm", ["validate:android:device-evidence"]);',
     );

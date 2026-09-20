@@ -28,6 +28,7 @@ export function usePairingSession({
   const [mode, setMode] = useState<"choose" | "review" | "manual" | "success">(
     initialValue === null ? "choose" : "review",
   );
+  const [navigationDirection, setNavigationDirection] = useState<"back" | "forward" | null>(null);
   const [displayName, setDisplayName] = useState(initialValue?.displayName ?? "");
   const [emoji, setEmoji] = useState(initialValue?.emoji ?? "🖥️");
   const [endpoint, setEndpoint] = useState(initialValue?.endpoint ?? "");
@@ -40,12 +41,17 @@ export function usePairingSession({
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const fullscreenOverlay = useAppFullscreenOverlay();
   const [error, setError] = useState<string | null>(initialPairing?.error ?? null);
+  const navigateMode = useEvent((nextMode: "choose" | "review" | "manual" | "success") => {
+    setNavigationDirection(nextMode === "choose" ? "back" : "forward");
+    setMode(nextMode);
+  });
   if (openIdentity !== null && openIdentity !== presentedOpenIdentity) {
     // This is a new pairing session, not synchronization with an external
     // system. Adjust the session state during render so React discards the
     // stale render before committing it; keeping the child mounted preserves
     // AppSheet's close animation and avoids a post-paint reset effect.
     setPresentedOpenIdentity(openIdentity);
+    setNavigationDirection(null);
     setMode(initialValue === null ? "choose" : "review");
     setDisplayName(initialValue?.displayName ?? "");
     setEmoji(initialValue?.emoji ?? "🖥️");
@@ -72,7 +78,7 @@ export function usePairingSession({
       setExpiresAt(pairing.expiresAt);
       setPairingParsedAt(result.parsedAt);
       setError(null);
-      setMode("review");
+      navigateMode("review");
       return null;
     }
     setError(result.error);
@@ -123,7 +129,7 @@ export function usePairingSession({
     };
     try {
       await onSave(input);
-      setMode("success");
+      navigateMode("success");
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 650);
       });
@@ -148,6 +154,7 @@ export function usePairingSession({
     error,
     minutesLeft,
     mode,
+    navigationDirection,
     openPairingScanner,
     pasteCode,
     save,
@@ -155,7 +162,7 @@ export function usePairingSession({
     setEmoji,
     setEndpoint,
     setError,
-    setMode,
+    setMode: navigateMode,
     setTlsPinSha256,
     setToken,
     tlsPinSha256,

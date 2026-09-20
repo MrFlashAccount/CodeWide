@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../../src/components/navigation/RouteUnavailable";
 import { recoverUnavailableRoute } from "../../../../../src/components/navigation/routeRecovery";
+import { ConversationRouteFullscreenOverlay } from "../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
 import { TerminalWorkspace } from "../../../../../src/features/terminal/TerminalWorkspace";
 import {
   v1ThreadRouteParams,
@@ -55,11 +56,17 @@ export default function V1TerminalRoute(): React.JSX.Element {
     recoverUnavailableRoute(router, v1ThreadDestination(params.value));
   };
   return (
-    <TerminalWorkspace
-      connectionId={session.request.connectionId}
-      cwd={session.request.cwd}
-      onMinimize={close}
-      threadId={session.request.threadId}
+    <ConversationRouteFullscreenOverlay
+      onDismiss={close}
+      render={(closeOverlay) => (
+        <TerminalWorkspace
+          connectionId={session.request.connectionId}
+          cwd={session.request.cwd}
+          onMinimize={closeOverlay}
+          threadId={session.request.threadId}
+        />
+      )}
+      scope={`terminal:${session.id}`}
     />
   );
 }

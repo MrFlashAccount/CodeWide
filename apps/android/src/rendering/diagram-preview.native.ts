@@ -8,16 +8,19 @@ import { checkAborted } from "../native/check-aborted";
 let sequence = 0;
 const MAX_RENDER_ATTEMPTS = 3;
 
+export type DiagramPreviewEngine = "ascii" | "mermaid";
+
 type DiagramPreviewBridge = {
   cancel: (id: string) => void;
-  render: (id: string, source: string) => Promise<unknown>;
+  render: (id: string, engine: DiagramPreviewEngine, source: string) => Promise<unknown>;
 };
 
-export function diagramPreviewKey(source: string): string {
-  return `diagram-svg:${bytesToHex(sha256(utf8ToBytes(source)))}`;
+export function diagramPreviewKey(engine: DiagramPreviewEngine, source: string): string {
+  return `diagram-preview:${engine}:${bytesToHex(sha256(utf8ToBytes(source)))}`;
 }
 
 export async function renderDiagramPreview(
+  engine: DiagramPreviewEngine,
   source: string,
   signal: AbortSignal,
 ): Promise<DiagramPreviewResult> {
@@ -34,7 +37,7 @@ export async function renderDiagramPreview(
     };
     signal.addEventListener("abort", cancel, { once: true });
     try {
-      const result: unknown = await bridge.render(id, source);
+      const result: unknown = await bridge.render(id, engine, source);
       checkAborted(signal);
       if (typeof result !== "string") {
         throw new Error("Invalid diagram renderer response");

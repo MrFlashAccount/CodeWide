@@ -7,7 +7,10 @@ import {
   TimelineDateSequence,
   type TimelineTurnDateLabels,
 } from "../../../presentation/conversation/timelineDates";
-import { optimisticTimelineKey, remoteTurnTimelineKey } from "../../../rendering/timeline-identity";
+import {
+  optimisticTimelineKey,
+  retainedRemoteTurnTimelineKey,
+} from "../../../rendering/timeline-identity";
 import type { TimelineItem } from "./timelineTypes";
 
 export const timelineRowCache = new WeakMap<
@@ -72,7 +75,7 @@ export function projectTimelineTurns(
 
 export function timelineItemKey(item: TimelineItem): string {
   if (item.kind === "turn") {
-    return remoteTurnTimelineKey(item.scope, item.id, item.turn.items);
+    return retainedRemoteTurnTimelineKey(item.scope, item.id, item.turn.items);
   }
   if (item.kind === "optimistic") {
     return optimisticTimelineKey(item.scope, item.id);

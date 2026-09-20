@@ -15,6 +15,7 @@ import { RichMarkdown } from "../../rendering/RichMarkdown";
 import { occurrenceKey, textFingerprint } from "../../rendering/listKey";
 import { colors, iconSize, spacing } from "../../theme";
 import { AppSheetScrollView } from "../../ui/AppSheet";
+import { SheetDetailTransition } from "../../ui/sheetNavigation";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AttachmentsFeature.styles";
 
@@ -55,7 +56,10 @@ export function AttachmentDocumentPreview({
   return (
     <>
       {document !== null && (
-        <View style={styles.threadResourceRoute}>
+        <SheetDetailTransition
+          routeKey={`${document.request.path}:${String(document.revision)}`}
+          style={styles.threadResourceOverlay}
+        >
           <View style={styles.menuTitleRow}>
             <Pressable
               accessibilityLabel="Back to attachments"
@@ -174,7 +178,7 @@ export function AttachmentDocumentPreview({
               targetId={`markdown-document:${document.request.path}`}
             />
           )}
-        </View>
+        </SheetDetailTransition>
       )}
     </>
   );

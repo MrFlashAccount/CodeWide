@@ -11,6 +11,8 @@ import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.system.Os
+import android.system.OsConstants
 import android.view.FrameMetrics
 import android.view.Window
 import com.facebook.drawee.backends.pipeline.Fresco
@@ -38,10 +40,12 @@ import kotlin.math.roundToLong
 
 private const val EVENT_NAME = "CodexPerformanceSnapshot"
 private const val SAMPLE_PERIOD_MS = 1_000L
-private const val HISTORY_CAPACITY = 3_600
+private const val MEMORY_SAMPLE_PERIOD_MS = 60_000L
+private const val HISTORY_CAPACITY = 60
 private const val MAX_HERMES_PROFILE_BYTES = 4 * 1_024 * 1_024L
 private const val HEAP_SNAPSHOT_MIME_TYPE = "application/gzip"
 private const val HEAP_SNAPSHOT_DIRECTORY = "CodeWide"
+private const val NAVIGATION_PROFILE_MIME_TYPE = "application/json"
 
 private data class HermesProfile(
   val sizeBytes: Long,
@@ -73,6 +77,18 @@ private data class PerformanceSample(
   val frame: FrameWindowSnapshot,
 )
 
+private data class ProcessMemorySample(
+  val codePssBytes: Long,
+  val graphicsPssBytes: Long,
+  val javaHeapPssBytes: Long,
+  val nativeHeapPssBytes: Long,
+  val privateOtherPssBytes: Long,
+  val pssBytes: Long,
+  val rssBytes: Long,
+  val stackPssBytes: Long,
+  val systemPssBytes: Long,
+)
+
 private data class ActiveNavigationTrace(
   val id: String,
   val startedAtElapsedMs: Long,
@@ -95,6 +111,10 @@ class CodexPerformanceModule(
     Thread(runnable, "codex-heap-snapshot-writer").apply { isDaemon = true }
   }
   private val heapSnapshotInFlight = AtomicBoolean(false)
+  private val hermesNavigationCaptureArmed = AtomicBoolean(false)
+  private val memoryPageSizeBytes = runCatching {
+    Os.sysconf(OsConstants._SC_PAGESIZE)
+  }.getOrDefault(4_096L).coerceAtLeast(1L)
   private val frameThread = HandlerThread("codex-frame-metrics").apply { start() }
   private val frameHandler = Handler(frameThread.looper)
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -116,6 +136,8 @@ class CodexPerformanceModule(
   private var previousCpuMs = 0L
   private var previousRxBytes = TrafficStats.UNSUPPORTED.toLong()
   private var previousTxBytes = TrafficStats.UNSUPPORTED.toLong()
+  private var lastMemorySample: ProcessMemorySample? = null
+  private var nextMemorySampleElapsedMs = 0L
   private var sessionRxBaseline = TrafficStats.UNSUPPORTED.toLong()
   private var sessionTxBaseline = TrafficStats.UNSUPPORTED.toLong()
   private var displayIntervalNanos = 16_666_667L
@@ -125,21 +147,17 @@ class CodexPerformanceModule(
   private var totalJankFrames = 0L
   private var totalDroppedFrameEstimate = 0L
   @Volatile private var latest: PerformanceSample? = null
-  private var activeNavigationTrace: ActiveNavigationTrace? = null
+  @Volatile private var activeNavigationTrace: ActiveNavigationTrace? = null
 
   private val frameListener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
     val totalDuration = metrics.getMetric(FrameMetrics.TOTAL_DURATION)
     val deadline = metrics.getMetric(FrameMetrics.DEADLINE)
     if (enabled) frameAccumulator.record(totalDuration, deadline, displayIntervalNanos)
-    synchronized(navigationTraceLock) {
-      activeNavigationTrace?.frames?.record(totalDuration, deadline, displayIntervalNanos)
-    }
+    activeNavigationTrace?.frames?.record(totalDuration, deadline, displayIntervalNanos)
   }
 
   init {
     context.addLifecycleEventListener(this)
-    collectorExecutor.execute { windowJournal.restore() }
-    collectorExecutor.scheduleWithFixedDelay({ windowJournal.persist() }, 5, 5, TimeUnit.SECONDS)
     if (enabled) startCollector()
   }
 
@@ -175,7 +193,7 @@ class CodexPerformanceModule(
 
   @ReactMethod
   fun getPerformanceSnapshot(promise: Promise) {
-    promise.resolve(snapshotMap())
+    promise.resolve(snapshotMap(includeHistory = true))
   }
 
   @ReactMethod
@@ -269,12 +287,16 @@ class CodexPerformanceModule(
       preferences.edit().putBoolean("enabled", nextEnabled).apply()
       if (nextEnabled) startCollector() else stopCollector()
     }
-    promise.resolve(snapshotMap())
+    promise.resolve(snapshotMap(includeHistory = true))
   }
 
   @ReactMethod
   fun beginNavigationTrace(traceId: String, promise: Promise) {
     if (!enabled || traceId.isBlank() || traceId.length > 256) {
+      promise.resolve(false)
+      return
+    }
+    if (!hermesNavigationCaptureArmed.getAndSet(false)) {
       promise.resolve(false)
       return
     }
@@ -290,7 +312,17 @@ class CodexPerformanceModule(
         hermesSamplingEnabled = hermesSamplingEnabled,
       )
     }
+    mainHandler.post {
+      if (foreground && activeNavigationTrace?.id == traceId) {
+        windowMonitor.start(context.currentActivity?.window)
+      }
+    }
     promise.resolve(true)
+  }
+
+  @ReactMethod
+  fun armNextNavigationHermesProfile(promise: Promise) {
+    promise.resolve(hermesNavigationCaptureArmed.compareAndSet(false, true))
   }
 
   @ReactMethod
@@ -302,6 +334,7 @@ class CodexPerformanceModule(
       promise.resolve(null)
       return
     }
+    mainHandler.post { windowMonitor.stop() }
     val durationMs = (SystemClock.elapsedRealtime() - trace.startedAtElapsedMs).coerceAtLeast(1L)
     val hermesProfile = if (trace.hermesSamplingEnabled) captureHermesProfile(trace.id) else null
     promise.resolve(frameTraceMap(trace.frames.drain(durationMs), durationMs, hermesProfile))
@@ -356,6 +389,26 @@ class CodexPerformanceModule(
   }
 
   @ReactMethod
+  fun saveNavigationProfile(report: String, promise: Promise) {
+    if (report.isEmpty()) {
+      promise.reject("NAVIGATION_PROFILE_INVALID", "Navigation profile is empty")
+      return
+    }
+    val collectedAt = System.currentTimeMillis()
+    heapSnapshotExecutor.execute {
+      try {
+        promise.resolve(publishNavigationProfile(report, collectedAt))
+      } catch (cause: Throwable) {
+        promise.reject(
+          "NAVIGATION_PROFILE_SAVE_FAILED",
+          "Could not save the navigation profile",
+          cause,
+        )
+      }
+    }
+  }
+
+  @ReactMethod
   fun addListener(eventName: String) {
     if (eventName != EVENT_NAME) return
     listenerCount += 1
@@ -370,9 +423,13 @@ class CodexPerformanceModule(
   override fun onHostResume() {
     foreground = true
     attachWindow(context.currentActivity)
-    // The same executor restores the journal first; new reports cannot displace restored history out of order.
     collectorExecutor.execute {
-      mainHandler.post { if (foreground) windowMonitor.start(context.currentActivity?.window) }
+      resetSamplingClock()
+      mainHandler.post {
+        if (foreground && activeNavigationTrace != null) {
+          windowMonitor.start(context.currentActivity?.window)
+        }
+      }
     }
   }
 
@@ -380,7 +437,6 @@ class CodexPerformanceModule(
     foreground = false
     mainHandler.post {
       windowMonitor.stop()
-      frameHandler.post { runCatching { collectorExecutor.execute { windowJournal.persist() } } }
     }
     detachWindow()
   }
@@ -465,6 +521,45 @@ class CodexPerformanceModule(
     }
   }
 
+  private fun publishNavigationProfile(report: String, collectedAt: Long): WritableMap {
+    val displayName = "codewide-navigation-profile-$collectedAt.json"
+    val values = ContentValues().apply {
+      put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+      put(MediaStore.MediaColumns.MIME_TYPE, NAVIGATION_PROFILE_MIME_TYPE)
+      put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$HEAP_SNAPSHOT_DIRECTORY")
+      put(MediaStore.MediaColumns.IS_PENDING, 1)
+    }
+    val resolver = context.contentResolver
+    val uri = checkNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)) {
+      "Could not create the navigation profile download"
+    }
+    try {
+      val output = checkNotNull(resolver.openOutputStream(uri, "w")) {
+        "Could not open the navigation profile download"
+      }
+      output.bufferedWriter(Charsets.UTF_8).use { writer -> writer.write(report) }
+      resolver.update(
+        uri,
+        ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+        null,
+        null,
+      )
+      val sizeBytes = resolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+        descriptor.statSize
+      } ?: 0L
+      return Arguments.createMap().apply {
+        putString("uri", uri.toString())
+        putString("name", displayName)
+        putDouble("sizeBytes", sizeBytes.coerceAtLeast(0L).toDouble())
+        putDouble("collectedAtMs", collectedAt.toDouble())
+        putString("location", "Downloads/$HEAP_SNAPSHOT_DIRECTORY")
+      }
+    } catch (cause: Throwable) {
+      runCatching { resolver.delete(uri, null, null) }
+      throw cause
+    }
+  }
+
   private external fun nativeCaptureHermesHeapSnapshot(
     runtimePointer: Long,
     destinationPath: String,
@@ -492,6 +587,7 @@ class CodexPerformanceModule(
     totalFrames = 0L
     totalJankFrames = 0L
     totalDroppedFrameEstimate = 0L
+    nextMemorySampleElapsedMs = 0L
     synchronized(historyLock) { history.clear() }
     frameAccumulator.reset()
     mainHandler.post { if (enabled) attachWindow(context.currentActivity) }
@@ -512,7 +608,8 @@ class CodexPerformanceModule(
       activeNavigationTrace?.takeIf { it.hermesSamplingEnabled }?.let { stopHermesSampling(null) }
       activeNavigationTrace = null
     }
-    // Low-volume frame incidents remain active when the optional HUD is off.
+    mainHandler.post { windowMonitor.stop() }
+    hermesNavigationCaptureArmed.set(false)
     if (clearLatest) latest = null
   }
 
@@ -534,7 +631,7 @@ class CodexPerformanceModule(
 
   @Synchronized
   private fun sample() {
-    if (!enabled) return
+    if (!enabled || !foreground) return
     val elapsedMs = SystemClock.elapsedRealtime()
     val elapsedDeltaMs = (elapsedMs - previousElapsedMs).coerceAtLeast(1L)
     val cpuMs = Process.getElapsedCpuTime()
@@ -542,21 +639,12 @@ class CodexPerformanceModule(
     previousElapsedMs = elapsedMs
     previousCpuMs = cpuMs
 
-    val memory = Debug.MemoryInfo()
-    Debug.getMemoryInfo(memory)
-    val pssBytes = memory.totalPss.toLong() * 1_024L
-    val rssBytes = memory.getMemoryStat("summary.total-rss")?.toLongOrNull()?.times(1_024L) ?: pssBytes
+    val memory = currentMemorySample(elapsedMs)
+    val rssBytes = currentResidentBytes(memory.rssBytes)
     val runtime = Runtime.getRuntime()
     val javaHeapBytes = runtime.totalMemory() - runtime.freeMemory()
     val javaHeapLimitBytes = runtime.maxMemory()
     val nativeHeapBytes = Debug.getNativeHeapAllocatedSize()
-    val javaHeapPssBytes = memoryStatBytes(memory, "summary.java-heap")
-    val nativeHeapPssBytes = memoryStatBytes(memory, "summary.native-heap")
-    val codePssBytes = memoryStatBytes(memory, "summary.code")
-    val stackPssBytes = memoryStatBytes(memory, "summary.stack")
-    val graphicsPssBytes = memoryStatBytes(memory, "summary.graphics")
-    val privateOtherPssBytes = memoryStatBytes(memory, "summary.private-other")
-    val systemPssBytes = memoryStatBytes(memory, "summary.system")
 
     val uid = Process.myUid()
     val rxBytes = TrafficStats.getUidRxBytes(uid)
@@ -569,7 +657,7 @@ class CodexPerformanceModule(
 
     sequence += 1
     peakCpuPercent = maxOf(peakCpuPercent, cpuPercent)
-    peakPssBytes = maxOf(peakPssBytes, pssBytes)
+    peakPssBytes = maxOf(peakPssBytes, memory.pssBytes)
     totalFrames += frame.renderedFrames
     totalJankFrames += frame.jankFrames
     totalDroppedFrameEstimate += frame.droppedFrameEstimate
@@ -578,18 +666,18 @@ class CodexPerformanceModule(
       sampledAtMs = System.currentTimeMillis(),
       uptimeMs = elapsedMs - sessionStartedElapsedMs,
       cpuPercent = cpuPercent,
-      pssBytes = pssBytes,
+      pssBytes = memory.pssBytes,
       rssBytes = rssBytes,
       javaHeapBytes = javaHeapBytes,
       javaHeapLimitBytes = javaHeapLimitBytes,
       nativeHeapBytes = nativeHeapBytes,
-      javaHeapPssBytes = javaHeapPssBytes,
-      nativeHeapPssBytes = nativeHeapPssBytes,
-      codePssBytes = codePssBytes,
-      stackPssBytes = stackPssBytes,
-      graphicsPssBytes = graphicsPssBytes,
-      privateOtherPssBytes = privateOtherPssBytes,
-      systemPssBytes = systemPssBytes,
+      javaHeapPssBytes = memory.javaHeapPssBytes,
+      nativeHeapPssBytes = memory.nativeHeapPssBytes,
+      codePssBytes = memory.codePssBytes,
+      stackPssBytes = memory.stackPssBytes,
+      graphicsPssBytes = memory.graphicsPssBytes,
+      privateOtherPssBytes = memory.privateOtherPssBytes,
+      systemPssBytes = memory.systemPssBytes,
       rxBytesPerSecond = rxRate,
       txBytesPerSecond = txRate,
       rxSessionBytes = sessionBytes(rxBytes, sessionRxBaseline),
@@ -617,19 +705,55 @@ class CodexPerformanceModule(
   private fun memoryStatBytes(memory: Debug.MemoryInfo, key: String): Long =
     memory.getMemoryStat(key)?.toLongOrNull()?.times(1_024L) ?: 0L
 
+  private fun currentMemorySample(elapsedMs: Long): ProcessMemorySample {
+    val cached = lastMemorySample
+    if (cached != null && elapsedMs < nextMemorySampleElapsedMs) return cached
+    val memory = Debug.MemoryInfo()
+    Debug.getMemoryInfo(memory)
+    val pssBytes = memory.totalPss.toLong() * 1_024L
+    val sample = ProcessMemorySample(
+      codePssBytes = memoryStatBytes(memory, "summary.code"),
+      graphicsPssBytes = memoryStatBytes(memory, "summary.graphics"),
+      javaHeapPssBytes = memoryStatBytes(memory, "summary.java-heap"),
+      nativeHeapPssBytes = memoryStatBytes(memory, "summary.native-heap"),
+      privateOtherPssBytes = memoryStatBytes(memory, "summary.private-other"),
+      pssBytes = pssBytes,
+      rssBytes = memory.getMemoryStat("summary.total-rss")?.toLongOrNull()?.times(1_024L) ?: pssBytes,
+      stackPssBytes = memoryStatBytes(memory, "summary.stack"),
+      systemPssBytes = memoryStatBytes(memory, "summary.system"),
+    )
+    lastMemorySample = sample
+    nextMemorySampleElapsedMs = elapsedMs + MEMORY_SAMPLE_PERIOD_MS
+    return sample
+  }
+
+  private fun currentResidentBytes(fallback: Long): Long = runCatching {
+    val statm = File("/proc/self/statm").readText()
+    val residentStart = statm.indexOf(' ').takeIf { it >= 0 }?.plus(1)
+      ?: return@runCatching fallback
+    val residentEnd = statm.indexOf(' ', residentStart).takeIf { it >= 0 } ?: statm.length
+    statm.substring(residentStart, residentEnd).toLong() * memoryPageSizeBytes
+  }.getOrDefault(fallback)
+
+  private fun resetSamplingClock() {
+    previousElapsedMs = SystemClock.elapsedRealtime()
+    previousCpuMs = Process.getElapsedCpuTime()
+    nextMemorySampleElapsedMs = 0L
+  }
+
   private fun emitSnapshot() {
     if (listenerCount <= 0) return
     mainHandler.post {
       if (listenerCount <= 0) return@post
       runCatching {
         context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-          .emit(EVENT_NAME, snapshotMap())
+          .emit(EVENT_NAME, snapshotMap(includeHistory = false))
       }
     }
   }
 
   @Synchronized
-  private fun snapshotMap(): WritableMap = Arguments.createMap().apply {
+  private fun snapshotMap(includeHistory: Boolean): WritableMap = Arguments.createMap().apply {
     putBoolean("available", true)
     putBoolean("enabled", enabled)
     putInt("samplePeriodMs", SAMPLE_PERIOD_MS.toInt())
@@ -647,7 +771,7 @@ class CodexPerformanceModule(
     } else {
       putMap("current", sampleMap(sample))
     }
-    putArray("recent", recentSamples())
+    putArray("recent", if (includeHistory) recentSamples() else Arguments.createArray())
   }
 
   private fun sampleMap(sample: PerformanceSample): WritableMap = Arguments.createMap().apply {

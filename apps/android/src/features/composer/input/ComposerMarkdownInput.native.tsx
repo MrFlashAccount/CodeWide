@@ -27,7 +27,6 @@ export function ComposerMarkdownInput({
 }: ComposerMarkdownInputProps & { readonly ref?: React.Ref<ComposerMarkdownInputHandle> }) {
   const externalValue = props.value;
   const externalSelection = props.selection;
-  const notifyExternalMarkdown = props.onChangeMarkdown;
   const root = useRef<View>(null);
   const editor = useRef<EnrichedMarkdownTextInputInstance>(null);
   const largePasteId = useId();
@@ -55,8 +54,7 @@ export function ComposerMarkdownInput({
     lastPlainText.current = externalValue;
     lastMarkdown.current = externalValue;
     editor.current?.setValue(externalValue);
-    notifyExternalMarkdown?.(externalValue);
-  }, [externalValue, notifyExternalMarkdown]);
+  }, [externalValue]);
 
   useLayoutEffect(() => {
     if (externalSelection === undefined) {
@@ -69,7 +67,10 @@ export function ComposerMarkdownInput({
     ref,
     () => ({
       focus: () => editor.current?.focus(),
-      getMarkdown: async () => (await editor.current?.getMarkdown()) ?? lastMarkdown.current,
+      getValue: async () => ({
+        markdown: (await editor.current?.getMarkdown()) ?? lastMarkdown.current,
+        plainText: lastPlainText.current,
+      }),
       insertCode: (block) => editor.current?.insertCode(block),
       insertLinkedText: (text, url) => editor.current?.insertLink(text, url),
       insertText: (text) => editor.current?.insertText(text),
@@ -113,7 +114,7 @@ export function ComposerMarkdownInput({
       return;
     }
     lastPlainText.current = next;
-    props.onChangeText(next);
+    lastMarkdown.current = next;
   });
   const changeMarkdown = useEvent((next: string) => {
     if (discardNextMarkdown.current) {
@@ -121,7 +122,7 @@ export function ComposerMarkdownInput({
       return;
     }
     lastMarkdown.current = next;
-    props.onChangeMarkdown?.(next);
+    props.onChangeValue({ markdown: next, plainText: lastPlainText.current });
   });
   const changeSelection = useEvent((next: { end: number; start: number }) => {
     props.onSelectionChange?.(next);

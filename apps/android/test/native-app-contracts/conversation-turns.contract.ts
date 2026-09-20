@@ -31,7 +31,7 @@ const ownerUserTurnBody = readFileSync(
 );
 
 it("preserves conversation turns integration contracts", () => {
-  expect(ownerOptimisticTurn).toContain('? "Running"');
+  expect(ownerOptimisticTurn).toContain('? "Sent"');
   expect(ownerPreTurnLifecycleRows).toContain('testID="pre-turn-lifecycle"');
   expect(ownerTurnProjection).toContain("preTurnActivityIndexes");
   expect(ownerOptimisticTurn).toContain(': "Accepted by Companion"');
@@ -47,7 +47,7 @@ it("preserves conversation turns integration contracts", () => {
     ]),
   ).toBe(true);
   expect(ownerTurnActivity).toContain("showToggle={!shouldAutoExpand}");
-  expect(ownerTurnActivity).toContain("{showToggle && (");
+  expect(ownerTurnActivity).toContain("if (props.showToggle === false)");
   expect(ownerTurnActivity).toMatch(
     /style=\{\[\s*styles\.turnActivityList,\s*!showToggle && styles\.turnActivityListWithoutToggle,?\s*\]\}/u,
   );
@@ -55,9 +55,10 @@ it("preserves conversation turns integration contracts", () => {
     /turnActivityListWithoutToggle: \{\s*paddingLeft: 0,?\s*\}/u,
   );
   expect(ownerTurnActivity).toContain('testID="turn-activity-loading-shimmer"');
-  expect(ownerTurnActivity).toContain("{expanded && (");
+  expect(ownerTurnActivity).toContain("if (!props.expanded)");
   expect(ownerTurnActivityStyles).toMatch(/turnActivityExpanded: \{[^}]*width: "100%"/u);
-  expect(ownerTurnProjection).toContain("normalizeThreadItem(connectionId(row.connectionId)");
+  expect(ownerTurnProjection).toContain("normalizeThreadItem(");
+  expect(ownerTurnProjection).toContain("connectionId(row.connectionId)");
   expect(ownerUserMessageContent).toContain('testID="user-image-gallery"');
   expect(ownerUserMessageContent).toContain("text={normalized.text}");
   expect(ownerUserMessageContent).toContain("normalizeUserMessage(part.text)");
@@ -73,7 +74,7 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerTurnProjection).toContain("selectTurnRenderWindow(rawTurn)");
   expect(ownerTurnProjection).toContain("renderWindow.liveActivityIndexes.flatMap");
   expect(ownerTurnProjection).toContain(
-    "activeTurnSequence(liveActivityEntries, renderWindow.collapsedActivityIndexes)",
+    "activeTurnSequence(liveActivityEntries, renderWindow.collapsedActivityIndexes, turn.key)",
   );
   expect(ownerTurnTimelineItem).toContain('rawTurn.status === "inProgress"');
   expect(ownerMessageActionRail).toContain('accessibilityLabel="Message actions"');
@@ -106,7 +107,9 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerDisclosureState).toMatch(/const PERSISTENT_EXPANSION_STATE_LIMIT = 4_?096/u);
   expect(ownerCard).toContain("writePersistentExpansionState(localKey, resolved)");
   expect(ownerTurnTimelineItem).toContain("function TurnTimelineItem({");
-  expect(ownerTurnActivity).toMatch(/const thinkingOnly =\s*part\.blocks\.length > 0/);
+  expect(ownerTurnActivity).toMatch(
+    /if \(blocks\.length > 0 && blocks\.every\(\(block\) => block\.kind === "reasoning"\)\)/u,
+  );
   expect(ownerTurnActivity).toContain('testID="thinking-status-section"');
   expect(ownerTurnContexts).toContain("const TurnActivityContentContext = createContext(false);");
   expect(ownerTurnActivity).toContain("<TurnActivityContentContext.Provider value>");

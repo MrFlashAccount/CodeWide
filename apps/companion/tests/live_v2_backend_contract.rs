@@ -453,7 +453,7 @@ async fn v2_authoritative_refresh_covers_real_client_use_cases() -> TestResult {
             return Err(error);
         }
     };
-    let outcome = run_v2_authoritative_refresh_scenarios(
+    let outcome = Box::pin(run_v2_authoritative_refresh_scenarios(
         &observer,
         &url,
         &primary_thread_id,
@@ -461,7 +461,7 @@ async fn v2_authoritative_refresh_covers_real_client_use_cases() -> TestResult {
         &run_id,
         &relay,
         &companion_status,
-    )
+    ))
     .await;
 
     let mut cleanup_errors = Vec::new();
@@ -580,14 +580,14 @@ async fn run_v2_authoritative_refresh_scenarios(
     assert_history_contains_completed_message(&history, &raced_message)?;
 
     verify_v2_idempotent_turn_submit(url, &mut control, primary_thread_id, run_id).await?;
-    verify_v2_two_thread_delivery(
+    Box::pin(verify_v2_two_thread_delivery(
         observer,
         url,
         &mut control,
         primary_thread_id,
         secondary_thread_id,
         run_id,
-    )
+    ))
     .await?;
 
     eprintln!("stage=v2_snapshot_live_seam_stress iterations=50");

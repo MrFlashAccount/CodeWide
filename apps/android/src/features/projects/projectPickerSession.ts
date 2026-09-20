@@ -21,6 +21,7 @@ export function useProjectPickerSession({
   visible,
 }: ProjectPickerProps) {
   const [mode, setMode] = useState<PickerMode>(browseOnly ? "directory" : "projects");
+  const [navigationDirection, setNavigationDirection] = useState<"back" | "forward" | null>(null);
   const [query, setQuery] = useState("");
   const cwdDirectory = normalizeDirectoryPath(cwd);
   const initialDirectory =
@@ -120,7 +121,12 @@ export function useProjectPickerSession({
     setQuery("");
     setDirectoryError(null);
     setRequestedDirectory(onReadHomeDirectory === undefined ? initialDirectory : null);
+    setNavigationDirection("forward");
     setMode("directory");
+  });
+  const showProjects = useEvent(() => {
+    setNavigationDirection("back");
+    setMode("projects");
   });
   const runAddCurrentDirectory = useEvent(async () => {
     if (
@@ -173,6 +179,7 @@ export function useProjectPickerSession({
     home,
     mode,
     navigate,
+    navigationDirection,
     normalizedQuery,
     openDirectoryPicker,
     parentPath,
@@ -184,8 +191,8 @@ export function useProjectPickerSession({
     readError,
     requestedDirectory,
     scrollToCurrentFolder,
-    setMode,
     setQuery,
+    showProjects,
     toggleProjectSection,
     unpinnedProjects,
     visibleDirectories,

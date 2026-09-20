@@ -10,9 +10,11 @@ import type {
   NativePortForwardEvent,
   NativeTerminalEvent,
   NativeTerminalOutput,
+  NativeTerminalSession,
   NativeDiscoveredPort,
   NativeCommandDelivery,
   MicrophonePermission,
+  NativeMicrophoneLease,
   NativeCommandMethod,
 } from "./native-transport-contract";
 
@@ -30,9 +32,11 @@ export type {
   NativePortForwardEvent,
   NativeTerminalEvent,
   NativeTerminalOutput,
+  NativeTerminalSession,
   NativeDiscoveredPort,
   NativeCommandDelivery,
   MicrophonePermission,
+  NativeMicrophoneLease,
   NativeCommandMethod,
 } from "./native-transport-contract";
 import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
@@ -44,6 +48,10 @@ type NativeAudioEvent = CapturedAudioChunk & {
   error?: string;
   type: "started" | "chunk" | "stopped" | "error";
 };
+
+const MAX_TERMINAL_CWD_LENGTH = 4096;
+const MAX_TERMINAL_THREAD_ID_LENGTH = 512;
+const TERMINAL_SESSION_ID = /^terminal-[0-9a-fA-F-]{36}$/u;
 
 type NativeBridge = {
   addListener: (eventName: string) => void;
@@ -74,6 +82,7 @@ type NativeBridge = {
   engineRetryCommand?: (connectionId: string, commandId: string) => Promise<string>;
   listConnectionConfigs: () => Promise<NativeConnectionConfig[]>;
   listPortForwards?: (connectionId: string) => Promise<string>;
+  listTerminals?: () => Promise<string>;
   microphonePermissionGranted?: boolean;
   mintStoredSession: (connectionId: string) => Promise<{ expiresAt: number; sessionToken: string }>;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
@@ -115,19 +124,21 @@ type NativeBridge = {
   setConnectionEnabled: (connectionId: string, enabled: boolean) => Promise<void>;
   setVoiceAuraOrigin?: (reactTag: number | null) => void;
   setVoiceAuraState?: (active: boolean, level: number, reducedMotion: boolean) => void;
-  setVoiceAuraTarget?: (reactTag: number | null) => void;
   startBrowserDevToolsBridge?: () => Promise<NativeBrowserDevToolsBridge>;
   startBrowserTracing?: () => Promise<void>;
   startLegacyRuntimeResources?: () => Promise<void>;
   // Native-22 and older resolve void/null. Native-23 adds capture diagnostics;
   // audio chunks themselves remain the source of truth for the PCM format.
-  startPcmCapture: () => Promise<PcmCaptureInfo | null>;
+  startPcmCapture: (
+    token: string,
+    purpose: NativeMicrophoneLease["purpose"],
+  ) => Promise<PcmCaptureInfo | null>;
   startPortForward: (profileId: string) => Promise<string>;
   startVoiceInput: (localeTag: string | null) => Promise<void>;
   stopBrowserDevToolsBridge?: () => void;
   stopBrowserTracing?: () => Promise<NativeBrowserTrace>;
   stopLegacyRuntimeResources?: () => Promise<void>;
-  stopPcmCapture: () => void;
+  stopPcmCapture: (token: string, purpose: NativeMicrophoneLease["purpose"]) => Promise<void>;
   stopPortForward: (profileId: string) => Promise<string>;
   stopVoiceInput: () => void;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
@@ -630,6 +641,69 @@ export async function readNativeTerminalOutput(
   };
 }
 
+export async function listNativeTerminals(): Promise<NativeTerminalSession[]> {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.listTerminals !== "function"
+  ) {
+    return [];
+  }
+  const value: unknown = JSON.parse(await bridge.listTerminals());
+  if (!Array.isArray(value)) {
+    throw new Error("Native terminal inventory is invalid");
+  }
+  return value.map(parseNativeTerminalSession);
+}
+
+export function parseNativeTerminalSession(value: unknown): NativeTerminalSession {
+  const row = unknownRecord(value);
+  if (row === null) {
+    throw new Error("Native terminal inventory is invalid");
+  }
+  if (typeof row.sessionId !== "string" || !TERMINAL_SESSION_ID.test(row.sessionId)) {
+    throw new Error("Native terminal inventory is invalid");
+  }
+  if (!isNonEmptyString(row.connectionId)) {
+    throw new Error("Native terminal inventory is invalid");
+  }
+  if (!isBoundedTerminalThreadId(row.threadId)) {
+    throw new Error("Native terminal inventory is invalid");
+  }
+  if (!isTerminalCwd(row.cwd)) {
+    throw new Error("Native terminal inventory is invalid");
+  }
+  if (!isNativeTerminalStatus(row.status)) {
+    throw new Error("Native terminal inventory is invalid");
+  }
+  return {
+    connectionId: row.connectionId,
+    cwd: row.cwd,
+    sessionId: row.sessionId,
+    status: row.status,
+    threadId: row.threadId,
+  };
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isBoundedTerminalThreadId(value: unknown): value is string {
+  return isNonEmptyString(value) && value.length <= MAX_TERMINAL_THREAD_ID_LENGTH;
+}
+
+function isTerminalCwd(value: unknown): value is string | null {
+  return (
+    value === null ||
+    (typeof value === "string" && value.length > 0 && value.length <= MAX_TERMINAL_CWD_LENGTH)
+  );
+}
+
+function isNativeTerminalStatus(value: unknown): value is NativeTerminalSession["status"] {
+  return value === "connecting" || value === "open";
+}
+
 export function closeNativeTerminal(sessionId: string): void {
   bridge?.closeTerminal?.(sessionId);
 }
@@ -1104,22 +1178,12 @@ export function setNativeVoiceAuraOrigin(reactTag: number | null): void {
   bridge.setVoiceAuraOrigin?.(reactTag);
 }
 
-export function setNativeVoiceAuraTarget(reactTag: number | null): void {
-  if (
-    bridge === undefined ||
-    Platform.OS !== "android" ||
-    bridge.setVoiceAuraTarget === undefined
-  ) {
-    return;
-  }
-  bridge.setVoiceAuraTarget(reactTag);
-}
-
 export function configureNativeFullscreenWindow(reactTag: number): void {
   bridge?.configureFullscreenWindow?.(reactTag);
 }
 
 export async function startPcmCapture(
+  lease: NativeMicrophoneLease,
   onChunk: (chunk: CapturedAudioChunk) => void,
   onError: (message: string) => void,
 ): Promise<{ info: PcmCaptureInfo | null; stop: () => Promise<void> }> {
@@ -1144,12 +1208,14 @@ export async function startPcmCapture(
     }
   });
   try {
-    const capture = await bridge.startPcmCapture();
+    const capture = await bridge.startPcmCapture(lease.token, lease.purpose);
     const info = isPcmCaptureInfo(capture) ? capture : null;
     if (info !== null) {
       appLogger.info({
         event: "microphone.capture_started",
         fields: {
+          acousticEchoCancelerEnabled: info.acousticEchoCancelerEnabled,
+          acousticEchoCancelerSupported: info.acousticEchoCancelerSupported,
           automaticGainControl: info.automaticGainControl,
           noiseSuppressor: info.noiseSuppressor,
           sampleRate: info.sampleRate,
@@ -1169,11 +1235,23 @@ export async function startPcmCapture(
           await stopPromise;
           return;
         }
-        stopPromise = new Promise<void>((resolve) => {
+        const stoppedEvent = new Promise<void>((resolve) => {
           resolveStopped = resolve;
         });
-        bridge.stopPcmCapture();
-        await stopPromise;
+        const attempt = (async () => {
+          await bridge.stopPcmCapture(lease.token, lease.purpose);
+          await stoppedEvent;
+        })();
+        stopPromise = attempt;
+        try {
+          await attempt;
+        } catch (error) {
+          if (stopPromise === attempt) {
+            stopPromise = null;
+            resolveStopped = null;
+          }
+          throw error;
+        }
       },
     };
   } catch (error) {
@@ -1196,11 +1274,9 @@ function isPcmCaptureInfo(value: unknown): value is PcmCaptureInfo {
     (info.source === "voice_recognition" ||
       info.source === "voice_communication" ||
       info.source === "mic") &&
+    typeof info.acousticEchoCancelerEnabled === "boolean" &&
+    typeof info.acousticEchoCancelerSupported === "boolean" &&
     typeof info.noiseSuppressor === "boolean" &&
     typeof info.automaticGainControl === "boolean"
   );
-}
-
-export function stopPcmCapture(): void {
-  bridge?.stopPcmCapture();
 }

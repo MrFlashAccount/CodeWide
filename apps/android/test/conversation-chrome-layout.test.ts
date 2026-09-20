@@ -11,39 +11,116 @@ import {
 } from "../src/ui/conversation-chrome-layout";
 import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
-const screen = compactSource(readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"));
+const screen = compactSource(
+  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+);
 const panelUnderlay = readFileSync(
   new URL("../src/ui/ConversationPanelUnderlay.tsx", import.meta.url),
   "utf8",
 );
 
-const ownerConversationLayout = compactSource(readFileSync(new URL("../src/features/conversation/ConversationLayout.tsx", import.meta.url), "utf8"));
-const ownerTimelineViewport = compactSource(readFileSync(new URL("../src/features/conversation/timeline/timelineViewport.ts", import.meta.url), "utf8"));
-const ownerConversationBottomChrome = compactSource(readFileSync(new URL("../src/features/conversation/ConversationBottomChrome.tsx", import.meta.url), "utf8"));
+const ownerConversationLayout = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationLayout.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerTimelineViewport = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/timelineViewport.ts", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerConversationBottomChrome = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationBottomChrome.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
-const composerInputStyles = compactSource(readFileSync(new URL("../src/features/composer/ComposerEditor.styles.ts", import.meta.url), "utf8"));
+const composerInputStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/ComposerEditor.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const composerDockStyles = compactSource(readFileSync(new URL("../src/features/composer/ComposerFeature.styles.ts", import.meta.url), "utf8"));
+const composerDockStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/ComposerFeature.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const composerStyles = compactSource(readFileSync(new URL("../src/features/composer/ComposerFeature.styles.ts", import.meta.url), "utf8"));
+const composerStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/ComposerFeature.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const composerInputShellStyles = compactSource(readFileSync(new URL("../src/features/composer/ComposerFeature.styles.ts", import.meta.url), "utf8"));
+const composerInputShellStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/ComposerFeature.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const composerStickyStyles = compactSource(readFileSync(new URL("../src/features/conversation/ConversationLayout.styles.ts", import.meta.url), "utf8"));
+const composerStickyStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationLayout.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const composerContextStripStyles = compactSource(readFileSync(new URL("../src/features/composer/ComposerContextStrip.styles.ts", import.meta.url), "utf8"));
+const composerContextStripStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/ComposerContextStrip.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const composerContextChipStyles = compactSource(readFileSync(new URL("../src/features/composer/settings/ComposerControlChips.styles.ts", import.meta.url), "utf8"));
+const composerContextChipStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/composer/settings/ComposerControlChips.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const conversationHeaderStyles = compactSource(readFileSync(new URL("../src/features/conversation/header/ConversationHeader.styles.ts", import.meta.url), "utf8"));
+const conversationHeaderStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/header/ConversationHeader.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const conversationIdentityRaisedStyles = compactSource(readFileSync(new URL("../src/features/conversation/header/ConversationHeader.styles.ts", import.meta.url), "utf8"));
+const conversationIdentityRaisedStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/header/ConversationHeader.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const conversationRaisedStyles = compactSource(readFileSync(new URL("../src/features/conversation/ConversationLayout.styles.ts", import.meta.url), "utf8"));
+const conversationRaisedStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationLayout.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const timelineRead = compactSource(readFileSync(new URL("../src/features/conversation/timeline/conversationTimelineRead.ts", import.meta.url), "utf8"));
+const timelineRead = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/conversationTimelineRead.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const viewport = compactSource(readFileSync(new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url), "utf8"));
+const viewport = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("conversation chrome layout", () => {
   it("gives composer text and its native placeholder symmetric vertical insets", () => {
@@ -56,8 +133,14 @@ describe("conversation chrome layout", () => {
 
   it("does not paint transcript backdrops over loading, unpositioned or empty history", () => {
     // The composition contract applies to both opaque panels.
-    expect(timelineRead).toContain("timelinePositioned && conversationTimelineBinding.timeline.length > 0");
-    expect(ownerConversationLayout.match(/conversationBackdropVisible && \( <ConversationPanelUnderlay/g)).toHaveLength(2);
+    expect(timelineRead).toContain(
+      "timelinePositioned && conversationTimelineBinding.timeline.length > 0",
+    );
+    expect(
+      ownerConversationLayout.match(
+        /conversationBackdropVisible && \( <ConversationPanelUnderlay/g,
+      ),
+    ).toHaveLength(2);
   });
   it("reuses the existing neutral surfaces instead of inventing a palette", () => {
     expect(colors.threadListSurface).toBe(darkScheme.background);
@@ -66,16 +149,12 @@ describe("conversation chrome layout", () => {
   });
 
   it("reserves only the chrome that can cover the first and last message", () => {
-    expect(conversationTopContentInset(false)).toBe(
-      layoutSize.header + spacing.compact,
-    );
+    expect(conversationTopContentInset(false)).toBe(layoutSize.header + spacing.compact);
     expect(conversationTopContentInset(true)).toBe(
       conversationTopContentInset(false) + controlSize.regular + spacing.xxs,
     );
     expect(conversationBottomContentInset(96, false)).toBe(96);
-    expect(conversationBottomContentInset(96, true)).toBe(
-      96 + controlSize.touch + spacing.sm,
-    );
+    expect(conversationBottomContentInset(96, true)).toBe(96 + controlSize.touch + spacing.sm);
   });
 
   it("clips opaque surfaces to the complete top and bottom chrome", () => {
@@ -83,22 +162,37 @@ describe("conversation chrome layout", () => {
     expect(conversationHeaderChromeHeight(true)).toBe(
       layoutSize.header + controlSize.regular + spacing.xxs,
     );
-    expect(ownerConversationLayout).toContain("height: conversationHeaderChromeHeight(threadSearchVisible)");
-    expect(ownerConversationLayout).toContain("<ConversationPanelUnderlay style={StyleSheet.absoluteFill} />");
+    expect(ownerConversationLayout).toContain(
+      "height: conversationHeaderChromeHeight(threadSearchVisible)",
+    );
+    expect(ownerConversationLayout).toContain(
+      "<ConversationPanelUnderlay style={StyleSheet.absoluteFill} />",
+    );
     expect(screen).not.toContain("height: bottomChromeHeight");
   });
 
   it("retains the measured composer height for transcript clearance, not backdrop layout", () => {
-    expect(ownerTimelineViewport).toContain("const [bottomChromeHeight, setBottomChromeHeight] = useState(0)");
+    expect(ownerTimelineViewport).toContain(
+      "const [bottomChromeHeight, setBottomChromeHeight] = useState(0)",
+    );
     expect(ownerConversationBottomChrome).toContain('testID="conversation-bottom-chrome"');
-    expect(ownerConversationBottomChrome).toContain("const nextHeight = Math.ceil(nativeEvent.layout.height)");
-    expect(ownerConversationBottomChrome).toContain("Math.abs(current - nextHeight) < 1 ? current : nextHeight");
+    expect(ownerConversationBottomChrome).toContain(
+      "const nextHeight = Math.ceil(nativeEvent.layout.height)",
+    );
+    expect(ownerConversationBottomChrome).toContain(
+      "Math.abs(current - nextHeight) < 1 ? current : nextHeight",
+    );
     expect(screen).not.toContain("composerDockHeight");
-    expect(viewport).toContain("conversationBottomContentInset( props.bottomChromeHeight, props.liveStatusVisible, )");
+    expect(viewport).toContain(
+      "conversationBottomContentInset( props.bottomChromeHeight, props.liveStatusVisible, )",
+    );
 
     const composerDock = sourceObjectDeclaration(composerDockStyles, "composerDock");
     const composer = sourceObjectDeclaration(composerStyles, "composer");
-    const composerInputShell = sourceObjectDeclaration(composerInputShellStyles, "composerInputShell");
+    const composerInputShell = sourceObjectDeclaration(
+      composerInputShellStyles,
+      "composerInputShell",
+    );
     expect(composerDock).not.toMatch(/\bheight:/u);
     expect(composer).toContain("flexShrink: 0");
     expect(composerInputShell).not.toContain("maxHeight");
@@ -119,8 +213,14 @@ describe("conversation chrome layout", () => {
   });
 
   it("keeps list chrome on the opaque thread-list surface", () => {
-    const sidebarStyles = readFileSync(new URL("../src/features/threadList/ThreadSidebar.styles.ts", import.meta.url), "utf8");
-    const threadListHeader = sourceObjectDeclaration(compactSource(sidebarStyles), "threadListHeaderChrome");
+    const sidebarStyles = readFileSync(
+      new URL("../src/features/threadList/ThreadSidebar.styles.ts", import.meta.url),
+      "utf8",
+    );
+    const threadListHeader = sourceObjectDeclaration(
+      compactSource(sidebarStyles),
+      "threadListHeaderChrome",
+    );
     expect(threadListHeader).toContain("flexShrink: 0");
     expect(threadListHeader).toContain("backgroundColor: colors.threadListSurface");
     expect(threadListHeader).not.toContain("position");
@@ -132,20 +232,53 @@ describe("conversation chrome layout", () => {
   it("overlays edge-to-edge chrome without a panel shadow", () => {
     const composerSticky = sourceObjectDeclaration(composerStickyStyles, "composerSticky");
     const composerDock = sourceObjectDeclaration(composerDockStyles, "composerDock");
-    const composerContextStrip = sourceObjectDeclaration(composerContextStripStyles, "composerContextStrip");
-    const composerContextChip = sourceObjectDeclaration(composerContextChipStyles, "composerContextChip");
+    const composerContextStrip = sourceObjectDeclaration(
+      composerContextStripStyles,
+      "composerContextStrip",
+    );
+    const composerContextChip = sourceObjectDeclaration(
+      composerContextChipStyles,
+      "composerContextChip",
+    );
     const composer = sourceObjectDeclaration(composerStyles, "composer");
-    const composerInputShell = sourceObjectDeclaration(composerInputShellStyles, "composerInputShell");
-    const inlineQueueOverlay = readFileSync(new URL("../src/features/queue/InlineQueueOverlay.tsx", import.meta.url), "utf8");
-    const queueLayout = readFileSync(new URL("../src/features/queue/inlineQueueLayout.ts", import.meta.url), "utf8");
-    const queueStyles = readFileSync(new URL("../src/features/queue/InlineQueueOverlay.styles.ts", import.meta.url), "utf8");
-    const queueBubble = readFileSync(new URL("../src/features/queue/AnimatedQueueBubble.tsx", import.meta.url), "utf8");
-    const queueMotion = readFileSync(new URL("../src/features/queue/queueBubbleMotion.ts", import.meta.url), "utf8");
-    const conversationHeader = sourceObjectDeclaration(conversationHeaderStyles, "conversationHeader");
-    const conversationIdentityRaised = sourceObjectDeclaration(conversationIdentityRaisedStyles, "conversationIdentityRaised");
-    const raisedConversation = sourceObjectDeclaration(conversationRaisedStyles, "conversationRaised");
+    const composerInputShell = sourceObjectDeclaration(
+      composerInputShellStyles,
+      "composerInputShell",
+    );
+    const inlineQueueOverlay = readFileSync(
+      new URL("../src/features/queue/InlineQueueOverlay.tsx", import.meta.url),
+      "utf8",
+    );
+    const queueLayout = readFileSync(
+      new URL("../src/features/queue/inlineQueueLayout.ts", import.meta.url),
+      "utf8",
+    );
+    const queueStyles = readFileSync(
+      new URL("../src/features/queue/InlineQueueOverlay.styles.ts", import.meta.url),
+      "utf8",
+    );
+    const queueBubble = readFileSync(
+      new URL("../src/features/queue/AnimatedQueueBubble.tsx", import.meta.url),
+      "utf8",
+    );
+    const queueMotion = readFileSync(
+      new URL("../src/features/queue/queueBubbleMotion.ts", import.meta.url),
+      "utf8",
+    );
+    const conversationHeader = sourceObjectDeclaration(
+      conversationHeaderStyles,
+      "conversationHeader",
+    );
+    const conversationIdentityRaised = sourceObjectDeclaration(
+      conversationIdentityRaisedStyles,
+      "conversationIdentityRaised",
+    );
+    const raisedConversation = sourceObjectDeclaration(
+      conversationRaisedStyles,
+      "conversationRaised",
+    );
     expect(composerSticky).toMatch(/position: "absolute"/);
-    expect(composerSticky).toMatch(/bottom: 0/);
+    expect(composerSticky).toContain("bottom: -StyleSheet.hairlineWidth");
     expect(composerSticky).toMatch(/left: 0/);
     expect(composerSticky).toMatch(/right: 0/);
     expect(composerDock).not.toMatch(/elevation|shadow/);
@@ -163,7 +296,9 @@ describe("conversation chrome layout", () => {
     expect(queueLayout).toContain("const STACK_VISIBLE_ITEMS = 2");
     expect(inlineQueueOverlay).toContain('testID="inline-queue-tail"');
     expect(queueStyles).toContain('width: "82%"');
-    expect(queueBubble).toContain("expanded ? styles.expandedBubbleContent : styles.collapsedBubbleContent");
+    expect(queueBubble).toContain(
+      "expanded ? styles.expandedBubbleContent : styles.collapsedBubbleContent",
+    );
     expect(queueMotion).toContain("withSpring(targetY, QUEUE_SPRING_GLIDE)");
     expect(inlineQueueOverlay).not.toContain("LinearTransition");
     expect(inlineQueueOverlay).not.toMatch(/elevation|shadow/u);

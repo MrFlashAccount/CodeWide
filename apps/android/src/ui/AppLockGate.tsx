@@ -8,6 +8,7 @@ import {
   decodeAppLockPreferences,
   encodeAppLockPreferences,
 } from "../data/app-lock-preferences";
+import { appLockVoiceLifecycle } from "../data/appLockVoiceLifecycle";
 import { getUserPreferencesDatabase } from "../data/user-preferences-database";
 import { authenticateWithDevice } from "../native/local-authentication";
 import { useEvent } from "../react/useEvent";
@@ -59,17 +60,25 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     authenticatingRef.current = true;
     setLockState((current) => ({ ...current, authenticating: true, message: null }));
     const task: Promise<void> = (async () => {
+      let result: Awaited<ReturnType<typeof authenticateWithDevice>>;
       try {
-        const result = await authenticateWithDevice("Unlock CodeWide");
-        if (result.success) {
-          setLockState({ authenticating: false, message: null, unlocked: true });
-        } else {
-          setLockState({ authenticating: false, message: result.message, unlocked: false });
-        }
+        result = await authenticateWithDevice("Unlock CodeWide");
       } catch {
         setLockState({
           authenticating: false,
           message: "Could not open system authentication.",
+          unlocked: false,
+        });
+        authenticatingRef.current = false;
+        return;
+      }
+      if (result.success && AppState.currentState === "active") {
+        setLockState({ authenticating: false, message: null, unlocked: true });
+        void appLockVoiceLifecycle.resumeAfterAppUnlock().catch(() => undefined);
+      } else {
+        setLockState({
+          authenticating: false,
+          message: result.success ? null : result.message,
           unlocked: false,
         });
       }
@@ -106,6 +115,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     if (state === "active") {
       authenticate();
     } else {
+      void appLockVoiceLifecycle.pauseForAppLock().catch(() => undefined);
       setLockState((current) => ({ ...current, unlocked: false }));
     }
   });

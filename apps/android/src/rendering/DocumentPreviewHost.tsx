@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { WebView } from "react-native-webview";
 
 import {
@@ -43,12 +43,10 @@ import {
   type AppFullscreenOverlayController,
 } from "../ui/AppFullscreenOverlay";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
-import { AppSheet, AppSheetScrollView } from "../ui/AppSheet";
 import { useAppDialog } from "../ui/AppDialog";
 import { useAppNotice } from "../ui/useAppNotice";
 import { AppText as Text } from "../ui/Typography";
 import {
-  documentPreviewSurface,
   interactiveHtmlDocument,
   markdownLineTarget,
   remoteDocumentDirectory,
@@ -69,15 +67,18 @@ import {
   useDiagramPreviewViewportController,
 } from "./DiagramPreviewViewport";
 
-export type DocumentPreviewRequest = {
+type DocumentPreviewRequestBase = {
   column?: number;
   getTransferAccess: GetTransferAccess;
-  kind: DocumentPreviewKind;
   line?: number;
   name: string;
   path: string;
   source?: PrivateAssetSource;
 };
+
+export type DocumentPreviewRequest = {
+  [Kind in DocumentPreviewKind]: DocumentPreviewRequestBase & { readonly kind: Kind };
+}[DocumentPreviewKind];
 
 function startDocumentDownload(
   request: DocumentPreviewRequest,
@@ -99,7 +100,6 @@ function startDocumentDownload(
   throw new Error("This attachment cannot be downloaded directly");
 }
 
-type PreviewState = DocumentPreviewRequest & { revision: number };
 type CompletedTransfer = Awaited<RunningTransfer["promise"]>;
 export type DocumentPreviewResult =
   | { phase: "loading" }
@@ -134,6 +134,7 @@ async function runDocumentDownload(
 
 function loadImagePreviewWithRetry(
   request: DocumentPreviewRequest,
+  signal: AbortSignal,
   isCurrent: () => boolean,
   onReady: (source: { headers: Record<string, string>; uri: string }) => void,
   onFailure: (error: unknown, retry: () => void) => void,
@@ -141,10 +142,11 @@ function loadImagePreviewWithRetry(
   if (!isCurrent()) {
     return;
   }
-  void materializePrivateAsset(
-    request.source ?? { kind: "path", path: request.path },
-    request.getTransferAccess,
-  ).then(
+  void materializePrivateAsset(request.source ?? { kind: "path", path: request.path }, {
+    getAccess: request.getTransferAccess,
+    signal,
+    variant: "detail",
+  }).then(
     (uri) => {
       if (isCurrent()) {
         onReady(uri);
@@ -155,24 +157,30 @@ function loadImagePreviewWithRetry(
         return;
       }
       onFailure(error, () => {
-        loadImagePreviewWithRetry(request, isCurrent, onReady, onFailure);
+        loadImagePreviewWithRetry(request, signal, isCurrent, onReady, onFailure);
       });
     },
   );
 }
 
-function presentFullscreenDocument(
-  fullscreen: AppFullscreenOverlayController,
-  request: DocumentPreviewRequest,
-  downloadFile: (request: DocumentPreviewRequest) => Promise<void>,
-): void {
+type FullscreenDocumentPresentation = {
+  readonly downloadFile: (request: DocumentPreviewRequest) => Promise<void>;
+  readonly fullscreen: AppFullscreenOverlayController;
+  readonly openDocument: (request: DocumentPreviewRequest) => void;
+  readonly request: DocumentPagePreviewRequest;
+};
+
+function presentFullscreenDocument({
+  downloadFile,
+  fullscreen,
+  openDocument,
+  request,
+}: FullscreenDocumentPresentation): void {
   fullscreen.present(({ close }) =>
-    createElement(FullscreenDocumentPreview, {
+    createElement(DocumentPagePreview, {
       onClose: close,
       onDownload: () => void downloadFile(request),
-      onOpen: (nested) => {
-        presentFullscreenDocument(fullscreen, nested, downloadFile);
-      },
+      onOpen: openDocument,
       request,
     }),
   );
@@ -181,44 +189,12 @@ function presentFullscreenDocument(
 /** Owns document preview above the virtualized timeline. Private files are
  * fetched with scoped auth into app-private storage; neither their URL nor
  * auth token is handed to a system browser. */
-export function DocumentPreviewHost({ children }: { children: ReactNode }) {
+export function DocumentPreviewHost({ children }: { children: ReactNode }): React.JSX.Element {
   const dialog = useAppDialog();
   const notice = useAppNotice();
   const openImagePreview = useImagePreview();
-  const resourceOwnerId = useId();
-  const [preview, setPreview] = useState<PreviewState | null>(null);
   const previewLoadRef = useRef<AbortController | null>(null);
   const revisionRef = useRef(0);
-  const previewSurface = preview === null ? null : documentPreviewSurface(preview.kind);
-  const previewSource =
-    preview?.source ?? (preview === null ? null : { kind: "path" as const, path: preview.path });
-  const previewResource = useEphemeralAsyncResource<
-    Extract<DocumentPreviewResult, { phase: "ready" }>
-  >(
-    preview === null || previewSurface !== "sheet" || previewSource === null
-      ? null
-      : `document-sheet:${resourceOwnerId}:${privateAssetCacheKey(previewSource)}`,
-    preview === null ? "none" : `${preview.kind}:${String(preview.revision)}`,
-    async (_publish, signal) => {
-      if (preview === null) {
-        throw new Error("Document preview is closed");
-      }
-      const loaded = await loadDocumentPreview(preview, signal);
-      return {
-        phase: "ready",
-        segments: preview.kind === "markdown" ? projectCompleteMarkdown(loaded.source) : [],
-        source: loaded.source,
-        truncated: loaded.truncated,
-      };
-    },
-    (value) => value.source.length * 2,
-  );
-  const result: DocumentPreviewResult =
-    previewResource.status === "ready" && previewResource.value !== null
-      ? previewResource.value
-      : previewResource.status === "error"
-        ? { message: previewResource.error ?? "Document preview failed", phase: "error" }
-        : { phase: "loading" };
   const showDownloadComplete = (request: DocumentPreviewRequest, completed: CompletedTransfer) => {
     const common = {
       description: request.name,
@@ -264,6 +240,7 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
     const isCurrent = () => !controller.signal.aborted && revisionRef.current === revision;
     loadImagePreviewWithRetry(
       request,
+      controller.signal,
       isCurrent,
       (source) => {
         openImagePreview(
@@ -287,108 +264,45 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
   };
   const open = useEvent(
     (request: DocumentPreviewRequest, fullscreen: AppFullscreenOverlayController) => {
-      revisionRef.current += 1;
-      const revision = revisionRef.current;
-      const surface = documentPreviewSurface(request.kind);
-      if (surface === "download") {
-        downloadFile(request).catch((error: unknown) => {
-          dialog.error("Download failed", error);
+      const present = (currentRequest: DocumentPreviewRequest): void => {
+        revisionRef.current += 1;
+        const revision = revisionRef.current;
+        previewLoadRef.current?.abort();
+        previewLoadRef.current = null;
+        if (currentRequest.kind === "download") {
+          downloadFile(currentRequest).catch((error: unknown) => {
+            dialog.error("Download failed", error);
+          });
+          return;
+        }
+        if (currentRequest.kind === "image") {
+          beginImagePreviewLoad(currentRequest, revision, fullscreen);
+          return;
+        }
+        presentFullscreenDocument({
+          downloadFile,
+          fullscreen,
+          openDocument: present,
+          request: currentRequest,
         });
-        return;
-      }
-      if (surface === "image-viewer") {
-        beginImagePreviewLoad(request, revision, fullscreen);
-        return;
-      }
-      if (surface === "fullscreen") {
-        presentFullscreenDocument(fullscreen, request, downloadFile);
-        return;
-      }
-      setPreview({ ...request, revision });
+      };
+      present(request);
     },
   );
-  const close = () => {
-    revisionRef.current += 1;
-    previewLoadRef.current?.abort();
-    previewLoadRef.current = null;
-    setPreview(null);
-  };
-  const retry = () => {
-    if (preview === null) {
-      return;
-    }
-    revisionRef.current += 1;
-    const revision = revisionRef.current;
-    setPreview({ ...preview, revision });
-  };
-  const previewBody =
-    result.phase === "loading" ? (
-      <View style={styles.center}>
-        <ActivityIndicator color={colors.accent} />
-        <Text style={styles.secondary}>Loading document…</Text>
-      </View>
-    ) : result.phase === "error" ? (
-      <View style={styles.center}>
-        <Text selectable style={styles.error}>
-          {result.message}
-        </Text>
-        <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
-          <Ionicons color={colors.onPrimary} name="refresh" size={iconSize.action} />
-          <Text style={styles.retryText}>Retry</Text>
-        </Pressable>
-      </View>
-    ) : null;
   return (
     <DocumentPreviewContext.Provider value={{ download: downloadFile, open }}>
       {children}
-      <AppSheet
-        contentProps={{
-          contentContainerClassName: "h-full",
-          enableDynamicSizing: false,
-          enableOverDrag: false,
-          index: 0,
-          snapPoints: ["60%", "90%"],
-        }}
-        isOpen={previewSurface === "sheet"}
-        onOpenChange={(open) => {
-          if (!open) {
-            close();
-          }
-        }}
-      >
-        <DocumentHeader
-          close={close}
-          icon={previewIcon(preview?.kind)}
-          title={preview?.name ?? "File"}
-          {...(preview === null ? {} : { onDownload: () => void downloadFile(preview) })}
-        />
-        {previewBody ??
-          (result.phase === "ready" &&
-            (preview?.kind === "html" ? (
-              <HtmlDocumentPreview source={result.source} />
-            ) : (
-              <AppSheetScrollView
-                contentContainerStyle={styles.document}
-                keyboardShouldPersistTaps="handled"
-                style={styles.scroll}
-              >
-                <Text selectable style={styles.textPreview}>
-                  {result.source}
-                </Text>
-                {result.truncated && (
-                  <Text style={styles.secondary}>
-                    Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download
-                    the file to read the rest.
-                  </Text>
-                )}
-              </AppSheetScrollView>
-            )))}
-      </AppSheet>
     </DocumentPreviewContext.Provider>
   );
 }
 
-function FullscreenDocumentPreview({
+export type DocumentPagePreviewRequest = Extract<
+  DocumentPreviewRequest,
+  { readonly kind: "html" | "markdown" | "text" }
+>;
+
+/** Renders text-backed attachments as a full page shared by Router and timeline previews. */
+export function DocumentPagePreview({
   onClose,
   onDownload,
   onOpen,
@@ -397,8 +311,8 @@ function FullscreenDocumentPreview({
   onClose: () => void;
   onDownload: () => void;
   onOpen: (request: DocumentPreviewRequest) => void;
-  request: DocumentPreviewRequest;
-}) {
+  request: DocumentPagePreviewRequest;
+}): React.JSX.Element {
   const resourceOwnerId = useId();
   const [revision, setRevision] = useState(0);
   const {
@@ -440,14 +354,23 @@ function FullscreenDocumentPreview({
     request.kind === "markdown"
       ? { id: `markdown-document:${request.path}`, label: request.name, reference: request.path }
       : undefined;
-  const openNestedDocument = (href: string) => {
+  const openNestedDocument = useEvent((href: string) => {
     const target = resolvePreviewableDocumentLink(href, remoteDocumentDirectory(request.path));
     if (target === null) {
       return false;
     }
     onOpen({ ...target, getTransferAccess: request.getTransferAccess });
     return true;
-  };
+  });
+  const retry = useEvent(() => {
+    setRevision((current) => current + 1);
+  });
+  const decreaseTextScale = useEvent(() => {
+    changeTextScale(-0.1);
+  });
+  const increaseTextScale = useEvent(() => {
+    changeTextScale(0.1);
+  });
 
   return (
     <View style={styles.browser}>
@@ -459,12 +382,8 @@ function FullscreenDocumentPreview({
         {...(request.kind === "markdown"
           ? {
               layoutMode,
-              onDecreaseText: () => {
-                changeTextScale(-0.1);
-              },
-              onIncreaseText: () => {
-                changeTextScale(0.1);
-              },
+              onDecreaseText: decreaseTextScale,
+              onIncreaseText: increaseTextScale,
               onLayoutModeChange: setLayoutMode,
               onResetText: resetTextScale,
               textScale,
@@ -482,13 +401,7 @@ function FullscreenDocumentPreview({
           <Text selectable style={styles.error}>
             {result.message}
           </Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              setRevision((current) => current + 1);
-            }}
-            style={styles.retryButton}
-          >
+          <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
             <Ionicons color={colors.onPrimary} name="refresh" size={iconSize.action} />
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
@@ -497,7 +410,24 @@ function FullscreenDocumentPreview({
       {result.phase === "ready" && request.kind === "html" && (
         <HtmlDocumentPreview source={result.source} />
       )}
-      {result.phase === "ready" && request.kind !== "html" && (
+      {result.phase === "ready" && request.kind === "text" && (
+        <ScrollView
+          contentContainerStyle={styles.document}
+          keyboardShouldPersistTaps="handled"
+          style={styles.scroll}
+        >
+          <Text selectable style={styles.textPreview}>
+            {result.source}
+          </Text>
+          {result.truncated && (
+            <Text style={styles.secondary}>
+              Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the
+              file to read the rest.
+            </Text>
+          )}
+        </ScrollView>
+      )}
+      {result.phase === "ready" && request.kind === "markdown" && (
         <DiagramPreviewViewportProvider controller={diagramViewport}>
           <RichMarkdownTextScaleProvider scale={textScale}>
             <MarkdownLocalLinkProvider onOpen={openNestedDocument}>
@@ -603,7 +533,7 @@ function DocumentHeader({
           },
         ]),
   ];
-  const onSelect = (id: string) => {
+  const onSelect = useEvent((id: string) => {
     if (id === "download") {
       onDownload?.();
     } else if (id === "text-smaller") {
@@ -617,7 +547,7 @@ function DocumentHeader({
     } else if (id === "layout-wide") {
       onLayoutModeChange?.("wide");
     }
-  };
+  });
   return (
     <View style={styles.header}>
       <Pressable
@@ -686,6 +616,7 @@ export function HtmlDocumentPreview(props: HtmlDocumentPreviewProps) {
       javaScriptCanOpenWindowsAutomatically
       javaScriptEnabled
       mixedContentMode="always"
+      nestedScrollEnabled
       originWhitelist={["*"]}
       setSupportMultipleWindows
       source={{ baseUrl: "about:blank", html: interactiveHtmlDocument(props.source) }}

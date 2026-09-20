@@ -1,7 +1,10 @@
 import { StyleSheet } from "react-native";
-import { colors, spacing, typeScale } from "../../../theme";
+import { colors, controlSize, spacing, typeScale } from "../../../theme";
 
 export const styles = StyleSheet.create({
+  agentAttachmentGrid: {
+    alignSelf: "flex-start",
+  },
   agentMessageRow: {
     alignItems: "stretch",
     flexDirection: "row",
@@ -38,4 +41,9 @@ export const styles = StyleSheet.create({
     gap: spacing.optical,
     width: "100%",
   },
+  virtualizedActionRailPlaceholder: {
+    flexShrink: 0,
+    width: controlSize.compact,
+  },
+  virtualizedTurnSegment: { gap: 0 },
 });

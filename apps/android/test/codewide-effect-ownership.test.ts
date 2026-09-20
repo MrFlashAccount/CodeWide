@@ -36,7 +36,7 @@ const historyController = readFileSync(
   "utf8",
 );
 const subagentSheet = readFileSync(
-  new URL("../src/features/agents/RouteSubagentWorkspace.tsx", import.meta.url),
+  new URL("../src/features/agents/SubagentSheet.tsx", import.meta.url),
   "utf8",
 );
 const documentPreview = readFileSync(
@@ -255,7 +255,7 @@ describe("CodeWide effect ownership", () => {
       "new RouteSessionRegistry<PairingRouteSession>({ limit: MAX_PAIRING_SESSIONS",
     );
     expect(newServerRoute).toContain("initialCode={routeSession?.initialCode ?? null}");
-    expect(ownerDraft).toContain("useComposerLatestValues(");
+    expect(ownerDraft).toContain("useComposerSession(");
     expect(ownerOverlayScrollOwnership).toContain("useAndroidBackHandler(");
     expect(ownerVoiceCaptureStatus).toContain("useSecondClock(");
     expect(ownerMainConversationPublication).toContain("<CommitOnChangeProbe");
@@ -286,12 +286,8 @@ describe("CodeWide effect ownership", () => {
   it("synchronizes unread acknowledgement and release telemetry at commit boundaries", () => {
     expect(ownerConversationTimelineSurface).toContain("revision={latestUnreadReceiptKey}");
     expect(ownerUnreadReceipt).toContain("acknowledgedUnreadReceiptKeyRef.current = null");
-    expect(ownerMainConversationPublication).toContain(
-      "scope={`main-presentation:${navigationKey}`}",
-    );
-    expect(ownerMainConversationPublication).toMatch(
-      /onCommit=\{\(\) => \{\s*chatDatabase\.chat\.finishPresentation\(connectionId, threadId\);\s*\}\}/u,
-    );
+    expect(ownerMainConversationPublication).not.toContain("finishPresentation");
+    expect(threadNavigation).not.toContain("beginPresentation");
     expect(screen).not.toContain("onTimelineFirstDraw");
     expect(ownerThreadTimelineNavigationCommit).toContain(
       "activeThreadNavigationIdFor(connectionId, threadId)",
@@ -304,12 +300,11 @@ describe("CodeWide effect ownership", () => {
     );
   });
 
-  it("keeps the one layout synchronization at the LegendList cache boundary", () => {
-    expect(timelineList).toContain("useLayoutEffect(() => {");
+  it("invalidates the LegendList cache only from a native measurement event", () => {
+    expect(timelineList).toContain("subscribeMeasurementInvalidation(invalidateMeasurements)");
     expect(timelineList).toContain('clearCaches({ mode: "sizes" })');
-    expect(ownerTimelineViewport).toContain(
-      "measurementRevision={props.windowLayout.measurementRevision}",
-    );
+    expect(timelineList).not.toContain("useLayoutEffect");
+    expect(ownerTimelineViewport).not.toContain("measurementRevision={");
     expect(screen).not.toContain("key={`timeline-layout:${windowLayout.measurementRevision}`}");
   });
 

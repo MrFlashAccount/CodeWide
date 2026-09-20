@@ -4,7 +4,7 @@ import { StyleSheet } from "react-native";
 
 import type { ComposerToolRouteRequest } from "../../services/composer/composerToolRouteSession";
 import { useBackgroundTerminalsRow, useTunnelRow } from "../../data/use-workspace-resource-row";
-import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
+import { AppSheet } from "../../ui/AppSheet";
 import { PortsFeature } from "../ports/PortsFeature";
 import { useNativeForwardingAdapter } from "../ports/nativeForwardingAdapter";
 import { BackgroundTerminalsSheet } from "../terminal/backgroundTerminals";
@@ -23,25 +23,38 @@ const TOOL_SHEET_PROPS: React.ComponentProps<typeof AppSheet>["contentProps"] = 
   snapPoints: ["55%", "90%"],
 };
 
+const PORTS_TOOL_SHEET_PROPS: React.ComponentProps<typeof AppSheet>["contentProps"] = {
+  contentContainerClassName: "h-full",
+  dismissLabel: "Close tool",
+  enableDynamicSizing: false,
+  enableOverDrag: false,
+  index: 0,
+  performanceSurface: "ports",
+  snapPoints: ["55%", "90%"],
+};
+
 /** Presents native port forwarding as a dedicated route-owned sheet. */
 export function ComposerPortsRoute({
   onClose,
   request,
+  visible,
 }: {
   readonly onClose: () => void;
   readonly request: Extract<ComposerToolRouteRequest, { readonly kind: "ports" }>;
+  readonly visible: boolean;
 }): React.JSX.Element {
   const resource = useTunnelRow(request.resources, request.tunnelResourceId);
   const forwarding = useNativeForwardingAdapter(
     request.connectionId,
     request.serverName,
-    request.openPort,
+    request.openBrowser,
   );
   return (
-    <ToolSheet onClose={onClose}>
+    <ToolSheet onClose={onClose} performanceSurface="ports" visible={visible}>
       <PortsFeature
         mode="forwarding"
         onClose={onClose}
+        {...(request.openBrowser === undefined ? {} : { onOpenBrowser: request.openBrowser })}
         portForwarding={forwarding}
         resource={resource}
       />
@@ -60,9 +73,11 @@ const styles = StyleSheet.create({
 export function ComposerRuntimeRoute({
   onClose,
   request,
+  visible,
 }: {
   readonly onClose: () => void;
   readonly request: RuntimeRouteRequest;
+  readonly visible: boolean;
 }): React.JSX.Element {
   const terminals = useBackgroundTerminalsRow(
     request.resources,
@@ -72,7 +87,7 @@ export function ComposerRuntimeRoute({
   const forwarding = useNativeForwardingAdapter(
     request.connectionId,
     request.serverName,
-    request.openPort,
+    request.openBrowser,
   );
   const [section, setSection] = useState<"terminals" | "ports">(
     request.listTerminals === undefined ? "ports" : "terminals",
@@ -81,7 +96,11 @@ export function ComposerRuntimeRoute({
     request.listTerminals !== undefined &&
     (forwarding !== undefined || request.createTunnel !== undefined);
   return (
-    <ToolSheet onClose={onClose}>
+    <ToolSheet
+      onClose={onClose}
+      performanceSurface={section === "ports" ? "ports" : "sheet"}
+      visible={visible}
+    >
       <RuntimeSectionSelector
         request={request}
         section={section}
@@ -164,6 +183,7 @@ function RuntimeSectionContent({
     <PortsFeature
       mode="runtime"
       onClose={onClose}
+      {...(request.openBrowser === undefined ? {} : { onOpenBrowser: request.openBrowser })}
       portForwarding={forwarding}
       resource={tunnel}
       {...(request.createTunnel === undefined ? {} : { onCreate: request.createTunnel })}
@@ -175,21 +195,25 @@ function RuntimeSectionContent({
 function ToolSheet({
   children,
   onClose,
+  performanceSurface,
+  visible,
 }: {
   readonly children: React.ReactNode;
   readonly onClose: () => void;
+  readonly performanceSurface: "ports" | "sheet";
+  readonly visible: boolean;
 }): React.JSX.Element {
   return (
     <AppSheet
-      contentProps={TOOL_SHEET_PROPS}
-      isOpen
+      contentProps={performanceSurface === "ports" ? PORTS_TOOL_SHEET_PROPS : TOOL_SHEET_PROPS}
+      isOpen={visible}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
         }
       }}
     >
-      <AppSheetScrollView>{children}</AppSheetScrollView>
+      {children}
     </AppSheet>
   );
 }

@@ -89,7 +89,6 @@ export function createConversationSurfaceAssembly(props: {
     getStableTransferAccess: props.getStableTransferAccess,
     goalContent: props.goalContent,
     goalInputs: props.goalInputs,
-    goalResource: props.scoped.goalResource,
     overlayScrollOwnershipBinding: props.scoped.overlayScrollOwnershipBinding,
     readInputs: props.readInputs,
     surfaceInputs: props.surfaceInputs,

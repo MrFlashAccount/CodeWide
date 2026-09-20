@@ -4,10 +4,10 @@ import type { useConversationOwner } from "../../../ui/use-conversation-owner";
 import { projectConversationPresentation } from "../conversationPresentation";
 import type { useConversationTimelineState } from "./conversationTimelineState";
 import { useHistoryAnchorActions, useTimelineCleanup } from "./historyAnchor";
-import { useInitialTimelinePosition } from "./initialTimelinePosition";
 import type { useOverlayScrollOwnership, useOverlayScrollState } from "./overlayScrollOwnership";
 import { projectConversationTimeline, projectTimelineDateLabels } from "./timelineProjection";
 import { useTimelineSearchActions, useTimelineSearchProjection } from "./timelineSearch";
+import { useTimelineJumpActions } from "./timelineJump";
 import { useTimelineViewportActions } from "./timelineViewport";
 import { projectUnreadReceipt, useUnreadReceiptActions } from "./unreadReceipt";
 
@@ -17,7 +17,6 @@ export function useConversationTimelineRead({
   currentOutcome,
   draftConnectionId,
   draftThreadId,
-  historyRestoreReady,
   historyViewport,
   messageListState,
   newChat,
@@ -34,7 +33,6 @@ export function useConversationTimelineRead({
   currentOutcome: Exclude<MainThreadReadCapabilities["currentOutcome"], undefined>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  historyRestoreReady: Exclude<MainThreadReadCapabilities["historyRestoreReady"], undefined>;
   historyViewport: Exclude<MainThreadReadCapabilities["historyViewport"], undefined>;
   messageListState: Exclude<MainThreadReadCapabilities["messageListState"], undefined>;
   newChat: Exclude<ConversationSurfaceCapabilities["newChat"], undefined>;
@@ -98,12 +96,8 @@ export function useConversationTimelineRead({
     displayedTimeline: timelineSearchProjectionBinding.displayedTimeline,
     draftConnectionId,
     draftThreadId,
-    firstVisibleHistoryAnchorKeyRef:
-      timelineState.historyAnchorStateBinding.firstVisibleHistoryAnchorKeyRef,
     firstVisibleHistoryAnchorRef:
       timelineState.historyAnchorStateBinding.firstVisibleHistoryAnchorRef,
-    firstVisibleHistoryAnchorStatusRef:
-      timelineState.historyAnchorStateBinding.firstVisibleHistoryAnchorStatusRef,
     fullscreenScrollOwnership: overlayScrollStateBinding.fullscreenScrollOwnership,
     historyViewport,
     lastTimelineOffsetYRef: timelineState.timelineViewportStateBinding.lastTimelineOffsetYRef,
@@ -140,53 +134,33 @@ export function useConversationTimelineRead({
     conversationTimelineBinding.timeline,
     historyViewport.containsBeginning,
   );
-  const timelineInitialPosition = useInitialTimelinePosition(
-    timelineState.timelineSearchStateBinding.searchTimelineScope,
-    timelineModelReady,
-    conversationTimelineBinding.timeline,
-    timelineState.historyAnchorStateBinding.initialRestoreAnchorTurnId,
-    timelineState.historyAnchorStateBinding.initialHistoryRestore,
-    searchWindow,
-  );
-  const emptyRemoteThread =
-    newChat ||
-    (readInputs.remoteThread !== null &&
-      readInputs.remoteThread !== undefined &&
-      historyRestoreReady &&
-      historyViewport.readStatus() === "ready" &&
-      readInputs.remoteThread.turns.length === 0 &&
-      !conversationTimelineBinding.timeline.some((item) => item.kind === "optimistic"));
   const historyAnchorActionsBinding = useHistoryAnchorActions({
     acknowledgeUnreadReceipt: unreadReceiptActionsBinding.acknowledgeUnreadReceipt,
     awayFromLatestRef: timelineState.historyAnchorStateBinding.awayFromLatestRef,
-    composerScope,
-    conversationOwner,
-    currentTurnId: conversationPresentationBinding.currentTurnId,
     draftConnectionId,
     draftThreadId,
-    firstVisibleHistoryAnchorKeyRef:
-      timelineState.historyAnchorStateBinding.firstVisibleHistoryAnchorKeyRef,
-    firstVisibleHistoryAnchorRef:
-      timelineState.historyAnchorStateBinding.firstVisibleHistoryAnchorRef,
-    firstVisibleHistoryAnchorStatusRef:
-      timelineState.historyAnchorStateBinding.firstVisibleHistoryAnchorStatusRef,
-    fullscreenScrollOwnership: overlayScrollStateBinding.fullscreenScrollOwnership,
-    historyViewport,
     latestUnreadReceiptKey: unreadReceiptBinding.latestUnreadReceiptKey,
-    pendingLatestJump: timelineState.historyAnchorStateBinding.pendingLatestJump,
     saveScrollOffset: readInputs.saveScrollOffset,
     scrollOffsetRef: timelineState.timelineViewportStateBinding.scrollOffsetRef,
     scrollSaveTimerRef: timelineState.historyAnchorStateBinding.scrollSaveTimerRef,
-    searchWindow,
     setAwayFromLatest: timelineState.historyAnchorStateBinding.setAwayFromLatest,
-    setPendingLatestJump: timelineState.historyAnchorStateBinding.setPendingLatestJump,
     setTimelineDidLoad: timelineState.timelineViewportStateBinding.setTimelineDidLoad,
     timeline: conversationTimelineBinding.timeline,
     timelineContentHeightRef: timelineState.timelineViewportStateBinding.timelineContentHeightRef,
-    timelineInitialPosition,
-    timelineModelReady,
-    timelineRef: timelineState.timelineViewportStateBinding.timelineRef,
     timelineViewportHeightRef: timelineState.timelineViewportStateBinding.timelineViewportHeightRef,
+  });
+  const timelineJumpActionsBinding = useTimelineJumpActions({
+    conversationOwner,
+    fullscreenScrollOwnership: overlayScrollStateBinding.fullscreenScrollOwnership,
+    historyViewport,
+    latestUnreadAgentTurnId: unreadReceiptBinding.latestUnreadAgentTurnId,
+    pendingTimelineJump: timelineState.timelineJumpStateBinding.pendingTimelineJump,
+    searchWindow,
+    setPendingTimelineJump: timelineState.timelineJumpStateBinding.setPendingTimelineJump,
+    timeline: conversationTimelineBinding.timeline,
+    timelineJumpInFlightRef: timelineState.timelineJumpStateBinding.timelineJumpInFlightRef,
+    timelineJumpRequestIdRef: timelineState.timelineJumpStateBinding.timelineJumpRequestIdRef,
+    timelineModelReady,
   });
   useTimelineCleanup({
     composerScope,
@@ -204,11 +178,12 @@ export function useConversationTimelineRead({
     conversationBackdropVisible,
     conversationPresentationBinding,
     conversationTimelineBinding,
-    emptyRemoteThread,
     historyAnchorActionsBinding,
+    newChat,
     newItemCount,
+    searchMessageItemId: searchWindow?.messageItemId ?? null,
     timelineDateLabels,
-    timelineInitialPosition,
+    timelineJumpActionsBinding,
     timelineModelReady,
     timelinePositioned,
     timelineSearchActionsBinding,

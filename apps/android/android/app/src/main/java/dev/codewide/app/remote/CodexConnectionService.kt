@@ -389,6 +389,8 @@ class CodexConnectionService : Service() {
   internal fun readTerminalOutput(sessionId: String, offset: Long, maxBytes: Int): String =
     terminalSessionManager.readOutput(sessionId, offset, maxBytes)
 
+  internal fun listTerminals(): String = terminalSessionManager.listRunning()
+
   internal fun closeTerminal(sessionId: String) = terminalSessionManager.close(sessionId)
 
   private fun attach(connectionId: String) {
@@ -450,6 +452,12 @@ class CodexConnectionService : Service() {
     if (session == null) completion(Result.failure(IllegalStateException("Connection is not enabled")))
     else session.rpc(method, params, completion)
   }
+
+  fun subscribeLive(connectionId: String, channelId: String, threadId: String): Boolean =
+    sessions[connectionId]?.subscribeLive(channelId, threadId) == true
+
+  fun unsubscribeLive(connectionId: String, channelId: String): Boolean =
+    sessions[connectionId]?.unsubscribeLive(channelId) == true
 
   internal fun enqueueCommand(
     connectionId: String,
@@ -1291,6 +1299,12 @@ class CodexConnectionService : Service() {
       reconnectNow()
       protocolEngine.rpc(method, params, completion = completion)
     }
+
+    fun subscribeLive(channelId: String, threadId: String): Boolean =
+      !closed && !authBlocked && protocolEngine.subscribeLive(channelId, threadId)
+
+    fun unsubscribeLive(channelId: String): Boolean =
+      !closed && protocolEngine.unsubscribeLive(channelId)
 
     fun drainOutbox() {
       if (closed || outboxDrainRunning || !protocolEngine.isLive()) return

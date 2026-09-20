@@ -9,6 +9,8 @@ import dev.codewide.app.rendering.AnimatedNumberManager
 import dev.codewide.app.rendering.ContentReviewSelectionModule
 import dev.codewide.app.rendering.DiagramPreviewModule
 import dev.codewide.app.rendering.NativeShimmerTextManager
+import dev.codewide.app.rendering.NebulaOrbManager
+import dev.codewide.app.rendering.VoiceAssistantOrbManager
 import dev.codewide.app.rendering.NativeRevealManager
 import dev.codewide.app.rendering.NativeStreamingRevealManager
 import dev.codewide.app.rendering.NativeFluidLayoutManager
@@ -21,6 +23,8 @@ class CodeWidePackage : ReactPackage {
       CodexPerformanceModule(reactContext),
       ContentReviewSelectionModule(reactContext),
       DiagramPreviewModule(reactContext),
+      GlobalVoiceCommunicationAudioModule(reactContext),
+      GlobalVoiceForegroundModule(reactContext),
       LargePasteModule(reactContext),
       V2VoiceCaptureModule(reactContext),
     )
@@ -33,5 +37,7 @@ class CodeWidePackage : ReactPackage {
       NativeRevealManager(),
       NativeStreamingRevealManager(),
       NativeFluidLayoutManager(),
+      NebulaOrbManager(),
+      VoiceAssistantOrbManager(),
     )
 }

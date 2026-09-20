@@ -2,7 +2,6 @@ import { useThreadRowActions } from "./threadRowActions";
 import { ThreadRowContent } from "./ThreadRowContent";
 import type { ThreadRowProps } from "./threadRowContract";
 import { ThreadRowWebMenu } from "./ThreadRowWebMenu";
-import { useRef } from "react";
 import { Platform } from "react-native";
 import { Pressable as GesturePressable } from "react-native-gesture-handler";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -14,7 +13,7 @@ import { styles } from "./ThreadRow.styles";
 import { ThreadSwipeAction, ThreadSwipeActions } from "./ThreadSwipeActions";
 
 export function ThreadRow(props: ThreadRowProps) {
-  const { onMarkRead, onPress, onPressIn, onTogglePin, selected, server, thread } = props;
+  const { onMarkRead, onPress, onTogglePin, selected, server, thread } = props;
   const actions = useThreadRowActions(props);
   const {
     archiveAction,
@@ -28,8 +27,6 @@ export function ThreadRow(props: ThreadRowProps) {
     swipeEnabled,
   } = actions;
 
-  const pressIntentCancelRef = useRef<(() => void) | null>(null);
-  const pressIntentReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const row = (
     <ThreadRowCommitBoundary>
       <CommitOnChangeProbe onCommit={closeSwipe} revision={selected ? 1 : 0} scope={thread.id} />
@@ -39,40 +36,8 @@ export function ThreadRow(props: ThreadRowProps) {
         cancelable
         delayLongPress={350}
         onPress={() => {
-          if (pressIntentReleaseTimerRef.current !== null) {
-            clearTimeout(pressIntentReleaseTimerRef.current);
-          }
-          pressIntentReleaseTimerRef.current = null;
-          // The database keeps the transient lease until the mounted
-          // conversation acquires its own lease in the retention effect.
-          pressIntentCancelRef.current = null;
           swipeableRef.current?.close();
           onPress();
-        }}
-        onPressIn={() => {
-          if (pressIntentReleaseTimerRef.current !== null) {
-            clearTimeout(pressIntentReleaseTimerRef.current);
-          }
-          pressIntentReleaseTimerRef.current = null;
-          pressIntentCancelRef.current?.();
-          pressIntentCancelRef.current = onPressIn?.() ?? null;
-        }}
-        onPressOut={() => {
-          const cancel = pressIntentCancelRef.current;
-          if (cancel === null) {
-            return;
-          }
-          // Gesture Handler dispatches onPressOut before onPress. Defer release
-          // one task so a completed press can transfer the same intent instead
-          // of evicting it in the gap between the two callbacks.
-          pressIntentReleaseTimerRef.current = setTimeout(() => {
-            pressIntentReleaseTimerRef.current = null;
-            if (pressIntentCancelRef.current !== cancel) {
-              return;
-            }
-            pressIntentCancelRef.current = null;
-            cancel();
-          }, 0);
         }}
         {...(Platform.OS === "web"
           ? {

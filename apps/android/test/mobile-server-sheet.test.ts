@@ -128,11 +128,10 @@ describe("unified thread filters", () => {
     expect(filters).not.toContain("<ControlOption");
     expect(filters).toContain('selectedCriteria.join(" and ")');
     expect(listFilters).toContain('label: "Approval needed"');
-    expect(selectServer).toContain("setRequested({");
-    expect(selectServer).toContain("connectionId");
-    expect(selectServer).toContain('kind: "connection"');
+    expect(selectServer).toContain("setRequested(next)");
+    expect(selectServer).toContain("readonly select: (next: ServerScope) => void");
     expect(selectServer).not.toContain("setActiveThreadId(");
-    expect(selectServer).toContain("setDesktopDefaultThreadEnabled(false)");
+    expect(selectServer).toContain("consumeDesktopDefaultThread()");
     for (const body of [sidebarBody, mobileBody])
       expect(body.match(/serverScope\.kind === "all" && servers\.length > 1/gu)).toHaveLength(1);
     expect(rowContent).toContain("accessibilityLabel={`Server ${server.name}`}");
@@ -197,18 +196,26 @@ describe("unified thread filters", () => {
     }
   });
 
-  it("places project breadcrumbs in the title row and keeps archive in the scope menu on both layouts", () => {
-    for (const [body, searchStart] of [
-      [sidebarHeader, "<View style={styles.threadSearchRow}>"],
-      [mobileHeader, "<View style={styles.mobileSearchWrap}>"],
-    ] as const) {
+  it("keeps title, Voice, Search, filters and overflow in one ordered header row", () => {
+    for (const body of [sidebarHeader, mobileHeader]) {
+      const row = body.indexOf("<ThreadListHeaderRow");
       const header = body.indexOf("<SidebarProjectHeader");
-      expect(header).toBeGreaterThan(0);
-      expect(header).toBeLessThan(body.indexOf(searchStart));
+      const search = body.indexOf('accessibilityLabel="Search threads and messages"');
+      const filter = body.indexOf("<ThreadFilterMenu");
+      const voice = body.indexOf("<GlobalVoiceEntryAction");
+      const overflow = body.indexOf("<ThreadListMenu");
+      expect(header).toBeGreaterThan(row);
+      expect(voice).toBeGreaterThan(header);
+      expect(search).toBeGreaterThan(voice);
+      expect(filter).toBeGreaterThan(search);
+      expect(overflow).toBeGreaterThan(filter);
       expect(body.slice(header + 1)).not.toContain("<SidebarProjectHeader");
-      expect(body).toContain("includeArchiveCount={project === null}");
+      expect(body).not.toContain("threadSearchRow");
+      expect(body).not.toContain("mobileSearchWrap");
       expect(body).toContain('onModeChange(mode === "archived" ? "active" : "archived")');
       expect(body).not.toContain("showArchive={project === null}");
+      expect(body).not.toContain("archivedCount");
+      expect(body).not.toContain("includeArchiveCount");
     }
   });
 });

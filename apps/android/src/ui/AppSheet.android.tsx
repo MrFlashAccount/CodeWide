@@ -20,6 +20,7 @@ import { spacing } from "../theme";
 import type { SheetPerformanceSurface } from "../presentation/diagnostics/sheetPerformanceSurface";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
+import { SheetBackProvider, useSheetDismissController } from "./sheetNavigation";
 
 type AppSheetContentProps = Omit<
   BottomSheetProps,
@@ -43,13 +44,23 @@ type AppSheetProps = {
   children: ReactNode;
   contentProps: AppSheetContentProps;
   isOpen: boolean;
+  onDismissRequest?: () => void;
   onOpenChange: (isOpen: boolean) => void;
 };
 
-export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSheetProps) {
+export function AppSheet({
+  children,
+  contentProps,
+  isOpen,
+  onDismissRequest,
+  onOpenChange,
+}: AppSheetProps) {
   const { width } = useWindowDimensions();
   const sheetRef = useRef<ModalBottomSheetRef>(null);
   const [nativeSheetReady, setNativeSheetReady] = useState(false);
+  const dismiss = useSheetDismissController(() => {
+    onOpenChange(false);
+  }, onDismissRequest);
   const expanded = contentProps.enableDynamicSizing === false;
   const fitToContents =
     contentProps.enableDynamicSizing !== false &&
@@ -59,9 +70,10 @@ export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSh
   const initialFullyExpanded = hasMultipleSnapPoints && (contentProps.index ?? 0) === maxIndex;
   const setSheetRef = useEvent((sheet: ModalBottomSheetRef | null) => {
     sheetRef.current = sheet;
-    setNativeSheetReady(sheet !== null);
+    if (sheet !== null) {
+      setNativeSheetReady(true);
+    }
   });
-
   useEffect(() => {
     if (isOpen || !nativeSheetReady) {
       return undefined;
@@ -98,10 +110,7 @@ export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSh
     <Host colorScheme="dark" pointerEvents="none" style={{ position: "absolute", width }}>
       <ModalBottomSheet
         initialFullyExpanded={initialFullyExpanded}
-        onDismissRequest={() => {
-          setNativeSheetReady(false);
-          onOpenChange(false);
-        }}
+        onDismissRequest={dismiss.requestDismiss}
         properties={{
           shouldDismissOnBackPress: contentProps.enablePanDownToClose ?? true,
           shouldDismissOnClickOutside: contentProps.enablePanDownToClose ?? true,
@@ -113,7 +122,6 @@ export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSh
       >
         <RNHostView matchContents={fitToContents}>
           <View
-            collapsable={false}
             style={[
               styles.content,
               expanded && styles.expandedContent,
@@ -128,7 +136,7 @@ export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSh
                 resetKey={isOpen ? "open" : "closed"}
                 scope="dialog"
               >
-                {children}
+                <SheetBackProvider register={dismiss.register}>{children}</SheetBackProvider>
               </RecoverableRenderBoundary>
             </OverlaySurfaceProvider>
           </View>
@@ -145,10 +153,10 @@ export function AppSheetScrollView(props: ComponentPropsWithRef<typeof ScrollVie
 
 const styles = StyleSheet.create({
   content: {
+    alignSelf: "stretch",
     minWidth: 0,
     paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
-    width: "100%",
   },
   expandedContent: {
     flex: 1,

@@ -6,29 +6,27 @@ import { useEvent } from "../../react/useEvent";
 import { useAppDialog } from "../../ui/AppDialog";
 import { resolveComposerSendMode, type ComposerSendPreference } from "./deliveryMode";
 import { EMPTY_TURN_CONTROLS } from "./settings";
-import {
-  containsSkillInvocation,
-  markdownForComposerSubmission,
-} from "./skills/composer-skill-suggestions";
+import { containsSkillInvocation } from "./skills/composer-skill-suggestions";
 import type { ComposerSubmissionCapabilities } from "./submissionCapabilities";
 import { mergeFailedComposerAttachments, mergeFailedComposerText } from "./submissionRecovery";
+import { composerTextForSubmission } from "./composerSubmissionText";
+import { sameComposerAttachments, sameComposerPreferences } from "./composerSession";
 
 export function useComposerSubmission({
   captureControlsResource,
   captureDraftMutations,
   capturePreferenceUpdate,
   clearContentReviewAttachmentId,
-  composerMarkdownRef,
+  composerInputRef,
   composerScope,
+  composerSession,
   composerUploadScope,
   contentReviewAttachmentId,
   conversationOwner,
   currentTurnId,
   draftConnectionId,
   draftThreadId,
-  latestAttachmentsRef,
-  latestComposerPreferencesRef,
-  latestDraftRef,
+  goalSubmission,
   onListQueue,
   onSend,
   pastedAttachmentPendingRef,
@@ -42,28 +40,40 @@ export function useComposerSubmission({
   threadLifecycleActive,
 }: ComposerSubmissionCapabilities) {
   const captureSend = useEvent(() => {
+    const session = composerSession.capture();
+    const capturedSession = session.read();
     const { updateAttachments, updateDraft } = captureDraftMutations();
     const updateComposerPreferences = capturePreferenceUpdate();
     const currentControlsResource = captureControlsResource();
+    const submissionBlocked =
+      queuedComposerEdit !== null ||
+      pastedAttachmentPendingRef.current ||
+      composerUploads.blocksSend(composerUploadScope);
+    const capturedMarkdown = capturedSession.markdown;
+    const capturedPlainDraft = capturedSession.plainText;
+    // Voice resolution is delayed, so this Send activation owns one stable
+    // attachment list even if the visible composer changes in the meantime.
+    const sentAttachments = composerUploads
+      .readyAttachments(composerUploadScope, capturedSession.attachments)
+      .slice();
+    const currentControls = currentControlsResource()?.value ?? EMPTY_TURN_CONTROLS;
+    const selectedSkillPaths = capturedSession.preferences.skillPaths;
     const send = (textOverride?: string, preference: ComposerSendPreference = "start") => {
-      if (
-        queuedComposerEdit !== null ||
-        pastedAttachmentPendingRef.current ||
-        composerUploads.blocksSend(composerUploadScope)
-      ) {
+      if (submissionBlocked) {
         return;
       }
-      // Voice completion passes its final draft explicitly. Reading `draft`
-      // here would use the render captured when recording started and can send
-      // the pre-transcription text instead of the latest transcript.
+      // Voice completion supplies the merged final text, while attachments,
+      // controls and preferences stay fixed to the user's Send activation.
+      const submissionDraft = textOverride ?? capturedPlainDraft;
       const text = (
-        textOverride ?? markdownForComposerSubmission(composerMarkdownRef.current)
+        textOverride ??
+        composerTextForSubmission({ markdown: capturedMarkdown, plainText: capturedPlainDraft })
       ).trim();
-      const sentAttachments = composerUploads.readyAttachments(
-        composerUploadScope,
-        latestAttachmentsRef.current.latest,
-      );
-      if ((text === "" && sentAttachments.length === 0) || onSend === undefined) {
+      if (goalSubmission === null) {
+        if ((text === "" && sentAttachments.length === 0) || onSend === undefined) {
+          return;
+        }
+      } else if (text === "") {
         return;
       }
       const scope = composerScope;
@@ -76,14 +86,11 @@ export function useComposerSubmission({
         threadLifecycleActive,
         currentTurnId,
       );
-      const currentControls = currentControlsResource()?.value ?? EMPTY_TURN_CONTROLS;
-      const selectedSkillPaths = latestComposerPreferencesRef.current.latest.skillPaths;
-      const plainDraft = latestDraftRef.current.latest;
       const skills = currentControls.skills
         .filter(
           (skill) =>
             selectedSkillPaths.includes(skill.path) &&
-            containsSkillInvocation(plainDraft, skill.name),
+            containsSkillInvocation(submissionDraft, skill.name),
         )
         .map(({ name, path }) => ({ name, path }));
       const restoreSentSkillPaths = () => {
@@ -97,23 +104,45 @@ export function useComposerSubmission({
             : { ...current, skillPaths: [...current.skillPaths, ...missing] };
         });
       };
-      const operation = onSend(text, mode, {
-        ...(selectedModel === null ? {} : { model: selectedModel }),
-        ...(selectedEffort === null ? {} : { effort: selectedEffort }),
-        ...(selectedPersonality === null ? {} : { personality: selectedPersonality }),
-        ...(selectedPermissions === null ? {} : { permissions: selectedPermissions }),
-        ...(skills.length === 0 ? {} : { skills }),
-        ...(sentAttachments.length === 0
-          ? {}
-          : { attachments: sentAttachments.map(remoteAttachment) }),
-      });
-      updateDraft("");
-      updateAttachments([]);
-      if (selectedSkillPaths.length > 0) {
-        updateComposerPreferences((current) => ({ ...current, skillPaths: [] }));
+      let operation: Promise<unknown>;
+      if (goalSubmission === null) {
+        if (onSend === undefined) {
+          return;
+        }
+        operation = onSend(text, mode, {
+          ...(selectedModel === null ? {} : { model: selectedModel }),
+          ...(selectedEffort === null ? {} : { effort: selectedEffort }),
+          ...(selectedPersonality === null ? {} : { personality: selectedPersonality }),
+          ...(selectedPermissions === null ? {} : { permissions: selectedPermissions }),
+          ...(skills.length === 0 ? {} : { skills }),
+          ...(sentAttachments.length === 0
+            ? {}
+            : { attachments: sentAttachments.map(remoteAttachment) }),
+        });
+      } else {
+        operation = goalSubmission.submit(text);
       }
-      for (const attachment of sentAttachments) {
-        composerUploads.remove(composerUploadScope, attachment.id);
+      const currentSession = session.read();
+      const ownsText =
+        (currentSession.markdown === capturedSession.markdown &&
+          currentSession.plainText === capturedSession.plainText) ||
+        (textOverride !== undefined && composerTextForSubmission(currentSession).trim() === text);
+      if (ownsText) {
+        updateDraft("");
+      }
+      if (goalSubmission === null) {
+        if (sameComposerAttachments(currentSession.attachments, capturedSession.attachments)) {
+          updateAttachments([]);
+        }
+        if (
+          selectedSkillPaths.length > 0 &&
+          sameComposerPreferences(currentSession.preferences, capturedSession.preferences)
+        ) {
+          updateComposerPreferences((current) => ({ ...current, skillPaths: [] }));
+        }
+        for (const attachment of sentAttachments) {
+          composerUploads.remove(composerUploadScope, attachment.id);
+        }
       }
       // Do not move or replace the resident history window here. The delivery is
       // already a row in the model-owned timeline. LegendList MVCP remains the
@@ -121,10 +150,12 @@ export function useComposerSubmission({
       // replace the range underneath an already measured list.
       void operation
         .then(() => {
-          if (sentContentReviewAttachmentId !== null) {
+          if (goalSubmission !== null) {
+            goalSubmission.close();
+          } else if (sentContentReviewAttachmentId !== null) {
             clearContentReviewAttachmentId(scope, sentContentReviewAttachmentId);
           }
-          if (mode.type === "queue" && onListQueue !== undefined) {
+          if (goalSubmission === null && mode.type === "queue" && onListQueue !== undefined) {
             void onListQueue().catch(() => undefined);
           }
         })
@@ -134,15 +165,16 @@ export function useComposerSubmission({
           // the Legend delivery/queue projection.
           if (conversationOwner.isCurrent()) {
             restoreSentSkillPaths();
-            const recoveredDraft = mergeFailedComposerText(latestDraftRef.current.latest, text);
-            if (recoveredDraft !== latestDraftRef.current.latest) {
+            const current = session.read();
+            const recoveredDraft = mergeFailedComposerText(current.plainText, text);
+            if (recoveredDraft !== current.plainText) {
               updateDraft(recoveredDraft);
             }
             const recoveredAttachments = mergeFailedComposerAttachments(
-              latestAttachmentsRef.current.latest,
+              current.attachments,
               sentAttachments,
             );
-            if (recoveredAttachments !== latestAttachmentsRef.current.latest) {
+            if (recoveredAttachments !== current.attachments) {
               updateAttachments(recoveredAttachments);
             }
             return;
@@ -152,17 +184,18 @@ export function useComposerSubmission({
           }
           // The user already navigated away. Restore the failed submission in its
           // owning thread without mutating the newly selected composer's local UI.
-          const recoveredDraft = mergeFailedComposerText(latestDraftRef.current.latest, text);
-          latestDraftRef.current.latest = recoveredDraft;
+          const current = session.read();
+          const recoveredDraft = mergeFailedComposerText(current.plainText, text);
+          session.updateText({ markdown: recoveredDraft, plainText: recoveredDraft });
           restoreSentSkillPaths();
           if (saveDraft !== undefined && draftConnectionId !== null && draftThreadId !== null) {
             void saveDraft(draftConnectionId, draftThreadId, recoveredDraft).catch(() => undefined);
           }
           const recoveredAttachments = mergeFailedComposerAttachments(
-            latestAttachmentsRef.current.latest,
+            current.attachments,
             sentAttachments,
           );
-          latestAttachmentsRef.current.latest = recoveredAttachments;
+          session.updateAttachments(recoveredAttachments);
           if (
             saveDraftAttachments !== undefined &&
             draftConnectionId !== null &&
@@ -176,9 +209,35 @@ export function useComposerSubmission({
     };
     return send;
   });
-  const send = useEvent((textOverride?: string, preference: ComposerSendPreference = "start") => {
-    captureSend()(textOverride, preference);
-  });
+  const send = useEvent(
+    async (textOverride?: string, preference: ComposerSendPreference = "start"): Promise<void> => {
+      const submit = captureSend();
+      const session = composerSession.capture();
+      const current = session.read();
+      if (
+        textOverride !== undefined ||
+        composerTextForSubmission(current).trim() !== "" ||
+        composerUploads.readyAttachments(composerUploadScope, current.attachments).length === 0
+      ) {
+        submit(textOverride, preference);
+        return;
+      }
+      const input = composerInputRef.current;
+      if (input === null) {
+        submit(undefined, preference);
+        return;
+      }
+      try {
+        const nativeValue = await input.getValue();
+        session.updateText(nativeValue);
+        submit(composerTextForSubmission(nativeValue), preference);
+      } catch {
+        // The editor can unmount while its native snapshot is in flight. The
+        // activation still owns the captured attachment-only submission.
+        submit(undefined, preference);
+      }
+    },
+  );
   return { captureSend, send };
 }
 
@@ -192,6 +251,7 @@ export function useComposerDeliveryActions({
   discardVoice,
   draft,
   finishVoice,
+  goalSubmissionActive,
   onEditQueued,
   onInterrupt,
   pastedAttachmentPending,
@@ -247,7 +307,9 @@ export function useComposerDeliveryActions({
         await finishVoice(true, id);
       }, "Could not finish voice input");
     } else {
-      send(undefined, id);
+      runAction(async () => {
+        await send(undefined, id);
+      }, "Could not send message");
     }
   });
 
@@ -255,6 +317,7 @@ export function useComposerDeliveryActions({
 
   const stoppingResponse =
     !editingQueuedMessage &&
+    !goalSubmissionActive &&
     currentTurnId !== null &&
     voicePhase === "idle" &&
     draft.trim() === "" &&
@@ -267,7 +330,11 @@ export function useComposerDeliveryActions({
     (editingQueuedMessage && onEditQueued === undefined) ||
     pastedAttachmentPending ||
     uploadsBlockSend ||
-    (voicePhase === "idle" && !stoppingResponse && draft.trim() === "" && attachments.length === 0);
+    (voicePhase === "idle" &&
+      !stoppingResponse &&
+      (goalSubmissionActive
+        ? draft.trim() === ""
+        : draft.trim() === "" && attachments.length === 0));
 
   const composerDiscardEnabled =
     editingQueuedMessage ||
@@ -295,6 +362,7 @@ export function useComposerDeliveryActions({
       }, "Could not finish voice input");
     } else if (
       currentTurnId !== null &&
+      !goalSubmissionActive &&
       onInterrupt !== undefined &&
       draft.trim() === "" &&
       attachments.length === 0
@@ -303,12 +371,20 @@ export function useComposerDeliveryActions({
         await onInterrupt(currentTurnId);
       }, "Could not stop response");
     } else {
-      send();
+      runAction(async () => {
+        await send();
+      }, "Could not send message");
     }
   });
 
   const steerComposer = useEvent(() => {
-    if (editingQueuedMessage || sendDisabled || currentTurnId === null || !threadLifecycleActive) {
+    if (
+      editingQueuedMessage ||
+      goalSubmissionActive ||
+      sendDisabled ||
+      currentTurnId === null ||
+      !threadLifecycleActive
+    ) {
       return;
     }
     handleDeliveryAction("steer");

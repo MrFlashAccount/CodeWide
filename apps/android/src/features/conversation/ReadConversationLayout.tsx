@@ -54,7 +54,7 @@ export function renderReadConversationLayout({
               jumpContent={
                 <JumpToLatest
                   bottomChromeHeight={props.viewport.bottomChromeHeight}
-                  jumpTimelineToLatest={read.anchorActions.jumpTimelineToLatest}
+                  jumpTimelineToLatest={read.jumpActions.jumpTimelineToLatest}
                   newItemCount={0}
                 />
               }

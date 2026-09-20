@@ -14,10 +14,11 @@ use std::{
 
 use codewide_companion::{
     catalog::SessionCatalog,
+    content::{ContentProjector, PrivateContentService},
     files::FileService,
     history_service::HistoryService,
     server,
-    store::IndexStore,
+    store::{IndexStore, OutboxClaimOutcome, OutboxClaimResolution, OutboxState},
     sync::SyncHub,
     upstream::{ConnectionStatus, UpstreamHandle},
 };
@@ -1071,6 +1072,111 @@ async fn sync_auth_rpc_replay_and_forwarding() -> Result<(), Box<dyn std::error:
 }
 
 #[tokio::test]
+async fn large_command_output_is_bounded_before_replay_and_rpc_reach_the_sync_client()
+-> Result<(), Box<dyn std::error::Error>> {
+    const OUTPUT_BYTES: usize = 1_048_608;
+    const MAX_SYNC_FRAME_BYTES: usize = 16 * 1024;
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (notifications, notification_rx) = mpsc::channel(4);
+    let (observed, _observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_large_output_app_server(
+        socket_path.clone(),
+        notification_rx,
+        observed,
+        OUTPUT_BYTES,
+    ));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let content = PrivateContentService::open(directory.path().join("content"));
+    let projector = Arc::new(ContentProjector::new(content));
+    let sync =
+        SyncHub::with_mutations(upstream, store.clone(), history).with_content_projector(projector);
+    let (address, server_task) = start_server(store.clone(), sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+
+    notifications
+        .send(json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "large-output-thread",
+                "turnId": "turn-1",
+                "item": {
+                    "id": "command-1",
+                    "type": "commandExecution",
+                    "command": "produce bounded output",
+                    "status": "completed",
+                    "aggregatedOutput": "x".repeat(OUTPUT_BYTES)
+                }
+            }
+        }))
+        .await?;
+    let event = receive_type(&mut client, "event").await?;
+    let event_bytes = serde_json::to_vec(&event)?.len();
+    assert!(
+        event_bytes < MAX_SYNC_FRAME_BYTES,
+        "projected replay event exceeded its sync frame budget: {event_bytes} bytes"
+    );
+    let event_item = &event["payload"]["params"]["item"];
+    assert_eq!(event_item["aggregatedOutput"], "");
+    assert_eq!(
+        event_item["codewideContent"]["fields"]["/aggregatedOutput"]["byteLength"],
+        OUTPUT_BYTES
+    );
+    let replay = store.replay_after(Some(0))?;
+    let stored_event: Value = serde_json::from_slice(
+        replay
+            .entries
+            .last()
+            .ok_or("projected replay event was not persisted")?
+            .1
+            .as_slice(),
+    )?;
+    assert_eq!(stored_event["params"]["item"]["aggregatedOutput"], "");
+    assert!(serde_json::to_vec(&stored_event)?.len() < MAX_SYNC_FRAME_BYTES);
+
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "large-history",
+                "method": "thread/turns/list",
+                "params": {
+                    "threadId": "large-output-thread",
+                    "itemsView": "full",
+                    "limit": 1,
+                    "sortDirection": "asc"
+                }
+            }
+        }),
+    )
+    .await?;
+    let response = receive_type(&mut client, "rpc").await?;
+    let response_bytes = serde_json::to_vec(&response)?.len();
+    assert!(
+        response_bytes < MAX_SYNC_FRAME_BYTES,
+        "projected RPC response exceeded its sync frame budget: {response_bytes} bytes"
+    );
+    let response_item = &response["response"]["result"]["data"][0]["items"][0];
+    assert_eq!(response_item["aggregatedOutput"], "");
+    assert_eq!(
+        response_item["codewideContent"]["fields"]["/aggregatedOutput"]["byteLength"],
+        OUTPUT_BYTES
+    );
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
 async fn user_messages_from_an_active_turn_and_another_desktop_thread_survive_reconnect()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
@@ -2024,6 +2130,69 @@ async fn ambiguous_turn_delivery_never_reads_or_repeats_upstream()
     Ok(())
 }
 
+#[tokio::test]
+async fn resolved_steer_reconciles_against_full_upstream_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_resolved_steer_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    store.outbox_put_turn_start(
+        "steered-message",
+        "thread-1",
+        json!({
+            "threadId": "thread-1",
+            "clientUserMessageId": "steered-message",
+            "input": [{"type": "text", "text": "during active turn"}]
+        }),
+        None,
+    )?;
+    let OutboxClaimOutcome::Acquired { token, .. } =
+        store.outbox_claim_steer("steered-message", "steer-operation")?
+    else {
+        return Err("steer claim was not acquired".into());
+    };
+    store.outbox_resolve_claim(
+        "steered-message",
+        token,
+        OutboxClaimResolution::Indeterminate {
+            error: "response lost",
+            retry_after_ms: 0,
+        },
+    )?;
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let _sync = SyncHub::with_mutations(upstream, store.clone(), history);
+
+    let request = timeout(Duration::from_secs(2), observed_rx.recv())
+        .await?
+        .ok_or("full history request was not observed")?;
+    assert_eq!(request["method"], "thread/turns/list");
+    assert_eq!(request["params"]["itemsView"], "full");
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if store
+                .outbox_list(None)
+                .ok()
+                .and_then(|commands| commands.first().cloned())
+                .is_some_and(|command| command.state == OutboxState::Delivered)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+
+    fake.abort();
+    Ok(())
+}
+
 async fn verify_approval_flow(
     notifications: &mpsc::Sender<Value>,
     observed: &mut mpsc::Receiver<String>,
@@ -2549,6 +2718,69 @@ async fn run_fake_app_server(
     }
 }
 
+async fn run_large_output_app_server(
+    socket_path: PathBuf,
+    mut notifications: mpsc::Receiver<Value>,
+    observed: mpsc::Sender<String>,
+    output_bytes: usize,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_async::<UnixStream>(stream).await?;
+    let initialize = receive_value(&mut socket).await?;
+    let initialize_id = initialize
+        .get("id")
+        .cloned()
+        .ok_or("initialize id missing")?;
+    send_value(&mut socket, &json!({"id": initialize_id, "result": {}})).await?;
+    let initialized = receive_value(&mut socket).await?;
+    if initialized.get("method").and_then(Value::as_str) != Some("initialized") {
+        return Err("initialized notification missing".into());
+    }
+
+    loop {
+        tokio::select! {
+            notification = notifications.recv() => {
+                let Some(notification) = notification else { return Ok(()); };
+                send_value(&mut socket, &notification).await?;
+            }
+            frame = socket.next() => {
+                let Some(frame) = frame else { return Ok(()); };
+                let frame = frame?;
+                let Message::Text(raw) = frame else { continue; };
+                let request: Value = serde_json::from_str(&raw)?;
+                let method = request.get("method").and_then(Value::as_str).unwrap_or_default();
+                observed.send(method.to_owned()).await?;
+                let result = if method == "thread/turns/list" {
+                    json!({
+                        "data": [{
+                            "id": "turn-1",
+                            "status": "completed",
+                            "itemsView": "full",
+                            "items": [{
+                                "id": "command-1",
+                                "type": "commandExecution",
+                                "command": "produce bounded output",
+                                "status": "completed",
+                                "aggregatedOutput": "x".repeat(output_bytes)
+                            }]
+                        }],
+                        "nextCursor": null,
+                        "backwardsCursor": null
+                    })
+                } else {
+                    json!({})
+                };
+                send_value(
+                    &mut socket,
+                    &json!({"id": request["id"].clone(), "result": result}),
+                )
+                .await?;
+            }
+        }
+    }
+}
+
 async fn run_empty_new_thread_app_server(
     socket_path: PathBuf,
     observed: mpsc::Sender<String>,
@@ -2824,6 +3056,44 @@ async fn run_ambiguous_app_server(
             let value: Value = serde_json::from_str(&raw)?;
             observed.send(method_of(&value)).await?;
         }
+    }
+    Ok(())
+}
+
+async fn run_resolved_steer_app_server(
+    socket_path: PathBuf,
+    observed: mpsc::Sender<Value>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    while let Some(frame) = socket.next().await {
+        let frame = frame?;
+        let Message::Text(raw) = frame else {
+            continue;
+        };
+        let request: Value = serde_json::from_str(&raw)?;
+        observed.send(request.clone()).await?;
+        send_value(
+            &mut socket,
+            &json!({
+                "id": request["id"].clone(),
+                "result": {
+                    "data": [{
+                        "id": "active-turn",
+                        "status": "inProgress",
+                        "itemsView": "full",
+                        "items": [{
+                            "type": "userMessage",
+                            "clientId": "steered-message",
+                            "content": [{"type": "text", "text": "during active turn"}]
+                        }]
+                    }],
+                    "nextCursor": null
+                }
+            }),
+        )
+        .await?;
     }
     Ok(())
 }

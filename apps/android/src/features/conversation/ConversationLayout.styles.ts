@@ -3,7 +3,8 @@ import { colors, radii } from "../../theme";
 
 export const styles = StyleSheet.create({
   composerSticky: {
-    bottom: 0,
+    // Keep a one-physical-pixel overlap so keyboard translation rounding cannot expose a seam.
+    bottom: -StyleSheet.hairlineWidth,
     left: 0,
     minWidth: 0,
     position: "absolute",

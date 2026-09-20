@@ -11,14 +11,39 @@ interface MockDialogRequest {
 
 let lastRequest: MockDialogRequest | null = null;
 
-export function useAppDialog(): (
+export function AppDialogProvider({ children }: { readonly children: ReactNode }): ReactNode {
+  return children;
+}
+
+type MockDialogAlert = (
   title: string,
   message?: string,
   actions?: readonly MockDialogAction[],
-) => void {
-  return (title, message, actions = [{ text: "OK" }]) => {
+) => void;
+
+type MockDialogController = MockDialogAlert & {
+  alert: MockDialogAlert;
+  error: (title: string, cause: unknown, actions?: readonly MockDialogAction[]) => void;
+};
+
+export function useAppDialog(): MockDialogController {
+  const alert: MockDialogAlert = (title, message, actions = [{ text: "OK" }]) => {
     lastRequest = { actions, ...(message === undefined ? {} : { message }), title };
   };
+  return Object.assign(alert, {
+    alert,
+    error: (title: string, cause: unknown, actions?: readonly MockDialogAction[]) => {
+      alert(
+        title,
+        cause instanceof Error ? cause.message : typeof cause === "string" ? cause : undefined,
+        actions,
+      );
+    },
+  });
+}
+
+export function getAppDialogRequest(): MockDialogRequest | null {
+  return lastRequest;
 }
 
 export function invokeAppDialogAction(text: string): void {
@@ -32,3 +57,4 @@ export function invokeAppDialogAction(text: string): void {
 export function resetAppDialog(): void {
   lastRequest = null;
 }
+import type { ReactNode } from "react";

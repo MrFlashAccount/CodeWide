@@ -46,7 +46,6 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     marginTop: spacing.xxs,
   },
-  flex: { flex: 1 },
   headerIcon: {
     alignItems: "center",
     borderRadius: radii.large,
@@ -75,13 +74,6 @@ export const styles = StyleSheet.create({
     minHeight: 0,
     overflow: "hidden",
     width: "100%",
-  },
-  previewError: {
-    backgroundColor: colors.errorContainer,
-    color: colors.red,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    ...typeScale.label,
   },
   previewHeader: {
     alignItems: "center",
@@ -118,6 +110,19 @@ export const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
+  secondaryButton: {
+    alignItems: "center",
+    borderColor: colors.outline,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: touchTarget,
+    paddingHorizontal: spacing.md,
+  },
+  secondaryButtonText: {
+    color: colors.text,
     fontWeight: typeWeight.semibold,
   },
   sheetTitle: {

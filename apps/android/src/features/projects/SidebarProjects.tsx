@@ -94,7 +94,9 @@ export function SidebarProjectHeader({
     </View>
   );
 }
-export function SidebarProjectsSheet(props: ProjectManagementProps) {
+export function SidebarProjectsSheet(
+  props: ProjectManagementProps & { readonly visible: boolean },
+) {
   const { onBrowse, onClose, servers } = props;
   const state = useProjectManagement(props);
   const { choosingServer, pending, rows, setChoosingServer } = state;
@@ -107,7 +109,7 @@ export function SidebarProjectsSheet(props: ProjectManagementProps) {
         performanceSurface: "projects",
         snapPoints: ["62%", "92%"],
       }}
-      isOpen
+      isOpen={props.visible}
       onOpenChange={(open) => {
         if (!open) {
           onClose();

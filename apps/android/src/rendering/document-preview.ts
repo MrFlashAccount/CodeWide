@@ -7,7 +7,7 @@ import {
 
 export type DocumentPreviewKind = "markdown" | "text" | "html" | "image" | "download";
 
-export type DocumentPreviewSurface = "sheet" | "fullscreen" | "image-viewer" | "download";
+export type DocumentPreviewSurface = "fullscreen" | "image-viewer" | "download";
 
 /** Pick the presentation primitive before IO starts, so an image tap never
  * flashes the generic document sheet while its private file is materialized. */
@@ -15,13 +15,10 @@ export function documentPreviewSurface(kind: DocumentPreviewKind): DocumentPrevi
   if (kind === "image") {
     return "image-viewer";
   }
-  if (kind === "html" || kind === "markdown") {
+  if (kind === "html" || kind === "markdown" || kind === "text") {
     return "fullscreen";
   }
-  if (kind === "download") {
-    return "download";
-  }
-  return "sheet";
+  return "download";
 }
 
 export type PreviewableDocumentTarget = {

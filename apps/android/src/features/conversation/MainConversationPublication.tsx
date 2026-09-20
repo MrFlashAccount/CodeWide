@@ -1,4 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
 import { startTransition } from "react";
 import type { ThreadChatWindowRequest } from "../../data/thread-chat-model";
 import { recordThreadNavigationVisualEvent } from "../../data/thread-navigation-metrics";
@@ -32,7 +31,6 @@ export function renderMainConversationPublication({
   resources,
   searchState,
   searchWindow,
-  setHistoryAnchorTurnId,
   threadId,
 }: {
   chatDatabase: NonNullable<ConversationDetailResources["threadDetails"]>;
@@ -51,7 +49,6 @@ export function renderMainConversationPublication({
   resources: ConversationDetailResources;
   searchState: ReturnType<SearchConversationWindow["state$"]["peek"]> | null;
   searchWindow: SearchConversationWindow | null;
-  setHistoryAnchorTurnId: Dispatch<SetStateAction<string | null>>;
   threadId: string;
 }) {
   return (
@@ -99,13 +96,6 @@ export function renderMainConversationPublication({
         revision={`${chatSnapshot.requestKey ?? "none"}:${chatSnapshot.status}:${String(chatSnapshot.layoutRevision)}:${String(chatSnapshot.revision)}:${String(chatWindow.turnRows.length)}:${String(chatWindow.detailRows.length)}:${String(chatWindow.liveRows.length)}`}
         scope={`main-window:${navigationKey}`}
       />
-      <CommitOnChangeProbe
-        onCommit={() => {
-          chatDatabase.chat.finishPresentation(connectionId, threadId);
-        }}
-        revision={navigationKey}
-        scope={`main-presentation:${navigationKey}`}
-      />
       {conversation.renderContent({
         composerState: composerState,
         currentOutcome: history.projection.currentOutcome,
@@ -129,7 +119,6 @@ export function renderMainConversationPublication({
                     return;
                   }
                   startTransition(() => {
-                    setHistoryAnchorTurnId(null);
                     conversation.onExitSearchHistory?.();
                   });
                 },

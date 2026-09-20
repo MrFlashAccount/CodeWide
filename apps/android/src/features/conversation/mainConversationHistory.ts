@@ -27,7 +27,6 @@ export function useMainConversationHistory({
   resources,
   storedThread,
   threadId,
-  threadOpenGeneration,
 }: {
   chatDatabase: NonNullable<ConversationDetailResources["threadDetails"]>;
   chatSnapshot: NonNullable<ReturnType<typeof useThreadChatWindow>>["snapshot"];
@@ -41,7 +40,6 @@ export function useMainConversationHistory({
   resources: ConversationDetailResources;
   storedThread: StoredThreadSummary | null;
   threadId: string;
-  threadOpenGeneration: number;
 }) {
   const latestResidentOrdinal = chatWindow.turnRows.reduce<number | null>(
     (maximum, row) =>
@@ -76,7 +74,6 @@ export function useMainConversationHistory({
   const putHistoryState = (state: ThreadHistoryState): void => {
     resources.putThreadHistory?.({
       connectionId,
-      generation: threadOpenGeneration,
       id: historyResourceId,
       threadId,
       ...state,

@@ -1,4 +1,8 @@
-import type { AccountLoginStart, AccountPoolSnapshot } from "../../data/account-pool";
+import type {
+  AccountLoginStart,
+  AccountPoolSnapshot,
+  AccountResetCreditConsumption,
+} from "../../data/account-pool";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
 import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/workspace-session";
 
@@ -43,6 +47,24 @@ export function createAccountsWorkspaceAdapter({
       throw new Error("Connection is not enabled");
     }
     await rpcAfterAttach(session, "companion/accountPool/add/cancel", { loginId });
+  };
+
+  const consumeAccountResetCredit = async (
+    connectionId: string,
+    profileId: string,
+    creditId: string | null,
+  ): Promise<AccountResetCreditConsumption> => {
+    const session = getSession(connectionId);
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
+    const result = await rpcAfterAttach<AccountResetCreditConsumption>(
+      session,
+      "companion/accountPool/profile/resetCredit/consume",
+      { creditId, profileId },
+    );
+    getAccountRateLimits()?.putAccountPool(connectionId, result.accountPool);
+    return result;
   };
 
   const activateAccountProfile = async (
@@ -99,6 +121,7 @@ export function createAccountsWorkspaceAdapter({
   return {
     activateAccountProfile,
     cancelAccountLogin,
+    consumeAccountResetCredit,
     refreshAccountPool,
     refreshAccountRateLimits,
     removeAccountProfile,

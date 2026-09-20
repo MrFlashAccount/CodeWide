@@ -11,6 +11,8 @@ import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 
 type ChangesDisplayMode = "unified" | "split" | "source";
 
+const DEFAULT_CHANGE_SCOPES: ThreadChangeScope[] = ["session", "lastTurn"];
+
 export type ChangesPreferences = {
   mode: ChangesDisplayMode;
   scope: ThreadChangeScope | null;
@@ -134,14 +136,29 @@ export function useChangeResourcePresentation(
       : (threadResourcesModel.get(threadResourceId) ?? null),
   );
 
-  const currentChangePresentation = useEvent(() => {
-    const resource = currentThreadResources()?.value ?? null;
-    const scopes = resource?.changeScopes ?? ["session" as const, "lastTurn" as const];
-    const scope =
-      changesPreferences.scope !== null && scopes.includes(changesPreferences.scope)
-        ? changesPreferences.scope
-        : (resource?.changeScope ?? scopes[0] ?? "session");
-    return { resource, scope, scopes };
-  });
+  const currentChangePresentation = useEvent(() =>
+    selectChangePresentation(currentThreadResources()?.value ?? null, changesPreferences.scope),
+  );
   return { currentChangePresentation, currentThreadResources };
+}
+
+/** Selects only resource data that belongs to the active Changes scope. */
+export function selectChangePresentation(
+  resource: ThreadResourcesValue | null,
+  preferredScope: ThreadChangeScope | null,
+): {
+  resource: ThreadResourcesValue | null;
+  scope: ThreadChangeScope;
+  scopes: ThreadChangeScope[];
+} {
+  const scopes = resource?.changeScopes ?? DEFAULT_CHANGE_SCOPES;
+  const scope =
+    preferredScope !== null && scopes.includes(preferredScope)
+      ? preferredScope
+      : (resource?.changeScope ?? scopes[0] ?? "session");
+  return {
+    resource: resource?.changeScope === scope ? resource : null,
+    scope,
+    scopes,
+  };
 }

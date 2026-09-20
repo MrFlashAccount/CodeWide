@@ -1,4 +1,4 @@
-import type { CachedTransferOptions } from "./transfer-options";
+import type { CachedSourceRequest, CachedTransferOptions } from "./transfer-options";
 
 /** Web/Node fallback keeps the existing transport; Android supplies a disk-backed adapter. */
 export async function cachedAttachmentFetch(
@@ -10,12 +10,20 @@ export async function cachedAttachmentFetch(
   return response;
 }
 
-export async function cachedAttachmentSource(
-  uri: string,
-  headers: Record<string, string>,
-  _options: CachedTransferOptions,
-  _signal?: AbortSignal,
-): Promise<{ headers: Record<string, string>; uri: string }> {
+export async function cachedAttachmentSource({
+  headers,
+  uri,
+}: CachedSourceRequest): Promise<{ headers: Record<string, string>; uri: string }> {
+  await Promise.resolve();
+  return { headers, uri };
+}
+
+/** Web can decode the authenticated response directly; Android overrides this
+ * with a one-GET local-file materialization for transformed images. */
+export async function cachedAttachmentSourceFromResponse({
+  headers,
+  uri,
+}: CachedSourceRequest): Promise<{ headers: Record<string, string>; uri: string }> {
   await Promise.resolve();
   return { headers, uri };
 }

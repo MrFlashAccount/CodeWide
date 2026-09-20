@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const requireAndroid = createRequire(new URL('../package.json', import.meta.url));
 const { build } = requireAndroid('esbuild');
+const legendListNativeEntry = fileURLToPath(
+  new URL('../node_modules/@legendapp/list/react-native.js', import.meta.url),
+);
 let browser;
 before(async () => { browser = await chromium.launch({ headless: true }); });
 after(async () => { await browser?.close(); });
@@ -41,7 +44,10 @@ window.scrollLast = () => list.scrollToEnd({ animated: false });
 `,
     },
     bundle: true, write: false, platform: 'browser', format: 'iife',
-    alias: { 'react-native': 'react-native-web' },
+    alias: {
+      '@legendapp/list/react-native': legendListNativeEntry,
+      'react-native': 'react-native-web',
+    },
     // Metro supplies the global alias in the application bundle.
     define: { 'process.env.NODE_ENV': '"production"', __DEV__: 'false', global: 'globalThis' },
     logLevel: 'silent',

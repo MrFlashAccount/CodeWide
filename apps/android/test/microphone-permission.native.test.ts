@@ -4,23 +4,39 @@ const platform = vi.hoisted(() => ({
   listeners: new Map<string, (value: unknown) => void>(),
   request: vi.fn<() => Promise<string>>(),
   refresh: vi.fn(),
-  start: vi.fn(async () => ({ sampleRate: 48_000, source: "voice_communication", noiseSuppressor: true, automaticGainControl: true })),
+  start: vi.fn(async () => ({
+    acousticEchoCancelerEnabled: true,
+    acousticEchoCancelerSupported: true,
+    automaticGainControl: true,
+    noiseSuppressor: true,
+    sampleRate: 48_000,
+    source: "voice_communication",
+  })),
+  stop: vi.fn(async () => {
+    platform.listeners.get("CodeWideAudioEvent")?.({ type: "stopped" });
+  }),
 }));
 
 // WHY: Android permissions and the native audio bridge are unavailable in Node.
 // The real permission adapter and capture admission run against this platform boundary.
 vi.mock("react-native", () => ({
   Platform: { OS: "android" },
-  NativeModules: { CodeWideNative: {
-    microphonePermissionGranted: false,
-    refreshMicrophonePermission: platform.refresh,
-    startPcmCapture: platform.start,
-    stopPcmCapture() { platform.listeners.get("CodeWideAudioEvent")?.({ type: "stopped" }); },
-  } },
+  NativeModules: {
+    CodeWideNative: {
+      microphonePermissionGranted: false,
+      refreshMicrophonePermission: platform.refresh,
+      startPcmCapture: platform.start,
+      stopPcmCapture: platform.stop,
+    },
+  },
   NativeEventEmitter: class {
     addListener(name: string, listener: (value: unknown) => void) {
       platform.listeners.set(name, listener);
-      return { remove() { platform.listeners.delete(name); } };
+      return {
+        remove() {
+          platform.listeners.delete(name);
+        },
+      };
     }
   },
   PermissionsAndroid: {
@@ -30,7 +46,12 @@ vi.mock("react-native", () => ({
   },
 }));
 
-import { getMicrophonePermission, requestMicrophonePermission, startPcmCapture, subscribeMicrophonePermission } from "../src/native/native-transport.native";
+import {
+  getMicrophonePermission,
+  requestMicrophonePermission,
+  startPcmCapture,
+  subscribeMicrophonePermission,
+} from "../src/native/native-transport.native";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -41,7 +62,13 @@ beforeEach(() => {
 describe("microphone permission boundary", () => {
   it("does not request permission or start capture implicitly", async () => {
     expect(getMicrophonePermission()).toBe("denied");
-    await expect(startPcmCapture(() => {}, () => {})).rejects.toThrow("Microphone permission is required");
+    await expect(
+      startPcmCapture(
+        { purpose: "dictation", token: "lease-1" },
+        () => {},
+        () => {},
+      ),
+    ).rejects.toThrow("Microphone permission is required");
     expect(platform.request).not.toHaveBeenCalled();
     expect(platform.start).not.toHaveBeenCalled();
     expect(platform.refresh).not.toHaveBeenCalled();
@@ -61,10 +88,15 @@ describe("microphone permission boundary", () => {
 
   it("starts permitted capture without another permission request", async () => {
     platform.listeners.get("CodeWideMicrophonePermission")?.(true);
-    const capture = await startPcmCapture(() => {}, () => {});
-    expect(platform.start).toHaveBeenCalledOnce();
+    const capture = await startPcmCapture(
+      { purpose: "dictation", token: "lease-1" },
+      () => {},
+      () => {},
+    );
+    expect(platform.start).toHaveBeenCalledWith("lease-1", "dictation");
     expect(platform.request).not.toHaveBeenCalled();
     await capture.stop();
+    expect(platform.stop).toHaveBeenCalledWith("lease-1", "dictation");
   });
 
   it("retains permanent denial until permission changes in Android settings", async () => {

@@ -29,7 +29,7 @@ export async function loadThreadCatalogPage(
       limit: THREAD_CATALOG_PAGE_SIZE,
       modelProviders: [],
       sortDirection: "desc",
-      sortKey: "updated_at",
+      sortKey: "recency_at",
       sourceKinds: ["cli", "vscode"],
       useStateDbOnly: true,
       ...(request.projectCwd === undefined ? {} : { cwd: request.projectCwd }),

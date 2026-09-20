@@ -4,7 +4,7 @@ import type { PendingServerRequest } from "../../data/pending-request-types";
 import type { WorkspaceRuntimeSnapshot } from "../../data/workspace-runtime";
 import type { useConnectionActions } from "../../features/connections/connectionActions";
 import type { useRenderRecovery } from "../../features/diagnostics/renderRecovery";
-import type { BrowserFeedbackCapability } from "../../features/ports/browser/feedback";
+import type { BrowserFeedbackCapability } from "../../features/browser/feedback";
 import type { useThreadListActions } from "../../features/threadList/threadListActions";
 import type { ThreadListSources } from "../../features/threadList/threadListSources";
 import type { useWorkspaceListBindings } from "../../features/workspace/workspaceListBindings";
@@ -20,7 +20,11 @@ export type WorkspaceRouteResources = {
   readonly insets: EdgeInsets;
   readonly list: ReturnType<typeof useWorkspaceListBindings>;
   readonly listActions: ReturnType<typeof useThreadListActions>;
-  readonly openBrowser: (title: string, url: string) => void;
+  readonly openBrowser: (
+    title: string,
+    url: string,
+    headers?: Readonly<Record<string, string>>,
+  ) => void;
   readonly openNewThread: (connectionId: string, cwd: string | null) => void;
   readonly pendingRequests: PendingServerRequest[];
   readonly project: ReturnType<typeof useWorkspaceProjectBindings>;

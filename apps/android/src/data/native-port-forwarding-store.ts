@@ -20,6 +20,7 @@ const EMPTY_PORT_FORWARDING_SNAPSHOT: NativePortForwardingSnapshot = {
   discoveryError: null,
   discoveryStatus: "idle",
   profiles: [],
+  profilesStatus: "ready",
 };
 const subscribeToNothing =
   (_listener: Listener): (() => void) =>
@@ -36,6 +37,7 @@ class PortForwardScope {
     discoveryError: null,
     discoveryStatus: "idle",
     profiles: [],
+    profilesStatus: "loading",
   };
   #loaded = false;
   #loading: Promise<void> | null = null;
@@ -81,10 +83,15 @@ class PortForwardScope {
       await this.#loading;
       return;
     }
+    this.#replace({ ...this.#snapshot, profilesStatus: "loading" });
     this.#loading = listNativePortForwards(this.connectionId)
       .then((profiles) => {
         this.#loaded = true;
-        this.#replaceProfiles(profiles);
+        this.#replaceProfiles(profiles, "ready");
+      })
+      .catch((error: unknown) => {
+        this.#replace({ ...this.#snapshot, profilesStatus: "error" });
+        throw error;
       })
       .finally(() => {
         this.#loading = null;
@@ -107,12 +114,14 @@ class PortForwardScope {
         // The native push worker reconciles before notifying us. Reload
         // current forwards so missed bridge events cannot retain dead profiles.
         const profiles = await listNativePortForwards(this.connectionId);
+        this.#loaded = true;
         this.#replace({
           ...this.#snapshot,
           discoveredPorts: ports,
           discoveryError: null,
           discoveryStatus: scannedAt === 0 ? "loading" : "ready",
           profiles,
+          profilesStatus: "ready",
         });
       })
       .catch((error: unknown) => {
@@ -204,12 +213,13 @@ class PortForwardScope {
     }
     const index = this.#snapshot.profiles.findIndex((candidate) => candidate.id === profile.id);
     if (index < 0) {
-      this.#replaceProfiles([profile, ...this.#snapshot.profiles]);
+      this.#replaceProfiles([profile, ...this.#snapshot.profiles], this.#snapshot.profilesStatus);
     } else {
       this.#replaceProfiles(
         this.#snapshot.profiles.map((candidate, candidateIndex) =>
           candidateIndex === index ? profile : candidate,
         ),
+        this.#snapshot.profilesStatus,
       );
     }
   }
@@ -235,16 +245,23 @@ class PortForwardScope {
     if (!this.#snapshot.profiles.some((profile) => profile.id === profileId)) {
       return;
     }
-    this.#replaceProfiles(this.#snapshot.profiles.filter((profile) => profile.id !== profileId));
+    this.#replaceProfiles(
+      this.#snapshot.profiles.filter((profile) => profile.id !== profileId),
+      this.#snapshot.profilesStatus,
+    );
   }
 
-  #replaceProfiles(profiles: readonly NativePortForwardProfile[]): void {
+  #replaceProfiles(
+    profiles: readonly NativePortForwardProfile[],
+    profilesStatus: NativePortForwardingSnapshot["profilesStatus"],
+  ): void {
     this.#replace({
       ...this.#snapshot,
       profiles: [...profiles].sort((left, right) => {
         const enabledOrder = Number(right.enabled) - Number(left.enabled);
         return enabledOrder !== 0 ? enabledOrder : right.updatedAt - left.updatedAt;
       }),
+      profilesStatus,
     });
   }
 
@@ -261,6 +278,7 @@ export type NativePortForwardingSnapshot = {
   discoveryError: string | null;
   discoveryStatus: "idle" | "loading" | "ready" | "error";
   profiles: readonly NativePortForwardProfile[];
+  profilesStatus: "loading" | "ready" | "error";
 };
 
 const DISCOVERY_STALE_MS = 60_000;

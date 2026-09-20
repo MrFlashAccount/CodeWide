@@ -49,8 +49,16 @@ describe("navigation performance HUD", () => {
     expect(hud).toContain("setMenuOpen((open) => !open)");
     expect(hud).toContain('title="Navigation timeline"');
     expect(hud).toContain('title="Hermes CPU profile"');
+    expect(hud).toContain('title="Profile next navigation"');
     expect(hud).toContain('title="Hermes heap snapshot"');
+    expect(hud).toContain('title="Save full JSON"');
+    expect(hud).toContain("saveNavigationProfile(serializeNavigationProfile(profile, current))");
+    expect(hud).not.toContain("Clipboard.setStringAsync");
     expect(hud).toContain("captureHermesHeapSnapshot()");
+    expect(hud).toContain("armNextNavigationHermesProfile()");
+    expect(hud).toContain("armNextThreadNavigationProfile()");
+    expect(hud).toContain("RSS ${bytes(current.rssBytes)}");
+    expect(hud).not.toContain("chat profile waiting");
     expect(hud).toContain("serializeNavigationSpeedscopeProfile(profile)");
     expect(hud).toContain("<SpeedscopeProfileViewer");
     expect(hud).toContain('kind: "codewide-navigation-profile"');
@@ -67,7 +75,12 @@ describe("navigation performance HUD", () => {
     );
     expect(performanceModule).toContain("activeNavigationTrace?.frames?.record");
     expect(performanceModule).toContain("HermesSamplingProfiler.enable()");
+    expect(performanceModule).toContain("if (!hermesNavigationCaptureArmed.getAndSet(false))");
     expect(performanceModule).toContain("HermesSamplingProfiler.dumpSampledTraceToFile");
+    expect(performanceModule).toContain(
+      "fun saveNavigationProfile(report: String, promise: Promise)",
+    );
+    expect(performanceModule).toContain("output.bufferedWriter(Charsets.UTF_8)");
     expect(performanceModule).toContain('putString("content", hermesProfile.content)');
     expect(hud).toContain("hermesSamplingProfile: samplingProfile");
     expect(hud).not.toContain("<RichMarkdown");

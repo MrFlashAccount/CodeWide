@@ -9,21 +9,15 @@ import type { ProjectPickerSession } from "./projectPickerSession";
 import { styles } from "./ProjectPickerSheet.styles";
 
 export function ProjectPickerHeader({
+  onBack,
   props,
   state,
 }: {
+  onBack: () => void;
   props: ProjectPickerProps;
   state: ProjectPickerSession;
 }) {
-  const {
-    browseOnly = false,
-    onAddProject,
-    onClose,
-    onManageProjects,
-    onReadDirectory,
-    onReadHomeDirectory,
-    projects,
-  } = props;
+  const { onAddProject, onManageProjects, onReadDirectory, onReadHomeDirectory, projects } = props;
   const {
     adding,
     breadcrumbScroll,
@@ -34,8 +28,6 @@ export function ProjectPickerHeader({
     openDirectoryPicker,
     parentPath,
     scrollToCurrentFolder,
-    setMode,
-    setQuery,
     unpinnedProjects,
   } = state;
   return (
@@ -45,14 +37,7 @@ export function ProjectPickerHeader({
           <Button
             accessibilityLabel="Back to projects"
             isIconOnly
-            onPress={() => {
-              if (browseOnly) {
-                onClose();
-              } else {
-                setMode("projects");
-                setQuery("");
-              }
-            }}
+            onPress={onBack}
             size="sm"
             variant="ghost"
           >

@@ -4,10 +4,11 @@ import type { GetTransferAccess } from "../../../data/private-transfer";
 import type { LargePasteEvent } from "../../../native/large-paste";
 import type { ComposerMention } from "./composer-mentions";
 import type { SearchComposerMentions } from "./composer-suggestions";
+import type { ComposerTextSnapshot } from "../composerSession";
 
 export type ComposerMarkdownInputHandle = {
   focus: () => void;
-  getMarkdown: () => Promise<string>;
+  getValue: () => Promise<ComposerTextSnapshot>;
   insertCode: (block: boolean) => void;
   insertLinkedText: (text: string, url: string) => void;
   insertText: (text: string) => void;
@@ -21,8 +22,7 @@ export type ComposerMarkdownInputProps = {
   readonly getTransferAccess?: GetTransferAccess;
   readonly largePasteThreshold?: number;
   readonly mentionIndicators: readonly ("/" | "@")[];
-  readonly onChangeMarkdown?: (markdown: string) => void;
-  readonly onChangeText: (text: string) => void;
+  readonly onChangeValue: (value: ComposerTextSnapshot) => void;
   readonly onLargePaste?: (event: LargePasteEvent) => void;
   readonly onSelectionChange?: (selection: {
     readonly end: number;

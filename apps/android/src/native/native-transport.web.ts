@@ -10,9 +10,11 @@ import type {
   NativePortForwardEvent,
   NativeTerminalEvent,
   NativeTerminalOutput,
+  NativeTerminalSession,
   NativeDiscoveredPort,
   NativeCommandDelivery,
   MicrophonePermission,
+  NativeMicrophoneLease,
   NativeCommandMethod,
 } from "./native-transport-contract";
 
@@ -38,9 +40,11 @@ export type {
   NativePortForwardEvent,
   NativeTerminalEvent,
   NativeTerminalOutput,
+  NativeTerminalSession,
   NativeDiscoveredPort,
   NativeCommandDelivery,
   MicrophonePermission,
+  NativeMicrophoneLease,
   NativeCommandMethod,
 } from "./native-transport-contract";
 export async function claimNativePairing(_input: {
@@ -197,6 +201,10 @@ export async function readNativeTerminalOutput(
   const unavailable = await androidOnly("Terminal is available on Android only");
   return unavailable;
 }
+export async function listNativeTerminals(): Promise<NativeTerminalSession[]> {
+  await RESOLVED_VOID_PROMISE;
+  return [];
+}
 export function closeNativeTerminal(_sessionId: string): void {}
 export async function startLegacyNativeRuntimeResources(): Promise<void> {
   await RESOLVED_VOID_PROMISE;
@@ -262,6 +270,7 @@ export function cancelVoiceRecognition(): void {}
 export function setNativeVoiceAuraOrigin(_reactTag: number | null): void {}
 
 export async function startPcmCapture(
+  _lease: NativeMicrophoneLease,
   _onChunk: (chunk: CapturedAudioChunk) => void,
   _onError: (message: string) => void,
 ): Promise<{ info: PcmCaptureInfo; stop: () => Promise<void> }> {
@@ -269,5 +278,4 @@ export async function startPcmCapture(
   return unavailable;
 }
 
-export function stopPcmCapture(): void {}
 export function configureNativeFullscreenWindow(_reactTag: number): void {}

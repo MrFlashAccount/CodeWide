@@ -8,8 +8,8 @@ import { usePerformanceExperiment } from "../data/performance-experiments";
 export type VoiceAuraPhase = "idle" | "recording" | "transcribing";
 
 /**
- * Keeps React responsible only for the recording lifecycle. Android applies
- * the live-root shader on the GPU; microphone levels stay in the native loop.
+ * Keeps React responsible only for the recording lifecycle. Android draws one
+ * application-attached overlay; microphone levels stay in the native loop.
  */
 export function VoiceAura({
   children,

@@ -38,6 +38,7 @@ import { useAppDialog } from "../ui/AppDialog";
 import { isRemoteFileHref, remoteFileKind } from "./document-preview";
 import { parseDiagnosticRichMarkdown } from "./diagnostic-markdown";
 import { safeImageUri } from "./image-source";
+import { recordDecodedImage, wasImageDecoded } from "./imageDecodeCache";
 import {
   useImagePreview,
   useImagePreviewGroup,
@@ -45,7 +46,7 @@ import {
 } from "./ImagePreviewHost";
 import { useMarkdownLocalLinkHandler } from "./MarkdownLinkHandler";
 import { markdownTableLayout } from "./markdown-table-layout";
-import { textFingerprint } from "./listKey";
+import { markdownNodeIdentity } from "./markdownNodeIdentity";
 import { collectMarkdownImageOrder, type MarkdownImageNode } from "./markdown-image-order";
 import type { MarkdownDocumentBlock } from "./markdown-document-blocks";
 import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
@@ -271,15 +272,17 @@ export function RichMarkdown({
 
 /** Renders one document viewport item with the same review address as the full renderer. */
 export function RichMarkdownDocumentBlockView({
+  animateStreaming = false,
   block,
   reviewTarget,
 }: {
+  animateStreaming?: boolean;
   block: MarkdownDocumentBlock;
   reviewTarget?: ContentReviewTarget;
 }) {
   const plainText = usePerformanceExperiment("plainTextMarkdown");
   return (
-    <RichMarkdownRevealContext.Provider value={false}>
+    <RichMarkdownRevealContext.Provider value={animateStreaming}>
       <RichMarkdownReviewContext.Provider
         value={
           reviewTarget === undefined
@@ -712,6 +715,7 @@ function MarkdownImage({
   const imageStyle = [styles.markdownImage, { height: imageHeight }];
   const safeTarget = isSafeLink(target) ? target : null;
   const previewItem = {
+    detail: privateImage.detail,
     id: groupId === null ? previewId : `${groupId}:${url}:${alt}`,
     label: alt,
     link: safeTarget,
@@ -770,12 +774,13 @@ function MarkdownImage({
       </InlineMediaFrame>
     );
   }
+  const resolvedImageUri = privateImage.uri;
   return (
     <InlineMediaFrame height={imageHeight}>
       <NativeRevealSurface
         animate={reveal}
-        ready={!reveal || loadedUri === privateImage.uri}
-        revealKey={`image:${privateImage.uri}`}
+        ready={!reveal || loadedUri === resolvedImageUri || wasImageDecoded(resolvedImageUri)}
+        revealKey={`image:${resolvedImageUri}`}
       >
         <Pressable
           accessibilityLabel={`Open ${alt}`}
@@ -788,14 +793,15 @@ function MarkdownImage({
           <Image
             accessibilityLabel={alt}
             onError={() => {
-              setFailedUri(privateImage.uri);
+              setFailedUri(resolvedImageUri);
             }}
             onLoad={() => {
-              setLoadedUri(privateImage.uri);
+              recordDecodedImage(resolvedImageUri);
+              setLoadedUri(resolvedImageUri);
             }}
             resizeMethod="resize"
             resizeMode="contain"
-            source={privateImage.source ?? { uri: privateImage.uri }}
+            source={privateImage.source ?? { uri: resolvedImageUri }}
             style={imageStyle}
           />
         </Pressable>
@@ -969,12 +975,7 @@ function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
 }
 
 function markdownNodeKey(node: Nodes): string {
-  const start = node.position?.start.offset;
-  const end = node.position?.end.offset;
-  if (start !== undefined && end !== undefined) {
-    return `${node.type}:${String(start)}:${String(end)}`;
-  }
-  return `${node.type}:${textFingerprint(fallbackText(node))}`;
+  return markdownNodeIdentity(node, fallbackText(node));
 }
 
 function headingStyle(depth: 1 | 2 | 3 | 4 | 5 | 6) {

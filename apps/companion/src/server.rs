@@ -78,6 +78,7 @@ pub struct CompanionServices {
     pub bootstrap_tls_limit: Option<Arc<tokio::sync::Semaphore>>,
     pub inner_tls_target: Option<SocketAddr>,
     pub inner_tls_limit: Option<Arc<tokio::sync::Semaphore>>,
+    pub relay: Option<crate::relay::RelayRuntime>,
     pub sync_v2: Option<SyncV2Runtime>,
     pub attachment_staging: Option<AttachmentStageStore>,
     pub workspace_upload_staging: Option<WorkspaceUploadStore>,
@@ -463,7 +464,9 @@ fn build_control_router(state: AppState) -> Router {
         .route(
             "/v1/telemetry/settings",
             get(telemetry_settings_read).patch(telemetry_settings_update),
-        );
+        )
+        .route("/v1/relay", get(relay_status).patch(relay_enabled))
+        .route("/v1/relay/pair", post(relay_pair));
     #[cfg(feature = "e2e-command-fault")]
     let router = router
         .route(
@@ -701,6 +704,7 @@ fn random_token(byte_count: usize) -> String {
 include!("server/services.rs");
 include!("server/transport.rs");
 include!("server/auth.rs");
+include!("server/relay.rs");
 
 async fn health(State(state): State<AppState>) -> Json<Health> {
     Json(Health {

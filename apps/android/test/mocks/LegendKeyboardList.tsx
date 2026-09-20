@@ -2,6 +2,10 @@ import type { LegendListProps, LegendListRef } from "@legendapp/list/react-nativ
 import { forwardRef, useImperativeHandle, type ForwardedRef, type ReactElement } from "react";
 import { View } from "react-native";
 
+export const legendListScrollToEnd = jest.fn(async () => undefined);
+export const legendListScrollToIndex = jest.fn(async () => undefined);
+export const legendListIsAtEnd = jest.fn(() => true);
+
 function KeyboardAwareLegendListInner<ItemT>(
   props: LegendListProps<ItemT>,
   ref: ForwardedRef<LegendListRef>,
@@ -22,11 +26,19 @@ function KeyboardAwareLegendListInner<ItemT>(
         clearCaches: () => undefined,
         getState: () =>
           ({
+            indexByKey: (key: string) => {
+              const index = data.findIndex(
+                (item, itemIndex) => props.keyExtractor?.(item, itemIndex) === key,
+              );
+              return index < 0 ? undefined : index;
+            },
             positionByKey: (key: string) =>
               data.findIndex((item, index) => props.keyExtractor?.(item, index) === key) * 480,
+            isAtEnd: legendListIsAtEnd(),
             scroll: 100,
           }) as ReturnType<LegendListRef["getState"]>,
-        scrollToEnd: async () => undefined,
+        scrollToEnd: legendListScrollToEnd,
+        scrollToIndex: legendListScrollToIndex,
       }) as LegendListRef,
     [data, props.keyExtractor],
   );

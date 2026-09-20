@@ -25,7 +25,7 @@ class V2VoiceLevelTest {
 
   @Test
   fun microphoneForegroundLifetimeEndsOnlyAfterTheFinalCaptureRelease() {
-    val lifetime = V2VoiceForegroundLifetime()
+    val lifetime = VoiceForegroundLifetime()
     lifetime.acquire("old-capture")
     lifetime.acquire("new-capture")
 
@@ -37,10 +37,25 @@ class V2VoiceLevelTest {
 
   @Test
   fun staleForegroundReleaseCannotStopTheActiveCapture() {
-    val lifetime = V2VoiceForegroundLifetime()
+    val lifetime = VoiceForegroundLifetime()
     lifetime.acquire("active-capture")
 
     assertEquals(false, lifetime.release("stale-capture"))
+    assertEquals(false, lifetime.isEmpty())
+  }
+
+  @Test
+  fun overlayOwnershipIsIsolatedFromOrdinaryVoiceCapture() {
+    val lifetime = VoiceForegroundLifetime()
+    lifetime.acquire("dictation")
+    lifetime.acquire("global-voice", overlay = true)
+
+    assertEquals(true, lifetime.hasOverlay())
+    assertEquals(false, lifetime.ownsOverlay("dictation"))
+    assertEquals(true, lifetime.ownsOverlay("global-voice"))
+
+    assertEquals(false, lifetime.release("global-voice"))
+    assertEquals(false, lifetime.hasOverlay())
     assertEquals(false, lifetime.isEmpty())
   }
 }

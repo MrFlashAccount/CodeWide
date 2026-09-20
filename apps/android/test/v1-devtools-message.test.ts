@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import {parseDevToolsMessage} from "../src/features/ports/browser/devToolsMessage";
+import {parseDevToolsMessage} from "../src/features/browser/devToolsMessage";
 
 describe("browser DevTools bridge messages",()=>{
   it("admits dock, health and transport events from the existing bridge protocol",()=>{

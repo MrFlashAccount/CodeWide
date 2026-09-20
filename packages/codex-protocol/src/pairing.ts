@@ -121,9 +121,10 @@ function validateEndpoint(raw: string): string {
   }
   if (url.protocol !== "wss:" && url.protocol !== "ws:") throw new Error("Pairing endpoint must use WebSocket");
   const local = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]" || url.hostname === "10.0.2.2";
-  if (url.protocol === "ws:" && !local) throw new Error("Remote pairing endpoint must use WSS");
+  const relay = /^\/c\/[a-f0-9]{64}\/v1\/sync$/u.test(url.pathname);
+  if (url.protocol === "ws:" && !local && !relay) throw new Error("Remote pairing endpoint must use WSS or an explicit inner-TLS relay route");
   const pathname = url.pathname === "/" || url.pathname === "" ? "/v1/sync" : url.pathname;
-  if (pathname !== "/v1/sync" || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
+  if ((pathname !== "/v1/sync" && !relay) || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
     throw new Error("Invalid pairing endpoint shape");
   }
   return (pathname === url.pathname ? url : new URL(pathname, url)).toString();

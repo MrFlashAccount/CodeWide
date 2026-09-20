@@ -1,0 +1,177 @@
+import { useState } from "react";
+import { Image, StyleSheet } from "react-native";
+
+import type { PrivateAssetSource } from "../data/private-transfer";
+import type { PrivateImageDetailRequest } from "./use-private-image-uri";
+import { usePrivateAssetUri } from "./use-private-image-uri";
+
+type DecodeState = "error" | "loading" | "ready";
+type ImageSize = { height: number; width: number };
+type ResolvedImageSource = { headers?: Record<string, string>; uri: string };
+
+/** Keeps the preview visible until detail decode succeeds, then releases it. */
+export function ProgressiveImageLayer({
+  detail,
+  label,
+  onDecodeStateChange,
+  onDimensions,
+  preview,
+}: {
+  detail?: PrivateImageDetailRequest | null | undefined;
+  label: string;
+  onDecodeStateChange: (state: DecodeState) => void;
+  onDimensions: (size: ImageSize) => void;
+  preview: ResolvedImageSource;
+}): React.JSX.Element {
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const [readyUri, setReadyUri] = useState<string | null>(null);
+  const request = progressiveImageRequest(detail);
+  const detailSource = usePrivateAssetUri(request.source, request.options).source;
+  return (
+    <>
+      <PreviewImageLayer
+        label={label}
+        onDecodeStateChange={onDecodeStateChange}
+        onDimensions={onDimensions}
+        preview={preview}
+        visible={detailSource === null || readyUri !== detailSource.uri}
+      />
+      <DetailImageLayer
+        failedUri={failedUri}
+        label={label}
+        onDecodeStateChange={onDecodeStateChange}
+        onDimensions={onDimensions}
+        onFailed={setFailedUri}
+        onReady={setReadyUri}
+        readyUri={readyUri}
+        source={detailSource}
+      />
+    </>
+  );
+}
+
+function PreviewImageLayer({
+  label,
+  onDecodeStateChange,
+  onDimensions,
+  preview,
+  visible,
+}: {
+  label: string;
+  onDecodeStateChange: (state: DecodeState) => void;
+  onDimensions: (size: ImageSize) => void;
+  preview: ResolvedImageSource;
+  visible: boolean;
+}): React.JSX.Element | null {
+  if (!visible) {
+    return null;
+  }
+  return (
+    <Image
+      accessibilityLabel={`${label} full screen`}
+      onError={() => {
+        onDecodeStateChange("error");
+      }}
+      onLoad={({ nativeEvent }) => {
+        onDecodeStateChange("ready");
+        publishLoadedDimensions(nativeEvent.source, onDimensions);
+      }}
+      onLoadStart={() => {
+        onDecodeStateChange("loading");
+      }}
+      resizeMethod="resize"
+      resizeMode="contain"
+      source={preview}
+      style={styles.image}
+    />
+  );
+}
+
+function DetailImageLayer({
+  failedUri,
+  label,
+  onDecodeStateChange,
+  onDimensions,
+  onFailed,
+  onReady,
+  readyUri,
+  source,
+}: {
+  failedUri: string | null;
+  label: string;
+  onDecodeStateChange: (state: DecodeState) => void;
+  onDimensions: (size: ImageSize) => void;
+  onFailed: (uri: string) => void;
+  onReady: (uri: string) => void;
+  readyUri: string | null;
+  source: ResolvedImageSource | null;
+}): React.JSX.Element | null {
+  if (source === null || failedUri === source.uri) {
+    return null;
+  }
+  return (
+    <Image
+      accessibilityLabel={`${label} high quality`}
+      onError={() => {
+        onFailed(source.uri);
+      }}
+      onLoad={({ nativeEvent }) => {
+        onReady(source.uri);
+        onDecodeStateChange("ready");
+        publishLoadedDimensions(nativeEvent.source, onDimensions);
+      }}
+      resizeMethod="resize"
+      resizeMode="contain"
+      source={source}
+      style={[styles.image, detailOpacity(readyUri, source.uri)]}
+    />
+  );
+}
+
+function progressiveImageRequest(detail: PrivateImageDetailRequest | null | undefined): {
+  options: Parameters<typeof usePrivateAssetUri>[1];
+  source: PrivateAssetSource | null;
+} {
+  if (detail === null || detail === undefined) {
+    return { options: { variant: "detail" }, source: null };
+  }
+  return {
+    options: {
+      access: detail.getAccess,
+      accessScope: detail.accessScope,
+      revision: detail.revision,
+      variant: "detail",
+    },
+    source: detail.source,
+  };
+}
+
+function publishLoadedDimensions(
+  // React Native Web omits this runtime field although the shared event type marks it as required.
+  loadedSource: ImageSize | undefined,
+  onDimensions: (size: ImageSize) => void,
+): void {
+  if (loadedSource === undefined) {
+    return;
+  }
+  const { height, width } = loadedSource;
+  if (width > 0 && height > 0) {
+    onDimensions({ height, width });
+  }
+}
+
+function detailOpacity(readyUri: string | null, sourceUri: string): { opacity: number } {
+  return { opacity: Number(readyUri === sourceUri) };
+}
+
+const styles = StyleSheet.create({
+  image: {
+    bottom: 0,
+    height: "100%",
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: "100%",
+  },
+});

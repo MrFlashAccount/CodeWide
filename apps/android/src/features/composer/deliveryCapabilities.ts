@@ -11,6 +11,7 @@ export type ComposerDeliveryCapabilities = {
   discardVoice: () => Promise<void>;
   draft: string;
   finishVoice: (sendAfter: boolean, preference?: ComposerSendPreference) => Promise<void>;
+  goalSubmissionActive: boolean;
   onEditQueued:
     | ((commandId: string, text: string, attachments: StoredDraftAttachment[]) => Promise<void>)
     | undefined;
@@ -19,7 +20,7 @@ export type ComposerDeliveryCapabilities = {
   queuedComposerEdit: QueuedComposerEdit | null;
   queuedComposerEditBusy: boolean;
   saveQueuedComposerEdit: () => void;
-  send: (textOverride?: string, preference?: ComposerSendPreference) => void;
+  send: (textOverride?: string, preference?: ComposerSendPreference) => Promise<void>;
   threadLifecycleActive: boolean;
   uploadsBlockSend: boolean;
   voiceError: string | null;

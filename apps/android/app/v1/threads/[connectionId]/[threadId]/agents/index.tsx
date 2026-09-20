@@ -1,99 +1,106 @@
-import { useTransition } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
-import { SubagentListProjection } from "../../../../../../src/data/subagent-projection";
-import { useThreadSummaryView } from "../../../../../../src/data/use-thread-summary-view";
 import { RouteUnavailable } from "../../../../../../src/components/navigation/RouteUnavailable";
 import { recoverUnavailableRoute } from "../../../../../../src/components/navigation/routeRecovery";
-import { RouteSubagentWorkspace } from "../../../../../../src/features/agents/RouteSubagentWorkspace";
-import type { SubagentRouteSelection } from "../../../../../../src/features/agents/subagentRouteSelection";
-import { SUBAGENT_LIST_LIMIT } from "../../../../../../src/features/agents/agentSelection";
+import { SubagentSheet } from "../../../../../../src/features/agents/SubagentSheet";
+import { ConversationRouteFullscreenOverlay } from "../../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
 import { SubagentConversation } from "../../../../../../src/features/conversation/SubagentConversation";
 import { useTurnChangesLoader } from "../../../../../../src/features/changes/turnChanges";
-import { useConstant } from "../../../../../../src/react/useConstant";
 import { workspaceFeatures as features } from "../../../../../../src/features/workspace/createWorkspaceFeatures";
+import { agentRouteSessions } from "../../../../../../src/services/agents/agentRouteSession";
 import {
-  threadIdParam,
-  v1ThreadRouteParams,
+  routeSessionIdParam,
+  threadRouteSessionOwner,
   v1ThreadDestination,
+  v1ThreadRouteParams,
   type V1ThreadRouteParams,
 } from "../../../../../../src/services/threads/threadRouteParams";
+import { useRouteSessionLifetime } from "../../../../../../src/services/useRouteSessionLifetime";
 import { useWorkspaceRouteResources } from "../../../../../../src/services/workspace/workspaceRouteResources";
 
-const MASTER_SUBAGENT_SELECTION = { status: "master" } as const;
 const loadTurnItems = features.conversation.loadTurnItems.bind(features.conversation);
 
 interface V1AgentsRouteContentProps {
-  readonly selection: SubagentRouteSelection;
+  readonly initialThreadId?: string | null;
 }
 
 interface ValidAgentsRouteProps {
+  readonly initialThreadId: string | null;
   readonly params: V1ThreadRouteParams;
-  readonly parentAgentThreadId: string | null;
-  readonly selection: SubagentRouteSelection;
+  readonly sessionId: string;
 }
 
-/** Presents the Router-owned subagent master route for one qualified thread. */
+/** Presents the route-owned fullscreen entry for the original V1 subagent workspace. */
 export default function V1AgentsRoute(): React.JSX.Element {
-  return <V1AgentsRouteContent selection={MASTER_SUBAGENT_SELECTION} />;
+  return <V1AgentsRouteContent />;
 }
 
-export function V1AgentsRouteContent(props: V1AgentsRouteContentProps): React.JSX.Element {
-  const { selection } = props;
+export function V1AgentsRouteContent({
+  initialThreadId = null,
+}: V1AgentsRouteContentProps): React.JSX.Element {
   const router = useRouter();
   const raw = useLocalSearchParams<{
     connectionId?: string | string[];
-    parentAgentThreadId?: string | string[];
+    sessionId?: string | string[];
     threadId?: string | string[];
   }>();
   const params = v1ThreadRouteParams(raw);
-  const parentAgent =
-    raw.parentAgentThreadId === undefined ? null : threadIdParam(raw.parentAgentThreadId);
-  if (params.status === "invalid" || parentAgent?.status === "invalid") {
+  const sessionId = routeSessionIdParam(raw.sessionId);
+  if (params.status === "invalid" || sessionId.status === "invalid") {
+    const back = (): void => {
+      if (params.status === "valid") {
+        recoverUnavailableRoute(router, v1ThreadDestination(params.value));
+        return;
+      }
+      router.dismissTo("/v1");
+    };
     return (
       <RouteUnavailable
-        message="This thread link is invalid."
-        onBack={() => {
-          router.dismissTo("/v1");
-        }}
+        message="This subagent workspace link is invalid or has expired."
+        onBack={back}
         title="Subagents unavailable"
       />
     );
   }
   return (
     <ValidAgentsRoute
+      initialThreadId={initialThreadId}
       params={params.value}
-      parentAgentThreadId={parentAgent?.value.value ?? null}
-      selection={selection}
+      sessionId={sessionId.value.value}
     />
   );
 }
 
-function ValidAgentsRoute(props: ValidAgentsRouteProps): React.JSX.Element {
-  const { params, parentAgentThreadId, selection } = props;
+function ValidAgentsRoute({
+  initialThreadId,
+  params,
+  sessionId,
+}: ValidAgentsRouteProps): React.JSX.Element {
   const router = useRouter();
   const resources = useWorkspaceRouteResources();
   const { loadTurnChanges } = useTurnChangesLoader(loadTurnItems);
-  const projection = useConstant(() => new SubagentListProjection());
-  const [, startSubagentTransition] = useTransition();
-  const connectionId = params.connectionId.value;
-  const threadId = params.threadId.value;
-  const parentThreadId = parentAgentThreadId ?? threadId;
-  const view = useThreadSummaryView(resources.runtime.threadSummaries, {
-    archivedLimit: 0,
-    connectionId: null,
-    recentLimit: 0,
-    selectedConnectionId: null,
-    selectedThreadId: null,
-    subagentConnectionId: connectionId,
-    subagentLimit: SUBAGENT_LIST_LIMIT,
-    viewId: `subagents:${connectionId}:${parentThreadId}`,
-  });
-  const summaries = projection.project(view?.subagents ?? []);
-  const threadDetails = resources.runtime.threadDetails;
+  const owner = threadRouteSessionOwner(params);
+  const session = agentRouteSessions.get(sessionId, owner);
+  useRouteSessionLifetime(
+    session?.id ?? null,
+    (id) => {
+      agentRouteSessions.close(id);
+    },
+    (id) => agentRouteSessions.retain(id, owner),
+  );
   const back = (): void => {
     recoverUnavailableRoute(router, v1ThreadDestination(params));
   };
+  if (session === null) {
+    return (
+      <RouteUnavailable
+        message="Open subagents again from the conversation."
+        onBack={back}
+        title="Subagents unavailable"
+      />
+    );
+  }
+  const threadDetails = resources.runtime.threadDetails;
   if (threadDetails === null) {
     return (
       <RouteUnavailable
@@ -103,46 +110,39 @@ function ValidAgentsRoute(props: ValidAgentsRouteProps): React.JSX.Element {
       />
     );
   }
-  const select = (agentThreadId: string): void => {
-    startSubagentTransition(() => {
-      router.push({
-        params: {
-          agentThreadId,
-          connectionId,
-          ...(parentAgentThreadId === null ? {} : { parentAgentThreadId }),
-          threadId,
-        },
-        pathname: "/v1/threads/[connectionId]/[threadId]/agents/[agentThreadId]",
-      });
-    });
-  };
+  const connectionId = params.connectionId.value;
+  const request = session.request;
   return (
-    <RouteSubagentWorkspace
-      connectionId={connectionId}
-      onBack={back}
-      onClose={back}
-      onSelect={select}
-      parentThread={threadDetails.getThread(connectionId, parentThreadId)}
-      parentThreadId={parentThreadId}
-      renderThread={(viewProps) => (
-        <SubagentConversation
-          details={resources.runtime.threadDetails}
-          fixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-          getTransferAccess={async (forceRefresh) =>
-            features.attachments.transferAccess(connectionId, forceRefresh)
-          }
-          loadTurnChanges={loadTurnChanges}
-          refresh={async (rootThreadId) =>
-            features.agents.refreshSubagents(connectionId, rootThreadId)
-          }
-          server={resources.list.servers.find((server) => server.id === connectionId)}
-          summaries={resources.runtime.threadSummaries}
-          view={viewProps}
+    <ConversationRouteFullscreenOverlay
+      onDismiss={back}
+      render={(closeOverlay) => (
+        <SubagentSheet
+          connectionId={connectionId}
+          initialThreadId={initialThreadId ?? request.initialThreadId}
+          onClose={closeOverlay}
+          parentThread={request.parentThread}
+          parentThreadId={request.parentThreadId}
+          renderThread={(view) => (
+            <SubagentConversation
+              details={threadDetails}
+              fixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
+              getTransferAccess={async (forceRefresh) =>
+                features.attachments.transferAccess(connectionId, forceRefresh)
+              }
+              loadTurnChanges={loadTurnChanges}
+              refresh={async (rootThreadId) =>
+                features.agents.refreshSubagents(connectionId, rootThreadId)
+              }
+              server={resources.list.servers.find((server) => server.id === connectionId)}
+              summaries={resources.runtime.threadSummaries}
+              view={view}
+            />
+          )}
+          summaries={request.summaries}
+          threadDetails={threadDetails}
         />
       )}
-      selection={selection}
-      summaries={summaries}
-      threadDetails={threadDetails}
+      scope={`agents:${session.id}`}
     />
   );
 }

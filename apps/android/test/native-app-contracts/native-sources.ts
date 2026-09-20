@@ -143,6 +143,20 @@ export const preparedMicrophone = readFileSync(
   ),
   "utf8",
 );
+export const preparedMicrophoneEffects = readFileSync(
+  new URL(
+    "../../android/app/src/main/java/dev/codewide/app/remote/PreparedMicrophoneEffects.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+export const communicationAudioModule = readFileSync(
+  new URL(
+    "../../android/app/src/main/java/dev/codewide/app/remote/GlobalVoiceCommunicationAudioModule.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
 export const opusAudioEncoder = readFileSync(
   new URL(
     "../../android/app/src/main/java/dev/codewide/app/remote/OpusAudioEncoder.kt",
@@ -174,6 +188,13 @@ export const nativeCodeView = readFileSync(
 export const nativeCodeHighlighter = readFileSync(
   new URL(
     "../../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeHighlighter.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+export const diagramPreviewModule = readFileSync(
+  new URL(
+    "../../android/app/src/main/java/dev/codewide/app/rendering/DiagramPreviewModule.kt",
     import.meta.url,
   ),
   "utf8",

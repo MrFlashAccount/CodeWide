@@ -97,6 +97,17 @@ pub struct OutboxCommand {
     claim: Option<OutboxClaim>,
 }
 
+impl OutboxCommand {
+    /// Reports whether a completed steer claim needs reconciliation against
+    /// full App Server history rather than the initial-message summary.
+    #[must_use]
+    pub fn has_resolved_steer_claim(&self) -> bool {
+        self.claim
+            .as_ref()
+            .is_some_and(|claim| claim.kind == OutboxClaimKind::Steer && claim.resolved)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboxChange {
     pub command_id: String,
@@ -1502,7 +1513,9 @@ impl IndexStore {
         }
         Ok(heads
             .into_values()
-            .filter(|command| command.next_attempt_at <= now)
+            .filter(|command| {
+                command.next_attempt_at <= now && !outbox_has_in_flight_claim(command)
+            })
             .collect())
     }
 
@@ -1723,7 +1736,8 @@ impl IndexStore {
         Ok(outcome)
     }
 
-    /// Changes a command delivery state atomically.
+    /// Changes a queue-owned command delivery state atomically. A terminal
+    /// command or a command with an in-flight claim wins over a stale updater.
     ///
     /// # Errors
     ///
@@ -1742,6 +1756,9 @@ impl IndexStore {
                 .map(|value| value.value().to_vec())
                 .ok_or_else(|| StoreError::CorruptedIndex("outbox command not found".into()))?;
             let mut command: OutboxCommand = serde_json::from_slice(&encoded)?;
+            if outbox_rejects_stale_queue_update(&command) {
+                return Ok(command);
+            }
             command.state = state;
             command.updated_at = unix_time_ms();
             command.last_error = last_error.map(bounded_outbox_error);
@@ -1760,8 +1777,10 @@ impl IndexStore {
         Ok(command)
     }
 
-    /// Defers a transiently failed command without releasing the per-thread
-    /// FIFO head. The attempt counter and deadline are durable across restarts.
+    /// Defers a transiently failed queue-owned command without releasing the
+    /// per-thread FIFO head. A terminal command or a command with an in-flight
+    /// claim wins over a stale updater. The attempt counter and deadline are
+    /// durable across restarts.
     ///
     /// # Errors
     ///
@@ -1781,6 +1800,9 @@ impl IndexStore {
                 .map(|value| value.value().to_vec())
                 .ok_or_else(|| StoreError::CorruptedIndex("outbox command not found".into()))?;
             let mut command: OutboxCommand = serde_json::from_slice(&encoded)?;
+            if outbox_rejects_stale_queue_update(&command) {
+                return Ok(command);
+            }
             let now = unix_time_ms();
             command.state = state;
             command.attempts = command.attempts.saturating_add(1);
@@ -1801,8 +1823,10 @@ impl IndexStore {
         Ok(command)
     }
 
-    /// Delays a command for a known non-failure condition without consuming a
-    /// retry attempt. The returned flag reports a client-visible state change.
+    /// Delays a queue-owned command for a known non-failure condition without
+    /// consuming a retry attempt. A terminal command or a command with an
+    /// in-flight claim wins over a stale updater. The returned flag reports a
+    /// client-visible state change.
     ///
     /// # Errors
     ///
@@ -1822,6 +1846,9 @@ impl IndexStore {
                 .map(|value| value.value().to_vec())
                 .ok_or_else(|| StoreError::CorruptedIndex("outbox command not found".into()))?;
             let mut command: OutboxCommand = serde_json::from_slice(&encoded)?;
+            if outbox_rejects_stale_queue_update(&command) {
+                return Ok((command, false));
+            }
             let changed = command.state != state || command.last_error.as_deref() != last_error;
             let now = unix_time_ms();
             command.state = state;
@@ -2259,6 +2286,15 @@ fn validate_outbox_id(value: &str, label: &str) -> Result<(), StoreError> {
 
 fn bounded_outbox_error(error: &str) -> String {
     error.chars().take(500).collect()
+}
+
+fn outbox_has_in_flight_claim(command: &OutboxCommand) -> bool {
+    command.claim.as_ref().is_some_and(|claim| !claim.resolved)
+}
+
+fn outbox_rejects_stale_queue_update(command: &OutboxCommand) -> bool {
+    matches!(command.state, OutboxState::Failed | OutboxState::Delivered)
+        || outbox_has_in_flight_claim(command)
 }
 
 fn outbox_owner_bytes(

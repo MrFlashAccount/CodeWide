@@ -11,9 +11,9 @@ import { ThreadHistoryEmptyState } from "./ConversationHistoryStatus";
 
 export function ConversationEmptyState({
   cwd,
-  emptyRemoteThread,
   historyActivityModel,
   historyActivityResourceId,
+  newChat,
   onChangeWorkspaceMode,
   openProjectPicker,
   threadSearchActive,
@@ -21,9 +21,9 @@ export function ConversationEmptyState({
   workspaceSupport,
 }: {
   cwd: string;
-  emptyRemoteThread: boolean;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
+  newChat: boolean;
   onChangeWorkspaceMode: ((mode: NewChatWorkspaceMode) => void) | undefined;
   openProjectPicker: () => void;
   threadSearchActive: boolean;
@@ -34,7 +34,7 @@ export function ConversationEmptyState({
   const projectDescription = project === "" ? "server default" : project;
   return (
     <View style={styles.emptyConversation}>
-      {emptyRemoteThread && !threadSearchActive ? (
+      {newChat && !threadSearchActive ? (
         <View style={styles.newChatEmptyState} testID="new-chat-empty-state">
           <Text style={styles.newChatPrompt}>What would you like to work on?</Text>
           <Pressable
@@ -108,9 +108,15 @@ export function ConversationEmptyState({
 
 export function ConversationSelectionPlaceholder() {
   return (
-    <View style={styles.emptyConversation}>
+    <View
+      style={[styles.emptyConversation, styles.selectionPlaceholder]}
+      testID="conversation-selection-placeholder"
+    >
       <Ionicons color={colors.textDim} name="chatbubbles-outline" size={iconSize.illustration} />
-      <Text style={styles.emptyText}>Select a thread</Text>
+      <Text style={styles.emptyText}>Select a chat</Text>
+      <Text style={styles.emptyDescription}>
+        Choose a conversation from the list to open it here.
+      </Text>
     </View>
   );
 }
@@ -122,6 +128,11 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: spacing.sm,
     justifyContent: "center",
+  },
+  emptyDescription: {
+    color: colors.textDim,
+    textAlign: "center",
+    ...typeScale.body,
   },
   emptyText: {
     color: colors.textMuted,
@@ -169,4 +180,5 @@ const styles = StyleSheet.create({
     ...typeScale.body,
   },
   pressed: { opacity: 0.68 },
+  selectionPlaceholder: { padding: spacing.lg },
 });

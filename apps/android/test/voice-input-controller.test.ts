@@ -10,11 +10,13 @@ const capture = vi.hoisted(() => ({
 vi.mock("../src/native/native-transport", () => ({
   cancelVoiceRecognition: vi.fn(),
   startVoiceRecognition: vi.fn(),
-  startPcmCapture: vi.fn(async (onChunk: (chunk: CapturedAudioChunk) => void) => {
+  startPcmCapture: vi.fn(async (_lease: unknown, onChunk: (chunk: CapturedAudioChunk) => void) => {
     capture.onChunk = onChunk;
     return {
       stop: capture.stop,
       info: {
+        acousticEchoCancelerEnabled: true,
+        acousticEchoCancelerSupported: true,
         sampleRate: 24_000,
         source: "voice_communication" as const,
         noiseSuppressor: true,
@@ -31,7 +33,11 @@ import {
   type VoiceTranscriptionEvent,
   type VoiceTranscriptionSession,
 } from "../src/data/voice-input-controller";
-import type { VoiceInputRow, WorkspaceResourceDatabase } from "../src/data/workspace-resource-database";
+import { createV1MicrophoneLeaseRegistry } from "../src/data/v1MicrophoneLease";
+import type {
+  VoiceInputRow,
+  WorkspaceResourceDatabase,
+} from "../src/data/workspace-resource-database";
 
 function resources(): { database: WorkspaceResourceDatabase; rows: Map<string, VoiceInputRow> } {
   const rows = new Map<string, VoiceInputRow>();
@@ -65,7 +71,13 @@ function remoteSession(
 }
 
 function emitAudio(): void {
-  capture.onChunk?.({ data: "pcm", sampleRate: 24_000, numChannels: 1, samplesPerChannel: 6_000, level: 0.4 });
+  capture.onChunk?.({
+    data: "pcm",
+    sampleRate: 24_000,
+    numChannels: 1,
+    samplesPerChannel: 6_000,
+    level: 0.4,
+  });
 }
 
 describe("VoiceInputController", () => {
@@ -75,17 +87,170 @@ describe("VoiceInputController", () => {
     capture.stop.mockImplementation(async () => undefined);
   });
 
+  it("waits for Global Voice to yield capture, writes to the requesting input, then resumes it", async () => {
+    const { database, rows } = resources();
+    const leases = createV1MicrophoneLeaseRegistry(() => "microphone-token");
+    const paused = Promise.withResolvers<void>();
+    const resumed = Promise.withResolvers<void>();
+    const assistant = leases.acquireGlobalSupervisor("activation", {
+      pauseForDictation: vi.fn(() => paused.promise),
+      resumeAfterDictation: vi.fn(() => resumed.promise),
+    });
+    if (assistant.status !== "acquired") throw new Error("Expected assistant lease");
+    const controller = new VoiceInputController(database, leases);
+    const updateDraft = vi.fn();
+    controller.bind({
+      scope: "review-comment",
+      source: () => "Prefix ",
+      selection: () => ({ end: 7, start: 7 }),
+      thread: null,
+      updateDraft,
+      send: vi.fn(),
+      startRemote: async (listener) => remoteSession(listener, ["dictated text"]),
+    });
+
+    const starting = controller.toggle("review-comment");
+    await vi.waitFor(() => expect(leases.state().phase).toBe("handoffToDictation"));
+    expect(startPcmCapture).not.toHaveBeenCalled();
+    paused.resolve();
+    await starting;
+    expect(rows.get("review-comment")?.phase).toBe("recording");
+    expect(leases.state().phase).toBe("dictationOwned");
+
+    emitAudio();
+    const finishing = controller.finish("review-comment", false);
+    await vi.waitFor(() => expect(leases.state().phase).toBe("handoffBack"));
+    await finishing;
+
+    expect(updateDraft).toHaveBeenCalledWith("Prefix dictated text");
+    expect(leases.state().phase).toBe("handoffBack");
+    resumed.resolve();
+    await vi.waitFor(() => expect(leases.state().phase).toBe("assistantOwned"));
+    expect(leases.state()).toEqual({
+      assistant: { activationId: "activation", kind: "globalSupervisor" },
+      phase: "assistantOwned",
+    });
+    await assistant.lease.release();
+  });
+
+  it("sends the final transcript without waiting for the assistant transport to reconnect", async () => {
+    const { database, rows } = resources();
+    const leases = createV1MicrophoneLeaseRegistry(() => "microphone-token");
+    const resumed = Promise.withResolvers<void>();
+    const assistant = leases.acquireGlobalSupervisor("activation", {
+      pauseForDictation: vi.fn(async () => undefined),
+      resumeAfterDictation: vi.fn(() => resumed.promise),
+    });
+    if (assistant.status !== "acquired") throw new Error("Expected assistant lease");
+    const controller = new VoiceInputController(database, leases);
+    const send = vi.fn();
+    controller.bind({
+      scope: "composer",
+      source: () => "",
+      selection: () => ({ end: 0, start: 0 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send,
+      startRemote: async (listener) => remoteSession(listener, ["send now"]),
+    });
+    await controller.toggle("composer");
+    emitAudio();
+
+    await controller.finish("composer", true);
+
+    expect(send).toHaveBeenCalledExactlyOnceWith("send now");
+    expect(rows.get("composer")?.phase).toBe("idle");
+    expect(leases.state().phase).toBe("handoffBack");
+    resumed.resolve();
+    await vi.waitFor(() => expect(leases.state().phase).toBe("assistantOwned"));
+    await assistant.lease.release();
+  });
+
+  it("clears a transient microphone error after three seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const { database, rows } = resources();
+      const leases = createV1MicrophoneLeaseRegistry(() => "microphone-token");
+      const occupied = await leases.acquireDictation("other-input");
+      if (occupied.status !== "acquired") throw new Error("Expected occupied microphone");
+      const controller = new VoiceInputController(database, leases);
+      controller.bind({
+        scope: "composer",
+        source: () => "",
+        selection: () => ({ end: 0, start: 0 }),
+        thread: null,
+        updateDraft: vi.fn(),
+        send: vi.fn(),
+        startRemote: vi.fn(),
+      });
+
+      await controller.toggle("composer");
+      expect(rows.get("composer")?.error).toBe("Microphone is already in use");
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(rows.get("composer")?.error).toBe("Microphone is already in use");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(rows.get("composer")?.error).toBeNull();
+      await occupied.lease.release();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns capture to Global Voice when dictation permission or native start fails", async () => {
+    const { database, rows } = resources();
+    const leases = createV1MicrophoneLeaseRegistry(() => "microphone-token");
+    const resumeAfterDictation = vi.fn(async () => undefined);
+    const assistant = leases.acquireGlobalSupervisor("activation", {
+      pauseForDictation: vi.fn(async () => undefined),
+      resumeAfterDictation,
+    });
+    if (assistant.status !== "acquired") throw new Error("Expected assistant lease");
+    vi.mocked(startPcmCapture).mockRejectedValueOnce(new Error("microphone permission denied"));
+    const controller = new VoiceInputController(database, leases);
+    const startRemote = vi.fn();
+    controller.bind({
+      scope: "composer",
+      source: () => "",
+      selection: () => ({ end: 0, start: 0 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send: vi.fn(),
+      startRemote,
+    });
+
+    await controller.toggle("composer");
+
+    expect(resumeAfterDictation).toHaveBeenCalledOnce();
+    expect(startRemote).not.toHaveBeenCalled();
+    expect(rows.get("composer")).toMatchObject({
+      error: "OpenAI transcription: microphone permission denied",
+      phase: "idle",
+    });
+    expect(leases.state()).toEqual({
+      assistant: { activationId: "activation", kind: "globalSupervisor" },
+      phase: "assistantOwned",
+    });
+    await assistant.lease.release();
+  });
+
   it("ends the recording presentation before native stop finishes, without truncating audio", async () => {
     const { database, rows } = resources();
     const controller = new VoiceInputController(database);
     const stopped = Promise.withResolvers<void>();
     capture.stop.mockImplementation(() => stopped.promise);
     const session: VoiceTranscriptionSession = {
-      appendAudio: vi.fn(), cancel: vi.fn(async () => undefined), finish: vi.fn(async () => undefined),
+      appendAudio: vi.fn(),
+      cancel: vi.fn(async () => undefined),
+      finish: vi.fn(async () => undefined),
     };
     controller.bind({
-      scope: "thread", source: () => "", selection: () => ({ start: 0, end: 0 }),
-      thread: null, updateDraft: vi.fn(), send: vi.fn(), startRemote: async () => session,
+      scope: "thread",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send: vi.fn(),
+      startRemote: async () => session,
     });
     await controller.toggle("thread");
     emitAudio();
@@ -100,6 +265,53 @@ describe("VoiceInputController", () => {
     expect(rows.get("thread")?.phase).toBe("idle");
   });
 
+  it("pauses biometric-lock dictation into the draft and resumes only after unlock", async () => {
+    const { database, rows } = resources();
+    const controller = new VoiceInputController(database);
+    let draft = "Existing ";
+    const send = vi.fn();
+    controller.bind({
+      scope: "thread",
+      source: () => draft,
+      selection: () => ({ end: draft.length, start: draft.length }),
+      thread: null,
+      updateDraft: (next) => {
+        draft = next;
+      },
+      send,
+      startRemote: async (listener) => remoteSession(listener, ["protected transcript"]),
+    });
+    await controller.toggle("thread");
+    emitAudio();
+    controller.unbind("thread");
+
+    await controller.pauseForAppLock();
+
+    expect(capture.stop).toHaveBeenCalledOnce();
+    expect(draft).toBe("Existing protected transcript");
+    expect(send).not.toHaveBeenCalled();
+    expect(rows.get("thread")?.phase).toBe("idle");
+    const captureStartsBeforeUnlock = vi.mocked(startPcmCapture).mock.calls.length;
+
+    controller.bind({
+      scope: "thread",
+      source: () => draft,
+      selection: () => ({ end: draft.length, start: draft.length }),
+      thread: null,
+      updateDraft: (next) => {
+        draft = next;
+      },
+      send,
+      startRemote: async (listener) => remoteSession(listener, ["continued transcript"]),
+    });
+    expect(startPcmCapture).toHaveBeenCalledTimes(captureStartsBeforeUnlock);
+    await controller.resumeAfterAppUnlock();
+
+    expect(startPcmCapture).toHaveBeenCalledTimes(captureStartsBeforeUnlock + 1);
+    expect(rows.get("thread")?.phase).toBe("recording");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("keeps recording and delivery owned by the original input after another input binds", async () => {
     const { database, rows } = resources();
     const controller = new VoiceInputController(database);
@@ -109,16 +321,25 @@ describe("VoiceInputController", () => {
     const sendOther = vi.fn();
     const startOther = vi.fn();
     controller.bind({
-      scope: "review-line-a", source: () => "", selection: () => ({ start: 0, end: 0 }),
-      thread: null, updateDraft: updateOwner, send: sendOwner,
+      scope: "review-line-a",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: updateOwner,
+      send: sendOwner,
       startRemote: async (listener) => remoteSession(listener, ["original input transcript"]),
     });
     await controller.toggle("review-line-a");
     emitAudio();
     controller.unbind("review-line-a");
     controller.bind({
-      scope: "composer-b", source: () => "", selection: () => ({ start: 0, end: 0 }),
-      thread: null, updateDraft: updateOther, send: sendOther, startRemote: startOther,
+      scope: "composer-b",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: updateOther,
+      send: sendOther,
+      startRemote: startOther,
     });
     await controller.toggle("composer-b");
     await controller.finish("composer-b", true, sendOther);
@@ -128,7 +349,7 @@ describe("VoiceInputController", () => {
     expect(capture.stop).not.toHaveBeenCalled();
     expect(startOther).not.toHaveBeenCalled();
     await controller.finish("review-line-a", true);
-    expect(updateOwner).toHaveBeenLastCalledWith("original input transcript");
+    expect(updateOwner).not.toHaveBeenCalled();
     expect(sendOwner).toHaveBeenCalledExactlyOnceWith("original input transcript");
     expect(updateOther).not.toHaveBeenCalled();
     expect(sendOther).not.toHaveBeenCalled();
@@ -143,10 +364,18 @@ describe("VoiceInputController", () => {
       return { stop: capture.stop, info: null };
     });
     const startRemote = vi.fn();
-    controller.bind({ scope: "thread", source: () => "draft", selection: () => ({ start: 5, end: 5 }),
-      thread: null, updateDraft: vi.fn(), send: vi.fn(), startRemote });
+    controller.bind({
+      scope: "thread",
+      source: () => "draft",
+      selection: () => ({ start: 5, end: 5 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send: vi.fn(),
+      startRemote,
+    });
     const starting = controller.toggle("thread");
     expect(rows.get("thread")?.phase).toBe("starting");
+    await vi.waitFor(() => expect(startPcmCapture).toHaveBeenCalled());
     await controller.finish("thread", false);
     ready.resolve();
     await starting;
@@ -159,16 +388,29 @@ describe("VoiceInputController", () => {
     const { database, rows } = resources();
     const controller = new VoiceInputController(database);
     const sendOwner = vi.fn();
-    controller.bind({ scope: "thread", source: () => "", selection: () => ({ start: 0, end: 0 }),
-      thread: null, updateDraft: vi.fn(), send: sendOwner,
-      startRemote: async (listener) => remoteSession(listener, ["retried transcript"], 1) });
+    controller.bind({
+      scope: "thread",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send: sendOwner,
+      startRemote: async (listener) => remoteSession(listener, ["retried transcript"], 1),
+    });
     await controller.toggle("thread");
     emitAudio();
     await controller.finish("thread", true);
     expect(rows.get("thread")?.retryAvailable).toBe(true);
     const startOther = vi.fn();
-    controller.bind({ scope: "other", source: () => "", selection: () => ({ start: 0, end: 0 }),
-      thread: null, updateDraft: vi.fn(), send: vi.fn(), startRemote: startOther });
+    controller.bind({
+      scope: "other",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send: vi.fn(),
+      startRemote: startOther,
+    });
     await controller.toggle("other");
     await controller.discard("other");
     await controller.retry("other");
@@ -179,115 +421,165 @@ describe("VoiceInputController", () => {
     expect(rows.get("thread")?.retryAvailable).toBe(false);
   });
 
-  it.each([false, true])("rejects a late transcript after discarding a finishing recording (send=%s)", async (sendAfter) => {
-    const { database, rows } = resources();
-    const controller = new VoiceInputController(database);
-    const finished = Promise.withResolvers<void>();
-    const cancelled = Promise.withResolvers<void>();
-    const listeners: Array<(event: VoiceTranscriptionEvent) => void> = [];
-    let draft = "original";
-    const send = vi.fn();
-    const session: VoiceTranscriptionSession = {
-      appendAudio: vi.fn(),
-      finish: vi.fn(() => finished.promise),
-      cancel: vi.fn(() => cancelled.promise),
-    };
-    controller.bind({
-      scope: "thread", source: () => draft,
-      selection: () => ({ start: draft.length, end: draft.length }),
-      thread: null, updateDraft: (text) => { draft = text; }, send,
-      startRemote: async (listener) => { listeners.push(listener); return session; },
-    });
-    await controller.toggle("thread");
-    emitAudio();
-    const finishing = controller.finish("thread", sendAfter);
-    await vi.waitFor(() => expect(session.finish).toHaveBeenCalledOnce());
-    const discarding = controller.discard("thread");
-    expect(rows.get("thread")?.phase).toBe("idle");
-    expect(session.cancel).toHaveBeenCalledOnce();
-    // The server can finish while its cancellation acknowledgement is still pending.
-    listeners[0]?.({ type: "delta", text: "late partial" });
-    listeners[0]?.({ type: "error", message: "late error" });
-    listeners[0]?.({ type: "closed", reason: "late close" });
-    listeners[0]?.({ type: "done", text: "late transcript" });
-    finished.resolve();
-    cancelled.resolve();
-    await Promise.all([finishing, discarding]);
-    expect(draft).toBe("original");
-    expect(send).not.toHaveBeenCalled();
-    expect(rows.get("thread")).toMatchObject({ phase: "idle", error: null, retryAvailable: false });
-  });
+  it.each([false, true])(
+    "rejects a late transcript after discarding a finishing recording (send=%s)",
+    async (sendAfter) => {
+      const { database, rows } = resources();
+      const controller = new VoiceInputController(database);
+      const finished = Promise.withResolvers<void>();
+      const cancelled = Promise.withResolvers<void>();
+      const listeners: Array<(event: VoiceTranscriptionEvent) => void> = [];
+      let draft = "original";
+      const send = vi.fn();
+      const session: VoiceTranscriptionSession = {
+        appendAudio: vi.fn(),
+        finish: vi.fn(() => finished.promise),
+        cancel: vi.fn(() => cancelled.promise),
+      };
+      controller.bind({
+        scope: "thread",
+        source: () => draft,
+        selection: () => ({ start: draft.length, end: draft.length }),
+        thread: null,
+        updateDraft: (text) => {
+          draft = text;
+        },
+        send,
+        startRemote: async (listener) => {
+          listeners.push(listener);
+          return session;
+        },
+      });
+      await controller.toggle("thread");
+      emitAudio();
+      const finishing = controller.finish("thread", sendAfter);
+      await vi.waitFor(() => expect(session.finish).toHaveBeenCalledOnce());
+      const discarding = controller.discard("thread");
+      expect(rows.get("thread")?.phase).toBe("idle");
+      expect(session.cancel).toHaveBeenCalledOnce();
+      // The server can finish while its cancellation acknowledgement is still pending.
+      listeners[0]?.({ type: "delta", text: "late partial" });
+      listeners[0]?.({ type: "error", message: "late error" });
+      listeners[0]?.({ type: "closed", reason: "late close" });
+      listeners[0]?.({ type: "done", text: "late transcript" });
+      finished.resolve();
+      cancelled.resolve();
+      await Promise.all([finishing, discarding]);
+      expect(draft).toBe("original");
+      expect(send).not.toHaveBeenCalled();
+      expect(rows.get("thread")).toMatchObject({
+        phase: "idle",
+        error: null,
+        retryAvailable: false,
+      });
+    },
+  );
 
-  it.each([false, true])("keeps a new recording intact when the discarded finish settles (reject=%s)", async (reject) => {
-    const { database, rows } = resources();
-    const controller = new VoiceInputController(database);
-    const oldFinish = Promise.withResolvers<void>();
-    const oldCancel = Promise.withResolvers<void>();
-    const listeners: Array<(event: VoiceTranscriptionEvent) => void> = [];
-    let draft = "original";
-    const send = vi.fn();
-    const oldSession: VoiceTranscriptionSession = {
-      appendAudio: vi.fn(), finish: vi.fn(() => oldFinish.promise), cancel: vi.fn(() => oldCancel.promise),
-    };
-    const newSession = remoteSession((event) => listeners[1]?.(event), ["new transcript"]);
-    controller.bind({
-      scope: "thread", source: () => draft,
-      selection: () => ({ start: draft.length, end: draft.length }),
-      thread: null, updateDraft: (text) => { draft = text; }, send,
-      startRemote: async (listener) => { listeners.push(listener); return listeners.length === 1 ? oldSession : newSession; },
-    });
-    await controller.toggle("thread");
-    emitAudio();
-    const finishing = controller.finish("thread", true);
-    await vi.waitFor(() => expect(oldSession.finish).toHaveBeenCalledOnce());
-    const discarding = controller.discard("thread");
-    await controller.toggle("thread");
-    emitAudio();
-    expect(listeners).toHaveLength(2);
-    listeners[0]?.({ type: "done", text: "stale" });
-    if (reject) oldFinish.reject(new Error("old failure"));
-    else oldFinish.resolve();
-    oldCancel.resolve();
-    await Promise.all([finishing, discarding]);
-    expect(rows.get("thread")).toMatchObject({ phase: "recording", error: null, retryAvailable: false });
-    expect(draft).toBe("original");
-    await controller.finish("thread", true);
-    expect(newSession.finish).toHaveBeenCalledOnce();
-    expect(draft).toBe("original new transcript");
-    expect(send).toHaveBeenCalledExactlyOnceWith("original new transcript");
-  });
+  it.each([false, true])(
+    "keeps a new recording intact when the discarded finish settles (reject=%s)",
+    async (reject) => {
+      const { database, rows } = resources();
+      const controller = new VoiceInputController(database);
+      const oldFinish = Promise.withResolvers<void>();
+      const oldCancel = Promise.withResolvers<void>();
+      const listeners: Array<(event: VoiceTranscriptionEvent) => void> = [];
+      let draft = "original";
+      const send = vi.fn();
+      const oldSession: VoiceTranscriptionSession = {
+        appendAudio: vi.fn(),
+        finish: vi.fn(() => oldFinish.promise),
+        cancel: vi.fn(() => oldCancel.promise),
+      };
+      const newSession = remoteSession((event) => listeners[1]?.(event), ["new transcript"]);
+      controller.bind({
+        scope: "thread",
+        source: () => draft,
+        selection: () => ({ start: draft.length, end: draft.length }),
+        thread: null,
+        updateDraft: (text) => {
+          draft = text;
+        },
+        send,
+        startRemote: async (listener) => {
+          listeners.push(listener);
+          return listeners.length === 1 ? oldSession : newSession;
+        },
+      });
+      await controller.toggle("thread");
+      emitAudio();
+      const finishing = controller.finish("thread", true);
+      await vi.waitFor(() => expect(oldSession.finish).toHaveBeenCalledOnce());
+      const discarding = controller.discard("thread");
+      await controller.toggle("thread");
+      emitAudio();
+      expect(listeners).toHaveLength(2);
+      listeners[0]?.({ type: "done", text: "stale" });
+      if (reject) oldFinish.reject(new Error("old failure"));
+      else oldFinish.resolve();
+      oldCancel.resolve();
+      await Promise.all([finishing, discarding]);
+      expect(rows.get("thread")).toMatchObject({
+        phase: "recording",
+        error: null,
+        retryAvailable: false,
+      });
+      expect(draft).toBe("original");
+      await controller.finish("thread", true);
+      expect(newSession.finish).toHaveBeenCalledOnce();
+      expect(draft).toBe("original");
+      expect(send).toHaveBeenCalledExactlyOnceWith("original new transcript");
+    },
+  );
 
-  it.each([false, true])("does not restore a discarded retry or send its transcript (reject=%s)", async (reject) => {
-    const { database, rows } = resources();
-    const controller = new VoiceInputController(database);
-    const retried = Promise.withResolvers<void>();
-    const listeners: Array<(event: VoiceTranscriptionEvent) => void> = [];
-    let draft = "original";
-    const send = vi.fn();
-    const session: VoiceTranscriptionSession = {
-      appendAudio: vi.fn(), cancel: vi.fn(async () => undefined),
-      finish: vi.fn(() => retried.promise).mockRejectedValueOnce(new RetryableVoiceTranscriptionError("Try again", 1)),
-    };
-    controller.bind({
-      scope: "thread", source: () => draft,
-      selection: () => ({ start: draft.length, end: draft.length }),
-      thread: null, updateDraft: (text) => { draft = text; }, send,
-      startRemote: async (listener) => { listeners.push(listener); return session; },
-    });
-    await controller.toggle("thread");
-    emitAudio();
-    await controller.finish("thread", true);
-    const retrying = controller.retry("thread");
-    await vi.waitFor(() => expect(session.finish).toHaveBeenCalledTimes(2));
-    await controller.discard("thread");
-    listeners[0]?.({ type: "done", text: "stale retry" });
-    if (reject) retried.reject(new Error("late failure"));
-    else retried.resolve();
-    await retrying;
-    expect(draft).toBe("original");
-    expect(send).not.toHaveBeenCalled();
-    expect(rows.get("thread")).toMatchObject({ phase: "idle", error: null, retryAvailable: false });
-  });
+  it.each([false, true])(
+    "does not restore a discarded retry or send its transcript (reject=%s)",
+    async (reject) => {
+      const { database, rows } = resources();
+      const controller = new VoiceInputController(database);
+      const retried = Promise.withResolvers<void>();
+      const listeners: Array<(event: VoiceTranscriptionEvent) => void> = [];
+      let draft = "original";
+      const send = vi.fn();
+      const session: VoiceTranscriptionSession = {
+        appendAudio: vi.fn(),
+        cancel: vi.fn(async () => undefined),
+        finish: vi
+          .fn(() => retried.promise)
+          .mockRejectedValueOnce(new RetryableVoiceTranscriptionError("Try again", 1)),
+      };
+      controller.bind({
+        scope: "thread",
+        source: () => draft,
+        selection: () => ({ start: draft.length, end: draft.length }),
+        thread: null,
+        updateDraft: (text) => {
+          draft = text;
+        },
+        send,
+        startRemote: async (listener) => {
+          listeners.push(listener);
+          return session;
+        },
+      });
+      await controller.toggle("thread");
+      emitAudio();
+      await controller.finish("thread", true);
+      const retrying = controller.retry("thread");
+      await vi.waitFor(() => expect(session.finish).toHaveBeenCalledTimes(2));
+      await controller.discard("thread");
+      listeners[0]?.({ type: "done", text: "stale retry" });
+      if (reject) retried.reject(new Error("late failure"));
+      else retried.resolve();
+      await retrying;
+      expect(draft).toBe("original");
+      expect(send).not.toHaveBeenCalled();
+      expect(rows.get("thread")).toMatchObject({
+        phase: "idle",
+        error: null,
+        retryAvailable: false,
+      });
+    },
+  );
 
   it("keeps frame-rate microphone levels out of the reactive database", async () => {
     const { database } = resources();
@@ -318,7 +610,7 @@ describe("VoiceInputController", () => {
     expect(controller.level("thread")).toBe(0);
   });
 
-  it("sends the final transcript rather than the draft captured when recording started", async () => {
+  it("sends the final transcript without publishing it through the editor first", async () => {
     const { database } = resources();
     const controller = new VoiceInputController(database);
     let draft = "Existing ";
@@ -328,7 +620,9 @@ describe("VoiceInputController", () => {
       source: () => draft,
       selection: () => ({ start: draft.length, end: draft.length }),
       thread: null,
-      updateDraft: (next) => { draft = next; },
+      updateDraft: (next) => {
+        draft = next;
+      },
       send: (text) => sent.push(text),
       startRemote: async (listener) => remoteSession(listener, ["second transcript"]),
     });
@@ -337,8 +631,8 @@ describe("VoiceInputController", () => {
     emitAudio();
     await controller.finish("thread", true);
 
-    expect(draft).toContain("second transcript");
-    expect(sent).toEqual([draft]);
+    expect(draft).toBe("Existing ");
+    expect(sent).toEqual(["Existing second transcript"]);
   });
 
   it("waits for native Opus tail packets before finishing the remote session", async () => {
@@ -371,10 +665,12 @@ describe("VoiceInputController", () => {
     await controller.toggle("thread");
     await controller.finish("thread", false);
 
-    expect(session?.appendAudio).toHaveBeenCalledWith(expect.objectContaining({
-      encoding: "opus",
-      data: "framed-opus-tail",
-    }));
+    expect(session?.appendAudio).toHaveBeenCalledWith(
+      expect.objectContaining({
+        encoding: "opus",
+        data: "framed-opus-tail",
+      }),
+    );
     expect(session?.finish).toHaveBeenCalledOnce();
   });
 
@@ -389,7 +685,9 @@ describe("VoiceInputController", () => {
       source: () => draft,
       selection: () => ({ start: draft.length, end: draft.length }),
       thread: null,
-      updateDraft: (next) => { draft = next; },
+      updateDraft: (next) => {
+        draft = next;
+      },
       send: (text) => defaultSent.push(text),
       startRemote: async (listener) => remoteSession(listener, ["voice command"]),
     });
@@ -398,9 +696,9 @@ describe("VoiceInputController", () => {
     emitAudio();
     await controller.finish("thread", true, (text) => steered.push(text));
 
-    expect(draft).toContain("voice command");
+    expect(draft).toBe("");
     expect(defaultSent).toEqual([]);
-    expect(steered).toEqual([draft]);
+    expect(steered).toEqual(["voice command"]);
   });
 
   it("keeps retryable audio and retries locally without recording again", async () => {
@@ -413,7 +711,9 @@ describe("VoiceInputController", () => {
       source: () => draft,
       selection: () => ({ start: draft.length, end: draft.length }),
       thread: null,
-      updateDraft: (next) => { draft = next; },
+      updateDraft: (next) => {
+        draft = next;
+      },
       send: (text) => sent.push(text),
       startRemote: async (listener) => remoteSession(listener, ["recovered transcript"], 1),
     });
@@ -421,11 +721,15 @@ describe("VoiceInputController", () => {
     await controller.toggle("thread");
     emitAudio();
     await controller.finish("thread", true);
-    expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: true, error: "Rate limited" });
+    expect(rows.get("thread")).toMatchObject({
+      phase: "idle",
+      retryAvailable: true,
+      error: "Rate limited",
+    });
 
     await controller.retry("thread");
-    expect(draft).toContain("recovered transcript");
-    expect(sent).toEqual([draft]);
+    expect(draft).toBe("");
+    expect(sent).toEqual(["recovered transcript"]);
     expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: false, error: null });
   });
 
@@ -440,7 +744,9 @@ describe("VoiceInputController", () => {
       source: () => draft,
       selection: () => ({ start: draft.length, end: draft.length }),
       thread: null,
-      updateDraft: (next) => { draft = next; },
+      updateDraft: (next) => {
+        draft = next;
+      },
       send: (text) => defaultSent.push(text),
       startRemote: async (listener) => remoteSession(listener, ["recovered queue transcript"], 1),
     });
@@ -452,7 +758,8 @@ describe("VoiceInputController", () => {
 
     await controller.retry("thread");
     expect(defaultSent).toEqual([]);
-    expect(queued).toEqual([draft]);
+    expect(draft).toBe("");
+    expect(queued).toEqual(["recovered queue transcript"]);
   });
 
   it("retries session startup three times and keeps captured audio for a manual retry", async () => {
@@ -462,15 +769,20 @@ describe("VoiceInputController", () => {
       const controller = new VoiceInputController(database);
       let draft = "";
       let starts = 0;
-      const session = remoteSession((event) => {
-        if (event.type === "done") draft = event.text;
-      }, ["recovered startup transcript"]);
+      const session = remoteSession(
+        (event) => {
+          if (event.type === "done") draft = event.text;
+        },
+        ["recovered startup transcript"],
+      );
       controller.bind({
         scope: "thread",
         source: () => draft,
         selection: () => ({ start: draft.length, end: draft.length }),
         thread: null,
-        updateDraft: (next) => { draft = next; },
+        updateDraft: (next) => {
+          draft = next;
+        },
         send: () => undefined,
         startRemote: async (listener) => {
           starts += 1;
@@ -495,7 +807,11 @@ describe("VoiceInputController", () => {
       await controller.retry("thread");
       expect(starts).toBe(5);
       expect(draft).toContain("recovered startup transcript");
-      expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: false, error: null });
+      expect(rows.get("thread")).toMatchObject({
+        phase: "idle",
+        retryAvailable: false,
+        error: null,
+      });
       expect(session.finish).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -521,7 +837,9 @@ describe("VoiceInputController", () => {
       source: () => draft,
       selection: () => ({ start: draft.length, end: draft.length }),
       thread: null,
-      updateDraft: (next) => { draft = next; },
+      updateDraft: (next) => {
+        draft = next;
+      },
       send: () => undefined,
       startRemote: async () => session,
     });
@@ -529,7 +847,11 @@ describe("VoiceInputController", () => {
     await controller.toggle("thread");
     emitAudio();
     await controller.finish("thread", false);
-    expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: true, error: "Socket timed out" });
+    expect(rows.get("thread")).toMatchObject({
+      phase: "idle",
+      retryAvailable: true,
+      error: "Socket timed out",
+    });
 
     await controller.retry("thread");
     expect(session.finish).toHaveBeenCalledTimes(2);
@@ -544,14 +866,18 @@ describe("VoiceInputController", () => {
     const session: VoiceTranscriptionSession = {
       appendAudio: vi.fn(),
       cancel: vi.fn(async () => undefined),
-      finish: vi.fn(async () => { throw new RetryableVoiceTranscriptionError("Try again", 1_000); }),
+      finish: vi.fn(async () => {
+        throw new RetryableVoiceTranscriptionError("Try again", 1_000);
+      }),
     };
     controller.bind({
       scope: "thread",
       source: () => draft,
       selection: () => ({ start: draft.length, end: draft.length }),
       thread: null,
-      updateDraft: (next) => { draft = next; },
+      updateDraft: (next) => {
+        draft = next;
+      },
       send: () => undefined,
       startRemote: async (nextListener) => {
         listener = nextListener;
@@ -564,7 +890,11 @@ describe("VoiceInputController", () => {
     listener?.({ type: "delta", text: " temporary transcript" });
     expect(draft).toContain("temporary transcript");
     await controller.finish("thread", false);
-    expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: true, error: "Try again" });
+    expect(rows.get("thread")).toMatchObject({
+      phase: "idle",
+      retryAvailable: true,
+      error: "Try again",
+    });
 
     await controller.discard("thread");
 
@@ -584,7 +914,9 @@ describe("VoiceInputController", () => {
       source: () => draft,
       selection: () => ({ start: draft.length, end: draft.length }),
       thread: null,
-      updateDraft: (next) => { draft = next; },
+      updateDraft: (next) => {
+        draft = next;
+      },
       send: () => undefined,
       startRemote: async (nextListener) => {
         listener = nextListener;
@@ -607,7 +939,9 @@ describe("VoiceInputController", () => {
     const session: VoiceTranscriptionSession = {
       appendAudio: vi.fn(),
       cancel: vi.fn(async () => undefined),
-      finish: vi.fn(async () => { throw new UnretryableVoiceTranscriptionError("Invalid microphone audio"); }),
+      finish: vi.fn(async () => {
+        throw new UnretryableVoiceTranscriptionError("Invalid microphone audio");
+      }),
     };
     controller.bind({
       scope: "thread",
@@ -623,7 +957,11 @@ describe("VoiceInputController", () => {
     emitAudio();
     await controller.finish("thread", false);
 
-    expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: false, error: "Invalid microphone audio" });
+    expect(rows.get("thread")).toMatchObject({
+      phase: "idle",
+      retryAvailable: false,
+      error: "Invalid microphone audio",
+    });
     expect(session.cancel).toHaveBeenCalledOnce();
   });
 
@@ -633,15 +971,18 @@ describe("VoiceInputController", () => {
     let draft = "";
     const sent: string[] = [];
     const transcripts = ["first transcript", "second transcript"];
-    const bind = () => controller.bind({
-      scope: "thread",
-      source: () => draft,
-      selection: () => ({ start: draft.length, end: draft.length }),
-      thread: null,
-      updateDraft: (next) => { draft = next; },
-      send: (text) => sent.push(text),
-      startRemote: async (listener) => remoteSession(listener, transcripts),
-    });
+    const bind = () =>
+      controller.bind({
+        scope: "thread",
+        source: () => draft,
+        selection: () => ({ start: draft.length, end: draft.length }),
+        thread: null,
+        updateDraft: (next) => {
+          draft = next;
+        },
+        send: (text) => sent.push(text),
+        startRemote: async (listener) => remoteSession(listener, transcripts),
+      });
 
     bind();
     await controller.toggle("thread");
@@ -652,9 +993,8 @@ describe("VoiceInputController", () => {
     emitAudio();
     await controller.finish("thread", true);
 
-    expect(draft).toContain("first transcript");
-    expect(draft).toContain("second transcript");
-    expect(sent).toEqual([draft]);
+    expect(draft).toBe("first transcript");
+    expect(sent).toEqual(["first transcript second transcript"]);
   });
 
   it("cancels an empty remote recording locally instead of asking the companion to finish zero audio", async () => {
@@ -668,7 +1008,9 @@ describe("VoiceInputController", () => {
       source: () => draft,
       selection: () => ({ start: draft.length, end: draft.length }),
       thread: null,
-      updateDraft: (next) => { draft = next; },
+      updateDraft: (next) => {
+        draft = next;
+      },
       send: (text) => sent.push(text),
       startRemote: async () => session,
     });

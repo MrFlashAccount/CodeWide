@@ -9,8 +9,9 @@ export function useComposerDelivery({
   capturePreferenceUpdate,
   clearComposerText,
   clearContentReviewAttachmentId,
-  composerMarkdownRef,
+  composerInputRef,
   composerScope,
+  composerSession,
   composerUploadScope,
   contentReviewAttachmentId,
   conversationOwner,
@@ -19,9 +20,7 @@ export function useComposerDelivery({
   draftConnectionId,
   draftSelectionRef,
   draftThreadId,
-  latestAttachmentsRef,
-  latestComposerPreferencesRef,
-  latestDraftRef,
+  goalSubmission,
   onEditQueued,
   onInterrupt,
   onListQueue,
@@ -57,8 +56,9 @@ export function useComposerDelivery({
   clearContentReviewAttachmentId: Parameters<
     typeof useComposerSubmission
   >[0]["clearContentReviewAttachmentId"];
-  composerMarkdownRef: Parameters<typeof useComposerSubmission>[0]["composerMarkdownRef"];
+  composerInputRef: Parameters<typeof useComposerSubmission>[0]["composerInputRef"];
   composerScope: Parameters<typeof useVoiceBinding>[0]["composerScope"];
+  composerSession: Parameters<typeof useComposerSubmission>[0]["composerSession"];
   composerUploadScope: Parameters<typeof useComposerSubmission>[0]["composerUploadScope"];
   contentReviewAttachmentId: Parameters<
     typeof useComposerSubmission
@@ -69,11 +69,7 @@ export function useComposerDelivery({
   draftConnectionId: Parameters<typeof useComposerSubmission>[0]["draftConnectionId"];
   draftSelectionRef: Parameters<typeof useVoiceBinding>[0]["draftSelectionRef"];
   draftThreadId: Parameters<typeof useComposerSubmission>[0]["draftThreadId"];
-  latestAttachmentsRef: Parameters<typeof useComposerSubmission>[0]["latestAttachmentsRef"];
-  latestComposerPreferencesRef: Parameters<
-    typeof useComposerSubmission
-  >[0]["latestComposerPreferencesRef"];
-  latestDraftRef: Parameters<typeof useComposerSubmission>[0]["latestDraftRef"];
+  goalSubmission: Parameters<typeof useComposerSubmission>[0]["goalSubmission"];
   onEditQueued: Parameters<typeof useComposerDeliveryActions>[0]["onEditQueued"];
   onInterrupt: Parameters<typeof useComposerDeliveryActions>[0]["onInterrupt"];
   onListQueue: Parameters<typeof useComposerSubmission>[0]["onListQueue"];
@@ -111,17 +107,16 @@ export function useComposerDelivery({
     captureDraftMutations,
     capturePreferenceUpdate,
     clearContentReviewAttachmentId,
-    composerMarkdownRef,
+    composerInputRef,
     composerScope,
+    composerSession,
     composerUploadScope,
     contentReviewAttachmentId,
     conversationOwner,
     currentTurnId,
     draftConnectionId,
     draftThreadId,
-    latestAttachmentsRef,
-    latestComposerPreferencesRef,
-    latestDraftRef,
+    goalSubmission,
     onListQueue,
     onSend,
     pastedAttachmentPendingRef,
@@ -138,7 +133,7 @@ export function useComposerDelivery({
     captureDraftMutations,
     captureSend,
     composerScope,
-    draft,
+    composerSession,
     draftSelectionRef,
     onStartVoiceTranscription,
     remoteThread,
@@ -162,6 +157,7 @@ export function useComposerDelivery({
     discardVoice,
     draft,
     finishVoice,
+    goalSubmissionActive: goalSubmission !== null,
     onEditQueued,
     onInterrupt,
     pastedAttachmentPending,

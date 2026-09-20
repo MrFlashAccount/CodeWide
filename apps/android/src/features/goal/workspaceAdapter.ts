@@ -3,8 +3,10 @@ import type {
   ThreadGoalGetResponse,
   ThreadGoalSetResponse,
 } from "@codewide/codex-protocol/v0.147.0/v2";
-import type { ThreadGoalInput } from "../../data/workspace-resource-database";
-import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
+import type {
+  ThreadGoalInput,
+  WorkspaceResourceDatabase,
+} from "../../data/workspace-resource-database";
 import { threadResourceKey } from "../../data/workspace-resource-keys";
 import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/workspace-session";
 
@@ -73,6 +75,7 @@ export function createGoalWorkspaceAdapter({
       throw new Error("Goal objective must be 1–100000 characters");
     }
     if (
+      input.tokenBudget !== undefined &&
       input.tokenBudget !== null &&
       (!Number.isSafeInteger(input.tokenBudget) || input.tokenBudget < 1)
     ) {
@@ -86,6 +89,7 @@ export function createGoalWorkspaceAdapter({
       objective,
       status: input.status,
       threadId,
+      // JSON transport omits undefined (keep) while preserving null (clear).
       tokenBudget: input.tokenBudget,
     });
     getResources().putThreadGoal({

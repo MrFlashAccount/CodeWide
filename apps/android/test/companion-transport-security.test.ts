@@ -39,6 +39,10 @@ describe("companion transport trust boundary", () => {
     const innerTls = read("../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt");
     expect(innerTls).toContain("PinnedTls.client");
     expect(innerTls).toContain("PinnedTls.innerTlsClient");
+    expect(innerTls).toContain('Regex("^/c/([a-f0-9]{64})/v1/sync$")');
+    expect(innerTls).toContain('"$routePrefix$path"');
+    expect(innerTls).toContain("uri.rawPath.removePrefix(routePrefix)");
+    expect(pinnedTls).toContain("isExplicitRelayRoute(uri.path)");
     for (const [source, transportFactory] of [
       ["CodeWideModule.kt", "InnerTlsTransport.bootstrapClient"],
       ["CodexConnectionService.kt", "InnerTlsTransport.client"],

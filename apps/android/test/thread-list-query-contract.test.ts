@@ -63,5 +63,7 @@ describe("thread list query contract", () => {
     expect(allRoute).toContain('scope="v1-desktop-default-thread"');
     expect(ownerActiveConversationScope).toContain("? selectedThread : null;");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
+    expect(workspaceListBindings).toContain("server.consumeDesktopDefaultThread();");
+    expect(workspaceListBindings).toContain("navigation.selectThread(selectionKey);");
   });
 });

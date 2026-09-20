@@ -26,7 +26,6 @@ export function renderOpenableImageFrame({
   resolvedGroupId,
   resolvedSource,
   setRetryRevision,
-  variant,
 }: {
   imageContainerStyle: StyleProp<ViewStyle>;
   label: string;
@@ -37,7 +36,6 @@ export function renderOpenableImageFrame({
   resolvedGroupId: ReturnType<typeof useImagePreviewGroup>;
   resolvedSource: ReturnType<typeof usePrivateImageUri>["source"];
   setRetryRevision: Dispatch<SetStateAction<number>>;
-  variant: "generated" | "user";
 }) {
   if (resolvedSource === null) {
     return (
@@ -74,7 +72,7 @@ export function renderOpenableImageFrame({
           onError?.();
         }}
         resizeMethod="resize"
-        resizeMode={variant === "user" ? "cover" : "contain"}
+        resizeMode="cover"
         source={resolvedSource}
         style={styles.openableImage}
       />

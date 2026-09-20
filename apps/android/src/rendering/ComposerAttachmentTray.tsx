@@ -1,5 +1,5 @@
 import { useSelector } from "@legendapp/state/react";
-import { useContext, useState } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import { ThreadCodeDocumentContext } from "./ThreadCodeDocumentContext";
 import { ScrollView, StyleSheet } from "react-native";
 
@@ -27,12 +27,17 @@ interface ComposerAttachmentTrayProps {
   readonly getAccess: GetTransferAccess;
   onRemove: (id: string) => void;
   readonly scope: string;
+  readonly startAttachment?: ReactNode;
 }
 
 export function ComposerAttachmentTray(props: ComposerAttachmentTrayProps) {
   const uploads = useSelector(() => composerUploads.entries(props.scope));
   const managed = new Set(uploads.map((entry) => entry.attachment.id));
-  if (uploads.length === 0 && props.attachments.length === 0) {
+  if (
+    uploads.length === 0 &&
+    props.attachments.length === 0 &&
+    props.startAttachment === undefined
+  ) {
     return null;
   }
   return (
@@ -44,6 +49,7 @@ export function ComposerAttachmentTray(props: ComposerAttachmentTrayProps) {
         showsHorizontalScrollIndicator={false}
         testID="composer-attachment-strip"
       >
+        {props.startAttachment}
         {props.attachments
           .filter((item) => !managed.has(item.id))
           .map((attachment) => (
@@ -148,12 +154,12 @@ function ComposerCard(props: ComposerCardProps) {
   const ready = upload === null || upload.state.status === "ready";
   const image = usePrivateAssetUri(
     attachment.kind === "image" && localUri === null && ready ? source : null,
-    attachment.editor?.revision ?? 0,
-    owner.getAccess,
+    { access: owner.getAccess, revision: attachment.editor?.revision },
   );
   const uri = localUri ?? image.uri;
   const groupId = `composer:${owner.scope}`;
   const item = {
+    detail: image.detail,
     draft: { attachmentId: attachment.id, scope: owner.scope },
     id: attachment.id,
     label: attachment.name,

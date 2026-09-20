@@ -1,16 +1,24 @@
-import type {PortForwardingManagerProps,PortForwardingProfile} from "../src/features/ports/portForwardingContract";
+import type {
+  PortForwardingManagerProps,
+  PortForwardingProfile,
+} from "../src/features/ports/portForwardingContract";
 import { LegendList } from "@legendapp/list/react-native";
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
-import {
-  PortForwardingManager,
-} from "../src/features/ports/PortForwardingManager";
+import { PortForwardingManager } from "../src/features/ports/PortForwardingManager";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
 
 function discoveredPort(port: number): PortForwardingManagerProps["discoveredPorts"][number] {
   return {
-    port, name: "Dev server", group: "Development", details: "", process: "node",
-    pid: 42, cwd: null, kind: "node", forwardingKey: port.toString(16).padStart(64, "0"),
+    port,
+    name: "Dev server",
+    group: "Development",
+    details: "",
+    process: "node",
+    pid: 42,
+    cwd: null,
+    kind: "node",
+    forwardingKey: port.toString(16).padStart(64, "0"),
     defaultForwardingEnabled: true,
   };
 }
@@ -35,7 +43,7 @@ const defaults: PortForwardingManagerProps = {
   discoveredPorts: [discoveredPort(3000)],
   discoveryStatus: "ready",
   discoveryError: null,
-  onOpen: jest.fn(),
+  onOpenBrowser: jest.fn(),
   onSelectPort: jest.fn(),
   onExcludePort: jest.fn(),
   onAdd: jest.fn(),
@@ -57,7 +65,7 @@ it("supplies exact sizes for individual ports and headers, not whole groups or e
   expect(list.props.getFixedItemSize(list.props.data[0])).toBe(36);
   expect(list.props.getFixedItemSize(list.props.data[1])).toBe(listRowHeight.double);
   fireEvent.press(view.getByLabelText("Dev server, Live"));
-  expect(defaults.onOpen).toHaveBeenCalledWith(profile);
+  expect(defaults.onOpenBrowser).toHaveBeenCalledWith(profile.label, profile.previewUrl);
 });
 
 it("rounds only the outer rows in a port group", () => {
@@ -66,8 +74,13 @@ it("rounds only the outer rows in a port group", () => {
     { ...profile, id: "middle", label: "Middle", remotePort: 3002 },
     { ...profile, id: "last", label: "Last", remotePort: 3003 },
   ];
-  const view = render(<PortForwardingManager {...defaults} profiles={profiles}
-    discoveredPorts={profiles.map((entry) => discoveredPort(entry.remotePort))} />);
+  const view = render(
+    <PortForwardingManager
+      {...defaults}
+      profiles={profiles}
+      discoveredPorts={profiles.map((entry) => discoveredPort(entry.remotePort))}
+    />,
+  );
   expect(view.UNSAFE_getAllByType(AppListRow).map((row) => row.props.position)).toEqual([
     "first",
     "middle",
@@ -108,15 +121,24 @@ it("keeps exclusion separate from forwarding and restores both actions after fai
   });
   const onSelectPort = jest.fn(async () => {});
   const onExcludePort = jest.fn(() => exclusion);
-  const view = render(<PortForwardingManager {...defaults} profiles={[]}
-    discoveredPorts={[candidate]} onSelectPort={onSelectPort} onExcludePort={onExcludePort} />);
+  const view = render(
+    <PortForwardingManager
+      {...defaults}
+      profiles={[]}
+      discoveredPorts={[candidate]}
+      onSelectPort={onSelectPort}
+      onExcludePort={onExcludePort}
+    />,
+  );
   fireEvent.press(view.getByText("Available 1"));
   fireEvent.press(view.getByLabelText("Exclude Dev server port 3000"));
   expect(onExcludePort).toHaveBeenCalledWith(candidate);
   expect(onSelectPort).not.toHaveBeenCalled();
   expect(view.getByLabelText("Forward Dev server port 3000")).toBeDisabled();
   expect(view.queryByLabelText("Exclude Dev server port 3000")).toBeNull();
-  await act(async () => { rejectExclusion(new Error("Exclusion failed")); });
+  await act(async () => {
+    rejectExclusion(new Error("Exclusion failed"));
+  });
   const failureHeader = view.UNSAFE_getByType(LegendList).props.ListHeaderComponent;
   expect(view.getByLabelText("Exclude Dev server port 3000")).toBeVisible();
   fireEvent.press(view.getByLabelText("Forward Dev server port 3000"));
@@ -126,13 +148,19 @@ it("keeps exclusion separate from forwarding and restores both actions after fai
   expect(render(failureHeader).getByText("Exclusion failed")).toBeVisible();
 });
 
-it("keeps profile actions independently anchored without opening its preview", async () => {
-  const onOpen = jest.fn();
+it("opens the anchored profile actions without opening the preview", async () => {
+  const onOpenBrowser = jest.fn();
   const onStop = jest.fn(async () => {});
-  const view = render(<PortForwardingManager {...defaults} onOpen={onOpen} onStop={onStop} />);
+  const view = render(
+    <PortForwardingManager
+      {...defaults}
+      onOpenBrowser={onOpenBrowser}
+      onStop={onStop}
+    />,
+  );
   fireEvent.press(view.getByLabelText("Forwarding actions Dev server"));
-  expect(onOpen).not.toHaveBeenCalled();
+  expect(onOpenBrowser).not.toHaveBeenCalled();
   fireEvent.press(view.getByLabelText("Forwarding actions Dev server: Stop"));
   await waitFor(() => expect(onStop).toHaveBeenCalledWith(profile.id));
-  expect(onOpen).not.toHaveBeenCalled();
+  expect(onOpenBrowser).not.toHaveBeenCalled();
 });

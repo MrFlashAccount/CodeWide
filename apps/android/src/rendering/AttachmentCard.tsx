@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import type { ComponentProps } from "react";
 import { ActivityIndicator, Image, Pressable, StyleSheet, View } from "react-native";
 
 import type { ComposerUploadState } from "../data/composer-uploads";
@@ -10,6 +11,7 @@ export interface AttachmentCardProps {
   readonly bytes?: number;
   readonly compact?: boolean;
   readonly excerpt?: string | null;
+  readonly icon?: ComponentProps<typeof Ionicons>["name"];
   readonly label: string;
   readonly name: string;
   onOpen?: () => void;
@@ -17,6 +19,7 @@ export interface AttachmentCardProps {
   onRetry?: () => void;
   onThumbnailError?: () => void;
   readonly state?: ComposerUploadState;
+  readonly testID?: string;
   readonly uri?: string | null;
   readonly video?: boolean;
 }
@@ -38,7 +41,7 @@ export function AttachmentCard(props: AttachmentCardProps) {
       ? `${phase}${percent === null ? "…" : ` · ${String(percent)}%`}`
       : `${state?.status === "ready" ? "Ready" : props.label}${props.bytes === undefined ? "" : ` · ${formatAttachmentBytes(props.bytes)}`}`;
   return (
-    <View style={[styles.card, props.compact === true && styles.compact]}>
+    <View style={[styles.card, props.compact === true && styles.compact]} testID={props.testID}>
       <Pressable
         accessibilityHint={subtitle}
         accessibilityLabel={`Open ${props.name}`}
@@ -59,7 +62,10 @@ export function AttachmentCard(props: AttachmentCardProps) {
           ) : (
             <Ionicons
               color={colors.accent}
-              name={props.video === true ? "play-circle-outline" : "document-text-outline"}
+              name={
+                props.icon ??
+                (props.video === true ? "play-circle-outline" : "document-text-outline")
+              }
               size={iconSize.action}
             />
           )}

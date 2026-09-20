@@ -3,17 +3,21 @@ import type { ThreadListSources } from "../../src/features/threadList/threadList
 import { WorkspaceThreadList } from "../../src/features/workspace/WorkspaceThreadList";
 import type { useWorkspaceListBindings } from "../../src/features/workspace/workspaceListBindings";
 import type { useWorkspaceProjectBindings } from "../../src/features/workspace/workspaceProjectBindings";
+import type { GlobalVoiceControl } from "../../src/features/threadList/GlobalVoiceEntryAction";
 
 type V1WorkspaceThreadListProps = {
   readonly createSidebarThread: () => void;
   readonly desktop: boolean;
+  readonly globalVoice: GlobalVoiceControl;
   readonly list: ReturnType<typeof useWorkspaceListBindings>;
   readonly listActions: ReturnType<typeof useThreadListActions>;
   readonly openGlobalSearch: () => void;
   readonly openProjects: () => void;
   readonly openSettings: () => void;
+  readonly openTerminals: () => void;
   readonly project: ReturnType<typeof useWorkspaceProjectBindings>;
   readonly refreshThreadListAccountRateLimits: () => Promise<void>;
+  readonly sidebarSearch: React.JSX.Element | null;
   readonly threadListSources: ThreadListSources;
   readonly viewportWidth: number;
 };
@@ -30,6 +34,7 @@ export function V1WorkspaceThreadList(props: V1WorkspaceThreadListProps): React.
       closeSidebarProject={list.projectSelection.closeSidebarProject}
       createSidebarThread={props.createSidebarThread}
       desktop={props.desktop}
+      globalVoice={props.globalVoice}
       loadMoreProjectThreads={project.loadMoreProjectThreads}
       loadMoreThreads={list.loadMoreThreads}
       markListThreadRead={listActions.markListThreadRead}
@@ -43,8 +48,8 @@ export function V1WorkspaceThreadList(props: V1WorkspaceThreadListProps): React.
       openProjects={props.openProjects}
       openSettings={props.openSettings}
       openSidebarProject={list.projectSelection.openSidebarProject}
+      openTerminals={props.openTerminals}
       pinnedSidebarProjects={project.projectWorkspace.pinnedSidebarProjects}
-      preloadThread={list.preloadThread}
       projectLimit={project.projectLimit}
       refreshThreadListAccountRateLimits={props.refreshThreadListAccountRateLimits}
       selectedThreadKey={list.selectedThreadKey}
@@ -59,7 +64,7 @@ export function V1WorkspaceThreadList(props: V1WorkspaceThreadListProps): React.
       sidebarMode={project.sidebarMode}
       sidebarProject={list.projectSelection.sidebarProject}
       sidebarScopeKey={project.sidebarScopeKey}
-      sidebarSearch={null}
+      sidebarSearch={props.sidebarSearch}
       threadListSources={props.threadListSources}
       toggleListThreadPin={listActions.toggleListThreadPin}
       unarchiveListThread={listActions.unarchiveListThread}

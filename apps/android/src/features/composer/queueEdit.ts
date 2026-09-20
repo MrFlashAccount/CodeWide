@@ -28,7 +28,7 @@ export function useQueueEditState(composerScope: string) {
 import { composerUploads } from "../../data/composer-uploads";
 import type { QueuedPrompt } from "../../data/thread-delivery-state";
 import type { QueueEditCapabilities } from "./queueEditCapabilities";
-import { markdownForComposerSubmission } from "./skills/composer-skill-suggestions";
+import { composerTextForSubmission } from "./composerSubmissionText";
 
 function clearQueuedComposerUploads(scope: string): void {
   for (const upload of composerUploads.entries(scope)) {
@@ -39,11 +39,10 @@ function clearQueuedComposerUploads(scope: string): void {
 export function useQueueEditActions({
   closeInlineQueueOverlay,
   composerInputRef,
-  composerMarkdownRef,
+  composerSession,
   composerUploadScope,
   conversationOwner,
   draftSelectionRef,
-  latestAttachmentsRef,
   onEditQueued,
   onListQueue,
   queuedComposerEdit,
@@ -74,9 +73,9 @@ export function useQueueEditActions({
     }
     closeInlineQueueOverlay();
     setQueuedComposerEdit({
-      attachments: item.attachments,
       commandId: item.commandId,
-      text: item.text,
+      initialAttachments: item.attachments,
+      initialText: item.text,
     });
     setQueuedComposerEditError(null);
     requestAnimationFrame(() => composerInputRef.current?.focus());
@@ -87,18 +86,35 @@ export function useQueueEditActions({
     if (edit === null || onEditQueued === undefined || queuedComposerEditBusy || uploadsBlockSend) {
       return;
     }
-    const text = markdownForComposerSubmission(composerMarkdownRef.current).trim();
+    const session = composerSession.capture();
+    const snapshot = session.read();
+    const initialText = composerTextForSubmission(snapshot).trim();
     const editedAttachments = composerUploads.readyAttachments(
       composerUploadScope,
-      latestAttachmentsRef.current.latest,
+      snapshot.attachments,
     );
-    if (text === "" && editedAttachments.length === 0) {
+    if (initialText === "" && editedAttachments.length === 0) {
       return;
     }
     const editScope = composerUploadScope;
+    const input = composerInputRef.current;
     setQueuedComposerEditBusy(true);
     setQueuedComposerEditError(null);
-    void onEditQueued(edit.commandId, text, editedAttachments).then(
+    const update = async (): Promise<void> => {
+      let text = initialText;
+      if (text === "" && editedAttachments.length > 0 && input !== null) {
+        try {
+          const nativeValue = await input.getValue();
+          session.updateText(nativeValue);
+          text = composerTextForSubmission(nativeValue).trim();
+        } catch {
+          // The attachment edit remains valid if its resident editor unmounts
+          // before the consistency read completes.
+        }
+      }
+      await onEditQueued(edit.commandId, text, editedAttachments);
+    };
+    void update().then(
       () => {
         if (conversationOwner.isCurrent()) {
           clearQueuedComposerUploads(editScope);

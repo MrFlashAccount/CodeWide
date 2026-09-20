@@ -50,6 +50,10 @@ const ownerAttachmentDocumentResource = readFileSync(
   new URL("../../src/features/attachments/attachmentDocumentResource.ts", import.meta.url),
   "utf8",
 );
+const ownerThreadUiStateRead = readFileSync(
+  new URL("../../src/data/use-thread-ui-state.ts", import.meta.url),
+  "utf8",
+);
 
 it("renders attached Markdown and isolated HTML with the reusable document preview", () => {
   expect(appRootProviders).toContain("<ImagePreviewHost>");
@@ -66,15 +70,13 @@ it("renders attached Markdown and isolated HTML with the reusable document previ
   expect(richMarkdown).toContain("useMarkdownLocalLinkHandler()");
   expect(documentPreviewHost).toContain("<MarkdownDocumentView");
   expect(documentPreviewHost).toContain("target={markdownTarget}");
-  expect(documentPreviewHost).toContain('isOpen={previewSurface === "sheet"}');
-  expect(documentPreviewHost).toContain('snapPoints: ["60%", "90%"]');
-  expect(documentPreviewHost).toContain('if (surface === "fullscreen")');
-  expect(documentPreviewHost).toContain(
-    "presentFullscreenDocument(fullscreen, request, downloadFile)",
-  );
+  expect(documentPreviewHost).not.toContain("<AppSheet");
+  expect(documentPreviewHost).toContain("export function DocumentPagePreview");
+  expect(documentPreviewHost).toContain("presentFullscreenDocument({");
+  expect(documentPreviewHost).toContain("openDocument: present");
   expect(documentPreviewHost).not.toContain('<Modal visible={previewSurface === "browser"}');
-  expect(documentPreviewHost).toContain('surface === "image-viewer"');
-  expect(documentPreviewHost).toContain('surface === "download"');
+  expect(documentPreviewHost).toContain('currentRequest.kind === "image"');
+  expect(documentPreviewHost).toContain('currentRequest.kind === "download"');
   expect(documentPreviewHost).toContain(
     "startPreviewDownload(request.getTransferAccess, directory, source.path",
   );
@@ -112,8 +114,9 @@ it("renders attached Markdown and isolated HTML with the reusable document previ
   expect(migratedAttachmentDocumentPreview).toContain('accessibilityLabel="Back to attachments"');
   expect(migratedAttachmentsFeature).toContain("if (!open)");
   expect(migratedAttachmentsFeature).toContain(
-    "(document === null ? closeSheet : navigateBack)();",
+    "document === null ? {} : { onDismissRequest: navigateBack }",
   );
+  expect(migratedAttachmentsFeature).toContain("closeSheet();");
   expect(ownerAttachmentDocumentResource).toMatch(
     /useEphemeralAsyncResource<\s*Extract<DocumentPreviewResult/u,
   );
@@ -238,7 +241,7 @@ it("keeps async data ownership in resources and event-driven preview controllers
   );
   expect(ownerThreadSyncRuntime).toContain("threadObserverDesired.set(connectionId, threadId)");
   expect(threadDetailDatabase).toContain("remoteLoader?.observe?.({ connectionId, threadId })");
-  expect(ownerThreadSyncRemoteLoader).toContain('event: "thread.observer.attach_failed"');
+  expect(navigationActions).toContain('event: "thread.observer.attach_failed"');
   expect(reconnectOwner).toContain('event: "thread.reconnect_sync.failed"');
   expect(ownerThreadSyncRuntime).toContain('"companion/thread/sync"');
   expect(nativeEngine).toContain("async reattachRuntime(): Promise<void>");
@@ -252,23 +255,26 @@ it("keeps async data ownership in resources and event-driven preview controllers
   );
   expect(screen).not.toContain("refreshIfSelected");
   expect(navigationActions).toContain("open({");
-  expect(navigationActions).toContain('mode: same ? "replace" : router.selectionMode');
+  expect(navigationActions).toContain(
+    'mode: isCurrentThread(router.currentThread, params) ? "replace" : router.selectionMode',
+  );
   expect(navigationActions).toContain("navigationId,");
   expect(navigationActions).toContain("params,");
-  expect(navigationActions).toContain("setActiveConnection(params.connectionId.value)");
+  expect(navigationActions).not.toContain("setActiveConnection(");
   expect(screen).not.toContain("setActiveServerId(parsed.connectionId);\n      setActiveThreadId(");
   expect(newChat).toContain("newThreadService.open(connectionId, cwd)");
   expect(screen).not.toContain("setNewChatDraft(");
   expect(screen).not.toContain("active-thread-lifecycle-repair");
-  expect(ownerDraft).toContain("`composer-seed:${composerScope}`");
+  expect(ownerThreadUiStateRead).toContain("useAsyncResource<ThreadUiStateLoadResult>");
+  expect(ownerThreadUiStateRead).toContain("database.read(connectionId, threadId)");
+  expect(ownerThreadUiStateRead).not.toContain("use(database.read");
+  expect(ownerDraft).not.toContain("composer-seed:");
   expect(screen).not.toContain("setMobileRemoteSearch");
-  expect(documentPreviewHost).toContain(
-    "presentFullscreenDocument(fullscreen, request, downloadFile)",
-  );
+  expect(documentPreviewHost).toContain("presentFullscreenDocument({");
   expect(compactSource(documentPreviewHost)).toContain(
     "useEphemeralAsyncResource< Extract<DocumentPreviewResult",
   );
-  expect(documentPreviewHost).toContain("await loadDocumentPreview(preview, signal)");
+  expect(documentPreviewHost).toContain("await loadDocumentPreview(request, signal)");
   expect(mermaidWeb).not.toContain("useEffect(");
   expect(mermaidWeb).toContain("useAsyncResource");
   expect(imagePreviewHost).toContain("const handleAnnotation = useEvent(handler)");

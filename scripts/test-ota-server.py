@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import http.client
 import importlib.util
@@ -17,6 +18,7 @@ import threading
 import unittest
 from email.parser import BytesParser
 from email.policy import default
+from http import HTTPStatus
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -55,6 +57,108 @@ class ArtifactCatalogRetentionTest(unittest.TestCase):
                 {path.name for path in archive_root.glob("*.apk.json")},
                 {f"{name}.json" for name in expected},
             )
+
+    def test_catalog_ignores_unpublished_gradle_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            archive_root = repo_root / "builds/android"
+            archive_root.mkdir(parents=True)
+            published = archive_root / "CodeWide-published.apk"
+            published.write_bytes(b"published")
+            published.with_suffix(".apk.json").write_text(
+                json.dumps(
+                    {"variant": "release", "versionName": "1.0.0", "versionCode": 1}
+                ),
+                encoding="utf-8",
+            )
+            output_root = repo_root / "apps/android/android/app/build/outputs/apk/release"
+            output_root.mkdir(parents=True)
+            (output_root / "app-release.apk").write_bytes(b"dry-run")
+            (output_root / "output-metadata.json").write_text(
+                json.dumps(
+                    {
+                        "variantName": "release",
+                        "elements": [
+                            {
+                                "outputFile": "app-release.apk",
+                                "versionName": "2.0.0",
+                                "versionCode": 2,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            catalog = SERVER_MODULE.ArtifactCatalog(repo_root)
+
+            self.assertEqual([artifact.path for artifact in catalog.list()], [published.resolve()])
+            self.assertEqual(catalog.latest().version_name, "1.0.0")
+
+
+class ArtifactTransportTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self.directory.name)
+        archive_root = self.repo_root / "builds/android"
+        archive_root.mkdir(parents=True)
+        self.body = (b"deterministic-apk-content\n" * 4096) + os.urandom(1024)
+        apk = archive_root / "CodeWide-test-release.apk"
+        apk.write_bytes(self.body)
+        apk.with_suffix(".apk.json").write_text(
+            json.dumps({"variant": "release", "versionName": "test", "versionCode": 1}),
+            encoding="utf-8",
+        )
+        catalog = SERVER_MODULE.ArtifactCatalog(self.repo_root)
+        ota_catalog = SERVER_MODULE.OtaCatalog(self.repo_root)
+        self.server = SERVER_MODULE.BuildShelfServer(("127.0.0.1", 0), catalog, ota_catalog)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.server.server_address[1]
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.directory.cleanup()
+
+    def request(self, headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], bytes]:
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        connection.request("GET", "/latest.apk", headers=headers or {})
+        response = connection.getresponse()
+        result = response.status, {key.lower(): value for key, value in response.getheaders()}, response.read()
+        connection.close()
+        return result
+
+    def test_gzip_download_is_deterministic_and_keeps_identity_ranges(self) -> None:
+        status, headers, compressed = self.request({"Accept-Encoding": "gzip"})
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertEqual(headers["content-encoding"], "gzip")
+        self.assertEqual(headers["accept-ranges"], "none")
+        self.assertEqual(headers["vary"], "Accept-Encoding")
+        self.assertEqual(gzip.decompress(compressed), self.body)
+        self.assertLess(len(compressed), len(self.body))
+
+        repeated_status, repeated_headers, repeated = self.request({"Accept-Encoding": "gzip"})
+        self.assertEqual(repeated_status, HTTPStatus.OK)
+        self.assertEqual(repeated_headers["etag"], headers["etag"])
+        self.assertEqual(repeated, compressed)
+
+        range_status, range_headers, partial = self.request(
+            {"Accept-Encoding": "gzip", "Range": "bytes=10-29"}
+        )
+        self.assertEqual(range_status, HTTPStatus.PARTIAL_CONTENT)
+        self.assertNotIn("content-encoding", range_headers)
+        self.assertEqual(range_headers["accept-ranges"], "bytes")
+        self.assertEqual(range_headers["content-range"], f"bytes 10-29/{len(self.body)}")
+        self.assertEqual(partial, self.body[10:30])
+
+    def test_gzip_quality_zero_uses_identity(self) -> None:
+        status, headers, body = self.request({"Accept-Encoding": "br, gzip;q=0"})
+        self.assertEqual(status, HTTPStatus.OK)
+        self.assertNotIn("content-encoding", headers)
+        self.assertEqual(headers["accept-ranges"], "bytes")
+        self.assertEqual(body, self.body)
 
 
 class OtaServerTest(unittest.TestCase):

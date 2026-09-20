@@ -21,7 +21,7 @@ export default {
   // WHY: Metro resolves these exact module names to native, Android, or web files before
   // the unsuffixed fallback. Knip does not model React Native platform resolution.
   ignoreUnresolved: [
-    /^(?:\.\.?\/)+(?:[^/]+\/)*(?:ActionMenu|AppDialogSurface|BrowserDevToolsPane|CodeReviewEditor|CodeWideMenu|ComposerDeliveryMenu|ComposerEditorTrialEntry|ComposerMarkdownInput|Diagram|AppRootProviders|InternalBrowser|MermaidDiagram|MessageActionMenu|ReviewableText|SpeedscopeProfileViewer|TerminalWorkspace|TurnControlMenus|VoiceAura|account-rate-limits-database|connection-profile-database|file-transfer|interactive-terminal-store|local-authentication|native-engine|pending-request-database|performance-metrics|quickdraw-image-source|send-feedback|thread-detail-database|thread-summary-database|thread-ui-state-database|turn-controls-collection|user-preferences-database)$/u,
+    /^(?:\.\.?\/)+(?:[^/]+\/)*(?:ActionMenu|AppDialogSurface|BrowserDevToolsPane|CodeReviewEditor|CodeWideMenu|ComposerDeliveryMenu|ComposerEditorTrialEntry|ComposerMarkdownInput|Diagram|AppRootProviders|InternalBrowser|MermaidDiagram|MessageActionMenu|ReviewableText|SpeedscopeProfileViewer|TerminalWorkspace|TurnControlMenus|VoiceAura|account-rate-limits-database|connection-profile-database|file-transfer|globalSupervisorBindingDatabase|interactive-terminal-store|local-authentication|native-engine|nativeTerminalInventory|pending-request-database|performance-metrics|quickdraw-image-source|remoteProjectCatalogCache|send-feedback|thread-detail-database|thread-summary-database|thread-ui-state-database|turn-controls-collection|user-preferences-database)$/u,
   ],
   entry: [
     "app/legacy.tsx",

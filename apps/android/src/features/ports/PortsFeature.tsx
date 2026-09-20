@@ -12,6 +12,7 @@ export function PortsFeature({
   mode,
   onClose,
   onCreate,
+  onOpenBrowser,
   onRevoke,
   portForwarding,
   resource,
@@ -19,6 +20,7 @@ export function PortsFeature({
   mode: "forwarding" | "runtime";
   onClose: () => void;
   onCreate?: (port: number, ttlSeconds: number) => Promise<TunnelValue>;
+  onOpenBrowser?: (title: string, url: string, headers?: Readonly<Record<string, string>>) => void;
   onRevoke?: (tunnelId: string) => Promise<void>;
   portForwarding: PortForwardingManagerProps | undefined;
   resource: TunnelRow | null;
@@ -33,6 +35,7 @@ export function PortsFeature({
     <LocalhostPreview
       embedded
       onClose={onClose}
+      {...(onOpenBrowser === undefined ? {} : { onOpenBrowser })}
       resource={resource}
       visible
       {...(onCreate === undefined ? {} : { onCreate })}

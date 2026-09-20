@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureBrowserScreenshot } from "../src/features/ports/browser/capture-screenshot";
+import { captureBrowserScreenshot } from "../src/features/browser/capture-screenshot";
 
 class Socket {
   static readonly CLOSING = 2;

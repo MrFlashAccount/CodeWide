@@ -6,8 +6,7 @@ import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioRecord
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
+import android.media.AudioFormat
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -30,9 +29,11 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.uimanager.UIManagerHelper
-import dev.codewide.app.rendering.VoiceAuraRenderEffect
+import dev.codewide.app.rendering.VoiceAuraOverlay
 import java.io.IOException
 import java.net.URI
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArraySet
@@ -56,11 +57,11 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   private var voiceGeneration = 0L
   @Volatile private var audioCaptureRunning = false
   private var audioCaptureGeneration = 0L
+  private var audioCaptureLeasePurpose: String? = null
+  private var audioCaptureLeaseToken: String? = null
   private var audioRecord: AudioRecord? = null
   private var audioCaptureThread: Thread? = null
-  private var audioNoiseSuppressor: NoiseSuppressor? = null
-  private var audioAutomaticGainControl: AutomaticGainControl? = null
-  private val voiceAura = VoiceAuraRenderEffect(context)
+  private val voiceAura = VoiceAuraOverlay(context)
   private val browserDevTools = BrowserDevToolsBridge(context)
   private val mainHandler = Handler(Looper.getMainLooper())
   private val authenticatedLeaseGate = LeaseAcquisitionGate(MAX_AUTHENTICATED_LEASES_PER_CONTEXT)
@@ -76,8 +77,13 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     refreshMicrophonePermission()
   }
 
-  override fun onHostPause() { microphone.setForeground(false) }
-  override fun onHostDestroy() { microphone.setForeground(false) }
+  override fun onHostPause() {
+    microphone.setForeground(false)
+  }
+  override fun onHostDestroy() {
+    stopPcmCaptureInternal()
+    microphone.setForeground(false)
+  }
 
   @ReactMethod
   fun refreshMicrophonePermission() {
@@ -622,6 +628,38 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
+  fun engineLiveSubscribe(connectionId: String, channelId: String, threadId: String, promise: Promise) {
+    try {
+      require(connectionId.isNotBlank() && channelId.isNotBlank() && threadId.isNotBlank()) {
+        "Live subscription identifiers are required"
+      }
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      check(service.subscribeLive(connectionId, channelId, threadId)) {
+        "Live subscription is unavailable"
+      }
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("ENGINE_LIVE_SUBSCRIBE_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun engineLiveUnsubscribe(connectionId: String, channelId: String, promise: Promise) {
+    try {
+      require(connectionId.isNotBlank() && channelId.isNotBlank()) {
+        "Live subscription identifiers are required"
+      }
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      check(service.unsubscribeLive(connectionId, channelId)) {
+        "Live subscription is unavailable"
+      }
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("ENGINE_LIVE_UNSUBSCRIBE_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
   fun engineEnqueueCommand(
     connectionId: String,
     commandId: String,
@@ -907,6 +945,16 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
+  fun listTerminals(promise: Promise) {
+    try {
+      val service = CodexConnectionService.instance ?: error("Server connection is not ready")
+      promise.resolve(service.listTerminals())
+    } catch (error: Throwable) {
+      promise.reject("TERMINAL_LIST_FAILED", error.message ?: "Could not list terminals", error)
+    }
+  }
+
+  @ReactMethod
   fun closeTerminal(sessionId: String) {
     CodexConnectionService.instance?.closeTerminal(sessionId)
   }
@@ -1039,7 +1087,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
-  /** Drives the live root-View RuntimeShader used while the microphone is recording. */
+  /** Drives the application-scoped visual overlay used while the microphone is recording. */
   @ReactMethod
   fun setVoiceAuraState(active: Boolean, level: Double, reducedMotion: Boolean) {
     context.runOnUiQueueThread {
@@ -1072,23 +1120,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
-  /** Moves the live shader into the separate Android window owned by a fullscreen overlay. */
-  @ReactMethod
-  fun setVoiceAuraTarget(reactTag: Double?) {
-    context.runOnUiQueueThread {
-      try {
-        val tag = reactTag?.toInt()?.takeIf { it > 0 }
-        val view = tag?.let {
-          UIManagerHelper.getUIManagerForReactTag(context, it)?.resolveView(it) as? View
-        }
-        voiceAura.setTarget(view)
-      } catch (error: Throwable) {
-        voiceAura.setTarget(null)
-        Log.e(VOICE_AURA_LOG_TAG, "Could not update live voice aura target", error)
-      }
-    }
-  }
-
   @ReactMethod
   fun setVoiceAuraOrigin(reactTag: Double?) {
     context.runOnUiQueueThread {
@@ -1107,50 +1138,132 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   /** Captures mono PCM16 and emits bandwidth-efficient Opus frames. Transcription stays on the paired Codex host. */
   @ReactMethod
-  fun startPcmCapture(promise: Promise) {
+  fun startPcmCapture(token: String, purpose: String, promise: Promise) {
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
       promise.reject("MIC_PERMISSION", "Microphone permission is required")
       return
     }
+    if (token.isBlank() || (purpose != "dictation" && purpose != "globalSupervisor")) {
+      promise.reject("MIC_LEASE_INVALID", "Microphone lease is invalid")
+      return
+    }
+    val claimed = synchronized(this) {
+      if (audioCaptureLeaseToken != null || audioCaptureRunning) {
+        false
+      } else {
+        audioCaptureLeaseToken = token
+        audioCaptureLeasePurpose = purpose
+        true
+      }
+    }
+    if (!claimed) {
+      promise.reject("MIC_BUSY", "Microphone is already in use")
+      return
+    }
+    VoiceCaptureForegroundService.acquire(context, token) foreground@{ error ->
+      if (error != null) {
+        synchronized(this) {
+          if (audioCaptureLeaseToken == token && audioCaptureLeasePurpose == purpose) {
+            audioCaptureLeaseToken = null
+            audioCaptureLeasePurpose = null
+          }
+        }
+        promise.reject("PCM_CAPTURE_FOREGROUND_FAILED", error.message, error)
+        return@foreground
+      }
+      val stillOwned = synchronized(this) {
+        audioCaptureLeaseToken == token && audioCaptureLeasePurpose == purpose
+      }
+      if (!stillOwned) {
+        VoiceCaptureForegroundService.release(token)
+        promise.reject("PCM_CAPTURE_CANCELLED", "Microphone capture start was cancelled")
+        return@foreground
+      }
+      thread(name = "CodeWidePcmStart", isDaemon = true) {
+        beginPcmCapture(token, purpose, promise)
+      }
+    }
+  }
+
+  private fun beginPcmCapture(token: String, purpose: String, promise: Promise) {
+    var capture: PreparedMicrophone.Session? = null
+    var captureOwnedByThread = false
     try {
-      stopPcmCaptureInternal()
-      val capture = microphone.start()
-      val recorder = capture.recorder
-      val sampleRate = capture.sampleRate
-      val noiseSuppressor = capture.noiseSuppressor
-      val automaticGainControl = capture.automaticGainControl
+      val activeCapture = microphone.start()
+      capture = activeCapture
+      val recorder = activeCapture.recorder
+      val sampleRate = activeCapture.sampleRate
+      val effects = activeCapture.effects
       val generation = synchronized(this) {
+        check(audioCaptureLeaseToken == token && audioCaptureLeasePurpose == purpose) {
+          "Microphone capture start was cancelled"
+        }
         audioCaptureGeneration += 1
         audioCaptureRunning = true
         audioRecord = recorder
-        audioNoiseSuppressor = noiseSuppressor
-        audioAutomaticGainControl = automaticGainControl
         audioCaptureGeneration
       }
       Log.i(
         AUDIO_LOG_TAG,
-        "PCM capture source=${capture.source.label} sampleRate=$sampleRate channels=${recorder.channelCount} " +
-          "bufferFrames=${recorder.bufferSizeInFrames} ns=${noiseSuppressor?.enabled ?: false} " +
-          "agc=${automaticGainControl?.enabled ?: false}",
+        "PCM capture source=${activeCapture.source.label} sampleRate=$sampleRate channels=${recorder.channelCount} " +
+          "bufferFrames=${recorder.bufferSizeInFrames} aecSupported=${effects.acousticEchoCancelerSupported} " +
+          "aec=${effects.acousticEchoCancelerEnabled} ns=${effects.noiseSuppressor?.enabled == true} " +
+          "agc=${effects.automaticGainControl?.enabled == true}",
       )
-      audioCaptureThread = thread(name = "CodeWideOpusCapture", isDaemon = true) {
-        capturePcm(generation, recorder, sampleRate, noiseSuppressor, automaticGainControl)
+      val captureThread = thread(
+        start = false,
+        name = "CodeWideAudioCapture",
+        isDaemon = true,
+      ) {
+        capturePcm(generation, purpose, activeCapture)
       }
+      synchronized(this) { audioCaptureThread = captureThread }
+      captureThread.start()
+      captureOwnedByThread = true
       promise.resolve(Arguments.createMap().apply {
         putInt("sampleRate", sampleRate)
-        putString("source", capture.source.label)
-        putBoolean("noiseSuppressor", noiseSuppressor?.enabled ?: false)
-        putBoolean("automaticGainControl", automaticGainControl?.enabled ?: false)
+        putString("source", activeCapture.source.label)
+        putBoolean("acousticEchoCancelerSupported", effects.acousticEchoCancelerSupported)
+        putBoolean("acousticEchoCancelerEnabled", effects.acousticEchoCancelerEnabled)
+        putBoolean("noiseSuppressor", effects.noiseSuppressor?.enabled == true)
+        putBoolean("automaticGainControl", effects.automaticGainControl?.enabled == true)
       })
     } catch (error: Throwable) {
+      if (!captureOwnedByThread) {
+        capture?.let { abandoned ->
+          synchronized(this) {
+            if (audioRecord === abandoned.recorder) {
+              audioCaptureRunning = false
+              audioRecord = null
+              audioCaptureThread = null
+            }
+          }
+          try { abandoned.recorder.stop() } catch (_: Throwable) {}
+          try {
+            abandoned.release()
+          } catch (cleanupError: Throwable) {
+            Log.w(AUDIO_LOG_TAG, "PCM capture startup cleanup failed", cleanupError)
+          } finally {
+            microphone.captureReleased()
+          }
+        }
+      }
       stopPcmCaptureInternal()
       promise.reject("PCM_CAPTURE_START_FAILED", error.message, error)
     }
   }
 
   @ReactMethod
-  fun stopPcmCapture() {
+  fun stopPcmCapture(token: String, purpose: String, promise: Promise) {
+    val matches = synchronized(this) {
+      audioCaptureLeaseToken == token && audioCaptureLeasePurpose == purpose
+    }
+    if (!matches) {
+      promise.reject("MIC_LEASE_STALE", "Microphone lease is stale")
+      return
+    }
     stopPcmCaptureInternal()
+    promise.resolve(null)
   }
 
   @ReactMethod fun addListener(eventName: String) = Unit
@@ -1160,12 +1273,12 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     val service = CodexConnectionService.instance
     invalidated = true
     context.removeLifecycleEventListener(this)
+    stopPcmCaptureInternal()
     microphone.close()
     authenticatedLeaseGate.close().forEach { leaseHandle -> service?.releaseAuthenticatedTransportLease(leaseHandle) }
     mainHandler.removeCallbacksAndMessages(null)
     contexts -= context
     browserDevTools.close()
-    stopPcmCaptureInternal()
     context.runOnUiQueueThread {
       voiceAura.clear()
       voiceGeneration += 1
@@ -1178,16 +1291,16 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   private fun capturePcm(
     generation: Long,
-    recorder: AudioRecord,
-    sampleRate: Int,
-    noiseSuppressor: NoiseSuppressor?,
-    automaticGainControl: AutomaticGainControl?,
+    purpose: String,
+    capture: PreparedMicrophone.Session,
   ) {
+    val recorder = capture.recorder
+    val sampleRate = capture.sampleRate
     val samples = ShortArray(maxOf(1, sampleRate / OPUS_FRAMES_PER_SECOND))
     val batcher = OpusTransportBatcher(maxOf(1, sampleRate / AUDIO_CHUNKS_PER_SECOND))
     var encoder: OpusAudioEncoder? = null
     try {
-      val activeEncoder = OpusAudioEncoder(sampleRate, 1, OPUS_BITRATE)
+      val activeEncoder = if (purpose == "dictation") OpusAudioEncoder(sampleRate, 1, OPUS_BITRATE) else null
       encoder = activeEncoder
       emitPcm("started", null, sampleRate, 0, 0.0)
       while (audioCaptureRunning && generation == audioCaptureGeneration) {
@@ -1207,8 +1320,12 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         context.runOnUiQueueThread {
           if (audioCaptureRunning && generation == audioCaptureGeneration) voiceAura.setLevel(level)
         }
-        for (packet in activeEncoder.append(samples, count)) {
-          batcher.append(packet, level)?.let { emitOpus(it, sampleRate) }
+        if (activeEncoder == null) {
+          emitRawPcm(samples, count, sampleRate, level)
+        } else {
+          for (packet in activeEncoder.append(samples, count)) {
+            batcher.append(packet, level)?.let { emitOpus(it, sampleRate) }
+          }
         }
       }
     } catch (error: Throwable) {
@@ -1229,33 +1346,41 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           emitPcm("error", error.javaClass.simpleName, sampleRate, 0, 0.0)
         }
       }
-      synchronized(this) {
+      val captureToken = synchronized(this) {
         if (generation == audioCaptureGeneration) {
+          val token = audioCaptureLeaseToken
           audioCaptureRunning = false
           audioRecord = null
           audioCaptureThread = null
-          audioNoiseSuppressor = null
-          audioAutomaticGainControl = null
-        }
+          audioCaptureLeaseToken = null
+          audioCaptureLeasePurpose = null
+          token
+        } else null
       }
       try { recorder.stop() } catch (_: Throwable) {}
-      noiseSuppressor?.release()
-      automaticGainControl?.release()
-      recorder.release()
-      microphone.captureReleased()
-      emitPcm("stopped", null, sampleRate, 0, 0.0)
+      try {
+        capture.release()
+      } finally {
+        microphone.captureReleased()
+        captureToken?.let(VoiceCaptureForegroundService::release)
+        emitPcm("stopped", null, sampleRate, 0, 0.0)
+      }
     }
   }
 
   private fun stopPcmCaptureInternal() {
-    val recorder = synchronized(this) {
+    val stopped = synchronized(this) {
       audioCaptureRunning = false
       audioCaptureGeneration += 1
       val active = audioRecord
+      val token = audioCaptureLeaseToken
       audioRecord = null
-      active
+      audioCaptureLeaseToken = null
+      audioCaptureLeasePurpose = null
+      Pair(active, token)
     }
-    try { recorder?.stop() } catch (_: Throwable) {}
+    try { stopped.first?.stop() } catch (_: Throwable) {}
+    stopped.second?.let(VoiceCaptureForegroundService::release)
   }
 
   private inner class VoiceListener(
@@ -1329,6 +1454,12 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           .emit(AUDIO_EVENT, map)
       }
     }
+  }
+
+  private fun emitRawPcm(samples: ShortArray, count: Int, sampleRate: Int, level: Double) {
+    val bytes = ByteBuffer.allocate(count * 2).order(ByteOrder.LITTLE_ENDIAN)
+    for (index in 0 until count) bytes.putShort(samples[index])
+    emitPcm("chunk", Base64.encodeToString(bytes.array(), Base64.NO_WRAP), sampleRate, count, level)
   }
 
   private fun emitOpus(chunk: OpusTransportChunk, sampleRate: Int) {

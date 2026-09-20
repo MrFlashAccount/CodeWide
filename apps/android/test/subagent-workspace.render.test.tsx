@@ -28,13 +28,16 @@ const summary: StoredThreadSummary = {
 it("uses the thread-sidebar geometry and real subagent preview", () => {
   const view = render(
     <SubagentWorkspace
+      compact={false}
+      masterWidth={320}
+      onLayout={jest.fn()}
       subagents={[summary]}
       selected={summary}
       onSelect={jest.fn()}
-      onBack={jest.fn()}
       onClose={jest.fn()}
-      renderDetail={() => null}
-    />,
+    >
+      {null}
+    </SubagentWorkspace>,
   );
 
   fireEvent(view.getByTestId("subagent-workspace"), "layout", {

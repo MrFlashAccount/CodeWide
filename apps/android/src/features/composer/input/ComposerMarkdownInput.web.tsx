@@ -17,15 +17,16 @@ export function ComposerMarkdownInput({
   const insertText = useEvent((text: string) => {
     const start = Math.min(selection.current.start, selection.current.end);
     const end = Math.max(selection.current.start, selection.current.end);
-    props.onChangeText(`${props.value.slice(0, start)}${text}${props.value.slice(end)}`);
+    const next = `${props.value.slice(0, start)}${text}${props.value.slice(end)}`;
+    props.onChangeValue({ markdown: next, plainText: next });
   });
   useImperativeHandle(
     ref,
     () => ({
       focus: () => input.current?.focus(),
-      getMarkdown: async () => {
+      getValue: async () => {
         await Promise.resolve();
-        return props.value;
+        return { markdown: props.value, plainText: props.value };
       },
       insertCode: () => undefined,
       insertLinkedText: (text) => {
@@ -42,7 +43,9 @@ export function ComposerMarkdownInput({
     <AppTextInput
       accessibilityLabel={props.accessibilityLabel}
       multiline
-      onChangeText={props.onChangeText}
+      onChangeText={(next) => {
+        props.onChangeValue({ markdown: next, plainText: next });
+      }}
       onSelectionChange={(event) => {
         selection.current = event.nativeEvent.selection;
         props.onSelectionChange?.(event.nativeEvent.selection);

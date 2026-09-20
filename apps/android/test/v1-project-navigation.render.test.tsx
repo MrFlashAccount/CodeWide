@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react-native";
 import { KeyboardController } from "react-native-keyboard-controller";
 
 import { useComposerProjectSelection } from "../src/features/projects/composerProjectSelection";
+import { useProjectPickerSession } from "../src/features/projects/projectPickerSession";
 import {
   threadSelectionKey,
   v1ThreadRouteParams,
@@ -25,10 +26,43 @@ function routeParams(connectionId: string, threadId: string): V1ThreadRouteParam
   return parsed.value;
 }
 
+it("records project-picker navigation direction without animating its initial page", () => {
+  const props = {
+    browseOnly: false,
+    busy: false,
+    cwd: "/workspace",
+    discoveredProjects: [],
+    error: null,
+    onAddProject: jest.fn(async (path: string) => ({
+      addedAt: 1,
+      lastUsedAt: 1,
+      name: "Project",
+      path,
+      pinned: true,
+    })),
+    onClose: jest.fn(),
+    onReadDirectory: jest.fn(async () => []),
+    onSelect: jest.fn(async () => undefined),
+    projects: [],
+    visible: true,
+  };
+  const { result } = renderHook(() => useProjectPickerSession(props));
+
+  expect(result.current.mode).toBe("projects");
+  expect(result.current.navigationDirection).toBeNull();
+
+  act(() => result.current.openDirectoryPicker());
+  expect(result.current.mode).toBe("directory");
+  expect(result.current.navigationDirection).toBe("forward");
+
+  act(() => result.current.showProjects());
+  expect(result.current.mode).toBe("projects");
+  expect(result.current.navigationDirection).toBe("back");
+});
+
 it("publishes the qualified route before observer hydration settles and keeps stable intents", async () => {
   const observation = pending();
   const observeThread = jest.fn(() => observation.promise);
-  const setActiveConnection = jest.fn();
   const current = { value: null as V1ThreadRouteParams | null };
   const push = jest.fn((destination: V1ThreadDestination) => {
     current.value = routeParams(destination.params.connectionId, destination.params.threadId);
@@ -37,7 +71,10 @@ it("publishes the qualified route before observer hydration settles and keeps st
     get currentThread() {
       return current.value;
     },
+    prefetch: jest.fn(),
     push,
+    reset: jest.fn(),
+    searchSelectionMode: "push" as const,
     selectionMode: "push" as const,
     replace: jest.fn(),
     dismissToAll: jest.fn(),
@@ -46,14 +83,10 @@ it("publishes the qualified route before observer hydration settles and keeps st
   const { result, rerender } = renderHook(() =>
     useThreadNavigationService(
       {
-        native: false,
-        threadDetails: null,
-        threadUiStateDatabase: null,
         observeThread,
         searchConversation: async () => ({ messages: [], turns: [], older: null, newer: null }),
       },
       router,
-      setActiveConnection,
     ),
   );
   const select = result.current.selectThread;
@@ -66,7 +99,6 @@ it("publishes the qualified route before observer hydration settles and keeps st
     undefined,
   );
   expect(observeThread).toHaveBeenCalledWith("server", "chat");
-  expect(setActiveConnection).toHaveBeenCalledWith("server");
   expect(dismiss).toHaveBeenCalledWith({ animated: false, keepFocus: false });
   rerender({});
   expect(result.current.selectThread).toBe(select);

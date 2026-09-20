@@ -10,10 +10,6 @@ const timelineListSource = readFileSync(
   new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url),
   "utf8",
 );
-const initialPositionSource = readFileSync(
-  new URL("../src/rendering/timeline-initial-position.ts", import.meta.url),
-  "utf8",
-);
 const uiStateDatabase = readFileSync(
   new URL("../src/data/thread-ui-state-database.native.ts", import.meta.url),
   "utf8",
@@ -139,24 +135,20 @@ describe("thread history pagination contract", () => {
     expect(historyController).toContain("ThreadHistoryViewportFill");
   });
 
-  it("leaves scroll position to MVCP while paging and follows only the authoritative tail", () => {
+  it("leaves scroll positioning to LegendList", () => {
     expect(historyController).not.toContain("maintainAtEnd");
     expect(screen).not.toContain("maintainAtEnd=");
     expect(historyController).toContain("containsLatest: options.isLatestRange");
+    expect(ownerTimelineViewport).toContain("initialScrollAtEnd={!props.timelinePositioned}");
+    expect(ownerTimelineViewport).toContain("maintainScrollAtEnd");
     expect(ownerTimelineViewport).toContain(
-      "!props.fullscreenCovered && props.historyViewport.containsLatest && !props.awayFromLatest && !props.threadSearchActive",
+      "maintainScrollAtEndThreshold={TIMELINE_TAIL_MODE_THRESHOLD_RATIO}",
     );
-    expect(ownerTimelineGestureBindings).toContain(
-      "const away = !props.historyViewport.containsLatest || distance > LATEST_TIMELINE_THRESHOLD_PX;",
-    );
-    expect(timelineListSource).toContain(
-      "maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}",
-    );
-    expect(timelineListSource).toContain("dataChange: true");
-    expect(timelineListSource).toContain("itemLayout: true");
-    expect(timelineListSource).toContain(
-      "maintainVisibleContentPosition={{ data: true, size: true }}",
-    );
+    expect(ownerTimelineViewport).toContain("maintainVisibleContentPosition");
+    expect(ownerTimelineViewport).not.toContain("shouldFollowTimelineTail");
+    expect(ownerTimelineGestureBindings).not.toContain("publishUserTailPosition");
+    expect(timelineListSource).not.toContain("maintainScrollAtEnd=");
+    expect(timelineListSource).not.toContain("maintainScrollAtEndThreshold");
   });
 
   it("does not advance a backend cursor before its page is durable", () => {
@@ -307,12 +299,19 @@ describe("thread history pagination contract", () => {
     expect(screen).not.toContain("active-thread-hydration");
     expect(detailDatabase).toContain("setRemoteLoader(loader)");
     expect(detailDatabase).toContain("await loader.hydrateWindow(");
-    expect(detailDatabase).toContain("void hydrateAndInstall().catch(");
+    expect(detailDatabase).toContain("void hydrateAndInstall()");
+    expect(detailDatabase).not.toContain("windowIntents");
     expect(
       readFileSync(new URL("../src/data/workspace-runtime.ts", import.meta.url), "utf8"),
     ).toContain(
       "details.setRemoteLoader(createThreadSyncRemoteLoader(details, workspaceThreadSync))",
     );
+  });
+
+  it("binds the chat window lifetime to the resource subscription without passive effects", () => {
+    expect(chatWindowHook).toContain("useSyncExternalStore(");
+    expect(chatWindowHook).toContain("resource?.retain ?? emptyRetain");
+    expect(chatWindowHook).not.toContain("useEffect");
   });
 
   it("keeps authoritative refresh out of cached navigation readiness", () => {
@@ -392,6 +391,7 @@ describe("thread history pagination contract", () => {
 
     expect(timelineList).toContain("onStartReached={props.loadOlderAtTimelineStart}");
     expect(timelineList).toContain("onEndReached={props.loadNewerAtTimelineEnd}");
+    expect(timelineList).not.toContain("if (props.timelinePositioned)");
     expect(timelineList).toContain("showsVerticalScrollIndicator={false}");
     expect(historyController).toContain("loadRange(context, direction)");
     expect(detailDatabase).toContain("turnLimit: THREAD_HISTORY_PAGE_SIZE");
@@ -410,7 +410,8 @@ describe("thread history pagination contract", () => {
     expect(ownerTimelineViewportState).toContain(
       'const paginationEdgeLockRef = useConversationRef<"older" | "newer" | null>( composerScope, () => null, );',
     );
-    expect(ownerTimelineViewportState).toContain("paginationEdgeLockRef.current = null;");
+    expect(ownerTimelineViewportState).not.toContain("paginationEdgeLockRef.current = null;");
+    expect(ownerTimelineGestureBindings).toContain("paginationEdgeLockRef.current = null;");
     expect(ownerTimelineViewportState).toContain('paginationEdgeLockRef.current === "newer"');
     expect(ownerTimelineViewportState).toContain('paginationEdgeLockRef.current === "older"');
     expect(ownerTimelineViewportState).toContain('"ignored_opposite_edge"');
@@ -423,12 +424,9 @@ describe("thread history pagination contract", () => {
     expect(momentumBegin).not.toContain("trimPaginationWindow()");
     expect(ownerTimelineGestureBindings).toContain("trimPaginationWindow();");
     expect(historyController).toContain("trimAfterGesture");
-    expect(timelineListSource).toContain(
-      "maintainVisibleContentPosition={{ data: true, size: true }}",
-    );
-    expect(timelineListSource).toContain(
-      "maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}",
-    );
+    expect(ownerTimelineViewport).toContain("maintainVisibleContentPosition");
+    expect(ownerTimelineViewport).toContain("maintainScrollAtEnd");
+    expect(timelineListSource).not.toContain("followTail");
     expect(screen).not.toContain("reconcileTimelineEndPosition");
   });
 
@@ -468,9 +466,8 @@ describe("thread history pagination contract", () => {
     expect(ownerConversationDetail).toContain(
       "const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)",
     );
-    expect(ownerConversationDestinationSurface).toContain(
-      "<Suspense fallback={ <ConversationNavigationFallback",
-    );
+    expect(ownerConversationDestinationSurface).not.toContain("<Suspense");
+    expect(ownerConversationDestinationSurface).not.toContain("ConversationNavigationFallback");
     expect(ownerConversationDestinationSurface).toContain("<ConversationDestination");
     expect(screen).not.toContain("pendingConversationRequest");
     expect(screen).not.toContain("advanceConversationPresentation(");
@@ -484,15 +481,16 @@ describe("thread history pagination contract", () => {
     expect(screen).not.toContain("<Profiler");
   });
 
-  it("restores a semantic anchor declaratively without measuring the whole chat", () => {
-    expect(ownerTimelineViewport).toContain("initialPosition={props.timelineInitialPosition}");
+  it("does not install a second initial-position owner around LegendList", () => {
+    expect(ownerTimelineViewport).toContain("initialScrollAtEnd={!props.timelinePositioned}");
+    expect(ownerTimelineViewport).not.toContain("bootstrapInitialPosition");
+    expect(ownerTimelineViewport).not.toContain("timelineRowInitialIndex");
     expect(screen).not.toContain(
       "contentHeight - timelineViewportHeightRef.current - pendingOffset",
     );
     expect(screen).not.toContain("scrollToIndex({ index: anchorIndex");
-    expect(timelineListSource).toContain("legendInitialPositionProps(initialPosition)");
-    expect(initialPositionSource).toContain('position.kind === "tail"');
-    expect(initialPositionSource).toContain("initialScrollIndex:");
+    expect(timelineListSource).not.toContain("legendInitialPositionProps");
+    expect(timelineListSource).not.toContain("initialPosition");
     expect(timelineListSource).toContain("positionByKey(itemKey)");
     expect(uiStateDatabase).toContain("historyAnchorOffsetPx");
   });

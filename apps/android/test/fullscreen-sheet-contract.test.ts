@@ -45,7 +45,7 @@ const mermaid = readFileSync(
   "utf8",
 );
 const subagentSheet = readFileSync(
-  new URL("../src/features/agents/RouteSubagentWorkspace.tsx", import.meta.url),
+  new URL("../src/features/agents/SubagentSheet.tsx", import.meta.url),
   "utf8",
 );
 const subagentWorkspace = readFileSync(
@@ -107,6 +107,9 @@ const ownerTimelineViewport = compactSource(
 );
 const ownerComposerLayout = compactSource(
   readFileSync(new URL("../src/features/composer/composerLayout.ts", import.meta.url), "utf8"),
+);
+const conversationChromeLayout = compactSource(
+  readFileSync(new URL("../src/ui/conversation-chrome-layout.ts", import.meta.url), "utf8"),
 );
 const ownerComposerFeatureStyles = compactSource(
   readFileSync(
@@ -234,7 +237,7 @@ describe("fullscreen workspace presentation", () => {
     expect(androidFullscreenModal).toContain("<RNHostView matchContents={false}>");
     expect(androidFullscreenModal).toContain("<SafeAreaProvider");
     expect(androidFullscreenModal).toContain("<FullscreenWindowReadyProvider ready={windowReady}>");
-    expect(androidFullscreenModal).toContain("setNativeVoiceAuraTarget(reactTag)");
+    expect(androidFullscreenModal).not.toContain("setNativeVoiceAuraTarget");
     expect(androidFullscreenModal).toContain("props.onShow?.()");
     expect(androidFullscreenModal).not.toContain("<Modal");
     expect(ownerOverlayScrollOwnership).toContain("fullscreenScrollOwnership.willOpen(id)");
@@ -254,7 +257,8 @@ describe("fullscreen workspace presentation", () => {
     expect(timelineList).not.toContain("freeze=");
     expect(viewportActions).toContain("fullscreenScrollOwnership.isCovered()");
     expect(viewportActions).toContain("return;");
-    expect(ownerTimelineViewport).toContain("followTail={ !props.fullscreenCovered &&");
+    expect(ownerTimelineViewport).toContain("maintainScrollAtEnd");
+    expect(ownerTimelineViewport).not.toContain("shouldFollowTimelineTail");
     expect(ownerOverlayScrollOwnership).toContain("didClose: fullscreenScrollOwnership.didClose");
   });
 
@@ -356,9 +360,13 @@ describe("fullscreen workspace presentation", () => {
     expect(contextContent).toContain("paddingBottom: 0");
     expect(ownerComposerLayout).toContain("const COMPOSER_CHIP_TOP_INSET = spacing.xxs;");
     expect(ownerComposerLayout).toContain("const COMPOSER_CHIP_BOTTOM_INSET = spacing.xxs;");
-    expect(ownerComposerFeatureStyles).toContain(
-      "minHeight: touchTarget + COMPOSER_CHIP_BOTTOM_INSET + spacing.compact",
+    expect(conversationChromeLayout).toContain(
+      "conversationComposerDockMinHeight = touchTarget + spacing.xxs + spacing.compact",
     );
+    expect(ownerComposerLayout).toContain(
+      "COMPOSER_DOCK_MIN_HEIGHT = conversationComposerDockMinHeight",
+    );
+    expect(ownerComposerFeatureStyles).toContain("minHeight: COMPOSER_DOCK_MIN_HEIGHT");
     const composerStyle = sourceObjectDeclaration(ownerComposerFeatureStyles, "composer");
     expect(composerStyle).toContain("paddingTop: COMPOSER_CHIP_BOTTOM_INSET");
     expect(composerStyle).toContain("paddingBottom: spacing.compact");
@@ -416,16 +424,15 @@ describe("fullscreen workspace presentation", () => {
     expect(subagentRenderer).toContain("<ReadOnlyComposerContext");
     expect(subagentRenderer).toContain("onOpenSubagentThread={onOpenSubagent}");
     expect(subagentRenderer).not.toContain("<SubagentTranscript");
-    expect(agentsRoute).toContain(
-      "parentThread={threadDetails.getThread(connectionId, parentThreadId)}",
-    );
+    expect(agentsRoute).toContain("parentThread={request.parentThread}");
+    expect(agentsRoute).toContain("summaries={request.summaries}");
     expect(screen).not.toContain('testID="subagent-task-card"');
     expect(subagentSheet).not.toContain("onLoadResources");
-    expect(subagentSheet).toContain("resolveSubagentRouteSelection(subagents, selection)");
-    expect(subagentSheet).toContain("onOpenSubagent={onSelect}");
-    expect(agentsRoute).toContain("startSubagentTransition(() =>");
+    expect(subagentSheet).toContain("setSelectedId(threadId)");
+    expect(subagentSheet).toContain("onOpenSubagent={openById}");
+    expect(subagentSheet).toContain("startSubagentTransition(() =>");
     expect(subagentSheet).toContain("<Suspense");
-    expect(subagentSheet.indexOf("function RouteSubagentDetail")).toBeGreaterThan(
+    expect(subagentSheet.indexOf("function SubagentConversationDetail")).toBeGreaterThan(
       subagentSheet.indexOf("<Suspense fallback={"),
     );
     expect(fullscreenOverlay).toContain(
@@ -434,10 +441,10 @@ describe("fullscreen workspace presentation", () => {
   });
 
   it("keeps the model-owned cached subagent text visible and updates recycled selection", () => {
-    expect(subagentSheet).toContain("applyThreadSummaryMetadata(materialized, summary)");
+    expect(subagentSheet).toContain("applyThreadSummaryMetadata(materializedThread, summary)");
     expect(subagentSheet).toContain("did not materialize from its ready window");
     expect(subagentSheet).toContain("if (conversation === null)");
-    expect(subagentSheet).toContain('resolvedSelection.status === "selected"');
+    expect(subagentSheet).toContain("summary.remoteThreadId === selectedId");
     expect(subagentSheet).not.toContain("remoteThreadResource");
     expect(subagentWorkspace).toContain("extraData={selected?.remoteThreadId ?? null}");
   });
@@ -453,13 +460,14 @@ describe("fullscreen workspace presentation", () => {
     expect(ownerWorkspaceThreadList).toContain(': { mode: "mobile", props:');
     const conversation = destinationView;
     expect(conversation).toContain('label="Conversation"');
-    expect(conversation).toContain("fallback={ <ConversationNavigationFallback");
-    expect(conversation).toContain("compact={!props.desktop}");
+    expect(conversation).not.toContain("<Suspense");
+    expect(conversation).not.toContain("ConversationNavigationFallback");
+    expect(conversation).toContain("<ConversationDestination");
     expect(conversation).toContain("onDismiss={props.scope.closeActiveConversation}");
     expect(turnOwner).toContain('scope="bubble"');
     expect(ownerThreadTimeline).toContain('label="Conversation item"');
     expect(subagentSheet).toContain('label="Subagent conversation"');
-    expect(subagentSheet).toContain("<RouteSubagentDetail");
+    expect(subagentSheet).toContain("<SubagentConversationDetail");
     expect(fullscreenOverlay).toContain("fullscreen-overlay-suspense-fallback");
     expect(fullscreenOverlay).toContain('label="Fullscreen overlay content"');
     expect(fullscreenOverlay).toMatch(/onDismiss=\{\(\) => \{\s*close\(entry\.id\);\s*\}\}/u);
@@ -479,6 +487,7 @@ describe("fullscreen workspace presentation", () => {
     expect(renderer).not.toContain("agentNavigationSubtitle");
     expect(renderer).not.toContain("<Card");
     expect(ownerTurnActivity).toContain('testID="subagent-activity-navigation"');
-    expect(ownerTurnActivity).toContain("if (agentNavigationOnly)");
+    expect(ownerTurnActivity).toContain('if (kind === "agentNavigation")');
+    expect(ownerTurnActivity).toContain("function AgentNavigationActivitySegment");
   });
 });

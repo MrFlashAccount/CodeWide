@@ -13,6 +13,27 @@ export function reconcileTurnItems(
   cached: readonly ThreadItem[],
   incoming: readonly ThreadItem[],
 ): ThreadItem[] {
+  return reconcileItems(cached, incoming, false);
+}
+
+/**
+ * Reconciles an active-turn snapshot without treating a context-compaction
+ * item as proof that the previously observed lifecycle has completed. That
+ * protocol item has no status field, so the matching live item event remains
+ * the authority for advancing its lifecycle.
+ */
+export function reconcileActiveTurnItems(
+  cached: readonly ThreadItem[],
+  incoming: readonly ThreadItem[],
+): ThreadItem[] {
+  return reconcileItems(cached, incoming, true);
+}
+
+function reconcileItems(
+  cached: readonly ThreadItem[],
+  incoming: readonly ThreadItem[],
+  preserveLifecycle: boolean,
+): ThreadItem[] {
   if (cached.length === 0) return incoming.slice();
   if (incoming.length === 0) return cached.slice();
 
@@ -34,7 +55,7 @@ export function reconcileTurnItems(
       (item.type === "userMessage" ? leading : trailing).push(item);
       continue;
     }
-    result[index] = preserveProjectedItemMarkers(item, result[index]!);
+    result[index] = preserveProjectedItemMarkers(item, result[index]!, preserveLifecycle);
     matched.add(index);
   }
 
@@ -62,13 +83,62 @@ function preserveUserClientId(incoming: ThreadItem, cached: ThreadItem): ThreadI
   return clientId === null ? incoming : { ...incoming, clientId };
 }
 
-function preserveProjectedItemMarkers(incoming: ThreadItem, cached: ThreadItem): ThreadItem {
-  const withClientId = preserveUserClientId(incoming, cached);
-  const cachedProjection = cached as ThreadItem & { codewidePreTurn?: boolean };
-  const incomingProjection = withClientId as ThreadItem & { codewidePreTurn?: boolean };
-  return cachedProjection.codewidePreTurn === true && incomingProjection.codewidePreTurn !== true
-    ? { ...(withClientId as unknown as Record<string, unknown>), codewidePreTurn: true } as unknown as ThreadItem
-    : withClientId;
+function preserveProjectedItemMarkers(
+  incoming: ThreadItem,
+  cached: ThreadItem,
+  preserveLifecycle: boolean,
+): ThreadItem {
+  let projected = preserveActiveAgentText(incoming, cached, preserveLifecycle);
+  projected = preserveUserClientId(projected, cached);
+  if (projectedPreTurn(cached) && !projectedPreTurn(projected)) {
+    projected = withProjectedPreTurn(projected);
+  }
+  const lifecyclePhase =
+    preserveLifecycle && projected.type === "contextCompaction"
+      ? projectedLifecyclePhase(cached)
+      : null;
+  if (lifecyclePhase !== null && projectedLifecyclePhase(projected) === null) {
+    projected = withProjectedLifecycle(projected, lifecyclePhase);
+  }
+  return projected;
+}
+
+function preserveActiveAgentText(
+  incoming: ThreadItem,
+  cached: ThreadItem,
+  preserveLifecycle: boolean,
+): ThreadItem {
+  if (
+    !preserveLifecycle ||
+    incoming.type !== "agentMessage" ||
+    cached.type !== "agentMessage" ||
+    !cached.text.startsWith(incoming.text) ||
+    cached.text === incoming.text
+  ) {
+    return incoming;
+  }
+  return { ...incoming, text: cached.text };
+}
+
+function withProjectedPreTurn<Item extends ThreadItem>(item: Item): Item & { codewidePreTurn: true } {
+  return Object.assign({}, item, { codewidePreTurn: true as const });
+}
+
+function withProjectedLifecycle<Item extends ThreadItem>(
+  item: Item,
+  phase: "completed" | "started",
+): Item & { codewideLifecyclePhase: "completed" | "started" } {
+  return Object.assign({}, item, { codewideLifecyclePhase: phase });
+}
+
+function projectedPreTurn(item: ThreadItem): boolean {
+  return "codewidePreTurn" in item && item.codewidePreTurn === true;
+}
+
+function projectedLifecyclePhase(item: ThreadItem): "completed" | "started" | null {
+  if (!("codewideLifecyclePhase" in item)) return null;
+  const phase = item.codewideLifecyclePhase;
+  return phase === "started" || phase === "completed" ? phase : null;
 }
 
 function userMessageFingerprint(item: Extract<ThreadItem, { type: "userMessage" }>): string {

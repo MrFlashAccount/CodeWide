@@ -10,18 +10,18 @@ import type { ComposerSuggestionsCapabilities } from "./suggestionsCapabilities"
 export function useComposerSuggestions({
   composerInputRef,
   composerScope,
+  composerSession,
   currentControlsResource,
   cwd,
-  draft,
   draftSelectionRef,
-  latestComposerPreferencesRef,
   onLoadControls,
   updateComposerPreferences,
   updateDraft,
+  updateText,
   voiceController,
 }: ComposerSuggestionsCapabilities) {
   const insertSkillInvocation = useEvent((skill: { name: string; path: string }) => {
-    const selected = latestComposerPreferencesRef.current.latest.skillPaths;
+    const selected = composerSession.read().preferences.skillPaths;
     if (!selected.includes(skill.path)) {
       updateComposerPreferences((current) => ({
         ...current,
@@ -37,7 +37,7 @@ export function useComposerSuggestions({
     }
     const selection = draftSelectionRef.current;
     const invocation = `$${skill.name} `;
-    const current = draft;
+    const current = composerSession.read().plainText;
     const next = `${current.slice(0, selection.start)}${invocation}${current.slice(selection.end)}`;
     const cursor = selection.start + invocation.length;
     updateDraft(next);
@@ -45,16 +45,16 @@ export function useComposerSuggestions({
     voiceController?.setPendingSelection(composerScope, { end: cursor, start: cursor });
   });
 
-  const handleComposerTextChange = useEvent((nextText: string) => {
-    updateDraft(nextText);
+  const handleComposerTextChange = useEvent((nextText: Parameters<typeof updateText>[0]) => {
+    updateText(nextText);
     const currentSkills = currentControlsResource()?.value?.skills;
-    const selected = latestComposerPreferencesRef.current.latest.skillPaths;
+    const selected = composerSession.read().preferences.skillPaths;
     if (currentSkills === undefined || selected.length === 0) {
       return;
     }
     const next = selected.filter((path) => {
       const skill = currentSkills.find((candidate) => candidate.path === path);
-      return skill !== undefined && containsSkillInvocation(nextText, skill.name);
+      return skill !== undefined && containsSkillInvocation(nextText.plainText, skill.name);
     });
     if (next.length !== selected.length) {
       updateComposerPreferences((current) => ({ ...current, skillPaths: next }));
@@ -77,7 +77,7 @@ export function useComposerSuggestions({
     if (mention.kind !== "skill") {
       return;
     }
-    const selected = latestComposerPreferencesRef.current.latest.skillPaths;
+    const selected = composerSession.read().preferences.skillPaths;
     if (!selected.includes(mention.path)) {
       updateComposerPreferences((current) => ({
         ...current,

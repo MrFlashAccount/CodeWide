@@ -17,6 +17,7 @@ type RealtimeOpusAudioChunk = {
 export type RealtimeAudioChunk = RealtimePcmAudioChunk | RealtimeOpusAudioChunk;
 
 type QueuedBatch = {
+  byteLength: number;
   chunks: RealtimeAudioChunk[];
   id: number;
 };
@@ -29,28 +30,39 @@ type RealtimeAudioFormat = {
 
 export type RealtimeAudioUploaderOptions = {
   batchDurationMs?: number;
+  maxBufferedBytes?: number;
   onError: (message: string) => void;
   send: (batchId: number, chunks: RealtimeAudioChunk[], signal: AbortSignal) => Promise<void>;
 };
 
 const REALTIME_AUDIO_BATCH_DURATION_MS = 1000;
+// WHY: Match the V2 four-batch ceiling so V1 cannot retain an entire Voice session during a stalled acknowledgement.
+// oxlint-disable-next-line eslint/no-magic-numbers
+const REALTIME_AUDIO_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+// Base64 represents each three decoded bytes with exactly four encoded characters.
+const BASE64_DECODED_BYTES_PER_QUANTUM = 3;
+const BASE64_CHARACTERS_PER_QUANTUM = 4;
 
 /**
  * Ordered bridge between native audio callbacks and the remote host.
  * Native callbacks are capture frames, not network packets: coalesce them into
  * one-second batches and keep exactly one RPC in flight so speech can never be
- * reordered by response timing. Network slowness is backpressure, not data
- * loss: queued microphone audio remains pending until accepted or cancelled.
+ * reordered by response timing. A short network stall is backpressure, not data
+ * loss; the bounded buffer fails the recording instead of retaining audio
+ * indefinitely when the host cannot acknowledge it.
  */
 export class RealtimeAudioUploader {
   readonly #send: RealtimeAudioUploaderOptions["send"];
   readonly #onError: RealtimeAudioUploaderOptions["onError"];
   readonly #batchDurationMs: number;
+  readonly #maxBufferedBytes: number;
   readonly #queue: QueuedBatch[] = [];
   readonly #drainWaiters = new Set<() => void>();
   readonly #abortController = new AbortController();
   #pendingChunks: RealtimeAudioChunk[] = [];
+  #pendingBytes = 0;
   #pendingDurationMs = 0;
+  #bufferedBytes = 0;
   #inFlight: Promise<void> | null = null;
   #nextBatchId = 0;
   #accepting = true;
@@ -64,6 +76,10 @@ export class RealtimeAudioUploader {
     this.#batchDurationMs = positiveInteger(
       options.batchDurationMs ?? REALTIME_AUDIO_BATCH_DURATION_MS,
       "batchDurationMs",
+    );
+    this.#maxBufferedBytes = positiveInteger(
+      options.maxBufferedBytes ?? REALTIME_AUDIO_MAX_BUFFERED_BYTES,
+      "maxBufferedBytes",
     );
   }
 
@@ -87,7 +103,12 @@ export class RealtimeAudioUploader {
       this.#fail("Microphone audio format changed during recording");
       return;
     }
-    this.#appendPending(chunk, durationMs);
+    const byteLength = decodedBase64ByteLength(chunk.data);
+    if (this.#bufferedBytes + byteLength > this.#maxBufferedBytes) {
+      this.#fail("Voice audio buffer capacity exceeded");
+      return;
+    }
+    this.#appendPending(chunk, durationMs, byteLength);
   }
 
   async finish(): Promise<void> {
@@ -108,9 +129,11 @@ export class RealtimeAudioUploader {
     await this.#waitForDrain();
   }
 
-  #appendPending(chunk: RealtimeAudioChunk, durationMs: number): void {
+  #appendPending(chunk: RealtimeAudioChunk, durationMs: number, byteLength: number): void {
     this.#pendingChunks.push(chunk);
+    this.#pendingBytes += byteLength;
     this.#pendingDurationMs += durationMs;
+    this.#bufferedBytes += byteLength;
     if (this.#pendingDurationMs >= this.#batchDurationMs) {
       this.#flushPending();
     }
@@ -120,9 +143,14 @@ export class RealtimeAudioUploader {
     if (this.#pendingChunks.length === 0) {
       return;
     }
-    this.#queue.push({ chunks: this.#pendingChunks, id: this.#nextBatchId });
+    this.#queue.push({
+      byteLength: this.#pendingBytes,
+      chunks: this.#pendingChunks,
+      id: this.#nextBatchId,
+    });
     this.#nextBatchId += 1;
     this.#pendingChunks = [];
+    this.#pendingBytes = 0;
     this.#pendingDurationMs = 0;
     this.#pump();
   }
@@ -141,6 +169,7 @@ export class RealtimeAudioUploader {
           this.#fail(error instanceof Error ? error.message : "Audio upload failed");
         })
         .finally(() => {
+          this.#bufferedBytes -= entry.byteLength;
           if (this.#inFlight === request) {
             this.#inFlight = null;
           }
@@ -166,12 +195,17 @@ export class RealtimeAudioUploader {
   }
 
   #discardQueued(): void {
+    for (const entry of this.#queue) {
+      this.#bufferedBytes -= entry.byteLength;
+    }
     this.#queue.length = 0;
     this.#resolveDrainIfIdle();
   }
 
   #discardPending(): void {
+    this.#bufferedBytes -= this.#pendingBytes;
     this.#pendingChunks = [];
+    this.#pendingBytes = 0;
     this.#pendingDurationMs = 0;
   }
 
@@ -208,6 +242,15 @@ function chunkDurationMs(chunk: RealtimeAudioChunk): number | null {
     return null;
   }
   return (chunk.samplesPerChannel * 1000) / chunk.sampleRate;
+}
+
+function decodedBase64ByteLength(value: string): number {
+  const padding = value.endsWith("==") ? "==".length : value.endsWith("=") ? "=".length : "".length;
+  return Math.max(
+    "".length,
+    Math.floor((value.length * BASE64_DECODED_BYTES_PER_QUANTUM) / BASE64_CHARACTERS_PER_QUANTUM) -
+      padding,
+  );
 }
 
 function positiveInteger(value: number, name: string): number {

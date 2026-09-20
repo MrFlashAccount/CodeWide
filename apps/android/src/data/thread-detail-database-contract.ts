@@ -17,7 +17,6 @@ import type {
 
 /** Owns one thread's durable detail model and windowed timeline mutations. */
 export type ThreadDetailDatabase = {
-  adoptPreloadedWindow: (connectionId: string, threadId: string) => void;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
   // oxlint-disable-next-line eslint/max-params
   appendTurns: (
@@ -97,7 +96,6 @@ export type ThreadDetailDatabase = {
     direction: -1 | 1,
   ) => PendingTimelineMutation | null;
   planQueuedRemoval: (connectionId: string, commandId: string) => PendingTimelineMutation | null;
-  preloadWindow: (request: ThreadChatWindowRequest) => () => void;
   prepare: () => Promise<void>;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
   // oxlint-disable-next-line eslint/max-params
@@ -162,7 +160,6 @@ export type ThreadDetailDatabase = {
     turnId: string,
     items: Turn["items"],
   ) => Promise<void>;
-  retainWindow: (connectionId: string, threadId: string) => () => void;
   readonly sessionId: string;
   setRemoteLoader: (loader: ThreadRemoteLoader) => void;
   stagePendingMutation: (mutation: PendingTimelineMutation) => {
@@ -221,7 +218,7 @@ export type ThreadRemoteLoader = {
     historyEpoch: number;
     threadId: string;
   }) => Promise<void>;
-  observe?: (input: { connectionId: string; threadId: string }) => void;
+  observe?: (input: { connectionId: string; threadId: string }) => () => void;
   reconcilePending: (input: { connectionId: string; threadId: string }) => Promise<void>;
   repairProjection: (input: { connectionId: string; threadId: string }) => Promise<void>;
   shouldRepairProjection?: (input: { connectionId: string; threadId: string }) => boolean;

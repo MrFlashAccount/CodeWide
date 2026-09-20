@@ -7,10 +7,11 @@ import {
   cachedResponseHeaders,
   type AttachmentMetadata,
 } from "./http-metadata";
-import type { CachedTransferOptions } from "./transfer-options";
+import type { CachedSourceRequest, CachedTransferOptions } from "./transfer-options";
 
 let residentCache: AttachmentDiskCache | null = null;
 let state: Promise<{ cache: AttachmentDiskCache; storage: ExpoAttachmentStorage }> | null = null;
+let responseDownloadSequence = 0;
 
 async function cacheState(): Promise<{
   cache: AttachmentDiskCache;
@@ -84,11 +85,9 @@ export async function cachedAttachmentFetch(
 
 /** A native player can stream when a file cannot fit without evicting active readers. */
 export async function cachedAttachmentSource(
-  uri: string,
-  headers: Record<string, string>,
-  options: CachedTransferOptions,
-  signal?: AbortSignal,
+  request: CachedSourceRequest,
 ): Promise<{ headers: Record<string, string>; uri: string }> {
+  const { headers, options, signal, uri } = request;
   if (!/^https?:/u.test(uri)) {
     return { headers, uri };
   }
@@ -110,6 +109,75 @@ export async function cachedAttachmentSource(
   }
   retainUntilAbort(lease, signal);
   return { headers: {}, uri: lease.uri };
+}
+
+/** Downloads a transformed image once, then derives its durable cache key from
+ * the response ETag. Unlike mutable original files, this path needs no HEAD probe. */
+export async function cachedAttachmentSourceFromResponse(
+  request: CachedSourceRequest,
+): Promise<{ headers: Record<string, string>; uri: string }> {
+  const { headers, options, signal, uri } = request;
+  if (!/^https?:/u.test(uri)) {
+    return { headers, uri };
+  }
+  checkOptionalAbort(signal);
+  const sequence = responseDownloadSequence;
+  responseDownloadSequence += 1;
+  const [{ cache, storage }, fileSystem, provisionalKey] = await Promise.all([
+    cacheState(),
+    import("expo-file-system/legacy"),
+    digest(JSON.stringify([options.scope, options.identity, sequence])),
+  ]);
+  const { deleteAsync, downloadAsync, getInfoAsync, moveAsync } = fileSystem;
+  const partial = `${storage.uri(provisionalKey)}.partial`;
+  try {
+    const downloaded = await downloadAsync(uri, partial, { cache: false, headers });
+    checkOptionalAbort(signal);
+    const info = await getInfoAsync(partial);
+    const metadata = responseDownloadMetadata(downloaded, info);
+    const key = await digest(
+      JSON.stringify([
+        options.scope,
+        options.identity,
+        metadata.revision,
+        metadata.start,
+        metadata.bytes,
+      ]),
+    );
+    const lease = await cache.acquire(key, metadata.bytes, async () => {
+      await moveAsync({ from: partial, to: storage.uri(key) });
+    });
+    if (lease === null) {
+      return { headers, uri };
+    }
+    retainUntilAbort(lease, signal);
+    return { headers: {}, uri: lease.uri };
+  } finally {
+    await deleteAsync(partial, { idempotent: true });
+  }
+}
+
+function checkOptionalAbort(signal: AbortSignal | undefined): void {
+  if (signal !== undefined) {
+    checkAborted(signal);
+  }
+}
+
+function responseDownloadMetadata(
+  downloaded: { headers: Record<string, string>; status: number },
+  info: { exists: boolean; isDirectory?: boolean; size?: number },
+): AttachmentMetadata {
+  if (!new Response(null, { status: downloaded.status }).ok) {
+    throw new AttachmentHttpError(downloaded.status);
+  }
+  const metadata = attachmentMetadata(new Headers(downloaded.headers), null);
+  if (metadata === null) {
+    throw new Error("Transformed image response had no stable revision");
+  }
+  if (![info.exists, info.isDirectory === false, info.size === metadata.bytes].every(Boolean)) {
+    throw new Error("Transformed image response was incomplete");
+  }
+  return metadata;
 }
 
 export function retainCachedAttachment(uri: string): () => void {

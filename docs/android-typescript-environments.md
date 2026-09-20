@@ -30,7 +30,7 @@ Browser database adapters and native implementations share the `*-contract.ts` i
 
 The installed package versions need three repository-owned pnpm patches:
 
-- `@legendapp/list@3.3.5`: the published `react-native` browser export pointed at the plain React DOM implementation, and `react-native.web.d.ts` duplicated the DOM types. The patch selects the RN implementation for React Native Web and removes the conflicting declaration so the existing RN public contract is selected. The separate `/react` entrypoint stays available for DOM consumers. This matches the [library's RN Web guidance](https://legendapp.com/open-source/list/v3/guides/).
+- `@legendapp/list@3.3.11`: the published `react-native` browser export points at the plain React DOM implementation, and `react-native.web.d.ts` duplicates the DOM types. The patch selects the RN implementation for React Native Web and removes the conflicting declaration so the existing RN public contract is selected. The separate `/react` entrypoint stays available for DOM consumers. This matches the [library's RN Web guidance](https://legendapp.com/open-source/list/v3/guides/).
 - `expo-video@57.0.3`: browser factories construct `VideoPlayerWeb`, but their declarations returned the narrower base interface, which `VideoView.web` rejected. Source annotations and declarations now express the concrete returned class.
 - `expo-status-bar@57.0.1`: the browser no-op accepts the shared props and setter signatures; its source annotations and declarations match that contract.
 

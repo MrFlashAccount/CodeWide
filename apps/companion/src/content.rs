@@ -2233,6 +2233,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_activity_wire_uses_a_reference_and_preserves_large_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const MAX_WIRE_BYTES: usize = 8 * 1024;
+        let directory = tempfile::tempdir()?;
+        let content = PrivateContentService::open(directory.path().join("cas"));
+        let projector = ContentProjector::new(content.clone());
+        let output = "large command output\n".repeat(64 * 1024);
+        let projected = projector.project_rpc_result(
+            "thread/turns/list",
+            json!({
+                "data": [{
+                    "id":"turn",
+                    "status":"completed",
+                    "itemsView":"full",
+                    "items":[{
+                        "id":"command",
+                        "type":"commandExecution",
+                        "aggregatedOutput":output
+                    }]
+                }]
+            }),
+        );
+        let item = &projected["data"][0]["items"][0];
+        let reference = &item["codewideContent"]["fields"]["/aggregatedOutput"];
+        assert_eq!(item["aggregatedOutput"], "");
+        assert_eq!(reference["byteLength"], output.len());
+        assert!(serde_json::to_vec(&projected)?.len() < MAX_WIRE_BYTES);
+
+        let response = content
+            .serve_text(
+                reference["id"].as_str().ok_or("missing reference")?,
+                ContentQuery {
+                    offset: None,
+                    limit: None,
+                },
+                &HeaderMap::new(),
+                false,
+            )
+            .await?;
+        let bytes = axum::body::to_bytes(response.into_body(), output.len()).await?;
+        assert_eq!(bytes.as_ref(), output.as_bytes());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn completed_large_turn_keeps_message_summary_and_lazy_activity() {
         let directory = tempfile::tempdir().expect("temp content directory");
         let projector =

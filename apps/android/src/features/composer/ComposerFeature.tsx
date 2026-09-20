@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import type { ReactElement } from "react";
 import { Pressable, View } from "react-native";
 import { ComposerAttachmentTray } from "../../rendering/ComposerAttachmentTray";
 import { colors, controlHitSlop, iconSize } from "../../theme";
@@ -49,7 +50,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 Editing queue
               </Text>
               <Text numberOfLines={1} style={styles.queuedComposerEditPreview}>
-                {props.queuedComposerEdit.text}
+                {props.draft}
               </Text>
               <Pressable
                 accessibilityLabel="Cancel queued message edit"
@@ -62,38 +63,31 @@ export function ComposerFeature(props: ComposerFeatureProps) {
               </Pressable>
             </View>
           )}
-          {(props.voiceError !== null || props.queuedComposerEditError !== null) && (
+          {props.queuedComposerEditError !== null && (
             <View style={styles.composerErrorRow}>
-              <Text style={styles.composerError}>
-                {props.queuedComposerEditError ?? props.voiceError}
-              </Text>
+              <Text style={styles.composerError}>{props.queuedComposerEditError}</Text>
             </View>
           )}
-          {props.goalAttachmentVisible &&
-            props.onSetGoal !== undefined &&
-            props.onClearGoal !== undefined && (
-              <ComposerGoalAttachment
-                goalResource={props.goalResource}
-                key={props.goalResource?.goal?.updatedAt ?? "empty"}
-                onClear={props.onClearGoal}
-                onClose={props.closeGoalAttachment}
-                onSet={props.onSetGoal}
-                voiceScope={props.composerScope}
-              />
-            )}
-          {props.getTransferAccess !== undefined && (
+          {(props.getTransferAccess !== undefined ||
+            (props.goalAttachmentVisible && props.onSetGoal !== undefined)) && (
             <ComposerAttachmentTray
               attachments={props.attachments}
               getAccess={props.getStableTransferAccess}
               onRemove={props.removeComposerAttachment}
               scope={props.composerUploadScope}
+              {...(props.goalAttachmentVisible && props.onSetGoal !== undefined
+                ? {
+                    startAttachment: <ComposerGoalAttachment onClose={props.closeGoalAttachment} />,
+                  }
+                : {})}
             />
           )}
           {props.composerTrayVisible && !props.useAnchoredComposerMenu && (
             <ComposerAccessoryTray
               fileEnabled={props.fileAttachmentEnabled}
-              goalEnabled={props.onSetGoal !== undefined && props.onClearGoal !== undefined}
+              goalEnabled={props.onSetGoal !== undefined}
               onSelect={props.openAccessoryAction}
+              terminalEnabled={props.terminalEnabled}
             />
           )}
           <View style={styles.composer} testID="composer-row">
@@ -150,7 +144,6 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 getStableTransferAccess={props.getStableTransferAccess}
                 getTransferAccess={props.getTransferAccess}
                 handleComposerLargePaste={props.handleComposerLargePaste}
-                handleComposerMarkdownChange={props.handleComposerMarkdownChange}
                 handleComposerTextChange={props.handleComposerTextChange}
                 pastedAttachmentPending={props.pastedAttachmentPending}
                 pendingVoiceSelection={props.pendingVoiceSelection}
@@ -179,6 +172,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 discardComposer={props.discardComposer}
                 dismissComposerKeyboardForOverlay={props.dismissComposerKeyboardForOverlay}
                 editingQueuedMessage={props.editingQueuedMessage}
+                goalAttachmentVisible={props.goalAttachmentVisible}
                 handleDeliveryAction={props.handleDeliveryAction}
                 queuedComposerEditBusy={props.queuedComposerEditBusy}
                 sendDisabled={props.sendDisabled}
@@ -191,6 +185,17 @@ export function ComposerFeature(props: ComposerFeatureProps) {
           </View>
         </>
       )}
+    </View>
+  );
+}
+
+/** Reserves the resting composer geometry while its persisted draft is restored. */
+export function ComposerLoadingPlaceholder(): ReactElement {
+  return (
+    <View style={styles.composerDock} testID="composer-loading-placeholder">
+      <View style={styles.composer}>
+        <View style={styles.composerInputShell} />
+      </View>
     </View>
   );
 }

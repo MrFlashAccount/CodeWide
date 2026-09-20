@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle, type ReactNode } from "react";
 import { View } from "react-native";
 
 interface WebViewMockProps {
+  nestedScrollEnabled?: boolean;
   onMessage?(event: { nativeEvent: { data: string } }): void;
   renderLoading?(): ReactNode;
   startInLoadingState?: boolean;
@@ -29,7 +30,9 @@ export const WebView = forwardRef<WebViewMockHandle, WebViewMockProps>(
       injectJavaScript: (script) => {
         webViewInjectedJavaScript.push(script);
       },
-      postMessage: (message) => { webViewPostedMessages.push(message); },
+      postMessage: (message) => {
+        webViewPostedMessages.push(message);
+      },
       reload: () => undefined,
     }));
     return (

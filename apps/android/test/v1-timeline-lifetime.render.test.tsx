@@ -1,7 +1,6 @@
 import { act, renderHook } from "@testing-library/react-native";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
 import {
-  sessionConversationHistoryAnchors,
   useHistoryAnchorActions,
   useHistoryAnchorState,
   useTimelineCleanup,
@@ -9,6 +8,7 @@ import {
 import { useTimelineSearchState } from "../src/features/conversation/timeline/timelineSearch";
 import {
   usePaginationTrim,
+  useTimelineViewportActions,
   useTimelineViewportState,
 } from "../src/features/conversation/timeline/timelineViewport";
 import { useUnreadReceiptState } from "../src/features/conversation/timeline/unreadReceipt";
@@ -16,38 +16,52 @@ import { createFullscreenScrollOwnership } from "../src/ui/fullscreen-scroll-own
 
 const saveOffset = jest.fn(async () => undefined);
 const dismissScope = jest.fn();
+const loadNewer = jest.fn(async () => undefined);
+const loadOlder = jest.fn(async () => undefined);
 const trimAfterGesture = jest.fn(async () => undefined);
 const overlayOwnership = createFullscreenScrollOwnership(() => undefined);
-const historyViewport = { ...COMPLETE_STATIC_THREAD_HISTORY, trimAfterGesture };
+const historyViewport = {
+  ...COMPLETE_STATIC_THREAD_HISTORY,
+  loadNewer,
+  loadOlder,
+  trimAfterGesture,
+};
 
 function useTimelineSession(scope: string) {
-  const anchor = useHistoryAnchorState(scope, null, null, "server", scope, saveOffset);
+  const anchor = useHistoryAnchorState(scope, "server", scope, saveOffset);
   const viewport = useTimelineViewportState(scope);
   const search = useTimelineSearchState(scope, null);
   const unread = useUnreadReceiptState(scope);
   const actions = useHistoryAnchorActions({
     ...anchor,
     ...viewport,
-    composerScope: scope,
     draftConnectionId: "server",
     draftThreadId: scope,
     saveScrollOffset: saveOffset,
-    timelineInitialPosition: { kind: "tail" },
     timeline: [],
-    currentTurnId: null,
     latestUnreadReceiptKey: null,
     acknowledgeUnreadReceipt: () => undefined,
-    searchWindow: null,
-    timelineModelReady: true,
-    historyViewport,
-    conversationOwner: { isCurrent: () => true, hasReplacement: () => false },
-    fullscreenScrollOwnership: overlayOwnership,
   });
   const trim = usePaginationTrim({
     paginationTrimTimerRef: viewport.paginationTrimTimerRef,
     paginationEdgeLockRef: viewport.paginationEdgeLockRef,
     fullscreenScrollOwnership: overlayOwnership,
     historyViewport,
+  });
+  const pagingActions = useTimelineViewportActions({
+    displayedTimeline: [],
+    draftConnectionId: null,
+    draftThreadId: null,
+    firstVisibleHistoryAnchorRef: anchor.firstVisibleHistoryAnchorRef,
+    fullscreenScrollOwnership: overlayOwnership,
+    historyViewport,
+    lastTimelineOffsetYRef: viewport.lastTimelineOffsetYRef,
+    paginationEdgeLockRef: viewport.paginationEdgeLockRef,
+    scrollOffsetRef: viewport.scrollOffsetRef,
+    threadSearchActive: false,
+    timeline: [],
+    timelineContentHeightRef: viewport.timelineContentHeightRef,
+    timelineViewportHeightRef: viewport.timelineViewportHeightRef,
   });
   useTimelineCleanup({
     composerScope: scope,
@@ -60,33 +74,15 @@ function useTimelineSession(scope: string) {
     timelineIndexRetryTimerRef: search.timelineIndexRetryTimerRef,
     fullscreenOverlay: { dismissScope },
   });
-  return { anchor, viewport, actions, trim };
+  return { anchor, viewport, actions, pagingActions, trim };
 }
 
 beforeEach(() => {
   jest.useFakeTimers();
   jest.clearAllMocks();
-  sessionConversationHistoryAnchors.clear();
 });
 afterEach(() => {
   jest.useRealTimers();
-  sessionConversationHistoryAnchors.clear();
-});
-
-it("keeps the bootstrap anchor fixed while the resident window changes", () => {
-  sessionConversationHistoryAnchors.set("first", { turnId: "anchor-a", viewportOffsetPx: 23 });
-  const hook = renderHook((scope: string) => useTimelineSession(scope), { initialProps: "first" });
-  expect(hook.result.current.anchor.initialHistoryRestore).toEqual({
-    turnId: "anchor-a", viewportOffsetPx: 23,
-  });
-  sessionConversationHistoryAnchors.set("first", { turnId: "anchor-b", viewportOffsetPx: 77 });
-  hook.rerender("first");
-  expect(hook.result.current.anchor.initialHistoryRestore.turnId).toBe("anchor-a");
-  sessionConversationHistoryAnchors.set("second", { turnId: "anchor-c", viewportOffsetPx: 31 });
-  hook.rerender("second");
-  expect(hook.result.current.anchor.initialHistoryRestore).toEqual({
-    turnId: "anchor-c", viewportOffsetPx: 31,
-  });
 });
 
 it("flushes the outgoing offset to its own thread and cancels its deferred trim", () => {
@@ -105,7 +101,7 @@ it("flushes the outgoing offset to its own thread and cancels its deferred trim"
   expect(hook.result.current.viewport.scrollOffsetRef.current).toBe(0);
 });
 
-it("settles a slow drag once and suppresses trim while another window covers the timeline", () => {
+it("settles a slow drag once, retaining its edge until the next gesture", () => {
   const hook = renderHook(() => useTimelineSession("first"));
   act(() => {
     hook.result.current.viewport.paginationEdgeLockRef.current = "older";
@@ -113,7 +109,7 @@ it("settles a slow drag once and suppresses trim while another window covers the
     jest.runOnlyPendingTimers();
   });
   expect(trimAfterGesture).toHaveBeenCalledWith("older");
-  expect(hook.result.current.viewport.paginationEdgeLockRef.current).toBeNull();
+  expect(hook.result.current.viewport.paginationEdgeLockRef.current).toBe("older");
   act(() => {
     overlayOwnership.willOpen("overlay");
     hook.result.current.viewport.paginationEdgeLockRef.current = "newer";
@@ -121,4 +117,31 @@ it("settles a slow drag once and suppresses trim while another window covers the
   });
   expect(trimAfterGesture).toHaveBeenCalledTimes(1);
   overlayOwnership.didClose("overlay");
+});
+
+it("ignores the transient opposite edge while a trimmed window settles", () => {
+  const hook = renderHook(() => useTimelineSession("sliding-window"));
+  act(() => {
+    hook.result.current.viewport.paginationEdgeLockRef.current = "newer";
+    hook.result.current.trim.trimPaginationWindow();
+    hook.result.current.pagingActions.loadOlderAtTimelineStart();
+  });
+
+  expect(trimAfterGesture).toHaveBeenCalledWith("newer");
+  expect(loadOlder).not.toHaveBeenCalled();
+  expect(hook.result.current.viewport.paginationEdgeLockRef.current).toBe("newer");
+});
+
+it("publishes the LegendList initial load without overwriting a user scroll", () => {
+  const hook = renderHook(() => useTimelineSession("initial-load"));
+  act(() => {
+    hook.result.current.anchor.awayFromLatestRef.current = true;
+    hook.result.current.anchor.setAwayFromLatest(true);
+  });
+
+  act(() => hook.result.current.actions.commitInitialTimelineLoad());
+
+  expect(hook.result.current.viewport.timelineDidLoad).toBe(true);
+  expect(hook.result.current.anchor.awayFromLatest).toBe(true);
+  expect(hook.result.current.anchor.awayFromLatestRef.current).toBe(true);
 });

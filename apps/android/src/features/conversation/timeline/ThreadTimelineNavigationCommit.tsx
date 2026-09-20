@@ -15,7 +15,6 @@ export function ThreadTimelineNavigationCommit({
   itemCount,
   loadStatus,
   modelReady,
-  restoreAnchorTurnId,
   threadId,
   turnCount,
   visible,
@@ -25,7 +24,6 @@ export function ThreadTimelineNavigationCommit({
   itemCount: number;
   loadStatus: ThreadHistoryState["status"];
   modelReady: boolean;
-  restoreAnchorTurnId: string | null;
   threadId: string | null;
   turnCount: number;
   visible: boolean;
@@ -72,7 +70,7 @@ export function ThreadTimelineNavigationCommit({
         threadId,
         "scope_commit",
         {
-          tags: { position: restoreAnchorTurnId === null ? "end" : "anchor" },
+          tags: { position: "end" },
         },
         navigationId,
       );

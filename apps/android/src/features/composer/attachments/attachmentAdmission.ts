@@ -19,6 +19,7 @@ export function useAttachmentAdmission({
   attachmentCount,
   captureDraftMutations,
   composerScope,
+  composerSession,
   composerUploadScope,
   dismissComposerKeyboardForOverlay,
   draftConnectionId,
@@ -26,7 +27,6 @@ export function useAttachmentAdmission({
   fileTransferController,
   getStableTransferAccess,
   getTransferAccess,
-  latestAttachmentsRef,
   queuedComposerEdit,
   setComposerTrayVisible,
   upsertDraftAttachment,
@@ -39,6 +39,7 @@ export function useAttachmentAdmission({
     attachmentCount < MAX_TURN_ATTACHMENTS;
   const captureStageAttachment = useEvent(() => {
     const { updateAttachments } = captureDraftMutations();
+    const session = composerSession.capture();
     const stageAttachment = (
       selected: SelectedUpload,
       existing: StoredDraftAttachment | null = null,
@@ -54,7 +55,7 @@ export function useAttachmentAdmission({
       }
       if (
         existing === null &&
-        composerUploads.count(composerUploadScope, latestAttachmentsRef.current.latest) >=
+        composerUploads.count(composerUploadScope, session.read().attachments) >=
           MAX_TURN_ATTACHMENTS
       ) {
         dialog.alert(
@@ -78,9 +79,7 @@ export function useAttachmentAdmission({
           if (queuedComposerEdit !== null) {
             if (isCurrent()) {
               updateAttachments([
-                ...latestAttachmentsRef.current.latest.filter(
-                  (candidate) => candidate.id !== ready.id,
-                ),
+                ...session.read().attachments.filter((candidate) => candidate.id !== ready.id),
                 ready,
               ]);
             }
@@ -112,6 +111,7 @@ export function useAttachmentAdmission({
   });
   const captureUploadAttachment = useEvent(() => {
     const { updateAttachments } = captureDraftMutations();
+    const session = composerSession.capture();
     const uploadSelectedAttachment = async (
       selected: SelectedUpload,
       onUploaded?: (attachment: StoredDraftAttachment) => void,
@@ -129,9 +129,7 @@ export function useAttachmentAdmission({
         onUploaded ??
         ((attachment: StoredDraftAttachment) => {
           updateAttachments([
-            ...latestAttachmentsRef.current.latest.filter(
-              (candidate) => candidate.id !== attachment.id,
-            ),
+            ...session.read().attachments.filter((candidate) => candidate.id !== attachment.id),
             attachment,
           ]);
         });
@@ -196,13 +194,13 @@ export function useAttachmentAdmission({
 
 export function useDrawingAttachmentRead(
   composerUploadScope: string,
-  latestAttachmentsRef: Parameters<typeof useAttachmentAdmission>[0]["latestAttachmentsRef"],
+  composerSession: Parameters<typeof useAttachmentAdmission>[0]["composerSession"],
 ) {
   const readDrawingAttachments = useEvent((attachmentId: string | undefined) => {
     const uploading = composerUploads
       .entries(composerUploadScope)
       .find((entry) => entry.attachment.id === attachmentId);
-    return uploading === undefined ? latestAttachmentsRef.current.latest : [uploading.attachment];
+    return uploading === undefined ? composerSession.read().attachments : [uploading.attachment];
   });
   return { readDrawingAttachments };
 }

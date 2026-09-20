@@ -98,14 +98,17 @@ const featurePublicModules = {
   ports: [
     "PortsFeature",
     "ComposerPortContextChip",
-    "ForwardedLoopbackBrowser",
-    "browserNavigation",
+    "loopbackNavigation",
     "nativeForwardingAdapter",
     "portForwardingContract",
-    "browser/feedbackSubmission",
-    "browser/feedback",
-    "browser/BrowserFeedbackContext",
     "conversationPortCapabilities",
+  ],
+  browser: [
+    "BrowserWorkspace",
+    "InternalBrowser",
+    "feedbackSubmission",
+    "feedback",
+    "BrowserFeedbackContext",
   ],
   drawing: ["DrawingFeature", "drawingAttachment"],
   review: [

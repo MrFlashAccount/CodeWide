@@ -7,24 +7,49 @@ import {
   ScopedRemoteImage,
 } from "../protocol/ImageProtocolBlock";
 import { styles } from "./UserMessageContent.styles";
+import { UserImageTileFrame } from "./UserImageTileFrame";
 
 /** Renders one gallery asset while preserving its qualified preview identity. */
-export function renderUserImageTile(
-  attachment: UserMessageAttachment,
-  index: number,
-  attachmentCount: number,
-  getTransferAccess: (() => Promise<{ authorization: string; baseUrl: string }>) | undefined,
-) {
-  const hero = attachmentCount === 1 || (attachmentCount % 2 === 1 && index === 0);
-  const containerStyle = hero ? styles.userImageGalleryHero : styles.userImageGalleryTile;
+export function UserImageTile({
+  attachment,
+  attachmentCount,
+  getTransferAccess,
+  index,
+}: {
+  readonly attachment: UserMessageAttachment;
+  readonly attachmentCount: number;
+  readonly getTransferAccess:
+    | (() => Promise<{ authorization: string; baseUrl: string }>)
+    | undefined;
+  readonly index: number;
+}) {
+  const hero = attachmentCount === 1;
+  const content = renderUserImageTileContent({
+    attachment,
+    getTransferAccess,
+    index,
+  });
+  return <UserImageTileFrame layout={hero ? "hero" : "tile"}>{content}</UserImageTileFrame>;
+}
+
+function renderUserImageTileContent({
+  attachment,
+  getTransferAccess,
+  index,
+}: {
+  readonly attachment: UserMessageAttachment;
+  readonly getTransferAccess:
+    | (() => Promise<{ authorization: string; baseUrl: string }>)
+    | undefined;
+  readonly index: number;
+}) {
   const source = attachment.source;
   if (source.type === "content") {
     if (getTransferAccess !== undefined) {
       return (
         <ScopedPrivateAssetImage
-          containerStyle={containerStyle}
+          containerStyle={styles.userImageFill}
           getTransferAccess={getTransferAccess}
-          key={source.asset.id}
           label={attachment.name}
           order={index}
           previewId={`user-private-image:${source.asset.id}`}
@@ -34,7 +59,7 @@ export function renderUserImageTile(
       );
     }
     return (
-      <View key={source.asset.id} style={[styles.userImage, containerStyle]}>
+      <View style={styles.userImageFill}>
         <Text style={styles.menuNotice}>Attached image</Text>
       </View>
     );
@@ -42,8 +67,7 @@ export function renderUserImageTile(
   if (source.type === "url") {
     return (
       <OpenableImage
-        containerStyle={containerStyle}
-        key={source.url}
+        containerStyle={styles.userImageFill}
         label={attachment.name}
         order={index}
         previewId={`user-image:${String(index)}:${source.url}`}
@@ -55,14 +79,13 @@ export function renderUserImageTile(
   }
   if (source.type === "path") {
     return getTransferAccess === undefined ? (
-      <View key={source.path} style={[styles.userImage, containerStyle]}>
+      <View style={styles.userImageFill}>
         <Text style={styles.menuNotice}>{attachment.name}</Text>
       </View>
     ) : (
       <ScopedRemoteImage
-        containerStyle={containerStyle}
+        containerStyle={styles.userImageFill}
         getTransferAccess={getTransferAccess}
-        key={source.path}
         order={index}
         path={source.path}
         previewId={`user-local-image:${String(index)}:${source.path}`}
@@ -70,14 +93,13 @@ export function renderUserImageTile(
     );
   }
   return getTransferAccess === undefined ? (
-    <View key={`${source.rootId}:${source.path}`} style={[styles.userImage, containerStyle]}>
+    <View style={styles.userImageFill}>
       <Text style={styles.menuNotice}>{attachment.name}</Text>
     </View>
   ) : (
     <ScopedPrivateAssetImage
-      containerStyle={containerStyle}
+      containerStyle={styles.userImageFill}
       getTransferAccess={getTransferAccess}
-      key={`${source.rootId}:${source.path}`}
       label={attachment.name}
       order={index}
       previewId={`user-scoped-image:${source.rootId}:${source.path}`}

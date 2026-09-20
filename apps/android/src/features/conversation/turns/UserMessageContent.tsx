@@ -1,14 +1,15 @@
 import { isProtocolRecord } from "../protocol/protocolValue";
-import { renderUserImageTile } from "./UserImageTile";
+import { UserImageTile } from "./UserImageTile";
 /** V1 UserMessageContent owner, extracted without changing interaction or resource lifetime. */
 import { Ionicons } from "@expo/vector-icons";
 import { useContext } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
 import type { StoredDraftAttachment } from "../../../data/thread-ui-state-types";
 import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard";
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { SearchHighlightQuery } from "../../../rendering/SearchMessageFocus";
+import { TwoRowHorizontalScroller } from "../../../rendering/TwoRowHorizontalScroller";
 import {
   projectUserMessageAttachments,
   type UserMessageAttachment,
@@ -57,15 +58,11 @@ export function UserMessageContent(props: UserMessageContentProps) {
   );
   const bodyPartOccurrences = new Map<string, number>();
   return (
-    <View
-      style={[
-        styles.userMessageContent,
-        imageAttachments.length > 0 && styles.userMessageMediaContent,
-      ]}
-    >
+    <View style={userMessageContentStyle(imageAttachments.length)}>
       {imageAttachments.length > 0 && (
         <UserImageGallery
           attachments={imageAttachments}
+          separatedFromBody={bodyParts.length > 0}
           {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
         />
       )}
@@ -97,7 +94,7 @@ export function UserMessageContent(props: UserMessageContentProps) {
         );
       })}
       {otherAttachments.length > 0 && (
-        <MessageAttachmentGrid>
+        <MessageAttachmentGrid style={userMessageAttachmentGridStyle(bodyParts.length)}>
           {otherAttachments.map((attachment) => (
             <MessageAttachmentCard
               attachment={attachment}
@@ -197,15 +194,42 @@ export function userMessageAttachmentReference(attachment: UserMessageAttachment
 export function UserImageGallery({
   attachments,
   getTransferAccess,
+  separatedFromBody = false,
 }: {
   attachments: UserMessageAttachment[];
   getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  separatedFromBody?: boolean;
 }) {
-  return (
-    <View style={styles.userImageGallery} testID="user-image-gallery">
-      {attachments.map((attachment, index) =>
-        renderUserImageTile(attachment, index, attachments.length, getTransferAccess),
-      )}
+  const tiles = attachments.map((attachment, index) => (
+    <UserImageTile
+      attachment={attachment}
+      attachmentCount={attachments.length}
+      getTransferAccess={getTransferAccess}
+      index={index}
+      key={userMessageAttachmentReference(attachment)}
+    />
+  ));
+  const galleryStyle = [
+    styles.userImageGallery,
+    separatedFromBody && styles.userImageSeparatedFromBody,
+  ];
+  return attachments.length === 1 ? (
+    <View style={galleryStyle} testID="user-image-gallery">
+      {tiles}
     </View>
+  ) : (
+    <TwoRowHorizontalScroller items={tiles} style={galleryStyle} testID="user-image-gallery" />
   );
+}
+
+function userMessageContentStyle(imageAttachmentCount: number): StyleProp<ViewStyle> {
+  const contentStyles: ViewStyle[] = [styles.userMessageContent];
+  if (imageAttachmentCount > 0) {
+    contentStyles.push(styles.userMessageMediaContent);
+  }
+  return contentStyles;
+}
+
+function userMessageAttachmentGridStyle(bodyPartCount: number): StyleProp<ViewStyle> {
+  return bodyPartCount > 0 ? styles.userMessageAttachmentGridSeparated : undefined;
 }

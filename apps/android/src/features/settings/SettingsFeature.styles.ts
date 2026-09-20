@@ -1,9 +1,37 @@
 import { StyleSheet } from "react-native";
-import { colors, typeScale } from "../../theme";
+import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
 
 export const styles = StyleSheet.create({
   errorText: {
     color: colors.red,
     ...typeScale.body,
   },
+  fieldLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  helpText: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
+  orbStyleSettings: { gap: spacing.md },
+  personalityField: { gap: spacing.xxs },
+  personalityForm: { gap: spacing.sm },
+  personalityInput: {
+    backgroundColor: colors.surfaceContainerLow,
+    borderColor: colors.outline,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    color: colors.text,
+    minHeight: touchTarget + touchTarget,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    ...typeScale.body,
+  },
+  saveButton: { alignSelf: "stretch" },
+  savedText: {
+    color: colors.green,
+    ...typeScale.body,
+  },
+  voiceAssistantSettings: { gap: spacing.lg },
 });

@@ -62,8 +62,8 @@ it("preserves thread runtime integration contracts", () => {
   expect(threadDetailDatabase).toContain("createThreadChatModel({");
   expect(threadDetailDatabase).toContain("createThreadDetailSqlite(");
   expect(threadDetailDatabase).toContain("detailStorage.loadResolvedWindow(");
-  expect(threadDetailDatabase).toContain("preloadWindow(request)");
-  expect(threadDetailDatabase).toContain("windowIntents.isCurrent(navigationToken)");
+  expect(threadDetailDatabase).not.toContain("preloadWindow(request)");
+  expect(threadDetailDatabase).not.toContain("windowIntents");
   expect(threadDetailDatabase).toContain("newerBuffer: THREAD_HISTORY_PAGE_SIZE");
   expect(threadDetailDatabase).not.toContain("createSqliteSyncRuntime<ThreadDetailRow, string>");
   expect(threadDetailDatabase).not.toContain("collection.startSyncImmediate()");

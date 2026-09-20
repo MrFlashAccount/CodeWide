@@ -154,6 +154,7 @@ export interface HermesHeapSnapshot {
 }
 
 export interface NavigationDiagnosticsSource {
+  armHermesProfile(): Promise<void>;
   captureHeap(): Promise<HermesHeapSnapshot>;
   copyReport(profile: NavigationProfile): Promise<void>;
   snapshot(): NavigationProfilesSnapshot;

@@ -66,7 +66,11 @@ type ReviewRouteRequest = {
 type PortsRouteRequest = {
   readonly connectionId: string | null;
   readonly kind: "ports";
-  readonly openPort?: (title: string, url: string) => void;
+  readonly openBrowser?: (
+    title: string,
+    url: string,
+    headers?: Readonly<Record<string, string>>,
+  ) => void;
   readonly resources: WorkspaceResourceDatabase | null;
   readonly serverName: string;
   readonly tunnelResourceId: string | null;
@@ -78,7 +82,11 @@ type RuntimeRouteRequest = {
   readonly createTunnel?: (port: number, ttlSeconds: number) => Promise<TunnelValue>;
   readonly kind: "runtime";
   readonly listTerminals?: () => Promise<BackgroundTerminalValue[]>;
-  readonly openPort?: (title: string, url: string) => void;
+  readonly openBrowser?: (
+    title: string,
+    url: string,
+    headers?: Readonly<Record<string, string>>,
+  ) => void;
   readonly resources: WorkspaceResourceDatabase | null;
   readonly revokeTunnel?: (tunnelId: string) => Promise<void>;
   readonly serverName: string;

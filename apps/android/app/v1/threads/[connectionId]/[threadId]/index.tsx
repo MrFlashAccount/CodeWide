@@ -14,7 +14,6 @@ import {
   v1ThreadDestination,
   v1ThreadRouteParams,
 } from "../../../../../src/services/threads/threadRouteParams";
-import { threadRouteGeneration } from "../../../../../src/services/threads/threadNavigationService";
 import { useRouteSessionLifetime } from "../../../../../src/services/useRouteSessionLifetime";
 import { useWorkspaceRouteResources } from "../../../../../src/services/workspace/workspaceRouteResources";
 
@@ -46,6 +45,7 @@ export default function V1ThreadRoute(): React.JSX.Element {
   const router = useRouter();
   const raw = useLocalSearchParams<{
     connectionId?: string | string[];
+    globalSearchSessionId?: string | string[];
     searchWindowId?: string | string[];
     threadId?: string | string[];
   }>();
@@ -93,7 +93,17 @@ export default function V1ThreadRoute(): React.JSX.Element {
     if (searchRoute.sessionId !== null) {
       searchRouteSessions.closeWindow(searchRoute.sessionId);
     }
-    router.replace(v1ThreadDestination(params.value));
+    const destination = v1ThreadDestination(params.value);
+    const globalSearchSessionId = routeSessionIdParam(raw.globalSearchSessionId);
+    router.replace({
+      ...destination,
+      params: {
+        ...destination.params,
+        ...(globalSearchSessionId.status === "valid"
+          ? { globalSearchSessionId: globalSearchSessionId.value.value }
+          : {}),
+      },
+    });
   };
   const connectionId = params.value.connectionId.value;
   const threadId = params.value.threadId.value;
@@ -110,7 +120,6 @@ export default function V1ThreadRoute(): React.JSX.Element {
         desktop={resources.desktop}
         destination={{
           connectionId,
-          generation: threadRouteGeneration(params.value),
           kind: "thread",
           searchWindow: searchRoute.window,
           threadId,

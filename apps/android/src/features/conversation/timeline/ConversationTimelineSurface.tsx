@@ -15,7 +15,6 @@ export function ConversationTimelineSurface({
   awayFromLatest,
   bottomChromeHeight,
   commitUnreadReceipt,
-  completeLatestJump,
   composerScope,
   draftConnectionId,
   draftThreadId,
@@ -24,7 +23,6 @@ export function ConversationTimelineSurface({
   historyActivityModel,
   historyActivityResourceId,
   historyViewport,
-  initialRestoreAnchorTurnId,
   latestUnreadReceiptKey,
   liveStatusVisible,
   liveTurnPlan,
@@ -80,13 +78,11 @@ export function ConversationTimelineSurface({
       />
       <MessageListBoundary state={messageListState}>
         <EveryCommitProbe onCommit={positionSearchTurn} />
-        <EveryCommitProbe onCommit={completeLatestJump} />
         <ThreadTimelineNavigationCommit
           connectionId={draftConnectionId}
           itemCount={timeline.length}
           loadStatus={historyViewport.readStatus()}
           modelReady={timelineModelReady}
-          restoreAnchorTurnId={initialRestoreAnchorTurnId}
           threadId={draftThreadId}
           turnCount={remoteThread?.turns.length ?? 0}
           visible={timelinePositioned}

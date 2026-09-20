@@ -37,15 +37,18 @@ export function ThreadResourcesSheet(props: AttachmentSheetProps) {
         snapPoints: ["55%", "90%"],
       }}
       isOpen={visible}
+      {...(document === null ? {} : { onDismissRequest: navigateBack })}
       onOpenChange={(open) => {
         if (!open) {
-          (document === null ? closeSheet : navigateBack)();
+          closeSheet();
         }
       }}
     >
       <View
+        accessibilityElementsHidden={document !== null}
+        importantForAccessibility={document === null ? "auto" : "no-hide-descendants"}
         pointerEvents={document === null ? "auto" : "none"}
-        style={[styles.threadResourceRoute, document !== null && styles.threadResourceRouteHidden]}
+        style={styles.threadResourceRoute}
       >
         <View style={styles.menuTitleRow}>
           <View style={styles.sheetHeaderIconSlot}>

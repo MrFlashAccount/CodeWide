@@ -4,12 +4,14 @@ import type { GetTransferAccess } from "../../../data/private-transfer";
 import type { StoredDraftAttachment } from "../../../data/thread-ui-state-types";
 import type { QueuedComposerEdit } from "../composerTypes";
 import type { useComposerDraftCommands } from "../draft";
+import type { ComposerSessionBinding } from "../composerSession";
 
 /** Uploads capture draft mutation and qualified transfer capabilities per activation. */
 export type AttachmentAdmissionCapabilities = {
   attachmentCount: number;
   captureDraftMutations: ReturnType<typeof useComposerDraftCommands>["captureDraftMutations"];
   composerScope: string;
+  composerSession: ComposerSessionBinding;
   composerUploadScope: string;
   dismissComposerKeyboardForOverlay: () => void;
   draftConnectionId: string | null;
@@ -17,7 +19,6 @@ export type AttachmentAdmissionCapabilities = {
   fileTransferController: FileTransferController | null;
   getStableTransferAccess: GetTransferAccess;
   getTransferAccess: GetTransferAccess | undefined;
-  latestAttachmentsRef: { current: { latest: StoredDraftAttachment[] } };
   queuedComposerEdit: QueuedComposerEdit | null;
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
   upsertDraftAttachment:

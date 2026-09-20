@@ -4,8 +4,20 @@ import { createContext, useContext, useSyncExternalStore, type ReactNode } from 
 import type { WorkspaceResourceDatabase, VoiceInputRow } from "../data/workspace-resource-database";
 import type { StartVoiceTranscription, VoiceInputController } from "../data/voice-input-controller";
 
+export type AppVoiceInputController = Pick<
+  VoiceInputController,
+  | "bind"
+  | "clearPendingSelection"
+  | "finish"
+  | "level"
+  | "retry"
+  | "subscribeLevel"
+  | "toggle"
+  | "unbind"
+>;
+
 export type AppVoiceInputRuntime = {
-  controller: VoiceInputController | null;
+  controller: AppVoiceInputController | null;
   resources: WorkspaceResourceDatabase | null;
   scopePrefix: string;
   startRemote?: StartVoiceTranscription;
@@ -19,7 +31,7 @@ export function AppVoiceInputProvider({
   runtime,
 }: {
   children: ReactNode;
-  runtime: AppVoiceInputRuntime;
+  runtime: AppVoiceInputRuntime | null;
 }) {
   return (
     <VoiceInputRuntimeContext.Provider value={runtime}>
@@ -68,7 +80,7 @@ export function useScopedVoiceInputResource(
 
 /** Subscribes only the tiny meter/aura surface to transient PCM levels. */
 export function useVoiceInputLevel(
-  controller: VoiceInputController | null | undefined,
+  controller: Pick<AppVoiceInputController, "level" | "subscribeLevel"> | null | undefined,
   scope: string | null,
 ): number {
   return useSyncExternalStore(

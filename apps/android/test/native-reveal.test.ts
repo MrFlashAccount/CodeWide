@@ -50,10 +50,13 @@ describe("native semantic reveal", () => {
       screen.indexOf("function TurnActivitySegment"),
       screen.indexOf("interface TurnActivityProps"),
     );
-    expect(activity.match(/revealKey=\{`\$\{turnKey\}:\$\{block.key\}`\}/gu)).toHaveLength(2);
+    expect(activity.match(/revealKey=\{`\$\{turnKey\}:\$\{block.key\}`\}/gu)).toHaveLength(1);
     expect(
-      activity.match(/animate=\{animateNew && motionAllowed && turnStatus === "inProgress"\}/gu),
+      activity.match(
+        /animate=\{props\.animateNew && motionAllowed && props\.turnStatus === "inProgress"\}/gu,
+      ),
     ).toHaveLength(2);
+    expect(activity.match(/<RevealedActivityBlock/gu)).toHaveLength(2);
     expect(activity).toContain("useContext(TimelineMotionContext)");
     expect(nativeView).toContain("RevealHistory.contains(historyKey)");
   });

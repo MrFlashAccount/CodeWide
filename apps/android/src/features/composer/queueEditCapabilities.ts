@@ -11,8 +11,7 @@ export type QueueEditCapabilities = Pick<
   | "composerUploadScope"
   | "draftSelectionRef"
   | "composerInputRef"
-  | "composerMarkdownRef"
-  | "latestAttachmentsRef"
+  | "composerSession"
   | "uploadsBlockSend"
 > & {
   closeInlineQueueOverlay: () => void;

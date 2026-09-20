@@ -16,10 +16,83 @@ afterEach(() => {
 });
 
 describe("Legend remote project catalog", () => {
+  it("publishes the durable catalog before a connection can refresh it", async () => {
+    const cached = { ...project("/cached"), pinned: true };
+    const write = vi.fn(async () => undefined);
+    const model = createRemoteProjectCatalogModel({
+      cache: {
+        read: async () => [cached],
+        write,
+      },
+    });
+
+    await model.resource("server", "connecting", null).peek();
+    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([cached]);
+
+    const refresh = Promise.withResolvers<RemoteProject[]>();
+    model.resource("server", "live", async () => await refresh.promise);
+    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([cached]);
+    refresh.resolve([project("/fresh")]);
+
+    await vi.waitFor(() =>
+      expect(model.snapshot$.projectsByConnection.peek().server).toEqual([project("/fresh")]),
+    );
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("server", [project("/fresh")]));
+    model.clear();
+  });
+
+  it("does not let delayed cache hydration undo an acknowledged project change", async () => {
+    const cache = Promise.withResolvers<RemoteProject[]>();
+    const model = createRemoteProjectCatalogModel({
+      cache: {
+        read: async () => await cache.promise,
+        write: async () => undefined,
+      },
+    });
+    const resource = model.resource("server", "connecting", null);
+    const pinned = { ...project("/cached"), pinned: true };
+    model.mergeProject("server", pinned);
+    cache.resolve([project("/cached")]);
+
+    await resource.peek();
+
+    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([pinned]);
+    model.clear();
+  });
+
+  it("starts the authoritative refresh without waiting for cache hydration", async () => {
+    const cache = Promise.withResolvers<RemoteProject[]>();
+    const refresh = Promise.withResolvers<RemoteProject[]>();
+    let loads = 0;
+    const model = createRemoteProjectCatalogModel({
+      cache: {
+        read: async () => await cache.promise,
+        write: async () => undefined,
+      },
+    });
+    const resource = model.resource("server", "live", async () => {
+      loads += 1;
+      return refresh.promise;
+    });
+
+    await vi.waitFor(() => expect(loads).toBe(1));
+    refresh.resolve([project("/fresh")]);
+    await vi.waitFor(() =>
+      expect(model.snapshot$.projectsByConnection.peek().server).toEqual([project("/fresh")]),
+    );
+
+    cache.resolve([{ ...project("/stale"), pinned: true }]);
+    await resource.peek();
+    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([project("/fresh")]);
+    model.clear();
+  });
+
   it("does not let a stale list response undo an acknowledged pin change", async () => {
     const model = createRemoteProjectCatalogModel();
     let resolve!: (projects: RemoteProject[]) => void;
-    const pending = new Promise<RemoteProject[]>((done) => { resolve = done; });
+    const pending = new Promise<RemoteProject[]>((done) => {
+      resolve = done;
+    });
     const resource = model.resource("server", "live", async () => await pending);
     const pinned = { ...project("/repo"), pinned: true, name: "Custom label" };
     const added = { ...project("/new"), pinned: true };
@@ -27,7 +100,11 @@ describe("Legend remote project catalog", () => {
     model.mergeProject("server", added);
     resolve([project("/repo"), project("/other")]);
     await resource.peek();
-    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([pinned, project("/other"), added]);
+    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([
+      pinned,
+      project("/other"),
+      added,
+    ]);
     model.clear();
   });
   it("deduplicates initial demand and publishes the resolved catalog", async () => {
@@ -53,13 +130,17 @@ describe("Legend remote project catalog", () => {
     const model = createRemoteProjectCatalogModel();
     await model.resource("server", "syncing", async () => [project("/old")]).peek();
     let resolveRefresh!: (projects: RemoteProject[]) => void;
-    const refresh = new Promise<RemoteProject[]>((resolve) => { resolveRefresh = resolve; });
+    const refresh = new Promise<RemoteProject[]>((resolve) => {
+      resolveRefresh = resolve;
+    });
 
     model.resource("server", "live", async () => await refresh);
 
     expect(model.snapshot$.projectsByConnection.peek().server).toEqual([project("/old")]);
     resolveRefresh([project("/new")]);
-    await vi.waitFor(() => expect(model.snapshot$.projectsByConnection.peek().server).toEqual([project("/new")]));
+    await vi.waitFor(() =>
+      expect(model.snapshot$.projectsByConnection.peek().server).toEqual([project("/new")]),
+    );
   });
 
   it("retries a failed demanded catalog without requiring a connection revision", async () => {

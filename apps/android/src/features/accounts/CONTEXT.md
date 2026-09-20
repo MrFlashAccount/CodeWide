@@ -6,6 +6,8 @@ Public surfaces: `AccountPoolEditor` and `AccountPoolProps`, `UsageMenu`/`Contex
 
 Profile operation pending/error remains with the account editor. Login/code feedback belongs to the mounted login hook. Explicit close cancels the server login; unmount clears only the copied-code timer. A changed profile-ID snapshot hides completed login feedback without adding cancellation. Copied feedback expires after the existing 2400 ms delay. Usage reads use the same live database query, retain stale/error snapshots, and refresh on existing open intent; there is no fetch effect or duplicate cache.
 
+Account profile rows visualize the canonical Codex allowance without deriving a second quota model: the weekly remaining percentage is the outer thin ring, the optional five-hour percentage is the inner thin ring, and the center dot carries account-status color. Rings and inline limit bars are white until remaining capacity falls below 15%, when their progress becomes warning orange. The inline disclosure owns the weekly-first limit bars and banked-reset actions. Reset times are details, not collapsed-row subtitles; unavailable five-hour limits do not reserve an inner ring.
+
 Imports may reach existing data models, rendering-neutral UI and theme primitives. No private feature imports, V2 dependencies, lower-to-feature edges or facade import are allowed. Styles stay with their narrow common account surface owner.
 
 Verification: `v1-account-login.render.test.tsx`, usage-menu/workspace-subscriptions render tests, account semantic tests, `usage-menu-summary.test.ts`, `v1-settings-feature-contract.test.ts`, and `pnpm validate:android:v1`.

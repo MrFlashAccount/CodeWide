@@ -20,7 +20,7 @@ import {
 import { secureCryptoPolyfill, screen } from "./platform-sources";
 import { voiceWorkspace, ownerWorkspaceRuntime, otaPrefetch } from "./runtime-sources";
 import { ownerNewServerRoute } from "./workspace-sources";
-import { appErrorBoundary, globalErrorStore } from "./presentation-sources";
+import { appErrorBoundary, crashRecovery, globalErrorStore } from "./presentation-sources";
 
 it("keeps identity, scheme, orientation and predictive back in sync", () => {
   expect(gradle).toContain(`applicationId '${appConfig.expo.android.package}'`);
@@ -116,13 +116,18 @@ it("keeps a dependency-light root crash recovery surface", () => {
   expect(appErrorBoundary).toContain("getDerivedStateFromError");
   expect(appErrorBoundary).toContain("componentDidCatch");
   expect(appErrorBoundary).toContain('testID="root-error-boundary"');
-  expect(appErrorBoundary).toContain('await import("expo-updates")');
-  expect(appErrorBoundary).toContain("await reloadAsync()");
+  expect(appErrorBoundary).toContain('from "./crashRecovery"');
+  expect(appErrorBoundary).toContain("await reloadPublishedApp()");
   expect(appErrorBoundary).toContain("DevSettings.reload()");
-  expect(appErrorBoundary).toContain('await import("expo-clipboard")');
-  expect(appErrorBoundary).toContain("await setStringAsync(report)");
+  expect(appErrorBoundary).toContain("await copyCrashReport(report)");
   expect(appErrorBoundary).not.toContain('import * as Clipboard from "expo-clipboard"');
   expect(appErrorBoundary).not.toContain('import * as Updates from "expo-updates"');
+  expect(crashRecovery).toContain('await import("expo-updates")');
+  expect(crashRecovery).toContain("await reloadAsync()");
+  expect(crashRecovery).toContain('await import("expo-clipboard")');
+  expect(crashRecovery).toContain("await setStringAsync(report)");
+  expect(crashRecovery).not.toContain('import * as Clipboard from "expo-clipboard"');
+  expect(crashRecovery).not.toContain('import * as Updates from "expo-updates"');
   expect(appErrorBoundary).not.toContain("op-sqlite");
   expect(appErrorBoundary).not.toContain("tanstack");
   expect(appEntry.indexOf('import "./src/ui/install-global-error-handler"')).toBeLessThan(
@@ -139,6 +144,10 @@ it("packages icon fonts as permanent Android assets under the library's exact fa
   expect(gradle).toContain('into "fonts"');
   expect(gradle).toContain('name == "Ionicons.ttf" ? "ionicons.ttf" : "material.ttf"');
   expect(gradle).toContain('throw new GradleException("Required UI icon font is missing: $name")');
+  expect(gradle).toContain('tasks.register("cleanReleaseReactResources")');
+  expect(gradle).toContain('delete(file("$buildDir/generated/res/react/release"))');
+  expect(gradle).toContain('it.name == "createBundleReleaseJsAndAssets"');
+  expect(gradle).toContain("dependsOn(cleanReleaseReactResources)");
 });
 
 it("keeps signed self-hosted updates enabled and applies them without a process restart", () => {

@@ -75,6 +75,11 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     width: "100%",
   },
+  threadResourceOverlay: {
+    backgroundColor: colors.surfaceContainerHigh,
+    minHeight: 0,
+    width: "100%",
+  },
   threadResourcePreviewCenter: {
     alignItems: "center",
     flex: 1,
@@ -88,7 +93,6 @@ export const styles = StyleSheet.create({
     minHeight: 0,
     width: "100%",
   },
-  threadResourceRouteHidden: { display: "none" },
   threadResourcesContent: { paddingBottom: spacing.md },
   threadResourcesEmpty: {
     alignItems: "center",

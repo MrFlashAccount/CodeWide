@@ -7,7 +7,6 @@ import { useThreadSummaryView } from "../../data/use-thread-summary-view";
 import { useThreadUiState } from "../../data/use-thread-ui-state";
 import { threadHistoryResourceKey } from "../../data/workspace-resource-keys";
 import { useEvent } from "../../react/useEvent";
-import { useConversationState } from "../../ui/use-conversation-scope";
 import type { SearchConversationWindow } from "../search/search-conversation-window";
 import { useSearchConversationWindowLifecycle } from "../search/use-search-conversation-window";
 import { renderMainConversationPublication } from "./MainConversationPublication";
@@ -23,7 +22,6 @@ export type MainConversationDetailProps = ConversationDestinationBaseProps & {
   connectionId: string;
   resources: ConversationDetailResources;
   threadId: string;
-  threadOpenGeneration: number;
 };
 export type NewConversationDetailProps = ConversationDestinationBaseProps & {
   connectionId: string;
@@ -37,7 +35,6 @@ export type ConversationDestinationProps = ConversationDestinationBaseProps & {
         kind: "thread";
         resources: ConversationDetailResources;
         threadId: string;
-        threadOpenGeneration: number;
       }
     | {
         connectionId: string;
@@ -52,7 +49,6 @@ export function MainConversationDetail({
   navigationKey,
   resources,
   threadId,
-  threadOpenGeneration,
   ...conversation
 }: MainConversationDetailProps) {
   const uiStateDatabase = resources.threadUiStateDatabase;
@@ -92,17 +88,12 @@ export function MainConversationDetail({
   // reuse the first result when another message in that same chat is selected.
   searchWindow?.read().catch(() => undefined);
   const searchState = useSelector(() => searchWindow?.state$.get() ?? null);
-  const [initialHistoryAnchorTurnId, setHistoryAnchorTurnId] = useConversationState(
-    `${connectionId}\u0000${threadId}`,
-    () => composerState.historyAnchorTurnId ?? null,
-  );
   const historyResourceId = threadHistoryResourceKey(connectionId, threadId);
   const historyModel = resources.threadHistoryModel ?? null;
   const historyResourceRaw = useThreadHistoryCursor(historyModel, historyResourceId);
   const chatWindowRequest: ThreadChatWindowRequest = {
-    anchorTurnId: searchWindow === null ? initialHistoryAnchorTurnId : null,
+    anchorTurnId: null,
     connectionId,
-    openGeneration: threadOpenGeneration,
     threadId,
   };
   const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false);
@@ -124,7 +115,6 @@ export function MainConversationDetail({
     resources,
     storedThread,
     threadId,
-    threadOpenGeneration,
   });
 
   return renderMainConversationPublication({
@@ -144,7 +134,6 @@ export function MainConversationDetail({
     resources,
     searchState,
     searchWindow,
-    setHistoryAnchorTurnId,
     threadId,
   });
 }

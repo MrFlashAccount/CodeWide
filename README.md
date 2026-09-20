@@ -168,6 +168,17 @@ set -lx CODEWIDE_SERVER_EMOJI '🏠'
 codewide-companion pair
 ```
 
+Build the standalone Linux Relay with `cargo build --release -p codewide-relay`
+and run `target/release/codewide-relay --port 8780`. Android and Companion
+both connect outbound to that Relay address. Plain WebSocket connections carry
+opaque inner-TLS bytes, while TLS 1.3 connections on the same port carry health,
+pairing, and control. On the Relay host, `codewide-relay invite` creates an
+address-independent one-time bundle. On the Companion host, run
+`codewide-companion relay pair relay.example:8780` and paste that bundle. The
+running Companion applies pairing and `relay disable|enable` immediately through
+its private control socket; no restart is required. Setup, canary and rollback are documented in
+[docs/relay-rollout.md](docs/relay-rollout.md).
+
 `pair` reads the Companion identity through the private control socket and puts
 its SHA-256 SPKI pin in the QR. A current Android build establishes pinned inner
 TLS before it sends the one-time pairing token, public device key, or proof. The

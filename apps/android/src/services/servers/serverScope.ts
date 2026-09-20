@@ -10,10 +10,10 @@ export type ServerScope =
 export const ALL_SERVER_SCOPE: ServerScope = { kind: "all" };
 
 export type ServerScopeBinding = {
+  readonly consumeDesktopDefaultThread: () => void;
   readonly desktopDefaultThreadEnabled: boolean;
   readonly scope: ServerScope;
   readonly select: (next: ServerScope) => void;
-  readonly selectConnection: (connectionId: string) => void;
 };
 
 /** Keeps a requested V1 list scope valid as saved connections change. */
@@ -43,17 +43,20 @@ export function serverScopeIncludes(scope: ServerScope, connectionId: string): b
 export function useServerScope(
   connections: readonly StoredConnection[],
   resetThreadList: () => void,
+  desktopDefaultThreadInitiallyEnabled = true,
 ): ServerScopeBinding {
   const [requested, setRequested] = useState<ServerScope>(ALL_SERVER_SCOPE);
-  const [desktopDefaultThreadEnabled, setDesktopDefaultThreadEnabled] = useState(true);
+  const [desktopDefaultThreadEnabled, setDesktopDefaultThreadEnabled] = useState(
+    desktopDefaultThreadInitiallyEnabled,
+  );
   const scope = normalizeServerScope(requested, connections);
+  const consumeDesktopDefaultThread = useEvent((): void => {
+    setDesktopDefaultThreadEnabled(false);
+  });
   const select = useEvent((next: ServerScope): void => {
     resetThreadList();
-    setDesktopDefaultThreadEnabled(false);
+    consumeDesktopDefaultThread();
     setRequested(next);
   });
-  const selectConnection = useEvent((connectionId: string): void => {
-    setRequested({ connectionId, kind: "connection" });
-  });
-  return { desktopDefaultThreadEnabled, scope, select, selectConnection };
+  return { consumeDesktopDefaultThread, desktopDefaultThreadEnabled, scope, select };
 }

@@ -4,13 +4,13 @@ import type { ThreadChatModel } from "../../data/thread-chat-model";
 import type { ProjectedThreadChatTimelineEntry } from "../../data/thread-chat-projection";
 import type { ThreadCurrentOutcome } from "../../data/thread-current-outcome";
 import type { ThreadHistoryModel } from "../../data/thread-history-model";
-import type { ThreadUiStateRow } from "../../data/thread-ui-state-types";
 import type { ThreadHistoryViewport } from "../../data/use-thread-history-controller";
+import type { ThreadUiStateRead } from "../../data/use-thread-ui-state";
 import type { MessageListState } from "../../ui/MessageListBoundary";
 import type { SearchConversationWindow } from "../search/search-conversation-window";
 /** Qualified capabilities consumed by the conversation owner in conversation composition. */
 export type MainThreadReadCapabilities = {
-  composerState: ThreadUiStateRow | null;
+  composerState: ThreadUiStateRead;
   currentOutcome: ThreadCurrentOutcome | null;
   currentUsage: TurnUsageProjection | null;
   historyActivityModel: ThreadHistoryModel | null;

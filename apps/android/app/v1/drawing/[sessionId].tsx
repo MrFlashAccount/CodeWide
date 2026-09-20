@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../src/components/navigation/RouteUnavailable";
+import { RouteFullscreenOverlay } from "../../../src/components/navigation/RouteFullscreenOverlay";
 import { recoverUnavailableRoute } from "../../../src/components/navigation/routeRecovery";
 import { DrawingWorkspace } from "../../../src/features/drawing/DrawingWorkspace";
 import { drawingRouteSessions } from "../../../src/services/drawing/drawingRouteSession";
@@ -45,12 +46,18 @@ export default function V1DrawingRoute(): React.JSX.Element {
     recoverUnavailableRoute(router, fallback);
   };
   return (
-    <DrawingWorkspace
-      editing={session.request.editing}
-      initialSnapshot={session.request.initialSnapshot}
-      mode={session.request.mode}
-      onClose={close}
-      onCommit={async (value) => drawingRouteSessions.commit(session.id, value)}
+    <RouteFullscreenOverlay
+      onDismiss={close}
+      render={(closeOverlay) => (
+        <DrawingWorkspace
+          editing={session.request.editing}
+          initialSnapshot={session.request.initialSnapshot}
+          mode={session.request.mode}
+          onClose={closeOverlay}
+          onCommit={async (value) => drawingRouteSessions.commit(session.id, value)}
+        />
+      )}
+      scope={`drawing:${session.id}`}
     />
   );
 }

@@ -24,7 +24,6 @@ export function useActiveConversationScope({
     destination.kind === "thread"
       ? threadSelectionKey({ id: destination.threadId, serverId: destination.connectionId })
       : null;
-  const threadOpenGeneration = destination.generation;
   const closeActiveConversation = onClose;
   const exitSearchHistory = onExitSearchHistory;
   const selectedThread =
@@ -94,7 +93,6 @@ export function useActiveConversationScope({
     newChatDraft,
     requestedThreadId,
     searchWindow,
-    threadOpenGeneration,
     visibleConversationThread,
   };
 }

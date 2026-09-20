@@ -295,6 +295,7 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
       }
       const key = threadSummaryViewKey(request);
       const requestRevision = threadSummaryViewRequestKey(request);
+      const previousRequest = requests.get(key);
       let record = resources.get(key);
       if (record === undefined) {
         // Register the record before the Promise can settle so synchronous test
@@ -325,6 +326,7 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
         // is published when the new SQLite range is ready.
         const blocksNavigation =
           !record.hasReadySnapshot ||
+          !summaryViewSatisfiesVisiblePartition(previousRequest, request) ||
           !summaryViewSatisfiesSelection(view$(request).peek(), request);
         const load = beginResourceLoad(request, loader, blocksNavigation);
         if (blocksNavigation) {
@@ -477,5 +479,15 @@ function summaryViewSatisfiesSelection(
     (row) =>
       row.connectionId === request.selectedConnectionId &&
       row.remoteThreadId === request.selectedThreadId,
+  );
+}
+
+function summaryViewSatisfiesVisiblePartition(
+  previous: ThreadSummaryViewRequest | undefined,
+  next: ThreadSummaryViewRequest,
+): boolean {
+  return !(
+    (next.recentLimit > 0 && (previous?.recentLimit ?? 0) === 0) ||
+    (next.archivedLimit > 0 && (previous?.archivedLimit ?? 0) === 0)
   );
 }

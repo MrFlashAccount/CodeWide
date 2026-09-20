@@ -1,7 +1,9 @@
+import { appLockVoiceLifecycle } from "../../data/appLockVoiceLifecycle";
 import {
   commandDelivery,
   currentConnections,
   forgetHttpAuthorization,
+  globalSupervisorRuntime,
   loadTurnControls,
   refreshAccountRateLimits,
   rpcAfterAttach,
@@ -18,6 +20,9 @@ import { createComposerWorkspaceAdapter } from "../composer/workspaceAdapter";
 import { createConnectionsWorkspaceAdapter } from "../connections/workspaceAdapter";
 import { createConversationWorkspaceAdapter } from "../conversation/workspaceAdapter";
 import { createGoalWorkspaceAdapter } from "../goal/workspaceAdapter";
+import { createGlobalSupervisorFeature } from "../globalSupervisor";
+import { bindGlobalVoiceOverlayActions } from "../globalSupervisor/globalVoiceOverlayBinding";
+import { createGlobalSupervisorWorkspaceAdapter } from "../globalSupervisor/workspaceAdapter";
 import { createPortsWorkspaceAdapter } from "../ports/workspaceAdapter";
 import { createProjectsWorkspaceAdapter } from "../projects/workspaceAdapter";
 import { createQueueWorkspaceAdapter } from "../queue/workspaceAdapter";
@@ -45,6 +50,7 @@ function createWorkspaceFeatures() {
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
+    getVisibility: () => workspaceRuntime.globalSupervisorVisibility,
     rpcAfterAttach: rpcAfterAttach,
   });
   const projects = createProjectsWorkspaceAdapter({
@@ -113,6 +119,25 @@ function createWorkspaceFeatures() {
     loadThreadChangeDiff: workspaceThreadResources.loadThreadChangeDiff,
     loadThreadResources: workspaceThreadResources.loadThreadResources,
   };
+  const globalSupervisor = createGlobalSupervisorFeature(
+    createGlobalSupervisorWorkspaceAdapter(globalSupervisorRuntime),
+  );
+  appLockVoiceLifecycle.bind({
+    async pauseForAppLock() {
+      try {
+        // Dictation release may resume the assistant through the microphone handoff.
+        // Applying the assistant pause second makes the privacy boundary the final state.
+        await workspaceRuntime.voiceController?.pauseForAppLock();
+      } finally {
+        await globalSupervisor.pause();
+      }
+    },
+    async resumeAfterAppUnlock() {
+      await globalSupervisor.resume();
+      await workspaceRuntime.voiceController?.resumeAfterAppUnlock();
+    },
+  });
+  bindGlobalVoiceOverlayActions(globalSupervisor);
   return {
     accounts,
     agents,
@@ -121,6 +146,7 @@ function createWorkspaceFeatures() {
     composer,
     connections,
     conversation,
+    globalSupervisor,
     goal,
     ports,
     projects,

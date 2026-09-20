@@ -5,13 +5,17 @@ import { Text, View } from "react-native";
 
 import { useConversationCleanup, useConversationRef, useConversationState } from "../src/ui/use-conversation-scope";
 import { useConversationOwner, type ConversationOwner } from "../src/ui/use-conversation-owner";
-import { useComposerLatestValues } from "../src/features/composer/useComposerLatestValues";
+import {
+  useComposerSession,
+  type ComposerSessionOwner,
+} from "../src/features/composer/composerSession";
+import { TEST_COMPOSER_PREFERENCES } from "./composer-session-fixture";
 
 interface ProbeHandle {
   setSearch: Dispatch<SetStateAction<string>>;
   owner: ConversationOwner;
   scroll: { current: number };
-  draft: { current: { latest: string } };
+  composer: ComposerSessionOwner;
 }
 
 interface ProbeProps {
@@ -25,9 +29,13 @@ function Probe(props: ProbeProps) {
   const [search, setSearch] = useConversationState(props.scope, () => "");
   const scroll = useConversationRef(props.scope, () => 0);
   const owner = useConversationOwner(props.scope);
-  const latest = useComposerLatestValues(props.scope, `draft-${props.scope}`, [], null);
+  const composer = useComposerSession(props.scope, {
+    attachments: [],
+    plainText: `draft-${props.scope}`,
+    preferences: TEST_COMPOSER_PREFERENCES,
+  });
   useLayoutEffect(() => {
-    props.handles.push({ setSearch, owner, scroll, draft: latest.draft });
+    props.handles.push({ setSearch, owner, scroll, composer: composer.capture() });
   });
   useConversationCleanup(props.scope, () => props.disposed(props.scope, scroll.current, search));
   return <View><StableChrome mounted={props.mounted} /><Text>{`${props.scope}:${search}`}</Text></View>;
@@ -73,9 +81,9 @@ describe("persistent conversation shell", () => {
     const first = handles.at(-1)!;
     view.rerender(<Probe scope="b" handles={handles} mounted={mounted} disposed={disposed} />);
     const second = handles.at(-1)!;
-    expect(first.draft.current.latest).toBe("draft-a");
-    expect(second.draft.current.latest).toBe("draft-b");
-    first.draft.current.latest = "recovered-a";
-    expect(second.draft.current.latest).toBe("draft-b");
+    expect(first.composer.read().plainText).toBe("draft-a");
+    expect(second.composer.read().plainText).toBe("draft-b");
+    first.composer.updateText({ markdown: "recovered-a", plainText: "recovered-a" });
+    expect(second.composer.read().plainText).toBe("draft-b");
   });
 });

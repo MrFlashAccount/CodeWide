@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 
+import type { NativeTerminalSession } from "../native/native-transport";
+
 import type { InteractiveTerminalWorkspace } from "./interactive-terminal-store.native";
 
 export type {
@@ -40,9 +42,11 @@ export function selectInteractiveTerminalTab(
   _threadId: string,
   _terminalId: string,
 ): void {}
+export function focusInteractiveTerminalSession(_session: NativeTerminalSession): void {}
 export function closeInteractiveTerminalTab(
   _connectionId: string,
   _threadId: string,
   _terminalId: string,
 ): void {}
+export function closeInteractiveTerminalSession(_terminalId: string): void {}
 export function closeInteractiveTerminalWorkspace(_connectionId: string, _threadId: string): void {}

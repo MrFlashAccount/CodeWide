@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../src/components/navigation/RouteUnavailable";
 import { recoverUnavailableRoute } from "../../../../src/components/navigation/routeRecovery";
+import { ConversationRouteFullscreenOverlay } from "../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
 import { LargeContentViewerSession } from "../../../../src/features/conversation/content/FullContentViewer";
 import { contentRouteSessions } from "../../../../src/services/content/contentRouteSession";
 import { newThreadService } from "../../../../src/services/threads/newThreadService";
@@ -46,5 +47,13 @@ export default function V1DraftContentRoute(): React.JSX.Element {
     contentRouteSessions.close(session.id);
     router.back();
   };
-  return <LargeContentViewerSession initialRequest={session.request} onClose={close} />;
+  return (
+    <ConversationRouteFullscreenOverlay
+      onDismiss={close}
+      render={(closeOverlay) => (
+        <LargeContentViewerSession initialRequest={session.request} onClose={closeOverlay} />
+      )}
+      scope={`draft-content:${session.id}`}
+    />
+  );
 }

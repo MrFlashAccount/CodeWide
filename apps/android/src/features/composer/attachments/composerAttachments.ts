@@ -9,6 +9,7 @@ export function useComposerAttachments({
   attachmentCount,
   captureDraftMutations,
   composerScope,
+  composerSession,
   composerUploadScope,
   contentReviewAttachmentId,
   dismissComposerKeyboardForOverlay,
@@ -19,21 +20,19 @@ export function useComposerAttachments({
   getStableTransferAccess,
   getTransferAccess,
   largePasteOperationRef,
-  latestAttachmentsRef,
-  latestDraftRef,
   pastedAttachmentPendingRef,
   queuedComposerEdit,
   removeDraftAttachment,
   setComposerTrayVisible,
   setContentReviewAttachmentId,
   setPastedAttachmentPending,
-  updateAttachments,
   upsertDraftAttachment,
   voiceController,
 }: {
   attachmentCount: Parameters<typeof useAttachmentAdmission>[0]["attachmentCount"];
   captureDraftMutations: Parameters<typeof useLargePasteActions>[0]["captureDraftMutations"];
   composerScope: Parameters<typeof useAttachmentRemoval>[0]["composerScope"];
+  composerSession: Parameters<typeof useAttachmentRemoval>[0]["composerSession"];
   composerUploadScope: Parameters<typeof useAttachmentRemoval>[0]["composerUploadScope"];
   contentReviewAttachmentId: Parameters<
     typeof useAttachmentRemoval
@@ -48,8 +47,6 @@ export function useComposerAttachments({
   getStableTransferAccess: Parameters<typeof useAttachmentAdmission>[0]["getStableTransferAccess"];
   getTransferAccess: Parameters<typeof useAttachmentAdmission>[0]["getTransferAccess"];
   largePasteOperationRef: Parameters<typeof useLargePasteActions>[0]["largePasteOperationRef"];
-  latestAttachmentsRef: Parameters<typeof useAttachmentRemoval>[0]["latestAttachmentsRef"];
-  latestDraftRef: Parameters<typeof useLargePasteActions>[0]["latestDraftRef"];
   pastedAttachmentPendingRef: Parameters<
     typeof useLargePasteActions
   >[0]["pastedAttachmentPendingRef"];
@@ -62,7 +59,6 @@ export function useComposerAttachments({
   setPastedAttachmentPending: Parameters<
     typeof useLargePasteActions
   >[0]["setPastedAttachmentPending"];
-  updateAttachments: Parameters<typeof useAttachmentRemoval>[0]["updateAttachments"];
   upsertDraftAttachment: Parameters<typeof useAttachmentAdmission>[0]["upsertDraftAttachment"];
   voiceController: Parameters<typeof useLargePasteActions>[0]["voiceController"];
 }) {
@@ -75,6 +71,7 @@ export function useComposerAttachments({
     attachmentCount,
     captureDraftMutations,
     composerScope,
+    composerSession,
     composerUploadScope,
     dismissComposerKeyboardForOverlay,
     draftConnectionId,
@@ -82,7 +79,6 @@ export function useComposerAttachments({
     fileTransferController,
     getStableTransferAccess,
     getTransferAccess,
-    latestAttachmentsRef,
     queuedComposerEdit,
     setComposerTrayVisible,
     upsertDraftAttachment,
@@ -95,36 +91,32 @@ export function useComposerAttachments({
     setContentReviewAttachmentId,
   );
   const admitContentReview = useEvent(async (selected: SelectedUpload) =>
-    reviewAdmission.admitContentReview(selected, () => latestAttachmentsRef.current.latest),
+    reviewAdmission.admitContentReview(selected, () => composerSession.read().attachments),
   );
-  const { readDrawingAttachments } = useDrawingAttachmentRead(
-    composerUploadScope,
-    latestAttachmentsRef,
-  );
+  const { readDrawingAttachments } = useDrawingAttachmentRead(composerUploadScope, composerSession);
   const { handleComposerLargePaste } = useLargePasteActions({
     captureDraftMutations,
     captureStageAttachment,
     composerScope,
+    composerSession,
     draftConnectionId,
     draftSelectionRef,
     draftThreadId,
     largePasteOperationRef,
-    latestDraftRef,
     pastedAttachmentPendingRef,
     setPastedAttachmentPending,
     voiceController,
   });
   const { removeComposerAttachment } = useAttachmentRemoval({
     composerScope,
+    composerSession,
     composerUploadScope,
     contentReviewAttachmentId,
     draftConnectionId,
     draftThreadId,
-    latestAttachmentsRef,
     queuedComposerEdit,
     removeDraftAttachment,
     setContentReviewAttachmentId,
-    updateAttachments,
   });
   return {
     admitContentReview,

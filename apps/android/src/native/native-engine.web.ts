@@ -26,5 +26,14 @@ export class NativeEngineSupervisor {
   async reattachRuntime(_connectionId: string): Promise<void> {
     await Promise.resolve();
   }
+
+  async subscribeLive(_connectionId: string, _channelId: string, _threadId: string): Promise<void> {
+    await Promise.resolve();
+    throw new Error("Native live subscription is unavailable on web");
+  }
+
+  async unsubscribeLive(_connectionId: string, _channelId: string): Promise<void> {
+    await Promise.resolve();
+  }
   stop(): void {}
 }

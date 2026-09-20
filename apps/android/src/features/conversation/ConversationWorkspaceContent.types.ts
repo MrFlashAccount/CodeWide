@@ -8,7 +8,7 @@ import type { WorkspaceRuntimeSnapshot } from "../../data/workspace-runtime";
 import type { NewThreadDraft } from "../../services/threads/newThreadService";
 import type { useTurnChangesLoader } from "../changes/turnChanges";
 import type { ThreadListServer } from "../connections/connectionPresentation";
-import type { useLoopbackNavigation } from "../ports/browserNavigation";
+import type { useLoopbackNavigation } from "../ports/loopbackNavigation";
 import type { useActiveProjectSelection } from "../projects/activeProjectSelection";
 import type { ThreadListItem } from "../threadList/threadListTypes";
 import type { useActiveThreadActions, useThreadMutationActions } from "../turnActions/turnActions";

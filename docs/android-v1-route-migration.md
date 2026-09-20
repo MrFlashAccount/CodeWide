@@ -36,7 +36,7 @@ retain their established owners. V1 stays isolated from V2 route and runtime con
 
 | Owner | Lifetime and bound |
 | --- | --- |
-| `services/threads/threadNavigationService.ts` | mounted workspace; preserves observer, preload, IME, presentation and timing order |
+| `services/threads/threadNavigationService.ts` | mounted workspace; preserves observer, IME, presentation and timing order; route resources own loading after selection |
 | `services/threads/newThreadService.ts` | one retained local draft until close or successful first send |
 | `services/servers/serverScope.ts` | mounted workspace; `all | connection` list scope only |
 | `services/routeSessionPolicy.ts` | count/TTL policy plus mounted-route leases; retained entries resist passive expiry and capacity eviction, with temporary overflow only while every candidate is mounted |
@@ -65,16 +65,21 @@ owners. No rule is disabled inside either generation.
 
 ### R1 — All and thread: closed
 
-`/v1` owns All, qualified thread paths own conversations, and the workspace stays mounted around a
-`Slot`. Peer thread selection uses replace after leaving All. Main conversation publication remains
+`/v1` owns All, qualified thread paths own conversations, and the workspace stays mounted around an
+inner `Stack`. Peer thread selection collapses to All before opening the replacement conversation,
+so an older conversation cannot remain mounted below it. Transparent sheet routes retain
+the owning conversation below them. Main conversation publication remains
 immediate with local Suspense and progressive history hydration. Desktop default selection occurs at
 commit and mobile Back returns to All.
 
 ### R2 — new thread and search: closed
 
 `/v1/new` owns the local draft until first-send admission succeeds. Search query/filter state and
-message windows remain in bounded search sessions; a result opens a qualified thread without query
-or project data in its URL. The old `empty | thread | draft` destination model is deleted.
+message windows remain in bounded search sessions. Global search renders in the persistent list
+pane: desktop result selection collapses the previous peer conversation while preserving the search
+session, while mobile result selection pushes so Back returns to search. The query and project data
+never enter the URL. The old
+`empty | thread | draft` destination model is deleted.
 
 ### R3 — server scope, settings, pairing and projects: closed for implemented V1 product surfaces
 
@@ -93,9 +98,10 @@ also Router-owned and reuse the existing transfer cache, review, annotation and 
 
 ### R5 — agents and composer tools: closed
 
-Agent list/detail and model, permissions, skills, queue, goal, review, ports and runtime surfaces are
-route-owned. The composer no longer owns application navigation state. Subagent navigation keeps its
-Transition and carries the immediate parent agent separately from the root conversation thread.
+The fullscreen agent workspace and model, permissions, skills, queue, goal, review, ports and runtime
+surfaces are route-owned. The composer no longer owns application navigation state. Opening agents
+captures the same visible catalog snapshot as the former V1 overlay; selection remains local to the
+master/detail workspace and keeps its existing Transition.
 
 ### R6 — Terminal, browser, drawing and full content: closed
 
@@ -127,7 +133,7 @@ resource bounds and observable rendering semantics. Representation-only assertio
 where the owner or formatting changed; they were not weakened to existence checks.
 
 The configured V1 Jest suite mounts the production workspace layout and composition around a stateful
-`Slot` that renders the actual registered child route. It is separate from the V2 Jest suite and runs
+inner-stack mock that renders the actual registered child route. It is separate from the V2 Jest suite and runs
 inside `validate:android:v1`. The tests prove persistent shell identity, push and replace history,
 Back/replacement retirement, workspace teardown, missing direct-entry recovery through visible
 controls, nested-agent parent routing and mounted session retention beyond TTL and capacity pressure.

@@ -1,4 +1,4 @@
-const DESKTOP_BREAKPOINT = 840;
+const V1_TWO_PANE_MIN_WIDTH = 720;
 
 export type WindowLayoutSnapshot = Readonly<{
   desktop: boolean;
@@ -15,7 +15,7 @@ export function windowLayoutSnapshot(
   const scale = finitePositiveOr(window.scale, 1);
   const fontScale = finitePositiveOr(window.fontScale, scale);
   return {
-    desktop: window.width >= DESKTOP_BREAKPOINT && window.height >= 480,
+    desktop: window.width >= V1_TWO_PANE_MIN_WIDTH,
     fontScale,
     height: window.height,
     measurementRevision: `${String(scale)}:${String(fontScale)}`,

@@ -2,6 +2,7 @@ import type {
   NativeDomainProjection,
   NativeConnectionStateProjection,
   NativeEngineSupervisorOptions,
+  NativeLiveRealtimeEvent,
 } from "./native-engine-contract";
 import {
   RpcResponseError,
@@ -46,9 +47,17 @@ type NativeEngineEvent = {
     | "events"
     | "checkpointEvents"
     | "journalAdvanced"
+    | "liveEvent"
+    | "liveSubscribed"
+    | "liveTerminal"
     | "outbox"
     | "telemetry";
 };
+
+type NativeLiveEventType = Extract<
+  NativeEngineEvent["type"],
+  "liveEvent" | "liveSubscribed" | "liveTerminal"
+>;
 
 type NativeEngineState = {
   error?: string;
@@ -68,6 +77,8 @@ type NativeBridge = {
   acknowledgeProjection: (connectionId: string, projectionCursor: number) => void;
   addListener: (eventName: string) => void;
   attachSocket: (connectionId: string) => Promise<void>;
+  engineLiveSubscribe: (connectionId: string, channelId: string, threadId: string) => Promise<void>;
+  engineLiveUnsubscribe: (connectionId: string, channelId: string) => Promise<void>;
   engineRpc: (connectionId: string, method: string, paramsJson: string) => Promise<string>;
   readCommittedFrames: (
     connectionId: string,
@@ -104,6 +115,7 @@ export class NativeEngineSession implements RpcClient {
   readonly #onPendingRequests:
     | ((connectionId: string, requests: SyncServerRequest[]) => void)
     | undefined;
+  readonly #onEvents: ((connectionId: string, events: readonly SyncEvent[]) => void) | undefined;
   readonly #projectionGate: OrderedProjectionGate;
   readonly #projectionAcknowledger: OrderedProjectionAcknowledger;
   #stopped = false;
@@ -120,6 +132,7 @@ export class NativeEngineSession implements RpcClient {
   constructor(options: {
     connection: RemoteConnection;
     connectionState: NativeConnectionStateProjection;
+    onEvents?: (connectionId: string, events: readonly SyncEvent[]) => void;
     onPendingRequests?: (connectionId: string, requests: SyncServerRequest[]) => void;
     projection: NativeDomainProjection;
   }) {
@@ -127,6 +140,7 @@ export class NativeEngineSession implements RpcClient {
     this.#connectionState = options.connectionState;
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;
+    this.#onEvents = options.onEvents;
     const projectionFailed = (error: unknown) => {
       this.#publishedLiveRpcAvailable = undefined;
       this.#stateGeneration += 1;
@@ -198,6 +212,13 @@ export class NativeEngineSession implements RpcClient {
       if (telemetry !== null) {
         recordOperationalTelemetryEvent(this.connectionId, telemetry);
       }
+      return;
+    }
+    if (
+      event.type === "liveEvent" ||
+      event.type === "liveSubscribed" ||
+      event.type === "liveTerminal"
+    ) {
       return;
     }
     if (event.type === "state") {
@@ -630,6 +651,7 @@ export class NativeEngineSession implements RpcClient {
           recordDiagnosticTiming("projection_apply_ms", projectionMs);
         }
         if (!recovery) {
+          this.#onEvents?.(this.connectionId, eventProjection.events);
           const liveDeltas = eventProjection.events.flatMap((event) => {
             const delta = agentMessageDeltaMetric(this.connectionId, event);
             return delta === null ? [] : [delta];
@@ -764,6 +786,10 @@ export class NativeEngineSupervisor {
     | ((connectionId: string, requests: SyncServerRequest[]) => void)
     | undefined;
   readonly #onOutboxChange: ((delivery: NativeCommandDelivery) => void) | undefined;
+  readonly #onEvents: ((connectionId: string, events: readonly SyncEvent[]) => void) | undefined;
+  readonly #onLiveRealtime:
+    | ((connectionId: string, event: NativeLiveRealtimeEvent) => void)
+    | undefined;
   readonly #sessions = new Map<string, NativeEngineSession>();
   readonly #fingerprints = new Map<string, string>();
   readonly #subscription: { remove: () => void } | null;
@@ -773,30 +799,56 @@ export class NativeEngineSupervisor {
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;
     this.#onOutboxChange = options.onOutboxChange;
+    this.#onEvents = options.onEvents;
+    this.#onLiveRealtime = options.onLiveRealtime;
     this.#subscription =
       bridge === undefined
         ? null
         : new NativeEventEmitter(bridge).addListener(
             "CodeWideEngineEvent",
             (event: NativeEngineEvent) => {
-              if (
-                // WHY: NativeEventEmitter delivers untyped runtime data even though this adapter annotates the validated event shape.
-                // oxlint-disable-next-line typescript/no-unnecessary-condition
-                (event.contractVersion === 1 || event.contractVersion === 2) &&
-                event.type === "outbox"
-              ) {
-                try {
-                  const payload: unknown = JSON.parse(event.data);
-                  recordNativeOutboxStorage(event.connectionId, payload);
-                  this.#onOutboxChange?.(parseNativeCommandDelivery(payload));
-                } catch {
-                  // Malformed native projections are never repaired with an
-                  // unbounded cross-server rescan.
-                }
-              }
-              this.#sessions.get(event.connectionId)?.receive(event);
+              this.#receiveBridgeEvent(event);
             },
           );
+  }
+
+  #publishLiveRealtime(event: NativeEngineEvent): void {
+    if (
+      event.type !== "liveEvent" &&
+      event.type !== "liveSubscribed" &&
+      event.type !== "liveTerminal"
+    ) {
+      return;
+    }
+    const liveEvent = parseNativeLiveRealtimeEvent(event.type, event.data);
+    if (liveEvent !== null) {
+      this.#onLiveRealtime?.(event.connectionId, liveEvent);
+    }
+  }
+
+  #publishOutbox(event: NativeEngineEvent): void {
+    if (
+      // WHY: NativeEventEmitter delivers untyped runtime data even though this adapter annotates the validated event shape.
+      // oxlint-disable-next-line typescript/no-unnecessary-condition
+      (event.contractVersion !== 1 && event.contractVersion !== 2) ||
+      event.type !== "outbox"
+    ) {
+      return;
+    }
+    try {
+      const payload: unknown = JSON.parse(event.data);
+      recordNativeOutboxStorage(event.connectionId, payload);
+      this.#onOutboxChange?.(parseNativeCommandDelivery(payload));
+    } catch {
+      // Malformed native projections are never repaired with an
+      // unbounded cross-server rescan.
+    }
+  }
+
+  #receiveBridgeEvent(event: NativeEngineEvent): void {
+    this.#publishOutbox(event);
+    this.#publishLiveRealtime(event);
+    this.#sessions.get(event.connectionId)?.receive(event);
   }
 
   replaceConnections(connections: RemoteConnection[]): void {
@@ -817,6 +869,7 @@ export class NativeEngineSupervisor {
       const session = new NativeEngineSession({
         connection,
         connectionState: this.#connectionState,
+        ...(this.#onEvents === undefined ? {} : { onEvents: this.#onEvents }),
         projection: this.#projection,
         ...(this.#onPendingRequests === undefined
           ? {}
@@ -840,6 +893,20 @@ export class NativeEngineSupervisor {
     await session.reattachRuntime();
   }
 
+  async subscribeLive(connectionId: string, channelId: string, threadId: string): Promise<void> {
+    if (bridge === undefined) {
+      throw new Error("Native live subscription is unavailable");
+    }
+    await bridge.engineLiveSubscribe(connectionId, channelId, threadId);
+  }
+
+  async unsubscribeLive(connectionId: string, channelId: string): Promise<void> {
+    if (bridge === undefined) {
+      throw new Error("Native live subscription is unavailable");
+    }
+    await bridge.engineLiveUnsubscribe(connectionId, channelId);
+  }
+
   stop(): void {
     for (const session of this.#sessions.values()) {
       session.stop();
@@ -848,6 +915,72 @@ export class NativeEngineSupervisor {
     this.#fingerprints.clear();
     this.#subscription?.remove();
   }
+}
+
+function parseNativeLiveEnvelope(data: string): Readonly<Record<string, unknown>> | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  return unknownRecord(value);
+}
+
+function parseNativeLivePayload(
+  envelope: Readonly<Record<string, unknown>>,
+  channelId: string,
+): NativeLiveRealtimeEvent | null {
+  const payload = unknownRecord(envelope.payload);
+  const sequence = envelope.sequence;
+  const threadId = envelope.threadId;
+  return payload !== null &&
+    typeof sequence === "number" &&
+    Number.isSafeInteger(sequence) &&
+    typeof threadId === "string" &&
+    threadId.length > 0
+    ? { channelId, event: "payload", payload, sequence, threadId }
+    : null;
+}
+
+function nonEmptyNativeString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function parseNativeLiveSubscribed(
+  envelope: Readonly<Record<string, unknown>>,
+  channelId: string,
+): NativeLiveRealtimeEvent | null {
+  const threadId = nonEmptyNativeString(envelope.threadId);
+  return threadId === null ? null : { channelId, event: "subscribed", threadId };
+}
+
+function parseNativeLiveTerminal(
+  envelope: Readonly<Record<string, unknown>>,
+  channelId: string,
+): NativeLiveRealtimeEvent | null {
+  const reason = nonEmptyNativeString(envelope.reason);
+  return reason === null ? null : { channelId, event: "terminal", reason };
+}
+
+function parseNativeLiveRealtimeEvent(
+  type: NativeLiveEventType,
+  data: string,
+): NativeLiveRealtimeEvent | null {
+  const envelope = parseNativeLiveEnvelope(data);
+  if (envelope === null) {
+    return null;
+  }
+  const channelId = nonEmptyNativeString(envelope.channelId);
+  if (channelId === null) {
+    return null;
+  }
+  if (type === "liveEvent") {
+    return parseNativeLivePayload(envelope, channelId);
+  }
+  return type === "liveSubscribed"
+    ? parseNativeLiveSubscribed(envelope, channelId)
+    : parseNativeLiveTerminal(envelope, channelId);
 }
 
 function recordNativeOutboxStorage(connectionId: string, value: unknown): void {

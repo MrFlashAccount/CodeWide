@@ -27,6 +27,13 @@ export type WeeklyRateLimit = {
   window: RateLimitWindow;
 };
 
+export type AccountRateLimitResetWindow = {
+  durationMins: number | null;
+  resetsAt: number;
+  slot: "availability" | "primary" | "secondary";
+  usedPercent: number | null;
+};
+
 export type ContextUsage = {
   remainingTokens: number;
   totalTokens: number;
@@ -93,29 +100,101 @@ export function selectWeeklyRateLimit(
   if (response === null) {
     return null;
   }
-  const canonical = weeklyRateLimit(response.rateLimits);
-  if (canonical !== null) {
-    return canonical;
-  }
-
-  const canonicalLimitId = response.rateLimits.limitId;
-  if (canonicalLimitId !== null) {
-    const canonicalBucket = response.rateLimitsByLimitId?.[canonicalLimitId];
-    if (canonicalBucket !== undefined) {
-      const matching = weeklyRateLimit(canonicalBucket);
-      if (matching !== null) {
-        return matching;
-      }
-    }
-  }
-
-  if (canonicalLimitId !== "codex") {
-    const codexBucket = response.rateLimitsByLimitId?.codex;
-    if (codexBucket !== undefined) {
-      return weeklyRateLimit(codexBucket);
+  for (const snapshot of rateLimitCandidates(response)) {
+    const weekly = weeklyRateLimit(snapshot);
+    if (weekly !== null) {
+      return weekly;
     }
   }
   return null;
+}
+
+/** Prefers the metered allowance tier when it is more specific than the account summary. */
+export function selectAccountRateLimitPlanType(
+  response: GetAccountRateLimitsResponse | null,
+): string | null {
+  if (response === null) {
+    return null;
+  }
+  let fallback: string | null = null;
+  for (const snapshot of rateLimitCandidates(response)) {
+    const planType = snapshot.planType;
+    if (planType === null || planType === "unknown") {
+      continue;
+    }
+    if (planType.startsWith("pro_x_")) {
+      return planType;
+    }
+    fallback ??= planType;
+  }
+  return fallback;
+}
+
+/** Reset-bearing windows from the canonical Codex allowance plus pool availability. */
+export function accountRateLimitResetWindows(
+  profile: AccountPoolProfile,
+): AccountRateLimitResetWindow[] {
+  const windows = profile.rateLimits === null ? [] : canonicalResetWindows(profile.rateLimits);
+  const exhaustedUntil = profile.exhaustedUntil;
+  if (exhaustedUntil !== null && !windows.some((window) => window.resetsAt === exhaustedUntil)) {
+    windows.push({
+      durationMins: null,
+      resetsAt: exhaustedUntil,
+      slot: "availability",
+      usedPercent: null,
+    });
+  }
+  windows.sort((left, right) => left.resetsAt - right.resetsAt);
+  return windows;
+}
+
+function canonicalResetWindows(
+  response: GetAccountRateLimitsResponse,
+): AccountRateLimitResetWindow[] {
+  for (const snapshot of rateLimitCandidates(response)) {
+    const windows = resetWindows(snapshot);
+    if (windows.length > 0) {
+      return windows;
+    }
+  }
+  return [];
+}
+
+function resetWindows(snapshot: RateLimitSnapshot): AccountRateLimitResetWindow[] {
+  const windows: AccountRateLimitResetWindow[] = [];
+  for (const [slot, window] of [
+    ["primary", snapshot.primary],
+    ["secondary", snapshot.secondary],
+  ] as const) {
+    if (window?.resetsAt === null || window?.resetsAt === undefined) {
+      continue;
+    }
+    windows.push({
+      durationMins: window.windowDurationMins,
+      resetsAt: window.resetsAt,
+      slot,
+      usedPercent: window.usedPercent,
+    });
+  }
+  return windows;
+}
+
+function rateLimitCandidates(response: GetAccountRateLimitsResponse): RateLimitSnapshot[] {
+  const candidates = [response.rateLimits];
+  const canonicalLimitId = response.rateLimits.limitId;
+  if (canonicalLimitId !== null) {
+    const matching = response.rateLimitsByLimitId?.[canonicalLimitId];
+    if (matching !== undefined && matching !== response.rateLimits) {
+      candidates.push(matching);
+    }
+  }
+  if (canonicalLimitId !== "codex") {
+    const codex = response.rateLimitsByLimitId?.codex;
+    if (codex !== undefined && !candidates.includes(codex)) {
+      candidates.push(codex);
+    }
+  }
+  return candidates;
 }
 
 function weeklyRateLimit(snapshot: RateLimitSnapshot): WeeklyRateLimit | null {

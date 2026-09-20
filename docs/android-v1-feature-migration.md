@@ -15,7 +15,7 @@ Every row below is a real policy owner. Public names are architectural exports; 
 | Owner / target source | Owns and public surface | Existing mechanisms retained; what deletion would break |
 | --- | --- | --- |
 | `features/workspace/WorkspaceScreen.tsx` | Responsive shell and composition of stable feature surfaces; no data/action algorithms | Window layout and insets remain native-owned. Deleting it removes the application surface composition |
-| `features/navigation/threadNavigation.ts`, `ConversationHost.tsx` | Destination model, selection/preload intent, IME handoff, deep-link and search destination admission; `selectThread`, `openDraft`, `openSearch`, scoped selection reads | Existing `createThreadNavigationModel` semantics and `WorkspaceConversationHost` subscriptions; deleting loses one selection/lifetime authority |
+| `features/navigation/threadNavigation.ts`, `ConversationHost.tsx` | Destination model, selection intent, IME handoff, deep-link and search destination admission; `selectThread`, `openDraft`, `openSearch`, scoped selection reads | Existing `createThreadNavigationModel` semantics and `WorkspaceConversationHost` subscriptions; route resources now own thread loading after selection |
 | `features/threadList/ThreadListFeature.tsx`, `threadListModel.ts`, `SidebarSectionHeader.tsx`, `sidebarRows.ts`, `summaryProjection.ts`, `SidebarListFeedback.tsx` | Server/project-scoped list paging/filtering, stable projections, scroll memory, list row actions | Summary database/query contracts retained; deleting loses list interaction policy, not transport |
 | `features/projects/ProjectPickerFeature.tsx`, `projectSelection.ts`, `newChat.ts`, `SidebarProjects.tsx`, `sidebarProjects.ts`, `sidebarProjectOrder.ts`, `useSidebarProjectOrder.ts`, `useRemoteProjectCatalog.ts` | Project discovery/order/pinning, directory picker, new-chat workspace selection and draft-to-thread activation | Remote project model and V1 workspace creation behavior; deleting loses new-chat/project interaction invariants |
 | `features/connections/ConnectionFeature.tsx`, `pairing.ts`, `connectionPresentation.ts`, `ConnectionActivityIndicator.tsx` | Add/edit/reconnect/enable/delete/order, pairing validation/session/camera/paste, diagnostics presentation; explicit connection capabilities | Native credentials/session adapter and validated profile contracts retained; deleting loses pairing/profile workflow |
@@ -37,7 +37,8 @@ Every row below is a real policy owner. Public names are architectural exports; 
 | `features/drawing/DrawingFeature.tsx`, `drawingAttachment.ts` | Drawing/annotation session, commit/snapshot/PNG conversion and result handoff | Existing drawing native implementation and upload capability retained; only close after accepted commit as currently implemented |
 | `features/agents/AgentsFeature.tsx`, `agentSelection.ts` | Subagent list/projection/selection/opening, child conversation scope and sheet lifetime | Existing summary/detail databases retained. Subagent child renders the public conversation **detail/turn** surface without recursively mounting the full tools composition |
 | `features/terminal/TerminalFeature.tsx`, `backgroundTerminals.tsx` | Interactive tab create/select/open/close and background process list/terminate | Existing native terminal store/controller retained; overlay dismissal and explicit close remain distinct |
-| `features/ports/PortsFeature.tsx`, `browserNavigation.ts` | Native port forward manager adaptation, tunnel create/revoke, loopback parsing/opening and browser/feedback session | Existing forwarding store/native/browser implementations retained; runtime ports are not duplicated per chat |
+| `features/ports/PortsFeature.tsx`, `loopbackNavigation.ts` | Native port forward manager adaptation, tunnel create/revoke and loopback qualification; invokes an injected browser callback | Existing forwarding store remains authoritative; runtime ports are not duplicated per chat and do not own browser UI |
+| `features/browser/**` | Standalone browser surface, navigation, DevTools and feedback interaction | Existing WebView/native browser bridges retained; ports and attachments supply destinations through a narrow callback |
 | `features/diagnostics/DiagnosticsFeature.tsx`, `renderRecovery.ts` | Diagnostic UI/recovery-thread action and experiment presentation | Metrics collection/batching stays data/native-owned, never moved into render |
 
 `features/conversation` contains several **named internal owners**, not one replacement `useConversation` hook. `ConversationWorkspace` may compose siblings' public surfaces; `ConversationDetail`, timeline and turn modules cannot import the full workspace, composer, agents or tools. This breaks the otherwise likely agents -> conversation -> agents cycle.
@@ -214,7 +215,7 @@ Coverage: **275 declared names**, each assigned once below. Overloaded giant com
 | `features/conversation/conversationCapabilities.ts` | `ConversationDestinationBaseProps` (1107) |
 | `features/conversation/ConversationDetail.tsx` | `MainConversationDetailProps` (1122), `MainConversationDetail` (1133), `NewConversationDetailProps` (1402), `NewConversationDetail` (1408), `ConversationDestinationProps` (1436) |
 | `features/conversation/ConversationDestination.tsx` | `ConversationDestination` (1454) |
-| `features/conversation/ConversationNavigationBoundary.tsx` | `ConversationNavigationLoader` (1462), `ConversationNavigationFallback` (1503) |
+| `DELETE obsolete full-screen navigation fallback; progressive composer state keeps ConversationLayout mounted` | `ConversationNavigationLoader` (1462), `ConversationNavigationFallback` (1503) |
 | `features/conversation/timeline/timelineProjection.ts` | `timelineRowCache` (1543), `optimisticTimelineRowCache` (1547), `projectOptimisticTimelineItem` (1552), `projectTimelineTurns` (1575), `timelineItemKey` (1598), `projectTimelineDateLabels` (1604), `timelineItemTimestampMs` (1627), `timelineSearchTextCache` (1633) |
 | `features/threadList/scrollOffsetMemory.ts` | `ScrollOffsetMemory` (1635) |
 | `features/threadList/threadListProjection.ts` | `ThreadListItemProjection` (1646), `ThreadListScopeProjection` (1687), `firstLine` (16418), `deduplicateThreadSummaries` (16568), `storedThreadToListItem` (16574) |
@@ -226,7 +227,7 @@ Coverage: **275 declared names**, each assigned once below. Overloaded giant com
 | `features/workspace/WorkspaceConversationProviders.tsx` | `WorkspaceConversationProviders` (2666) |
 | `features/navigation/threadNavigation.ts` | `SelectWorkspaceThread` (2716) |
 | `features/conversation/ConversationWorkspace.tsx (decompose detail/action bindings)` | `ActiveWorkspaceConversation` (2724) |
-| `features/ports/ForwardedLoopbackBrowser.tsx` | `ForwardedLoopbackBrowser` (3236) |
+| `features/browser/BrowserWorkspace.tsx` | `BrowserWorkspace` (3236) |
 | `features/threadList/ThreadSidebar.tsx` | `ThreadSidebar` (3477) |
 | `features/threadList/SelectableThreadRow.tsx` | `SelectableThreadRow` (3729) |
 | `features/threadList/ThreadListMenus.tsx` | `ThreadListMenu` (3741), `ThreadFilterMenu` (3800) |
@@ -310,11 +311,11 @@ The names below identify the existing operation bodies, not a new all-purpose co
 
 | Existing owner / action family | New owner |
 | --- | --- |
-| Workspace: setActiveThreadId, selectThread, preloadThread, openSearchThread, selectServer, closeActiveConversation, workspaceConversationScope | `features/navigation/threadNavigation.ts / conversationScope.ts` |
+| Workspace: setActiveThreadId, selectThread, openSearchThread, selectServer, closeActiveConversation, workspaceConversationScope | `features/navigation/threadNavigation.ts / conversationScope.ts` |
 | Workspace: loadMoreThreads, loadMoreProjectThreads, toggleListThreadPin, archiveListThread, unarchiveListThread, markListThreadRead; list/filter/project limits and ScrollOffsetMemory | `features/threadList/threadListModel.ts; shared mutations through turnActions public capability` |
 | Workspace: openSidebarProject, closeSidebarProject, toggleSidebarProject, moveSidebarProject, addSidebarProject, defaultProjectCwd, createSidebarThread, openNewChat; active changeEmptyThreadProject, addActiveProject, readActiveDirectory | `features/projects/projectSelection.ts / newChat.ts` |
 | Workspace: openGlobalSearch, closeGlobalSearch, searchSession, mobileRemoteSearchResource, abortableDelay | `features/search/searchWorkspace.ts; list gets typed results/status` |
-| Workspace: sendFeedback, browserFeedback, loopbackBrowser / ForwardedLoopbackBrowser | `features/ports/browserNavigation.ts and browser feedback owner` |
+| Workspace: sendFeedback, browserFeedback, loopbackBrowser / BrowserWorkspace | `features/browser/**` plus the injected handoff in `features/ports/loopbackNavigation.ts` |
 | Workspace: openConnectionSheet, saveConnection, toggleConnection, reconnectSavedConnection, deleteSavedConnection, updateSavedConnection, moveSavedConnection | `features/connections/connectionActions.ts` |
 | Workspace: createRepairThread, createUnsupportedFixThread, createRenderFailureFixThread; pending diagnostic experiment controls | `features/diagnostics/renderRecovery.ts` |
 | Active conversation: forkCurrentThread, markActiveThreadRead, loadTurnChanges and on* binding families | `features/turnActions/turnActions.ts and feature-specific adapters; ConversationWorkspace only selects qualified scope` |
@@ -355,7 +356,7 @@ All platform siblings and local type/style files of a moved family move atomical
 | `ui/PortForwardingManager` | `features/ports/PortForwardingManager` | `CodeWideScreen.tsx` |
 | `ui/ProjectPickerSheet` | `features/projects/ProjectPickerSheet` | `CodeWideScreen.tsx` |
 | `ui/TerminalWorkspace` | `features/terminal/TerminalWorkspace` | `CodeWideScreen.tsx` |
-| `ui/InternalBrowser` | `features/ports/browser/InternalBrowser` | `CodeWideScreen.tsx` |
+| `ui/InternalBrowser` | `features/browser/InternalBrowser` | `CodeWideScreen.tsx` |
 | `ui/SkillsPicker` | `features/composer/skills/SkillsPicker` | `CodeWideScreen.tsx` |
 | `ui/SettingsSheet` | `features/settings/SettingsSheet` | `CodeWideScreen.tsx` |
 | `ui/SettingsVersion` | `features/settings/SettingsVersion` | `CodeWideScreen.tsx` |
@@ -401,7 +402,7 @@ All platform siblings and local type/style files of a moved family move atomical
 Specific closure rules discovered from consumers:
 
 - `search/SearchMessageFocus.tsx` is a real shared rendering primitive imported by `rendering/NativeMarkup.tsx`, `RichMarkdown.tsx` and `NativeCodeBlock.tsx`. Move it to **`rendering/SearchMessageFocus.tsx`**, not into the private search feature. Move the other `src/search/` session/query/screens as a cohesive `features/search/` zone, updating navigation and tests. This avoids a generic renderer -> feature back-edge.
-- Move the existing `src/browser/` behavior family into **`features/ports/browser/`**, with InternalBrowser platform variants. Browser feedback submission receives narrow thread/delivery capabilities; no RemoteWorkspace import survives.
+- Move the existing `src/browser/` behavior family into standalone **`features/browser/`**, with InternalBrowser platform variants. Browser feedback submission receives narrow thread/delivery capabilities; ports may only hand off a resolved destination through the injected browser callback; no RemoteWorkspace import survives.
 - `ui/VoiceInputRuntime.tsx` remains a **V1 shared input-scope synchronization owner**, used by workspace/composer and review; it is not protocol-neutral presentation and does not migrate into composer. `VoiceAura`, `WorkspaceVoiceAura`, microphone/platform hooks and conversation ownership hooks keep their existing shared operational contracts.
 - **Retain** `rendering/ContentReviewHost`, `rendering/ThreadCodeDocumentContext` and `rendering/content-review`. Their real consumers include DocumentPreviewHost, MessageAttachmentCard, ComposerAttachmentTray, MermaidDiagram native/web, RichMarkdown, ReviewableText, ImagePreviewHost, MarkdownDocumentView and HeroUIRoot native/web. They own shared rendering selection/highlights and host lifetime; moving them into features/review would create forbidden renderer/root -> feature back-edges. The Code Review-specific editor, bridge, comments, workspace and browser bundle are instead cohesive owners under `features/review/{editor,comments,workspace,resources}`. Its voice type imports move directly to data/voice-input-controller, not a feature type.
 - Move `ui/composer-suggestions.ts` to `features/composer/input/composer-suggestions.ts` and `ui/composer-editor-trial.ts` to `features/composer/input/composer-editor-trial.ts` with the input family: they import moved composer-mentions and are feature-specific. Update their existing consumer imports atomically.
@@ -427,9 +428,9 @@ Additional test consumer closure for the corrected policy moves: update `apps/an
 
 | Original key | Current symbol consumers (new owners in A/B) |
 | --- | --- |
-| `root` | `CodeWideWorkspaceContent`, `ForwardedLoopbackBrowser` |
+| `root` | `CodeWideWorkspaceContent`, `BrowserWorkspace` |
 | `desktopWorkspace` | `CodeWideWorkspaceContent` |
-| `flex` | `CodeWideWorkspaceContent`, `ForwardedLoopbackBrowser`, `ThreadResourcesSheet`, `QueueManagerSheet`, `BackgroundTerminalsSheet`, `ThreadGoalDialog`, `ReviewSheet`, `LocalhostPreview`, `Card`, `UnknownProtocolBlock`, `AgentActivityProtocolBlock`, `NewThreadServerSheet`, `ConnectionSheetSession`, `ConnectionRowEditor`, `AccountPoolEditor` |
+| `flex` | `CodeWideWorkspaceContent`, `BrowserWorkspace`, `ThreadResourcesSheet`, `QueueManagerSheet`, `BackgroundTerminalsSheet`, `ThreadGoalDialog`, `ReviewSheet`, `LocalhostPreview`, `Card`, `UnknownProtocolBlock`, `AgentActivityProtocolBlock`, `NewThreadServerSheet`, `ConnectionSheetSession`, `ConnectionRowEditor`, `AccountPoolEditor` |
 | `pressed` | `ThreadFilterMenu`, `ThreadRow`, `NewThreadFloatingButton`, `ConversationPane`, `ComposerAccessoryTray`, `MessageActionRail`, `OptimisticTurn`, `TurnActivity`, `LargeContentControls`, `AgentActivityProtocolBlock` |
 | `serverEmoji` | `ConnectionSettings` |
 | `connectionActivityIndicator` | `ConnectionActivityIndicator` |
@@ -440,7 +441,7 @@ Additional test consumer closure for the corrected policy moves: update `apps/an
 | `sidebarHeader` | `ThreadSidebar` |
 | `serverTitleRow` | `ThreadSidebar` |
 | `serverTitle` | `ThreadSidebar` |
-| `headerIcon` | `ConversationNavigationLoader`, `ThreadSidebar`, `ThreadListMenu`, `MobileThreads`, `ConversationPane`, `ThreadResourcesSheet`, `ThreadHeaderMenu`, `QueueManagerSheet`, `BackgroundTerminalsSheet`, `LocalhostPreview`, `FullContentViewer`, `PairingQrScanner` |
+| `headerIcon` | `ThreadSidebar`, `ThreadListMenu`, `MobileThreads`, `ConversationPane`, `ThreadResourcesSheet`, `ThreadHeaderMenu`, `QueueManagerSheet`, `BackgroundTerminalsSheet`, `LocalhostPreview`, `FullContentViewer`, `PairingQrScanner` |
 | `headerMenuAnchor` | `ThreadHeaderMenu` |
 | `threadSearchRow` | `ThreadSidebar`, `MobileThreads` |
 | `threadSearchBox` | `ThreadSidebar`, `MobileThreads` |
@@ -490,9 +491,9 @@ Additional test consumer closure for the corrected policy moves: update `apps/an
 | `mobileSubtitle` | `MobileThreads` |
 | `mobileSearchWrap` | `ThreadSidebar`, `MobileThreads` |
 | `newThreadFab` | `NewThreadFloatingButton` |
-| `conversation` | `ConversationNavigationLoader`, `ConversationPane` |
+| `conversation` | `ConversationPane` |
 | `conversationRaised` | `ConversationPane` |
-| `conversationKeyboard` | `ConversationNavigationLoader`, `ConversationPane` |
+| `conversationKeyboard` | `ConversationPane` |
 | `emptyConversation` | `ConversationPane`, `PairingQrScanner` |
 | `emptyText` | `ThreadHistoryEmptyState`, `ConversationPane`, `PairingQrScanner` |
 | `newChatEmptyState` | `ConversationPane` |
@@ -505,16 +506,16 @@ Additional test consumer closure for the corrected policy moves: update `apps/an
 | `projectSearchInput` | No static consumer found: delete only after dynamic/reference check in implementation unit |
 | `projectPickerProgress` | No static consumer found: delete only after dynamic/reference check in implementation unit |
 | `conversationHeaderChrome` | `ConversationPane` |
-| `conversationHeader` | `ConversationNavigationLoader`, `ConversationPane` |
+| `conversationHeader` | `ConversationPane` |
 | `conversationHeaderUnderlay` | `ConversationPane` |
-| `conversationIdentity` | `ConversationNavigationLoader`, `ConversationPane` |
+| `conversationIdentity` | `ConversationPane` |
 | `conversationIdentityRaised` | `ConversationPane` |
 | `conversationTitleRow` | `ConversationPane` |
-| `conversationTitle` | `ConversationNavigationLoader`, `ConversationPane`, `LocalhostPreview` |
+| `conversationTitle` | `ConversationPane`, `LocalhostPreview` |
 | `conversationHeaderTitle` | `ConversationPane` |
 | `conversationBackendRefreshIndicator` | `ConversationBackendRefreshIndicator` |
 | `emojiText` | `emojiSafeTitle` |
-| `conversationSubtitle` | `ConversationNavigationLoader`, `ConversationHistorySubtitle`, `LocalhostPreview` |
+| `conversationSubtitle` | `ConversationHistorySubtitle`, `LocalhostPreview` |
 | `threadSearchBar` | `ConversationPane` |
 | `searchAction` | `ConversationPane` |
 | `threadSearchCount` | `ConversationPane` |
@@ -788,7 +789,7 @@ Additional test consumer closure for the corrected policy moves: update `apps/an
 | `previewIdentity` | `LocalhostPreview` |
 | `previewSetup` | `LocalhostPreview` |
 | `previewWebView` | No static consumer found: delete only after dynamic/reference check in implementation unit |
-| `previewError` | `ForwardedLoopbackBrowser`, `LocalhostPreview` |
+| `previewError` | `BrowserWorkspace` |
 | `previewLoading` | No static consumer found: delete only after dynamic/reference check in implementation unit |
 | `tunnelTtlChoices` | `LocalhostPreview` |
 | `tunnelTtlChip` | `LocalhostPreview` |

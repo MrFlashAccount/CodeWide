@@ -4,6 +4,10 @@ export const appErrorBoundary = readFileSync(
   new URL("../../src/ui/AppErrorBoundary.tsx", import.meta.url),
   "utf8",
 );
+export const crashRecovery = readFileSync(
+  new URL("../../src/ui/crashRecovery.ts", import.meta.url),
+  "utf8",
+);
 export const globalErrorStore = readFileSync(
   new URL("../../src/ui/global-error-store.ts", import.meta.url),
   "utf8",

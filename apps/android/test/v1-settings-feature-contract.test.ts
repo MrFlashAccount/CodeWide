@@ -21,8 +21,13 @@ describe("M1 feature integration contracts", () => {
     expect(source).toContain(
       '<SettingsVersion version={Constants.expoConfig?.version ?? "unknown"} />',
     );
-    expect(source).toContain('testID="ui-generation-setting"');
-    expect(source).toContain("<UiGenerationControl current={uiGeneration.generation} />");
+    expect(source).not.toContain('testID="ui-generation-setting"');
+    expect(source).not.toContain("UiGenerationControl");
+    expect(source).not.toContain('title="Interface"');
+    expect(source).toContain('title="Biometric Lock"');
+    expect(source).not.toContain("ComposerEditorTrialEntry");
+    expect(source).not.toContain("ConversationLayoutFeatureFlag");
+    expect(source).not.toContain('<SettingsSection title="Experiments">');
   });
   it("connections/ConnectionSheet.tsx retains its migrated UI contract", () => {
     const source = readFileSync(
@@ -59,6 +64,16 @@ describe("M1 feature integration contracts", () => {
     expect(source).toContain('id: "activate"');
     expect(source).toContain('label: profile.active ? "Active account" : "Switch to account"');
     expect(source).toContain("run(async () => onActivate(connectionId, profile.id))");
+    expect(source).toContain("<AccountLimitRings");
+    expect(source).not.toContain('name={expanded ? "chevron-up" : "chevron-down"}');
+  });
+  it("accounts/AccountLimitRings.tsx keeps the account limits monochrome", () => {
+    const source = readFileSync(
+      new URL("../src/features/accounts/AccountLimitRings.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(source.match(/color=\{accountLimitProgressColor\(/gu)).toHaveLength(2);
+    expect(source).not.toContain("colors.nebula");
   });
   it("connections/connectionPresentation.ts retains its migrated UI contract", () => {
     const source = readFileSync(
@@ -111,6 +126,8 @@ describe("M1 feature integration contracts", () => {
       ]),
     ).toBe(true);
     expect(source).toMatch(/descriptionLeading=\{\s*secureLive\s*\?/);
+    expect(source).not.toContain('label: "Move up"');
+    expect(source).not.toContain('label: "Move down"');
   });
   it("connections/ConnectionStatus.tsx retains its migrated UI contract", () => {
     const source = readFileSync(

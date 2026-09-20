@@ -5,7 +5,7 @@ import type { useComposerSettings } from "./settings";
 /** Skill insertion and editor changes update the existing draft and selection owners. */
 export type ComposerSuggestionsCapabilities = Pick<
   ReturnType<typeof useComposerDraftState>,
-  "latestComposerPreferencesRef" | "composerInputRef" | "draftSelectionRef" | "draft"
+  "composerInputRef" | "composerSession" | "draftSelectionRef"
 > &
   Pick<
     ReturnType<typeof useComposerSettings>,
@@ -15,5 +15,6 @@ export type ComposerSuggestionsCapabilities = Pick<
     cwd: string;
     onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
     updateDraft: ReturnType<typeof useComposerDraftCommands>["updateDraft"];
+    updateText: ReturnType<typeof useComposerDraftCommands>["updateText"];
     voiceController: VoiceInputController | null;
   };

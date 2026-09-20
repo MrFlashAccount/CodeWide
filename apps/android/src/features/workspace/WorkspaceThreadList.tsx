@@ -13,6 +13,7 @@ export function WorkspaceThreadList({
   closeSidebarProject,
   createSidebarThread,
   desktop,
+  globalVoice,
   loadMoreProjectThreads,
   loadMoreThreads,
   markListThreadRead,
@@ -26,8 +27,8 @@ export function WorkspaceThreadList({
   openProjects,
   openSettings,
   openSidebarProject,
+  openTerminals,
   pinnedSidebarProjects,
-  preloadThread,
   projectLimit,
   refreshThreadListAccountRateLimits,
   selectedThreadKey,
@@ -55,6 +56,7 @@ export function WorkspaceThreadList({
   closeSidebarProject: ThreadSidebarProps["onBackToProjects"];
   createSidebarThread: ThreadSidebarProps["onNewThread"];
   desktop: boolean;
+  globalVoice: ThreadSidebarProps["globalVoice"];
   loadMoreProjectThreads: ThreadSidebarProps["onLoadMoreProject"];
   loadMoreThreads: ThreadSidebarProps["onLoadMore"];
   markListThreadRead: ThreadSidebarProps["onMarkRead"];
@@ -68,8 +70,8 @@ export function WorkspaceThreadList({
   openProjects: () => void;
   openSettings: () => void;
   openSidebarProject: ThreadSidebarProps["onOpenProject"];
+  openTerminals: () => void;
   pinnedSidebarProjects: ThreadSidebarProps["projects"];
-  preloadThread: ThreadSidebarProps["onPreload"];
   projectLimit: ThreadSidebarProps["projectLimit"];
   refreshThreadListAccountRateLimits: NonNullable<ThreadSidebarProps["onRefreshAccountRateLimits"]>;
   selectedThreadKey: ThreadSidebarProps["selectedThreadKey"];
@@ -89,7 +91,7 @@ export function WorkspaceThreadList({
   toggleListThreadPin: ThreadSidebarProps["onTogglePin"];
   unarchiveListThread: ThreadSidebarProps["onUnarchive"];
   viewportWidth: number;
-}) {
+}): React.JSX.Element {
   return (
     <ThreadListFeature
       scopeKey={sidebarScopeKey}
@@ -109,6 +111,7 @@ export function WorkspaceThreadList({
                         false,
                       ),
                 filter: sidebarFilter,
+                globalVoice,
                 initialOffset: mobileThreadOffset.read(sidebarScopeKey),
                 mode: sidebarMode,
                 onArchive: archiveListThread,
@@ -117,6 +120,7 @@ export function WorkspaceThreadList({
                 onLoadMore: loadMoreThreads,
                 onLoadMoreProject: loadMoreProjectThreads,
                 onManageProjects: openProjects,
+                onManageTerminals: openTerminals,
                 onMarkRead: markListThreadRead,
                 onModeChange: changeSidebarMode,
                 onNewThread: createSidebarThread,
@@ -125,7 +129,6 @@ export function WorkspaceThreadList({
                 },
                 onOpenProject: openSidebarProject,
                 onOpenSearch: openGlobalSearch,
-                onPreload: preloadThread,
                 onRefreshAccountRateLimits: refreshThreadListAccountRateLimits,
                 onSelect: selectThread,
                 onSelectServer: selectServer,
@@ -150,6 +153,7 @@ export function WorkspaceThreadList({
                 archivedThreads: mobileVisibleArchivedThreads,
                 catalogState: sidebarCatalogState,
                 filter: sidebarFilter,
+                globalVoice,
                 initialOffset: mobileThreadOffset.read(sidebarScopeKey),
                 mode: sidebarMode,
                 onArchive: archiveListThread,
@@ -158,6 +162,7 @@ export function WorkspaceThreadList({
                 onLoadMore: loadMoreThreads,
                 onLoadMoreProject: loadMoreProjectThreads,
                 onManageProjects: openProjects,
+                onManageTerminals: openTerminals,
                 onMarkRead: markListThreadRead,
                 onModeChange: changeSidebarMode,
                 onNewThread: createSidebarThread,
@@ -166,7 +171,6 @@ export function WorkspaceThreadList({
                 },
                 onOpenProject: openSidebarProject,
                 onOpenSearch: openGlobalSearch,
-                onPreloadThread: preloadThread,
                 onQueryChange: setMobileThreadQuery,
                 onRefreshAccountRateLimits: refreshThreadListAccountRateLimits,
                 onSelectServer: selectServer,

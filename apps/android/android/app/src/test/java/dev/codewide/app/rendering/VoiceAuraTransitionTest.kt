@@ -20,6 +20,7 @@ class VoiceAuraTransitionTest {
 
   @Test
   fun closingUsesQuadraticEaseOutThen200MillisecondFade() {
+    assertEquals(720L, VoiceAuraTransition.CLOSE_DURATION_MILLIS)
     val transition = VoiceAuraTransition()
     transition.setActive(true, false)
     transition.advance(1.1f)

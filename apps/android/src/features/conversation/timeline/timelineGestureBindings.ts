@@ -1,7 +1,7 @@
 import { recordThreadHistoryTelemetry } from "../../../data/thread-history-telemetry";
 import { useEvent } from "../../../react/useEvent";
 import type { ThreadTimelineListProps } from "../../../rendering/ThreadTimelineList";
-import { LATEST_TIMELINE_THRESHOLD_PX } from "./historyAnchor";
+import { timelineTailModeThreshold } from "./historyAnchor";
 import type { TimelineItem } from "./timelineTypes";
 import type { TimelineViewportProps } from "./TimelineViewportContract";
 
@@ -76,7 +76,9 @@ export function useTimelineGestureBindings(props: TimelineViewportProps) {
           nativeEvent.contentOffset.y,
       );
       scrollOffsetRef.current = distance;
-      const away = !props.historyViewport.containsLatest || distance > LATEST_TIMELINE_THRESHOLD_PX;
+      const away =
+        !props.historyViewport.containsLatest ||
+        distance > timelineTailModeThreshold(nativeEvent.layoutMeasurement.height);
       const wasAway = awayFromLatestRef.current;
       if (awayFromLatestRef.current !== away) {
         awayFromLatestRef.current = away;

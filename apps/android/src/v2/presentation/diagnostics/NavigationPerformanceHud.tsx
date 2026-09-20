@@ -3,7 +3,6 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useEvent } from "../../../react/useEvent";
-import { navigationHudSummary } from "../../features/diagnostics/navigationProfile";
 import type { NavigationProfile } from "../../features/diagnostics/diagnosticsTypes";
 import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
@@ -14,6 +13,8 @@ export interface NavigationPerformanceHudProps {
   frameSummary: string;
   heapBusy: boolean;
   heapMessage: string;
+  hermesMessage: string;
+  onArmHermes(): void;
   onCaptureHeap(): void;
   onCopy(): void;
   onOpenHermes(): void;
@@ -36,7 +37,6 @@ const HUD_MENU_WIDTH = 280;
 export function NavigationPerformanceHud(props: NavigationPerformanceHudProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const insets = useSafeAreaInsets();
-  const profileSummary = navigationHudSummary(props.profile);
   const toggle = useEvent(() => setOpen((current) => !current));
   return (
     <>
@@ -53,7 +53,7 @@ export function NavigationPerformanceHud(props: NavigationPerformanceHudProps): 
           style={[styles.status, props.profile?.status === "active" ? styles.active : styles.ready]}
         />
         <ProductText numberOfLines={1} style={styles.summary} tone="muted">
-          {props.frameSummary} · {profileSummary}
+          {props.frameSummary}
         </ProductText>
         <PresentationIcon
           color={colors.textMuted}
@@ -95,6 +95,12 @@ export function NavigationPerformanceHud(props: NavigationPerformanceHudProps): 
               />
             </>
           )}
+          <HudAction
+            icon="flash"
+            label="Profile next navigation"
+            onPress={props.onArmHermes}
+            subtitle={props.hermesMessage}
+          />
           <HudAction
             busy={props.heapBusy}
             icon="layers"

@@ -25,12 +25,19 @@ export function useConversationTools(props: UseConversationToolsProps) {
     props.draftThreadId,
   );
   const openSubagents = useEvent(
-    (_summaries: readonly StoredThreadSummary[], initialThreadId: string | null = null): void => {
+    (summaries: readonly StoredThreadSummary[], initialThreadId: string | null = null): void => {
       if (props.draftThreadId === null) {
         return;
       }
+      // Opening the workspace starts a background refresh, but the captured V1 catalog remains
+      // authoritative for this activation when the server is unavailable.
       void props.agentsInputs.onRefreshSubagents?.(props.draftThreadId).catch(() => undefined);
-      routeNavigation.openAgents(initialThreadId);
+      routeNavigation.openAgents({
+        initialThreadId,
+        parentThread: props.readInputs.remoteThread ?? null,
+        parentThreadId: props.draftThreadId,
+        summaries,
+      });
     },
   );
   const presentTerminal = useEvent(() => {
@@ -107,7 +114,11 @@ export function useConversationTools(props: UseConversationToolsProps) {
     () => {
       changesFeatureBinding.openChangesResource();
     },
-    routeNavigation.openAttachments,
+    () => {
+      routeNavigation.openAttachments({
+        openCodeDocument: changesFeatureBinding.openCodeDocument,
+      });
+    },
   );
   const openTimelineDocument = useEvent(
     (request: Parameters<typeof routeNavigation.openDocument>[0]) => {

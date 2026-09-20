@@ -11,7 +11,7 @@ const session: RpcClient = {
     throw new Error("must use qualified transport");
   },
 };
-function harness(respond: (method: string) => Promise<unknown>) {
+function harness(respond: (method: string, params: unknown) => Promise<unknown>) {
   const rows = new Map<string, ThreadResourcesRow>();
   const resources: ReturnType<ThreadResourceAuthority["getResources"]> = {
     threadResources: { get: (id) => rows.get(id) },
@@ -21,7 +21,7 @@ function harness(respond: (method: string) => Promise<unknown>) {
     getResources: () => resources,
     getSession: () => session,
     readRecencyAt: async () => null,
-    rpcAfterAttach: async (_session, method) => await respond(method),
+    rpcAfterAttach: async (_session, method, params) => await respond(method, params),
   });
   return { loader, rows };
 }
@@ -65,5 +65,29 @@ describe("V1 shared thread resource loader", () => {
     expect(ready?.status).toBe("ready");
     expect(ready?.resourceErrors).toEqual({});
     expect(ready?.readyKinds).toEqual(["changes"]);
+  });
+
+  it("sends the selected changes scope to the Companion", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const { loader } = harness(async (method, params) => {
+      requests.push({ method, params });
+      return {
+        attachments: [],
+        changeScope: "branch",
+        changeScopes: ["session", "lastTurn", "staged", "unstaged", "branch"],
+        changes: [],
+        revision: "branch-r1",
+        threadId: "thread",
+      };
+    });
+
+    await loader.loadThreadResources("server", "thread", "branch", "changes");
+
+    expect(requests).toEqual([
+      {
+        method: "companion/threadChanges/read",
+        params: { changeScope: "branch", threadId: "thread" },
+      },
+    ]);
   });
 });

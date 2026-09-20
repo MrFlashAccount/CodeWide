@@ -18,14 +18,22 @@ describe("lazy command output", () => {
     const bodies = new Map([[first.id, "first\n"], [second.id, "second\n"]]);
     const requests: string[] = [];
     const server = createServer((request, response) => {
-      const id = request.url?.split("/").at(-1) ?? "";
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const pathParts = url.pathname.split("/");
+      const id = pathParts.at(-2) ?? "";
       const body = bodies.get(id);
       if (body === undefined) { response.writeHead(404).end(); return; }
       requests.push(id);
-      const range = /bytes=(\d+)-(\d+)/.exec(request.headers.range ?? "");
-      const start = Number(range?.[1] ?? 0);
-      const end = Math.min(body.length, Number(range?.[2] ?? body.length - 1) + 1);
-      response.writeHead(206, { "content-type": "text/plain; charset=utf-8", "content-range": `bytes ${start}-${end - 1}/${body.length}` });
+      const start = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? body.length);
+      const end = Math.min(body.length, start + limit);
+      response.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "x-content-complete": String(end === body.length),
+        "x-content-next-offset": String(end),
+        "x-content-offset": String(start),
+        "x-content-total-bytes": String(body.length),
+      });
       response.end(body.slice(start, end));
     });
     server.listen(0, "127.0.0.1");

@@ -145,6 +145,7 @@ struct ProfileObservation {
 struct PoolRefreshReport {
     active_outcome: RefreshOutcome,
     active_error: Option<String>,
+    recovered_profile_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -228,6 +229,7 @@ impl AccountPoolService {
                 | "companion/accountPool/add/start"
                 | "companion/accountPool/add/cancel"
                 | "companion/accountPool/profile/activate"
+                | "companion/accountPool/profile/resetCredit/consume"
                 | "companion/accountPool/profile/update"
                 | "companion/accountPool/profile/remove"
         )
@@ -248,6 +250,9 @@ impl AccountPoolService {
             "companion/accountPool/add/start" => self.start_add().await,
             "companion/accountPool/add/cancel" => self.cancel_add(params).await,
             "companion/accountPool/profile/activate" => self.activate_profile(params).await,
+            "companion/accountPool/profile/resetCredit/consume" => {
+                self.consume_profile_reset_credit(params).await
+            }
             "companion/accountPool/profile/update" => self.update_profile(params).await,
             "companion/accountPool/profile/remove" => self.remove_profile(params).await,
             _ => Err(AccountPoolError::InvalidRequest(format!(
@@ -298,17 +303,18 @@ impl AccountPoolService {
         Ok(last_limit_response.unwrap_or_else(exhausted_response))
     }
 
-    /// Rehydrates one thread in the active App Server before retrying a turn
-    /// that was conclusively rejected because the runtime had not loaded it.
+    /// Rehydrates one thread in the active App Server before retrying a
+    /// thread-scoped mutation that was conclusively rejected because the
+    /// runtime had not loaded it.
     /// The response excludes historical turns because Companion already owns
     /// the indexed read projection; App Server only needs the live session.
     ///
     /// # Errors
     ///
     /// Returns an upstream error when the active App Server cannot be reached.
-    pub async fn resume_thread_for_turn(&self, thread_id: &str) -> Result<Value, AccountPoolError> {
+    pub async fn resume_thread_runtime(&self, thread_id: &str) -> Result<Value, AccountPoolError> {
         self.request(json!({
-            "id": "turn-start-resume",
+            "id": "thread-mutation-resume",
             "method": "thread/resume",
             "params": {
                 "threadId": thread_id,
@@ -374,7 +380,8 @@ impl AccountPoolService {
             self.mark_lease_exhausted_from_known_limits_locked(lease)
                 .await?;
         }
-        self.reconcile_account_selection_locked().await?;
+        self.reconcile_refreshed_account_selection_locked(report.recovered_profile_id.as_deref())
+            .await?;
         Ok(true)
     }
 
@@ -540,6 +547,107 @@ impl AccountPoolService {
             self.reconcile_account_selection_locked().await?;
         }
         self.list().await
+    }
+
+    async fn consume_profile_reset_credit(
+        &self,
+        params: &Value,
+    ) -> Result<Value, AccountPoolError> {
+        let profile_id = required_string(params, "profileId")?;
+        let credit_id = optional_string(params, "creditId")?;
+        let _switch = self.switch_lock.lock().await;
+        self.capture_current_credentials_unpublished_locked()
+            .await?;
+        let active = {
+            let state = self.state.lock().await;
+            if !state
+                .persisted
+                .profiles
+                .iter()
+                .any(|profile| profile.id == profile_id)
+            {
+                return Err(AccountPoolError::InvalidRequest(
+                    "account profile not found".into(),
+                ));
+            }
+            state.persisted.active_profile_id.as_deref() == Some(profile_id.as_str())
+        };
+        let (outcome, observation) = if active {
+            self.consume_active_profile_reset_credit(&profile_id, credit_id.as_deref())
+                .await?
+        } else {
+            self.consume_inactive_profile_reset_credit(&profile_id, credit_id.as_deref())
+                .await?
+        };
+        if let Some(credentials) = observation.refreshed_credentials.as_deref() {
+            write_private_atomic(&self.credential_path(&profile_id), credentials).await?;
+        }
+        let observed_at = unix_time();
+        let mut recovered_profile = None;
+        let persisted = {
+            let mut state = self.state.lock().await;
+            let profile = state
+                .persisted
+                .profiles
+                .iter_mut()
+                .find(|profile| profile.id == profile_id)
+                .ok_or_else(|| {
+                    AccountPoolError::InvalidRequest("account profile not found".into())
+                })?;
+            apply_refreshed_profile_observation(
+                profile,
+                &observation.account_result,
+                observation.rate_snapshot,
+                observed_at,
+                &mut recovered_profile,
+            );
+            state.persisted.clone()
+        };
+        self.persist(&persisted).await?;
+        self.emit_updated(&persisted);
+        self.reconcile_refreshed_account_selection_locked(
+            recovered_profile.as_ref().map(|(_, id)| id.as_str()),
+        )
+        .await?;
+        Ok(json!({
+            "outcome": outcome,
+            "accountPool": self.list().await?
+        }))
+    }
+
+    async fn consume_active_profile_reset_credit(
+        &self,
+        profile_id: &str,
+        credit_id: Option<&str>,
+    ) -> Result<(String, ProfileObservation), AccountPoolError> {
+        let outcome = consume_rate_limit_reset_credit(&self.upstream, credit_id).await?;
+        let observation = self.refresh_active_profile(profile_id).await?;
+        Ok((outcome, observation))
+    }
+
+    async fn consume_inactive_profile_reset_credit(
+        &self,
+        profile_id: &str,
+        credit_id: Option<&str>,
+    ) -> Result<(String, ProfileObservation), AccountPoolError> {
+        let credentials = fs::read(self.credential_path(profile_id))
+            .await
+            .map_err(|error| AccountPoolError::Storage(error.to_string()))?;
+        let (upstream, mut child, home) = self.spawn_isolated_server(Some(&credentials)).await?;
+        let result = async {
+            let outcome = consume_rate_limit_reset_credit(&upstream, credit_id).await?;
+            let observation = self
+                .attach_refreshed_credentials(
+                    profile_id,
+                    &home.join("auth.json"),
+                    read_profile_observation(&upstream, profile_id, None).await,
+                )
+                .await?;
+            Ok((outcome, observation))
+        }
+        .await;
+        cleanup_isolated_enrollment(&mut child, &home).await;
+        result
     }
 
     async fn remove_profile(&self, params: &Value) -> Result<Value, AccountPoolError> {
@@ -840,10 +948,11 @@ impl AccountPoolService {
     async fn refresh_and_reconcile(&self) -> Result<(), AccountPoolError> {
         let _switch = self.switch_lock.lock().await;
         let report = self.refresh_all_profiles_locked().await?;
-        if let Some(error) = report.active_error {
+        if let Some(error) = report.active_error.as_deref() {
             warn!(%error, "active Codex account usage refresh failed");
         }
-        self.reconcile_account_selection_locked().await?;
+        self.reconcile_refreshed_account_selection_locked(report.recovered_profile_id.as_deref())
+            .await?;
         Ok(())
     }
 
@@ -928,6 +1037,7 @@ impl AccountPoolService {
             RefreshOutcome::NoActive
         };
         let mut active_error = None;
+        let mut recovered_profile: Option<(u32, String)> = None;
         let persisted = {
             let mut state = self.state.lock().await;
             let before = state.persisted.clone();
@@ -940,12 +1050,12 @@ impl AccountPoolService {
                 else {
                     continue;
                 };
-                let blocking = apply_profile_observation(
+                let blocking = apply_refreshed_profile_observation(
                     profile,
                     &observation.account_result,
-                    Some(observation.rate_snapshot),
-                    true,
+                    observation.rate_snapshot,
                     observed_at,
+                    &mut recovered_profile,
                 );
                 if active_profile_id.as_deref() == Some(observation.profile_id.as_str()) {
                     active_outcome = RefreshOutcome::Current { blocking };
@@ -973,6 +1083,7 @@ impl AccountPoolService {
         Ok(PoolRefreshReport {
             active_outcome,
             active_error,
+            recovered_profile_id: recovered_profile.map(|(_, profile_id)| profile_id),
         })
     }
 
@@ -1091,13 +1202,33 @@ impl AccountPoolService {
     }
 
     async fn reconcile_account_selection_locked(&self) -> Result<bool, AccountPoolError> {
+        self.reconcile_account_selection_with_recovered_profile_locked(None)
+            .await
+    }
+
+    async fn reconcile_refreshed_account_selection_locked(
+        &self,
+        recovered_profile_id: Option<&str>,
+    ) -> Result<bool, AccountPoolError> {
+        self.reconcile_account_selection_with_recovered_profile_locked(recovered_profile_id)
+            .await
+    }
+
+    async fn reconcile_account_selection_with_recovered_profile_locked(
+        &self,
+        recovered_profile_id: Option<&str>,
+    ) -> Result<bool, AccountPoolError> {
         let attempts = self.state.lock().await.persisted.profiles.len().max(1);
-        for _ in 0..attempts {
+        for attempt in 0..attempts {
             let (active, target) = {
                 let state = self.state.lock().await;
                 (
                     state.persisted.active_profile_id.clone(),
-                    select_profile(&state.persisted, unix_time()),
+                    select_profile_after_refresh(
+                        &state.persisted,
+                        unix_time(),
+                        (attempt == 0).then_some(recovered_profile_id).flatten(),
+                    ),
                 )
             };
             let Some(target) = target else {
@@ -1447,6 +1578,52 @@ async fn read_profile_observation(
     })
 }
 
+async fn consume_rate_limit_reset_credit(
+    upstream: &UpstreamHandle,
+    credit_id: Option<&str>,
+) -> Result<String, AccountPoolError> {
+    let nonce = hex::encode(rand::random::<[u8; 16]>());
+    let response = upstream
+        .request(reset_credit_consume_request(
+            credit_id,
+            &format!("account-pool-reset-credit-{nonce}"),
+            &format!("codewide-{nonce}"),
+        ))
+        .await
+        .map_err(|error| AccountPoolError::Upstream(error.to_string()))?;
+    if response.get("error").is_some() {
+        return Err(AccountPoolError::Upstream(rpc_error_message(&response)));
+    }
+    let outcome = response
+        .pointer("/result/outcome")
+        .and_then(Value::as_str)
+        .filter(|outcome| {
+            matches!(
+                *outcome,
+                "reset" | "nothingToReset" | "noCredit" | "alreadyRedeemed"
+            )
+        })
+        .ok_or_else(|| {
+            AccountPoolError::Upstream("reset-credit result has an invalid outcome".into())
+        })?;
+    Ok(outcome.to_owned())
+}
+
+fn reset_credit_consume_request(
+    credit_id: Option<&str>,
+    request_id: &str,
+    idempotency_key: &str,
+) -> Value {
+    json!({
+        "id": request_id,
+        "method": "account/rateLimitResetCredit/consume",
+        "params": {
+            "idempotencyKey": idempotency_key,
+            "creditId": credit_id
+        }
+    })
+}
+
 fn refresh_error_message(error: &AccountPoolError) -> String {
     error.to_string().chars().take(500).collect()
 }
@@ -1513,6 +1690,33 @@ fn apply_profile_observation(
         BlockingState::Available => {}
     }
     Some(blocking)
+}
+
+fn apply_refreshed_profile_observation(
+    profile: &mut AccountProfile,
+    account_result: &Value,
+    rate_snapshot: Value,
+    observed_at: i64,
+    recovered_profile: &mut Option<(u32, String)>,
+) -> Option<BlockingState> {
+    let was_exhausted = profile.exhausted_until.is_some() || profile.exhausted_indefinitely;
+    let blocking = apply_profile_observation(
+        profile,
+        account_result,
+        Some(rate_snapshot),
+        true,
+        observed_at,
+    );
+    if was_exhausted && blocking == Some(BlockingState::Available) {
+        let candidate = (profile.priority, profile.id.clone());
+        if recovered_profile
+            .as_ref()
+            .is_none_or(|current| candidate.0 < current.0)
+        {
+            *recovered_profile = Some(candidate);
+        }
+    }
+    blocking
 }
 
 fn mark_profile_refresh_failed(profile: &mut AccountProfile, error: &str) {
@@ -1588,6 +1792,32 @@ fn select_profile(state: &PersistedAccountPool, now: i64) -> Option<String> {
         .filter(|profile| profile.eligible_at(now))
         .min_by_key(|profile| profile.priority)
         .map(|profile| profile.id.clone())
+}
+
+fn select_profile_after_refresh(
+    state: &PersistedAccountPool,
+    now: i64,
+    recovered_profile_id: Option<&str>,
+) -> Option<String> {
+    let recovered = recovered_profile_id.and_then(|profile_id| {
+        state
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id && profile.eligible_at(now))
+    });
+    let active = state.active_profile_id.as_ref().and_then(|profile_id| {
+        state
+            .profiles
+            .iter()
+            .find(|profile| &profile.id == profile_id)
+    });
+    if let (Some(active), Some(recovered)) = (active, recovered)
+        && active.eligible_at(now)
+        && recovered.priority < active.priority
+    {
+        return Some(recovered.id.clone());
+    }
+    select_profile(state, now)
 }
 
 fn activation_required(
@@ -1923,6 +2153,16 @@ fn required_string(params: &Value, key: &str) -> Result<String, AccountPoolError
         .ok_or_else(|| AccountPoolError::InvalidRequest(format!("{key} is required")))
 }
 
+fn optional_string(params: &Value, key: &str) -> Result<Option<String>, AccountPoolError> {
+    match params.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+        Some(_) => Err(AccountPoolError::InvalidRequest(format!(
+            "{key} must be a non-empty string"
+        ))),
+    }
+}
+
 fn rpc_error_message(response: &Value) -> String {
     let error = response.get("error").unwrap_or(response);
     error
@@ -1968,6 +2208,32 @@ mod tests {
                 .chars()
                 .count(),
             500
+        );
+    }
+
+    #[test]
+    fn reset_credit_consume_is_owned_by_the_account_pool() {
+        assert!(AccountPoolService::handles(
+            "companion/accountPool/profile/resetCredit/consume"
+        ));
+    }
+
+    #[test]
+    fn reset_credit_consume_uses_the_upstream_contract() {
+        assert_eq!(
+            reset_credit_consume_request(
+                Some("banked-reset"),
+                "companion-request",
+                "stable-attempt"
+            ),
+            json!({
+                "id": "companion-request",
+                "method": "account/rateLimitResetCredit/consume",
+                "params": {
+                    "idempotencyKey": "stable-attempt",
+                    "creditId": "banked-reset"
+                }
+            })
         );
     }
 
@@ -2025,6 +2291,10 @@ mod tests {
             ],
         };
         assert_eq!(select_profile(&state, 500).as_deref(), Some("backup"));
+        assert_eq!(
+            select_profile_after_refresh(&state, 500, None).as_deref(),
+            Some("backup")
+        );
     }
 
     #[test]
@@ -2231,6 +2501,87 @@ mod tests {
         assert!(!active.exhausted_indefinitely);
         assert_eq!(active.rate_limits_updated_at, Some(100));
         assert_eq!(backup.exhausted_until, Some(900));
+    }
+
+    #[test]
+    fn authoritative_refresh_after_reset_reactivates_the_primary_selection() {
+        let mut state = PersistedAccountPool {
+            version: STATE_VERSION,
+            active_profile_id: Some("backup".into()),
+            profiles: vec![
+                profile("primary", 0, Some(500), false),
+                profile("backup", 1, None, true),
+            ],
+        };
+        state.profiles[0].rate_limits = Some(json!({
+            "rateLimits": {
+                "limitId": "codex",
+                "secondary": {"usedPercent": 100, "resetsAt": 500}
+            },
+            "rateLimitResetCredits": {
+                "availableCount": 1,
+                "credits": [{
+                    "id": "banked-reset",
+                    "resetType": "codexRateLimits",
+                    "status": "available",
+                    "grantedAt": 400,
+                    "expiresAt": 900,
+                    "title": null,
+                    "description": null
+                }]
+            }
+        }));
+        let mut recovered_profile = None;
+        {
+            let primary = state
+                .profiles
+                .iter_mut()
+                .find(|profile| profile.id == "primary")
+                .expect("primary profile");
+            let blocking = apply_refreshed_profile_observation(
+                primary,
+                &Value::Null,
+                json!({
+                    "rateLimitResetCredits": {
+                        "availableCount": 0,
+                        "credits": []
+                    },
+                    "rateLimits": {
+                        "limitId": "codex",
+                        "secondary": {
+                            "usedPercent": 0,
+                            "windowDurationMins": 10_080,
+                            "resetsAt": 1_200
+                        }
+                    }
+                }),
+                501,
+                &mut recovered_profile,
+            );
+            assert_eq!(blocking, Some(BlockingState::Available));
+        }
+        assert_eq!(state.profiles[0].exhausted_until, None);
+        assert!(!state.profiles[0].exhausted_indefinitely);
+        assert_eq!(
+            state.profiles[0]
+                .rate_limits
+                .as_ref()
+                .and_then(|limits| limits.pointer("/rateLimitResetCredits/availableCount")),
+            Some(&json!(0))
+        );
+        assert_eq!(
+            recovered_profile.as_ref().map(|(_, id)| id.as_str()),
+            Some("primary")
+        );
+        assert_eq!(
+            select_profile_after_refresh(
+                &state,
+                501,
+                recovered_profile.as_ref().map(|(_, id)| id.as_str()),
+            )
+            .as_deref(),
+            Some("primary")
+        );
     }
 
     #[test]

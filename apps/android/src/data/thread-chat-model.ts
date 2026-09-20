@@ -9,8 +9,6 @@ import { THREAD_RESIDENT_TURN_LIMIT } from "./thread-pagination";
 export type ThreadChatWindowRequest = {
   anchorTurnId: string | null;
   connectionId: string;
-  /** Changes once per explicit chat opening, including a repeated selection. */
-  openGeneration?: number;
   threadId: string;
 };
 
@@ -43,7 +41,6 @@ export type LoadedThreadChatWindow = Omit<
 
 export type ThreadChatModel = {
   beginBackendRefresh: (connectionId: string, threadId: string) => () => void;
-  beginPresentation: (connectionId: string, threadId: string) => void;
   close: () => void;
   // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
   // oxlint-disable-next-line eslint/max-params
@@ -59,7 +56,6 @@ export type ThreadChatModel = {
     loaded: LoadedThreadChatWindow,
   ) => boolean;
   failWindow: (request: ThreadChatWindowRequest, generation: number, cause: unknown) => void;
-  finishPresentation: (connectionId: string, threadId: string) => void;
   publishChanges: (
     changes: readonly (
       | { type: "insert" | "update"; value: ThreadDetailRow }
@@ -81,6 +77,8 @@ export type ThreadChatModel = {
 
 export type ThreadChatWindowResource = {
   ready$: Observable<boolean>;
+  retain: (notify: () => void) => () => void;
+  retentionSnapshot: () => number;
   window$: Observable<ThreadChatWindowSnapshot>;
 };
 
@@ -90,6 +88,8 @@ type ThreadChatResourceRecord = {
   loadingKey: string | null;
   ready$: Observable<boolean> | null;
   requestKey: string | null;
+  readonly retain: ThreadChatWindowResource["retain"];
+  readonly retentionSnapshot: ThreadChatWindowResource["retentionSnapshot"];
   retryAttempt: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
   token: number;
@@ -98,10 +98,11 @@ type ThreadChatResourceRecord = {
 export type ThreadChatModelOptions = {
   onEvictWindow?: (connectionId: string, threadId: string) => void;
   onResidentRowCountChange?: (rowCount: number) => void;
+  onRetainWindow?: (connectionId: string, threadId: string) => () => void;
 };
 
-// Keep data, not mounted screens, for the three most recently visited inactive
-// chats. Mounted consumers and the current navigation resource are protected.
+// Unowned transient resources stay bounded while the current route resource
+// and mounted chats remain protected. SQLite owns evicted inactive windows.
 const INACTIVE_WINDOW_LIMIT = 3;
 
 export function createThreadChatModel(options: ThreadChatModelOptions = {}): ThreadChatModel {
@@ -114,26 +115,12 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const backendRefreshCounts = new Map<string, number>();
   const windowLayoutSignatures = new Map<string, string>();
   const changedRowIdsByScope = new Map<string, Set<string>>();
-  const presentations = new Map<
-    string,
-    {
-      hasCommittedWindow: boolean;
-      pendingRows: { rows: readonly ThreadDetailRow[]; sequence: number } | null;
-      pendingWindow: {
-        generation: number;
-        loaded: LoadedThreadChatWindow;
-        request: ThreadChatWindowRequest;
-        sequence: number;
-      } | null;
-    }
-  >();
   const resources = new Map<string, ThreadChatResourceRecord>();
   let closed = false;
   let reportedResidentRowCount = -1;
   // Only this owner installs, deletes or evicts row values. Metadata updates
   // leave residency unchanged and must not scan every retained chat.
   let residentRowCount = 0;
-  let presentationSequence = 0;
   // The last requested resource owns its window independently of React's
   // passive effects. A responsive remount can release every component owner
   // for multiple commits without meaning that navigation left this resource.
@@ -159,15 +146,6 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     }
     return node;
   };
-
-  // Empty/meta-only windows never mount the timeline and cannot acknowledge
-  // its first draw. Only an actual timeline row can hold later publications.
-  const hasTimelineRows = (snapshot: ThreadChatWindowSnapshot): boolean =>
-    snapshot.turnRowIds.length > 0 ||
-    snapshot.liveRowIds.some((id) => {
-      const kind = rowNodes.get(id)?.peek()?.kind;
-      return kind === "turn" || kind === "pending";
-    });
 
   const window$ = (
     connectionId: string,
@@ -196,11 +174,65 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     windowIdentities.delete(scope);
     windowLayoutSignatures.delete(scope);
     changedRowIdsByScope.delete(scope);
-    presentations.delete(scope);
     resources.delete(scope);
     if (identity !== undefined) {
       options.onEvictWindow?.(identity.connectionId, identity.threadId);
     }
+  };
+
+  const evictReleasedWindow = (scope: string): void => {
+    if (closed || scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) {
+      return;
+    }
+    evictWindow(scope);
+    evictUnretainedWindows(residentResourceScope);
+  };
+
+  const scheduleReleasedWindowEviction = (scope: string): void => {
+    const readiness = resources.get(scope)?.ready$?.peek();
+    if (readiness === undefined) {
+      queueMicrotask(() => {
+        evictReleasedWindow(scope);
+      });
+      return;
+    }
+    // A replacement owner cannot retain before a suspended resource resolves.
+    // Give React one task after resolution to commit that owner. The current
+    // route resource remains authoritative through transient effect cleanup.
+    void Promise.resolve(readiness)
+      .catch(() => false)
+      .finally(() => {
+        setTimeout(() => {
+          evictReleasedWindow(scope);
+        }, 0);
+      });
+  };
+
+  const retainWindow = (connectionId: string, threadId: string): (() => void) => {
+    if (closed) {
+      return () => undefined;
+    }
+    const scope = threadChatScope(connectionId, threadId);
+    retainCounts.set(scope, (retainCounts.get(scope) ?? 0) + 1);
+    let retained = true;
+    return () => {
+      if (!retained) {
+        return;
+      }
+      retained = false;
+      const next = (retainCounts.get(scope) ?? 1) - 1;
+      if (next <= 0) {
+        retainCounts.delete(scope);
+      } else {
+        retainCounts.set(scope, next);
+      }
+      // React may replace one external-store subscriber with another after the
+      // destination resource resolves. Keep the current route resource alive
+      // through that subscription handoff.
+      if (next <= 0) {
+        scheduleReleasedWindowEviction(scope);
+      }
+    };
   };
 
   const pruneUnreferencedRows = (): void => {
@@ -494,24 +526,6 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         }
       };
     },
-    beginPresentation(connectionId, threadId) {
-      if (closed) {
-        return;
-      }
-      const scope = threadChatScope(connectionId, threadId);
-      if (presentations.has(scope)) {
-        return;
-      }
-      const snapshot = windowNodes.get(scope)?.peek();
-      presentations.set(scope, {
-        hasCommittedWindow:
-          snapshot !== undefined &&
-          threadLoadHasResidentSnapshot(snapshot.status) &&
-          hasTimelineRows(snapshot),
-        pendingRows: null,
-        pendingWindow: null,
-      });
-    },
     close() {
       residentResourceScope = null;
       closed = true;
@@ -524,7 +538,6 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       retainCounts.clear();
       generations.clear();
       backendRefreshCounts.clear();
-      presentations.clear();
       resources.clear();
       windowNodes.clear();
       windowIdentities.clear();
@@ -577,8 +590,6 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       pruneUnreferencedRows();
       return true;
     },
-    // WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
-    // oxlint-disable-next-line eslint/complexity
     commitWindow(request, generation, loaded) {
       const scope = threadChatScope(request.connectionId, request.threadId);
       if (
@@ -588,27 +599,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       ) {
         return false;
       }
-      const presentation = presentations.get(scope);
-      if (presentation?.hasCommittedWindow === true) {
-        presentation.pendingWindow = {
-          generation,
-          loaded,
-          request,
-          sequence: ++presentationSequence,
-        };
-        const resource = resources.get(scope);
-        if (resource?.requestKey === threadChatRequestKey(request)) {
-          resource.committedToken = resource.token;
-        }
-        return true;
-      }
-      const committed = commitWindowNow(request, generation, loaded);
-      if (committed && presentation !== undefined) {
-        presentation.hasCommittedWindow = hasTimelineRows(
-          window$(request.connectionId, request.threadId).peek(),
-        );
-      }
-      return committed;
+      return commitWindowNow(request, generation, loaded);
     },
     failWindow(request, generation, cause) {
       const scope = threadChatScope(request.connectionId, request.threadId);
@@ -627,26 +618,6 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       if (next !== previous) {
         node.set(next);
       }
-    },
-    finishPresentation(connectionId, threadId) {
-      const scope = threadChatScope(connectionId, threadId);
-      const presentation = presentations.get(scope);
-      if (presentation === undefined) {
-        return;
-      }
-      presentations.delete(scope);
-      batch(() => {
-        const pending = [presentation.pendingWindow, presentation.pendingRows]
-          .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-          .sort((left, right) => left.sequence - right.sequence);
-        for (const entry of pending) {
-          if ("request" in entry) {
-            commitWindowNow(entry.request, entry.generation, entry.loaded);
-          } else {
-            refreshThreadNow(connectionId, threadId, entry.rows);
-          }
-        }
-      });
     },
     publishChanges(changes) {
       if (closed || changes.length === 0) {
@@ -687,12 +658,6 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       });
     },
     refreshThread(connectionId, threadId, rows) {
-      const scope = threadChatScope(connectionId, threadId);
-      const presentation = presentations.get(scope);
-      if (presentation !== undefined) {
-        presentation.pendingRows = { rows, sequence: ++presentationSequence };
-        return;
-      }
       refreshThreadNow(connectionId, threadId, rows);
     },
     residentRowCount() {
@@ -722,6 +687,18 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           loadingKey: requestKey,
           ready$: null,
           requestKey,
+          retain: (_notify) => {
+            const releaseObservation = options.onRetainWindow?.(
+              request.connectionId,
+              request.threadId,
+            );
+            const releaseWindow = retainWindow(request.connectionId, request.threadId);
+            return () => {
+              releaseObservation?.();
+              releaseWindow();
+            };
+          },
+          retentionSnapshot: () => 0,
           retryAttempt: 0,
           retryTimer: null,
           token: 0,
@@ -743,42 +720,14 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       if (record.ready$ === null) {
         throw new Error("Thread chat readiness was not initialized");
       }
-      return { ready$: record.ready$, window$: window$(request.connectionId, request.threadId) };
-    },
-    retainWindow(connectionId, threadId) {
-      if (closed) {
-        return () => undefined;
-      }
-      const scope = threadChatScope(connectionId, threadId);
-      retainCounts.set(scope, (retainCounts.get(scope) ?? 0) + 1);
-      let retained = true;
-      return () => {
-        if (!retained) {
-          return;
-        }
-        retained = false;
-        const next = (retainCounts.get(scope) ?? 1) - 1;
-        if (next <= 0) {
-          retainCounts.delete(scope);
-        } else {
-          retainCounts.set(scope, next);
-        }
-        // React destroys the old passive effect before mounting the replacement
-        // effect. A responsive mobile/desktop handoff therefore reaches zero
-        // owners briefly even though the same thread remains visible. Defer
-        // eviction to the commit's microtask boundary so the new owner can
-        // retain the exact same observable instead of subscribing to a window
-        // that cleanup has already removed from the model.
-        if (next <= 0) {
-          queueMicrotask(() => {
-            if (scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) {
-              return;
-            }
-            evictUnretainedWindows(residentResourceScope);
-          });
-        }
+      return {
+        ready$: record.ready$,
+        retain: record.retain,
+        retentionSnapshot: record.retentionSnapshot,
+        window$: window$(request.connectionId, request.threadId),
       };
     },
+    retainWindow,
     row$,
     // WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.
     // oxlint-disable-next-line eslint/complexity
@@ -833,12 +782,7 @@ export function threadChatRequestKey(request: ThreadChatWindowRequest | undefine
   if (request === undefined) {
     return null;
   }
-  return [
-    request.connectionId,
-    request.threadId,
-    request.anchorTurnId ?? "",
-    request.openGeneration ?? 0,
-  ].join("\u0000");
+  return [request.connectionId, request.threadId, request.anchorTurnId ?? ""].join("\u0000");
 }
 
 function emptyWindow(scope: string): ThreadChatWindowSnapshot {

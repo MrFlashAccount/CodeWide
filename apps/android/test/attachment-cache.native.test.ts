@@ -45,19 +45,28 @@ vi.mock("expo-crypto", () => ({
   async digestStringAsync(_algorithm: string, value: string) { return createHash("sha256").update(value).digest("hex"); },
 }));
 
-import { cacheInlineAttachment, cachedAttachmentFetch, cachedAttachmentSource } from "../src/native/attachment-cache/cached-transfer.native";
+import {
+  cacheInlineAttachment,
+  cachedAttachmentFetch,
+  cachedAttachmentSource,
+  cachedAttachmentSourceFromResponse,
+} from "../src/native/attachment-cache/cached-transfer.native";
 import { ExpoAttachmentStorage } from "../src/native/attachment-cache/storage.native";
 
 function server(initial: string) {
   let body = initial;
   let gets = 0;
+  let heads = 0;
   let denied = false;
   const request = vi.fn(async (_uri: string, init?: RequestInit) => {
     if (denied) return new Response(null, { status: 403 });
     const bytes = Buffer.from(body);
     const digest = createHash("sha256").update(bytes).digest("hex");
     const headers = new Headers({ "content-type": "text/plain", "content-length": String(bytes.length), "x-content-sha256": digest });
-    if (init?.method === "HEAD") return new Response(null, { headers });
+    if (init?.method === "HEAD") {
+      heads += 1;
+      return new Response(null, { headers });
+    }
     gets += 1;
     const range = new Headers(init?.headers).get("range");
     if (range !== null) {
@@ -72,7 +81,12 @@ function server(initial: string) {
     return new Response(bytes, { headers });
   });
   vi.stubGlobal("fetch", request);
-  return { update: (value: string) => { body = value; }, deny: () => { denied = true; }, gets: () => gets };
+  return {
+    update: (value: string) => { body = value; },
+    deny: () => { denied = true; },
+    gets: () => gets,
+    heads: () => heads,
+  };
 }
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -106,12 +120,39 @@ describe("native attachment cache", () => {
     const controller = new AbortController();
     const remote = server("image bytes");
     const options = { scope: "server", identity: "native-abort-image" };
-    const source = await cachedAttachmentSource("https://example.test/image", {}, options, controller.signal);
+    const source = await cachedAttachmentSource({
+      headers: {},
+      options,
+      signal: controller.signal,
+      uri: "https://example.test/image",
+    });
     expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("image bytes");
     controller.abort();
-    await expect(cachedAttachmentSource("https://example.test/image", {}, options, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
-    const reopened = await cachedAttachmentSource("https://example.test/image", {}, options);
+    await expect(cachedAttachmentSource({
+      headers: {},
+      options,
+      signal: controller.signal,
+      uri: "https://example.test/image",
+    })).rejects.toMatchObject({ name: "AbortError" });
+    const reopened = await cachedAttachmentSource({
+      headers: {},
+      options,
+      uri: "https://example.test/image",
+    });
     expect(reopened.uri).toBe(source.uri);
+    expect(remote.gets()).toBe(1);
+  });
+
+  it("materializes transformed images with one GET and no HEAD probe", async () => {
+    const remote = server("webp bytes");
+    const source = await cachedAttachmentSourceFromResponse({
+      headers: {},
+      options: { identity: "content:image:preview", scope: "server" },
+      uri: "https://example.test/image?variant=preview",
+    });
+
+    expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("webp bytes");
+    expect(remote.heads()).toBe(0);
     expect(remote.gets()).toBe(1);
   });
 
@@ -160,8 +201,16 @@ describe("native attachment cache", () => {
     const remote = server("image bytes");
     const options = { scope: "server", identity: "interrupted" };
     environment.interrupt = true;
-    await expect(cachedAttachmentSource("https://example.test/image", {}, options)).rejects.toThrow("connection reset");
-    const source = await cachedAttachmentSource("https://example.test/image", {}, options);
+    await expect(cachedAttachmentSource({
+      headers: {},
+      options,
+      uri: "https://example.test/image",
+    })).rejects.toThrow("connection reset");
+    const source = await cachedAttachmentSource({
+      headers: {},
+      options,
+      uri: "https://example.test/image",
+    });
     expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("image bytes");
     expect(remote.gets()).toBe(2);
     expect((await readdir(fileURLToPath(environment.directory + "codewide-attachments-v1/"))).some((name) => name.endsWith(".partial"))).toBe(false);

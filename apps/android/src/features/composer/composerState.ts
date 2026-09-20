@@ -49,7 +49,6 @@ export function useComposerState({
     cwd,
     draftConnectionId,
     draftThreadId,
-    loadDraft: composerInputs.loadDraft,
     newChat,
     onLoadControls: composerInputs.onLoadControls,
     onUpdateSettings: composerInputs.onUpdateSettings,
@@ -57,7 +56,6 @@ export function useComposerState({
     saveComposerPreferences: composerInputs.saveComposerPreferences,
     saveDraft: composerInputs.saveDraft,
     saveDraftAttachments: composerInputs.saveDraftAttachments,
-    setQueuedComposerEdit: queueEditStateBinding.setQueuedComposerEdit,
     voiceController,
     workspaceResources,
   });

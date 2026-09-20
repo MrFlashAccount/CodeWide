@@ -183,8 +183,12 @@ function projectThreadSummaryPatch(
     next.provisionalThread = null;
     next.updatedAt = Math.max(next.updatedAt, nowSeconds);
     next.latestActivityCursor = Math.max(next.latestActivityCursor, cursor);
-    if (summary.conversationMessage === true) {
-      next.recencyAt = Math.max(next.recencyAt ?? 0, nowSeconds);
+    if (
+      typeof summary.recencyAt === "number" &&
+      Number.isSafeInteger(summary.recencyAt) &&
+      summary.recencyAt >= 0
+    ) {
+      next.recencyAt = Math.max(next.recencyAt ?? 0, summary.recencyAt);
     }
     if (summary.finalAgentResponse === true) {
       next.unread = next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;

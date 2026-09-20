@@ -2,26 +2,30 @@ import { connectionSettingsSections } from "../connections/ConnectionFeature";
 /** V1 SettingsFeature owner, extracted without changing interaction or resource lifetime. */
 import { useLiveQuery } from "@tanstack/react-db";
 import Constants from "expo-constants";
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
 import { ActivityIndicator, Platform, Switch, View } from "react-native";
-import { UiGenerationControl } from "../../boot/UiGenerationControl";
-import { subscribeUiGeneration, uiGenerationSnapshot } from "../../boot/uiGenerationResource";
-import type { AccountPoolSnapshot } from "../../data/account-pool";
+import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
 import type { AccountRateLimitsRow } from "../../data/account-rate-limits";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { ConnectionUpdateInput } from "../../data/connection-validation";
+import type { GlobalVoiceName } from "../../data/globalVoicePreferences";
+import { hasCustomVoiceAssistantPersonality } from "../../data/voiceAssistantPersonality";
 import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
 import { useAppLockSettings } from "../../ui/AppLockGate";
-import { ComposerEditorTrialEntry } from "../composer/input/ComposerEditorTrialEntry";
 import { PerformanceDiagnostics } from "../diagnostics/PerformanceDiagnostics";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./SettingsFeature.styles";
 import { SettingsSection, SettingsSheet } from "./SettingsSheet";
 import { SettingsVersion } from "./SettingsVersion";
+import { VoiceAssistantSettings } from "./VoiceAssistantSettings";
+import { globalVoiceLabel } from "./globalVoicePresentation";
+import { useGlobalVoicePreference } from "./useGlobalVoicePreference";
+import { useGlobalVoiceOrbStyle } from "./useGlobalVoiceOrbStyle";
+import { useVoiceAssistantPersonality } from "./useVoiceAssistantPersonality";
 
 export function SubscribedConnectionSettings({
   accountRateLimitsDatabase,
@@ -43,8 +47,9 @@ export function ConnectionSettings({
   onAddServer,
   onCancelAccountLogin,
   onClose,
+  onConsumeAccountResetCredit,
   onDelete,
-  onMove,
+  onPreviewGlobalVoice,
   onReconnect,
   onRefreshAccountPool,
   onRemoveAccountProfile,
@@ -52,6 +57,7 @@ export function ConnectionSettings({
   onToggle,
   onUpdate,
   onUpdateAccountProfile,
+  visible,
 }: {
   accountRateLimits: AccountRateLimitsRow[];
   connections: StoredConnection[];
@@ -62,8 +68,13 @@ export function ConnectionSettings({
   onAddServer: () => void;
   onCancelAccountLogin?: (connectionId: string, loginId: string) => Promise<void>;
   onClose: () => void;
+  onConsumeAccountResetCredit?: (
+    connectionId: string,
+    profileId: string,
+    creditId: string | null,
+  ) => Promise<AccountResetCreditConsumption>;
   onDelete: (connectionId: string) => Promise<void>;
-  onMove: (connectionId: string, direction: -1 | 1) => Promise<void>;
+  onPreviewGlobalVoice: (voice: GlobalVoiceName) => Promise<void>;
   onReconnect: (connectionId: string) => Promise<void>;
   onRefreshAccountPool?: (connectionId: string) => Promise<AccountPoolSnapshot>;
   onRemoveAccountProfile?: (
@@ -80,15 +91,14 @@ export function ConnectionSettings({
     profileId: string,
     update: { enabled?: boolean; priority?: number },
   ) => Promise<AccountPoolSnapshot>;
+  visible: boolean;
 }) {
   const appLock = useAppLockSettings();
-  const uiGeneration = useSyncExternalStore(
-    subscribeUiGeneration,
-    uiGenerationSnapshot,
-    uiGenerationSnapshot,
-  );
   const [appLockSaving, setAppLockSaving] = useState(false);
   const [appLockError, setAppLockError] = useState<string | null>(null);
+  const voicePreference = useGlobalVoicePreference();
+  const voiceOrbStyle = useGlobalVoiceOrbStyle();
+  const voiceAssistantPersonality = useVoiceAssistantPersonality();
   const changeAppLock = useEvent(async (enabled: boolean) => {
     if (appLockSaving) {
       return;
@@ -105,37 +115,9 @@ export function ConnectionSettings({
   return (
     <SettingsSheet
       advanced={
-        <>
-          <SettingsSection title="Interface">
-            <View testID="ui-generation-setting">
-              <AppListRow
-                description="Legacy"
-                fixedHeight={listRowHeight.double}
-                leadingIcon={{
-                  color: colors.textMuted,
-                  name: "layers-outline",
-                  size: iconSize.action,
-                }}
-                title="Interface"
-              />
-              {uiGeneration.status === "ready" ? (
-                <UiGenerationControl current={uiGeneration.generation} />
-              ) : (
-                <ActivityIndicator
-                  accessibilityLabel="Loading interface generation"
-                  color={colors.textMuted}
-                  size="small"
-                />
-              )}
-            </View>
-          </SettingsSection>
-          <SettingsSection title="Experiments">
-            <ComposerEditorTrialEntry />
-          </SettingsSection>
-          <SettingsSection title="Diagnostics">
-            <PerformanceDiagnostics />
-          </SettingsSection>
-        </>
+        <SettingsSection title="Diagnostics">
+          <PerformanceDiagnostics />
+        </SettingsSection>
       }
       onAddServer={onAddServer}
       onClose={onClose}
@@ -146,7 +128,7 @@ export function ConnectionSettings({
               description="Use fingerprint, face or device authentication"
               fixedHeight={listRowHeight.double}
               leadingIcon={{ color: colors.textMuted, name: "finger-print", size: iconSize.action }}
-              title="App lock"
+              title="Biometric Lock"
               trailing={
                 <>
                   {appLockSaving && <ActivityIndicator color={colors.textMuted} size="small" />}
@@ -171,18 +153,39 @@ export function ConnectionSettings({
         accountRateLimits,
         connections,
         onDelete,
-        onMove,
         onReconnect,
         onToggle,
         onUpdate,
         ...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool }),
         ...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin }),
         ...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin }),
+        ...(onConsumeAccountResetCredit === undefined ? {} : { onConsumeAccountResetCredit }),
         ...(onActivateAccountProfile === undefined ? {} : { onActivateAccountProfile }),
         ...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile }),
         ...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile }),
       })}
       version={<SettingsVersion version={Constants.expoConfig?.version ?? "unknown"} />}
+      visible={visible}
+      voiceAssistant={{
+        content: (
+          <VoiceAssistantSettings
+            onPreviewVoice={onPreviewGlobalVoice}
+            onSavePersonality={voiceAssistantPersonality.savePersonality}
+            onSelectOrbStyle={voiceOrbStyle.selectStyle}
+            onSelectVoice={voicePreference.selectVoice}
+            personality={voiceAssistantPersonality.personality}
+            selectedOrbStyle={voiceOrbStyle.selectedStyle}
+            selectedVoice={voicePreference.selectedVoice}
+          />
+        ),
+        description: `${globalVoiceLabel(voicePreference.selectedVoice)} · ${
+          voiceOrbStyle.selectedStyle === "particles" ? "Particles" : "Nebula"
+        } · ${
+          hasCustomVoiceAssistantPersonality(voiceAssistantPersonality.personality)
+            ? "Custom personality"
+            : "Default personality"
+        }`,
+      }}
     />
   );
 }

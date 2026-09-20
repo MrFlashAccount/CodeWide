@@ -24,12 +24,13 @@ export interface OptimisticTurnProps {
 export function OptimisticTurn(props: OptimisticTurnProps) {
   const { getTransferAccess, item, onRetry } = props;
   const failed = item.status === "failed";
+  const pending = !failed && item.status !== "appServerAccepted";
   const deliveryLabel = failed
     ? "Failed"
     : item.status === "uncertain"
       ? "Checking delivery"
       : item.status === "appServerAccepted"
-        ? "Running"
+        ? "Sent"
         : item.status === "companionAccepted"
           ? item.workspaceRequestId !== null && item.workspaceRequestId !== undefined
             ? "Preparing workspace"
@@ -77,7 +78,7 @@ export function OptimisticTurn(props: OptimisticTurnProps) {
                   <UserMessageContent
                     content={item.text === "" ? [] : [{ text: item.text, type: "text" }]}
                     localAttachments={item.attachments}
-                    pendingText={!failed}
+                    pendingText={pending}
                     {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
                   />
                 </BubbleContent>

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LegendList } from "@legendapp/list/react-native";
-import { type ReactNode, useState } from "react";
-import { Pressable, useWindowDimensions, View } from "react-native";
+import type { ReactNode } from "react";
+import { type LayoutChangeEvent, Pressable, View } from "react-native";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { colors, iconSize } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
@@ -21,38 +21,29 @@ export const SUBAGENT_ROW_HEIGHT =
 
 /** Composes the selectable subagent list and active subagent detail. */
 export function SubagentWorkspace({
+  children,
+  compact,
+  masterWidth,
   onClose,
+  onLayout,
   onSelect,
-  renderDetail,
   selected,
   subagents,
 }: {
-  onBack: () => void;
+  children: ReactNode;
+  compact: boolean;
+  masterWidth: number;
   onClose: () => void;
+  onLayout: (event: LayoutChangeEvent) => void;
   onSelect: (summary: StoredThreadSummary) => void;
-  renderDetail: (compact: boolean) => ReactNode;
   selected: StoredThreadSummary | null;
   subagents: readonly StoredThreadSummary[];
 }) {
-  const window = useWindowDimensions();
-  const [measuredWidth, setMeasuredWidth] = useState(0);
-  const width = measuredWidth > 0 ? measuredWidth : window.width;
-  const compact = width < MASTER_DETAIL_BREAKPOINT;
   const showMaster = !compact || selected === null;
   const showDetail = !compact || selected !== null;
-  const masterWidth = compact
-    ? width
-    : Math.min(MASTER_MAX_WIDTH, Math.max(MASTER_MIN_WIDTH, Math.floor(width * 0.32)));
 
   return (
-    <View
-      onLayout={({ nativeEvent }) => {
-        const next = Math.floor(nativeEvent.layout.width);
-        setMeasuredWidth((current) => (current === next ? current : next));
-      }}
-      style={styles.workspace}
-      testID="subagent-workspace"
-    >
+    <View onLayout={onLayout} style={styles.workspace} testID="subagent-workspace">
       {showMaster && (
         <View style={[styles.master, { width: masterWidth }]} testID="subagent-master-pane">
           <View style={styles.masterHeader}>
@@ -101,7 +92,7 @@ export function SubagentWorkspace({
           style={[styles.detail, !compact && styles.detailRaised]}
           testID="subagent-detail-pane"
         >
-          {selected === null ? <EmptySelection /> : renderDetail(compact)}
+          {selected === null ? <EmptySelection /> : children}
         </View>
       )}
     </View>

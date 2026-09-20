@@ -53,6 +53,8 @@ export const colors = {
   conversationSurface: scheme.surface,
   green: scheme.success,
   messageSurface: scheme.background,
+  nebula: "#1a73f2",
+  nebulaHighlight: "#fcffff",
   red: scheme.error,
   surfaceHover: scheme.surfaceContainerHigh,
   surfaceRaised: scheme.surfaceContainer,

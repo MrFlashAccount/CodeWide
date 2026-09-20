@@ -31,10 +31,15 @@ function sessionProps() {
 it("keeps closing content mounted and resets the next manual pairing open", () => {
   const props = sessionProps();
   const { result, rerender } = renderHook(usePairingSession, { initialProps: props, wrapper });
+  expect(result.current.navigationDirection).toBeNull();
   act(() => {
     result.current.setMode("manual");
     result.current.setDisplayName("Edited server");
   });
+  expect(result.current.navigationDirection).toBe("forward");
+  act(() => result.current.setMode("choose"));
+  expect(result.current.navigationDirection).toBe("back");
+  act(() => result.current.setMode("manual"));
   rerender({ ...props, visible: false });
   expect(result.current.displayName).toBe("Edited server");
   expect(result.current.mode).toBe("manual");

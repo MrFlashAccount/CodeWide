@@ -31,10 +31,18 @@ export type CapturedAudioChunk = PcmAudioChunk | OpusAudioChunk;
 
 /** Native PCM capture parameters selected for the active microphone session. */
 export type PcmCaptureInfo = {
+  acousticEchoCancelerEnabled: boolean;
+  acousticEchoCancelerSupported: boolean;
   automaticGainControl: boolean;
   noiseSuppressor: boolean;
   sampleRate: number;
   source: "voice_recognition" | "voice_communication" | "mic";
+};
+
+/** Native microphone generation identity validated at physical capture start and stop. */
+export type NativeMicrophoneLease = {
+  readonly purpose: "dictation" | "globalSupervisor";
+  readonly token: string;
 };
 
 /** Validated server configuration passed into the native connection runtime. */
@@ -106,6 +114,15 @@ export type NativeTerminalOutput = {
   finished: boolean;
   hasMore: boolean;
   nextOffset: number;
+};
+
+/** Native-owned V1 terminal session that has not exited or been disposed. */
+export type NativeTerminalSession = {
+  connectionId: string;
+  cwd: string | null;
+  sessionId: string;
+  status: "connecting" | "open";
+  threadId: string;
 };
 
 /** Listening port discovered by the Companion through native transport. */

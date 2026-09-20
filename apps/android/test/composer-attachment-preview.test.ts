@@ -36,10 +36,14 @@ describe("composer attachment preview", () => {
     expect(screen.match(/<ComposerAttachmentTray/g)).toHaveLength(1);
     expect(tray).toContain('testID="composer-attachment-strip"');
     expect(ownerComposerFeature).toContain("scope={props.composerUploadScope}");
-    expect(ownerDraft).toContain('const attachments = queuedComposerEdit?.attachments ?? storedAttachments');
+    expect(ownerDraft).toContain(
+      "const attachments = queuedComposerEdit?.initialAttachments ?? storedAttachments",
+    );
     expect(ownerDraft).toContain('`${composerScope}\\u0000queue-edit:${queuedComposerEdit.commandId}`');
-    expect(ownerQueueEdit).toContain("onEditQueued(edit.commandId, text, editedAttachments).then");
-    expect(ownerDraft).toContain("const draft = queuedComposerEdit?.text ?? storedDraft");
+    expect(ownerQueueEdit).toContain(
+      "await onEditQueued(edit.commandId, text, editedAttachments)",
+    );
+    expect(ownerDraft).toContain("const draft = queuedComposerEdit?.initialText ?? storedDraft");
     expect(ownerComposerFeature).toContain('testID="queued-composer-edit-bar"');
     expect(screen).not.toContain('testID="queue-attachment-strip"');
     expect(tray).toContain("composerAttachmentSource(attachment)");

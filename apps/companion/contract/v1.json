@@ -1,6 +1,26 @@
 {
   "protocolVersion": 1,
   "threadReadModelVersion": 3,
+  "globalSupervisorLimitsV1": {
+    "version": 1,
+    "liveChannelMaxEnvelopes": 256,
+    "liveChannelMaxBytes": 4194304,
+    "liveEnvelopeMaxBytes": 262144,
+    "microphoneInputBufferMaxDurationMs": 2000,
+    "microphoneInputBufferMaxBytes": 262144,
+    "outputPlaybackBufferMaxDurationMs": 5000,
+    "outputPlaybackBufferMaxBytes": 524288,
+    "dynamicToolInputMaxBytes": 65536,
+    "dynamicToolOutputMaxBytes": 262144,
+    "listChatsPageMaxEntries": 100,
+    "readChatPageMaxItems": 100,
+    "readChatPageMaxBytes": 262144,
+    "eventCoalescingMaxDistinctSources": 32,
+    "eventCoalescingWindowMs": 2000,
+    "realtimeStartupTimeoutMs": 15000,
+    "interruptionAckTimeoutMs": 2000,
+    "realtimeStopCloseTimeoutMs": 5000
+  },
   "threadProjectionPatch": {
     "field": "codewideThreadPatch",
     "version": 1,

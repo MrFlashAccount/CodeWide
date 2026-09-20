@@ -1,6 +1,6 @@
-const UNREAD_AGENT_VISIBLE_RATIO = 0.3;
+const READ_VISIBILITY_FRACTION = 0.5;
 
-export function visibleRatioWithinViewport(
+export function visibleHeightWithinViewport(
   itemY: number,
   itemHeight: number,
   viewportY: number,
@@ -11,8 +11,21 @@ export function visibleRatioWithinViewport(
   }
   const visibleTop = Math.max(itemY, viewportY);
   const visibleBottom = Math.min(itemY + itemHeight, viewportY + viewportHeight);
-  const visibleHeight = Math.max(0, visibleBottom - visibleTop);
-  return visibleHeight / Math.min(itemHeight, viewportHeight);
+  return Math.max(0, visibleBottom - visibleTop);
+}
+
+export function requiredAgentResponseVisibleHeight(
+  itemHeight: number,
+  viewportHeight: number,
+): number {
+  if (itemHeight <= 0 || viewportHeight <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const halfViewport = viewportHeight * READ_VISIBILITY_FRACTION;
+  if (itemHeight <= halfViewport) {
+    return itemHeight;
+  }
+  return Math.min(itemHeight * READ_VISIBILITY_FRACTION, halfViewport);
 }
 
 export function shouldMarkAgentResponseRead(
@@ -20,9 +33,11 @@ export function shouldMarkAgentResponseRead(
   itemHeight: number,
   viewportY: number,
   viewportHeight: number,
-  threshold = UNREAD_AGENT_VISIBLE_RATIO,
 ): boolean {
-  return visibleRatioWithinViewport(itemY, itemHeight, viewportY, viewportHeight) >= threshold;
+  return (
+    visibleHeightWithinViewport(itemY, itemHeight, viewportY, viewportHeight) >=
+    requiredAgentResponseVisibleHeight(itemHeight, viewportHeight)
+  );
 }
 
 /** Atomically decides whether one async visibility path owns the receipt. */

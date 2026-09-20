@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { RealtimeAudioUploader, type RealtimeAudioChunk } from "../src/data/realtime-audio-uploader";
+import {
+  RealtimeAudioUploader,
+  type RealtimeAudioChunk,
+} from "../src/data/realtime-audio-uploader";
 
 const chunk = (index: number): RealtimeAudioChunk => ({
   data: `chunk-${index}`,
@@ -29,7 +32,9 @@ describe("RealtimeAudioUploader", () => {
     });
 
     for (let index = 0; index < 5; index += 1) uploader.append(chunk(index));
-    expect(sent.map((batch) => batch.map(({ data }) => data))).toEqual([["chunk-0", "chunk-1", "chunk-2"]]);
+    expect(sent.map((batch) => batch.map(({ data }) => data))).toEqual([
+      ["chunk-0", "chunk-1", "chunk-2"],
+    ]);
     const finishing = uploader.finish();
 
     for (let guard = 0; guard < 20 && sent.length < 2; guard += 1) {
@@ -81,6 +86,31 @@ describe("RealtimeAudioUploader", () => {
     expect(batchIds).toEqual(Array.from({ length: 70 }, (_, index) => index));
   });
 
+  it("fails explicitly instead of retaining an unbounded weak-network backlog", async () => {
+    let release: (() => void) | null = null;
+    const errors: string[] = [];
+    const uploader = new RealtimeAudioUploader({
+      batchDurationMs: 100,
+      maxBufferedBytes: 12,
+      onError: (message) => errors.push(message),
+      send: async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    });
+
+    uploader.append({ ...chunk(0), data: "AAAA" });
+    uploader.append({ ...chunk(1), data: "AAAA" });
+    uploader.append({ ...chunk(2), data: "AAAA" });
+    uploader.append({ ...chunk(3), data: "AAAA" });
+    uploader.append({ ...chunk(4), data: "AAAA" });
+
+    expect(errors).toEqual(["Voice audio buffer capacity exceeded"]);
+    release?.();
+    await uploader.cancel();
+  });
+
   it("rejects malformed native audio at the boundary", async () => {
     const errors: string[] = [];
     const uploader = new RealtimeAudioUploader({
@@ -100,7 +130,9 @@ describe("RealtimeAudioUploader", () => {
     const errors: string[] = [];
     const uploader = new RealtimeAudioUploader({
       onError: (message) => errors.push(message),
-      send: async (_batchId, audio) => { sent.push(audio); },
+      send: async (_batchId, audio) => {
+        sent.push(audio);
+      },
     });
 
     uploader.append({ ...chunk(0), sampleRate: 48_000, samplesPerChannel: 4_800 });

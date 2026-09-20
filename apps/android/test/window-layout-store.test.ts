@@ -17,8 +17,9 @@ describe("window layout projection", () => {
 
   it("switches layout modes after rotation or compact window resize", () => {
     expect(windowLayoutSnapshot({ width: 1_200, height: 800 }).desktop).toBe(true);
-    expect(windowLayoutSnapshot({ width: 800, height: 1_200 }).desktop).toBe(false);
-    expect(windowLayoutSnapshot({ width: 900, height: 420 }).desktop).toBe(false);
+    expect(windowLayoutSnapshot({ width: 400, height: 800 }).desktop).toBe(false);
+    expect(windowLayoutSnapshot({ width: 800, height: 360 }).desktop).toBe(true);
+    expect(windowLayoutSnapshot({ width: 700, height: 360 }).desktop).toBe(false);
   });
 
   it("changes measurement revision when Samsung windowed mode changes density without resizing", () => {

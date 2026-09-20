@@ -14,6 +14,7 @@ type MockHref =
 
 let entries: MockRoute[] = [{ params: {}, pathname: "/" }];
 let currentIndex = 0;
+let localParamsOverride: Readonly<Record<string, string>> | null = null;
 const listeners = new Set<() => void>();
 const routeComponents = new Map<string, React.ComponentType>();
 
@@ -81,6 +82,7 @@ export const router = {
   navigate(href: MockHref): void {
     this.push(href);
   },
+  prefetch(_href: MockHref): void {},
   push(href: MockHref): void {
     entries = [...entries.slice(0, currentIndex + 1), route(href)];
     currentIndex += 1;
@@ -95,6 +97,12 @@ export const router = {
 export function resetMockRouter(initial: MockHref = "/"): void {
   entries = [route(initial)];
   currentIndex = 0;
+  localParamsOverride = null;
+  publish();
+}
+
+export function setMockLocalSearchParams(params: Readonly<Record<string, string>> | null): void {
+  localParamsOverride = params;
   publish();
 }
 
@@ -118,11 +126,20 @@ export function useFocusEffect(effect: () => void | (() => void)): void {
   useEffect(effect, [effect]);
 }
 
+export function useIsFocused(): boolean {
+  return true;
+}
+
 export function usePathname(): string {
   return useSyncExternalStore(subscribe, snapshot, snapshot).pathname;
 }
 
 export function useLocalSearchParams(): Readonly<Record<string, string>> {
+  const params = useSyncExternalStore(subscribe, snapshot, snapshot).params;
+  return localParamsOverride ?? params;
+}
+
+export function useGlobalSearchParams(): Readonly<Record<string, string>> {
   return useSyncExternalStore(subscribe, snapshot, snapshot).params;
 }
 
@@ -131,6 +148,17 @@ export function Slot(): React.JSX.Element {
   const RouteComponent = routeComponents.get(routeSnapshot.pathname);
   return RouteComponent === undefined ? createElement(Fragment) : createElement(RouteComponent);
 }
+
+export const Stack = Object.assign(
+  function MockStack(): React.JSX.Element {
+    return createElement(Slot);
+  },
+  {
+    Screen(): null {
+      return null;
+    },
+  },
+);
 
 export function Redirect({ href }: { readonly href: MockHref }): null {
   useEffect(() => {

@@ -48,6 +48,13 @@ export function createThreadSyncProjection({
         const params = asRecord(event.payload.params);
         const patch = threadProjectionPatchFromEvent(event.payload);
         if (
+          event.payload.method === "turn/started" ||
+          event.payload.method === "companion/thread/progress" ||
+          event.payload.method === "companion/thread/invalidated"
+        ) {
+          catalog.refreshConnectionWindows(connectionId);
+        }
+        if (
           event.payload.method === "thread/archived" ||
           event.payload.method === "thread/unarchived"
         ) {

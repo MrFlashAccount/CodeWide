@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ACCOUNT_RATE_LIMITS_REFRESH_MS,
+  accountRateLimitResetWindows,
   currentThreadContextUsage,
   currentThreadUsageProjection,
   mergeAccountRateLimits,
@@ -37,6 +38,28 @@ describe("account rate limits", () => {
     const weekly = selectWeeklyRateLimit(response());
     expect(weekly?.window.windowDurationMins).toBe(10_080);
     expect(weekly?.remainingPercent).toBe(60);
+  });
+
+  it("orders reset-bearing windows and keeps unmatched availability reconciliation visible", () => {
+    const profile = {
+      id: "primary",
+      email: null,
+      planType: "pro",
+      priority: 0,
+      enabled: true,
+      active: true,
+      exhaustedUntil: 4_000,
+      exhaustedIndefinitely: false,
+      rateLimits: response(),
+      rateLimitsUpdatedAt: 10,
+      rateLimitsError: null,
+      lastUsedAt: null,
+    };
+    expect(accountRateLimitResetWindows(profile)).toEqual([
+      { durationMins: 300, resetsAt: 2_000, slot: "primary", usedPercent: 25 },
+      { durationMins: 10_080, resetsAt: 3_000, slot: "secondary", usedPercent: 40 },
+      { durationMins: null, resetsAt: 4_000, slot: "availability", usedPercent: null },
+    ]);
   });
 
   it("selects the canonical Codex allowance instead of another weekly bucket", () => {

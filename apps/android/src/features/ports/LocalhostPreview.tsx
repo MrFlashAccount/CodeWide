@@ -6,13 +6,13 @@ import { Pressable, View } from "react-native";
 import type { TunnelRow } from "../../data/workspace-resource-database";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
-import { InternalBrowser } from "./browser/InternalBrowser";
 import { styles } from "./LocalhostPreview.styles";
 
 export function LocalhostPreview({
   embedded = false,
   onClose,
   onCreate,
+  onOpenBrowser,
   onRevoke,
   resource,
   visible,
@@ -20,6 +20,7 @@ export function LocalhostPreview({
   embedded?: boolean;
   onClose: () => void;
   onCreate?: (port: number, ttlSeconds: number) => Promise<TunnelValue>;
+  onOpenBrowser?: (title: string, url: string, headers?: Readonly<Record<string, string>>) => void;
   onRevoke?: (tunnelId: string) => Promise<void>;
   resource: TunnelRow | null;
   visible: boolean;
@@ -47,7 +48,8 @@ export function LocalhostPreview({
     }
     setError(null);
     try {
-      await onCreate(localhostTargetPort(target), Number(ttl));
+      const created = await onCreate(localhostTargetPort(target), Number(ttl));
+      openCreatedTunnel(onOpenBrowser, created);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not open localhost preview");
     }
@@ -130,36 +132,59 @@ export function LocalhostPreview({
           </Pressable>
         </View>
       ) : (
-        <View style={styles.flex}>
-          {error !== null && <Text style={styles.previewError}>{error}</Text>}
-          <InternalBrowser
-            headers={{ Authorization: tunnel.authorization }}
-            url={tunnel.url}
-            {...(!embedded
-              ? {
-                  header: {
-                    closeLabel: "Close localhost preview",
-                    onClose: close,
-                    status: "LIVE",
-                    title: "Localhost preview",
-                  },
-                }
-              : {})}
-            onError={setError}
-            onHttpError={(statusCode) => {
-              setError(
-                statusCode === 502
-                  ? "Nothing is listening on that local service"
-                  : `Preview returned HTTP ${String(statusCode)}`,
-              );
-            }}
-            originWhitelist={[new URL(tunnel.url).origin]}
+        <View style={styles.previewSetup}>
+          <Ionicons
+            color={colors.green}
+            name="checkmark-circle-outline"
+            size={iconSize.illustration}
           />
+          <Text style={styles.sheetTitle}>Localhost tunnel is ready</Text>
+          <Text style={styles.menuNotice}>
+            The browser opens as its own workspace and keeps this tunnel available in the
+            background.
+          </Text>
+          {effectiveError !== null && <Text style={styles.errorText}>{effectiveError}</Text>}
+          <Pressable
+            accessibilityLabel="Open localhost preview in browser"
+            accessibilityRole="button"
+            disabled={onOpenBrowser === undefined}
+            onPress={() => {
+              onOpenBrowser?.("Localhost preview", tunnel.url, {
+                Authorization: tunnel.authorization,
+              });
+            }}
+            style={styles.primaryButton}
+          >
+            <Text style={styles.primaryButtonText}>Open browser</Text>
+          </Pressable>
+          <Pressable
+            accessibilityLabel="Close localhost tunnel"
+            accessibilityRole="button"
+            disabled={loading}
+            onPress={close}
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryButtonText}>{loading ? "Closing…" : "Close tunnel"}</Text>
+          </Pressable>
         </View>
       )}
     </View>
   );
   return visible ? content : null;
+}
+
+function openCreatedTunnel(
+  openBrowser:
+    | ((title: string, url: string, headers?: Readonly<Record<string, string>>) => void)
+    | undefined,
+  tunnel: TunnelValue,
+): void {
+  if (openBrowser === undefined) {
+    return;
+  }
+  openBrowser("Localhost preview", tunnel.url, {
+    Authorization: tunnel.authorization,
+  });
 }
 
 export function localhostTargetPort(rawTarget: string): number {

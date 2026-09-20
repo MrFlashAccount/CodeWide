@@ -2,12 +2,16 @@ import Constants from "expo-constants";
 import { randomUUID } from "expo-crypto";
 import { Platform } from "react-native";
 import { appLogger } from "../observability/logger";
+import { createGlobalSupervisorWebRtcSession } from "../native/globalSupervisorWebRtcSession";
+import { acquireGlobalVoiceForegroundLease } from "../native/globalVoiceForegroundLease.native";
 import { NativeEngineSupervisor } from "../native/native-engine";
 import {
   enqueueNativeCommand,
   listNativeCommands,
   mintNativeSession,
   nativeCompanionHttpOrigin,
+  getMicrophonePermission,
+  requestMicrophonePermission,
 } from "../native/native-transport";
 import { assertSecureCryptoRuntime } from "../polyfills/secure-crypto";
 import {
@@ -29,10 +33,29 @@ import {
   type PendingRequestDatabase,
 } from "./pending-request-database";
 import { createPrivateTransferAccess } from "./private-transfer";
-import { configureTelemetryAppVersion, configureTelemetryTransport } from "./telemetry";
+import {
+  configureTelemetryAppVersion,
+  configureTelemetryTransport,
+  recordOperationalTelemetryEvent,
+} from "./telemetry";
 import { createThreadDetailDatabase, type ThreadDetailDatabase } from "./thread-detail-database";
 import { createThreadResourceLoader } from "./thread-resource-loader";
 import { createThreadSummaryDatabase, type ThreadSummaryDatabase } from "./thread-summary-database";
+import type { GlobalSupervisorBindingOwner } from "./globalSupervisorBinding";
+import { createGlobalSupervisorAttentionOwner } from "./globalSupervisorAttention";
+import { createGlobalSupervisorAttentionProjection } from "./globalSupervisorAttentionProjection";
+import { createGlobalSupervisorAttentionStorage } from "./globalSupervisorAttentionStorage";
+import type { GlobalSupervisorVisibilityPolicy } from "./globalSupervisorVisibility";
+import { createGlobalSupervisorRuntime } from "./globalSupervisorRuntime";
+import { createGlobalSupervisorRuntimeIngress } from "./globalSupervisorRuntimeIngress";
+import { createGlobalVoicePreviewRuntime } from "./globalVoicePreviewRuntime";
+import { hydrateGlobalVoiceOrbStylePreference } from "./globalVoiceOrbStylePreference";
+import { decodeGlobalVoicePreference, GLOBAL_VOICE_PREFERENCE_ID } from "./globalVoicePreferences";
+import {
+  createGlobalSupervisorWorkspaceBinding,
+  createGlobalSupervisorWorkspaceSystemRequests,
+} from "./globalSupervisorWorkspaceRuntime";
+import { deliverServerRequestResponse } from "./serverRequestDelivery";
 import { createThreadSyncProjection } from "./thread-sync-projection";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
@@ -43,6 +66,12 @@ import {
 } from "./thread-ui-state-database";
 import { createTurnControlsLoader } from "./turn-controls-loader";
 import { VoiceInputController } from "./voice-input-controller";
+import { createV1MicrophoneLeaseRegistry } from "./v1MicrophoneLease";
+import { getUserPreferencesDatabase } from "./user-preferences-database";
+import {
+  decodeVoiceAssistantPersonality,
+  VOICE_ASSISTANT_PERSONALITY_PREFERENCE_ID,
+} from "./voiceAssistantPersonality";
 import { createVoiceTransport } from "./voice-transport";
 import {
   createWorkspaceResourceDatabase,
@@ -81,6 +110,8 @@ class WorkspaceRuntime {
   };
   readonly listeners = new Set<() => void>();
   supervisor: WorkspaceSyncSupervisor | null = null;
+  globalSupervisorBinding: GlobalSupervisorBindingOwner | null = null;
+  globalSupervisorVisibility: GlobalSupervisorVisibilityPolicy | null = null;
   voiceController: VoiceInputController | null = null;
   fileTransferController: FileTransferController | null = null;
   startPromise: Promise<void> | null = null;
@@ -143,7 +174,18 @@ async function startWorkspaceRuntime(): Promise<void> {
     startupStage = "local database";
     const profiles = createConnectionProfileDatabase();
     const connectionState = createConnectionStateModel();
-    const summaries = createThreadSummaryDatabase();
+    const globalSupervisor = await createGlobalSupervisorWorkspaceBinding({
+      getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+      personality: readVoiceAssistantPersonality,
+      randomUUID,
+      rpcAfterAttach,
+    });
+    workspaceRuntime.globalSupervisorBinding = globalSupervisor.binding;
+    workspaceRuntime.globalSupervisorVisibility = globalSupervisor.visibility;
+    const summaries = createThreadSummaryDatabase({
+      globalSupervisorStorage: globalSupervisor.storage,
+      visibility: globalSupervisor.visibility,
+    });
     const details = createThreadDetailDatabase();
     details.setRemoteLoader(createThreadSyncRemoteLoader(details, workspaceThreadSync));
     createdThreadDetails = details;
@@ -151,7 +193,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     const threadUiState = createThreadUiStateDatabase();
     const resources = createWorkspaceResourceDatabase();
     const accountRateLimits = createAccountRateLimitsDatabase();
-    workspaceRuntime.voiceController = new VoiceInputController(resources);
+    workspaceRuntime.voiceController = new VoiceInputController(resources, v1MicrophoneLeases);
     workspaceRuntime.fileTransferController = new FileTransferController(resources);
     // Publish the local-first stores before hydration, migrations and the
     // connection engine finish. The workspace can paint immediately while
@@ -175,7 +217,8 @@ async function startWorkspaceRuntime(): Promise<void> {
       });
     });
     await Promise.all([
-      summaries.prepare(),
+      globalSupervisorAttention.ready,
+      hydrateGlobalVoiceOrbStylePreference(),
       details.prepare(),
       profiles.collection.preload(),
       pendingRequests.collection.preload(),
@@ -183,39 +226,67 @@ async function startWorkspaceRuntime(): Promise<void> {
       resources.turnControls.preload(),
       accountRateLimits.collection.preload(),
     ]);
-    // Kotlin owns the only durable command ledger. The UI cache is a reconstructable
-    // read model, so startup reads the native snapshot only for state that is
-    // already active (thread deletion) and never persists a second outbox copy.
-    try {
-      await summaries.reconcileDeleteCommands(await listNativeCommands());
-    } catch (error) {
-      appLogger.warnCaught({ error, event: "workspace.native_command.reconcile.failed" });
-    }
-
     startupStage = "profile migration";
     const initialProfiles = await migrateConnectionProfiles(profiles, () => {
       startupStage = "native credential projection";
     });
 
     startupStage = "connection engine";
+    const systemRequests = createGlobalSupervisorWorkspaceSystemRequests({
+      attention: globalSupervisorAttention,
+      binding: globalSupervisor.binding,
+      currentConnections: () => currentConnections(),
+      getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+      isRpcAvailable: (connectionId) =>
+        connectionState.rows$.peek().find((candidate) => candidate.connectionId === connectionId)
+          ?.rpcAvailable === true,
+      isSupervisorActive: () => globalSupervisorRuntime.isActive(),
+      respond: async (request) => deliverServerRequestResponse(request),
+      rpcAfterAttach,
+      sendSystemText: async (request) => commandDelivery.sendSystemTextWithCommandId(request),
+      visibility: globalSupervisor.visibility,
+    });
     const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
         setConnectionState(connectionId, state, diagnostic, rpcAvailable) {
           connectionState.setState(connectionId, state, diagnostic, rpcAvailable);
         },
       },
+      onEvents: (connectionId, events) => {
+        globalSupervisorIngress.publishThreadEvents(connectionId, events);
+      },
+      onLiveRealtime: (connectionId, event) => {
+        globalSupervisorIngress.publishLive(connectionId, event);
+      },
       onOutboxChange: createCommandDeliveryProjection(details, summaries),
       onPendingRequests: (connectionId, requests) => {
         pendingRequests.replace(connectionId, requests);
+        void globalSupervisorAttention
+          .ingestPendingRequests(connectionId, requests)
+          .catch((error: unknown) => {
+            appLogger.warnCaught({
+              error,
+              event: "global_supervisor.attention_request_ingest.failed",
+            });
+          });
+        void systemRequests.replace(connectionId, requests).catch(() => {
+          appLogger.warn({
+            event: "global_supervisor.tool_dispatch.failed",
+            fields: { failureKind: "boundedDispatchFailure" },
+          });
+        });
       },
-      projection: createThreadSyncProjection({
-        accountRateLimits,
-        catalog: workspaceCatalog,
-        details,
-        resources,
-        summaries,
-        sync: workspaceThreadSync,
-      }),
+      projection: createGlobalSupervisorAttentionProjection(
+        createThreadSyncProjection({
+          accountRateLimits,
+          catalog: workspaceCatalog,
+          details,
+          resources,
+          summaries,
+          sync: workspaceThreadSync,
+        }),
+        globalSupervisorAttention,
+      ),
     };
     const supervisor: WorkspaceSyncSupervisor = new NativeEngineSupervisor(nativeSupervisorOptions);
     workspaceRuntime.supervisor = supervisor;
@@ -228,9 +299,33 @@ async function startWorkspaceRuntime(): Promise<void> {
       })),
     );
     supervisor.replaceConnections(initialProfiles);
+    startupStage = "global supervisor binding recovery";
+    try {
+      await globalSupervisor.binding.reconcile();
+    } catch {
+      appLogger.warn({
+        event: "global_supervisor.binding_reconcile.deferred",
+        fields: { failureKind: "homeUnavailable" },
+      });
+    }
+    startupStage = "thread summary projection";
+    await summaries.prepare();
+    // Kotlin owns the only durable command ledger. The UI cache is a reconstructable
+    // read model, so startup reads the native snapshot only for state that is
+    // already active (thread deletion) and never persists a second outbox copy.
+    try {
+      await summaries.reconcileDeleteCommands(await listNativeCommands());
+    } catch (error) {
+      appLogger.warnCaught({ error, event: "workspace.native_command.reconcile.failed" });
+    }
     workspaceRuntime.profileSubscription?.unsubscribe();
     workspaceRuntime.profileSubscription = profiles.collection.subscribeChanges(() => {
       const currentProfiles = profiles.project();
+      globalSupervisor.binding
+        .invalidateDeletedConnections(new Set(currentProfiles.map((profile) => profile.id)))
+        .catch((error: unknown) => {
+          appLogger.warnCaught({ error, event: "global_supervisor.binding_invalidation.failed" });
+        });
       connectionState.reconcileProfiles(currentProfiles.map(connectionStateSeed));
       supervisor.replaceConnections(currentProfiles);
     });
@@ -275,12 +370,92 @@ async function startWorkspaceRuntime(): Promise<void> {
 }
 
 const workspaceRuntime = new WorkspaceRuntime();
+export const v1MicrophoneLeases = createV1MicrophoneLeaseRegistry(randomUUID);
 const { currentConnections, forgetHttpAuthorization, rpcAfterAttach, scopedHttpAuthorization } =
   createWorkspaceSession({
     mintNativeSession,
     projectConnections: () => workspaceRuntime.snapshot.connectionProfiles?.project() ?? [],
     randomUUID,
   });
+const globalSupervisorIngress = createGlobalSupervisorRuntimeIngress();
+const globalSupervisorAttention = createGlobalSupervisorAttentionOwner({
+  now: () => Date.now(),
+  storage: createGlobalSupervisorAttentionStorage(),
+});
+const userPreferences = getUserPreferencesDatabase();
+
+async function readVoiceAssistantPersonality() {
+  await userPreferences.ready;
+  return decodeVoiceAssistantPersonality(
+    userPreferences.collection.get(VOICE_ASSISTANT_PERSONALITY_PREFERENCE_ID)?.value,
+  );
+}
+
+export const globalSupervisorRuntime = createGlobalSupervisorRuntime({
+  acquireForegroundLease: acquireGlobalVoiceForegroundLease,
+  attention: globalSupervisorAttention,
+  binding() {
+    const binding = workspaceRuntime.globalSupervisorBinding;
+    if (binding === null) {
+      throw new Error("Global Voice binding is not ready");
+    }
+    return binding;
+  },
+  enabledConnectionIds: () => workspaceRuntime.enabledConnectionIds(),
+  ensureStarted: ensureWorkspaceRuntimeStarted,
+  getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+  getSupervisor: () => workspaceRuntime.supervisor,
+  ingress: globalSupervisorIngress,
+  isRpcAvailable: (connectionId) =>
+    workspaceRuntime.snapshot.connectionState?.rows$
+      .peek()
+      .find((candidate) => candidate.connectionId === connectionId)?.rpcAvailable === true,
+  microphoneLeases: v1MicrophoneLeases,
+  now: () => Date.now(),
+  personality: readVoiceAssistantPersonality,
+  preferredVoice: async () => {
+    await userPreferences.ready;
+    return decodeGlobalVoicePreference(
+      userPreferences.collection.get(GLOBAL_VOICE_PREFERENCE_ID)?.value,
+    );
+  },
+  randomUUID,
+  recordStartupStage: (event) => {
+    recordOperationalTelemetryEvent(event.connectionId, {
+      name: "global_voice.startup_stage",
+      sessionId: event.activationId,
+      tags: { stage: event.stage },
+      threadId: event.threadId,
+    });
+  },
+  requestMicrophonePermission: async () =>
+    getMicrophonePermission() === "granted" ? "granted" : requestMicrophonePermission(),
+  rpcAfterAttach,
+  startWebRtc: createGlobalSupervisorWebRtcSession,
+});
+
+export const globalVoicePreviewRuntime = createGlobalVoicePreviewRuntime({
+  binding() {
+    const binding = workspaceRuntime.globalSupervisorBinding;
+    if (binding === null) {
+      throw new Error("Global Voice binding is not ready");
+    }
+    return binding;
+  },
+  enabledConnectionIds: () => workspaceRuntime.enabledConnectionIds(),
+  ensureStarted: ensureWorkspaceRuntimeStarted,
+  getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+  getSupervisor: () => workspaceRuntime.supervisor,
+  ingress: globalSupervisorIngress,
+  isRpcAvailable: (connectionId) =>
+    workspaceRuntime.snapshot.connectionState?.rows$
+      .peek()
+      .find((candidate) => candidate.connectionId === connectionId)?.rpcAvailable === true,
+  microphoneLeases: v1MicrophoneLeases,
+  randomUUID,
+  rpcAfterAttach,
+  startWebRtc: createGlobalSupervisorWebRtcSession,
+});
 
 const uploadTelemetryBatch = createWorkspaceTelemetryUpload({
   currentConnections,

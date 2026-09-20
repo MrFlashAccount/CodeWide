@@ -69,8 +69,8 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       }}
       ports={{
         onCreateTunnel: props.conversationActions.onCreateTunnel,
+        onOpenBrowser: props.onOpenBrowser,
         onOpenLoopbackLink: props.openActiveLoopbackLink,
-        onOpenPortForward: props.onOpenBrowser,
         onRevokeTunnel: props.conversationActions.onRevokeTunnel,
         portForwardingConnectionId:
           props.native && props.activeConnectionId !== "" ? props.activeConnectionId : null,

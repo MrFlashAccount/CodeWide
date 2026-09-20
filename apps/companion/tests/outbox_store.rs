@@ -402,6 +402,52 @@ fn outbox_dispatches_only_one_head_per_thread() -> Result<(), Box<dyn std::error
 }
 
 #[test]
+fn claimed_head_blocks_dispatch_and_stale_queue_updates() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = tempfile::tempdir()?;
+    let store = IndexStore::open(directory.path().join("state.redb"))?;
+    for command_id in ["claimed", "next"] {
+        store.outbox_put_turn_start(
+            command_id,
+            "thread-a",
+            json!({
+                "threadId": "thread-a",
+                "clientUserMessageId": command_id,
+                "input": [{"type": "text", "text": command_id}]
+            }),
+            None,
+        )?;
+    }
+    let OutboxClaimOutcome::Acquired {
+        command: claimed,
+        token,
+    } = store.outbox_claim_steer("claimed", "steer-a")?
+    else {
+        return Err("steer claim was not acquired".into());
+    };
+
+    assert!(!claimed.has_resolved_steer_claim());
+    assert!(store.outbox_ready_heads()?.is_empty());
+    let (waited, changed) = store.outbox_wait("claimed", OutboxState::Queued, None, 60_000)?;
+    assert!(!changed);
+    assert_eq!(waited.state, OutboxState::Uncertain);
+    assert_eq!(waited.attempts, 0);
+    let deferred = store.outbox_defer("claimed", OutboxState::Queued, "stale retry", 60_000)?;
+    assert_eq!(deferred.state, OutboxState::Uncertain);
+    assert_eq!(deferred.attempts, 0);
+    let failed = store.outbox_set_state("claimed", OutboxState::Failed, Some("stale failure"))?;
+    assert_eq!(failed.state, OutboxState::Uncertain);
+
+    store.outbox_resolve_claim("claimed", token, OutboxClaimResolution::Delivered)?;
+    let (waited, changed) = store.outbox_wait("claimed", OutboxState::Uncertain, None, 60_000)?;
+    assert!(!changed);
+    assert_eq!(waited.state, OutboxState::Delivered);
+    assert!(waited.has_resolved_steer_claim());
+    assert_eq!(store.outbox_ready_heads()?[0].command_id, "next");
+    Ok(())
+}
+
+#[test]
 fn queued_commands_can_be_edited_and_placed_idempotently() -> Result<(), Box<dyn std::error::Error>>
 {
     let directory = tempfile::tempdir()?;

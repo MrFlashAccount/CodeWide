@@ -18,7 +18,7 @@ it("gives the attachment sheet fixed cells instead of eagerly mounting every res
   expect(settings).toContain("fixedHeight={listRowHeight.double}");
 });
 
-it("limits the Compose-only cell experiment to attachment resources", () => {
+it("keeps the attachment row on the synchronous icon implementation", () => {
   const row = readFileSync(new URL("../src/features/attachments/ThreadAttachmentResourceRow.tsx", import.meta.url), "utf8");
   expect(row).toContain("<AttachmentListRow");
   expect(row).not.toContain("<AppListRow");
@@ -27,10 +27,12 @@ it("limits the Compose-only cell experiment to attachment resources", () => {
     new URL("../src/ui/AttachmentListRow.android.tsx", import.meta.url),
     "utf8",
   );
-  // Boundary contract: no embedded RN accessories inside the Compose cell.
-  expect(implementation).not.toContain("RNHostView");
-  expect(implementation).not.toContain("@expo/vector-icons");
-  expect(implementation.match(/<Host\b/gu)).toHaveLength(1);
-  expect(implementation).toContain("matchContents={false}");
-  expect(implementation).not.toMatch(/<AppListRow\s/u);
+  const content = readFileSync(
+    new URL("../src/ui/AttachmentListRowContent.tsx", import.meta.url),
+    "utf8",
+  );
+  expect(implementation).toContain('from "./AttachmentListRowContent"');
+  expect(content).toContain('@expo/vector-icons');
+  expect(content).not.toContain("@expo/ui/jetpack-compose");
+  expect(content).toContain("height: listRowHeight.double");
 });

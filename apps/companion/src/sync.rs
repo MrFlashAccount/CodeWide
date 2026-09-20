@@ -19,6 +19,7 @@ use crate::{
     content::{ContentProjector, MAX_INLINE_TEXT_BYTES},
     dictation::DictationService,
     files::FileService,
+    global_supervisor_limits::GLOBAL_SUPERVISOR_LIMITS_V1,
     history_service::HistoryService,
     projects::ProjectService,
     remote_inputs::{RemoteInputError, prepare_remote_file_inputs},
@@ -26,6 +27,16 @@ use crate::{
     store::{
         IndexStore, IndexedThreadMetadata, OutboxClaimOutcome, OutboxClaimResolution,
         OutboxClaimResolutionOutcome, OutboxCommand, OutboxPresentation, OutboxState, ReplayPage,
+    },
+    sync_live::{
+        LiveChannelRegistry, LiveControlResult, classify_pending_request_method,
+        is_realtime_notification, realtime_startup_notification_method,
+    },
+    sync_pending::{
+        PendingServerRequests, clear_user_requests_on_disconnect,
+        enforce_dynamic_tool_output_limit, observe_server_requests,
+        reject_oversized_dynamic_tool_requests, remove_server_request,
+        retry_oversized_dynamic_tool_rejections, rpc_id_key,
     },
     thread_view::{ThreadActivity, ThreadViewService},
     upstream::{ConnectionStatus, OrderedUpstreamEvent, UpstreamError, UpstreamHandle},
@@ -39,9 +50,6 @@ const MAX_REPLAY_BATCH_ENTRIES: usize = 256;
 const REPLAY_BATCH_DELAY: Duration = Duration::from_millis(16);
 const MAX_COALESCED_TEXT_DELTA_BYTES: usize = MAX_INLINE_TEXT_BYTES;
 const MAX_STREAM_DIAGNOSTIC_TURNS: usize = 4_096;
-const MAX_PENDING_SERVER_REQUESTS: usize = 1_024;
-const MAX_PENDING_SERVER_REQUEST_BYTES: usize = 4 * 1024 * 1024;
-const MAX_SINGLE_SERVER_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_RECENT_TURN_STARTS: usize = 4_096;
 const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const OUTBOX_RETRY_BASE_MS: u64 = 1_000;
@@ -55,14 +63,9 @@ const ROLLOUT_RECONCILIATION_POLL: Duration = Duration::from_millis(50);
 const MAX_RECENT_UPSTREAM_THREADS: usize = 4_096;
 const MAX_CONCURRENT_SESSION_RPCS: usize = 32;
 const SESSION_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
-const USER_SERVER_REQUEST_METHODS: [&str; 5] = [
-    "item/commandExecution/requestApproval",
-    "item/fileChange/requestApproval",
-    "item/tool/requestUserInput",
-    "item/permissions/requestApproval",
-    "mcpServer/elicitation/request",
-];
-
+const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE: i64 = -32_061;
+const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_MESSAGE: &str =
+    "Global supervisor thread is unavailable";
 #[derive(Clone)]
 pub struct SyncHub {
     port_inventory: Option<crate::port_inventory::PortInventory>,
@@ -73,6 +76,7 @@ pub struct SyncHub {
     events: tokio::sync::broadcast::Sender<DurableSignal>,
     local_events: tokio::sync::mpsc::Sender<Value>,
     server_requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
+    live_channels: Arc<LiveChannelRegistry>,
     recent_turn_starts: Arc<tokio::sync::Mutex<RecentTurnStarts>>,
     mutation_mode: MutationMode,
     outbox_wakeup: Arc<tokio::sync::Notify>,
@@ -134,12 +138,12 @@ enum OutboxDeliveryError {
     E2EUncertain(String),
 }
 
-enum TurnStartDispatchError {
+enum ThreadMutationDispatchError {
     AccountPool(AccountPoolError),
     Upstream(UpstreamError),
 }
 
-impl TurnStartDispatchError {
+impl ThreadMutationDispatchError {
     fn message(&self) -> String {
         match self {
             Self::AccountPool(error) => error.to_string(),
@@ -223,13 +227,6 @@ impl ThreadMutationLanes {
                 .clone(),
         )
     }
-}
-
-#[derive(Default)]
-struct PendingServerRequests {
-    requests: HashMap<String, Value>,
-    resolving: HashSet<String>,
-    bytes: usize,
 }
 
 #[derive(Default)]
@@ -436,6 +433,7 @@ impl SyncHub {
         let (local_events, ingest_rx) = tokio::sync::mpsc::channel(MAX_REPLAY_ENTRIES);
         let (ordered_ingest, ordered_ingest_rx) = tokio::sync::mpsc::channel(MAX_REPLAY_ENTRIES);
         let server_requests = Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default()));
+        let live_channels = Arc::new(LiveChannelRegistry::default());
         let recent_turn_starts = Arc::new(tokio::sync::Mutex::new(RecentTurnStarts::default()));
         let outbox_wakeup = Arc::new(tokio::sync::Notify::new());
         let content_projector = Arc::new(std::sync::RwLock::new(None));
@@ -456,6 +454,7 @@ impl SyncHub {
             ordered_ingest.clone(),
             outbox_wakeup.clone(),
             recent_upstream_threads.clone(),
+            live_channels.clone(),
         ));
         tokio::spawn(forward_local_events(ingest_rx, ordered_ingest));
         match history.spawn_rollout_monitor() {
@@ -470,19 +469,23 @@ impl SyncHub {
             }
             Err(error) => warn!(%error, "canonical rollout monitor is unavailable"),
         }
-        tokio::spawn(ingest_events(
-            ordered_ingest_rx,
-            store.clone(),
-            events.clone(),
-            server_requests.clone(),
-            content_projector.clone(),
-            resources.clone(),
-            usage_projector.clone(),
-        ));
-        tokio::spawn(clear_server_requests_on_disconnect(
+        let ingest_context = IngestContext {
+            store: store.clone(),
+            events: events.clone(),
+            server_requests: server_requests.clone(),
+            content_projector: content_projector.clone(),
+            resources: resources.clone(),
+            usage_projector: usage_projector.clone(),
+        };
+        tokio::spawn(ingest_events(ordered_ingest_rx, ingest_context));
+        tokio::spawn(clear_user_requests_on_disconnect(
             upstream.subscribe_status(),
             server_requests.clone(),
             local_events.clone(),
+        ));
+        tokio::spawn(retry_oversized_dynamic_tool_rejections(
+            upstream.clone(),
+            server_requests.clone(),
         ));
         if mutation_mode == MutationMode::Active {
             tokio::spawn(run_outbox_pump(
@@ -508,6 +511,7 @@ impl SyncHub {
             events,
             local_events,
             server_requests,
+            live_channels,
             recent_turn_starts,
             mutation_mode,
             outbox_wakeup,
@@ -824,6 +828,12 @@ impl SyncHub {
         let mut session_tasks = tokio::task::JoinSet::new();
         let mut replay_events = Some(events);
         let mut replay_task = None;
+        let live_owner_id = hex::encode(rand::random::<[u8; 16]>());
+        let (live_sender, mut live_receiver) =
+            tokio::sync::mpsc::channel(GLOBAL_SUPERVISOR_LIMITS_V1.live_channel_max_envelopes);
+        let (live_terminal_sender, mut live_terminal_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        let mut live_channel_id: Option<String> = None;
         let mut keepalive = tokio::time::interval(SESSION_KEEPALIVE_INTERVAL);
         keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         keepalive.tick().await;
@@ -840,7 +850,7 @@ impl SyncHub {
                 task_failed_tx.clone(),
             ));
         }
-        loop {
+        'session: loop {
             tokio::select! {
                 _ = keepalive.tick() => {
                     if socket.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
@@ -919,7 +929,7 @@ impl SyncHub {
                                     for (cursor, payload) in replay.entries {
                                         let Ok(payload) = serde_json::from_slice::<Value>(&payload) else {
                                             close_with(&socket, 1011, "replay_journal_failed").await;
-                                            return;
+                                            break 'session;
                                         };
                                         if send_json(
                                             &socket,
@@ -928,7 +938,7 @@ impl SyncHub {
                                         .await
                                         .is_err()
                                         {
-                                            return;
+                                            break 'session;
                                         }
                                     }
                                     if send_json(&socket, &json!({ "type": "caughtUp", "cursor": head })).await.is_err() { break; }
@@ -948,6 +958,23 @@ impl SyncHub {
                                     }
                                 }
                                 Some("ack") => {}
+                                Some("liveSubscribe" | "liveUnsubscribe") => {
+                                    match self.live_channels.handle_control(
+                                        &live_owner_id,
+                                        &mut live_channel_id,
+                                        &message,
+                                        &live_sender,
+                                        &live_terminal_sender,
+                                    ).await {
+                                        LiveControlResult::Reply(reply) => {
+                                            if send_json(&socket, &reply).await.is_err() { break; }
+                                        }
+                                        LiveControlResult::Invalid => {
+                                            close_with(&socket, 1008, "invalid_live_control").await;
+                                            break;
+                                        }
+                                    }
+                                }
                                 Some("rpc") => {
                                     let request = message.get("request").cloned();
                                     let mutation_lane = thread_mutation_lanes.for_request(request.as_ref());
@@ -1032,12 +1059,47 @@ impl SyncHub {
                     }
                 }
                 Some(()) = task_failed_rx.recv() => break,
+                Some(envelope) = live_receiver.recv() => {
+                    if live_channel_id.as_deref() != Some(envelope.channel_id.as_str()) {
+                        continue;
+                    }
+                    let closes_channel = envelope.value["payload"]["method"] == "thread/realtime/closed";
+                    let startup_method = envelope
+                        .value
+                        .get("payload")
+                        .and_then(realtime_startup_notification_method);
+                    if send_json(&socket, &envelope.value).await.is_err() { break; }
+                    if let Some(method) = startup_method {
+                        info!(
+                            channel_id = %envelope.channel_id,
+                            method,
+                            companion_delivery_ms = u64::try_from(envelope.received_at.elapsed().as_millis())
+                                .unwrap_or(u64::MAX),
+                            "global voice startup notification delivered to device"
+                        );
+                    }
+                    self.live_channels
+                        .acknowledge_delivery(&envelope.channel_id, envelope.encoded_bytes)
+                        .await;
+                    if closes_channel {
+                        live_channel_id = None;
+                    }
+                }
+                Some(terminal) = live_terminal_receiver.recv() => {
+                    let channel_id = terminal.get("channelId").and_then(Value::as_str);
+                    if channel_id != live_channel_id.as_deref() {
+                        continue;
+                    }
+                    live_channel_id = None;
+                    if send_json(&socket, &terminal).await.is_err() { break; }
+                }
             }
         }
         if let Some(replay_task) = replay_task {
             replay_task.abort();
         }
         session_tasks.abort_all();
+        self.live_channels.unsubscribe_owner(&live_owner_id).await;
     }
 
     async fn handle_server_response(
@@ -1045,7 +1107,7 @@ impl SyncHub {
         socket: &SessionSocket,
         response: Option<Value>,
     ) -> Result<(), ()> {
-        let Some(response) = response else {
+        let Some(mut response) = response else {
             close_with(socket, 1008, "invalid_server_response").await;
             return Err(());
         };
@@ -1060,16 +1122,20 @@ impl SyncHub {
             return Err(());
         }
         let key = rpc_id_key(&id);
-        {
+        let request_class = {
             let mut pending = self.server_requests.lock().await;
-            if !pending.requests.contains_key(&key) {
+            let Some(request) = pending.requests.get(&key) else {
                 return send_json(
                     socket,
                     &json!({"type": "serverResponseRejected", "id": id, "reason": "already_resolved_or_unknown"}),
                 )
                 .await
                 .map_err(|_| ());
-            }
+            };
+            let request_class = request
+                .get("method")
+                .and_then(Value::as_str)
+                .and_then(classify_pending_request_method);
             if !pending.resolving.insert(key.clone()) {
                 return send_json(
                     socket,
@@ -1078,7 +1144,9 @@ impl SyncHub {
                 .await
                 .map_err(|_| ());
             }
-        }
+            request_class
+        };
+        response = enforce_dynamic_tool_output_limit(response, request_class);
         match self.upstream.respond(response).await {
             Ok(()) => {
                 remove_server_request(&self.server_requests, &key).await;
@@ -1289,6 +1357,49 @@ impl SyncHub {
                     .await
                 }
                 Err(error) => send_rpc_error(socket, id, -32040, &error.message()).await,
+            };
+        }
+        if method == "thread/realtime/start" {
+            let account_pool = self.account_pool();
+            let thread_id = request
+                .pointer("/params/threadId")
+                .and_then(Value::as_str)
+                .map_or_else(|| "unknown".to_owned(), ToOwned::to_owned);
+            let started_at = Instant::now();
+            return match dispatch_realtime_start_with_resume(
+                &self.upstream,
+                account_pool.as_ref(),
+                request.take(),
+            )
+            .await
+            {
+                Ok(response) => {
+                    info!(
+                        thread_id = %thread_id,
+                        upstream_response_ms = u64::try_from(started_at.elapsed().as_millis())
+                            .unwrap_or(u64::MAX),
+                        outcome = if response.get("error").is_some() {
+                            "rejected"
+                        } else {
+                            "accepted"
+                        },
+                        "global voice realtime start response received from app server"
+                    );
+                    forward_rpc_response(
+                        socket,
+                        response,
+                        id,
+                        &method,
+                        self.projector(),
+                        &self.history,
+                        RpcResultObservers {
+                            resources: self.resources(),
+                            projects: self.projects(),
+                        },
+                    )
+                    .await
+                }
+                Err(error) => send_rpc_error(socket, id, -32020, &error.message()).await,
             };
         }
         forward_rpc(
@@ -2031,10 +2142,15 @@ async fn forward_upstream_events(
     ingest: tokio::sync::mpsc::Sender<IngestInput>,
     outbox_wakeup: Arc<tokio::sync::Notify>,
     recent_upstream_threads: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
+    live_channels: Arc<LiveChannelRegistry>,
 ) {
     while let Some(event) = upstream.recv().await {
         match event {
             OrderedUpstreamEvent::Notification(payload) => {
+                if is_realtime_notification(&payload) {
+                    live_channels.route(payload).await;
+                    continue;
+                }
                 if let Some(thread_id) = event_thread_id(&payload) {
                     remember_upstream_thread(&recent_upstream_threads, thread_id);
                 }
@@ -2241,21 +2357,8 @@ async fn forward_account_pool_events(
 
 async fn ingest_events(
     mut ingest: tokio::sync::mpsc::Receiver<IngestInput>,
-    store: Arc<IndexStore>,
-    events: tokio::sync::broadcast::Sender<DurableSignal>,
-    server_requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
-    content_projector: Arc<std::sync::RwLock<Option<Arc<ContentProjector>>>>,
-    resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
-    usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
+    context: IngestContext,
 ) {
-    let context = IngestContext {
-        store,
-        events,
-        server_requests,
-        content_projector,
-        resources,
-        usage_projector,
-    };
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     while let Some(first) = ingest.recv().await {
         let IngestInput::Payload(first) = first else {
@@ -2299,6 +2402,15 @@ async fn ingest_payload_batch(
     stream_diagnostics: &mut AgentStreamDiagnostics,
     mut payloads: Vec<Value>,
 ) -> Result<(), ()> {
+    payloads = reject_oversized_dynamic_tool_requests(&context.server_requests, payloads)
+        .await
+        .map_err(|()| {
+            warn!("pending oversized dynamic tool rejection limits exceeded");
+            let _ = context.events.send(DurableSignal::Failed);
+        })?;
+    if payloads.is_empty() {
+        return Ok(());
+    }
     if observe_server_requests(&context.server_requests, &payloads)
         .await
         .is_err()
@@ -2631,114 +2743,6 @@ fn agent_stream_key(payload: &Value) -> Option<AgentStreamKey> {
         thread_id: thread_id.to_owned(),
         turn_id: turn_id.to_owned(),
     })
-}
-
-async fn observe_server_requests(
-    state: &Arc<tokio::sync::Mutex<PendingServerRequests>>,
-    payloads: &[Value],
-) -> Result<(), ()> {
-    let mut pending = state.lock().await;
-    for payload in payloads {
-        let method = payload.get("method").and_then(Value::as_str);
-        if method == Some("serverRequest/resolved") {
-            if let Some(id) = payload
-                .get("params")
-                .and_then(|params| params.get("requestId"))
-            {
-                remove_server_request_locked(&mut pending, &rpc_id_key(id));
-            }
-            continue;
-        }
-        if !method.is_some_and(|method| USER_SERVER_REQUEST_METHODS.contains(&method)) {
-            continue;
-        }
-        if payload.get("params").and_then(Value::as_object).is_none() {
-            continue;
-        }
-        let Some(id) = payload.get("id") else {
-            continue;
-        };
-        let bytes = serde_json::to_vec(payload).map_err(|_| ())?.len();
-        let key = rpc_id_key(id);
-        let previous_bytes = pending
-            .requests
-            .get(&key)
-            .and_then(|value| serde_json::to_vec(value).ok())
-            .map_or(0, |value| value.len());
-        let next_bytes = pending
-            .bytes
-            .saturating_sub(previous_bytes)
-            .saturating_add(bytes);
-        if bytes > MAX_SINGLE_SERVER_REQUEST_BYTES
-            || (previous_bytes == 0 && pending.requests.len() >= MAX_PENDING_SERVER_REQUESTS)
-            || next_bytes > MAX_PENDING_SERVER_REQUEST_BYTES
-        {
-            return Err(());
-        }
-        pending.requests.insert(key, payload.clone());
-        pending.bytes = next_bytes;
-    }
-    Ok(())
-}
-
-async fn clear_server_requests_on_disconnect(
-    mut status: tokio::sync::watch::Receiver<ConnectionStatus>,
-    state: Arc<tokio::sync::Mutex<PendingServerRequests>>,
-    local_events: tokio::sync::mpsc::Sender<Value>,
-) {
-    while status.changed().await.is_ok() {
-        if *status.borrow() != ConnectionStatus::Reconnecting {
-            continue;
-        }
-        let ids = {
-            let mut pending = state.lock().await;
-            let ids = pending
-                .requests
-                .values()
-                .filter_map(|request| request.get("id").cloned())
-                .collect::<Vec<_>>();
-            *pending = PendingServerRequests::default();
-            ids
-        };
-        for id in ids {
-            if local_events
-                .send(json!({
-                    "method": "serverRequest/resolved",
-                    "params": {"requestId": id, "reason": "upstream_disconnected"}
-                }))
-                .await
-                .is_err()
-            {
-                return;
-            }
-        }
-    }
-}
-
-async fn remove_server_request(state: &Arc<tokio::sync::Mutex<PendingServerRequests>>, key: &str) {
-    let mut pending = state.lock().await;
-    remove_server_request_locked(&mut pending, key);
-}
-
-fn remove_server_request_locked(state: &mut PendingServerRequests, key: &str) {
-    if let Some(request) = state.requests.remove(key) {
-        state.bytes = state
-            .bytes
-            .saturating_sub(serde_json::to_vec(&request).map_or(0, |serialized| serialized.len()));
-    }
-    state.resolving.remove(key);
-}
-
-fn rpc_id_key(id: &Value) -> String {
-    let kind = match id {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    };
-    format!("{kind}:{id}")
 }
 
 struct RpcResultObservers {
@@ -3224,7 +3228,7 @@ async fn reconcile_outbox_command(
         }
     }
     if command.state == OutboxState::Uncertain {
-        match local_history_contains_client_message(history, &command).await {
+        match history_contains_client_message(upstream, history, &command).await {
             Ok(true) => {
                 set_outbox_state(
                     store,
@@ -3239,10 +3243,10 @@ async fn reconcile_outbox_command(
             Ok(false) | Err(_) => {
                 // A lost App Server response is genuinely ambiguous because
                 // clientUserMessageId is projection metadata, not an
-                // idempotency key. Never resend blindly. The canonical rollout
-                // monitor advances the local tail index; once the accepted
-                // message appears there, the command is acknowledged without
-                // touching App Server history or risking a duplicate prompt.
+                // idempotency key. Never resend blindly. Ordinary starts use
+                // the canonical local summary; steers use full App Server
+                // history because intermediate user messages are absent from
+                // the summary projection.
                 wait_outbox(
                     store,
                     local_events,
@@ -3357,10 +3361,14 @@ async fn apply_e2e_queue_dispatch_fault(
     true
 }
 
-async fn local_history_contains_client_message(
+async fn history_contains_client_message(
+    upstream: &UpstreamHandle,
     history: &HistoryService,
     command: &OutboxCommand,
 ) -> Result<bool, String> {
+    if command.has_resolved_steer_claim() {
+        return upstream_full_history_contains_client_message(upstream, command).await;
+    }
     let params = json!({
         "threadId": command.remote_thread_id,
         "cursor": null,
@@ -3377,6 +3385,35 @@ async fn local_history_contains_client_message(
         .get("data")
         .and_then(Value::as_array)
         .ok_or_else(|| "local summary history returned no turns page".to_string())?;
+    Ok(turns_contain_client_message(turns, &command.command_id))
+}
+
+async fn upstream_full_history_contains_client_message(
+    upstream: &UpstreamHandle,
+    command: &OutboxCommand,
+) -> Result<bool, String> {
+    let response = upstream
+        .request(json!({
+            "id": "outbox-steer-reconcile",
+            "method": "thread/turns/list",
+            "params": {
+                "threadId": command.remote_thread_id,
+                "cursor": null,
+                "limit": OUTBOX_RECONCILE_PAGE_SIZE,
+                "sortDirection": "desc",
+                "itemsView": "full"
+            }
+        }))
+        .await
+        .map_err(|error| error.to_string())?;
+    if response.get("error").is_some() {
+        return Err(rpc_error_message(&response));
+    }
+    let turns = response
+        .get("result")
+        .and_then(|result| result.get("data"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "upstream full history returned no turns page".to_string())?;
     Ok(turns_contain_client_message(turns, &command.command_id))
 }
 
@@ -3457,7 +3494,7 @@ async fn deliver_outbox_start(
     });
     let delivered = dispatch_turn_start_with_resume(upstream, account_pool.as_ref(), start)
         .await
-        .map_err(TurnStartDispatchError::into_outbox);
+        .map_err(ThreadMutationDispatchError::into_outbox);
     #[cfg(feature = "e2e-command-fault")]
     let delivered = apply_e2e_queue_uncertain_after_acceptance(e2e_surface_fault, delivered).await;
     match delivered {
@@ -3559,7 +3596,7 @@ async fn dispatch_turn_start_with_resume(
     upstream: &UpstreamHandle,
     account_pool: Option<&Arc<AccountPoolService>>,
     request: Value,
-) -> Result<Value, TurnStartDispatchError> {
+) -> Result<Value, ThreadMutationDispatchError> {
     let response = dispatch_turn_start_once(upstream, account_pool, request.clone()).await?;
     let Some(thread_id) = request.pointer("/params/threadId").and_then(Value::as_str) else {
         return Ok(response);
@@ -3572,14 +3609,67 @@ async fn dispatch_turn_start_with_resume(
     // reconnect can replace the App Server runtime while indexed history keeps
     // the chat readable, so mutation ownership must rehydrate that runtime
     // before the one safe retry. No turn history is returned to the phone.
-    let resumed = match account_pool {
+    let resumed = resume_thread_runtime(upstream, account_pool, thread_id).await?;
+    if resumed.get("error").is_some() {
+        return Ok(resumed);
+    }
+    dispatch_turn_start_once(upstream, account_pool, request).await
+}
+
+async fn dispatch_realtime_start_with_resume(
+    upstream: &UpstreamHandle,
+    account_pool: Option<&Arc<AccountPoolService>>,
+    request: Value,
+) -> Result<Value, ThreadMutationDispatchError> {
+    let response = upstream
+        .request(request.clone())
+        .await
+        .map_err(ThreadMutationDispatchError::Upstream)?;
+    let Some(thread_id) = request
+        .pointer("/params/threadId")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+    else {
+        return Ok(response);
+    };
+    if !is_thread_not_found_response(&response, &thread_id) {
+        return Ok(response);
+    }
+
+    // `thread/realtime/start` is rejected before a live session exists, so
+    // rehydrating the indexed thread and retrying once cannot duplicate audio.
+    let resumed = resume_thread_runtime(upstream, account_pool, &thread_id).await?;
+    if resumed.get("error").is_some() {
+        return Ok(if is_rollout_not_found_response(&resumed, &thread_id) {
+            global_supervisor_thread_unavailable_response(&request)
+        } else {
+            resumed
+        });
+    }
+    let retried = upstream
+        .request(request)
+        .await
+        .map_err(ThreadMutationDispatchError::Upstream)?;
+    Ok(if is_thread_not_found_response(&retried, &thread_id) {
+        global_supervisor_thread_unavailable_response(&retried)
+    } else {
+        retried
+    })
+}
+
+async fn resume_thread_runtime(
+    upstream: &UpstreamHandle,
+    account_pool: Option<&Arc<AccountPoolService>>,
+    thread_id: &str,
+) -> Result<Value, ThreadMutationDispatchError> {
+    match account_pool {
         Some(account_pool) => account_pool
-            .resume_thread_for_turn(thread_id)
+            .resume_thread_runtime(thread_id)
             .await
-            .map_err(TurnStartDispatchError::AccountPool)?,
+            .map_err(ThreadMutationDispatchError::AccountPool),
         None => upstream
             .request(json!({
-                "id": "turn-start-resume",
+                "id": "thread-mutation-resume",
                 "method": "thread/resume",
                 "params": {
                     "threadId": thread_id,
@@ -3587,28 +3677,24 @@ async fn dispatch_turn_start_with_resume(
                 }
             }))
             .await
-            .map_err(TurnStartDispatchError::Upstream)?,
-    };
-    if resumed.get("error").is_some() {
-        return Ok(resumed);
+            .map_err(ThreadMutationDispatchError::Upstream),
     }
-    dispatch_turn_start_once(upstream, account_pool, request).await
 }
 
 async fn dispatch_turn_start_once(
     upstream: &UpstreamHandle,
     account_pool: Option<&Arc<AccountPoolService>>,
     request: Value,
-) -> Result<Value, TurnStartDispatchError> {
+) -> Result<Value, ThreadMutationDispatchError> {
     match account_pool {
         Some(account_pool) => account_pool
             .send_turn_start(request)
             .await
-            .map_err(TurnStartDispatchError::AccountPool),
+            .map_err(ThreadMutationDispatchError::AccountPool),
         None => upstream
             .request(request)
             .await
-            .map_err(TurnStartDispatchError::Upstream),
+            .map_err(ThreadMutationDispatchError::Upstream),
     }
 }
 
@@ -3618,6 +3704,24 @@ fn is_thread_not_found_response(response: &Value, thread_id: &str) -> bool {
         .and_then(Value::as_str)
         .and_then(|message| message.strip_prefix("thread not found: "))
         == Some(thread_id)
+}
+
+fn is_rollout_not_found_response(response: &Value, thread_id: &str) -> bool {
+    response
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .and_then(|message| message.strip_prefix("no rollout found for thread id "))
+        == Some(thread_id)
+}
+
+fn global_supervisor_thread_unavailable_response(request: &Value) -> Value {
+    json!({
+        "id": request.get("id").cloned().unwrap_or(Value::Null),
+        "error": {
+            "code": GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE,
+            "message": GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_MESSAGE
+        }
+    })
 }
 
 fn retry_delay_ms(attempts: u32) -> u64 {
@@ -4055,17 +4159,17 @@ mod tests {
         let (ingest, receiver) = tokio::sync::mpsc::channel(4);
         let (signals, _) = tokio::sync::broadcast::channel(4);
         let (fence, resolved) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(ingest_events(
-            receiver,
-            store.clone(),
-            signals,
-            Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
-            Arc::new(std::sync::RwLock::new(None)),
-            Arc::new(std::sync::RwLock::new(None)),
-            Arc::new(std::sync::Mutex::new(
+        let context = IngestContext {
+            store: store.clone(),
+            events: signals,
+            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
+            content_projector: Arc::new(std::sync::RwLock::new(None)),
+            resources: Arc::new(std::sync::RwLock::new(None)),
+            usage_projector: Arc::new(std::sync::Mutex::new(
                 crate::usage::LiveUsageProjector::new(store.clone()),
             )),
-        ));
+        };
+        let task = tokio::spawn(ingest_events(receiver, context));
         ingest
             .send(IngestInput::Payload(json!({
                 "method": "item/agentMessage/delta",

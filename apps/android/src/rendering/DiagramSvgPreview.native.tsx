@@ -8,13 +8,18 @@ import { colors, iconSize, radii, spacing, typeScale, typeWeight } from "../them
 import { AppText } from "../ui/Typography";
 import { useAppDialog } from "../ui/AppDialog";
 import { useAsyncResource } from "./async-resource-store";
-import { diagramPreviewKey, renderDiagramPreview } from "./diagram-preview.native";
+import {
+  diagramPreviewKey,
+  renderDiagramPreview,
+  type DiagramPreviewEngine,
+} from "./diagram-preview.native";
 import type { DiagramPreviewResult } from "./diagram-preview-result";
 import { InlineMediaFrame } from "./InlineMediaFrame";
 import { checkAborted } from "../native/check-aborted";
 import { DiagramPreviewVisibility } from "./DiagramPreviewViewport";
 
 interface DiagramSvgPreviewProps {
+  readonly engine: DiagramPreviewEngine;
   readonly onOpen: () => void;
   readonly onSettled: () => void;
   readonly source: string;
@@ -30,20 +35,21 @@ export function DiagramSvgPreview(props: DiagramSvgPreviewProps) {
 
 function DiagramImagePreview({
   activated,
+  engine,
   near,
   onOpen,
   onSettled,
   source,
 }: DiagramSvgPreviewProps & { readonly activated: boolean; readonly near: boolean }) {
   const dialog = useAppDialog();
-  const key = diagramPreviewKey(source);
+  const key = diagramPreviewKey(engine, source);
   const [copied, setCopied] = useState(false);
   const resource = useAsyncResource<DiagramPreviewResult>(
     activated ? key : null,
     0,
     async (_publish, signal) => {
       try {
-        return await renderDiagramPreview(source, signal);
+        return await renderDiagramPreview(engine, source, signal);
       } catch (error) {
         checkAborted(signal);
         return {

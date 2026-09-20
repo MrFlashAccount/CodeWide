@@ -9,11 +9,13 @@ import type { DrawingRouteRequest } from "../../services/drawing/drawingRouteSes
 import type { TerminalRouteRequest } from "../../services/terminal/terminalRouteSession";
 import type { ComposerToolRouteRequest } from "../../services/composer/composerToolRouteSession";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
+import type { AgentRouteRequest } from "../../services/agents/agentRouteSession";
+import type { AttachmentRouteRequest } from "../../services/attachments/attachmentRouteSession";
 
 /** Commands exposed by the qualified V1 thread route layout to conversation features. */
 export type ConversationRouteNavigation = {
-  readonly openAgents: (initialThreadId: string | null, parentThreadId?: string) => void;
-  readonly openAttachments: () => void;
+  readonly openAgents: (request: AgentRouteRequest) => void;
+  readonly openAttachments: (request: AttachmentRouteRequest) => void;
   readonly openChanges: (request: CurrentChangesRouteRequest) => void;
   readonly openCodeDocument: (request: CodeDocumentRouteRequest) => void;
   readonly openContent: (request: LargeContentRouteRequest) => void;

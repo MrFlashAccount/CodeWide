@@ -214,5 +214,5 @@ function trimOldest<T extends { id: string; updatedAt: number }>(
 export type ThreadGoalInput = {
   objective: string;
   status: ThreadGoalStatus;
-  tokenBudget: number | null;
+  tokenBudget?: number | null;
 };

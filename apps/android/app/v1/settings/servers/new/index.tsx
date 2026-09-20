@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 
 import { retryStartup } from "../../../../../src/data/workspace-runtime";
 import { ConnectionSheet } from "../../../../../src/features/connections/ConnectionSheet";
@@ -10,6 +10,7 @@ import { useWorkspaceRouteResources } from "../../../../../src/services/workspac
 /** Composes the existing validated pairing flow under route-owned Back history. */
 export default function V1NewServerRoute(): React.JSX.Element {
   const router = useRouter();
+  const visible = useIsFocused();
   const { sessionId } = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const parsedSessionId = routeSessionIdParam(sessionId);
   const routeSession =
@@ -36,7 +37,7 @@ export default function V1NewServerRoute(): React.JSX.Element {
       onClose={close}
       onRetryStartup={retryStartup}
       onSave={resources.connectionActions.saveConnection}
-      visible
+      visible={visible}
     />
   );
 }

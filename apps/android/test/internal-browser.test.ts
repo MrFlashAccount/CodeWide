@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { sourceHasJsxElement, sourceObjectDeclaration } from "./source-contract";
 
 const browser = readFileSync(
-  new URL("../src/features/ports/browser/InternalBrowser.native.tsx", import.meta.url),
+  new URL("../src/features/browser/InternalBrowser.native.tsx", import.meta.url),
   "utf8",
 );
 const devToolsBoundary = readFileSync(
@@ -37,11 +37,11 @@ const nativeBridge = readFileSync(
 );
 
 const ownerBrowserDevTools = readFileSync(
-  new URL("../src/features/ports/browser/browserDevTools.ts", import.meta.url),
+  new URL("../src/features/browser/browserDevTools.ts", import.meta.url),
   "utf8",
 );
 const ownerBrowserBack = readFileSync(
-  new URL("../src/features/ports/browser/browserBack.ts", import.meta.url),
+  new URL("../src/features/browser/browserBack.ts", import.meta.url),
   "utf8",
 );
 const ownerLocalhostPreview = readFileSync(
@@ -52,29 +52,29 @@ const ownerForwardingRow = readFileSync(
   new URL("../src/features/ports/ForwardingRow.tsx", import.meta.url),
   "utf8",
 );
-const ownerForwardedLoopbackBrowser = readFileSync(
-  new URL("../src/features/ports/ForwardedLoopbackBrowser.tsx", import.meta.url),
+const ownerBrowserWorkspace = readFileSync(
+  new URL("../src/features/browser/BrowserWorkspace.tsx", import.meta.url),
   "utf8",
 );
-const ownerBrowserNavigation = readFileSync(
-  new URL("../src/features/ports/browserNavigation.ts", import.meta.url),
+const ownerLoopbackNavigation = readFileSync(
+  new URL("../src/features/ports/loopbackNavigation.ts", import.meta.url),
   "utf8",
 );
 const ownerDevToolsTarget = readFileSync(
-  new URL("../src/features/ports/browser/devToolsTarget.ts", import.meta.url),
+  new URL("../src/features/browser/devToolsTarget.ts", import.meta.url),
   "utf8",
 );
 const ownerDevToolsBootstrap = readFileSync(
-  new URL("../src/features/ports/browser/devToolsBootstrap.ts", import.meta.url),
+  new URL("../src/features/browser/devToolsBootstrap.ts", import.meta.url),
   "utf8",
 );
 const ownerInternalBrowserStyles = readFileSync(
-  new URL("../src/features/ports/browser/InternalBrowser.styles.ts", import.meta.url),
+  new URL("../src/features/browser/InternalBrowser.styles.ts", import.meta.url),
   "utf8",
 );
 
 const ownerBrowserDevToolsPaneNative = readFileSync(
-  new URL("../src/features/ports/browser/BrowserDevToolsPane.native.tsx", import.meta.url),
+  new URL("../src/features/browser/BrowserDevToolsPane.native.tsx", import.meta.url),
   "utf8",
 );
 
@@ -100,23 +100,27 @@ describe("internal browser", () => {
     expect(browser).not.toContain("localhost");
   });
 
-  it("uses the shared browser surface for the current localhost preview", () => {
-    expect(ownerLocalhostPreview).toContain("<InternalBrowser");
-    expect(ownerLocalhostPreview).toContain("url={tunnel.url}");
-    expect(ownerLocalhostPreview).toContain("headers={{ Authorization: tunnel.authorization }}");
+  it("hands localhost previews to the standalone browser capability", () => {
+    expect(ownerLocalhostPreview).not.toContain("InternalBrowser");
+    expect(ownerLocalhostPreview).toContain('onOpenBrowser?.("Localhost preview", tunnel.url');
+    expect(ownerLocalhostPreview).toContain("Authorization: tunnel.authorization");
     expect(ownerLocalhostPreview).toContain("!embedded && tunnel === null");
-    expect(ownerLocalhostPreview).toContain('title: "Localhost preview"');
+    expect(ownerLocalhostPreview).toContain(">Open browser</Text>");
   });
 
   it("opens live phone-local forwards inside the app", () => {
     expect(portForwarding).not.toContain("<InternalBrowser");
     expect(ownerForwardingRow).toContain("onPress={live ? props.onOpen : props.onEdit}");
-    expect(portForwarding).toContain("props.onOpen(entry.profile)");
+    expect(portForwarding).toContain(
+      "props.onOpenBrowser(entry.profile.label, entry.profile.previewUrl)",
+    );
     expect(portForwarding).not.toContain("Linking.openURL");
-    expect(ownerForwardedLoopbackBrowser).toContain('testID="forwarded-loopback-browser"');
-    expect(ownerBrowserNavigation).toContain("setLoopbackBrowser({");
+    expect(ownerBrowserWorkspace).toContain('testID="browser-workspace"');
+    expect(ownerLoopbackNavigation).toContain(
+      "openBrowser(profile.label, forwardedLoopbackUrl(target, profile))",
+    );
     expect(
-      sourceHasJsxElement(ownerForwardedLoopbackBrowser, "InternalBrowser", [
+      sourceHasJsxElement(ownerBrowserWorkspace, "InternalBrowser", [
         'closeLabel: "Close browser"',
         "title",
         "onClose",
@@ -134,7 +138,7 @@ describe("internal browser", () => {
     expect(browser).toContain("<BrowserAddressBar");
     expect(browser).toContain("onEditingChange={setAddressEditing}");
     expect(browser).not.toContain("locationTitle");
-    expect(ownerForwardedLoopbackBrowser).not.toContain("styles.previewHeader");
+    expect(ownerBrowserWorkspace).not.toContain("styles.previewHeader");
   });
 
   it("bundles Chromium DevTools and connects it to authenticated native CDP", () => {

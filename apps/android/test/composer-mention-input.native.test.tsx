@@ -1,11 +1,8 @@
 import { ComposerEditor } from "../src/features/composer/ComposerEditor";
-import { act, fireEvent, render as renderNative, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render as renderNative } from "@testing-library/react-native";
 import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markdown";
-import { ComposerMentionInput } from "../src/features/composer/input/ComposerMentionInput.native";
 import { ComposerMarkdownInput } from "../src/features/composer/input/ComposerMarkdownInput.native";
-import { searchComposerTrialMentions } from "../src/features/composer/input/composer-editor-trial";
 import { colors, touchTarget, typeScale } from "../src/theme";
-import ComposerEditorTrial from "../src/features/composer/input/ComposerEditorTrial.native";
 import type { ReactNode } from "react";
 
 const mockEditor = {
@@ -85,20 +82,39 @@ function render(node: ReactNode) {
   return renderNative(node);
 }
 
-function mountEditor(onPreviewMarkdown = jest.fn()) {
+const reviewSuggestion = {
+  description: "Review code",
+  group: "Built-in",
+  id: "review",
+  insertText: "$review",
+  kind: "skill",
+  label: "Review",
+  name: "review",
+  path: "/review",
+  plugin: null,
+  url: "codewide-skill://%2Fdemo%2Freview",
+} as const;
+
+function mountEditor() {
   return render(
-    <ComposerMentionInput
-      defaultValue="**Initial**"
-      onPreviewMarkdown={onPreviewMarkdown}
-      search={searchComposerTrialMentions}
+    <ComposerMarkdownInput
+      accessibilityLabel="Message Codex"
+      mentionIndicators={["/", "@"]}
+      onChangeValue={jest.fn()}
+      placeholder="Message Codex…"
+      search={async (query) =>
+        query.text === "" || reviewSuggestion.label.toLowerCase().includes(query.text.toLowerCase())
+          ? [reviewSuggestion]
+          : []
+      }
+      style={{ maxHeight: touchTarget + 4 * typeScale.composerInput.lineHeight }}
+      value="**Initial**"
     />,
   );
 }
 
-it("starts compact with formatting collapsed and uses the dark composer palette", () => {
+it("uses the dark composer palette", () => {
   const view = mountEditor();
-  expect(view.queryByLabelText("Bold")).toBeNull();
-  expect(view.getByLabelText("Composer tools").props.accessibilityState.expanded).toBe(false);
   const editor = view.getByTestId("native-editor");
   // V1's input envelope is the explicit visual contract, not a measured text snapshot.
   expect(editor).toHaveStyle({
@@ -114,11 +130,6 @@ it("starts compact with formatting collapsed and uses the dark composer palette"
   expect(editor.props.markdownStyle.link.color).toBe(colors.text);
   expect(editor.props.markdownStyle.spoiler.backgroundColor).toBe(colors.surfaceContainerHigh);
   expect(editor.props.cursorColor).toBe(colors.text);
-  fireEvent.press(view.getByLabelText("Composer tools"));
-  expect(view.getByText("Code block")).toBeTruthy();
-  expect(view.queryByText("Bold")).toBeNull();
-  fireEvent.press(view.getByLabelText("Composer tools"));
-  expect(view.queryByLabelText("Bold")).toBeNull();
   expect(view.getByTestId("native-editor").props.defaultValue).toBe("**Initial**");
 });
 
@@ -130,7 +141,7 @@ it("fills the composer shell, grows intrinsically and keeps the empty-state plac
       placeholder="Message Codex…"
       mentionIndicators={["/"]}
       search={async () => []}
-      onChangeText={jest.fn()}
+      onChangeValue={jest.fn()}
       style={{ flex: 1, flexBasis: 0, minWidth: 0, width: 0, maxHeight: 132 }}
     />,
   );
@@ -150,35 +161,27 @@ it("fills the composer shell, grows intrinsically and keeps the empty-state plac
   expect(editor.props.scrollEnabled).toBe(true);
 });
 
-it("opens an empty trial composer and previews without clearing the editor", async () => {
-  const onClose = jest.fn();
-  const view = render(<ComposerEditorTrial onClose={onClose} />);
-  expect(view.getByTestId("native-editor").props.defaultValue).toBe("");
-  mockEditor.getMarkdown.mockResolvedValueOnce("**Local draft**");
-  fireEvent.press(view.getByLabelText("Preview Markdown"));
-  await waitFor(() => expect(view.getByText("**Local draft**")).toBeTruthy());
-  expect(view.getByTestId("native-editor").props.defaultValue).toBe("");
-  fireEvent.press(view.getByLabelText("Close composer trial"));
-  expect(onClose).toHaveBeenCalledTimes(1);
-});
-
-it("focuses before inserting from the native menu and closes it after selection", () => {
-  const view = mountEditor();
-  fireEvent.press(view.getByLabelText("Composer tools"));
-  fireEvent(view.getByText("Skills"), "touchEnd");
-  expect(mockEditor.focus).toHaveBeenCalledTimes(1);
-  expect(mockEditor.startMention).toHaveBeenCalledWith("/");
-  expect(mockEditor.focus.mock.invocationCallOrder[0]).toBeLessThan(
-    mockEditor.startMention.mock.invocationCallOrder[0]!,
+it("publishes one coherent text snapshot after native Markdown compilation", () => {
+  const onChangeValue = jest.fn();
+  const view = render(
+    <ComposerMarkdownInput
+      accessibilityLabel="Main composer"
+      mentionIndicators={["/"]}
+      onChangeValue={onChangeValue}
+      placeholder="Message"
+      search={async () => []}
+      value="before"
+    />,
   );
-  expect(view.queryByText("Code block")).toBeNull();
-  fireEvent.press(view.getByLabelText("Composer tools"));
-  fireEvent(view.getByText("Bulleted list"), "touchEnd");
-  expect(mockEditor.toggleUnorderedList).toHaveBeenCalledTimes(1);
-  fireEvent.press(view.getByLabelText("Composer tools"));
-  fireEvent(view.getByText("Code block"), "touchEnd");
-  expect(mockEditor.insertCode).toHaveBeenCalledWith(true);
-  expect(view.getByTestId("native-editor").props.editableMentions).toBe(true);
+
+  fireEvent(view.getByTestId("native-editor"), "changeText", "after");
+  expect(onChangeValue).not.toHaveBeenCalled();
+  fireEvent(view.getByTestId("native-editor"), "changeMarkdown", "**after**");
+  expect(onChangeValue).toHaveBeenCalledTimes(1);
+  expect(onChangeValue).toHaveBeenCalledWith({
+    markdown: "**after**",
+    plainText: "after",
+  });
 });
 
 it("filters suggestions and inserts the selected display name and URL", async () => {
@@ -195,7 +198,7 @@ it("filters suggestions and inserts the selected display name and URL", async ()
   expect(view.queryByLabelText("Insert Tests")).toBeNull();
   expect(view.getByLabelText("Composer suggestions")).toHaveStyle({ width: "100%" });
   expect(view.getByTestId("composer-suggestions-scroll").props.nestedScrollEnabled).toBe(true);
-  expect(view.queryByText("Demo plugin")).toBeNull();
+  expect(view.queryByText("Built-in")).toBeNull();
   fireEvent.press(view.getByLabelText("Insert Review"));
   expect(mockEditor.insertMention).toHaveBeenCalledWith(
     "$review",
@@ -215,55 +218,8 @@ it("dismisses suggestions on blur, including a still scheduled search", async ()
   expect(view.queryByLabelText("Composer suggestions")).toBeNull();
 });
 
-it("reads Markdown on request, preserves the native result, and prevents concurrent reads", async () => {
-  const output = "# Heading\n\n[Review](https://example.com/skills/review) **text**";
-  const pending = Promise.withResolvers<string>();
-  mockEditor.getMarkdown.mockReturnValueOnce(pending.promise);
-  const preview = jest.fn();
-  const view = mountEditor(preview);
-  expect(mockEditor.getMarkdown).not.toHaveBeenCalled();
-  fireEvent.press(view.getByLabelText("Preview Markdown"));
-  fireEvent.press(view.getByLabelText("Preview Markdown"));
-  expect(mockEditor.getMarkdown).toHaveBeenCalledTimes(1);
-  expect(view.getByLabelText("Preview Markdown").props.accessibilityState.busy).toBe(true);
-  await act(async () => {
-    pending.resolve(output);
-    await pending.promise;
-  });
-  expect(preview).toHaveBeenCalledWith(output);
-  expect(view.getByLabelText("Preview Markdown").props.accessibilityState.busy).toBe(false);
-});
-
-it("allows retry after serialization failure without substituting plain text", async () => {
-  mockEditor.getMarkdown
-    .mockRejectedValueOnce(new Error("native serialization failed"))
-    .mockResolvedValueOnce("*Recovered*");
-  const preview = jest.fn();
-  const view = mountEditor(preview);
-  fireEvent.press(view.getByLabelText("Preview Markdown"));
-  await waitFor(() => expect(view.getByRole("alert")).toBeTruthy());
-  expect(preview).not.toHaveBeenCalled();
-  fireEvent.press(view.getByLabelText("Preview Markdown"));
-  await waitFor(() => expect(preview).toHaveBeenCalledWith("*Recovered*"));
-  expect(view.queryByRole("alert")).toBeNull();
-});
-
-it("does not publish a pending read after the editor is closed", async () => {
-  const pending = Promise.withResolvers<string>();
-  mockEditor.getMarkdown.mockReturnValueOnce(pending.promise);
-  const preview = jest.fn();
-  const view = mountEditor(preview);
-  fireEvent.press(view.getByLabelText("Preview Markdown"));
-  view.unmount();
-  await act(async () => {
-    pending.resolve("old trial");
-    await pending.promise;
-  });
-  expect(preview).not.toHaveBeenCalled();
-});
-
 it("returns a large paste to the attachment owner without committing it to the draft", () => {
-  const onChangeText = jest.fn();
+  const onChangeValue = jest.fn();
   const onLargePaste = jest.fn();
   const view = render(
     <ComposerMarkdownInput
@@ -272,13 +228,13 @@ it("returns a large paste to the attachment owner without committing it to the d
       placeholder="Message"
       mentionIndicators={["/"]}
       search={async () => []}
-      onChangeText={onChangeText}
+      onChangeValue={onChangeValue}
       largePasteThreshold={10}
       onLargePaste={onLargePaste}
     />,
   );
   fireEvent(view.getByTestId("native-editor"), "changeText", "before 01234567890after");
-  expect(onChangeText).not.toHaveBeenCalled();
+  expect(onChangeValue).not.toHaveBeenCalled();
   expect(onLargePaste).toHaveBeenCalledWith({ text: "01234567890", start: 7, end: 7 });
   expect(mockEditor.setValue).toHaveBeenCalledWith("before after");
   expect(mockEditor.setSelection).toHaveBeenCalledWith(7, 7);
@@ -299,7 +255,6 @@ it("keeps the resident composer editor mounted while a new chat restores its dra
     handleComposerLargePaste: () => undefined,
     draft: "First draft",
     handleComposerTextChange: () => undefined,
-    handleComposerMarkdownChange: () => undefined,
     draftSelectionRef: { current: { start: 0, end: 0 } },
     pendingVoiceSelection: null,
     voiceController: null,

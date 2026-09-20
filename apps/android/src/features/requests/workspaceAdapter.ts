@@ -1,7 +1,6 @@
-import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
 import type { PendingRequestDatabase } from "../../data/pending-request-database";
 import type { PendingServerRequest } from "../../data/pending-request-types";
-import { enqueueNativeCommand } from "../../native/native-transport";
+import { deliverServerRequestResponse } from "../../data/serverRequestDelivery";
 
 import type { RequestsWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts requests intents using retained lower authorities. */
@@ -19,13 +18,12 @@ export function createRequestsWorkspaceAdapter({
       return;
     }
     try {
-      const requestHash = await digestStringAsync(CryptoDigestAlgorithm.SHA256, request.requestKey);
-      await enqueueNativeCommand(
-        request.connectionId,
-        `server-response-${requestHash}`,
-        "serverRequest/respond",
-        { requestId: request.requestId, result },
-      );
+      await deliverServerRequestResponse({
+        connectionId: request.connectionId,
+        requestId: request.requestId,
+        responseKey: request.requestKey,
+        result,
+      });
     } catch (error) {
       pending.release(request.connectionId, request.requestKey);
       throw error;

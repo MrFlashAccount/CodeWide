@@ -39,6 +39,23 @@ describe("CodeWide pairing QR", () => {
     expect(() => parsePairingPayload("x".repeat(4_097), 1_000_000)).toThrow("too large");
   });
 
+  it("accepts a cleartext carrier only for an explicit opaque relay route", () => {
+    const now = Date.now();
+    const routeId = "a".repeat(64);
+    const payload = {
+      type: "codewide-pairing",
+      version: 1,
+      endpoint: `ws://192.0.2.10:8780/c/${routeId}/v1/sync`,
+      pairingToken: "x".repeat(43),
+      expiresAt: now + 60_000,
+      displayName: "Workstation",
+      emoji: "🧪",
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+    } as const;
+    expect(parsePairingPayload(JSON.stringify(payload), now)).toMatchObject({ endpoint: payload.endpoint });
+    expect(() => parsePairingPayload(JSON.stringify({ ...payload, endpoint: "ws://192.0.2.10:8780/c/short/v1/sync" }), now)).toThrow("WSS");
+  });
+
   it("round-trips a one-tap app link without weakening payload validation", () => {
     const now = Date.now();
     const link = encodePairingLink({

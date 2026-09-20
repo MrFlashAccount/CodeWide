@@ -41,6 +41,13 @@ internal class NativeProtocolEngine(
     val completion: (Result<Any?>) -> Unit,
   )
 
+  private data class LiveSubscription(
+    val channelId: String,
+    val threadId: String,
+    var nextSequence: Long,
+    var subscribed: Boolean,
+  )
+
   private val requestIds = AtomicLong(System.currentTimeMillis())
   private val pendingRpcs = linkedMapOf<String, PendingRpc>()
   private val pendingServerResponses = linkedMapOf<String, PendingRpc>()
@@ -67,6 +74,7 @@ internal class NativeProtocolEngine(
   private var ingressWindowLastCursor = 0L
   private var ingressWindowEvents = 0
   private var ingressWindowBytes = 0L
+  private var liveSubscription: LiveSubscription? = null
 
   @Synchronized
   fun onSocketOpen() {
@@ -103,6 +111,7 @@ internal class NativeProtocolEngine(
     flushIngressTelemetry()
     flushJournalFrames()
     upstreamLive = false
+    terminateLiveSubscription("socketClosed")
     snapshotLoading = false
     snapshotHead = null
     catchUpHead = null
@@ -115,6 +124,7 @@ internal class NativeProtocolEngine(
     stopKeepalive()
     flushJournalFrames()
     upstreamLive = false
+    terminateLiveSubscription("sessionClosed")
     rejectInFlight(message)
     rejectDeferred(message)
   }
@@ -154,9 +164,113 @@ internal class NativeProtocolEngine(
       "caughtUp" -> handleCaughtUp(envelope, frameBytes)
       "serverResponseAccepted" -> resolveServerResponse(envelope, true)
       "serverResponseRejected" -> resolveServerResponse(envelope, false)
+      "liveSubscribed" -> handleLiveSubscribed(envelope)
+      "liveSubscriptionRejected" -> handleLiveTerminal(envelope, "subscriptionRejected")
+      "liveUnsubscribed" -> handleLiveUnsubscribed(envelope)
+      "liveEvent" -> handleLiveEvent(envelope, text, frameBytes)
+      "liveOverflow" -> handleLiveTerminal(envelope, envelope.optString("reason", "liveOverflow"))
       "pong" -> Unit
       else -> resetTransport("unknown_sync_message")
     }
+  }
+
+  @Synchronized
+  fun subscribeLive(channelId: String, threadId: String): Boolean {
+    if (!upstreamLive || liveSubscription != null || channelId.isBlank() || threadId.isBlank()) return false
+    val subscription = LiveSubscription(channelId, threadId, 1L, false)
+    liveSubscription = subscription
+    val sent = sendFrame(
+      JSONObject()
+        .put("type", "liveSubscribe")
+        .put("channelId", channelId)
+        .put("threadId", threadId)
+        .toString(),
+    )
+    if (!sent) {
+      liveSubscription = null
+      return false
+    }
+    return true
+  }
+
+  @Synchronized
+  fun unsubscribeLive(channelId: String): Boolean {
+    val subscription = liveSubscription ?: return false
+    if (subscription.channelId != channelId) return false
+    return sendFrame(JSONObject().put("type", "liveUnsubscribe").put("channelId", channelId).toString())
+  }
+
+  private fun handleLiveSubscribed(envelope: JSONObject) {
+    val subscription = liveSubscription ?: return
+    if (
+      envelope.optString("channelId") != subscription.channelId ||
+      envelope.optString("threadId") != subscription.threadId ||
+      subscription.subscribed
+    ) {
+      terminateLiveSubscription("invalidSubscriptionAck")
+      return
+    }
+    subscription.subscribed = true
+    CodeWideModule.emitEngineEvent(connectionId, "liveSubscribed", envelope.toString(), null)
+  }
+
+  private fun handleLiveUnsubscribed(envelope: JSONObject) {
+    val subscription = liveSubscription ?: return
+    if (envelope.optString("channelId") != subscription.channelId) {
+      terminateLiveSubscription("invalidUnsubscribeAck")
+      return
+    }
+    liveSubscription = null
+    CodeWideModule.emitEngineEvent(connectionId, "liveTerminal", envelope.toString(), null)
+  }
+
+  private fun handleLiveEvent(envelope: JSONObject, text: String, frameBytes: Int) {
+    val subscription = liveSubscription
+    val payload = envelope.optJSONObject("payload")
+    val params = payload?.optJSONObject("params")
+    val method = payload?.optString("method")
+    if (
+      subscription == null ||
+      !subscription.subscribed ||
+      frameBytes > GlobalSupervisorLimitsV1.LIVE_ENVELOPE_MAX_BYTES ||
+      envelope.optString("channelId") != subscription.channelId ||
+      envelope.optString("threadId") != subscription.threadId ||
+      envelope.optLong("sequence", -1L) != subscription.nextSequence ||
+      params?.optString("threadId") != subscription.threadId ||
+      !LIVE_REALTIME_METHODS.contains(method)
+    ) {
+      terminateLiveSubscription("invalidLiveEnvelope")
+      return
+    }
+    subscription.nextSequence += 1L
+    CodeWideModule.emitEngineEvent(connectionId, "liveEvent", text, null)
+  }
+
+  private fun handleLiveTerminal(envelope: JSONObject, fallbackReason: String) {
+    val subscription = liveSubscription ?: return
+    if (envelope.optString("channelId") != subscription.channelId) {
+      terminateLiveSubscription("invalidLiveTerminal")
+      return
+    }
+    liveSubscription = null
+    val reason = envelope.optString("reason").takeIf(String::isNotBlank) ?: fallbackReason
+    CodeWideModule.emitEngineEvent(
+      connectionId,
+      "liveTerminal",
+      JSONObject().put("channelId", subscription.channelId).put("reason", reason).toString(),
+      null,
+    )
+  }
+
+  private fun terminateLiveSubscription(reason: String) {
+    val subscription = liveSubscription ?: return
+    liveSubscription = null
+    CodeWideModule.emitEngineEvent(
+      connectionId,
+      "liveTerminal",
+      JSONObject().put("channelId", subscription.channelId).put("reason", reason).toString(),
+      null,
+    )
   }
 
   @Synchronized
@@ -779,5 +893,15 @@ internal class NativeProtocolEngine(
     private const val MAX_JOURNAL_BYTES = 512 * 1024
     private const val INGRESS_TELEMETRY_INTERVAL_MS = 1_000.0
     private val EPHEMERAL_CONTROL_METHODS = setOf("turn/interrupt")
+    private val LIVE_REALTIME_METHODS = setOf(
+      "thread/realtime/started",
+      "thread/realtime/itemAdded",
+      "thread/realtime/transcript/delta",
+      "thread/realtime/transcript/done",
+      "thread/realtime/outputAudio/delta",
+      "thread/realtime/sdp",
+      "thread/realtime/error",
+      "thread/realtime/closed",
+    )
   }
 }

@@ -7,6 +7,7 @@ import {
 import type { ComponentPropsWithRef, ReactNode } from "react";
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 
+import { SheetBackProvider, useSheetDismissController } from "./sheetNavigation";
 import { colors, radii, spacing, layoutSize } from "../theme";
 import type { SheetPerformanceSurface } from "../presentation/diagnostics/sheetPerformanceSurface";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
@@ -38,12 +39,22 @@ type AppSheetProps = {
   children: ReactNode;
   contentProps: AppSheetContentProps;
   isOpen: boolean;
+  onDismissRequest?: () => void;
   onOpenChange: (isOpen: boolean) => void;
 };
 
-export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSheetProps) {
+export function AppSheet({
+  children,
+  contentProps,
+  isOpen,
+  onDismissRequest,
+  onOpenChange,
+}: AppSheetProps) {
   const expanded = contentProps.enableDynamicSizing === false;
   const detached = contentProps.detached ?? true;
+  const dismiss = useSheetDismissController(() => {
+    onOpenChange(false);
+  }, onDismissRequest);
 
   return (
     <BottomSheet
@@ -78,11 +89,11 @@ export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSh
                 contentProps.enablePanDownToClose === false
                   ? undefined
                   : () => {
-                      onOpenChange(false);
+                      dismiss.requestDismiss();
                     }
               }
               onPress={() => {
-                onOpenChange(false);
+                dismiss.requestDismiss();
               }}
               style={styles.handleArea}
             >
@@ -94,7 +105,7 @@ export function AppSheet({ children, contentProps, isOpen, onOpenChange }: AppSh
                 resetKey={isOpen ? "open" : "closed"}
                 scope="dialog"
               >
-                {children}
+                <SheetBackProvider register={dismiss.register}>{children}</SheetBackProvider>
               </RecoverableRenderBoundary>
             </OverlaySurfaceProvider>
           </View>

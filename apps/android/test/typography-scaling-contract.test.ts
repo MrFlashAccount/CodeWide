@@ -111,7 +111,7 @@ describe("windowed typography scaling contract", () => {
     expect(ownerTurnActivityStyles).toContain(
       "turnActivityToggleCompact: { minHeight: typeScale.body.lineHeight }",
     );
-    expect(ownerTurnActivity).toContain("compactHeader = false");
+    expect(ownerTurnActivity).toContain("const compactHeader = props.compactHeader ?? false");
   });
 
   it("keeps accessibility scaling bounded and identical across native text surfaces", () => {
@@ -124,11 +124,11 @@ describe("windowed typography scaling contract", () => {
   it("invalidates variable timeline measurements while keeping fixed thread rows stable", () => {
     expect(ownerTimelineViewport).toContain("windowLayout.measurementRevision");
     expect(ownerTimelineViewport).toContain("renderRevision={props.composerScope}");
-    expect(ownerTimelineViewport).toContain(
-      "measurementRevision={props.windowLayout.measurementRevision}",
-    );
+    expect(ownerTimelineViewport).not.toContain("measurementRevision={");
     expect(screen).not.toContain("key={`timeline-layout:${windowLayout.measurementRevision}`}");
+    expect(timelineList).toContain("subscribeMeasurementInvalidation(invalidateMeasurements)");
     expect(timelineList).toContain('clearCaches({ mode: "sizes" })');
+    expect(timelineList).not.toContain("useLayoutEffect");
     expect(ownerThreadSidebar).toContain(
       'dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}',
     );

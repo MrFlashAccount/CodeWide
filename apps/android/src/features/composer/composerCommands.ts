@@ -46,11 +46,10 @@ export function useComposerCommands({
   const queueEditActionsBinding = useQueueEditActions({
     closeInlineQueueOverlay: queueVisibilityBinding.closeInlineQueueOverlay,
     composerInputRef: composerStateBinding.composerEditingBinding.composerInputRef,
-    composerMarkdownRef: composerStateBinding.composerEditingBinding.composerMarkdownRef,
+    composerSession: composerStateBinding.composerEditingBinding.composerSession,
     composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
     conversationOwner,
     draftSelectionRef: composerStateBinding.composerEditingBinding.draftSelectionRef,
-    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
     onEditQueued: queueInputs.onEditQueued,
     onListQueue: queueInputs.onListQueue,
     queuedComposerEdit: composerStateBinding.queueEditStateBinding.queuedComposerEdit,
@@ -77,6 +76,7 @@ export function useComposerCommands({
     attachmentCount: composerStateBinding.composerEditingBinding.attachmentCount,
     captureDraftMutations: composerStateBinding.composerEditingBinding.captureDraftMutations,
     composerScope,
+    composerSession: composerStateBinding.composerEditingBinding.composerSession,
     composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
     contentReviewAttachmentId:
       composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
@@ -89,8 +89,6 @@ export function useComposerCommands({
     getStableTransferAccess,
     getTransferAccess: attachmentsInputs.getTransferAccess,
     largePasteOperationRef: composerStateBinding.largePasteStateBinding.largePasteOperationRef,
-    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
-    latestDraftRef: composerStateBinding.composerEditingBinding.latestDraftRef,
     pastedAttachmentPendingRef:
       composerStateBinding.largePasteStateBinding.pastedAttachmentPendingRef,
     queuedComposerEdit: composerStateBinding.queueEditStateBinding.queuedComposerEdit,
@@ -100,7 +98,6 @@ export function useComposerCommands({
       composerStateBinding.reviewAttachmentIdsBinding.setContentReviewAttachmentId,
     setPastedAttachmentPending:
       composerStateBinding.largePasteStateBinding.setPastedAttachmentPending,
-    updateAttachments: composerStateBinding.composerEditingBinding.updateAttachments,
     upsertDraftAttachment: composerInputs.upsertDraftAttachment,
     voiceController,
   });

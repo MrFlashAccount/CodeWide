@@ -84,7 +84,7 @@ function AttachmentVideoPreview(props: VideoPreviewProps) {
   const source = props.source ?? { kind: "path" as const, path: props.fallbackPath };
   const key = `attachment-video:${props.scope}:${privateAssetCacheKey(source)}`;
   const resource = useEphemeralAsyncResource<VideoSource>(key, revision, async (_publish, signal) =>
-    materializePrivateAsset(source, props.getAccess, undefined, signal),
+    materializePrivateAsset(source, { getAccess: props.getAccess, signal }),
   );
   const retry = () => {
     setRevision((value) => value + 1);

@@ -39,6 +39,7 @@ export interface DiagnosticsSourceAdapterInput {
 }
 
 export interface NavigationDiagnosticsSourceAdapterInput {
+  armHermesProfile: NavigationDiagnosticsSource["armHermesProfile"];
   captureHeap: NavigationDiagnosticsSource["captureHeap"];
   copy(profile: NavigationProfile): Promise<void>;
   profiles: ObservableDiagnosticsSnapshot<NavigationProfilesSnapshot>;
@@ -95,6 +96,7 @@ export function createNavigationDiagnosticsSource(
   input: NavigationDiagnosticsSourceAdapterInput,
 ): NavigationDiagnosticsSource {
   return {
+    armHermesProfile: input.armHermesProfile,
     captureHeap: input.captureHeap,
     copyReport: input.copy,
     snapshot: input.profiles.snapshot,

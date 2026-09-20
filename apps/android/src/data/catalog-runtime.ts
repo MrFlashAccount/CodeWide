@@ -49,7 +49,7 @@ export function createCatalogRuntime({
       if (session === undefined || summaries === null) {
         return;
       }
-      pruneInactiveProjectCatalogWindows(summaries);
+      pruneInactiveCatalogWindows(summaries);
       const active = threadCatalogWindows.get(catalogWindowKey(connectionId, false));
       const refreshes = [
         active === undefined
@@ -122,23 +122,26 @@ export function createCatalogRuntime({
     }
   }
 
-  function pruneInactiveProjectCatalogWindows(summaries: ThreadSummaryDatabase): void {
+  function pruneInactiveCatalogWindows(summaries: ThreadSummaryDatabase): void {
     const demanded = new Set<string>();
     for (const request of summaries.model.activeRequests()) {
-      if (request.projectCwd === undefined || request.connectionId === null) {
-        continue;
-      }
-      if (request.recentLimit > 0) {
-        demanded.add(catalogWindowKey(request.connectionId, false, request.projectCwd));
-      }
-      if (request.archivedLimit > 0) {
-        demanded.add(catalogWindowKey(request.connectionId, true, request.projectCwd));
+      const connectionIds =
+        request.connectionId === null ? enabledConnectionIds() : [request.connectionId];
+      for (const connectionId of connectionIds) {
+        if (request.projectCwd !== undefined && request.recentLimit > 0) {
+          demanded.add(catalogWindowKey(connectionId, false, request.projectCwd));
+        }
+        if (request.archivedLimit > 0) {
+          demanded.add(catalogWindowKey(connectionId, true, request.projectCwd));
+        }
       }
     }
     for (const [key, window] of threadCatalogWindows) {
-      // Only project scopes are view-owned; the two global windows repair the
-      // connection catalog independently of whether the sidebar is mounted.
-      if (!key.includes("\u0000", key.indexOf("\u0000") + 1) || demanded.has(key)) {
+      const separator = key.indexOf("\u0000");
+      const connectionId = key.slice(0, separator);
+      // The global active catalog repairs the primary list independently. Archive
+      // and project windows exist only while a matching view requests them.
+      if (key === catalogWindowKey(connectionId, false) || demanded.has(key)) {
         continue;
       }
       window.close();
@@ -242,7 +245,7 @@ export function createCatalogRuntime({
 
   function bindSummaryDemand(summaries: ThreadSummaryDatabase): void {
     summaries.setCatalogLoader(async (request) => {
-      pruneInactiveProjectCatalogWindows(summaries);
+      pruneInactiveCatalogWindows(summaries);
       const connectionIds =
         request.connectionId === null ? enabledConnectionIds() : [request.connectionId];
       await Promise.all(
@@ -283,6 +286,11 @@ export function createCatalogRuntime({
   }
   function refreshConnectionWindows(connectionId: string): void {
     catalogSummaryModel.invalidate(connectionId);
+    const summaries = getSummaries();
+    if (summaries === null) {
+      return;
+    }
+    pruneInactiveCatalogWindows(summaries);
     for (const [key, window] of threadCatalogWindows) {
       if (key.startsWith(`${connectionId}\u0000`)) {
         void window.refresh().catch(() => undefined);

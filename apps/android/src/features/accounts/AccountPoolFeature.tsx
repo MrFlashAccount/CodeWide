@@ -8,6 +8,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
+import { AppListRow } from "../../ui/AppListRow";
+import { listRowHeight } from "../../ui/AppListRow.types";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AccountPoolFeature.styles";
 
@@ -16,6 +18,7 @@ export function AccountPoolEditor({
   connectionId,
   onActivate,
   onCancelLogin,
+  onConsumeResetCredit,
   onRefresh,
   onRemove,
   onStartLogin,
@@ -54,6 +57,12 @@ export function AccountPoolEditor({
       },
     );
   });
+  const refreshAccounts = useEvent(() => {
+    run(async () => onRefresh(connectionId));
+  });
+  const startAddingAccount = useEvent(() => {
+    run(addAccount);
+  });
   return (
     <>
       <View style={styles.accountPoolEditor}>
@@ -67,9 +76,7 @@ export function AccountPoolEditor({
           <Pressable
             accessibilityLabel="Refresh Codex accounts"
             disabled={busy}
-            onPress={() => {
-              run(async () => onRefresh(connectionId));
-            }}
+            onPress={refreshAccounts}
             style={[styles.connectionMiniButton, busy && styles.disabled]}
           >
             {busy ? (
@@ -86,6 +93,10 @@ export function AccountPoolEditor({
               : "No Codex accounts connected."}
           </Text>
         )}
+        {accountPool?.allExhausted === true && (
+          <Text style={styles.errorText}>All configured accounts are exhausted.</Text>
+        )}
+        {error !== null && <Text style={styles.errorText}>{error}</Text>}
         {profiles.map((profile, index) => (
           <AccountProfileRow
             busy={busy}
@@ -94,27 +105,23 @@ export function AccountPoolEditor({
             index={index}
             key={profile.id}
             onActivate={onActivate}
+            onConsumeResetCredit={onConsumeResetCredit}
             onRemove={onRemove}
             onUpdate={onUpdate}
             profile={profile}
             run={run}
           />
         ))}
-        {accountPool?.allExhausted === true && (
-          <Text style={styles.errorText}>All configured accounts are exhausted.</Text>
-        )}
-        {error !== null && <Text style={styles.errorText}>{error}</Text>}
-        <Pressable
-          accessibilityRole="button"
+        <AppListRow
+          accessibilityLabel="Add Codex account"
           disabled={busy}
-          onPress={() => {
-            run(addAccount);
-          }}
-          style={[styles.secondaryButton, styles.accountPoolAddButton, busy && styles.disabled]}
-        >
-          <Ionicons color={colors.text} name="person-add-outline" size={iconSize.inline} />
-          <Text style={styles.secondaryButtonText}>Add Codex account</Text>
-        </Pressable>
+          fixedHeight={listRowHeight.single}
+          leadingIcon={{ color: colors.textMuted, name: "add", size: iconSize.action }}
+          onPress={startAddingAccount}
+          position={profiles.length === 0 ? "only" : "last"}
+          testID="add-codex-account"
+          title="Add Codex account"
+        />
       </View>
       {pendingAccountLogin !== null && (
         <AccountLoginSheet

@@ -1,4 +1,8 @@
 import { StyleSheet } from "react-native";
+import {
+  filterIconButtonDotLayout,
+  filterIconButtonPressed,
+} from "../../presentation/input/filterIconButtonLayout";
 import { searchFieldLayout } from "../../presentation/input/searchLayout";
 import { colors, controlSize, radii, spacing, typeScale } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
@@ -17,6 +21,15 @@ export const styles = StyleSheet.create({
     color: colors.textDim,
     flexShrink: 0,
   },
+  clearButton: {
+    alignItems: "center",
+    borderRadius: radii.large,
+    flexShrink: 0,
+    height: controlSize.regular,
+    justifyContent: "center",
+    marginLeft: spacing.xs,
+    width: controlSize.regular,
+  },
   empty: {
     gap: spacing.sm,
     padding: spacing.md,
@@ -26,23 +39,9 @@ export const styles = StyleSheet.create({
     color: colors.error,
     margin: spacing.md,
   },
-  filterButton: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainerLow,
-    borderRadius: radii.large,
-    flexShrink: 0,
-    justifyContent: "center",
-    minHeight: controlSize.touch,
-    width: controlSize.touch,
-  },
   filterDot: {
+    ...filterIconButtonDotLayout,
     backgroundColor: colors.primary,
-    borderRadius: radii.pill,
-    height: spacing.xs,
-    position: "absolute",
-    right: spacing.xs,
-    top: spacing.xs,
-    width: spacing.xs,
   },
   filterHeader: {
     alignItems: "center",
@@ -62,13 +61,7 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.warningContainer,
     color: colors.text,
   },
-  icon: {
-    alignItems: "center",
-    flexShrink: 0,
-    height: controlSize.regular,
-    justifyContent: "center",
-    width: controlSize.regular,
-  },
+  iconButtonPressed: filterIconButtonPressed,
   input: {
     flex: 1,
     height: controlSize.regular,
@@ -132,6 +125,12 @@ export const styles = StyleSheet.create({
   root: {
     flex: 1,
     minHeight: 0,
+  },
+  screenTitle: {
+    ...typeScale.title,
+    color: colors.text,
+    flex: 1,
+    minWidth: 0,
   },
   searchBar: {
     ...searchFieldLayout,

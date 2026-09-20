@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../src/components/navigation/RouteUnavailable";
 import { ProjectPickerSheet } from "../../../../src/features/projects/ProjectPickerSheet";
@@ -11,6 +11,7 @@ const EMPTY_PROJECTS: never[] = [];
 /** Composes one server-qualified project directory browser. */
 export default function V1AddProjectRoute(): React.JSX.Element {
   const router = useRouter();
+  const visible = useIsFocused();
   const { connectionId } = useLocalSearchParams<{ connectionId?: string | string[] }>();
   const parsed = connectionIdParam(connectionId);
   const resources = useWorkspaceRouteResources();
@@ -49,7 +50,7 @@ export default function V1AddProjectRoute(): React.JSX.Element {
         return Promise.resolve();
       }}
       projects={EMPTY_PROJECTS}
-      visible
+      visible={visible}
     />
   );
 }

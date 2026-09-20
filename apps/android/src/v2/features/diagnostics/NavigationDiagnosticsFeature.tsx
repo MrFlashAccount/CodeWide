@@ -26,6 +26,9 @@ export function NavigationDiagnosticsFeature(
   );
   const [heapBusy, setHeapBusy] = useState(false);
   const [heapMessage, setHeapMessage] = useState("Full retained object graph");
+  const [hermesMessage, setHermesMessage] = useState(
+    "Samples JavaScript only during the next chat switch",
+  );
   const profile = profiles.active ?? profiles.last;
   const openTimeline = useEvent(() => {
     if (profile === null) return;
@@ -43,6 +46,17 @@ export function NavigationDiagnosticsFeature(
       fileName: `${profile.id}.cpuprofile`,
       title: "Hermes CPU profile",
     });
+  });
+  const armHermes = useEvent(() => {
+    setHermesMessage("Arming…");
+    void props.source
+      .armHermesProfile()
+      .then(() => setHermesMessage("Armed for the next chat switch"))
+      .catch((cause: unknown) =>
+        setHermesMessage(
+          cause instanceof Error ? cause.message : "Could not arm the Hermes profiler",
+        ),
+      );
   });
   const copy = useEvent(() => {
     if (profile !== null) {
@@ -67,13 +81,15 @@ export function NavigationDiagnosticsFeature(
   const frameSummary =
     current === null
       ? "collecting frames"
-      : `${diagnosticDecimal(current.renderedFps)} fps · p95 ${diagnosticDecimal(current.p95FrameMs)} ms · ${diagnosticDecimal(current.jankPercent)}% jank · ${diagnosticBytes(current.pssBytes)}`;
+      : `${diagnosticDecimal(current.renderedFps)} fps · CPU ${diagnosticDecimal(current.cpuPercent)}% · RSS ${diagnosticBytes(current.rssBytes)}`;
   if (!props.metrics.enabled) return null;
   return (
     <NavigationPerformanceHud
       frameSummary={frameSummary}
       heapBusy={heapBusy}
       heapMessage={heapMessage}
+      hermesMessage={hermesMessage}
+      onArmHermes={armHermes}
       onCaptureHeap={captureHeap}
       onCopy={copy}
       onOpenHermes={openHermes}

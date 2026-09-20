@@ -1,7 +1,5 @@
 import { KeyboardController } from "react-native-keyboard-controller";
 import { appLogger } from "../../observability/logger";
-import type { ThreadDetailDatabase } from "../../data/thread-detail-database";
-import type { ThreadUiStateDatabase } from "../../data/thread-ui-state-database";
 import { recordTiming } from "../../data/operational-metrics";
 import {
   beginThreadNavigation,
@@ -21,7 +19,6 @@ import {
 } from "./threadRouteParams";
 
 export type ThreadNavigationReadCapability = {
-  readonly native: boolean;
   readonly observeThread: (
     connectionId: string,
     threadId: string,
@@ -31,8 +28,6 @@ export type ThreadNavigationReadCapability = {
     connectionId: string,
     query: SearchContextQuery,
   ) => Promise<SearchConversationPage>;
-  readonly threadDetails: ThreadDetailDatabase | null;
-  readonly threadUiStateDatabase: ThreadUiStateDatabase | null;
 };
 
 export type V1ThreadRouter = {
@@ -46,50 +41,42 @@ export type V1ThreadRouter = {
     destination: ReturnType<typeof v1ThreadDestination>,
     searchWindowId?: string,
   ) => void;
-  readonly selectionMode: "push" | "replace";
+  readonly reset: (
+    destination: ReturnType<typeof v1ThreadDestination>,
+    searchWindowId?: string,
+  ) => void;
+  readonly searchSelectionMode: "push" | "reset";
+  readonly selectionMode: "push" | "replace" | "reset";
 };
 
 /** Qualified thread navigation commands consumed by the mounted workspace. */
 export type ThreadNavigationService = {
   readonly closeActiveThread: () => void;
   readonly openSearchThread: (target: LocatedSearchHit, query: string) => void;
-  readonly preloadThread: (selectionKey: string) => (() => void) | undefined;
   readonly selectThread: (selectionKey: string | null) => void;
 };
 
-const generations = new Map<string, number>();
-
 type OpenThreadInput = {
-  readonly mode: "push" | "replace";
+  readonly mode: "push" | "replace" | "reset";
   readonly navigationId?: string;
   readonly params: V1ThreadRouteParams;
   readonly searchWindowId?: string;
 };
 
-function routeKey(params: V1ThreadRouteParams): string {
-  return threadSelectionKey({
-    id: params.threadId.value,
-    serverId: params.connectionId.value,
-  });
+function isCurrentThread(
+  current: V1ThreadRouteParams | null,
+  params: V1ThreadRouteParams,
+): boolean {
+  return (
+    current?.connectionId.value === params.connectionId.value &&
+    current.threadId.value === params.threadId.value
+  );
 }
 
-function nextGeneration(params: V1ThreadRouteParams): number {
-  const key = routeKey(params);
-  const next = (generations.get(key) ?? 0) + 1;
-  generations.set(key, next);
-  return next;
-}
-
-/** Returns the current explicit open/reload generation for a qualified thread route. */
-export function threadRouteGeneration(params: V1ThreadRouteParams): number {
-  return generations.get(routeKey(params)) ?? 0;
-}
-
-/** Preserves V1 observer, presentation, IME, preload, and timing order around Router commands. */
+/** Preserves V1 observer, IME, and timing order around Router commands. */
 export function useThreadNavigationService(
   remote: ThreadNavigationReadCapability,
   router: V1ThreadRouter,
-  setActiveConnection: (connectionId: string) => void,
 ): ThreadNavigationService {
   const open = useEvent(({ mode, navigationId, params, searchWindowId }: OpenThreadInput): void => {
     const current = router.currentThread;
@@ -109,14 +96,8 @@ export function useThreadNavigationService(
     });
     if (changed) {
       void KeyboardController.dismiss({ animated: false, keepFocus: false }).catch(() => undefined);
-      remote.threadDetails?.chat.beginPresentation(
-        params.connectionId.value,
-        params.threadId.value,
-      );
     }
     const startedAt = performance.now();
-    nextGeneration(params);
-    setActiveConnection(params.connectionId.value);
     router[mode](v1ThreadDestination(params), searchWindowId);
     requestAnimationFrame(() => {
       const elapsed = performance.now() - startedAt;
@@ -149,16 +130,13 @@ export function useThreadNavigationService(
       return;
     }
     const navigationId = beginThreadNavigation(params.connectionId.value, params.threadId.value);
-    // Frame tracing is telemetry-only work and does not control route admission.
-    void beginNavigationFrameTrace(navigationId).catch(() => undefined);
-    const current = router.currentThread;
-    const same =
-      current !== null &&
-      current.connectionId.value === params.connectionId.value &&
-      current.threadId.value === params.threadId.value;
+    if (navigationId !== null) {
+      // Frame tracing is explicitly armed diagnostic work and does not control route admission.
+      void beginNavigationFrameTrace(navigationId).catch(() => undefined);
+    }
     open({
-      mode: same ? "replace" : router.selectionMode,
-      navigationId,
+      mode: isCurrentThread(router.currentThread, params) ? "replace" : router.selectionMode,
+      ...(navigationId === null ? {} : { navigationId }),
       params,
     });
   });
@@ -179,58 +157,14 @@ export function useThreadNavigationService(
       target,
     });
     open({
-      mode: router.selectionMode,
+      mode: router.searchSelectionMode,
       params,
       ...(searchWindowId === null ? {} : { searchWindowId }),
-    });
-  });
-
-  const preloadThread = useEvent((selectionKey: string): (() => void) | undefined => {
-    const params = parseThreadSelectionKey(selectionKey);
-    if (params === null || !canPreloadThread(remote, router.currentThread, params)) {
-      return undefined;
-    }
-    // Observer preloading is background work and this handler consumes every rejection.
-    void remote.observeThread(params.connectionId.value, params.threadId.value, false).catch(() => {
-      appLogger.warn({
-        event: "thread.observer_preload.failed",
-        fields: {
-          connectionId: params.connectionId.value,
-          threadId: params.threadId.value,
-        },
-      });
-    });
-    const uiState = remote.threadUiStateDatabase.get(
-      params.connectionId.value,
-      params.threadId.value,
-    );
-    return remote.threadDetails.preloadWindow({
-      anchorTurnId: uiState?.historyAnchorTurnId ?? null,
-      connectionId: params.connectionId.value,
-      openGeneration: threadRouteGeneration(params) + 1,
-      threadId: params.threadId.value,
     });
   });
 
   const closeActiveThread = useEvent((): void => {
     router.dismissToAll();
   });
-  return { closeActiveThread, openSearchThread, preloadThread, selectThread };
-}
-
-function canPreloadThread(
-  remote: ThreadNavigationReadCapability,
-  current: V1ThreadRouteParams | null,
-  params: V1ThreadRouteParams,
-): remote is ThreadNavigationReadCapability & {
-  readonly threadDetails: ThreadDetailDatabase;
-  readonly threadUiStateDatabase: ThreadUiStateDatabase;
-} {
-  if (!remote.native || remote.threadDetails === null || remote.threadUiStateDatabase === null) {
-    return false;
-  }
-  return !(
-    current?.connectionId.value === params.connectionId.value &&
-    current.threadId.value === params.threadId.value
-  );
+  return { closeActiveThread, openSearchThread, selectThread };
 }

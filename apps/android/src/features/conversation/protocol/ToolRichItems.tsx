@@ -3,12 +3,13 @@ import { renderToolImage } from "./toolImages";
 /** V1 ToolContent owner, extracted without changing interaction or resource lifetime. */
 import { Linking, Pressable, View } from "react-native";
 import { isSafeHttpUrl } from "../../../rendering/http-link";
-import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
+import { occurrenceKey } from "../../../rendering/listKey";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { colors } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
 import { recordValue } from "./protocolValue";
+import { toolRichItemIdentity } from "./protocolItemIdentity";
 import { styles } from "./ToolContent.styles";
 
 import type { ComponentType } from "react";
@@ -43,7 +44,7 @@ export function renderToolRichItems(
   return (
     <View style={styles.protocolBody}>
       {items.map((raw, index) => {
-        const key = occurrenceKey(occurrences, toolRichItemIdentity(raw));
+        const key = occurrenceKey(occurrences, toolRichItemIdentity(raw, index));
         if (!isProtocolRecord(raw)) {
           return (
             <LazyJsonProtocolBody key={key} section={`${section}:${String(index)}`} value={raw} />
@@ -134,28 +135,4 @@ export function renderToolRichItems(
       })}
     </View>
   );
-}
-
-function toolRichItemIdentity(value: unknown): string {
-  if (!isProtocolRecord(value)) {
-    return `${typeof value}:${textFingerprint(String(value))}`;
-  }
-  const type = typeof value.type === "string" ? value.type : "record";
-  for (const field of [
-    "id",
-    "uri",
-    "url",
-    "imageUrl",
-    "image_url",
-    "text",
-    "data",
-    "name",
-  ] as const) {
-    const fieldValue = value[field];
-    if (typeof fieldValue === "string") {
-      return `${type}:${field}:${textFingerprint(fieldValue)}`;
-    }
-  }
-  const asset = recordValue(value.codewideAsset);
-  return typeof asset.id === "string" ? `${type}:asset:${asset.id}` : type;
 }

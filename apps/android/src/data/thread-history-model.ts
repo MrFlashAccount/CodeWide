@@ -6,7 +6,6 @@ import type { ThreadHistoryState } from "./thread-pagination";
 
 export type ThreadHistoryCursor = Omit<ThreadHistoryState, "status" | "error"> & {
   connectionId: string;
-  generation: number;
   id: string;
   threadId: string;
 };

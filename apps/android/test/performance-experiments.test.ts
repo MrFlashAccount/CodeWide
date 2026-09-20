@@ -12,7 +12,7 @@ describe("session-only performance experiments", () => {
   afterEach(resetPerformanceExperimentsForTests);
 
   it("starts safe and changes only the selected subsystem", () => {
-    expect(Object.values(performanceExperimentSnapshot())).toEqual([false, false, false, false, false]);
+    expect(Object.values(performanceExperimentSnapshot()).every((enabled) => !enabled)).toBe(true);
 
     setPerformanceExperiment("plainTextMarkdown", true);
 
@@ -28,6 +28,6 @@ describe("session-only performance experiments", () => {
     setPerformanceExperiment("reduceCustomMotion", true);
     resetPerformanceExperiments();
 
-    expect(Object.values(performanceExperimentSnapshot())).toEqual([false, false, false, false, false]);
+    expect(Object.values(performanceExperimentSnapshot()).every((enabled) => !enabled)).toBe(true);
   });
 });

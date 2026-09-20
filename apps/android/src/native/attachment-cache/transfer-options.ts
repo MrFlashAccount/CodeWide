@@ -3,3 +3,10 @@ export interface CachedTransferOptions {
   identity: string;
   scope: string;
 }
+
+export interface CachedSourceRequest {
+  headers: Record<string, string>;
+  options: CachedTransferOptions;
+  signal?: AbortSignal | undefined;
+  uri: string;
+}

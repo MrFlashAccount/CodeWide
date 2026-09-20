@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import type { ReactElement, ReactNode } from "react";
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 
 import { colors, controlSize, layoutSize, radii, spacing, typeScale, typeWeight } from "../theme";
 import { productFonts } from "../ui/product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../ui/typography-policy";
+import { TwoRowHorizontalScroller } from "./TwoRowHorizontalScroller";
 
 interface MessageAttachmentTileProps {
   readonly bytes?: number;
@@ -14,15 +15,18 @@ interface MessageAttachmentTileProps {
 }
 
 interface MessageAttachmentGridProps {
-  readonly children: ReactNode;
+  readonly children: readonly ReactElement[];
+  readonly style?: StyleProp<ViewStyle>;
 }
 
-/** At most two fixed-width tiles; Yoga wraps them when the bubble is narrower. */
+/** Shows at most two attachment rows while additional columns scroll horizontally. */
 export function MessageAttachmentGrid(props: MessageAttachmentGridProps) {
   return (
-    <View style={styles.grid} testID="message-attachment-grid">
-      {props.children}
-    </View>
+    <TwoRowHorizontalScroller
+      items={props.children}
+      style={[styles.grid, props.style]}
+      testID="message-attachment-grid"
+    />
   );
 }
 
@@ -74,12 +78,10 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   grid: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    maxWidth: layoutSize.attachmentTile * 2 + spacing.xs,
+    alignSelf: "center",
+    maxWidth: "100%",
     minWidth: 0,
+    width: layoutSize.attachmentTile,
   },
   name: {
     ...typeScale.label,
@@ -96,9 +98,9 @@ const styles = StyleSheet.create({
   tile: {
     alignItems: "center",
     backgroundColor: colors.surfaceContainerHigh,
-    borderRadius: radii.small,
+    borderRadius: radii.selected,
     flexDirection: "row",
-    flexShrink: 1,
+    flexShrink: 0,
     gap: spacing.xs,
     maxWidth: "100%",
     minHeight: controlSize.touch,

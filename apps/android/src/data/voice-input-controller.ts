@@ -8,6 +8,10 @@ import {
 } from "../native/native-transport";
 import { insertTranscriptAtSelection, type DraftSelection } from "./voice-draft";
 import { transcriptionLanguageHint } from "./transcription-language";
+import {
+  createV1MicrophoneLeaseRegistry,
+  type V1MicrophoneLeaseRegistry,
+} from "./v1MicrophoneLease";
 import type { VoiceInputRow, WorkspaceResourceDatabase } from "./workspace-resource-database";
 
 export type VoiceTranscriptionOptions = {
@@ -17,6 +21,13 @@ export type VoiceTranscriptionOptions = {
     source: "voice_recognition" | "voice_communication" | "mic";
   };
   language?: string;
+};
+
+type AndroidFallbackRequest = {
+  readonly binding: VoiceBinding;
+  readonly operation: number;
+  readonly releaseMicrophone: () => void;
+  readonly renderTranscript: (text: string) => void;
 };
 
 export type VoiceTranscriptionEvent =
@@ -63,6 +74,11 @@ type VoiceBinding = {
   updateDraft: (text: string) => void;
 };
 
+type AppLockDictationState =
+  | { readonly status: "inactive" }
+  | { readonly scope: string; readonly status: "paused" }
+  | { readonly scope: string; readonly status: "resumeAllowed" };
+
 const IDLE_VOICE = {
   backend: "remote" as const,
   error: null,
@@ -75,6 +91,8 @@ const IDLE_VOICE = {
 
 const VOICE_SESSION_START_RETRIES = 3;
 const VOICE_SESSION_START_RETRY_BASE_MS = 250;
+const VOICE_ERROR_VISIBLE_MS = 3000;
+let compatibilityLeaseSequence = 0;
 
 /**
  * Process owner for the single Android microphone. React binds callbacks and
@@ -83,6 +101,7 @@ const VOICE_SESSION_START_RETRY_BASE_MS = 250;
  */
 export class VoiceInputController {
   private readonly resources: WorkspaceResourceDatabase;
+  private readonly microphoneLeases: V1MicrophoneLeaseRegistry;
   private binding: VoiceBinding | null = null;
   private activeBinding: VoiceBinding | null = null;
   private retryBinding: VoiceBinding | null = null;
@@ -93,6 +112,7 @@ export class VoiceInputController {
   private finishPromise: Promise<void> | null = null;
   private readonly levelByScope = new Map<string, number>();
   private readonly levelSubscribers = new Map<string, Set<() => void>>();
+  private readonly errorTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private operation = 0;
   // A recording survives recoverable attempts, but never an explicit discard.
   private recording: AbortController | null = null;
@@ -102,9 +122,16 @@ export class VoiceInputController {
   private transcribedDraft: string | null = null;
   private originalDraft: string | null = null;
   private capturedAudioChunks = 0;
+  private appLockDictation: AppLockDictationState = { status: "inactive" };
 
-  constructor(resources: WorkspaceResourceDatabase) {
+  constructor(
+    resources: WorkspaceResourceDatabase,
+    microphoneLeases: V1MicrophoneLeaseRegistry = createV1MicrophoneLeaseRegistry(
+      () => `dictation-compatibility-${String(++compatibilityLeaseSequence)}`,
+    ),
+  ) {
     this.resources = resources;
+    this.microphoneLeases = microphoneLeases;
   }
 
   /**
@@ -131,6 +158,14 @@ export class VoiceInputController {
     this.binding = binding;
     if (!this.resources.voiceInputs.has(binding.scope)) {
       this.put(binding.scope, IDLE_VOICE);
+    }
+    if (
+      this.appLockDictation.status === "resumeAllowed" &&
+      this.appLockDictation.scope === binding.scope
+    ) {
+      void this.resumeAppLockDictation(binding).catch(() => {
+        this.patch(binding.scope, { error: "Could not resume voice input" });
+      });
     }
   }
 
@@ -183,23 +218,51 @@ export class VoiceInputController {
     }
     this.put(binding.scope, { ...IDLE_VOICE, phase: "starting" });
     this.activeBinding = binding;
+    const acquisition = await this.microphoneLeases.acquireDictation(binding.scope);
+    if (acquisition.status === "busy") {
+      this.activeBinding = null;
+      this.recording = null;
+      this.resetUi(binding.scope, { error: "Microphone is already in use" });
+      return;
+    }
+    const microphoneLease = acquisition.lease;
+    const releaseMicrophone = (): void => {
+      void microphoneLease.release().catch((error: unknown) => {
+        if (operation === this.operation) {
+          this.patch(binding.scope, {
+            error: `Could not return microphone: ${messageOf(error)}`,
+          });
+        }
+      });
+    };
+    if (operation !== this.operation || recording.signal.aborted) {
+      releaseMicrophone();
+      return;
+    }
     const source = binding.source();
     this.originalDraft = source;
     const selection = binding.selection();
     this.transcribedDraft = source;
-    const renderVoiceTranscript = (transcript: string) => {
+    const renderVoiceTranscript = (transcript: string, publishDraft = true) => {
       if (recording.signal.aborted) {
         return;
       }
       const insertion = insertTranscriptAtSelection(source, selection, transcript);
       this.insertionCursor = insertion.cursor;
       this.transcribedDraft = insertion.text;
-      binding.updateDraft(insertion.text);
+      if (publishDraft) {
+        binding.updateDraft(insertion.text);
+      }
     };
     this.insertionCursor = Math.max(0, Math.min(source.length, selection.start));
     this.sendAfterFinish = null;
     if (binding.startRemote === undefined) {
-      await this.startAndroidFallback(binding, operation, renderVoiceTranscript);
+      await this.startAndroidFallback({
+        binding,
+        operation,
+        releaseMicrophone,
+        renderTranscript: renderVoiceTranscript,
+      });
       return;
     }
     const completedSegments: string[] = [];
@@ -207,13 +270,15 @@ export class VoiceInputController {
     let streamingSession: VoiceTranscriptionSession | null = null;
     let startSession: (() => Promise<VoiceTranscriptionSession>) | null = null;
     const pendingAudio: CapturedAudioChunk[] = [];
-    const renderTranscript = () => {
+    const renderTranscript = (publishDraft = true) => {
       renderVoiceTranscript(
         [...completedSegments, activeTranscript].filter((part) => part.trim() !== "").join(" "),
+        publishDraft,
       );
     };
     try {
       const capture = await startPcmCapture(
+        { purpose: "dictation", token: microphoneLease.token },
         (chunk) => {
           if (operation !== this.operation || recording.signal.aborted) {
             return;
@@ -236,12 +301,24 @@ export class VoiceInputController {
         },
       );
       if (operation !== this.operation) {
-        Promise.resolve(capture.stop()).catch((error: unknown) => {
-          this.patch(binding.scope, { error: `Could not stop microphone: ${messageOf(error)}` });
-        });
+        Promise.resolve(capture.stop())
+          .catch((error: unknown) => {
+            this.patch(binding.scope, { error: `Could not stop microphone: ${messageOf(error)}` });
+          })
+          .finally(() => {
+            void microphoneLease.release().catch(() => undefined);
+          });
         return;
       }
-      this.stopCapture = capture.stop;
+      this.stopCapture = async () => {
+        try {
+          await capture.stop();
+        } finally {
+          // Capture is already closed. Reconnecting the assistant must not delay
+          // transcript finalization or the user's Send/Stop feedback.
+          releaseMicrophone();
+        }
+      };
       this.patch(binding.scope, { phase: "recording", seconds: 0 });
       const listener = (event: VoiceTranscriptionEvent) => {
         if (recording.signal.aborted) {
@@ -255,7 +332,11 @@ export class VoiceInputController {
             completedSegments.push(event.text.trim());
           }
           activeTranscript = "";
-          renderTranscript();
+          // Finish + Send owns the final transcript directly. Publishing it to
+          // the native rich editor immediately before submission clears the
+          // draft creates a setValue(final) -> setValue("") race; a delayed
+          // native change callback can then resurrect or repeat sent text.
+          renderTranscript(this.sendAfterFinish === null && this.retrySendAfter === null);
         } else if (event.type === "error") {
           this.failOperation(binding.scope, event.message);
         } else {
@@ -291,6 +372,7 @@ export class VoiceInputController {
         session.appendAudio(chunk);
       }
     } catch (error) {
+      releaseMicrophone();
       if (operation !== this.operation) {
         return;
       }
@@ -315,6 +397,43 @@ export class VoiceInputController {
       if (this.activeBinding === binding) {
         this.activeBinding = null;
       }
+    }
+  }
+
+  /** Ends protected capture into its draft; only successful app unlock may resume it. */
+  async pauseForAppLock(): Promise<void> {
+    const binding = this.activeBinding;
+    if (binding === null) {
+      await this.finishPromise;
+      return;
+    }
+    const state = this.state(binding.scope);
+    if (state.phase === "starting") {
+      this.appLockDictation = { scope: binding.scope, status: "paused" };
+      await this.discard(binding.scope);
+      return;
+    }
+    if (state.phase === "finishing") {
+      await this.finishPromise;
+      return;
+    }
+    this.appLockDictation = { scope: binding.scope, status: "paused" };
+    await this.finish(binding.scope, false);
+    if (this.appLockDictation.scope === binding.scope && this.state(binding.scope).retryAvailable) {
+      this.appLockDictation = { status: "inactive" };
+    }
+  }
+
+  /** Resumes only the dictation that biometric lock interrupted, never an already-finished input. */
+  async resumeAfterAppUnlock(): Promise<void> {
+    if (this.appLockDictation.status !== "paused") {
+      return;
+    }
+    const scope = this.appLockDictation.scope;
+    this.appLockDictation = { scope, status: "resumeAllowed" };
+    const binding = this.binding;
+    if (binding?.scope === scope) {
+      await this.resumeAppLockDictation(binding);
     }
   }
 
@@ -595,11 +714,12 @@ export class VoiceInputController {
     }
   }
 
-  private async startAndroidFallback(
-    binding: VoiceBinding,
-    operation: number,
-    renderTranscript: (text: string) => void,
-  ): Promise<void> {
+  private async startAndroidFallback({
+    binding,
+    operation,
+    releaseMicrophone,
+    renderTranscript,
+  }: AndroidFallbackRequest): Promise<void> {
     try {
       const stop = await startVoiceRecognition((event) => {
         if (operation !== this.operation) {
@@ -628,11 +748,19 @@ export class VoiceInputController {
       });
       if (operation !== this.operation) {
         stop();
+        releaseMicrophone();
         return;
       }
-      this.stopCapture = stop;
+      this.stopCapture = () => {
+        try {
+          stop();
+        } finally {
+          releaseMicrophone();
+        }
+      };
       this.patch(binding.scope, { backend: "android", phase: "recording" });
     } catch (error) {
+      releaseMicrophone();
       if (operation !== this.operation) {
         return;
       }
@@ -641,6 +769,17 @@ export class VoiceInputController {
         this.activeBinding = null;
       }
     }
+  }
+
+  private async resumeAppLockDictation(binding: VoiceBinding): Promise<void> {
+    if (
+      this.appLockDictation.status !== "resumeAllowed" ||
+      this.appLockDictation.scope !== binding.scope
+    ) {
+      return;
+    }
+    this.appLockDictation = { status: "inactive" };
+    await this.toggle(binding.scope);
   }
 
   private failOperation(scope: string, message: string): void {
@@ -719,6 +858,25 @@ export class VoiceInputController {
 
   private put(scope: string, value: Omit<VoiceInputRow, "id" | "scope" | "updatedAt">): void {
     this.resources.putVoiceInput({ id: scope, scope, ...value });
+    const previousTimer = this.errorTimers.get(scope);
+    if (previousTimer !== undefined) {
+      clearTimeout(previousTimer);
+      this.errorTimers.delete(scope);
+    }
+    if (value.error === null) {
+      return;
+    }
+    const error = value.error;
+    const timer = setTimeout(() => {
+      if (this.errorTimers.get(scope) !== timer) {
+        return;
+      }
+      this.errorTimers.delete(scope);
+      if (this.state(scope).error === error) {
+        this.patch(scope, { error: null });
+      }
+    }, VOICE_ERROR_VISIBLE_MS);
+    this.errorTimers.set(scope, timer);
   }
 }
 

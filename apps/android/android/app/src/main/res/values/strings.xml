@@ -2,6 +2,6 @@
   <string name="app_name">CodeWide</string>
   <string name="expo_system_ui_user_interface_style" translatable="false">dark</string>
   <string name="voice_capture_notification_channel">Voice input</string>
-  <string name="voice_capture_notification_title">Listening for voice input</string>
-  <string name="voice_capture_notification_text">CodeWide is recording your message</string>
+  <string name="voice_capture_notification_title">Voice session is active</string>
+  <string name="voice_capture_notification_text">CodeWide is using the microphone</string>
 </resources>

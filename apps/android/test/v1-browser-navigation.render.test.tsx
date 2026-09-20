@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react-native";
-import { useBrowserNavigationState } from "../src/features/ports/browser/browserNavigationState";
+import { useBrowserNavigationState } from "../src/features/browser/browserNavigationState";
 
 it("retains native navigation identity through redirects and resets only an explicit caller destination", () => {
   const hook = renderHook(({url}) => useBrowserNavigationState(url), {initialProps:{url:"https://example.com/start"}});

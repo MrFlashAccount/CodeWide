@@ -1,12 +1,12 @@
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import type { Dispatch, ReactElement, RefObject, SetStateAction } from "react";
+import type { View } from "react-native";
 import type { EdgeInsets } from "react-native-safe-area-context";
 import type { ThreadHistoryViewport } from "../../../data/use-thread-history-controller";
-import type {
-  ThreadTimelineListRef,
-  TimelineInitialPosition,
-} from "../../../rendering/ThreadTimelineList";
+import type { ThreadTimelineListRef } from "../../../rendering/ThreadTimelineList";
 import type { TimelineItem } from "./timelineTypes";
+import type { TimelineJumpRequest } from "./timelineJump";
+import type { TimelineRow } from "./timelineRows";
 
 /** Content, measurements, and controls owned by the timeline viewport. */
 export type TimelineViewportProps = {
@@ -15,6 +15,7 @@ export type TimelineViewportProps = {
   bottomChromeHeight: number;
   cancelScheduledPaginationTrim: () => void;
   commitInitialTimelineLoad: () => void;
+  completeTimelineJump: (requestId: number) => void;
   composerScope: string;
   conversationInsets: EdgeInsets;
   displayedTimeline: TimelineItem[];
@@ -32,6 +33,8 @@ export type TimelineViewportProps = {
   historyViewport: ThreadHistoryViewport;
   inlineQueueExpanded: boolean;
   lastTimelineOffsetYRef: { current: number | null };
+  latestUnreadAgentRef: RefObject<View | null>;
+  latestUnreadAgentTurnId: string | null;
   liveStatusVisible: boolean;
   loadNewerAtTimelineEnd: () => void;
   loadOlderAtTimelineStart: () => void;
@@ -46,12 +49,13 @@ export type TimelineViewportProps = {
   paginationEdgeLockRef: { current: "older" | "newer" | null };
   persistTimelineAtEnd: () => void;
   persistTimelineOffset: (offset: number) => void;
-  renderTimelineItem: ({ item }: LegendListRenderItemProps<TimelineItem>) => ReactElement;
+  renderTimelineItem: ({ item }: LegendListRenderItemProps<TimelineRow>) => ReactElement;
   reportHistoryViewport: () => void;
   schedulePaginationWindowTrim: () => void;
   scheduleUnreadAgentVisibilityCheck: () => void;
   scrollGestureStartedAtRef: { current: number | null };
   scrollOffsetRef: { current: number };
+  searchMessageItemId: string | null;
   setAwayFromLatest: Dispatch<SetStateAction<boolean>>;
   setTimelineGestureActive: Dispatch<SetStateAction<boolean>>;
   threadSearch: string;
@@ -60,10 +64,11 @@ export type TimelineViewportProps = {
   threadSearchVisible: boolean;
   timelineCompact: boolean;
   timelineContentHeightRef: { current: number };
-  timelineInitialPosition: TimelineInitialPosition;
+  timelineJumpRequest: TimelineJumpRequest | null;
   timelinePositioned: boolean;
   timelineRef: RefObject<ThreadTimelineListRef | null>;
   timelineViewportHeightRef: { current: number };
+  timelineViewportRef: RefObject<View | null>;
   trimPaginationWindow: () => void;
 
   windowLayout: Readonly<{

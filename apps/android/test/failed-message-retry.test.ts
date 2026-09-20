@@ -106,7 +106,10 @@ describe("failed message retry", () => {
   });
 
   it("keeps pending delivery feedback in the user text without reserving an absent footer", () => {
-    expect(ownerOptimisticTurn).toContain("pendingText={!failed}");
+    expect(ownerOptimisticTurn).toContain(
+      'const pending = !failed && item.status !== "appServerAccepted";',
+    );
+    expect(ownerOptimisticTurn).toContain("pendingText={pending}");
     expect(ownerUserMessageContent).toContain('testID="pending-user-message-shimmer"');
     expect(screen).not.toContain('testID="optimistic-turn-footer-spacer"');
     expect(ownerOptimisticTurn).toContain(
@@ -114,11 +117,10 @@ describe("failed message retry", () => {
     );
   });
 
-  it("does not describe transport acceptance as canonical delivery", () => {
+  it("distinguishes Companion transport acceptance from App Server delivery", () => {
     expect(screen).not.toContain('const delivered = item.status === "delivered";');
-    expect(screen).not.toContain('? "Sent"');
     expect(ownerOptimisticTurn).toContain('? "Checking delivery"');
-    expect(ownerOptimisticTurn).toContain('? "Running"');
+    expect(ownerOptimisticTurn).toContain('? "Sent"');
     expect(ownerOptimisticTurn).toContain(': "Accepted by Companion"');
     expect(ownerOptimisticTurn).toContain('? "Sending to Companion"');
     expect(screen).not.toContain("Sent ·");

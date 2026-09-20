@@ -42,6 +42,8 @@ it("preserves conversation protocol integration contracts", () => {
       "source: resolvedSource",
     ]),
   ).toBe(true);
+  expect(imageFrame).toContain('resizeMode="cover"');
+  expect(imageFrame).not.toContain('resizeMode="contain"');
   expect(
     sourceHasJsxElement(ownerFileChangeProtocolBlock, "NativeCodeBlock", [
       "language={nativeCodeLanguageForPath(path)}",
@@ -66,9 +68,9 @@ it("preserves conversation protocol integration contracts", () => {
   expect(thinkingStatus).toContain("minWidth: 0");
   expect(thinkingStatus).toContain("paddingHorizontal: 0");
   expect(ownerProtocolBlockStyles).toContain("thinkingStatusInActivity: { paddingLeft: 0 }");
-  expect(ownerImageProtocolBlock).toContain(
-    "usePrivateAssetUri(props.source, attempt, props.getTransferAccess)",
-  );
+  expect(ownerImageProtocolBlock).toContain("usePrivateAssetUri(props.source, {");
+  expect(ownerImageProtocolBlock).toContain("access: props.getTransferAccess");
+  expect(ownerImageProtocolBlock).toContain("revision: attempt");
   expect(ownerToolImages).toContain("privateImageAssetProjection(item.codewideAsset)");
   expect(ownerToolImages).toMatch(
     /source=\{\{(?=[^}]*id: projectedAsset\.id)(?=[^}]*kind: "content")[^}]*\}\}/u,

@@ -14,22 +14,49 @@ import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary
 import { AppText as Text } from "../../../ui/Typography";
 import { ThreadNavigationRowCommitBoundary } from "../../diagnostics/ThreadNavigationCommit";
 import { OptimisticTurn } from "../turns/OptimisticTurn";
+import { projectTurnPresentation } from "../turns/turnProjection";
 import { formatTurnMeta } from "../turns/turnPresentation";
 import { TurnTimelineItem } from "../turns/TurnTimelineItem";
+import { VirtualizedTurnTimelineItem } from "../turns/VirtualizedTurnTimelineItem";
 import type { UseThreadTimelineProps } from "./ThreadTimeline.types";
-import type { TimelineItem } from "./timelineTypes";
+import { timelineRowItem, type TimelineRow } from "./timelineRows";
 
 export function useThreadTimeline(props: UseThreadTimelineProps) {
-  const renderTimelineItem = ({ item }: LegendListRenderItemProps<TimelineItem>) => {
+  const renderTimelineItem = ({ item: timelineRow }: LegendListRenderItemProps<TimelineRow>) => {
+    const item = timelineRowItem(timelineRow);
     const boundaryKey =
-      item.kind === "turn" || item.kind === "meta" ? item.key : `${item.scope}\u0000${item.id}`;
+      timelineRow.kind === "turnSlice"
+        ? timelineRow.key
+        : item.kind === "turn" || item.kind === "meta"
+          ? item.key
+          : `${item.scope}\u0000${item.id}`;
     const boundaryContext =
       item.kind === "turn"
         ? `Thread: ${item.threadId}\nTurn: ${item.id}`
         : `Timeline item: ${boundaryKey}`;
     const usage = item.kind === "turn" ? (projectedTurnMetadata(item.turn)?.usage ?? null) : null;
     const dateLabels = props.timelineDateLabels.get(item);
-    const dateLabel = dateLabels?.before ?? null;
+    const dateLabel =
+      timelineRow.kind === "turnSlice" &&
+      timelineRow.placement !== "start" &&
+      timelineRow.placement !== "single"
+        ? null
+        : (dateLabels?.before ?? null);
+    const virtualizedSearchFocus =
+      timelineRow.kind === "turnSlice" &&
+      props.searchWindow !== null &&
+      timelineRow.item.id === props.searchWindow.target.hit.turnId
+        ? { itemId: props.searchWindow.messageItemId }
+        : null;
+    const virtualizedPresentation =
+      timelineRow.kind === "turnSlice"
+        ? projectTurnPresentation(
+            timelineRow.item,
+            virtualizedSearchFocus,
+            props.onFork !== undefined,
+            timelineRow.item.turn.status === "inProgress" && props.requestPrompt !== null,
+          )
+        : null;
     const row = (
       // The virtualized row owns one stable document identity. Recycling is off,
       // so leaving the render window unmounts this subtree instead of rebinding
@@ -67,7 +94,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                 <View
                   style={[styles.timelineItem, !props.timelineCompact && styles.timelineItemWide]}
                 >
-                  {item.kind === "turn" && (
+                  {item.kind === "turn" && timelineRow.kind === "item" && (
                     <TurnTimelineItem
                       agentDateLabel={dateLabels?.agent ?? null}
                       animateLiveUpdates={props.animateLiveUpdates}
@@ -89,6 +116,40 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                         ? {}
                         : { onLoadItems: props.loadStableTurnItems })}
                       {...(item.id === props.latestUnreadAgentTurnId
+                        ? {
+                            latestAgentRef: props.setLatestUnreadAgentNode,
+                            onLatestAgentLayout: props.scheduleUnreadAgentVisibilityCheck,
+                          }
+                        : {})}
+                    />
+                  )}
+                  {timelineRow.kind === "turnSlice" && virtualizedPresentation !== null && (
+                    <VirtualizedTurnTimelineItem
+                      agentDateLabel={dateLabels?.agent ?? null}
+                      animateLiveUpdates={props.animateLiveUpdates}
+                      compact={props.timelineCompact}
+                      forceExpanded={props.threadSearchActive}
+                      parts={timelineRow.parts}
+                      placement={timelineRow.placement}
+                      presentation={virtualizedPresentation}
+                      requestPrompt={
+                        timelineRow.item.turn.status === "inProgress" ? props.requestPrompt : null
+                      }
+                      turn={timelineRow.item}
+                      usage={usage}
+                      {...(props.getTransferAccess === undefined
+                        ? {}
+                        : { getTransferAccess: props.getStableTransferAccess })}
+                      {...(props.onFixUnsupportedBlock === undefined
+                        ? {}
+                        : { onFixUnsupportedBlock: props.fixUnsupportedBlock })}
+                      {...(props.onFork === undefined
+                        ? {}
+                        : { onForkThroughTurn: props.forkThroughTurn })}
+                      {...(props.onLoadTurnItems === undefined
+                        ? {}
+                        : { onLoadItems: props.loadStableTurnItems })}
+                      {...(timelineRow.item.id === props.latestUnreadAgentTurnId
                         ? {
                             latestAgentRef: props.setLatestUnreadAgentNode,
                             onLatestAgentLayout: props.scheduleUnreadAgentVisibilityCheck,
@@ -140,7 +201,10 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
         </View>
       </SearchMessageFocus.Provider>
     );
-    return item.kind === "turn" ? (
+    return item.kind === "turn" &&
+      (timelineRow.kind === "item" ||
+        timelineRow.placement === "start" ||
+        timelineRow.placement === "single") ? (
       <ThreadNavigationRowCommitBoundary
         connectionId={item.connectionId}
         rowKey={item.key}

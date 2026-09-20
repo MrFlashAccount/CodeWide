@@ -1,6 +1,6 @@
 import type { Thread, ThreadItem, Turn, TurnPlanStep } from "@codewide/codex-protocol/v0.147.0/v2";
 
-import { reconcileTurnItems } from "./thread-items";
+import { reconcileActiveTurnItems, reconcileTurnItems } from "./thread-items";
 import { appendCommandOutputReference } from "./command-output";
 
 export type ProjectedTurnMetadata = {
@@ -419,7 +419,11 @@ export function preserveProjectedTurnMetadata(incoming: Thread, cached: Thread |
   const cachedTurns = new Map(cached.turns.map((turn) => [turn.id, turn] as const));
   return {
     ...incoming,
-    turns: incoming.turns.map((turn) => mergeTurnMetadata(turn, cachedTurns.get(turn.id))),
+    turns: incoming.turns.map((turn) =>
+      turn.status === "inProgress"
+        ? mergeActiveTurnMetadata(turn, cachedTurns.get(turn.id))
+        : mergeTurnMetadata(turn, cachedTurns.get(turn.id)),
+    ),
   };
 }
 
@@ -494,14 +498,26 @@ function upsertTurn(thread: Thread, value: unknown): void {
 }
 
 function mergeTurnMetadata(incoming: Turn, cached: Turn | undefined): Turn {
+  return mergeTurnMetadataWithItemPolicy(incoming, cached, false);
+}
+
+function mergeActiveTurnMetadata(incoming: Turn, cached: Turn | undefined): Turn {
+  return mergeTurnMetadataWithItemPolicy(incoming, cached, true);
+}
+
+function mergeTurnMetadataWithItemPolicy(
+  incoming: Turn,
+  cached: Turn | undefined,
+  preserveLifecycle: boolean,
+): Turn {
   if (cached !== undefined
     && Array.isArray(cached.items)
     && cached.items.length > 0
     && Array.isArray(incoming.items)) {
-    incoming.items = reconcileTurnItems(
-      cached.items.map((item) => structuredClone(item)),
-      incoming.items,
-    );
+    const cachedItems = cached.items.map((item) => structuredClone(item));
+    incoming.items = preserveLifecycle
+      ? reconcileActiveTurnItems(cachedItems, incoming.items)
+      : reconcileTurnItems(cachedItems, incoming.items);
   }
   const cachedMetadata = cached === undefined ? null : projectedTurnMetadata(cached);
   const incomingMetadata = projectedTurnMetadata(incoming);

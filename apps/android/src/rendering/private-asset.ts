@@ -3,11 +3,13 @@ import { recoverPrivateAsset } from "./private-asset-recovery";
 import { materializePrivateImageUri } from "./private-image-cache";
 import {
   cachedAttachmentSource,
+  cachedAttachmentSourceFromResponse,
   retainCachedAttachment,
 } from "../native/attachment-cache/cached-transfer";
 import {
   resolvePrivateAssetRequest,
   type GetTransferAccess,
+  type PrivateAssetImageVariant,
   type PrivateAssetSource,
 } from "../data/private-transfer";
 
@@ -19,40 +21,60 @@ import {
  */
 export async function materializePrivateAsset(
   source: PrivateAssetSource,
-  getAccess: GetTransferAccess | null,
-  recoverMissing?: () => Promise<void>,
-  signal?: AbortSignal,
+  {
+    getAccess,
+    recoverMissing,
+    signal,
+    variant = "original",
+  }: {
+    getAccess: GetTransferAccess | null;
+    recoverMissing?: (() => Promise<void>) | undefined;
+    signal?: AbortSignal | undefined;
+    variant?: PrivateAssetImageVariant | undefined;
+  },
 ): Promise<{ headers: Record<string, string>; uri: string }> {
   if (source.kind === "direct") {
-    if (/^https?:/u.test(source.uri)) {
-      return cachedAttachmentSource(
-        source.uri,
-        source.headers ?? {},
-        { identity: source.uri, scope: "direct" },
-        signal,
-      );
-    }
-    const uri = await materializePrivateImageUri(source.uri, source.headers);
-    if (signal !== undefined) {
-      checkAborted(signal);
-      const release = retainCachedAttachment(uri);
-      signal.addEventListener("abort", release, { once: true });
-    }
-    return { headers: {}, uri };
+    return materializeDirectAsset(source, signal);
   }
   if (getAccess === null) {
     throw new Error("Private asset access is unavailable");
   }
   return recoverPrivateAsset(
     async (refresh) => {
-      const request = await resolvePrivateAssetRequest(source, getAccess, refresh);
-      return cachedAttachmentSource(
-        request.uri,
-        request.headers,
-        { identity: request.cacheIdentity, scope: request.cacheScope },
+      const request = await resolvePrivateAssetRequest(source, getAccess, {
+        forceRefresh: refresh,
+        imageVariant: variant,
+      });
+      const materializeSource =
+        variant === "original" ? cachedAttachmentSource : cachedAttachmentSourceFromResponse;
+      return materializeSource({
+        headers: request.headers,
+        options: { identity: request.cacheIdentity, scope: request.cacheScope },
         signal,
-      );
+        uri: request.uri,
+      });
     },
     source.kind === "content" ? (recoverMissing ?? null) : null,
   );
+}
+
+async function materializeDirectAsset(
+  source: Extract<PrivateAssetSource, { kind: "direct" }>,
+  signal: AbortSignal | undefined,
+): Promise<{ headers: Record<string, string>; uri: string }> {
+  if (/^https?:/u.test(source.uri)) {
+    return cachedAttachmentSource({
+      headers: source.headers ?? {},
+      options: { identity: source.uri, scope: "direct" },
+      signal,
+      uri: source.uri,
+    });
+  }
+  const uri = await materializePrivateImageUri(source.uri, source.headers);
+  if (signal !== undefined) {
+    checkAborted(signal);
+    const release = retainCachedAttachment(uri);
+    signal.addEventListener("abort", release, { once: true });
+  }
+  return { headers: {}, uri };
 }

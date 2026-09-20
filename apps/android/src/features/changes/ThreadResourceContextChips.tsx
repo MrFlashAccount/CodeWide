@@ -12,7 +12,7 @@ import { ActionMenu } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { ComposerContextCount, ComposerContextLabel } from "../../ui/ResourceContextChip";
-import type { ChangesPreferences } from "./changePresentation";
+import { selectChangePresentation, type ChangesPreferences } from "./changePresentation";
 import { styles } from "./ThreadResourceContextChips.styles";
 
 export function ThreadResourceContextChips({
@@ -36,7 +36,13 @@ export function ThreadResourceContextChips({
   revision: string;
 }) {
   const dialog = useAppDialog();
-  const resource = useThreadResources(model, resourceId, async () => load(), { revision });
+  const requestedScope = preferences.scope ?? undefined;
+  const resource = useThreadResources(model, resourceId, async () => load(requestedScope), {
+    revision: `${revision}:changes:${requestedScope ?? "default"}`,
+  });
+  const resourceValue = resource?.value ?? null;
+  const presentation = selectChangePresentation(resourceValue, preferences.scope);
+  const waitingForSelectedScope = resourceValue !== null && presentation.resource === null;
   const pending = (kind: "changes" | "attachments") =>
     resource === null ||
     (resource.pendingKinds === undefined
@@ -46,9 +52,9 @@ export function ThreadResourceContextChips({
     resource?.readyKinds === undefined
       ? resource?.value !== null && resource?.value !== undefined
       : resource.readyKinds.includes(kind);
-  const changesPending = pending("changes");
+  const changesPending = pending("changes") || waitingForSelectedScope;
   const attachmentsPending = pending("attachments");
-  const changesReady = ready("changes");
+  const changesReady = ready("changes") && !waitingForSelectedScope;
   const attachmentsReady = ready("attachments");
   const changesInitialLoading = changesPending && !changesReady;
   const attachmentsInitialLoading = attachmentsPending && !attachmentsReady;
@@ -60,13 +66,10 @@ export function ThreadResourceContextChips({
     (resource?.readyKinds === undefined && resource?.status === "error" ? resource.error : null);
   const changesUnavailable = changesError !== null && !changesReady;
   const attachmentsUnavailable = attachmentsError !== null && !attachmentsReady;
-  const changeCount = resource?.value?.changes.length ?? 0;
+  const changeCount = presentation.resource?.changes.length ?? 0;
   const attachmentCount = resource?.value?.attachments.length ?? 0;
-  const changeScopes = resource?.value?.changeScopes ?? ["session" as const, "lastTurn" as const];
-  const changeScope =
-    preferences.scope !== null && changeScopes.includes(preferences.scope)
-      ? preferences.scope
-      : (resource?.value?.changeScope ?? changeScopes[0] ?? "session");
+  const changeScopes = presentation.scopes;
+  const changeScope = presentation.scope;
   const changesEmpty = changesReady && changeCount === 0;
   const attachmentsEmpty = attachmentsReady && attachmentCount === 0;
   const changesLabel = changesInitialLoading

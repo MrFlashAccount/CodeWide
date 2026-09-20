@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import mimetypes
@@ -94,14 +95,36 @@ class Artifact:
 class ArtifactCatalog:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
-        self.output_root = (
-            self.repo_root / "apps/android/android/app/build/outputs/apk"
-        )
         self.archive_root = self.repo_root / "builds/android"
+        self.transport_cache_root = self.archive_root / ".transport-cache"
         self.archive_root.mkdir(parents=True, exist_ok=True)
         self._hash_cache: dict[Path, tuple[int, int, str]] = {}
         self._lock = threading.RLock()
-        self._snapshot_candidate_signature: tuple[int, int, int, int] | None = None
+
+    def gzip_path(self, artifact: Artifact) -> Path:
+        """Return a deterministic cached gzip representation for full downloads."""
+        destination = self.transport_cache_root / f"{artifact.sha256}.apk.gz"
+        with self._lock:
+            if destination.is_file():
+                return destination
+            self.transport_cache_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            partial = destination.with_suffix(f".gz.{os.getpid()}.partial")
+            try:
+                with artifact.path.open("rb") as source, partial.open("wb") as target:
+                    with gzip.GzipFile(
+                        filename="",
+                        mode="wb",
+                        compresslevel=6,
+                        fileobj=target,
+                        mtime=0,
+                    ) as compressed:
+                        shutil.copyfileobj(source, compressed, length=CHUNK_SIZE)
+                partial.chmod(0o600)
+                os.replace(partial, destination)
+            except BaseException:
+                partial.unlink(missing_ok=True)
+                raise
+        return destination
 
     def _digest(self, path: Path) -> str:
         stat = path.stat()
@@ -139,24 +162,17 @@ class ArtifactCatalog:
         return {}
 
     def _candidate_paths(self) -> list[Path]:
-        candidates: list[Path] = []
-        candidates.extend(self.archive_root.glob("*.apk"))
-        candidates.extend(self.output_root.glob("**/*.apk"))
-        candidates.extend(self.repo_root.glob("CodeWide-*.apk"))
-        candidates.extend(self.repo_root.glob("CodeWide-*.apk"))
-        candidates.extend((self.repo_root / "test-results/apk-backups").glob("*.apk"))
-        return [path.resolve() for path in candidates if path.is_file()]
+        return [
+            path.resolve()
+            for path in self.archive_root.glob("*.apk")
+            if path.is_file()
+        ]
 
     def _artifact(self, path: Path) -> Artifact:
         stat = path.stat()
         digest = self._digest(path)
         metadata = self._metadata_for(path)
-        if self.output_root in path.parents:
-            fallback_variant = path.parent.name
-        elif self.archive_root in path.parents:
-            fallback_variant = "release"
-        else:
-            fallback_variant = "archived"
+        fallback_variant = "release"
         variant = str(metadata.get("variant") or fallback_variant)
         version_name = str(metadata.get("versionName") or "dev")
         raw_version_code = metadata.get("versionCode")
@@ -238,69 +254,6 @@ class ArtifactCatalog:
             for stale_apk in archived[ARCHIVE_RETENTION_COUNT:]:
                 stale_apk.unlink(missing_ok=True)
                 stale_apk.with_suffix(".apk.json").unlink(missing_ok=True)
-
-    def snapshot_release(self) -> Path | None:
-        release = self.output_root / "release/app-release.apk"
-        if not release.is_file():
-            return None
-        with self._lock:
-            metadata_path = release.parent / "output-metadata.json"
-            if not metadata_path.is_file():
-                self._snapshot_candidate_signature = None
-                return None
-            release_stat = release.stat()
-            metadata_stat = metadata_path.stat()
-            candidate_signature = (
-                release_stat.st_mtime_ns,
-                release_stat.st_size,
-                metadata_stat.st_mtime_ns,
-                metadata_stat.st_size,
-            )
-            if candidate_signature != self._snapshot_candidate_signature:
-                self._snapshot_candidate_signature = candidate_signature
-                return None
-
-            metadata = self._metadata_for(release)
-            if not isinstance(metadata.get("versionCode"), int) or not metadata.get(
-                "versionName"
-            ):
-                return None
-            digest = self._digest(release)
-            for archived in self.archive_root.glob("*.apk"):
-                try:
-                    if self._digest(archived) == digest:
-                        return archived
-                except OSError:
-                    continue
-
-            version_name = safe_filename(str(metadata.get("versionName") or "dev"))
-            version_code = metadata.get("versionCode")
-            code_label = str(version_code) if isinstance(version_code, int) else "dev"
-            timestamp = datetime.fromtimestamp(release.stat().st_mtime).strftime(
-                "%Y%m%d-%H%M%S"
-            )
-            destination = self.archive_root / (
-                f"CodeWide-{version_name}-{code_label}-{timestamp}-{digest[:8]}.apk"
-            )
-            partial = destination.with_suffix(".apk.partial")
-            shutil.copy2(release, partial)
-            os.replace(partial, destination)
-            destination.with_suffix(".apk.json").write_text(
-                json.dumps(
-                    {
-                        "variant": "release",
-                        "versionName": metadata.get("versionName", "dev"),
-                        "versionCode": version_code,
-                        "sha256": digest,
-                    },
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            self.prune_archive()
-            return destination
-
 
 @dataclass(frozen=True)
 class OtaUpdate:
@@ -584,6 +537,27 @@ class BuildShelfHandler(BaseHTTPRequestHandler):
             return None
         return start, min(end, size - 1)
 
+    @staticmethod
+    def _accepts_gzip(value: str | None) -> bool:
+        if value is None:
+            return False
+        wildcard: bool | None = None
+        for item in value.split(","):
+            coding, *parameters = (part.strip().lower() for part in item.split(";"))
+            quality = 1.0
+            for parameter in parameters:
+                if not parameter.startswith("q="):
+                    continue
+                try:
+                    quality = float(parameter[2:])
+                except ValueError:
+                    quality = 0.0
+            if coding == "gzip":
+                return quality > 0
+            if coding == "*":
+                wildcard = quality > 0
+        return wildcard is True
+
     def _stream(self, source: BinaryIO, count: int) -> None:
         remaining = count
         while remaining > 0:
@@ -594,33 +568,44 @@ class BuildShelfHandler(BaseHTTPRequestHandler):
             remaining -= len(chunk)
 
     def _send_artifact(self, artifact: Artifact, *, include_body: bool) -> None:
-        etag = f'"sha256-{artifact.sha256}"'
+        range_header = self.headers.get("Range")
+        use_gzip = range_header is None and self._accepts_gzip(
+            self.headers.get("Accept-Encoding")
+        )
+        representation_path = self.catalog.gzip_path(artifact) if use_gzip else artifact.path
+        representation_size = representation_path.stat().st_size
+        representation = "gzip" if use_gzip else "identity"
+        etag = f'"sha256-{artifact.sha256}-{representation}"'
         if self.headers.get("If-None-Match") == etag:
             self.send_response(HTTPStatus.NOT_MODIFIED)
             self._common_headers()
             self.send_header("ETag", etag)
+            self.send_header("Vary", "Accept-Encoding")
             self.end_headers()
             return
 
-        range_header = self.headers.get("Range")
         byte_range = self._parse_range(range_header, artifact.size) if range_header else None
         if range_header and byte_range is None:
             self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
             self._common_headers()
             self.send_header("Content-Range", f"bytes */{artifact.size}")
             self.send_header("Content-Length", "0")
+            self.send_header("Vary", "Accept-Encoding")
             self.end_headers()
             return
 
-        start, end = byte_range or (0, artifact.size - 1)
+        start, end = byte_range or (0, representation_size - 1)
         length = end - start + 1
         status = HTTPStatus.PARTIAL_CONTENT if byte_range else HTTPStatus.OK
         self.send_response(status)
         self._common_headers()
         self.send_header("Content-Type", mimetypes.guess_type(artifact.path.name)[0] or APK_MIME)
         self.send_header("Content-Length", str(length))
-        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Accept-Ranges", "none" if use_gzip else "bytes")
         self.send_header("ETag", etag)
+        self.send_header("Vary", "Accept-Encoding")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.send_header(
             "Content-Disposition", f'attachment; filename="{artifact.download_name}"'
@@ -631,7 +616,7 @@ class BuildShelfHandler(BaseHTTPRequestHandler):
         if not include_body:
             return
         try:
-            with artifact.path.open("rb") as source:
+            with representation_path.open("rb") as source:
                 source.seek(start)
                 self._stream(source, length)
         except (BrokenPipeError, ConnectionResetError):
@@ -827,15 +812,6 @@ class BuildShelfServer(ThreadingHTTPServer):
         super().__init__(address, BuildShelfHandler)
 
 
-def snapshot_loop(catalog: ArtifactCatalog, stop: threading.Event) -> None:
-    while not stop.is_set():
-        try:
-            catalog.snapshot_release()
-        except OSError as error:
-            print(f"snapshot failed: {error}")
-        stop.wait(3)
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -848,12 +824,6 @@ def main() -> None:
     args = parse_args()
     catalog = ArtifactCatalog(args.root)
     ota_catalog = OtaCatalog(args.root)
-    catalog.snapshot_release()
-    stop = threading.Event()
-    watcher = threading.Thread(
-        target=snapshot_loop, args=(catalog, stop), name="build-snapshot", daemon=True
-    )
-    watcher.start()
     server = BuildShelfServer((args.host, args.port), catalog, ota_catalog)
     print(f"CodeWide build shelf listening on http://{args.host}:{args.port}")
     try:
@@ -861,7 +831,6 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        stop.set()
         server.server_close()
 
 

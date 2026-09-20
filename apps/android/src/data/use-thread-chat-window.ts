@@ -1,5 +1,5 @@
 import { useSelector } from "@legendapp/state/react";
-import { useEffect } from "react";
+import { useSyncExternalStore } from "react";
 
 import type { ThreadDetailDatabase } from "./thread-detail-database";
 import type { ThreadChatWindowRequest, ThreadChatWindowSnapshot } from "./thread-chat-model";
@@ -20,32 +20,31 @@ function useThreadChatWindowResource(
   const connectionId = input?.connectionId ?? "";
   const threadId = input?.threadId ?? "";
   const anchorTurnId = input?.anchorTurnId ?? null;
-  const openGeneration = input?.openGeneration ?? 0;
-  useEffect(() => {
-    if (database === null || !enabled) {
-      return undefined;
-    }
-    return database.retainWindow(connectionId, threadId);
-  }, [connectionId, database, enabled, threadId]);
-  useEffect(() => {
-    if (database === null || !enabled) {
-      return;
-    }
-    database.adoptPreloadedWindow(connectionId, threadId);
-  }, [anchorTurnId, connectionId, database, enabled, threadId]);
   const resource =
     database === null || !enabled
       ? null
       : database.windowResource({
           anchorTurnId,
           connectionId,
-          openGeneration,
           threadId,
         });
+  useSyncExternalStore(
+    resource?.retain ?? emptyRetain,
+    resource?.retentionSnapshot ?? emptyRetentionSnapshot,
+    emptyRetentionSnapshot,
+  );
   useSelector(() => (resource === null ? true : resource.ready$.get()), {
     suspense: suspendUntilReady,
   });
   return resource;
+}
+
+function emptyRetain(): () => void {
+  return () => undefined;
+}
+
+function emptyRetentionSnapshot(): number {
+  return 0;
 }
 
 export function useThreadChatWindow(

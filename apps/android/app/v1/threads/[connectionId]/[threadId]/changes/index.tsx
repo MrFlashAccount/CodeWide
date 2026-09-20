@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../../../src/components/navigation/RouteUnavailable";
+import { ConversationRouteFullscreenOverlay } from "../../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
 import { CurrentChangesRoute } from "../../../../../../src/features/changes/RouteChangesWorkspace";
 import { changesRouteSessions } from "../../../../../../src/services/changes/changesRouteSession";
 import {
@@ -47,5 +48,12 @@ export default function V1ChangesRoute(): React.JSX.Element {
     changesRouteSessions.close(session.id);
     router.back();
   };
-  return <CurrentChangesRoute onClose={close} request={session.request} />;
+  const request = session.request;
+  return (
+    <ConversationRouteFullscreenOverlay
+      onDismiss={close}
+      render={(closeOverlay) => <CurrentChangesRoute onClose={closeOverlay} request={request} />}
+      scope={`changes:${session.id}`}
+    />
+  );
 }

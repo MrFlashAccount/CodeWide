@@ -5,13 +5,13 @@ import { useWindowLayout } from "../workspace/useWindowLayout";
 import { projectConversationPresentation } from "./conversationPresentation";
 import type { ConversationReadSurfaceProps } from "./conversationReadCapabilities";
 import { useHistoryAnchorActions, useHistoryAnchorState } from "./timeline/historyAnchor";
-import { useInitialTimelinePosition } from "./timeline/initialTimelinePosition";
 import { projectConversationTimeline } from "./timeline/timelineProjection";
 import {
   useTimelineSearchActions,
   useTimelineSearchProjection,
   useTimelineSearchState,
 } from "./timeline/timelineSearch";
+import { useTimelineJumpActions, useTimelineJumpState } from "./timeline/timelineJump";
 import {
   useConversationPaneGeometry,
   useTimelineViewportActions,
@@ -38,15 +38,9 @@ export function useReadConversationTimelineBindings(props: {
   } = useConversationPaneGeometry();
   const historyViewport = COMPLETE_STATIC_THREAD_HISTORY;
   const search = useTimelineSearchState(composerScope, null);
-  const anchor = useHistoryAnchorState(
-    composerScope,
-    null,
-    null,
-    connectionId,
-    props.thread.id,
-    undefined,
-  );
+  const anchor = useHistoryAnchorState(composerScope, connectionId, props.thread.id, undefined);
   const unread = useUnreadReceiptState(composerScope);
+  const jump = useTimelineJumpState(composerScope);
   const { timeline } = projectConversationTimeline({
     composerScope,
     draftConnectionId: connectionId,
@@ -91,9 +85,7 @@ export function useReadConversationTimelineBindings(props: {
     displayedTimeline: searchProjection.displayedTimeline,
     draftConnectionId: connectionId,
     draftThreadId: props.thread.id,
-    firstVisibleHistoryAnchorKeyRef: anchor.firstVisibleHistoryAnchorKeyRef,
     firstVisibleHistoryAnchorRef: anchor.firstVisibleHistoryAnchorRef,
-    firstVisibleHistoryAnchorStatusRef: anchor.firstVisibleHistoryAnchorStatusRef,
     fullscreenScrollOwnership: props.overlayState.fullscreenScrollOwnership,
     historyViewport,
     lastTimelineOffsetYRef: props.viewport.lastTimelineOffsetYRef,
@@ -114,42 +106,33 @@ export function useReadConversationTimelineBindings(props: {
     unreadVisibilityFrameRef: unread.unreadVisibilityFrameRef,
     unreadVisibilityScheduledKeyRef: unread.unreadVisibilityScheduledKeyRef,
   });
-  const timelineInitialPosition = useInitialTimelinePosition(
-    search.searchTimelineScope,
-    true,
-    timeline,
-    anchor.initialRestoreAnchorTurnId,
-    anchor.initialHistoryRestore,
-    null,
-  );
   const anchorActions = useHistoryAnchorActions({
     acknowledgeUnreadReceipt: unreadActions.acknowledgeUnreadReceipt,
     awayFromLatestRef: anchor.awayFromLatestRef,
-    composerScope,
-    conversationOwner: owner,
-    currentTurnId: presentation.currentTurnId,
     draftConnectionId: connectionId,
     draftThreadId: props.thread.id,
-    firstVisibleHistoryAnchorKeyRef: anchor.firstVisibleHistoryAnchorKeyRef,
-    firstVisibleHistoryAnchorRef: anchor.firstVisibleHistoryAnchorRef,
-    firstVisibleHistoryAnchorStatusRef: anchor.firstVisibleHistoryAnchorStatusRef,
-    fullscreenScrollOwnership: props.overlayState.fullscreenScrollOwnership,
-    historyViewport,
     latestUnreadReceiptKey: null,
-    pendingLatestJump: anchor.pendingLatestJump,
     saveScrollOffset: undefined,
     scrollOffsetRef: props.viewport.scrollOffsetRef,
     scrollSaveTimerRef: anchor.scrollSaveTimerRef,
-    searchWindow: null,
     setAwayFromLatest: anchor.setAwayFromLatest,
-    setPendingLatestJump: anchor.setPendingLatestJump,
     setTimelineDidLoad: props.viewport.setTimelineDidLoad,
     timeline,
     timelineContentHeightRef: props.viewport.timelineContentHeightRef,
-    timelineInitialPosition,
-    timelineModelReady: true,
-    timelineRef: props.viewport.timelineRef,
     timelineViewportHeightRef: props.viewport.timelineViewportHeightRef,
+  });
+  const jumpActions = useTimelineJumpActions({
+    conversationOwner: owner,
+    fullscreenScrollOwnership: props.overlayState.fullscreenScrollOwnership,
+    historyViewport,
+    latestUnreadAgentTurnId: null,
+    pendingTimelineJump: jump.pendingTimelineJump,
+    searchWindow: null,
+    setPendingTimelineJump: jump.setPendingTimelineJump,
+    timeline,
+    timelineJumpInFlightRef: jump.timelineJumpInFlightRef,
+    timelineJumpRequestIdRef: jump.timelineJumpRequestIdRef,
+    timelineModelReady: true,
   });
   return {
     anchor,
@@ -158,6 +141,8 @@ export function useReadConversationTimelineBindings(props: {
     connectionId,
     conversationInsets,
     historyViewport,
+    jump,
+    jumpActions,
     narrow,
     presentation,
     search,
@@ -166,7 +151,6 @@ export function useReadConversationTimelineBindings(props: {
     setNarrow,
     setPaneHeight,
     timeline,
-    timelineInitialPosition,
     unread,
     unreadActions,
     viewportActions,

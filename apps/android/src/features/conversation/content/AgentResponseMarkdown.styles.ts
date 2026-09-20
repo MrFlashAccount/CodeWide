@@ -16,4 +16,7 @@ export const styles = StyleSheet.create({
     color: colors.red,
     ...typeScale.body,
   },
+  virtualizedMarkdownBlockGap: {
+    paddingBottom: spacing.xxs,
+  },
 });

@@ -1657,6 +1657,72 @@ mod tests {
         Ok(())
     }
 
+    fn write_turn_with_large_command_output(
+        path: &Path,
+        output: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut rollout = std::fs::File::create(path)?;
+        for event in [
+            json!({"type":"task_started", "turn_id":"turn-large"}),
+            json!({"type":"user_message", "message":"Run the probe"}),
+            json!({
+                "type":"item_completed",
+                "item": {
+                    "id":"command-large",
+                    "type":"commandExecution",
+                    "aggregatedOutput":output
+                }
+            }),
+            json!({"type":"task_complete", "turn_id":"turn-large", "last_agent_message":"Done"}),
+        ] {
+            writeln!(rollout, "{}", json!({"type":"event_msg", "payload":event}))?;
+        }
+        rollout.sync_all()?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repeated_summary_and_sync_reads_never_inline_large_command_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const MAX_WIRE_BYTES: usize = 8 * 1024;
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let output = "x".repeat(1024 * 1024);
+        write_turn_with_large_command_output(&path, &output)?;
+        let service = history_service(directory.path())?;
+        let params = json!({
+            "threadId":THREAD_ID,
+            "cursor":null,
+            "limit":1,
+            "sortDirection":"desc",
+            "itemsView":"summary"
+        });
+
+        for _ in 0..2 {
+            let page = service
+                .try_turns_page("thread/turns/list", &params)
+                .await
+                .ok_or("history page was not handled")??;
+            let encoded = serde_json::to_vec(&page)?;
+            assert!(encoded.len() < MAX_WIRE_BYTES);
+            assert!(
+                !encoded
+                    .windows(64)
+                    .any(|window| window.iter().all(|byte| *byte == b'x'))
+            );
+            assert_eq!(page["data"][0]["items"][1]["text"], "Done");
+
+            let sync = service
+                .sync_thread_history(THREAD_ID, None, 1, None)
+                .await?;
+            assert!(serde_json::to_vec(&sync)?.len() < MAX_WIRE_BYTES);
+            assert_eq!(sync["turns"][0]["items"][1]["text"], "Done");
+        }
+        Ok(())
+    }
+
     #[test]
     fn sync_without_cursor_returns_a_bounded_reset() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;

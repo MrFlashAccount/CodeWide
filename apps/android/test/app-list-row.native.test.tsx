@@ -110,9 +110,7 @@ it.each([listRowHeight.single, listRowHeight.double])(
 
 it("clips the Compose surface to the grouped bottom corners of the last row", () => {
   const view = render(<AppListRow title="Last option" position="last" />);
-  const modifiers = JSON.parse(
-    view.getByTestId("native-list-item").props.dataSet.modifiers,
-  );
+  const modifiers = JSON.parse(view.getByTestId("native-list-item").props.dataSet.modifiers);
   expect(modifiers).toContainEqual(
     clip(Shapes.RoundedCorner({ bottomStart: radii.medium, bottomEnd: radii.medium })),
   );
@@ -145,6 +143,56 @@ it("keeps secondary actions separate and exposes selection and the description a
   expect(open).toHaveBeenCalledTimes(1);
 });
 
+it("keeps controlled selection rows in one renderer before and after selection", () => {
+  const view = render(
+    <AppListRow title="Voice" description="Calm and clear" selected={false} onPress={() => {}} />,
+  );
+  expect(view.queryByTestId("native-list-host")).toBeNull();
+  expect(view.getByRole("radio", { name: "Voice", checked: false })).toBeVisible();
+
+  view.rerender(
+    <AppListRow title="Voice" description="Calm and clear" selected onPress={() => {}} />,
+  );
+  expect(view.queryByTestId("native-list-host")).toBeNull();
+  expect(view.getByRole("radio", { name: "Voice", checked: true })).toBeVisible();
+});
+
+it("reserves a secondary action slot but exposes its button only when visible", () => {
+  const play = jest.fn();
+  const view = render(
+    <AppListRow
+      title="Voice"
+      selected={false}
+      onPress={() => {}}
+      trailingAction={{
+        accessibilityLabel: "Play voice sample",
+        busy: false,
+        icon: { name: "play-circle-outline" },
+        onPress: play,
+        visible: false,
+      }}
+    />,
+  );
+  expect(view.queryByRole("button", { name: "Play voice sample" })).toBeNull();
+
+  view.rerender(
+    <AppListRow
+      title="Voice"
+      selected
+      onPress={() => {}}
+      trailingAction={{
+        accessibilityLabel: "Play voice sample",
+        busy: false,
+        icon: { name: "play-circle-outline" },
+        onPress: play,
+        visible: true,
+      }}
+    />,
+  );
+  fireEvent.press(view.getByRole("button", { name: "Play voice sample" }));
+  expect(play).toHaveBeenCalledTimes(1);
+});
+
 it("exposes primary and secondary custom-row buttons as separate labelled targets", () => {
   const open = jest.fn();
   const pin = jest.fn();
@@ -168,7 +216,7 @@ it("exposes primary and secondary custom-row buttons as separate labelled target
   expect(open).toHaveBeenCalledTimes(1);
 });
 
-it("renders display-only accessories and selection inside one Compose row", () => {
+it("renders icon-bearing rows with the synchronous RN icon renderer", () => {
   const open = jest.fn();
   const view = render(
     <AppListRow
@@ -181,18 +229,17 @@ it("renders display-only accessories and selection inside one Compose row", () =
       trailingIcon={{ name: "chevron-forward" }}
     />,
   );
-  expect(view.getAllByTestId("native-list-host")).toHaveLength(1);
-  expect(view.getAllByTestId("compose-icon")).toHaveLength(4);
-  expect(view.getAllByTestId("compose-icon")[0]?.props).toMatchObject({
-    size: 24,
-    tint: "#123456",
-  });
+  expect(view.queryByTestId("native-list-host")).toBeNull();
+  expect(view.getByText("folder-outline")).toHaveStyle({ color: "#123456", fontSize: 24 });
+  expect(view.getByText("lock-closed")).toBeVisible();
+  expect(view.getByText("chevron-forward")).toBeVisible();
+  expect(view.getByText("checkmark")).toBeVisible();
   expect(view.getByRole("radio", { name: "Project", checked: true })).toBeVisible();
-  fireEvent.press(view.getByTestId("native-list-item"));
+  fireEvent.press(view.getByRole("radio", { name: "Project", checked: true }));
   expect(open).toHaveBeenCalledTimes(1);
 });
 
-it("replaces native progress with the resolved accessory when a cell is recycled", () => {
+it("switches from native progress to a synchronous RN icon when a cell is recycled", () => {
   const view = render(<AppListRow title="Project" trailingBusy onPress={() => {}} />);
   expect(view.getByTestId("compose-progress")).toBeVisible();
   expect(view.getByTestId("compose-progress")).toHaveStyle({
@@ -204,7 +251,8 @@ it("replaces native progress with the resolved accessory when a cell is recycled
     <AppListRow title="Project" trailingIcon={{ name: "chevron-forward" }} onPress={() => {}} />,
   );
   expect(view.queryByTestId("compose-progress")).toBeNull();
-  expect(view.getAllByTestId("compose-icon")).toHaveLength(1);
+  expect(view.queryByTestId("native-list-host")).toBeNull();
+  expect(view.getByText("chevron-forward")).toBeVisible();
   expect(view.getByRole("button", { name: "Project", busy: false })).toBeVisible();
 });
 

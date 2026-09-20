@@ -38,6 +38,22 @@ describe("V1 shared thread sync lifetime", () => {
     expect(sync.desiredThreadId("first")).toBe("replacement");
   });
 
+  it("releases live observation only after its final owner and never clears a replacement", async () => {
+    const sync = runtime();
+    const releaseFirst = sync.retainObservedThread("server", "main");
+    const releaseSecond = sync.retainObservedThread("server", "main");
+
+    releaseFirst();
+    expect(sync.desiredThreadId("server")).toBe("main");
+    releaseSecond();
+    expect(sync.desiredThreadId("server")).toBeUndefined();
+
+    const releaseOld = sync.retainObservedThread("server", "old");
+    await sync.observeThread("server", "replacement");
+    releaseOld();
+    expect(sync.desiredThreadId("server")).toBe("replacement");
+  });
+
   it("releases a rejected read lane for subsequent activation", async () => {
     const sync = runtime();
     await expect(sync.readThread("server", "thread")).rejects.toThrow(

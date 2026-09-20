@@ -5,6 +5,7 @@ import { Platform, Pressable, View } from "react-native";
 import { colors, controlSize, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
+import { SheetPageTransition, useSheetBackHandler } from "../../ui/sheetNavigation";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { CandidateRow } from "./CandidateRow";
 import { ForwardingRow } from "./ForwardingRow";
@@ -31,22 +32,65 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
   const portActions = usePortActions(props);
   const [segment, setSegment] = useState<ServiceSegment>("active");
   const [query, setQuery] = useState("");
-  if (portForm.form !== null) {
-    return (
-      <ManualPortForm
-        error={portForm.formError}
-        form={portForm.form}
-        onBack={portForm.closeForm}
-        onChange={portForm.setForm}
-        onSubmit={() => void portForm.submit()}
-        serverName={props.serverName}
-        submitting={portForm.submitting}
-        {...(portForm.form.id === null ? {} : { onRemove: () => void portForm.removeCurrent() })}
-      />
-    );
-  }
-
+  useSheetBackHandler(portForm.form !== null, portForm.closeForm);
   const { counts, groups, rows } = projectPortList(props, segment, query);
+  return (
+    <SheetPageTransition
+      direction={portForm.navigationDirection}
+      routeKey={portForm.form === null ? "list" : "form"}
+    >
+      {portForm.form === null ? (
+        <PortForwardingList
+          counts={counts}
+          groups={groups}
+          portActions={portActions}
+          portForm={portForm}
+          props={props}
+          query={query}
+          rows={rows}
+          segment={segment}
+          setQuery={setQuery}
+          setSegment={setSegment}
+        />
+      ) : (
+        <ManualPortForm
+          error={portForm.formError}
+          form={portForm.form}
+          onBack={portForm.closeForm}
+          onChange={portForm.setForm}
+          onSubmit={() => void portForm.submit()}
+          serverName={props.serverName}
+          submitting={portForm.submitting}
+          {...(portForm.form.id === null ? {} : { onRemove: () => void portForm.removeCurrent() })}
+        />
+      )}
+    </SheetPageTransition>
+  );
+}
+
+function PortForwardingList({
+  counts,
+  groups,
+  portActions,
+  portForm,
+  props,
+  query,
+  rows,
+  segment,
+  setQuery,
+  setSegment,
+}: {
+  readonly counts: ReturnType<typeof projectPortList>["counts"];
+  readonly groups: ReturnType<typeof projectPortList>["groups"];
+  readonly portActions: ReturnType<typeof usePortActions>;
+  readonly portForm: ReturnType<typeof usePortForm>;
+  readonly props: PortForwardingManagerProps;
+  readonly query: string;
+  readonly rows: ReturnType<typeof projectPortList>["rows"];
+  readonly segment: ServiceSegment;
+  readonly setQuery: (query: string) => void;
+  readonly setSegment: (segment: ServiceSegment) => void;
+}) {
   return (
     <View style={styles.root} testID="port-forwarding-manager">
       <View style={styles.header}>
@@ -112,7 +156,7 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
                 : 0) +
               (entry.type === "profile" &&
               Platform.OS === "web" &&
-              portActions.webMenuId === entry.profile.id
+              portActions.actionMenuProfileId === entry.profile.id
                 ? controlSize.regular
                 : 0)
         }
@@ -186,43 +230,45 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
               onEdit={() => {
                 portForm.openEdit(entry.profile);
               }}
-              onInclude={() =>
-                void portActions.runProfileAction(entry.profile.id, async () =>
+              onInclude={() => {
+                portActions.activateProfileAction(entry.profile.id, async () =>
                   props.onSetPreference(entry.profile.id, "included"),
-                )
-              }
-              onOpen={() => {
-                props.onOpen(entry.profile);
+                );
               }}
-              onReconnect={() =>
-                void portActions.runProfileAction(entry.profile.id, async () =>
+              onOpen={() => {
+                if (entry.profile.previewUrl !== null) {
+                  props.onOpenBrowser(entry.profile.label, entry.profile.previewUrl);
+                }
+              }}
+              onReconnect={() => {
+                portActions.activateProfileAction(entry.profile.id, async () =>
                   props.onReconnect(entry.profile.id),
-                )
-              }
-              onRemove={() =>
-                void portActions.runProfileAction(entry.profile.id, async () =>
+                );
+              }}
+              onRemove={() => {
+                portActions.activateProfileAction(entry.profile.id, async () =>
                   props.onRemove(entry.profile.id),
-                )
-              }
-              onStart={() =>
-                void portActions.runProfileAction(entry.profile.id, async () =>
+                );
+              }}
+              onStart={() => {
+                portActions.activateProfileAction(entry.profile.id, async () =>
                   props.onStart(entry.profile.id),
-                )
-              }
-              onStop={() =>
-                void portActions.runProfileAction(entry.profile.id, async () =>
+                );
+              }}
+              onStop={() => {
+                portActions.activateProfileAction(entry.profile.id, async () =>
                   props.onStop(entry.profile.id),
-                )
-              }
-              onToggleWebMenu={() => {
-                portActions.setWebMenuId((current) =>
+                );
+              }}
+              onToggleActions={() => {
+                portActions.setActionMenuProfileId((current) =>
                   current === entry.profile.id ? null : entry.profile.id,
                 );
               }}
               pending={portActions.pendingId === entry.profile.id}
               position={serviceRowPosition(rows, index)}
               profile={entry.profile}
-              webMenuVisible={portActions.webMenuId === entry.profile.id}
+              webActionsVisible={portActions.actionMenuProfileId === entry.profile.id}
             />
           )
         }

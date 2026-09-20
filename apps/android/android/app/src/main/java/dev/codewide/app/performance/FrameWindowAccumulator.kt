@@ -19,7 +19,8 @@ data class FrameWindowSnapshot(
  * values here; sorting and projection happen once per sampling interval.
  */
 class FrameWindowAccumulator {
-  private val frameDurationsNanos = ArrayList<Long>(144)
+  private var frameDurationsNanos = LongArray(256)
+  private var frameCount = 0
   private var frameDurationSumNanos = 0L
   private var maxFrameDurationNanos = 0L
   private var overrunSumNanos = 0L
@@ -31,7 +32,11 @@ class FrameWindowAccumulator {
     if (totalDurationNanos <= 0L) return
     val safeDisplayInterval = displayIntervalNanos.coerceAtLeast(1L)
     val safeDeadline = deadlineNanos.takeIf { it > 0L } ?: safeDisplayInterval
-    frameDurationsNanos += totalDurationNanos
+    if (frameCount == frameDurationsNanos.size) {
+      frameDurationsNanos = frameDurationsNanos.copyOf(frameDurationsNanos.size * 2)
+    }
+    frameDurationsNanos[frameCount] = totalDurationNanos
+    frameCount += 1
     frameDurationSumNanos += totalDurationNanos
     maxFrameDurationNanos = maxOf(maxFrameDurationNanos, totalDurationNanos)
     if (totalDurationNanos > safeDeadline) {
@@ -43,9 +48,9 @@ class FrameWindowAccumulator {
 
   @Synchronized
   fun drain(elapsedMs: Long): FrameWindowSnapshot {
-    val count = frameDurationsNanos.size
+    val count = frameCount
     if (count == 0) return emptySnapshot()
-    val sorted = frameDurationsNanos.sorted()
+    val sorted = frameDurationsNanos.copyOf(count).apply { sort() }
     val p95Index = ceil(count * 0.95).toInt().coerceIn(1, count) - 1
     val elapsedSeconds = elapsedMs.coerceAtLeast(1L) / 1_000.0
     val result = FrameWindowSnapshot(
@@ -59,7 +64,7 @@ class FrameWindowAccumulator {
       droppedFrameEstimate = droppedFrameEstimate,
       averageOverrunMs = if (jankFrames == 0) 0.0 else nanosToMs(overrunSumNanos.toDouble() / jankFrames),
     )
-    frameDurationsNanos.clear()
+    frameCount = 0
     frameDurationSumNanos = 0L
     maxFrameDurationNanos = 0L
     overrunSumNanos = 0L
@@ -70,7 +75,7 @@ class FrameWindowAccumulator {
 
   @Synchronized
   fun reset() {
-    frameDurationsNanos.clear()
+    frameCount = 0
     frameDurationSumNanos = 0L
     maxFrameDurationNanos = 0L
     overrunSumNanos = 0L

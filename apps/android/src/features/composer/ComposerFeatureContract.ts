@@ -8,7 +8,6 @@ import type { TurnControlsValue } from "../../data/turn-controls-types";
 import type { DraftSelection } from "../../data/voice-draft";
 import type { VoiceInputController } from "../../data/voice-input-controller";
 import type {
-  ThreadGoalRow,
   VoiceInputRow,
   WorkspaceResourceDatabase,
 } from "../../data/workspace-resource-database";
@@ -23,6 +22,7 @@ import type {
 import type { ComposerSendPreference } from "./deliveryMode";
 import type { ComposerMarkdownInputHandle } from "./input/ComposerMarkdownInput.types";
 import type { ComposerMention } from "./input/composer-mentions";
+import type { ComposerTextSnapshot } from "./composerSession";
 
 /** Capabilities and state required by the complete V1 composer surface. */
 export type ComposerFeatureProps = {
@@ -54,16 +54,13 @@ export type ComposerFeatureProps = {
   getStableTransferAccess: GetTransferAccess;
   getTransferAccess: GetTransferAccess | undefined;
   goalAttachmentVisible: boolean;
-  goalResource: ThreadGoalRow | null;
   handleAnchoredComposerAction: (id: string) => void;
   handleComposerLargePaste: (event: LargePasteEvent) => void;
-  handleComposerMarkdownChange: (markdown: string) => void;
-  handleComposerTextChange: (nextText: string) => void;
+  handleComposerTextChange: (next: ComposerTextSnapshot) => void;
   handleDeliveryAction: (id: string) => void;
   microphoneAccess: { allowCapture: () => boolean; granted: boolean };
   microphoneButtonRef: RefObject<View | null>;
   newChat: boolean;
-  onClearGoal: GoalDialogProps["onClear"] | undefined;
   onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
   onSetGoal: GoalDialogProps["onSet"] | undefined;
   openAccessoryAction: (action: ComposerAccessoryAction) => void;
@@ -95,6 +92,7 @@ export type ComposerFeatureProps = {
   setSelectedPersonality: (value: Personality | null) => void;
   steerComposer: () => void;
   stoppingResponse: boolean;
+  terminalEnabled: boolean;
   threadLifecycleActive: boolean;
   toggleVoice: () => Promise<void>;
   toolContextChips: ReactNode;

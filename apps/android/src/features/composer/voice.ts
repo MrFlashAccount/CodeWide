@@ -7,7 +7,7 @@ export function useVoiceBinding({
   captureDraftMutations,
   captureSend,
   composerScope,
-  draft,
+  composerSession,
   draftSelectionRef,
   onStartVoiceTranscription,
   remoteThread,
@@ -23,7 +23,7 @@ export function useVoiceBinding({
       scope: composerScope,
       selection: () => draftSelectionRef.current,
       send,
-      source: () => draft,
+      source: () => composerSession.read().plainText,
       thread: remoteThread,
       updateDraft,
       ...(onStartVoiceTranscription === undefined
@@ -62,10 +62,13 @@ export function useVoiceBinding({
   return { discardVoice, finishVoice, microphoneAccess, retryVoice, toggleVoice };
 }
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { View } from "react-native";
 import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
+import { useAppNotice } from "../../ui/useAppNotice";
 import { useScopedVoiceInputResource } from "../../ui/VoiceInputRuntime";
+
+const VOICE_ERROR_NOTICE_DURATION_MS = 3000;
 
 export function useComposerVoiceState(
   composerScope: string,
@@ -73,6 +76,7 @@ export function useComposerVoiceState(
   draftConnectionId: string | null,
   draftThreadId: string | null,
 ) {
+  const showNotice = useAppNotice().show;
   const voiceResource = useScopedVoiceInputResource(
     workspaceResources,
     draftConnectionId === null || draftThreadId === null ? null : composerScope,
@@ -83,6 +87,13 @@ export function useComposerVoiceState(
   const voiceBackend = voiceResource?.backend ?? "remote";
 
   const voiceError = voiceResource?.error ?? null;
+
+  useEffect(() => {
+    if (voiceError === null) {
+      return;
+    }
+    showNotice({ duration: VOICE_ERROR_NOTICE_DURATION_MS, label: voiceError });
+  }, [showNotice, voiceError]);
 
   const voiceRetryAvailable = voiceResource?.retryAvailable ?? false;
 

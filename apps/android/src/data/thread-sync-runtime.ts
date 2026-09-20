@@ -39,6 +39,7 @@ export function createThreadSyncRuntime({
   const threadSyncLane = new ThreadSyncLane<ThreadWindow | null>();
   const historyReadAuthority = new ThreadHistoryReadAuthority();
   const threadObserverDesired = new Map<string, string>();
+  const retainedObservers = new Map<string, { owners: number; threadId: string }>();
   function captureThreadHistoryRead(
     connectionId: string,
     session: RpcClient,
@@ -226,6 +227,33 @@ export function createThreadSyncRuntime({
   const desiredThreadId = (connectionId: string) => threadObserverDesired.get(connectionId);
   const forgetObservedThread = (connectionId: string) => {
     threadObserverDesired.delete(connectionId);
+    retainedObservers.delete(connectionId);
+  };
+  const retainObservedThread = (connectionId: string, threadId: string): (() => void) => {
+    const previous = retainedObservers.get(connectionId);
+    const observation = previous?.threadId === threadId ? previous : { owners: 0, threadId };
+    observation.owners += 1;
+    retainedObservers.set(connectionId, observation);
+    threadObserverDesired.set(connectionId, threadId);
+    let retained = true;
+    return () => {
+      if (!retained) {
+        return;
+      }
+      retained = false;
+      const current = retainedObservers.get(connectionId);
+      if (current !== observation) {
+        return;
+      }
+      current.owners -= 1;
+      if (current.owners > 0) {
+        return;
+      }
+      retainedObservers.delete(connectionId);
+      if (threadObserverDesired.get(connectionId) === threadId) {
+        threadObserverDesired.delete(connectionId);
+      }
+    };
   };
   const invalidateHistoryReads = (connectionId: string) => {
     historyReadAuthority.invalidate(connectionId);
@@ -247,6 +275,7 @@ export function createThreadSyncRuntime({
     observeThread,
     readThread,
     repairThreadProjection,
+    retainObservedThread,
   };
 }
 function residentThreadWindow(thread: Thread, limit = THREAD_RESIDENT_TURN_LIMIT): Thread {

@@ -1,7 +1,7 @@
 import type { ThreadItem } from "@codewide/codex-protocol/v0.147.0/v2";
 import { describe, expect, it } from "vitest";
 
-import { reconcileTurnItems } from "../src/thread-items";
+import { reconcileActiveTurnItems, reconcileTurnItems } from "../src/thread-items";
 
 function user(id: string, clientId: string | null): ThreadItem {
   return { type: "userMessage", id, clientId, content: [{ type: "text", text: "Hello", text_elements: [] }] };
@@ -33,17 +33,39 @@ describe("turn item reconciliation", () => {
   });
 
   it("preserves the pre-turn marker when canonical history replaces a live item", () => {
-    const cached = {
-      type: "contextCompaction",
-      id: "compaction",
-      codewidePreTurn: true,
-      codewideLifecyclePhase: "started",
-    } as ThreadItem;
-    const incoming = { type: "contextCompaction", id: "compaction" } as ThreadItem;
+    const cached = Object.assign(
+      { type: "contextCompaction", id: "compaction" } as const,
+      { codewidePreTurn: true, codewideLifecyclePhase: "started" as const },
+    );
+    const incoming: ThreadItem = { type: "contextCompaction", id: "compaction" };
 
     expect(reconcileTurnItems([cached], [incoming])).toEqual([
       expect.objectContaining({ codewidePreTurn: true }),
     ]);
     expect(reconcileTurnItems([cached], [incoming])[0]).not.toHaveProperty("codewideLifecyclePhase");
+  });
+
+  it("preserves lifecycle phase when an active snapshot replaces a live item", () => {
+    const cached = Object.assign(
+      { type: "contextCompaction", id: "compaction" } as const,
+      { codewidePreTurn: true, codewideLifecyclePhase: "started" as const },
+    );
+    const incoming: ThreadItem = { type: "contextCompaction", id: "compaction" };
+
+    expect(reconcileActiveTurnItems([cached], [incoming])).toEqual([
+      expect.objectContaining({
+        codewideLifecyclePhase: "started",
+        codewidePreTurn: true,
+      }),
+    ]);
+  });
+
+  it("preserves richer streamed agent text across a bounded active snapshot", () => {
+    const cached = [agent("agent", "A complete streamed update")];
+    const incoming = [agent("agent", "A complete")];
+
+    expect(reconcileActiveTurnItems(cached, incoming)).toEqual([
+      expect.objectContaining({ text: "A complete streamed update" }),
+    ]);
   });
 });

@@ -28,6 +28,7 @@ import { protocolCopyText } from "./protocolCopyText";
 
 export function OpenableImage({
   containerStyle,
+  detail,
   download,
   groupId,
   label,
@@ -43,13 +44,15 @@ export function OpenableImage({
   const inheritedGroupId = useImagePreviewGroup();
   const generatedId = useId();
   const [retryRevision, setRetryRevision] = useState(0);
-  const resolvedGroupId = groupId === undefined ? inheritedGroupId : groupId;
-  const resolvedPreviewId = previewId ?? generatedId;
+  const resolvedGroupId = resolveImageGroupId(groupId, inheritedGroupId);
+  const resolvedPreviewId = resolveImagePreviewId(previewId, generatedId);
   // Native Image does not reliably preserve Authorization headers. Decode a
   // private file URI after the scoped response has been downloaded by JS.
   const privateImage = usePrivateImageUri(source.uri, source.headers, retryRevision);
   const resolvedSource = privateImage.source;
+  const resolvedDetail = resolveImageDetail(detail, privateImage.detail);
   const previewItem = {
+    detail: resolvedDetail,
     id: resolvedPreviewId,
     label,
     reference: reference ?? source.uri,
@@ -59,10 +62,10 @@ export function OpenableImage({
     ...(order === undefined ? {} : { order }),
   };
   useRegisterImagePreviewItem(resolvedGroupId, previewItem);
-  const imageContainerStyle = [
-    variant === "user" ? styles.userImage : styles.generatedImage,
+  const imageContainerStyle = resolveImageContainerStyle(
     containerStyle,
-  ];
+    defaultImageContainerStyle(variant),
+  );
   return renderOpenableImageFrame({
     imageContainerStyle,
     label,
@@ -73,8 +76,38 @@ export function OpenableImage({
     resolvedGroupId,
     resolvedSource,
     setRetryRevision,
-    variant,
   });
+}
+
+function resolveImageGroupId(
+  explicit: OpenableImageProps["groupId"],
+  inherited: ReturnType<typeof useImagePreviewGroup>,
+): ReturnType<typeof useImagePreviewGroup> {
+  return explicit === undefined ? inherited : explicit;
+}
+
+function resolveImagePreviewId(explicit: string | undefined, generated: string): string {
+  return explicit ?? generated;
+}
+
+function resolveImageContainerStyle(
+  explicit: OpenableImageProps["containerStyle"],
+  fallback: OpenableImageProps["containerStyle"],
+): OpenableImageProps["containerStyle"] {
+  return [explicit ?? fallback];
+}
+
+function defaultImageContainerStyle(
+  variant: NonNullable<OpenableImageProps["variant"]>,
+): OpenableImageProps["containerStyle"] {
+  return variant === "user" ? styles.userImage : styles.generatedImage;
+}
+
+function resolveImageDetail(
+  explicit: OpenableImageProps["detail"],
+  discovered: ReturnType<typeof usePrivateImageUri>["detail"],
+): ReturnType<typeof usePrivateImageUri>["detail"] {
+  return explicit === undefined ? discovered : explicit;
 }
 
 export function ImageProtocolBlock(props: ImageProtocolBlockInput) {
@@ -172,10 +205,14 @@ export function ScopedPrivateAssetImage(props: ScopedPrivateAssetImageInput) {
   const source = props.source;
   const [attempt, setAttempt] = useState(0);
   const downloadDocument = useDocumentDownload();
-  const privateImage = usePrivateAssetUri(props.source, attempt, props.getTransferAccess);
+  const imageContainerStyle = resolveImageContainerStyle(props.containerStyle, styles.userImage);
+  const privateImage = usePrivateAssetUri(props.source, {
+    access: props.getTransferAccess,
+    revision: attempt,
+  });
   if (privateImage.failed) {
     return (
-      <View style={[styles.userImage, props.containerStyle]}>
+      <View style={imageContainerStyle}>
         <Pressable
           accessibilityLabel={`Retry ${props.label}`}
           accessibilityRole="button"
@@ -190,13 +227,14 @@ export function ScopedPrivateAssetImage(props: ScopedPrivateAssetImageInput) {
   }
   if (privateImage.source === null) {
     return (
-      <View style={[styles.userImage, props.containerStyle]}>
+      <View style={imageContainerStyle}>
         <ActivityIndicator color={colors.textMuted} />
       </View>
     );
   }
   return (
     <OpenableImage
+      detail={privateImage.detail}
       label={props.label}
       previewId={props.previewId ?? props.reference}
       reference={props.reference}

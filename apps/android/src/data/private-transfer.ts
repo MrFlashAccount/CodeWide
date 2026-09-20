@@ -13,6 +13,13 @@ export type PrivateAssetSource =
   | { kind: "remote"; url: string }
   | { cacheRevision?: string; kind: "scoped"; path: string; rootId: string };
 
+export type PrivateAssetImageVariant = "detail" | "original" | "preview";
+
+type MediaAssetSource = { id: string; kind: "media" };
+type ResolvedPrivateAssetSource =
+  | Exclude<PrivateAssetSource, { kind: "direct" | "remote" }>
+  | MediaAssetSource;
+
 export type PrivateAssetTextResult = {
   contentType: string | null;
   nextOffset: number;
@@ -22,6 +29,8 @@ export type PrivateAssetTextResult = {
 };
 
 type TransferRequest = { init?: RequestInit; uri: string };
+
+export const MAX_PRIVATE_ASSET_TEXT_PAGE_BYTES = Number("2097152");
 
 /**
  * The only authenticated HTTP boundary for private data. Callers describe a
@@ -76,7 +85,10 @@ export async function fetchPrivateAsset(
         ...init,
         headers: mergeHeaders({ authorization: access.authorization }, init.headers),
       },
-      { identity: privateAssetCacheKey(resolved), scope: access.cacheScope ?? access.baseUrl },
+      {
+        identity: resolvedPrivateAssetCacheKey(resolved),
+        scope: access.cacheScope ?? access.baseUrl,
+      },
     );
     if (attempt === 0 && isAuthorizationStatus(response.status)) {
       continue;
@@ -109,14 +121,21 @@ export async function readPrivateAssetText(
   } = {},
 ): Promise<PrivateAssetTextResult> {
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
-  const limit = options.limit === undefined ? null : Math.max(1, Math.floor(options.limit));
-  const range = limit === null ? null : `bytes=${String(offset)}-${String(offset + limit - 1)}`;
-  const response = await fetchPrivateAsset(source, getAccess, {
-    headers: {
-      ...(options.accept === undefined ? {} : { accept: options.accept }),
-      ...(range === null ? {} : { range }),
-    },
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  const limit = Math.min(
+    MAX_PRIVATE_ASSET_TEXT_PAGE_BYTES,
+    Math.max(1, Math.floor(options.limit ?? MAX_PRIVATE_ASSET_TEXT_PAGE_BYTES)),
+  );
+  const resolved =
+    source.kind === "remote"
+      ? await materializeRemoteAsset(source.url, requireTransferAccess(getAccess))
+      : source;
+  const response = await fetchPrivateTextResponse({
+    accept: options.accept,
+    getAccess,
+    limit,
+    offset,
+    signal: options.signal,
+    source: resolved,
   });
   if (!response.ok) {
     if (response.status === 404 && source.kind === "path") {
@@ -128,7 +147,10 @@ export async function readPrivateAssetText(
     );
   }
   const text = await response.text();
-  const encodedBytes = new TextEncoder().encode(text).byteLength;
+  if (resolved.kind !== "direct" && resolved.kind !== "media") {
+    return companionTextResult(response.headers, text, offset);
+  }
+  const encodedBytes = utf8Length(text);
   const rangeInfo = parseContentRange(response.headers.get("content-range"));
   const totalBytes = rangeInfo?.total ?? parseContentLength(response.headers.get("content-length"));
   const nextOffset = rangeInfo?.endExclusive ?? offset + encodedBytes;
@@ -141,13 +163,108 @@ export async function readPrivateAssetText(
   };
 }
 
+async function fetchPrivateTextResponse({
+  accept,
+  getAccess,
+  limit,
+  offset,
+  signal,
+  source,
+}: {
+  accept: string | undefined;
+  getAccess: GetTransferAccess | null;
+  limit: number;
+  offset: number;
+  signal: AbortSignal | undefined;
+  source: Extract<PrivateAssetSource, { kind: "direct" }> | ResolvedPrivateAssetSource;
+}): Promise<Response> {
+  const range = `bytes=${String(offset)}-${String(offset + limit - 1)}`;
+  if (source.kind === "direct") {
+    return fetch(source.uri, {
+      headers: mergeHeaders(source.headers, textRequestHeaders(accept, range)),
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+  return fetchAuthenticatedTransfer(requireTransferAccess(getAccess), (access) => ({
+    init: {
+      headers: textRequestHeaders(accept, source.kind === "media" ? range : null),
+      ...(signal === undefined ? {} : { signal }),
+    },
+    uri:
+      source.kind === "media"
+        ? privateAssetUrl(source, access)
+        : privateAssetTextUrl({ access, limit, offset, source }),
+  }));
+}
+
+function companionTextResult(
+  headers: Headers,
+  text: string,
+  requestedOffset: number,
+): PrivateAssetTextResult {
+  const start = requiredIntegerHeader(headers, "x-content-offset");
+  const totalBytes = requiredIntegerHeader(headers, "x-content-total-bytes");
+  const complete = requiredBooleanHeader(headers, "x-content-complete");
+  const advertisedNext = optionalIntegerHeader(headers, "x-content-next-offset");
+  const nextOffset = advertisedNext ?? (complete ? totalBytes : null);
+  if (
+    nextOffset === null ||
+    !validCompanionTextMetadata({
+      complete,
+      nextOffset,
+      requestedOffset,
+      start,
+      text,
+      totalBytes,
+    })
+  ) {
+    throw new Error("Private text response metadata is invalid");
+  }
+  return {
+    contentType: headers.get("content-type"),
+    nextOffset,
+    text,
+    totalBytes,
+    truncated: !complete,
+  };
+}
+
+function validCompanionTextMetadata({
+  complete,
+  nextOffset,
+  requestedOffset,
+  start,
+  text,
+  totalBytes,
+}: {
+  complete: boolean;
+  nextOffset: number;
+  requestedOffset: number;
+  start: number;
+  text: string;
+  totalBytes: number;
+}): boolean {
+  const maxUtf8BoundaryShift = "💥".length + 1;
+  return [
+    start >= requestedOffset,
+    start <= requestedOffset + maxUtf8BoundaryShift,
+    nextOffset >= start,
+    nextOffset <= totalBytes,
+    utf8Length(text) === nextOffset - start,
+    complete === nextOffset >= totalBytes,
+  ].every(Boolean);
+}
+
 /** Resolve a private source for native streaming adapters such as Expo's
  * download task. The adapter still receives only an ephemeral request and
  * retries through this function after an authorization failure. */
 export async function resolvePrivateAssetRequest(
   source: Exclude<PrivateAssetSource, { kind: "direct" }>,
   getAccess: GetTransferAccess,
-  forceRefresh = false,
+  {
+    forceRefresh = false,
+    imageVariant = "original",
+  }: { forceRefresh?: boolean; imageVariant?: PrivateAssetImageVariant } = {},
 ): Promise<{
   cacheIdentity: string;
   cacheScope: string;
@@ -158,10 +275,16 @@ export async function resolvePrivateAssetRequest(
     source.kind === "remote" ? await materializeRemoteAsset(source.url, getAccess) : source;
   const access = await getAccess(forceRefresh);
   return {
-    cacheIdentity: privateAssetCacheKey(resolved),
+    cacheIdentity:
+      imageVariant === "original"
+        ? resolvedPrivateAssetCacheKey(resolved)
+        : `${resolvedPrivateAssetCacheKey(resolved)}:image:${imageVariant}`,
     cacheScope: access.cacheScope ?? access.baseUrl,
     headers: { authorization: access.authorization },
-    uri: privateAssetUrl(resolved, access),
+    uri:
+      imageVariant === "original"
+        ? privateAssetUrl(resolved, access)
+        : privateAssetImageUrl(resolved, access, imageVariant),
   };
 }
 
@@ -194,10 +317,7 @@ function scopedTransferUrl(
   return url.toString();
 }
 
-function privateAssetUrl(
-  source: Exclude<PrivateAssetSource, { kind: "direct" | "remote" }>,
-  access: TransferAccess,
-): string {
+function privateAssetUrl(source: ResolvedPrivateAssetSource, access: TransferAccess): string {
   if (source.kind === "path") {
     if (!source.path.startsWith("/") || source.path.includes("\0")) {
       throw new Error("Private file path must be absolute");
@@ -212,6 +332,10 @@ function privateAssetUrl(
     }
     return companionUrl(access, `/v1/content/${source.id}`).toString();
   }
+  if (source.kind === "media") {
+    validateAssetId(source.id);
+    return companionUrl(access, `/v1/media/${source.id}`).toString();
+  }
   const url = new URL(scopedTransferUrl(access, "/v1/files/download", source.rootId, source.path));
   if (source.cacheRevision !== undefined) {
     url.searchParams.set("v", source.cacheRevision);
@@ -219,10 +343,72 @@ function privateAssetUrl(
   return url.toString();
 }
 
+function privateAssetImageUrl(
+  source: ResolvedPrivateAssetSource,
+  access: TransferAccess,
+  variant: Exclude<PrivateAssetImageVariant, "original">,
+): string {
+  let url: URL;
+  if (source.kind === "path") {
+    if (!source.path.startsWith("/") || source.path.includes("\0")) {
+      throw new Error("Private file path must be absolute");
+    }
+    url = companionUrl(access, "/v1/image-previews/host-file");
+    url.searchParams.set("path", source.path);
+  } else if (source.kind === "content") {
+    validateAssetId(source.id);
+    url = companionUrl(access, `/v1/image-previews/content/${source.id}`);
+  } else if (source.kind === "media") {
+    validateAssetId(source.id);
+    url = companionUrl(access, `/v1/image-previews/media/${source.id}`);
+  } else {
+    validateScopedPath(source.rootId, source.path);
+    url = companionUrl(access, "/v1/image-previews/file");
+    url.searchParams.set("rootId", source.rootId);
+    url.searchParams.set("path", source.path);
+  }
+  url.searchParams.set("variant", variant);
+  return url.toString();
+}
+
+function privateAssetTextUrl({
+  access,
+  limit,
+  offset,
+  source,
+}: {
+  access: TransferAccess;
+  limit: number;
+  offset: number;
+  source: Exclude<PrivateAssetSource, { kind: "direct" | "remote" }>;
+}): string {
+  let url: URL;
+  if (source.kind === "path") {
+    if (!source.path.startsWith("/") || source.path.includes("\0")) {
+      throw new Error("Private file path must be absolute");
+    }
+    url = companionUrl(access, "/v1/files/preview-text");
+    url.searchParams.set("path", source.path);
+  } else if (source.kind === "content") {
+    if (!/^[a-f0-9]{64}$/u.test(source.id)) {
+      throw new Error("Private asset reference is invalid");
+    }
+    url = companionUrl(access, `/v1/content/${source.id}/text`);
+  } else {
+    validateScopedPath(source.rootId, source.path);
+    url = companionUrl(access, "/v1/files/text");
+    url.searchParams.set("rootId", source.rootId);
+    url.searchParams.set("path", source.path);
+  }
+  url.searchParams.set("offset", String(offset));
+  url.searchParams.set("limit", String(limit));
+  return url.toString();
+}
+
 async function materializeRemoteAsset(
   url: string,
   getAccess: GetTransferAccess,
-): Promise<{ id: string; kind: "content" }> {
+): Promise<MediaAssetSource> {
   const response = await fetchAuthenticatedTransfer(getAccess, (access) => ({
     init: {
       body: JSON.stringify({ url }),
@@ -238,7 +424,20 @@ async function materializeRemoteAsset(
   if (body === null || typeof body.id !== "string" || !/^[a-f0-9]{64}$/u.test(body.id)) {
     throw new Error("Private asset response is invalid");
   }
-  return { id: body.id, kind: "content" };
+  return { id: body.id, kind: "media" };
+}
+
+function resolvedPrivateAssetCacheKey(source: ResolvedPrivateAssetSource): string {
+  if (source.kind === "media") {
+    return `media:${source.id}`;
+  }
+  return privateAssetCacheKey(source);
+}
+
+function validateAssetId(id: string): void {
+  if (!/^[a-f0-9]{64}$/u.test(id)) {
+    throw new Error("Private asset reference is invalid");
+  }
 }
 
 function companionUrl(access: TransferAccess, path: string): URL {
@@ -264,6 +463,56 @@ function mergeHeaders(base: HeadersInit | undefined, override: HeadersInit | und
     headers.set(key, value);
   });
   return headers;
+}
+
+function requireTransferAccess(value: GetTransferAccess | null): GetTransferAccess {
+  if (value === null) {
+    throw new Error("Private asset access is unavailable");
+  }
+  return value;
+}
+
+function textRequestHeaders(accept: string | undefined, range: string | null): Headers {
+  const headers = new Headers();
+  if (accept !== undefined) {
+    headers.set("accept", accept);
+  }
+  if (range !== null) {
+    headers.set("range", range);
+  }
+  return headers;
+}
+
+function requiredIntegerHeader(headers: Headers, name: string): number {
+  const value = optionalIntegerHeader(headers, name);
+  if (value === null) {
+    throw new Error("Private text response metadata is invalid");
+  }
+  return value;
+}
+
+function optionalIntegerHeader(headers: Headers, name: string): number | null {
+  const raw = headers.get(name);
+  if (raw === null || !/^\d+$/u.test(raw)) {
+    return null;
+  }
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function requiredBooleanHeader(headers: Headers, name: string): boolean {
+  const value = headers.get(name);
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error("Private text response metadata is invalid");
+}
+
+function utf8Length(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function parseContentLength(value: string | null): number | null {

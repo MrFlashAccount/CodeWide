@@ -9,17 +9,21 @@ import { EMPTY_FORM, message, parseForwardingDraft, type FormState } from "./por
 
 export function usePortForm(props: PortForwardingManagerProps) {
   const [form, setForm] = useState<FormState | null>(null);
+  const [navigationDirection, setNavigationDirection] = useState<"back" | "forward" | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const closeForm = useEvent(() => {
+    setNavigationDirection("back");
     setForm(null);
     setFormError(null);
   });
   const openManual = useEvent(() => {
+    setNavigationDirection("forward");
     setForm(EMPTY_FORM);
     setFormError(null);
   });
   const openEdit = useEvent((profile: PortForwardingProfile) => {
+    setNavigationDirection("forward");
     setForm({
       id: profile.id,
       label: profile.label,
@@ -71,6 +75,7 @@ export function usePortForm(props: PortForwardingManagerProps) {
     closeForm,
     form,
     formError,
+    navigationDirection,
     openEdit,
     openManual,
     removeCurrent,

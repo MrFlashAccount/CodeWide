@@ -1,6 +1,8 @@
-import { controlSize, layoutSize, spacing } from "../theme";
+import { controlSize, layoutSize, spacing, touchTarget } from "../theme";
 
 export const conversationChromeEdgeInset = spacing.compact;
+
+export const conversationComposerDockMinHeight = touchTarget + spacing.xxs + spacing.compact;
 
 export function conversationHeaderChromeHeight(searchVisible: boolean): number {
   return layoutSize.header + (searchVisible ? controlSize.regular + spacing.xxs : 0);

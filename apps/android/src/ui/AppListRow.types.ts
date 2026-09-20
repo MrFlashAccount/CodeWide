@@ -19,17 +19,32 @@ type DescriptionAccessory =
 type TrailingAccessory =
   | {
       readonly trailing?: undefined;
+      readonly trailingAction?: undefined;
       readonly trailingBusy?: undefined;
       readonly trailingIcon?: AppListRowIcon;
     }
   | {
       readonly trailing?: ReactNode;
+      readonly trailingAction?: undefined;
       readonly trailingBusy?: undefined;
       readonly trailingIcon?: undefined;
     }
   | {
       readonly trailing?: undefined;
+      readonly trailingAction?: undefined;
       readonly trailingBusy: true;
+      readonly trailingIcon?: undefined;
+    }
+  | {
+      readonly trailing?: undefined;
+      readonly trailingAction: {
+        readonly accessibilityLabel: string;
+        readonly busy: boolean;
+        readonly icon: AppListRowIcon;
+        readonly onPress: () => void;
+        readonly visible: boolean;
+      };
+      readonly trailingBusy?: undefined;
       readonly trailingIcon?: undefined;
     };
 
@@ -40,6 +55,7 @@ interface AppListRowContentProps {
   readonly danger?: boolean;
   readonly description?: string;
   readonly disabled?: boolean;
+  readonly expanded?: boolean;
   /** Keep fixed versus content-measured mode stable during a row's mounted lifetime. */
   readonly fixedHeight?: number;
   readonly multiline?: boolean;
@@ -48,6 +64,11 @@ interface AppListRowContentProps {
   readonly selected?: boolean;
   readonly testID?: string;
   readonly title: string;
+  readonly titleIndicator?: {
+    readonly color: string;
+    readonly size: number;
+    readonly testID: string;
+  };
 }
 
 /** Custom React slots remain available for independently interactive accessories. */

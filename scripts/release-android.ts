@@ -178,7 +178,7 @@ async function releaseApk(endpoint: string, dryRun: boolean, requestedVersion?: 
 }
 
 async function runReleaseChecks(): Promise<void> {
-  await run("pnpm", ["validate:android:v2"]);
+  await run("pnpm", ["validate:android:v1"]);
   await run("pnpm", ["--filter", "@codewide/android", "typecheck"]);
   await run("pnpm", ["--filter", "@codewide/android", "lint"]);
   await run("pnpm", ["test"]);

@@ -1,4 +1,3 @@
-import { appLogger } from "../observability/logger";
 import { reconcileActiveThreadCommands } from "./command-delivery";
 import type { ThreadDetailDatabase } from "./thread-detail-database";
 import type { ThreadRemoteLoader } from "./thread-detail-database-contract";
@@ -29,12 +28,7 @@ export function createThreadSyncRemoteLoader(
       await sync.loadOlderTurns(connectionId, threadId, cursor, historyEpoch);
     },
     observe({ connectionId, threadId }) {
-      void sync.observeThread(connectionId, threadId).catch(() => {
-        appLogger.warn({
-          event: "thread.observer.attach_failed",
-          fields: { connectionId, threadId },
-        });
-      });
+      return sync.retainObservedThread(connectionId, threadId);
     },
     async reconcilePending({ connectionId, threadId }) {
       await reconcileActiveThreadCommands(details, connectionId, threadId);

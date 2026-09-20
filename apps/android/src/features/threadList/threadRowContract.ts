@@ -6,7 +6,6 @@ export type ThreadRowProps = {
   onArchive?: () => Promise<void>;
   onMarkRead?: () => Promise<void>;
   onPress: () => void;
-  onPressIn?: () => (() => void) | undefined;
   onTogglePin?: () => Promise<void>;
   onUnarchive?: () => Promise<void>;
   selected: boolean;

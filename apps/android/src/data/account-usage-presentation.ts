@@ -38,9 +38,13 @@ export function accountUsageProfiles(
   return result;
 }
 
-function accountPlanLabel(plan: string | null): string {
+export function accountPlanLabel(plan: string | null): string {
   if (plan === null || plan === "unknown") {
     return "Plan unavailable";
+  }
+  const proTier = /^pro_x_(\d+)$/u.exec(plan)?.[1];
+  if (proTier !== undefined) {
+    return `Pro X${proTier}`;
   }
   const normalized = plan.replaceAll("_", " ");
   return normalized.replaceAll(/\b\w/gu, (letter) => letter.toUpperCase());

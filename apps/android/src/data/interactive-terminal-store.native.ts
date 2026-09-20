@@ -7,6 +7,7 @@ import {
   openNativeTerminal,
   subscribeNativeTerminal,
   type NativeTerminalEvent,
+  type NativeTerminalSession,
 } from "../native/native-transport";
 import { appLogger } from "../observability/logger";
 
@@ -27,10 +28,10 @@ export type InteractiveTerminalWorkspace = {
   tabs: readonly InteractiveTerminalTab[];
 };
 
-const EMPTY_WORKSPACE: InteractiveTerminalWorkspace = Object.freeze({
+const EMPTY_WORKSPACE: InteractiveTerminalWorkspace = {
   activeId: null,
-  tabs: Object.freeze([]),
-});
+  tabs: [],
+};
 const workspaces = new Map<string, InteractiveTerminalWorkspace>();
 const renderedOffsets = new Map<string, number>();
 const listeners = new Set<() => void>();
@@ -118,6 +119,27 @@ export function selectInteractiveTerminalTab(
   setWorkspace(key, { ...current, activeId: terminalId });
 }
 
+/** Rehydrates and focuses an existing native session without creating a terminal. */
+export function focusInteractiveTerminalSession(session: NativeTerminalSession): void {
+  const key = requiredWorkspaceKey(session.connectionId, session.threadId);
+  const current = workspaces.get(key) ?? EMPTY_WORKSPACE;
+  const existing = current.tabs.find(({ id }) => id === session.sessionId);
+  if (existing !== undefined) {
+    setWorkspace(key, { ...current, activeId: existing.id });
+    return;
+  }
+  const tab: InteractiveTerminalTab = {
+    connectionId: session.connectionId,
+    cwd: session.cwd,
+    error: null,
+    id: session.sessionId,
+    status: session.status,
+    threadId: session.threadId,
+    title: nextTabTitle(current.tabs),
+  };
+  setWorkspace(key, { activeId: tab.id, tabs: [...current.tabs, tab] });
+}
+
 export function closeInteractiveTerminalTab(
   connectionId: string,
   threadId: string,
@@ -128,22 +150,17 @@ export function closeInteractiveTerminalTab(
   if (current === undefined) {
     return;
   }
-  const index = current.tabs.findIndex(({ id }) => id === terminalId);
-  if (index < 0) {
+  if (!current.tabs.some(({ id }) => id === terminalId)) {
     return;
   }
-  const tabs = current.tabs.filter(({ id }) => id !== terminalId);
-  const activeId =
-    current.activeId === terminalId
-      ? (tabs[Math.min(index, tabs.length - 1)]?.id ?? null)
-      : current.activeId;
-  if (tabs.length === 0) {
-    workspaces.delete(key);
-    emitChange();
-  } else {
-    setWorkspace(key, { activeId, tabs });
+  closeInteractiveTerminalSession(terminalId);
+}
+
+/** Closes one native-owned session even when the JS tab projection was reloaded. */
+export function closeInteractiveTerminalSession(terminalId: string): void {
+  if (!removeTabById(terminalId)) {
+    releaseTerminalRenderer(terminalId);
   }
-  releaseTerminalRenderer(terminalId);
   closeNativeTerminal(terminalId);
 }
 
@@ -203,7 +220,7 @@ function updateTab(
   }
 }
 
-function removeTabById(id: string): void {
+function removeTabById(id: string): boolean {
   for (const [key, workspace] of workspaces) {
     const index = workspace.tabs.findIndex((candidate) => candidate.id === id);
     if (index < 0) {
@@ -225,8 +242,9 @@ function removeTabById(id: string): void {
     if (tabs.length === 0) {
       emitChange();
     }
-    return;
+    return true;
   }
+  return false;
 }
 
 function releaseTerminalRenderer(id: string): void {

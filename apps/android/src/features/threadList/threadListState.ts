@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { startTransition, useState } from "react";
 import { useConstant } from "../../react/useConstant";
+import { useEvent } from "../../react/useEvent";
 import { ScrollOffsetMemory } from "./scrollOffsetMemory";
 import type { ThreadListFilter } from "./threadListFilters";
 import { THREAD_LIST_PAGE_SIZE, type ThreadListMode } from "./threadListModel";
@@ -12,6 +13,12 @@ export function useThreadListState() {
 
   const [threadListMode, setThreadListMode] = useState<ThreadListMode>("active");
 
+  const changeThreadListMode = useEvent((mode: ThreadListMode): void => {
+    startTransition(() => {
+      setThreadListMode(mode);
+    });
+  });
+
   const [threadListFilter, setThreadListFilter] = useState<ThreadListFilter>("all");
 
   const [threadListLimit, setThreadListLimit] = useState(THREAD_LIST_PAGE_SIZE);
@@ -21,7 +28,7 @@ export function useThreadListState() {
     setMobileThreadQuery,
     setThreadListFilter,
     setThreadListLimit,
-    setThreadListMode,
+    setThreadListMode: changeThreadListMode,
     threadListFilter,
     threadListLimit,
     threadListMode,
@@ -31,6 +38,11 @@ export function useThreadListState() {
 /** Project catalogs retain separate paging and filtering state. */
 export function useProjectListState() {
   const [projectListMode, setProjectListMode] = useState<ThreadListMode>("active");
+  const changeProjectListMode = useEvent((mode: ThreadListMode): void => {
+    startTransition(() => {
+      setProjectListMode(mode);
+    });
+  });
   const [projectListFilter, setProjectListFilter] = useState<ThreadListFilter>("all");
   const [projectListLimits, setProjectListLimits] = useState<Readonly<Record<string, number>>>({});
   return {
@@ -39,6 +51,6 @@ export function useProjectListState() {
     projectListMode,
     setProjectListFilter,
     setProjectListLimits,
-    setProjectListMode,
+    setProjectListMode: changeProjectListMode,
   };
 }

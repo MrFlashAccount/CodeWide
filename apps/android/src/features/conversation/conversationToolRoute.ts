@@ -91,9 +91,7 @@ function openPortsRoute(input: ConversationToolRouteInput): void {
     resources: props.composer.workspaceResources,
     serverName: props.ports.portForwardingServerName,
     tunnelResourceId: props.ports.tunnelResourceId,
-    ...(props.ports.onOpenPortForward === undefined
-      ? {}
-      : { openPort: props.ports.onOpenPortForward }),
+    ...(props.ports.onOpenBrowser === undefined ? {} : { openBrowser: props.ports.onOpenBrowser }),
   });
 }
 
@@ -106,9 +104,7 @@ function openRuntimeRoute(input: ConversationToolRouteInput): void {
     resources: props.composer.workspaceResources,
     serverName: props.ports.portForwardingServerName,
     tunnelResourceId: props.ports.tunnelResourceId,
-    ...(props.ports.onOpenPortForward === undefined
-      ? {}
-      : { openPort: props.ports.onOpenPortForward }),
+    ...(props.ports.onOpenBrowser === undefined ? {} : { openBrowser: props.ports.onOpenBrowser }),
     ...(props.terminal.onListTerminals === undefined
       ? {}
       : { listTerminals: props.terminal.onListTerminals }),

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  beginThreadNavigation,
   activeThreadNavigationIdFor,
+  armNextThreadNavigationProfile,
+  beginThreadNavigation,
   finalizeThreadNavigationProfile,
   getThreadNavigationProfileSnapshot,
   markThreadNavigationStage,
@@ -25,6 +26,15 @@ import {
   type TelemetryBatch,
 } from "../src/data/telemetry";
 
+function beginArmedThreadNavigation(connectionId: string, threadId: string): string {
+  armNextThreadNavigationProfile();
+  const navigationId = beginThreadNavigation(connectionId, threadId);
+  if (navigationId === null) {
+    throw new Error("The explicitly armed navigation profile did not start");
+  }
+  return navigationId;
+}
+
 describe("thread navigation metrics", () => {
   afterEach(() => {
     resetThreadNavigationMetricsForTests();
@@ -32,20 +42,32 @@ describe("thread navigation metrics", () => {
     resetTelemetryForTests();
   });
 
+  it("does not start detailed profiling during an ordinary chat selection", () => {
+    expect(beginThreadNavigation("server-1", "thread-1")).toBeNull();
+    expect(getThreadNavigationProfileSnapshot()).toEqual({ active: null, last: null });
+    expect(activeThreadNavigationIdFor("server-1", "thread-1")).toBeNull();
+  });
+
   it("correlates every stage of one navigation without recording content", async () => {
     const batches: TelemetryBatch[] = [];
-    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    configureTelemetryTransport(async (_connectionId, batch) => {
+      batches.push(batch);
+    });
     setTelemetryEnabled(true);
     setOperationalDiagnosticsEnabled(true);
 
-    const navigationId = beginThreadNavigation("server-1", "thread-1");
-    markThreadNavigationStage("server-1", "thread-1", "selection_next_frame", { values: { animationFrameDelayMs: 4 } });
+    const navigationId = beginArmedThreadNavigation("server-1", "thread-1");
+    markThreadNavigationStage("server-1", "thread-1", "selection_next_frame", {
+      values: { animationFrameDelayMs: 4 },
+    });
     markThreadNavigationStage("server-1", "thread-1", "hydration_start");
     markThreadNavigationStage("server-1", "thread-1", "hydration_result", {
       values: { rpcMs: 28, itemCount: 3 },
       tags: { outcome: "success" },
     });
-    markThreadNavigationStage("server-1", "thread-1", "hydration_result", { values: { rpcMs: 999 } });
+    markThreadNavigationStage("server-1", "thread-1", "hydration_result", {
+      values: { rpcMs: 999 },
+    });
     markThreadNavigationStage("server-1", "thread-1", "next_frame", { values: { itemCount: 3 } });
     await flushTelemetry();
 
@@ -58,37 +80,44 @@ describe("thread navigation metrics", () => {
       "next_frame",
     ]);
     expect(events.every((event) => event.requestId === navigationId)).toBe(true);
-    expect(events.every((event) => event.sessionId === "thread-1" && event.threadId === "thread-1")).toBe(true);
-    expect(events[3]).toMatchObject({ values: { rpcMs: 28, itemCount: 3 }, tags: { outcome: "success" } });
+    expect(
+      events.every((event) => event.sessionId === "thread-1" && event.threadId === "thread-1"),
+    ).toBe(true);
+    expect(events[3]).toMatchObject({
+      values: { rpcMs: 28, itemCount: 3 },
+      tags: { outcome: "success" },
+    });
     expect(JSON.stringify(events)).not.toMatch(/content|message|payload|prompt|response|text/u);
     expect(operationalMetricsSnapshot().timings.thread_navigation_total_ms?.totalCount).toBe(1);
   });
 
   it("closes an unfinished navigation as superseded and ignores its late stages", async () => {
     const batches: TelemetryBatch[] = [];
-    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    configureTelemetryTransport(async (_connectionId, batch) => {
+      batches.push(batch);
+    });
     setTelemetryEnabled(true);
 
-    const firstId = beginThreadNavigation("server-1", "thread-1");
-    const secondId = beginThreadNavigation("server-1", "thread-2");
-    markThreadNavigationStage("server-1", "thread-1", "hydration_result", { tags: { outcome: "aborted" } });
+    const firstId = beginArmedThreadNavigation("server-1", "thread-1");
+    const secondId = beginArmedThreadNavigation("server-1", "thread-2");
+    markThreadNavigationStage("server-1", "thread-1", "hydration_result", {
+      tags: { outcome: "aborted" },
+    });
     markThreadNavigationStage("server-1", "thread-2", "next_frame");
     await flushTelemetry();
 
     const events = batches.flatMap((batch) => batch.events);
-    expect(events.filter((event) => event.requestId === firstId).map((event) => event.tags?.stage)).toEqual([
-      "selection_requested",
-      "superseded",
-    ]);
-    expect(events.filter((event) => event.requestId === secondId).map((event) => event.tags?.stage)).toEqual([
-      "selection_requested",
-      "next_frame",
-    ]);
+    expect(
+      events.filter((event) => event.requestId === firstId).map((event) => event.tags?.stage),
+    ).toEqual(["selection_requested", "superseded"]);
+    expect(
+      events.filter((event) => event.requestId === secondId).map((event) => event.tags?.stage),
+    ).toEqual(["selection_requested", "next_frame"]);
   });
 
   it("rejects a late commit from an older generation of the same thread", () => {
-    const firstId = beginThreadNavigation("server-1", "thread-1");
-    const secondId = beginThreadNavigation("server-1", "thread-1");
+    const firstId = beginArmedThreadNavigation("server-1", "thread-1");
+    const secondId = beginArmedThreadNavigation("server-1", "thread-1");
 
     expect(activeThreadNavigationIdFor("server-1", "thread-1")).toBe(secondId);
     expect(markThreadNavigationStage("server-1", "thread-1", "next_frame", {}, firstId)).toBeNull();
@@ -100,11 +129,15 @@ describe("thread navigation metrics", () => {
 
   it("builds a content-free render profile with committed rows and exact frame stats", async () => {
     const batches: TelemetryBatch[] = [];
-    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    configureTelemetryTransport(async (_connectionId, batch) => {
+      batches.push(batch);
+    });
     setTelemetryEnabled(true);
 
-    const navigationId = beginThreadNavigation("server-1", "thread-3");
-    markThreadNavigationStage("server-1", "thread-3", "timeline_model_ready", { values: { itemCount: 12 } });
+    const navigationId = beginArmedThreadNavigation("server-1", "thread-3");
+    markThreadNavigationStage("server-1", "thread-3", "timeline_model_ready", {
+      values: { itemCount: 12 },
+    });
     recordThreadNavigationRowCommit("server-1", "thread-3", "row-1");
     recordThreadNavigationRowCommit("server-1", "thread-3", "row-1");
     recordThreadNavigationRowCommit("server-1", "thread-3", "row-2");
@@ -112,7 +145,9 @@ describe("thread navigation metrics", () => {
       values: { schedulerWaitMs: 4 },
       tags: { phase: "update" },
     });
-    expect(measureThreadNavigationWork("server-1", "thread-3", "assemble_timeline", () => 42)).toBe(42);
+    expect(measureThreadNavigationWork("server-1", "thread-3", "assemble_timeline", () => 42)).toBe(
+      42,
+    );
     const completed = markThreadNavigationStage("server-1", "thread-3", "next_frame");
     expect(completed).not.toBeNull();
     const profile = finalizeThreadNavigationProfile(completed!, {
@@ -143,59 +178,94 @@ describe("thread navigation metrics", () => {
       ]),
       frames: { renderedFrames: 3, jankFrames: 1 },
     });
-    expect(getThreadNavigationProfileSnapshot()).toMatchObject({ last: { id: navigationId, frames: { p95FrameMs: 24 } } });
-    const summary = batches.flatMap((batch) => batch.events).find((event) => event.name === "navigation.thread_profile");
-    const measures = batches.flatMap((batch) => batch.events).filter((event) => event.name === "navigation.thread_measure");
+    expect(getThreadNavigationProfileSnapshot()).toMatchObject({
+      last: { id: navigationId, frames: { p95FrameMs: 24 } },
+    });
+    const summary = batches
+      .flatMap((batch) => batch.events)
+      .find((event) => event.name === "navigation.thread_profile");
+    const measures = batches
+      .flatMap((batch) => batch.events)
+      .filter((event) => event.name === "navigation.thread_measure");
     expect(summary).toMatchObject({
       requestId: navigationId,
       values: { rowCommits: 3, uniqueRowsCommitted: 2, renderedFrames: 3, jankFrames: 1 },
       tags: { status: "completed", frameTrace: "available" },
     });
-    expect(measures).toEqual(expect.arrayContaining([
-      expect.objectContaining({ requestId: navigationId, values: expect.objectContaining({ durationMs: 18 }), tags: expect.objectContaining({ measure: "react_workspace_commit" }) }),
-      expect.objectContaining({ requestId: navigationId, tags: expect.objectContaining({ measure: "assemble_timeline" }) }),
-    ]));
+    expect(measures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          requestId: navigationId,
+          values: expect.objectContaining({ durationMs: 18 }),
+          tags: expect.objectContaining({ measure: "react_workspace_commit" }),
+        }),
+        expect.objectContaining({
+          requestId: navigationId,
+          tags: expect.objectContaining({ measure: "assemble_timeline" }),
+        }),
+      ]),
+    );
     expect(JSON.stringify(summary)).not.toMatch(/content|message|payload|prompt|response|text/u);
   });
 
   it("keeps visible UI events that happen after the first navigation frame", async () => {
     const batches: TelemetryBatch[] = [];
-    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    configureTelemetryTransport(async (_connectionId, batch) => {
+      batches.push(batch);
+    });
     setTelemetryEnabled(true);
 
-    const navigationId = beginThreadNavigation("server-1", "thread-4");
+    const navigationId = beginArmedThreadNavigation("server-1", "thread-4");
     const completed = markThreadNavigationStage("server-1", "thread-4", "next_frame");
     expect(completed).not.toBeNull();
-    expect(recordThreadNavigationVisualEvent("server-1", "thread-4", "suspense_fallback_visible", {
-      tags: { status: "loading-history" },
-    }, navigationId)).toBe(navigationId);
+    expect(
+      recordThreadNavigationVisualEvent(
+        "server-1",
+        "thread-4",
+        "suspense_fallback_visible",
+        {
+          tags: { status: "loading-history" },
+        },
+        navigationId,
+      ),
+    ).toBe(navigationId);
     finalizeThreadNavigationProfile(completed!, null);
     await flushTelemetry();
 
     expect(getThreadNavigationProfileSnapshot().last?.visualEvents).toEqual([
-      expect.objectContaining({ name: "suspense_fallback_visible", tags: { status: "loading-history" } }),
-    ]);
-    expect(batches.flatMap((batch) => batch.events)).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        name: "navigation.thread_visual_event",
-        requestId: navigationId,
-        tags: expect.objectContaining({ event: "suspense_fallback_visible" }),
+        name: "suspense_fallback_visible",
+        tags: { status: "loading-history" },
       }),
-    ]));
+    ]);
+    expect(batches.flatMap((batch) => batch.events)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "navigation.thread_visual_event",
+          requestId: navigationId,
+          tags: expect.objectContaining({ event: "suspense_fallback_visible" }),
+        }),
+      ]),
+    );
   });
 
   it("does not attach a stale visual cleanup to a newer navigation of the same thread", () => {
-    const firstId = beginThreadNavigation("server-1", "thread-5");
+    const firstId = beginArmedThreadNavigation("server-1", "thread-5");
     markThreadNavigationStage("server-1", "thread-5", "next_frame", {}, firstId);
-    const secondId = beginThreadNavigation("server-1", "thread-5");
+    const secondId = beginArmedThreadNavigation("server-1", "thread-5");
 
-    expect(recordThreadNavigationVisualEvent(
-      "server-1",
-      "thread-5",
-      "conversation_destination_hidden_or_unmounted",
-      {},
-      firstId,
-    )).toBeNull();
-    expect(getThreadNavigationProfileSnapshot().active).toMatchObject({ id: secondId, visualEvents: [] });
+    expect(
+      recordThreadNavigationVisualEvent(
+        "server-1",
+        "thread-5",
+        "conversation_destination_hidden_or_unmounted",
+        {},
+        firstId,
+      ),
+    ).toBeNull();
+    expect(getThreadNavigationProfileSnapshot().active).toMatchObject({
+      id: secondId,
+      visualEvents: [],
+    });
   });
 });

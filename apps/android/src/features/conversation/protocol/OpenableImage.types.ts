@@ -1,8 +1,10 @@
 import type { StyleProp, ViewStyle } from "react-native";
+import type { PrivateImageDetailRequest } from "../../../rendering/use-private-image-uri";
 
 /** Inputs owned by this composition boundary; concrete state owners remain separate. */
 export type OpenableImageProps = {
   containerStyle?: StyleProp<ViewStyle>;
+  detail?: PrivateImageDetailRequest | null;
   download?: (() => Promise<void>) | null;
   groupId?: string | null;
   label: string;

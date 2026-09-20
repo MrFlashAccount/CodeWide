@@ -10,10 +10,12 @@ it("preserves navigation integration contracts", () => {
     "const defaultDesktopThreadId = defaultDesktopThreadSelection(",
   );
   expect(conversationNavigation).toContain("revision={defaultThread}");
+  expect(conversationNavigation).toContain("focused &&");
+  expect(conversationNavigation).toContain('pathname === "/v1"');
   expect(conversationNavigation).toMatch(
     /onCommit=\{\(\) => \{\s*list\.selectThread\(defaultThread\);\s*\}\}/u,
   );
-  expect(navigationActions).toContain("remote.threadDetails.preloadWindow({");
+  expect(navigationActions).not.toContain("preloadWindow");
   expect(navigationActions).toContain(
     "KeyboardController.dismiss({ animated: false, keepFocus: false })",
   );

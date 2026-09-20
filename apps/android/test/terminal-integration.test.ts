@@ -43,6 +43,30 @@ const ownerTerminalTabNative = readFileSync(
   new URL("../src/features/terminal/TerminalTab.native.tsx", import.meta.url),
   "utf8",
 );
+const ownerManageTerminalsSheet = readFileSync(
+  new URL("../src/features/terminal/ManageTerminalsSheet.tsx", import.meta.url),
+  "utf8",
+);
+const nativeInventory = readFileSync(
+  new URL("../src/data/nativeTerminalInventory.native.ts", import.meta.url),
+  "utf8",
+);
+const portsRow = readFileSync(
+  new URL("../src/features/ports/ForwardingRow.tsx", import.meta.url),
+  "utf8",
+);
+const ownerThreadListMenu = readFileSync(
+  new URL("../src/features/threadList/ThreadListMenus.tsx", import.meta.url),
+  "utf8",
+);
+const ownerWorkspaceComposition = readFileSync(
+  new URL("../app/v1/V1WorkspaceRouteComposition.tsx", import.meta.url),
+  "utf8",
+);
+const ownerWorkspaceShell = readFileSync(
+  new URL("../app/v1/V1WorkspaceShell.tsx", import.meta.url),
+  "utf8",
+);
 
 const ownerTerminalActions = readFileSync(
   new URL("../src/features/terminal/terminalActions.ts", import.meta.url),
@@ -88,12 +112,37 @@ const historyBinding = compactSource(
 );
 
 describe("native terminal integration", () => {
+  it("manages existing terminal tabs from the thread-list overflow menu", () => {
+    expect(ownerThreadListMenu).toContain('label: "Manage terminals"');
+    expect(ownerThreadListMenu).toContain("onPress: onManageTerminals");
+    expect(ownerWorkspaceComposition).toContain("<ManageTerminalsSheet");
+    expect(ownerWorkspaceComposition).toContain("refreshNativeTerminalInventory()");
+    expect(ownerWorkspaceComposition).toContain("focusInteractiveTerminalSession(terminal)");
+    expect(ownerWorkspaceComposition).toContain("closeInteractiveTerminalSession(sessionId)");
+    expect(ownerWorkspaceComposition).not.toContain('pathname: "/v1/terminals');
+    expect(ownerWorkspaceShell).not.toContain('name="terminals/');
+    expect(nativeInventory).toContain("listNativeTerminals()");
+    expect(nativeManager).toContain("fun listRunning(): String");
+    expect(nativeManager).toContain("session.disposed.get() || session.finished");
+    expect(transport).toContain("await bridge.listTerminals()");
+    expect(ownerManageTerminalsSheet).not.toContain("createInteractiveTerminalTab");
+  });
+
+  it("uses the Ports row overflow trigger and keeps it separate from row focus", () => {
+    expect(portsRow).toContain("<AppListRowMenuTrigger");
+    expect(ownerManageTerminalsSheet).toContain("<AppListRowMenuTrigger");
+    expect(ownerManageTerminalsSheet).toContain("onPress={focus}");
+    expect(ownerManageTerminalsSheet).toContain("trailing={");
+    expect(ownerManageTerminalsSheet).toContain('id: "close", label: "Close"');
+    expect(ownerManageTerminalsSheet).not.toContain("accessibilityLabel={`Close");
+  });
+
   it("opens a thread-bound workspace through a retained route session", () => {
-    expect(ownerComposerAccessoryTray).not.toContain('id: "terminal"');
+    expect(ownerComposerAccessoryTray).toContain('id: "terminal"');
     expect(ownerComposerAccessoryTray).not.toContain('id: "ports"');
     expect(screen).not.toContain('label: "Open terminal"');
     expect(ownerTerminalActions).toContain("const createAndOpenTerminal = useEvent(() => {");
-    expect(ownerComposerFeatureActions).not.toContain("createAndOpenTerminal");
+    expect(ownerComposerFeatureActions).toContain("createAndOpenTerminal();");
     expect(ownerTerminalFeature).toContain("terminalRouteSessions.get");
     expect(ownerTerminalFeature).toMatch(
       /<TerminalWorkspace(?=[^>]*connectionId=\{session\.request\.connectionId\})(?=[^>]*threadId=\{session\.request\.threadId\})[^>]*>/u,

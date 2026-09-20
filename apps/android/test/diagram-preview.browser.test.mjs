@@ -36,6 +36,139 @@ test('inline ASCII previews keep the viewport height and contain tall and wide d
     assert.equal(await page.locator('#root').evaluate(node => node.getBoundingClientRect().height), 220);
   } finally { await page.close(); }
 });
+test("V1 ASCII preview uses the bundled wide-coverage monospace font and reports source geometry", async () => {
+  const page = await browser.newPage({ viewport: { width: 1024, height: 1024 } });
+  try {
+    await page.addInitScript(() => {
+      window.__diagramMessages = [];
+      window.CodeWideDiagramPreview = {
+        postMessage(value) {
+          window.__diagramMessages.push(JSON.parse(value));
+        },
+      };
+    });
+    await page.goto(
+      new URL("../android/app/src/main/assets/ascii-diagram-renderer.html", import.meta.url).href,
+    );
+    await page.waitForFunction(() =>
+      window.__diagramMessages.some((message) => message.type === "ready"),
+    );
+    const source = `A ───→ B
+    ╲     │
+     ↳    ↓
+       C ───→ D`;
+    await page.evaluate(async (diagram) => {
+      await window.diagramUseV1AsciiPresentation();
+      await window.renderAsciiDiagram(diagram, "ascii-preview", "preview");
+    }, source);
+    await page.waitForFunction(() =>
+      window.__diagramMessages.some(
+        (message) => message.type === "preview-ready" && message.requestId === "ascii-preview",
+      ),
+    );
+    const result = await page.evaluate(() => {
+      const message = window.__diagramMessages.findLast(
+        (value) => value.requestId === "ascii-preview",
+      );
+      const text = document.querySelector("#canvas svg text");
+      const context = document.createElement("canvas").getContext("2d");
+      context.font = "13.333px CodeWideV1AsciiMono";
+      return {
+        cellWidth: context.measureText("MMMMMMMMMM").width / 10,
+        font: getComputedStyle(text).fontFamily,
+        fontLoaded: document.fonts.check("13.333px CodeWideV1AsciiMono", "↳ ⇒ ╱ ╲"),
+        message,
+        mode: document.querySelector("#root").dataset.mode,
+      };
+    });
+    assert.equal(result.mode, "preview");
+    assert.match(result.font, /CodeWideV1AsciiMono/u);
+    assert.equal(result.fontLoaded, true);
+    assert.equal(result.cellWidth, 8);
+    assert.equal(result.message.type, "preview-ready");
+    assert.ok(result.message.width > 0);
+    assert.ok(result.message.height > 0);
+  } finally {
+    await page.close();
+  }
+});
+
+test("V1 ASCII labels stay text when they contain Svgbob shape characters", async () => {
+  const page = await browser.newPage({ viewport: { width: 1024, height: 1024 } });
+  try {
+    await page.addInitScript(() => {
+      window.__diagramMessages = [];
+      window.CodeWideDiagramPreview = {
+        postMessage(value) {
+          window.__diagramMessages.push(JSON.parse(value));
+        },
+      };
+    });
+    await page.goto(
+      new URL("../android/app/src/main/assets/ascii-diagram-renderer.html", import.meta.url).href,
+    );
+    await page.waitForFunction(() =>
+      window.__diagramMessages.some((message) => message.type === "ready"),
+    );
+    const source = `intake
+→ proposal_mode: verify | dialectic
+
+verify:
+  proposal
+  → hostile attack
+  → revise
+
+dialectic:
+  proposal A ┐
+             ├→ synthesis
+  proposal B ┘
+  → hostile attack синтеза
+  → revise`;
+    await page.evaluate(async (diagram) => {
+      await window.diagramUseV1AsciiPresentation();
+      await window.renderAsciiDiagram(diagram, "ascii-labels", "preview");
+    }, source);
+    const result = await page.evaluate(() => {
+      const svg = document.querySelector("#canvas svg");
+      const bounds = svg.getBBox();
+      const viewBox = svg.viewBox.baseVal;
+      return {
+        bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+        lines: [...svg.querySelectorAll("line")].map((line) => ({
+          x1: line.getAttribute("x1"),
+          y1: line.getAttribute("y1"),
+          x2: line.getAttribute("x2"),
+          y2: line.getAttribute("y2"),
+        })),
+        message: window.__diagramMessages.findLast((value) => value.requestId === "ascii-labels"),
+        texts: [...svg.querySelectorAll("text")].map((text) => text.textContent),
+        viewBox: { x: viewBox.x, y: viewBox.y, width: viewBox.width, height: viewBox.height },
+      };
+    });
+    assert.ok(result.texts.includes("proposal_mode: verify | dialectic"));
+    assert.ok(result.texts.includes("proposal"));
+    assert.ok(result.texts.includes("hostile attack синтеза"));
+    assert.equal(
+      result.lines.some((line) => line.x1 === "80" && line.y1 === "32"),
+      false,
+      "underscore must not become a horizontal line",
+    );
+    assert.equal(
+      result.lines.some((line) => line.x1 === "196" && line.y1 === "16"),
+      false,
+      "pipe must not become a vertical line",
+    );
+    assert.ok(
+      result.lines.some((line) => line.x1 === "104" && line.y1 === "152"),
+      "the intentional bracket must remain geometry",
+    );
+    assert.ok(result.message.width > 270, "preview geometry must include the complete long label");
+    assert.ok(result.viewBox.x <= result.bounds.x);
+    assert.ok(result.viewBox.x + result.viewBox.width >= result.bounds.x + result.bounds.width);
+  } finally {
+    await page.close();
+  }
+});
 
 const flowchart = `flowchart TD
   A[Идея жителя] --> B[Обсуждение замысла]

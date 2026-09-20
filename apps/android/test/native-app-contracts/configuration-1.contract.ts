@@ -109,8 +109,9 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
   expect(screen).not.toContain("interpolateColor(");
   expect(ownerTurnContexts).toContain("const ActiveToolCallContext = createContext(false)");
   expect(ownerTurnActivity).toContain(
-    "value={shouldAutoExpand && index === part.blocks.length - 1}",
+    "active={shouldAutoExpand && index === props.part.blocks.length - 1}",
   );
+  expect(ownerTurnActivity).toContain("value={props.active}");
   expect(ownerCard).toContain("|| activeToolCall");
   expect(ownerProtocolBlock).toContain(
     'reasoningActivityTitle(block.body, activeToolCall ? "inProgress" : block.status)',
@@ -123,10 +124,10 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
     'const send = (textOverride?: string, preference: ComposerSendPreference = "start") =>',
   );
   expect(ownerSubmission).toMatch(
-    /const text = \(\s*textOverride \?\? markdownForComposerSubmission\(composerMarkdownRef\.current\)\s*\)\.trim\(\)/u,
+    /const session = composerSession\.capture\(\);[\s\S]*const capturedSession = session\.read\(\);[\s\S]*composerTextForSubmission\(\{ markdown: capturedMarkdown, plainText: capturedPlainDraft \}\)/u,
   );
   expect(ownerSubmission).toMatch(
-    /const sentAttachments = composerUploads\.readyAttachments\(\s*composerUploadScope,\s*latestAttachmentsRef\.current\.latest,?\s*\)/u,
+    /const sentAttachments = composerUploads\s*\.readyAttachments\(\s*composerUploadScope,\s*capturedSession\.attachments,?\s*\)\s*\.slice\(\)/u,
   );
   expect(conversationTimeline).toContain(
     "beginQueuedComposerEdit={props.queueEditActionsBinding.beginQueuedComposerEdit}",
@@ -181,5 +182,5 @@ it("does not package unused Skia native binaries", () => {
   expect(appPackage.dependencies["@shopify/react-native-skia"]).toBeUndefined();
   expect(rootPackage.pnpm?.onlyBuiltDependencies ?? []).not.toContain("@shopify/react-native-skia");
   expect(voiceAura).toContain("setNativeVoiceAuraState");
-  expect(nativeModule).toContain("VoiceAuraRenderEffect");
+  expect(nativeModule).toContain("VoiceAuraOverlay");
 });

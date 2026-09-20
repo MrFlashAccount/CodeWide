@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
 import { summary } from "./fixtures/thread-summary";
 import type { ThreadSummaryViewRequest } from "../src/data/thread-summary-model";
+import {
+  parseGlobalSupervisorBinding,
+  type GlobalSupervisorBinding,
+} from "../src/data/globalSupervisorBinding";
+import { createGlobalSupervisorSummaryStoragePolicy } from "../src/data/globalSupervisorSummaryStoragePolicy";
+import { createGlobalSupervisorVisibilityPolicy } from "../src/data/globalSupervisorVisibility";
 
 const sqlite = await vi.hoisted(async () => {
   const { DatabaseSync } = await import("node:sqlite");
@@ -123,6 +129,103 @@ describe("persisted project catalog", () => {
     await database.markRead("server", "unread");
     expect(database.projectUnread.projects$.peek()).toEqual([]);
     read.release();
+    await database.close();
+  });
+
+  it("removes the exact supervisor binding before any summary view can expose it", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    writer.write({ type: "insert", value: summary("supervisor", { unread: 1 }) });
+    writer.write({ type: "insert", value: summary("ordinary", { unread: 1 }) });
+    await writer.commit({ durable: true });
+    await writer.close();
+
+    const binding = parseGlobalSupervisorBinding({
+      home: { connectionId: "server", threadId: "supervisor" },
+      schemaVersion: 1,
+      status: "ready",
+    });
+    if (binding === null) {
+      throw new Error("Invalid supervisor binding fixture");
+    }
+    const database = createThreadSummaryDatabase({
+      globalSupervisorStorage: createGlobalSupervisorSummaryStoragePolicy(() => binding),
+      visibility: createGlobalSupervisorVisibilityPolicy(() => binding),
+    });
+    await database.prepare();
+
+    expect(await database.get("server", "supervisor")).toBeNull();
+    expect(await database.get("server", "ordinary")).not.toBeNull();
+    expect(database.projectUnread.projects$.peek()).toEqual(["server\u0000/repo"]);
+    await database.close();
+  });
+
+  it("withholds uncertain supervisor state without deleting unrelated summary or unread data", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    writer.write({ type: "insert", value: summary("ordinary", { unread: 1 }) });
+    await writer.commit({ durable: true });
+    await writer.close();
+    let binding: GlobalSupervisorBinding | null = parseGlobalSupervisorBinding({
+      priorHome: null,
+      reason: "ambiguousCreation",
+      schemaVersion: 1,
+      status: "invalid",
+    });
+    if (binding === null) {
+      throw new Error("Invalid ambiguous supervisor fixture");
+    }
+    const database = createThreadSummaryDatabase({
+      globalSupervisorStorage: createGlobalSupervisorSummaryStoragePolicy(() => binding),
+      visibility: createGlobalSupervisorVisibilityPolicy(() => binding),
+    });
+    await database.prepare();
+    expect(await database.get("server", "ordinary")).toBeNull();
+    expect(database.projectUnread.projects$.peek()).toEqual([]);
+
+    const read = database.beginCatalogRead("server");
+    await database.applyCatalogPage("server", [], false, new Set(), read, true, "/repo");
+    read.release();
+    binding = null;
+
+    expect((await database.get("server", "ordinary"))?.unread).toBe(1);
+    const persisted = createThreadSummarySqlite();
+    expect((await persisted.loadRow("server", "ordinary"))?.unread).toBe(1);
+    await persisted.close();
+    await database.close();
+  });
+
+  it("preserves unrelated cached rows while supervisor creation is unresolved offline", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    writer.write({ type: "insert", value: summary("ordinary", { unread: 1 }) });
+    await writer.commit({ durable: true });
+    await writer.close();
+    let binding: GlobalSupervisorBinding | null = parseGlobalSupervisorBinding({
+      creationToken: "creation-token",
+      homeConnectionId: "server",
+      schemaVersion: 1,
+      status: "creating",
+    });
+    if (binding === null) {
+      throw new Error("Invalid creating supervisor fixture");
+    }
+    const database = createThreadSummaryDatabase({
+      globalSupervisorStorage: createGlobalSupervisorSummaryStoragePolicy(() => binding),
+      visibility: createGlobalSupervisorVisibilityPolicy(() => binding),
+    });
+    await database.prepare();
+    expect(await database.get("server", "ordinary")).toBeNull();
+
+    const read = database.beginCatalogRead("server");
+    await database.applyCatalogPage("server", [], false, new Set(), read, true, "/repo");
+    read.release();
+    binding = null;
+
+    expect((await database.get("server", "ordinary"))?.unread).toBe(1);
     await database.close();
   });
 });

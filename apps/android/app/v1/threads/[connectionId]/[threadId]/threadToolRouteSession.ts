@@ -47,9 +47,6 @@ export function useThreadToolRouteSession(): ThreadToolRouteSession {
         : () => undefined,
   );
   const recover = useEvent((): void => {
-    if (session !== null) {
-      composerToolRouteSessions.close(session.id);
-    }
     recoverUnavailableRoute(
       router,
       thread.status === "valid" ? v1ThreadDestination(thread.value) : "/v1",

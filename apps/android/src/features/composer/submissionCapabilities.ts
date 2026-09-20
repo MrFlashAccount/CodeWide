@@ -7,14 +7,15 @@ import type { useComposerSettings } from "./settings";
 
 type Draft = ReturnType<typeof useComposerDraftState>;
 type Settings = ReturnType<typeof useComposerSettings>;
+
+type ComposerGoalSubmission = {
+  readonly close: () => void;
+  readonly submit: (objective: string) => Promise<void>;
+};
 /** Submission retains the original draft and admission owner through asynchronous settlement. */
 export type ComposerSubmissionCapabilities = Pick<
   Draft,
-  | "composerUploadScope"
-  | "latestAttachmentsRef"
-  | "latestDraftRef"
-  | "latestComposerPreferencesRef"
-  | "composerMarkdownRef"
+  "composerUploadScope" | "composerSession" | "composerInputRef"
 > &
   Pick<
     Settings,
@@ -33,6 +34,7 @@ export type ComposerSubmissionCapabilities = Pick<
     currentTurnId: string | null;
     draftConnectionId: string | null;
     draftThreadId: string | null;
+    goalSubmission: ComposerGoalSubmission | null;
     onListQueue: (() => Promise<unknown>) | undefined;
     onSend:
       | ((text: string, mode: SendMode, options: TurnSendOptions) => Promise<string>)

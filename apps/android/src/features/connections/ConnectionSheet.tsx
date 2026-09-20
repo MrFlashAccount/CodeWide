@@ -10,7 +10,9 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
+import { SheetPageTransition, useSheetBackHandler } from "../../ui/sheetNavigation";
 import { AppText as Text } from "../../ui/Typography";
+import { useEvent } from "../../react/useEvent";
 import { styles } from "./ConnectionSheet.styles";
 
 export function ConnectionSheet({
@@ -71,6 +73,7 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
     error,
     minutesLeft,
     mode,
+    navigationDirection,
     openPairingScanner,
     pasteCode,
     save,
@@ -84,88 +87,92 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
     tlsPinSha256,
     token,
   } = usePairingSession(props);
+  const backToMethods = useEvent(() => {
+    setMode("choose");
+    setError(null);
+  });
+  useSheetBackHandler(mode === "manual" || mode === "review", backToMethods);
   return (
-    <AppSheetScrollView
-      contentContainerStyle={styles.connectionSheetContent}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      style={styles.connectionSheetScroll}
-    >
-      <View style={styles.pairingHeader}>
-        {mode !== "choose" && mode !== "success" ? (
-          <Pressable
-            accessibilityLabel="Back to connection methods"
-            hitSlop={8}
-            onPress={() => {
-              setMode("choose");
-              setError(null);
-            }}
-            style={styles.pairingBack}
-          >
-            <Ionicons color={colors.text} name="chevron-back" size={iconSize.action} />
-          </Pressable>
-        ) : null}
-        <Text ellipsizeMode="tail" numberOfLines={1} style={styles.pairingHeaderTitle}>
-          {mode === "review"
-            ? "Ready to connect"
-            : mode === "manual"
-              ? "Manual setup"
-              : mode === "success"
-                ? "Connected"
-                : "Connect a server"}
-        </Text>
-      </View>
+    <SheetPageTransition direction={navigationDirection} routeKey={mode}>
+      <AppSheetScrollView
+        contentContainerStyle={styles.connectionSheetContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={styles.connectionSheetScroll}
+      >
+        <View style={styles.pairingHeader}>
+          {mode !== "choose" && mode !== "success" ? (
+            <Pressable
+              accessibilityLabel="Back to connection methods"
+              hitSlop={8}
+              onPress={backToMethods}
+              style={styles.pairingBack}
+            >
+              <Ionicons color={colors.text} name="chevron-back" size={iconSize.action} />
+            </Pressable>
+          ) : null}
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.pairingHeaderTitle}>
+            {mode === "review"
+              ? "Ready to connect"
+              : mode === "manual"
+                ? "Manual setup"
+                : mode === "success"
+                  ? "Connected"
+                  : "Connect a server"}
+          </Text>
+        </View>
 
-      {mode === "choose" && (
-        <PairingChoose
-          error={error}
-          openPairingScanner={openPairingScanner}
-          pasteCode={pasteCode}
-          setError={setError}
-          setMode={setMode}
-        />
-      )}
+        {mode === "choose" && (
+          <PairingChoose
+            error={error}
+            openPairingScanner={openPairingScanner}
+            pasteCode={pasteCode}
+            setError={setError}
+            setMode={setMode}
+          />
+        )}
 
-      {mode === "review" && (
-        <PairingReview
-          displayName={displayName}
-          emoji={emoji}
-          endpointLabel={endpointLabel}
-          error={error}
-          localError={localError}
-          localReady={localReady}
-          minutesLeft={minutesLeft}
-          onRetryStartup={onRetryStartup}
-          save={save}
-          saving={saving}
-          setDisplayName={setDisplayName}
-          setEmoji={setEmoji}
-          setMode={setMode}
-        />
-      )}
+        {mode === "review" && (
+          <PairingReview
+            displayName={displayName}
+            emoji={emoji}
+            endpointLabel={endpointLabel}
+            error={error}
+            localError={localError}
+            localReady={localReady}
+            minutesLeft={minutesLeft}
+            onRetryStartup={onRetryStartup}
+            save={save}
+            saving={saving}
+            setDisplayName={setDisplayName}
+            setEmoji={setEmoji}
+            setMode={setMode}
+          />
+        )}
 
-      {mode === "manual" && (
-        <PairingManual
-          displayName={displayName}
-          emoji={emoji}
-          endpoint={endpoint}
-          error={error}
-          localError={localError}
-          localReady={localReady}
-          onRetryStartup={onRetryStartup}
-          save={save}
-          saving={saving}
-          setDisplayName={setDisplayName}
-          setEmoji={setEmoji}
-          setEndpoint={setEndpoint}
-          setTlsPinSha256={setTlsPinSha256}
-          setToken={setToken}
-          tlsPinSha256={tlsPinSha256}
-          token={token}
-        />
-      )}
+        {mode === "manual" && (
+          <PairingManual
+            displayName={displayName}
+            emoji={emoji}
+            endpoint={endpoint}
+            error={error}
+            localError={localError}
+            localReady={localReady}
+            onRetryStartup={onRetryStartup}
+            save={save}
+            saving={saving}
+            setDisplayName={setDisplayName}
+            setEmoji={setEmoji}
+            setEndpoint={setEndpoint}
+            setTlsPinSha256={setTlsPinSha256}
+            setToken={setToken}
+            tlsPinSha256={tlsPinSha256}
+            token={token}
+          />
+        )}
 
-      {mode === "success" && <PairingSuccess displayName={displayName} emoji={emoji} />}
-    </AppSheetScrollView>
+        {mode === "success" && <PairingSuccess displayName={displayName} emoji={emoji} />}
+      </AppSheetScrollView>
+    </SheetPageTransition>
   );
 }

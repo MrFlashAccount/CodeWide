@@ -12,6 +12,10 @@ import { reportGlobalError } from "../../src/ui/global-error-store";
 import { disposeAllRouteSessions } from "../../src/services/routeSessionPolicy";
 import { newThreadService } from "../../src/services/threads/newThreadService";
 
+// WHY: Expo Router reads this required route-module export before rendering the layout component.
+// oxlint-disable-next-line react-doctor/only-export-components
+export const unstable_settings = { anchor: "index", initialRouteName: "index" };
+
 /** Keeps the V1 runtime mounted while Expo Router owns destination history. */
 export default function V1WorkspaceLayout(): React.JSX.Element | null {
   const generation = useUiGenerationSnapshot();

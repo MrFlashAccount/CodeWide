@@ -129,7 +129,7 @@ export function createConversationChromeContent({
   const jumpContent = (
     <JumpToLatest
       bottomChromeHeight={timelineState.timelineViewportStateBinding.bottomChromeHeight}
-      jumpTimelineToLatest={timelineRead.historyAnchorActionsBinding.jumpTimelineToLatest}
+      jumpTimelineToLatest={timelineRead.timelineJumpActionsBinding.jumpTimelineToLatest}
       newItemCount={timelineRead.newItemCount}
     />
   );

@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ActivityIndicator, Image, Linking, Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { retainCachedAttachment } from "../native/attachment-cache/cached-transfer";
@@ -53,6 +53,7 @@ import type {
   ImagePreviewItem,
   ImagePreviewRequest,
 } from "./imagePreviewTypes";
+import { ProgressiveImageLayer } from "./ProgressiveImageLayer";
 
 export type { ImagePreviewItem, ImagePreviewRequest } from "./imagePreviewTypes";
 
@@ -238,6 +239,8 @@ export function useRegisterImagePreviewItem(groupId: string | null, item: ImageP
       item.source.uri,
       item.draft?.scope,
       item.draft?.attachmentId,
+      item.detail?.getAccess,
+      item.detail?.resourceKey,
       register,
       registerCurrentItem,
     ],
@@ -610,30 +613,12 @@ function ZoomableImage({
           <Animated.View
             style={[styles.imageLayer, { height: fit.height, width: fit.width }, imageStyle]}
           >
-            <Image
-              accessibilityLabel={`${item.label} full screen`}
-              onError={() => {
-                setDecodeState("error");
-              }}
-              onLoad={({ nativeEvent }) => {
-                setDecodeState("ready");
-                // React Native Web omits `source` from this event. Native
-                // Android includes it, which is where intrinsic sizing matters.
-                const loadedSource = nativeEvent.source;
-                // WHY: React Native Web omits this runtime field although the shared event type marks it as required.
-                // oxlint-disable-next-line typescript/no-unnecessary-condition
-                if (loadedSource === undefined) return;
-                const width = loadedSource.width;
-                const height = loadedSource.height;
-                if (width > 0 && height > 0) setIntrinsic({ height, width });
-              }}
-              onLoadStart={() => {
-                setDecodeState("loading");
-              }}
-              resizeMethod="resize"
-              resizeMode="contain"
-              source={item.source}
-              style={styles.image}
+            <ProgressiveImageLayer
+              detail={item.detail}
+              label={item.label}
+              onDecodeStateChange={setDecodeState}
+              onDimensions={setIntrinsic}
+              preview={item.source}
             />
             {points.map((point, index) => (
               <View
@@ -703,10 +688,6 @@ const styles = StyleSheet.create({
     minHeight: 0,
     minWidth: 0,
     position: "relative",
-  },
-  image: {
-    height: "100%",
-    width: "100%",
   },
   imageError: {
     color: "#ffffff",

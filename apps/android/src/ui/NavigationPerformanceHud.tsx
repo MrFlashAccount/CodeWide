@@ -1,22 +1,26 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
-import { type ComponentProps, useState, useSyncExternalStore } from "react";
+import { type ComponentProps, useRef, useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { serializeNavigationSpeedscopeProfile } from "../data/navigation-speedscope-profile";
 import {
+  armNextThreadNavigationProfile,
   getThreadNavigationProfileSnapshot,
   subscribeThreadNavigationProfiles,
   type ThreadNavigationProfile,
 } from "../data/thread-navigation-metrics";
 import {
+  armNextNavigationHermesProfile,
   captureHermesHeapSnapshot,
+  saveNavigationProfile,
   usePerformanceMetrics,
   type HermesHeapSnapshot,
+  type SavedNavigationProfile,
 } from "../native/performance-metrics";
+import { useEvent } from "../react/useEvent";
 import {
   colors,
   spacing,
@@ -45,32 +49,65 @@ export function NavigationPerformanceHud() {
     scope: "navigation-performance",
   });
   const dialog = useAppDialog();
-  const [copied, setCopied] = useState(false);
+  const profileExportRunning = useRef(false);
+  const [profileExport, setProfileExport] = useState<ProfileExportState>({ status: "idle" });
   const [menuOpen, setMenuOpen] = useState(false);
   const [heapCaptureRunning, setHeapCaptureRunning] = useState(false);
   const [heapSnapshot, setHeapSnapshot] = useState<HermesHeapSnapshot | null>(null);
   const [heapError, setHeapError] = useState<string | null>(null);
-  if (!metrics.enabled) {
-    return null;
-  }
-
   const current = metrics.current;
   const profile = profiles.active ?? profiles.last;
-  const profileText = formatProfile(profile);
   const frameText =
     current === null
       ? "collecting frames"
-      : `${integer(current.renderedFps)} fps · p95 ${decimal(current.p95FrameMs)} ms · ${decimal(current.jankPercent)}% jank · ${bytes(current.pssBytes)}`;
-  const copyReport = async () => {
+      : `${integer(current.renderedFps)} fps · CPU ${decimal(current.cpuPercent)}% · RSS ${bytes(current.rssBytes)}`;
+  const saveReport = useEvent(async () => {
     if (profile === null) {
       return;
     }
-    await Clipboard.setStringAsync(serializeNavigationProfile(profile, current));
-    setCopied(true);
-    setTimeout(() => {
-      setCopied(false);
-    }, 2000);
-  };
+    if (profileExportRunning.current) {
+      return;
+    }
+    profileExportRunning.current = true;
+    setProfileExport({ status: "saving" });
+    try {
+      const saved = await saveNavigationProfile(serializeNavigationProfile(profile, current));
+      setProfileExport({ artifact: saved, status: "saved" });
+      setTimeout(() => {
+        setProfileExport({ status: "idle" });
+      }, 2000);
+      profileExportRunning.current = false;
+    } catch (error) {
+      setProfileExport({ status: "idle" });
+      profileExportRunning.current = false;
+      throw error;
+    }
+  });
+  const requestSaveReport = useEvent(() => {
+    setMenuOpen(false);
+    void saveReport().catch((error: unknown) => {
+      dialog.alert(
+        "Save failed",
+        error instanceof Error ? error.message : "Could not save navigation profile",
+      );
+    });
+  });
+  const requestHermesProfile = useEvent(() => {
+    setMenuOpen(false);
+    void armNextNavigationHermesProfile()
+      .then(() => {
+        armNextThreadNavigationProfile();
+      })
+      .catch((error: unknown) => {
+        dialog.alert(
+          "Profiler unavailable",
+          error instanceof Error ? error.message : "Could not arm the navigation profiler",
+        );
+      });
+  });
+  if (!metrics.enabled) {
+    return null;
+  }
   const openViewer = (title: string, fileName: string, content: string) => {
     setMenuOpen(false);
     fullscreenOverlay.present(
@@ -112,7 +149,7 @@ export function NavigationPerformanceHud() {
         accessibilityLabel="Open navigation performance tools"
         accessibilityRole="button"
         accessibilityState={{ expanded: menuOpen }}
-        onLongPress={() => void copyReport()}
+        onLongPress={requestSaveReport}
         onPress={() => {
           setMenuOpen((open) => !open);
         }}
@@ -126,9 +163,9 @@ export function NavigationPerformanceHud() {
           ]}
         />
         <Text numberOfLines={1} style={styles.text}>
-          {copied
-            ? "Full profile copied"
-            : `${frameText}${profileText === "" ? "" : `  ·  ${profileText}`}`}
+          {profileExport.status === "saved"
+            ? `Full profile saved · ${profileExport.artifact.location}`
+            : frameText}
         </Text>
         <Ionicons
           color={colors.textMuted}
@@ -172,6 +209,12 @@ export function NavigationPerformanceHud() {
             </>
           )}
           <MenuAction
+            icon="flame-outline"
+            onPress={requestHermesProfile}
+            subtitle="Samples JavaScript only during the next chat switch"
+            title="Profile next navigation"
+          />
+          <MenuAction
             busy={heapCaptureRunning}
             disabled={heapCaptureRunning}
             icon="layers-outline"
@@ -181,18 +224,12 @@ export function NavigationPerformanceHud() {
           />
           {profile !== null && (
             <MenuAction
-              icon="copy-outline"
-              onPress={() => {
-                setMenuOpen(false);
-                copyReport().catch((error: unknown) => {
-                  dialog.alert(
-                    "Copy failed",
-                    error instanceof Error ? error.message : "Could not copy navigation profile",
-                  );
-                });
-              }}
-              subtitle="Stages, measures, frames, and Hermes"
-              title="Copy full JSON"
+              busy={profileExport.status === "saving"}
+              disabled={profileExport.status === "saving"}
+              icon="download-outline"
+              onPress={requestSaveReport}
+              subtitle="Full JSON · Downloads/CodeWide"
+              title="Save full JSON"
             />
           )}
         </View>
@@ -200,6 +237,11 @@ export function NavigationPerformanceHud() {
     </>
   );
 }
+
+type ProfileExportState =
+  | { status: "idle" }
+  | { status: "saving" }
+  | { artifact: SavedNavigationProfile; status: "saved" };
 
 function MenuAction({
   busy = false,
@@ -291,59 +333,6 @@ function serializeNavigationProfile(
     null,
     2,
   );
-}
-
-function formatProfile(profile: ThreadNavigationProfile | null): string {
-  if (profile === null) {
-    return "chat profile waiting";
-  }
-  const prefix =
-    profile.status === "active" ? "chat profiling" : `chat ${integer(profile.totalMs)} ms`;
-  const stage =
-    profile.bottleneckStage === null
-      ? profile.currentStage
-      : `${shortStage(profile.bottleneckStage)} ${integer(profile.bottleneckMs)} ms`;
-  const rows = `${String(profile.uniqueRowsCommitted)} rows/${String(profile.rowCommits)} commits`;
-  const slowest = profile.measures.reduce<(typeof profile.measures)[number] | null>(
-    (current, measure) =>
-      current === null || measure.durationMs > current.durationMs ? measure : current,
-    null,
-  );
-  const hotPath =
-    slowest === null ? "" : ` · hot ${slowest.name} ${integer(slowest.durationMs)} ms`;
-  const frames =
-    profile.frames === null
-      ? ""
-      : ` · ${String(profile.frames.jankFrames)} jank/${String(profile.frames.droppedFrameEstimate)} missed`;
-  return `${prefix} · ${stage} · ${rows}${hotPath}${frames}`;
-}
-
-function shortStage(stage: ThreadNavigationProfile["currentStage"]): string {
-  if (stage === "hydration_result") {
-    return "hydrate";
-  }
-  if (stage === "timeline_model_ready") {
-    return "model";
-  }
-  if (stage === "timeline_first_draw") {
-    return "draw";
-  }
-  if (stage === "timeline_positioned") {
-    return "position";
-  }
-  if (stage === "visible_commit") {
-    return "commit";
-  }
-  if (stage === "selection_next_frame") {
-    return "select frame";
-  }
-  if (stage === "scope_commit") {
-    return "scope";
-  }
-  if (stage === "next_frame") {
-    return "frame";
-  }
-  return stage.replaceAll("_", " ");
 }
 
 function integer(value: number): string {

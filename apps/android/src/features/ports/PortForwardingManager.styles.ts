@@ -85,10 +85,6 @@ export const styles = StyleSheet.create({
     right: 0,
     width: 9,
   },
-  menuAnchor: {
-    height: touchTarget,
-    width: touchTarget,
-  },
   portField: {
     alignItems: "center",
     flexDirection: "row",

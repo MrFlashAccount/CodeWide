@@ -1,7 +1,9 @@
 import type { ImageDraftTarget } from "../data/quickdraw-attachment";
+import type { PrivateImageDetailRequest } from "./use-private-image-uri";
 
 /** One image and its optional review, download, and drawing capabilities. */
 export type ImagePreviewItem = {
+  detail?: PrivateImageDetailRequest | null;
   download?: (() => Promise<void>) | null;
   draft?: ImageDraftTarget;
   id: string;

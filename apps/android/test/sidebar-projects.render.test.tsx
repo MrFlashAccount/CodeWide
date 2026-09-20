@@ -113,6 +113,7 @@ it("keeps a failed pin update visible instead of pretending it was saved", async
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={[project]}
       errors={[]}
       onToggle={toggle}
@@ -140,6 +141,7 @@ it("offers durable reordering without moving the first or last project outside t
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={[project, second]}
       errors={[]}
       onToggle={jest.fn()}
@@ -182,6 +184,7 @@ it("separates pinned order from recent activity and keeps other projects availab
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={[...discovered, project, second]}
       errors={[]}
       onToggle={jest.fn()}
@@ -210,6 +213,7 @@ it("leaves the header add action available for an empty list without empty secti
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={[]}
       errors={[]}
       onToggle={jest.fn()}
@@ -244,6 +248,7 @@ it("virtualizes each project independently instead of mounting an expanded secti
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={projects}
       errors={[]}
       onToggle={jest.fn()}
@@ -285,6 +290,7 @@ it("keeps the real project path instead of inserting a synthetic leading ellipsi
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={[{ ...project, path, subtitle: path }]}
       errors={[]}
       onToggle={jest.fn()}
@@ -303,6 +309,7 @@ it("keeps matching project paths on separate servers independently actionable", 
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={[alpha, beta]}
       servers={[
         { id: "a", name: "Alpha" },
@@ -332,6 +339,7 @@ it("prevents another project mutation until the current pin request settles", as
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={[{ ...project, pinned: false }]}
       errors={[]}
       onToggle={toggle}
@@ -358,6 +366,7 @@ it("browses the chosen server without changing the active conversation project",
   const view = render(
     <SidebarProjectsSheet
       {...management}
+      visible
       projects={[]}
       servers={[
         { id: "a", name: "Alpha" },

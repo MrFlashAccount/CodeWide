@@ -440,6 +440,54 @@ describe("thread cursor sync", () => {
     });
   });
 
+  it("keeps the observed active transcript when a foreground full checkpoint is shorter", () => {
+    const sealed = turn("sealed");
+    const cachedActive: Turn = {
+      id: "active",
+      itemsView: "full",
+      status: "inProgress",
+      error: null,
+      startedAt: 2,
+      completedAt: null,
+      durationMs: null,
+      items: [
+        { id: "user", type: "userMessage", clientId: "client", content: [{ type: "text", text: "Run", text_elements: [] }] },
+        { id: "progress-before-compaction", type: "agentMessage", text: "First update", phase: "commentary", memoryCitation: null },
+        { id: "command", type: "commandExecution", pluginId: null, scriptPath: null, command: "pnpm test", cwd: "/workspace", processId: null, source: "agent", status: "completed", commandActions: [], aggregatedOutput: "passed", exitCode: 0, durationMs: 10 },
+        { id: "compaction", type: "contextCompaction", codewideLifecyclePhase: "completed" },
+        { id: "latest", type: "agentMessage", text: "Latest update", phase: "commentary", memoryCitation: null },
+      ],
+    };
+    const foregroundCheckpoint: Turn = {
+      ...cachedActive,
+      items: [
+        { id: "compaction", type: "contextCompaction" },
+        { id: "latest", type: "agentMessage", text: "Latest update", phase: "commentary", memoryCitation: null },
+      ],
+    };
+
+    const result = materializeThreadSync(thread([sealed, cachedActive]), {
+      readModelVersion: 3,
+      throughCursor: 0,
+      thread: thread([]),
+      history: { kind: "current", headTurnId: "sealed", turns: [], hasMore: false, olderCursor: null },
+      activeTurn: foregroundCheckpoint,
+    }, null);
+
+    expect(result.thread.turns[0]).toBe(sealed);
+    expect(result.thread.turns[1]).toMatchObject({ id: "active", itemsView: "full" });
+    expect(result.thread.turns[1]?.items.map(({ id }) => id)).toEqual([
+      "user",
+      "progress-before-compaction",
+      "command",
+      "compaction",
+      "latest",
+    ]);
+    expect(result.thread.turns[1]?.items.find(({ id }) => id === "compaction")).toEqual(
+      expect.objectContaining({ codewideLifecyclePhase: "completed" }),
+    );
+  });
+
   it("replaces an offline partial active turn with its sealed checkpoint", () => {
     const partial = turn("active", "inProgress");
     const completed = turn("active", "completed");

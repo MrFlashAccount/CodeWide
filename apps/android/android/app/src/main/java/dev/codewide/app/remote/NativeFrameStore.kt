@@ -474,7 +474,18 @@ internal class NativeFrameStore(context: Context) {
         }
       } else {
         val requestId = payload.opt("id")
-        val params = payload.optJSONObject("params")
+        val rawParams = payload.optJSONObject("params")
+        val params = if (
+          method == "item/tool/call" &&
+            rawParams != null &&
+            rawParams.toString().toByteArray(Charsets.UTF_8).size > GlobalSupervisorLimitsV1.DYNAMIC_TOOL_INPUT_MAX_BYTES
+        ) {
+          JSONObject()
+            .put("threadId", rawParams.optString("threadId"))
+            .put("__codewideRejected", "dynamicToolInputTooLarge")
+        } else {
+          rawParams
+        }
         if (requestId == null || requestId === JSONObject.NULL || params == null) return@forEach
         val key = requestKey(requestId)
         var present = false
@@ -516,10 +527,11 @@ internal class NativeFrameStore(context: Context) {
       "mcpServer/elicitation/request",
       "item/permissions/requestApproval",
     )
+    private val PERSISTED_SERVER_REQUESTS = USER_SERVER_REQUESTS + "item/tool/call"
 
     fun changesPendingRequests(payload: JSONObject): Boolean {
       val method = payload.optString("method")
-      return method == "serverRequest/resolved" || USER_SERVER_REQUESTS.contains(method)
+      return method == "serverRequest/resolved" || PERSISTED_SERVER_REQUESTS.contains(method)
     }
   }
 }

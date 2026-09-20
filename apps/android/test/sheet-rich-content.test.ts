@@ -10,10 +10,10 @@ const readSource = (relativePath: string) =>
   readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8");
 
 describe("document preview surfaces", () => {
-  it("keeps interactive documents out of the bottom sheet", () => {
+  it("keeps text-backed documents out of the bottom sheet", () => {
     expect(documentPreviewSurface("markdown")).toBe("fullscreen");
     expect(documentPreviewSurface("html")).toBe("fullscreen");
-    expect(documentPreviewSurface("text")).toBe("sheet");
+    expect(documentPreviewSurface("text")).toBe("fullscreen");
   });
 
   it("leaves sheet chrome to Material while retaining responsive content and lifecycle", () => {
@@ -30,6 +30,9 @@ describe("document preview surfaces", () => {
     const fixedHostContent = sourceObjectDeclaration(appSheet, "fixedHostContent");
     expect(fixedHostContent).toContain("flexGrow: 1");
     expect(fixedHostContent).toContain("height: 0");
+    const sheetContent = sourceObjectDeclaration(appSheet, "content");
+    expect(sheetContent).toContain('alignSelf: "stretch"');
+    expect(sheetContent).not.toContain('width: "100%"');
     expect(appSheet).toContain(
       "<ScrollView {...props} nestedScrollEnabled={props.nestedScrollEnabled ?? true} />",
     );
@@ -68,10 +71,8 @@ describe("document preview surfaces", () => {
     expect(bubble).not.toContain("Gesture.LongPress()");
     expect(bubble).not.toContain("onLongPress");
     expect(bubble).not.toContain("<Pressable");
-    expect(documentPreview).toContain('if (surface === "fullscreen")');
-    expect(documentPreview).toContain(
-      "presentFullscreenDocument(fullscreen, request, downloadFile)",
-    );
+    expect(documentPreview).toContain("presentFullscreenDocument({");
+    expect(documentPreview).toContain("openDocument: present");
     expect(documentPreview).toContain("<MarkdownDocumentView");
     expect(documentPreview).toContain("paddingBottom: spacing.sm");
   });

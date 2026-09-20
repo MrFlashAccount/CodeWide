@@ -20,12 +20,11 @@ export type ActiveWorkspaceConversationProps = {
   destination:
     | {
         readonly connectionId: string;
-        readonly generation: number;
         readonly kind: "thread";
         readonly searchWindow: SearchConversationWindow | null;
         readonly threadId: string;
       }
-    | { readonly draft: NewThreadDraft; readonly generation: number; readonly kind: "draft" };
+    | { readonly draft: NewThreadDraft; readonly kind: "draft" };
   features: ConversationWorkspaceFeatures;
   fileTransferController: FileTransferController | null;
   loadedThreadSummaries: StoredThreadSummary[];

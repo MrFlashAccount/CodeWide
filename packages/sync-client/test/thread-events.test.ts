@@ -296,6 +296,38 @@ describe("thread event projection", () => {
     expect(projectedTurnMetadata(merged.turns[0]!)?.diff).toBe("+live");
   });
 
+  it("preserves active item lifecycle until a terminal snapshot replaces the turn", () => {
+    const cached = thread();
+    cached.turns[0]!.items = [];
+    applyThreadEvent(cached, event("item/started", {
+      item: { type: "contextCompaction", id: "compaction" },
+    }));
+    const incoming = structuredClone(cached);
+    const incomingCompaction = incoming.turns[0]!.items[0]!;
+    Reflect.deleteProperty(incomingCompaction, "codewideLifecyclePhase");
+    Reflect.deleteProperty(incomingCompaction, "codewidePreTurn");
+    const terminalIncoming = structuredClone(incoming);
+
+    const active = preserveProjectedTurnMetadata(incoming, cached);
+    expect(active.turns[0]?.items[0]).toEqual(
+      expect.objectContaining({
+        codewideLifecyclePhase: "started",
+        codewidePreTurn: true,
+      }),
+    );
+    applyThreadEvent(active, event("item/completed", {
+      item: { type: "contextCompaction", id: "compaction" },
+    }));
+    expect(active.turns[0]?.items[0]).toEqual(
+      expect.objectContaining({ codewideLifecyclePhase: "completed" }),
+    );
+
+    terminalIncoming.turns[0]!.status = "completed";
+    terminalIncoming.turns[0]!.completedAt = 2;
+    const terminal = preserveProjectedTurnMetadata(terminalIncoming, active);
+    expect(terminal.turns[0]?.items[0]).not.toHaveProperty("codewideLifecyclePhase");
+  });
+
   it("preserves metadata without reading absent items from a recovery envelope", () => {
     const cached = thread();
     applyThreadEvent(cached, event("turn/diff/updated", { diff: "+live" }));

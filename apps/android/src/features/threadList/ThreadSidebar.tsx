@@ -12,6 +12,7 @@ import { SidebarListFeedback } from "./SidebarListFeedback";
 import { sidebarRows } from "./sidebarRows";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ThreadListExperimentSuspended } from "./ThreadListBoundary";
+import { ThreadListRouteTransition } from "./ThreadListRouteTransition";
 import { threadMatchesFilter } from "./threadListFilters";
 import {
   sidebarRowKey,
@@ -19,6 +20,10 @@ import {
   threadListRowsEqual,
   useProjectSidebarThreads,
 } from "./threadListModel";
+import {
+  THREAD_LIST_VISIBLE_CONTENT_POSITION,
+  useThreadListScrollController,
+} from "./threadListScroll";
 import { styles } from "./ThreadSidebar.styles";
 
 export function ThreadSidebar(props: ThreadSidebarProps) {
@@ -35,7 +40,6 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     onNewThread,
     onOffsetChange,
     onOpenProject,
-    onPreload,
     onSelect,
     onTogglePin,
     onUnarchive,
@@ -75,84 +79,91 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     projects,
     mode === "archived" ? "archive" : project === null ? "global" : "project",
   );
+  const listKey = `${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`;
+  const scroll = useThreadListScrollController(rows, listKey, onOffsetChange);
 
   return (
     <View style={[styles.threadSidebar, { width }]} testID="thread-list-pane">
       <ThreadSidebarHeader props={props} setQuery={setQuery} />
       <View style={styles.threadListContentSurface}>
-        {searchContent ??
-          (hideThreadLists ? (
-            <View style={styles.threadListSuspended}>
-              <ThreadListExperimentSuspended />
-            </View>
-          ) : (
-            <LegendList
-              data={rows}
-              dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
-              drawDistance={320}
-              getFixedItemSize={threadListRowHeight}
-              getItemType={(row) => row.kind}
-              initialScrollOffset={initialOffset}
-              itemsAreEqual={threadListRowsEqual}
-              key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
-              keyboardShouldPersistTaps="handled"
-              keyExtractor={sidebarRowKey}
-              ListEmptyComponent={
-                <SidebarListFeedback
-                  archived={mode === "archived"}
-                  key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
-                  state={project === null ? catalogState : projectSource.state}
-                />
-              }
-              ListFooterComponent={
-                rows.length > 0 && mode === "active" && filtered.length === 0 ? (
+        <ThreadListRouteTransition routeKey={searchContent === null ? "list" : "search"}>
+          {searchContent ??
+            (hideThreadLists ? (
+              <View style={styles.threadListSuspended}>
+                <ThreadListExperimentSuspended />
+              </View>
+            ) : (
+              <LegendList
+                data={scroll.rows}
+                dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
+                drawDistance={320}
+                extraData={selectedThreadKey}
+                getFixedItemSize={threadListRowHeight}
+                getItemType={(row) => row.kind}
+                initialScrollOffset={initialOffset}
+                itemsAreEqual={threadListRowsEqual}
+                key={listKey}
+                keyboardShouldPersistTaps="handled"
+                keyExtractor={sidebarRowKey}
+                ListEmptyComponent={
                   <SidebarListFeedback
-                    archived={false}
+                    archived={mode === "archived"}
                     key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                     state={project === null ? catalogState : projectSource.state}
                   />
-                ) : null
-              }
-              onEndReached={project === null ? onLoadMore : projectSource.loadMore}
-              onEndReachedThreshold={0.4}
-              onScroll={({ nativeEvent }) => {
-                onOffsetChange(nativeEvent.contentOffset.y);
-              }}
-              recycleItems
-              renderItem={({ item }) =>
-                item.kind === "header" ? (
-                  <SidebarSectionHeader title={item.title} />
-                ) : item.kind === "project" ? (
-                  <SidebarProjectRow
-                    onPress={() => {
-                      setQuery("");
-                      onOpenProject(item.project);
-                    }}
-                    project={item.project}
-                  />
-                ) : (
-                  <SelectableThreadRow
-                    onArchive={async () => onArchive(item.thread)}
-                    onMarkRead={async () => onMarkRead(item.thread)}
-                    onPress={() => {
-                      onSelect(threadSelectionKey(item.thread));
-                    }}
-                    onPressIn={() => onPreload(threadSelectionKey(item.thread))}
-                    onTogglePin={async () => onTogglePin(item.thread)}
-                    onUnarchive={async () => onUnarchive(item.thread)}
-                    selectedThreadKey={selectedThreadKey}
-                    server={
-                      serverScope.kind === "all" && servers.length > 1
-                        ? servers.find((entry) => entry.id === item.thread.serverId)
-                        : undefined
-                    }
-                    thread={item.thread}
-                  />
-                )
-              }
-              scrollEventThrottle={100}
-            />
-          ))}
+                }
+                ListFooterComponent={
+                  scroll.rows.length > 0 &&
+                  mode === "active" &&
+                  !scroll.rows.some((row) => row.kind === "thread") ? (
+                    <SidebarListFeedback
+                      archived={false}
+                      key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
+                      state={project === null ? catalogState : projectSource.state}
+                    />
+                  ) : null
+                }
+                maintainVisibleContentPosition={THREAD_LIST_VISIBLE_CONTENT_POSITION}
+                onEndReached={project === null ? onLoadMore : projectSource.loadMore}
+                onEndReachedThreshold={0.4}
+                onMomentumScrollBegin={scroll.onMomentumScrollBegin}
+                onMomentumScrollEnd={scroll.onMomentumScrollEnd}
+                onScrollBeginDrag={scroll.onScrollBeginDrag}
+                onScrollEndDrag={scroll.onScrollEndDrag}
+                recycleItems
+                renderItem={({ item }) =>
+                  item.kind === "header" ? (
+                    <SidebarSectionHeader title={item.title} />
+                  ) : item.kind === "project" ? (
+                    <SidebarProjectRow
+                      onPress={() => {
+                        setQuery("");
+                        onOpenProject(item.project);
+                      }}
+                      project={item.project}
+                    />
+                  ) : (
+                    <SelectableThreadRow
+                      onArchive={async () => onArchive(item.thread)}
+                      onMarkRead={async () => onMarkRead(item.thread)}
+                      onPress={() => {
+                        onSelect(threadSelectionKey(item.thread));
+                      }}
+                      onTogglePin={async () => onTogglePin(item.thread)}
+                      onUnarchive={async () => onUnarchive(item.thread)}
+                      selectedThreadKey={selectedThreadKey}
+                      server={
+                        serverScope.kind === "all" && servers.length > 1
+                          ? servers.find((entry) => entry.id === item.thread.serverId)
+                          : undefined
+                      }
+                      thread={item.thread}
+                    />
+                  )
+                }
+              />
+            ))}
+        </ThreadListRouteTransition>
       </View>
       {searchContent === null && mode === "active" && (
         <NewThreadFloatingButton onPress={onNewThread} projectName={project?.name ?? null} />

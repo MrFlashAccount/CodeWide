@@ -14,6 +14,7 @@ import { searchDateBoundary } from "../../data/message-search";
 import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
 import { useAsyncResource } from "../../rendering/async-resource-store";
+import { AppVoiceInputProvider } from "../../ui/VoiceInputRuntime";
 import type { SearchDateField, SearchFilterValue } from "./SearchFilters";
 
 /** Public located-result contract; private search views share its single target shape. */
@@ -57,6 +58,9 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
   });
   const setText = useEvent((value: string) => {
     session.changeText(value);
+  });
+  const clear = useEvent(() => {
+    session.changeText("");
   });
   const didFocus = () => {
     session.didFocus();
@@ -129,7 +133,11 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
     session.changePage(-1);
   });
   const toggleFilters = () => {
-    setFilters(!filters);
+    const open = !filters;
+    setFilters(open);
+    if (open) {
+      Keyboard.dismiss();
+    }
   };
   const selectResult = useEvent((target: LocatedSearchHit) => {
     Keyboard.dismiss();
@@ -147,9 +155,10 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
   ].filter((value) => value.trim() !== "").length;
   const failed =
     resource.error !== null || resource.value?.some((server) => server.status === "error") === true;
-  return renderGlobalSearchView({
+  const view = renderGlobalSearchView({
     autoFocus,
     calendar,
+    clear,
     close,
     didFocus,
     dismissCalendar,
@@ -178,4 +187,5 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
     toggleFilters,
     window,
   });
+  return <AppVoiceInputProvider runtime={props.voiceRuntime}>{view}</AppVoiceInputProvider>;
 }

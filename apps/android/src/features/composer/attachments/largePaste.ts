@@ -37,7 +37,7 @@ export function useLargePasteState(composerScope: string) {
 import type { Dispatch, SetStateAction } from "react";
 type LargePasteCapabilities = Pick<
   ReturnType<typeof useComposerDraftState>,
-  "latestDraftRef" | "draftSelectionRef"
+  "composerSession" | "draftSelectionRef"
 > & {
   captureDraftMutations: ReturnType<typeof useComposerDraftCommands>["captureDraftMutations"];
   captureStageAttachment: ReturnType<typeof useAttachmentAdmission>["captureStageAttachment"];
@@ -53,11 +53,11 @@ export function useLargePasteActions({
   captureDraftMutations,
   captureStageAttachment,
   composerScope,
+  composerSession,
   draftConnectionId,
   draftSelectionRef,
   draftThreadId,
   largePasteOperationRef,
-  latestDraftRef,
   pastedAttachmentPendingRef,
   setPastedAttachmentPending,
   voiceController,
@@ -118,7 +118,7 @@ export function useLargePasteActions({
     if (largePasteOperationRef.current?.scope === composerScope) {
       return;
     }
-    const capture = captureClipboardLargePaste(latestDraftRef.current.latest, event.text, {
+    const capture = captureClipboardLargePaste(composerSession.read().plainText, event.text, {
       end: event.end,
       start: event.start,
     });

@@ -12,6 +12,10 @@ export const ownerTimelineViewport = readFileSync(
   new URL("../../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url),
   "utf8",
 );
+export const ownerTimelineJump = readFileSync(
+  new URL("../../src/features/conversation/timeline/timelineJump.ts", import.meta.url),
+  "utf8",
+);
 export const ownerOverlayScrollOwnership = readFileSync(
   new URL("../../src/features/conversation/timeline/overlayScrollOwnership.ts", import.meta.url),
   "utf8",

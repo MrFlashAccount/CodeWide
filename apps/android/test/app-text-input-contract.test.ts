@@ -89,7 +89,9 @@ describe("application text input contract", () => {
     expect(threadRoute.indexOf("<WorkspaceConversationProviders")).toBeLessThan(
       threadRoute.indexOf("<ActiveWorkspaceConversation"),
     );
-    expect(screen.indexOf("<WorkspaceVoiceAura")).toBeLessThan(screen.indexOf("<Slot />"));
+    expect(screen.indexOf("<WorkspaceVoiceAura")).toBeLessThan(
+      screen.indexOf("<V1WorkspaceDestinations"),
+    );
     expect(listBinding.match(/searchContent: sidebarSearch/gu)).toHaveLength(2);
   });
 

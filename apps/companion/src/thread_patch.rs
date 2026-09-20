@@ -150,12 +150,22 @@ fn summary_projection(method: &str, params: &serde_json::Map<String, Value>) -> 
     let turn = params.get("turn").and_then(Value::as_object);
     let item = params.get("item").and_then(Value::as_object);
     let final_agent_response = method == "turn/completed" && turn_has_agent_response(turn);
-    Some(json!({
+    let mut summary = json!({
         "activity": true,
         "conversationMessage": final_agent_response || turn_has_user_message(turn) || item.and_then(|item| item.get("type")).and_then(Value::as_str) == Some("userMessage"),
         "finalAgentResponse": final_agent_response,
         "previewText": preview_from_event(method, turn, item),
-    }))
+    });
+    if method == "turn/started"
+        && let Some(recency_at) = turn
+            .and_then(|turn| turn.get("startedAt"))
+            .and_then(Value::as_i64)
+            .filter(|value| *value >= 0)
+        && let Some(summary) = summary.as_object_mut()
+    {
+        summary.insert("recencyAt".into(), Value::Number(recency_at.into()));
+    }
+    Some(summary)
 }
 
 fn preview_from_event(
@@ -432,5 +442,23 @@ mod tests {
         assert_eq!(summary["previewText"], "**Answer**");
         assert_eq!(summary["conversationMessage"], true);
         assert_eq!(summary["finalAgentResponse"], true);
+    }
+
+    #[test]
+    fn projects_server_turn_start_time_as_authoritative_recency() {
+        let projected = attach_thread_patch(json!({
+            "method": "turn/started",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-1",
+                    "startedAt": 42,
+                    "items": []
+                }
+            }
+        }));
+
+        let summary = &projected[THREAD_PATCH_FIELD]["operation"]["summary"];
+        assert_eq!(summary["recencyAt"], 42);
     }
 }

@@ -10,7 +10,7 @@ function nativePortForwardingManagerProps(
   connectionId: string,
   serverName: string,
   snapshot: NativePortForwardingSnapshot,
-  onOpen: (title: string, url: string) => void,
+  openBrowser: (title: string, url: string) => void,
 ): PortForwardingManagerProps {
   const profiles = snapshot.profiles;
   return {
@@ -55,11 +55,7 @@ function nativePortForwardingManagerProps(
         startImmediately: false,
       });
     },
-    onOpen: (profile) => {
-      if (profile.status === "live" && profile.previewUrl !== null) {
-        onOpen(profile.label, profile.previewUrl);
-      }
-    },
+    onOpenBrowser: openBrowser,
     onReconnect: async (profileId) => {
       await nativePortForwardingStore.reconnect(connectionId, profileId);
     },
@@ -144,10 +140,10 @@ import { useNativePortForwarding } from "../../data/native-port-forwarding-store
 export function useNativeForwardingAdapter(
   connectionId: string | null,
   serverName: string,
-  onOpen: ((title: string, url: string) => void) | undefined,
+  openBrowser: ((title: string, url: string) => void) | undefined,
 ) {
   const snapshot = useNativePortForwarding(connectionId);
-  return connectionId === null || onOpen === undefined
+  return connectionId === null || openBrowser === undefined
     ? undefined
-    : nativePortForwardingManagerProps(connectionId, serverName, snapshot, onOpen);
+    : nativePortForwardingManagerProps(connectionId, serverName, snapshot, openBrowser);
 }

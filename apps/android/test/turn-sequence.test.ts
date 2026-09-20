@@ -1,10 +1,24 @@
 import type { RenderBlock } from "@codewide/renderers";
 import { describe, expect, it } from "vitest";
 
-import { activeTurnSequence, chronologicalTurnSequence, completedTurnContent } from "../src/rendering/turn-sequence";
+import {
+  activeTurnSequence,
+  chronologicalTurnSequence,
+  completedTurnContent,
+} from "../src/rendering/turn-sequence";
 
 function block(key: string, kind: RenderBlock["kind"], body: string | null = null): RenderBlock {
-  return { key, kind, body, raw: {}, title: key, status: null, durationMs: null, tone: "neutral", collapsible: true } as RenderBlock;
+  return {
+    key,
+    kind,
+    body,
+    raw: {},
+    title: key,
+    status: null,
+    durationMs: null,
+    tone: "neutral",
+    collapsible: true,
+  } as RenderBlock;
 }
 
 describe("chronological turn sequence", () => {
@@ -16,14 +30,69 @@ describe("chronological turn sequence", () => {
         { index: 5, block: block("progress-2", "agentMessage", "Second update") },
       ],
       [1, 3],
+      "turn-1",
     );
 
-    expect(sequence.map((part) => part.kind === "collapsedActivity"
-      ? `collapsed:${part.indexes.join(",")}`
-      : part.kind === "agent"
-        ? part.block.key
-        : part.blocks.map((item) => item.key).join(",")))
-      .toEqual(["collapsed:1", "progress-1", "collapsed:3", "tool-live", "progress-2"]);
+    expect(
+      sequence.map((part) =>
+        part.kind === "collapsedActivity"
+          ? `collapsed:${part.indexes.join(",")}`
+          : part.kind === "agent"
+            ? part.block.key
+            : part.blocks.map((item) => item.key).join(","),
+      ),
+    ).toEqual(["collapsed:1", "progress-1", "collapsed:3", "tool-live", "progress-2"]);
+  });
+
+  it("keeps the live activity group mounted when the bounded window advances", () => {
+    const blocks = Array.from({ length: 17 }, (_value, index) =>
+      block(`tool-${String(index)}`, "commandExecution"),
+    );
+    const before = activeTurnSequence(
+      blocks.slice(0, 16).map((item, index) => ({ block: item, index })),
+      [],
+      "sliding-turn",
+    );
+    const after = activeTurnSequence(
+      blocks.slice(1).map((item, index) => ({ block: item, index: index + 1 })),
+      [0],
+      "sliding-turn",
+    );
+    const beforeLive = before.find((part) => part.kind === "activity");
+    const afterLive = after.find((part) => part.kind === "activity");
+
+    expect(beforeLive?.key).toBe("activity:sliding-turn:start:live");
+    expect(afterLive?.key).toBe(beforeLive?.key);
+  });
+
+  it("retains unchanged sequence part objects when another run receives a tool", () => {
+    const firstAgent = block("agent-1", "agentMessage", "First");
+    const secondAgent = block("agent-2", "agentMessage", "Second");
+    const firstTool = block("tool-1", "commandExecution");
+    const secondTool = block("tool-2", "commandExecution");
+    const before = activeTurnSequence(
+      [
+        { block: firstTool, index: 0 },
+        { block: firstAgent, index: 1 },
+        { block: secondAgent, index: 2 },
+      ],
+      [],
+      "retained-turn",
+    );
+    const after = activeTurnSequence(
+      [
+        { block: firstTool, index: 0 },
+        { block: firstAgent, index: 1 },
+        { block: secondAgent, index: 2 },
+        { block: secondTool, index: 3 },
+      ],
+      [],
+      "retained-turn",
+    );
+
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+    expect(after[2]).toBe(before[2]);
   });
 
   it("keeps activity and agent messages in wire order", () => {
@@ -35,8 +104,11 @@ describe("chronological turn sequence", () => {
       block("final", "agentMessage", "Done"),
     ]);
 
-    expect(sequence.map((part) => part.kind === "agent" ? part.block.key : part.blocks.map((item) => item.key).join(",")))
-      .toEqual(["tool-1", "commentary", "tool-2", "final"]);
+    expect(
+      sequence.map((part) =>
+        part.kind === "agent" ? part.block.key : part.blocks.map((item) => item.key).join(","),
+      ),
+    ).toEqual(["tool-1", "commentary", "tool-2", "final"]);
   });
 
   it("collapses large completed tool runs into chronological groups around agent updates", () => {
@@ -56,9 +128,7 @@ describe("chronological turn sequence", () => {
       sequence.map((part) => (part.kind === "agent" ? part.block.key : part.blocks.length)),
     ).toEqual([20, "progress", 20]);
     expect(
-      sequence
-        .filter((part) => part.kind === "activity")
-        .map((part) => part.followedByAgent),
+      sequence.filter((part) => part.kind === "activity").map((part) => part.followedByAgent),
     ).toEqual([true, false]);
   });
 
@@ -81,12 +151,22 @@ describe("chronological turn sequence", () => {
     ]);
 
     expect(sequence).toHaveLength(1);
-    expect(sequence[0]?.kind === "activity" ? sequence[0].blocks.map((item) => item.key) : []).toEqual(["tool-1", "tool-2"]);
+    expect(
+      sequence[0]?.kind === "activity" ? sequence[0].blocks.map((item) => item.key) : [],
+    ).toEqual(["tool-1", "tool-2"]);
   });
 
   it("keeps only the explicit final answer outside completed history", () => {
-    const commentary = { ...block("commentary", "agentMessage", "Still working"), status: "commentary", raw: { phase: "commentary" } } as RenderBlock;
-    const final = { ...block("final", "agentMessage", "Done"), status: "final_answer", raw: { phase: "final_answer" } } as RenderBlock;
+    const commentary = {
+      ...block("commentary", "agentMessage", "Still working"),
+      status: "commentary",
+      raw: { phase: "commentary" },
+    } as RenderBlock;
+    const final = {
+      ...block("final", "agentMessage", "Done"),
+      status: "final_answer",
+      raw: { phase: "final_answer" },
+    } as RenderBlock;
     const content = completedTurnContent([
       block("user", "userMessage"),
       block("tool-1", "commandExecution"),
@@ -97,7 +177,12 @@ describe("chronological turn sequence", () => {
     ]);
 
     expect(content.finalAnswer?.key).toBe("final");
-    expect(content.history.map((item) => item.key)).toEqual(["tool-1", "commentary", "tool-2", "metadata"]);
+    expect(content.history.map((item) => item.key)).toEqual([
+      "tool-1",
+      "commentary",
+      "tool-2",
+      "metadata",
+    ]);
   });
 
   it("falls back to the last non-empty agent message for legacy turns", () => {

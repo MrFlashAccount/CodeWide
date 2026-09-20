@@ -143,4 +143,6 @@ export type WorkspaceSyncSupervisor = {
   replaceConnections: (connections: RemoteConnection[]) => void;
   session: (connectionId: string) => WorkspaceSyncSession | undefined;
   stop: () => void;
+  subscribeLive: (connectionId: string, channelId: string, threadId: string) => Promise<void>;
+  unsubscribeLive: (connectionId: string, channelId: string) => Promise<void>;
 };

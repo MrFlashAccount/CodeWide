@@ -5,8 +5,6 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -22,15 +20,27 @@ internal class PreparedMicrophone(private val context: ReactApplicationContext) 
     val recorder: AudioRecord,
     val source: Source,
     val sampleRate: Int,
-    val noiseSuppressor: NoiseSuppressor?,
-    val automaticGainControl: AutomaticGainControl?,
+    val effects: PreparedMicrophoneEffects,
   ) {
     fun release() {
-      noiseSuppressor?.release()
-      automaticGainControl?.release()
-      recorder.release()
+      var failure: Throwable? = null
+      try {
+        effects.release()
+      } catch (error: Throwable) {
+        failure = error
+      }
+      try {
+        recorder.release()
+      } catch (error: Throwable) {
+        if (failure == null) failure = error
+      }
+      failure?.let { throw it }
     }
   }
+
+  private val effectsFactory = PreparedMicrophoneEffectsFactory(
+    AndroidMicrophoneEffectsPlatform,
+  ) { name, error -> Log.w(TAG, "$name unavailable", error) }
 
   private val executor = Executors.newSingleThreadExecutor { task -> Thread(task, "CodeWideMicPrepare").apply { isDaemon = true } }
   private var pending: CompletableFuture<Session>? = null
@@ -128,12 +138,9 @@ internal class PreparedMicrophone(private val context: ReactApplicationContext) 
     val recorder = builder.build()
     try {
       check(recorder.state == AudioRecord.STATE_INITIALIZED) { "Microphone could not be initialized" }
-      val noise = try { if (!NoiseSuppressor.isAvailable()) null else NoiseSuppressor.create(recorder.audioSessionId)?.apply { if (hasControl()) enabled = true } }
-        catch (error: Exception) { Log.w(TAG, "Noise suppression unavailable", error); null }
-      val gain = try { if (!AutomaticGainControl.isAvailable()) null else AutomaticGainControl.create(recorder.audioSessionId)?.apply { if (hasControl()) enabled = true } }
-        catch (error: Exception) { Log.w(TAG, "Automatic gain unavailable", error); null }
+      val effects = effectsFactory.create(recorder.audioSessionId)
       Log.i(TAG, "Microphone prepare source=${source.label} durationMs=${SystemClock.elapsedRealtime() - startedAt}")
-      return Session(recorder, source, recorder.sampleRate, noise, gain)
+      return Session(recorder, source, recorder.sampleRate, effects)
     } catch (error: Exception) {
       recorder.release()
       throw error

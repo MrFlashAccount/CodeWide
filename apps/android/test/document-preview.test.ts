@@ -35,6 +35,10 @@ const documentPreview = readFileSync(
   new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url),
   "utf8",
 );
+const routeTextDocumentPreview = readFileSync(
+  new URL("../src/features/attachments/RouteTextDocumentPreview.tsx", import.meta.url),
+  "utf8",
+);
 
 const migratedDocumentNavigation = readFileSync(
   new URL("../src/features/attachments/documentNavigation.ts", import.meta.url),
@@ -72,8 +76,14 @@ describe("document preview", () => {
     expect(documentPreviewSurface("image")).toBe("image-viewer");
     expect(documentPreviewSurface("html")).toBe("fullscreen");
     expect(documentPreviewSurface("markdown")).toBe("fullscreen");
-    expect(documentPreviewSurface("text")).toBe("sheet");
+    expect(documentPreviewSurface("text")).toBe("fullscreen");
     expect(documentPreviewSurface("download")).toBe("download");
+  });
+
+  it("reuses the page document renderer from attachment routes", () => {
+    expect(routeTextDocumentPreview).toContain("<DocumentPagePreview");
+    expect(routeTextDocumentPreview).not.toContain("<AppSheet");
+    expect(documentPreview).toContain("export function DocumentPagePreview");
   });
 
   it("resolves attached relative document links against the remote thread cwd", () => {

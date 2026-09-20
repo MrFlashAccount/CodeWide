@@ -43,9 +43,9 @@ export function PerformanceMetricGrid(props: PerformanceMetricGridProps): React.
           value={diagnosticPercent(current.cpuPercent)}
         />
         <MetricTile
-          detail={`peak ${diagnosticBytes(metrics.peakPssBytes)}`}
-          label="Memory PSS"
-          value={diagnosticBytes(current.pssBytes)}
+          detail={`PSS sample ${diagnosticBytes(current.pssBytes)}`}
+          label="Memory RSS"
+          value={diagnosticBytes(current.rssBytes)}
         />
         <MetricTile
           detail={`${String(current.renderedFrames)} frames / sample`}

@@ -6,6 +6,7 @@ import type {
   MemoryCheckpoint,
   MemoryReclamationActionResult,
   PerformanceMetricsSnapshot,
+  SavedNavigationProfile,
 } from "./performance-metrics.native";
 import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
 
@@ -43,6 +44,10 @@ export function usePerformanceMetrics(): PerformanceMetricsSnapshot {
   );
 }
 
+export function usePerformanceMonitoringEnabled(): boolean {
+  return false;
+}
+
 export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
   return snapshot;
 }
@@ -61,6 +66,10 @@ export async function beginNavigationFrameTrace(_traceId: string): Promise<boole
   return false;
 }
 
+export async function armNextNavigationHermesProfile(): Promise<void> {
+  await androidOnly("Hermes navigation profiling is available only in the Android app");
+}
+
 export async function endNavigationFrameTrace(
   _traceId: string,
 ): Promise<ThreadNavigationFrameProfile | null> {
@@ -70,6 +79,13 @@ export async function endNavigationFrameTrace(
 
 export async function captureHermesHeapSnapshot(): Promise<HermesHeapSnapshot> {
   const unavailable = await androidOnly("Hermes heap capture is available only in the Android app");
+  return unavailable;
+}
+
+export async function saveNavigationProfile(_report: string): Promise<SavedNavigationProfile> {
+  const unavailable = await androidOnly(
+    "Saving a navigation profile is available only in the Android app",
+  );
   return unavailable;
 }
 
@@ -120,4 +136,5 @@ export type {
   MemoryReclamationActionResult,
   PerformanceMetricPoint,
   PerformanceMetricsSnapshot,
+  SavedNavigationProfile,
 } from "./performance-metrics.native";

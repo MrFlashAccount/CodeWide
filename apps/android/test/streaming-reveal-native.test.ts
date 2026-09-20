@@ -117,7 +117,7 @@ it("settles recovered live text before enabling animation for new deltas", () =>
   );
   expect(ownerAgentTurnBody).toContain("animateNew={animateLiveUpdates}");
   expect(ownerTurnActivity).toContain(
-    'animate={animateNew && motionAllowed && turnStatus === "inProgress"}',
+    'animate={props.animateNew && motionAllowed && props.turnStatus === "inProgress"}',
   );
   expect(ownerLiveAgentResponse).toContain("streaming");
   expect(ownerLiveAgentResponse).toContain("animateStreaming={animateNew}");

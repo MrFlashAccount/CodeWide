@@ -16,13 +16,21 @@ import { listRowStyles as styles } from "./AppListRow.styles";
 import type { AppListRowProps } from "./AppListRow.types";
 import { AppListRowContent } from "./AppListRowContent";
 
+const reactContentProps = [
+  "leading",
+  "leadingIcon",
+  "titleIndicator",
+  "descriptionLeading",
+  "descriptionIcon",
+  "trailing",
+  "trailingAction",
+  "trailingIcon",
+  "selected",
+] as const;
+
 /** Keep each row in one UI runtime, including independently interactive accessories. */
 export function AppListRow(props: AppListRowProps) {
-  if (
-    props.leading !== undefined ||
-    props.descriptionLeading !== undefined ||
-    props.trailing !== undefined
-  ) {
+  if (reactContentProps.some((name) => props[name] !== undefined)) {
     return <AppListRowContent {...props} />;
   }
   return <ComposeListRow {...props} />;
@@ -61,6 +69,7 @@ function ComposeListRow(props: AppListRowProps) {
       accessibilityState={{
         busy: props.trailingBusy === true,
         disabled: props.disabled ?? false,
+        ...(props.expanded === undefined ? {} : { expanded: props.expanded }),
         ...(props.selected === undefined ? {} : { checked: props.selected }),
       }}
       accessible={props.onPress !== undefined && props.trailing === undefined}

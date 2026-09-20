@@ -25,7 +25,12 @@ vi.mock("../src/native/native-transport", () => ({
 
 import { nativePortForwardingStore } from "../src/data/native-port-forwarding-store";
 
-function profile(connectionId: string, status: "stopped" | "connecting" | "live" | "unavailable", localPort: number | null, overrides: Record<string, unknown> = {}) {
+function profile(
+  connectionId: string,
+  status: "stopped" | "connecting" | "live" | "unavailable",
+  localPort: number | null,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     id: `forward-${connectionId}`,
     connectionId,
@@ -68,7 +73,10 @@ describe("native port forwarding store", () => {
     native.stop.mockReset();
     native.remove.mockReset();
     native.discover.mockReset();
-    native.discover.mockResolvedValue({ ports: [{ ...discoveredPort(false), port: 43_191 }], scannedAt: 1 });
+    native.discover.mockResolvedValue({
+      ports: [{ ...discoveredPort(false), port: 43_191 }],
+      scannedAt: 1,
+    });
   });
 
   it("deduplicates simultaneous loopback link taps and waits for the native port", async () => {
@@ -78,7 +86,8 @@ describe("native port forwarding store", () => {
     native.start.mockImplementation(async () => {
       const connecting = profile(connectionId, "connecting", null);
       queueMicrotask(() => {
-        for (const listener of native.listeners) listener({ type: "profile", profile: profile(connectionId, "live", 46_210) });
+        for (const listener of native.listeners)
+          listener({ type: "profile", profile: profile(connectionId, "live", 46_210) });
       });
       return connecting;
     });
@@ -99,7 +108,11 @@ describe("native port forwarding store", () => {
     const connectionId = "live-server";
     native.list.mockResolvedValue([profile(connectionId, "live", 46_211)]);
 
-    const result = await nativePortForwardingStore.ensureStarted({ connectionId, remotePort: 43_191, label: "localhost:43191" });
+    const result = await nativePortForwardingStore.ensureStarted({
+      connectionId,
+      remotePort: 43_191,
+      label: "localhost:43191",
+    });
 
     expect(result.localPort).toBe(46_211);
     expect(native.upsert).not.toHaveBeenCalled();
@@ -120,7 +133,9 @@ describe("native port forwarding store", () => {
 
     await nativePortForwardingStore.refreshDiscovery(connectionId);
 
-    expect(nativePortForwardingStore.scope(connectionId).getSnapshot().profiles).toEqual([forwarded]);
+    expect(nativePortForwardingStore.scope(connectionId).getSnapshot().profiles).toEqual([
+      forwarded,
+    ]);
     expect(native.upsert).not.toHaveBeenCalled();
     expect(native.start).not.toHaveBeenCalled();
   });
@@ -136,6 +151,20 @@ describe("native port forwarding store", () => {
     expect(native.start).not.toHaveBeenCalled();
   });
 
+  it("publishes profile loading until the initial native list settles", async () => {
+    const connectionId = "loading-chip-server";
+    const list = Promise.withResolvers<ReturnType<typeof profile>[]>();
+    native.list.mockReturnValue(list.promise);
+    const scope = nativePortForwardingStore.scope(connectionId);
+
+    const loading = scope.load();
+    expect(scope.getSnapshot().profilesStatus).toBe("loading");
+
+    list.resolve([]);
+    await loading;
+    expect(scope.getSnapshot().profilesStatus).toBe("ready");
+  });
+
   it("does not overwrite an unavailable native event with a stale connecting result", async () => {
     const connectionId = "unavailable-server";
     native.list.mockResolvedValue([profile(connectionId, "stopped", null)]);
@@ -143,10 +172,14 @@ describe("native port forwarding store", () => {
     native.start.mockImplementation(async () => {
       const connecting = profile(connectionId, "connecting", null);
       queueMicrotask(() => {
-        for (const listener of native.listeners) listener({
-          type: "profile",
-          profile: profile(connectionId, "unavailable", 46_213, { previewUrl: null, error: "Nothing is listening on remote localhost:43191" }),
-        });
+        for (const listener of native.listeners)
+          listener({
+            type: "profile",
+            profile: profile(connectionId, "unavailable", 46_213, {
+              previewUrl: null,
+              error: "Nothing is listening on remote localhost:43191",
+            }),
+          });
       });
       return connecting;
     });

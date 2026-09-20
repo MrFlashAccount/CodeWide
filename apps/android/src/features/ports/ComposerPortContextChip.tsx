@@ -3,7 +3,7 @@ import { Pressable } from "react-native";
 import { useNativePortForwarding } from "../../data/native-port-forwarding-store";
 import { colors } from "../../theme";
 import { InlineIcon } from "../../ui/InlineIcon";
-import { ComposerContextCount } from "../../ui/ResourceContextChip";
+import { ComposerContextCount, ComposerContextLabel } from "../../ui/ResourceContextChip";
 import { styles } from "./ComposerPortContextChip.styles";
 
 export function ComposerPortContextChip({
@@ -27,30 +27,47 @@ export function ComposerPortContextChipLoaded({
   onOpen: () => void;
 }) {
   const snapshot = useNativePortForwarding(connectionId);
-  if (snapshot.profiles.length === 0) {
+  return <ComposerPortContextChipView onOpen={onOpen} snapshot={snapshot} />;
+}
+
+export function ComposerPortContextChipView({
+  onOpen,
+  snapshot,
+}: {
+  onOpen: () => void;
+  snapshot: ReturnType<typeof useNativePortForwarding>;
+}): React.JSX.Element | null {
+  const initialLoading = snapshot.profilesStatus === "loading" && snapshot.profiles.length === 0;
+  if (!initialLoading && snapshot.profiles.length === 0) {
     return null;
   }
+  const label = initialLoading ? "Loading ports…" : `Ports: ${String(snapshot.profiles.length)}`;
   return (
     <Pressable
-      accessibilityLabel={`Ports: ${String(snapshot.profiles.length)}`}
+      accessibilityLabel={label}
       accessibilityRole="button"
+      accessibilityState={{ busy: initialLoading }}
       onPress={onOpen}
       style={styles.composerContextChip}
     >
       <InlineIcon
         color={
-          snapshot.profiles.some(({ status }) => status === "live")
+          !initialLoading && snapshot.profiles.some(({ status }) => status === "live")
             ? colors.green
             : colors.textMuted
         }
         name="git-network-outline"
         role="label"
       />
-      <ComposerContextCount
-        label="Ports"
-        testID="composer-ports-label"
-        value={snapshot.profiles.length}
-      />
+      {initialLoading ? (
+        <ComposerContextLabel loading testID="composer-ports-label" text={label} />
+      ) : (
+        <ComposerContextCount
+          label="Ports"
+          testID="composer-ports-label"
+          value={snapshot.profiles.length}
+        />
+      )}
     </Pressable>
   );
 }

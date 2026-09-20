@@ -13,7 +13,6 @@ export type ConversationTimelineSurfaceProps = {
   awayFromLatest: boolean;
   bottomChromeHeight: number;
   commitUnreadReceipt: () => () => void;
-  completeLatestJump: () => void;
   composerScope: string;
   draftConnectionId: string | null;
   draftThreadId: string | null;
@@ -22,7 +21,6 @@ export type ConversationTimelineSurfaceProps = {
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
   historyViewport: ThreadHistoryViewport;
-  initialRestoreAnchorTurnId: string | null;
   latestUnreadReceiptKey: string | null;
   liveStatusVisible: boolean;
   liveTurnPlan: LiveTurnPlan | null;

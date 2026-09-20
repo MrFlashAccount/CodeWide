@@ -1,4 +1,4 @@
-import type { AccountPoolSnapshot } from "../../data/account-pool";
+import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
 
 /** Account interaction capabilities; persistence and session state remain lower-owned. */
 export type AccountPoolProps = {
@@ -6,6 +6,11 @@ export type AccountPoolProps = {
   connectionId: string;
   onActivate: (connectionId: string, profileId: string) => Promise<AccountPoolSnapshot>;
   onCancelLogin: (connectionId: string, loginId: string) => Promise<void>;
+  onConsumeResetCredit: (
+    connectionId: string,
+    profileId: string,
+    creditId: string | null,
+  ) => Promise<AccountResetCreditConsumption>;
   onRefresh: (connectionId: string) => Promise<AccountPoolSnapshot>;
   onRemove: (connectionId: string, profileId: string) => Promise<AccountPoolSnapshot>;
   onStartLogin: (

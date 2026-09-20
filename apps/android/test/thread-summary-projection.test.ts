@@ -85,7 +85,7 @@ describe("thread summary projection", () => {
     expect(mutation?.value).toMatchObject({
       preview: "Fresh external answer",
       updatedAt: 42,
-      recencyAt: 42,
+      recencyAt: 10,
       latestActivityCursor: 8,
       unread: 0,
     });
@@ -114,7 +114,7 @@ describe("thread summary projection", () => {
     expect(mutation?.value).toMatchObject({
       preview: "Fresh partial answer",
       updatedAt: 42,
-      recencyAt: 42,
+      recencyAt: 10,
       latestActivityCursor: 8,
       unread: 0,
     });
@@ -143,7 +143,7 @@ describe("thread summary projection", () => {
     expect(mutation?.value).toMatchObject({
       preview: "Canonical answer",
       updatedAt: 42,
-      recencyAt: 42,
+      recencyAt: 10,
       latestActivityCursor: 8,
       unread: 1,
     });
@@ -298,10 +298,15 @@ describe("thread summary projection", () => {
     const current = summary();
     const mutation = projectThreadSummaryEvent("server", semanticEvent({
       kind: "turnStarted",
-      summary: { activity: true, conversationMessage: true, previewText: "New prompt" },
+      summary: {
+        activity: true,
+        conversationMessage: true,
+        previewText: "New prompt",
+        recencyAt: 41,
+      },
     }), () => current, 42, 7);
 
-    expect(mutation?.value).toMatchObject({ preview: "New prompt", updatedAt: 42, recencyAt: 42, unread: 0 });
+    expect(mutation?.value).toMatchObject({ preview: "New prompt", updatedAt: 42, recencyAt: 41, unread: 0 });
   });
 
   it("marks only the final agent bubble of a completed turn unread", () => {
@@ -319,7 +324,7 @@ describe("thread summary projection", () => {
     expect(mutation?.value).toMatchObject({
       preview: "Final answer",
       updatedAt: 42,
-      recencyAt: 42,
+      recencyAt: 10,
       latestActivityCursor: 8,
       lastSeenCursor: 0,
       unread: 1,
@@ -330,7 +335,12 @@ describe("thread summary projection", () => {
   it("reflects turn lifecycle in the sidebar without waiting for a separate thread status event", () => {
     const started = projectThreadSummaryEvent("server", semanticEvent({
       kind: "turnStarted",
-      summary: { activity: true, conversationMessage: true, previewText: "New prompt" },
+      summary: {
+        activity: true,
+        conversationMessage: true,
+        previewText: "New prompt",
+        recencyAt: 41,
+      },
     }), () => summary(), 42, 7);
 
     expect(started?.value?.status).toEqual({ type: "active", activeFlags: [] });

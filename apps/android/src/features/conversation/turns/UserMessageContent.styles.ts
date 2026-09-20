@@ -29,32 +29,33 @@ export const styles = StyleSheet.create({
     color: colors.text,
     ...typeScale.body,
   },
-  userImage: {
+  userImageFill: {
     alignItems: "center",
-    aspectRatio: 4 / 3,
+    alignSelf: "stretch",
     backgroundColor: colors.surfaceRaised,
-    borderRadius: radii.medium,
+    flex: 1,
+    height: "100%",
     justifyContent: "center",
     maxWidth: "100%",
+    width: "100%",
+  },
+  userImageFrame: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.selected,
     overflow: "hidden",
-    width: 220,
   },
   userImageGallery: {
-    borderRadius: radii.medium,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xxs,
+    alignSelf: "flex-start",
+    borderRadius: radii.selected,
+    maxWidth: "100%",
     overflow: "hidden",
-    width: "100%",
+    width: 320,
   },
-  userImageGalleryHero: {
-    aspectRatio: 16 / 9,
-    width: "100%",
+  userImageSeparatedFromBody: {
+    marginBottom: spacing.xxs,
   },
-  userImageGalleryTile: {
-    aspectRatio: 1,
-    flexGrow: 1,
-    width: "49%",
+  userMessageAttachmentGridSeparated: {
+    marginTop: spacing.xxs,
   },
   userMessageContent: {
     gap: spacing.compact,

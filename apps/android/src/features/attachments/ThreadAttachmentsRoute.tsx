@@ -31,27 +31,39 @@ export function ThreadAttachmentsRoute({
   getTransferAccess,
   model,
   onClose,
+  onOpenBrowser,
+  onOpenCodeDocument,
   onOpenDocument,
   onReload,
   resourceId,
   revision,
+  visible,
 }: {
   readonly cwd: string;
   readonly getTransferAccess: GetTransferAccess;
   readonly model: ThreadResourcesModel | null;
   readonly onClose: () => void;
+  readonly onOpenBrowser: (title: string, url: string) => void;
+  readonly onOpenCodeDocument: (request: DocumentPreviewRequest) => void;
   readonly onOpenDocument: (request: DocumentPreviewRequest) => void;
   readonly onReload?: () => Promise<ThreadResourcesValue>;
   readonly resourceId: string | null;
   readonly revision: string;
+  readonly visible: boolean;
 }): React.JSX.Element {
   const resource = useThreadResources(model, resourceId, onReload, { revision });
   const { attachments, error, pending, ready } = attachmentRouteState(resource);
-  const openAttachment = useAttachmentRouteActions({ cwd, getTransferAccess, onOpenDocument });
+  const openAttachment = useAttachmentRouteActions({
+    cwd,
+    getTransferAccess,
+    onOpenBrowser,
+    onOpenCodeDocument,
+    onOpenDocument,
+  });
   return (
     <AppSheet
       contentProps={ATTACHMENTS_SHEET_PROPS}
-      isOpen
+      isOpen={visible}
       onOpenChange={(open) => {
         if (!open) {
           onClose();

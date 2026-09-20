@@ -3,8 +3,8 @@ import { workspaceFeatures as features } from "./createWorkspaceFeatures";
 import type { ReactNode } from "react";
 import { workspaceRuntime, type WorkspaceRuntimeSnapshot } from "../../data/workspace-runtime";
 import { AppVoiceInputProvider, type AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
-import { BrowserFeedbackContext } from "../ports/browser/BrowserFeedbackContext";
-import type { BrowserFeedbackCapability } from "../ports/browser/feedback";
+import { BrowserFeedbackContext } from "../browser/BrowserFeedbackContext";
+import type { BrowserFeedbackCapability } from "../browser/feedback";
 
 export function WorkspaceConversationProviders({
   activeConnectionId,

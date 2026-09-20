@@ -25,6 +25,7 @@ export function Bubble({
   errorResetKey,
   fill = false,
   footer,
+  segment = "single",
   testID,
   variant,
 }: {
@@ -35,12 +36,16 @@ export function Bubble({
   errorResetKey?: string;
   fill?: boolean;
   footer?: ReactNode;
+  segment?: "end" | "middle" | "single" | "start";
   testID?: string;
   variant: BubbleVariant;
 }) {
   const surfaceStyle = [
     styles.surface,
     variant === "agent" ? styles.agentSurface : styles.userSurface,
+    variant === "agent" && segment !== "single" && styles.segmentedAgentSurface,
+    variant === "agent" && segment === "start" && styles.segmentedAgentSurfaceStart,
+    variant === "agent" && segment === "end" && styles.segmentedAgentSurfaceEnd,
   ];
   return (
     <RecoverableRenderBoundary
@@ -105,16 +110,31 @@ const styles = StyleSheet.create({
   agentSurface: {
     alignSelf: "stretch",
     backgroundColor: colors.messageSurface,
-    paddingBottom: spacing.xs,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.sm,
     paddingTop: spacing.xs,
   },
   content: { minWidth: 0 },
+  segmentedAgentSurface: {
+    borderRadius: 0,
+    paddingBottom: 0,
+    paddingTop: 0,
+  },
+  segmentedAgentSurfaceEnd: {
+    borderBottomLeftRadius: radii.selected,
+    borderBottomRightRadius: radii.selected,
+    paddingBottom: spacing.sm,
+  },
+  segmentedAgentSurfaceStart: {
+    borderTopLeftRadius: radii.selected,
+    borderTopRightRadius: radii.selected,
+    paddingTop: spacing.xs,
+  },
   userSurface: {
     alignSelf: "flex-end",
     backgroundColor: colors.messageSurface,
     maxWidth: "82%",
-    paddingBottom: spacing.xs,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.sm,
     paddingTop: spacing.xs,
   },

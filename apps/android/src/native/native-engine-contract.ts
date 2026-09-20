@@ -32,7 +32,29 @@ export type NativeConnectionStateProjection = {
 /** Injected projections and observers used to construct the native engine supervisor. */
 export type NativeEngineSupervisorOptions = {
   connectionState: NativeConnectionStateProjection;
+  onEvents?: (connectionId: string, events: readonly SyncEvent[]) => void;
+  onLiveRealtime?: (connectionId: string, event: NativeLiveRealtimeEvent) => void;
   onOutboxChange?: (delivery: NativeCommandDelivery) => void;
   onPendingRequests?: (connectionId: string, requests: SyncServerRequest[]) => void;
   projection: NativeDomainProjection;
 };
+
+/** Validated live-only realtime notification emitted outside durable replay. */
+export type NativeLiveRealtimeEvent =
+  | {
+      readonly channelId: string;
+      readonly event: "subscribed";
+      readonly threadId: string;
+    }
+  | {
+      readonly channelId: string;
+      readonly event: "payload";
+      readonly payload: Record<string, unknown>;
+      readonly sequence: number;
+      readonly threadId: string;
+    }
+  | {
+      readonly channelId: string;
+      readonly event: "terminal";
+      readonly reason: string;
+    };

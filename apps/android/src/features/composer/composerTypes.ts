@@ -12,9 +12,9 @@ export type ComposerMenuPage =
   | "ports";
 
 export type QueuedComposerEdit = {
-  readonly attachments: StoredDraftAttachment[];
   readonly commandId: string;
-  readonly text: string;
+  readonly initialAttachments: StoredDraftAttachment[];
+  readonly initialText: string;
 };
 
-export type ComposerAccessoryAction = "files" | "drawing" | "skills" | "goal";
+export type ComposerAccessoryAction = "files" | "drawing" | "skills" | "goal" | "terminal";

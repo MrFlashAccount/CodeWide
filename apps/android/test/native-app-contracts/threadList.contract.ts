@@ -31,9 +31,7 @@ it("preserves threadList integration contracts", () => {
   );
   expect(migratedThreadListWorkspace).toContain("const threadSummaryView = useThreadSummaryView(");
   expect(migratedThreadListProjection).toContain("timestamp: thread.recencyAt ?? thread.updatedAt");
-  expect(migratedMobileThreads).toContain(
-    "onPressIn={() => onPreloadThread(threadSelectionKey(item.thread))}",
-  );
+  expect(migratedMobileThreads).not.toContain("onPressIn=");
   expect(migratedThreadRowContent).toContain("style={styles.unreadDot}");
   const swipeActionStart = threadRowActions.search(
     /void action\(\)\.catch\(\(error: unknown\) =>\s*\{\s*dialog\.alert/,
@@ -72,6 +70,15 @@ it("preserves threadList integration contracts", () => {
   ).toBe(true);
   for (const list of [threadSidebarBody, migratedMobileThreads])
     expect(list.match(/getFixedItemSize=\{threadListRowHeight\}/g)).toHaveLength(1);
+  expect(threadSidebarBody).toContain("extraData={selectedThreadKey}");
+  for (const list of [threadSidebarBody, migratedMobileThreads]) {
+    expect(list).toContain("maintainVisibleContentPosition={THREAD_LIST_VISIBLE_CONTENT_POSITION}");
+    expect(list).toContain("onMomentumScrollBegin={scroll.onMomentumScrollBegin}");
+    expect(list).toContain("onMomentumScrollEnd={scroll.onMomentumScrollEnd}");
+    expect(list).toContain("onScrollBeginDrag={scroll.onScrollBeginDrag}");
+    expect(list).toContain("onScrollEndDrag={scroll.onScrollEndDrag}");
+    expect(list).not.toContain("scrollEventThrottle={100}");
+  }
   expect(migratedThreadListModel).toContain(
     "const THREAD_LIST_ROW_HEIGHT =\n  THREAD_LIST_ROW_CONTENT_HEIGHT + THREAD_LIST_ROW_VERTICAL_MARGIN * 2;",
   );

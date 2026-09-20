@@ -19,8 +19,8 @@ export function connectionSettingsSections({
   connections,
   onActivateAccountProfile,
   onCancelAccountLogin,
+  onConsumeAccountResetCredit,
   onDelete,
-  onMove,
   onReconnect,
   onRefreshAccountPool,
   onRemoveAccountProfile,
@@ -37,13 +37,13 @@ export function connectionSettingsSections({
         }
         connection={connection}
         onDelete={onDelete}
-        onMove={onMove}
         onReconnect={onReconnect}
         onToggle={onToggle}
         onUpdate={onUpdate}
         {...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool })}
         {...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin })}
         {...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin })}
+        {...(onConsumeAccountResetCredit === undefined ? {} : { onConsumeAccountResetCredit })}
         {...(onActivateAccountProfile === undefined ? {} : { onActivateAccountProfile })}
         {...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile })}
         {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}

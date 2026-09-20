@@ -9,10 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, type Edge } from "react-native-safe-area-context";
 
-import {
-  configureNativeFullscreenWindow,
-  setNativeVoiceAuraTarget,
-} from "../native/native-transport";
+import { configureNativeFullscreenWindow } from "../native/native-transport";
 import { useEvent } from "../react/useEvent";
 import { colors } from "../theme";
 import { FullscreenWindowReadyProvider } from "./FullscreenWindowReady";
@@ -48,18 +45,17 @@ function VisibleFullscreenModal(props: FullscreenModalProps) {
   const readyRef = useRef(false);
   const frameRef = useRef<number | null>(null);
   const rootRef = useRef<ComponentRef<typeof SafeAreaView> | null>(null);
-  const registerVoiceAuraTarget = useEvent(() => {
+  const configureWindow = useEvent(() => {
     const reactTag = findNodeHandle(rootRef.current);
     if (reactTag !== null) {
       configureNativeFullscreenWindow(reactTag);
-      setNativeVoiceAuraTarget(reactTag);
     }
   });
   const onLayout = (event: LayoutChangeEvent): void => {
     if (event.nativeEvent.layout.width <= 0 || event.nativeEvent.layout.height <= 0) {
       return;
     }
-    registerVoiceAuraTarget();
+    configureWindow();
     if (readyRef.current) {
       return;
     }
@@ -74,7 +70,6 @@ function VisibleFullscreenModal(props: FullscreenModalProps) {
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
       }
-      setNativeVoiceAuraTarget(null);
     },
     [],
   );

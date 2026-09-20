@@ -46,40 +46,50 @@ describe("thread list account usage sources", () => {
     ]);
   });
 
-  it.each(["free", "plus", "pro", "pro_x_5", "pro_x_20"])("formats the provided %s plan without adding account status", (planType) => {
-    const source = rateLimits("mac", "one@example.com");
-    const profile = source.accountPool?.profiles[0];
-    if (profile === undefined) throw new Error("Missing test account");
-    profile.planType = planType;
-    const [account] = accountUsageProfiles([{ id: "mac", name: "Mac", rateLimits: source }]);
-    expect(account?.label).toBe("one@example.com");
-    expect(account?.detail).toBe(({ free: "Free", plus: "Plus", pro: "Pro", pro_x_5: "Pro X 5", pro_x_20: "Pro X 20" })[planType]);
-  });
+  it.each(["free", "plus", "pro", "pro_x_5", "pro_x_20"])(
+    "formats the provided %s plan without adding account status",
+    (planType) => {
+      const source = rateLimits("mac", "one@example.com");
+      const profile = source.accountPool?.profiles[0];
+      if (profile === undefined) throw new Error("Missing test account");
+      profile.planType = planType;
+      const [account] = accountUsageProfiles([{ id: "mac", name: "Mac", rateLimits: source }]);
+      expect(account?.label).toBe("one@example.com");
+      expect(account?.detail).toBe(
+        { free: "Free", plus: "Plus", pro: "Pro", pro_x_5: "Pro X5", pro_x_20: "Pro X20" }[
+          planType
+        ],
+      );
+    },
+  );
 });
 
 function rateLimits(connectionId: string, email?: string): AccountRateLimitsRow {
   return {
-    accountPool: email === undefined ? null : {
-      activeProfileId: "profile",
-      allExhausted: false,
-      nextResetAt: null,
-      profiles: [
-        {
-          active: true,
-          email,
-          enabled: true,
-          exhaustedIndefinitely: false,
-          exhaustedUntil: null,
-          id: "profile",
-          lastUsedAt: null,
-          planType: "Pro",
-          priority: 0,
-          rateLimits: null,
-          rateLimitsError: null,
-          rateLimitsUpdatedAt: null,
-        },
-      ],
-    },
+    accountPool:
+      email === undefined
+        ? null
+        : {
+            activeProfileId: "profile",
+            allExhausted: false,
+            nextResetAt: null,
+            profiles: [
+              {
+                active: true,
+                email,
+                enabled: true,
+                exhaustedIndefinitely: false,
+                exhaustedUntil: null,
+                id: "profile",
+                lastUsedAt: null,
+                planType: "Pro",
+                priority: 0,
+                rateLimits: null,
+                rateLimitsError: null,
+                rateLimitsUpdatedAt: null,
+              },
+            ],
+          },
     connectionId,
     error: null,
     id: connectionId,

@@ -21,7 +21,9 @@ internal object PinnedTls {
     require(uri.scheme == "ws" || uri.scheme == "wss") { "Endpoint must use ws or wss" }
     require(pin == null || PIN_PATTERN.matches(pin)) { "Companion identity pin is invalid" }
     if (uri.scheme == "ws") {
-      require(isLocalDevelopmentHost(uri.host)) { "Cleartext WebSocket is only allowed for local development" }
+      require(isLocalDevelopmentHost(uri.host) || isExplicitRelayRoute(uri.path)) {
+        "Cleartext WebSocket is only allowed for local development or an explicit inner-TLS relay route"
+      }
     }
     return uri
   }
@@ -84,6 +86,9 @@ internal object PinnedTls {
 
   private fun isLocalDevelopmentHost(host: String?): Boolean =
     host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]" || host == "10.0.2.2"
+
+  private fun isExplicitRelayRoute(path: String): Boolean =
+    Regex("^/c/[a-f0-9]{64}/v1/sync$").matches(path)
 
   private class PinTrustManager(private val expectedPin: String) : X509TrustManager {
     override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {

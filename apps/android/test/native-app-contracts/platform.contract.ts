@@ -55,18 +55,13 @@ it("preserves platform integration contracts — 1", () => {
   expect(imagePreviewHost).toContain("Annotate image in QuickDraw");
   expect(imagePreviewHost).not.toContain("Attach image review");
   expect(screen).not.toContain("codex-image-review-");
-  expect(timelineList).toContain(
-    "maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}",
-  );
-  expect(timelineList).toContain("maintainScrollAtEndThreshold={TIMELINE_TAIL_FOLLOW_THRESHOLD}");
+  expect(timelineList).not.toContain("followTail");
+  expect(timelineList).not.toContain("maintainScrollAtEndThreshold");
+  expect(timelineList).not.toContain("TIMELINE_TAIL_FOLLOW");
   expect(timelineList).not.toContain("androidScrollEdges");
   expect(timelineList).not.toContain("fadingEdgeLength");
   expect(timelineList).toContain("showsHorizontalScrollIndicator={false}");
   expect(timelineList).toContain("showsVerticalScrollIndicator={false}");
-  expect(timelineList).toContain("dataChange: true");
-  expect(timelineList).toContain("itemLayout: true");
-  expect(timelineList).not.toContain("footerLayout: true");
-  expect(timelineList).not.toContain("layout: true");
   expect(screen).not.toContain("autoscrollToBottomThreshold");
   expect(richMarkdown).toContain("const openImagePreview = useImagePreview()");
   expect(richMarkdown).not.toContain("<Modal visible={open}");
@@ -109,8 +104,11 @@ it("preserves platform integration contracts — 1", () => {
   expect(mermaidNative).toContain('accessibilityLabel="Reset zoom"');
   expect(mermaidNative).toContain('accessibilityLabel="Zoom out"');
   expect(mermaidNative).not.toContain("useSafeAreaInsets");
-  expect(mermaidNative).toContain('mode="inline"');
+  expect(mermaidNative).toContain("<DiagramSvgPreview");
+  expect(mermaidNative).toContain("engine={engine.kind}");
+  expect(mermaidNative).not.toContain('mode="inline"');
   expect(mermaidNative).toContain('mode="fullscreen"');
+  expect(mermaidNative).toContain("await window.diagramUseV1AsciiPresentation()");
   expect(mermaidNative).toContain('if (message.type === "ready")');
   expect(mermaidNative).toContain("loaded.current = true;\n      render();");
   expect(mermaidNative).toContain("allowFileAccessFromFileURLs");
@@ -216,9 +214,10 @@ it("preserves platform integration contracts — 1", () => {
   expect(screen).not.toContain("viewabilityConfig={timelineViewabilityConfig}");
   expect(screen).not.toContain("OLDER_PAGE_TRIGGER_PX");
   expect(screen).not.toContain("requestResidentRangeMove");
-  expect(timelineList).toContain("initialScrollAtEnd");
+  expect(timelineList).toContain("{...props}");
+  expect(timelineList).not.toContain("initialScrollAtEnd");
   expect(timelineList).toContain("alignItemsAtEnd");
-  expect(timelineList).toContain("estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}");
+  expect(timelineList).toContain("estimatedItemSize={itemSizeEstimate}");
   expect(screen).not.toContain('testID="timeline-positioning-loader"');
   expect(screen).not.toContain("contentHeight - timelineViewportHeightRef.current - pendingOffset");
   expect(screen).not.toContain("historyViewport.prefetch()");

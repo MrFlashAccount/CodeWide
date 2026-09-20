@@ -1,12 +1,9 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useSelector } from "@legendapp/state/react";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
-import { catalogSummaryModel } from "../../data/catalog-summary-model";
 import type { AccountUsageServer } from "../../data/thread-list-account-usage";
+import { ThreadListHeaderAction } from "../../presentation/navigation/ThreadListHeader";
 import type { ServerScope } from "../../services/servers/serverScope";
-import { colors, iconSize } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { WorkspaceAccountUsageMenu } from "../accounts/WorkspaceAccountUsageMenu";
 import { serverGlyph, type ThreadListServer } from "../connections/connectionPresentation";
@@ -18,9 +15,8 @@ export function ThreadListMenu({
   accountDatabase,
   accountServers,
   archived,
-  catalogConnectionIds,
-  includeArchiveCount = true,
   onManageProjects,
+  onManageTerminals,
   onRefreshAccountRateLimits,
   onSettings,
   onToggleArchive,
@@ -28,16 +24,12 @@ export function ThreadListMenu({
   accountDatabase: AccountRateLimitsDatabase | null;
   accountServers: readonly AccountUsageServer[];
   archived: boolean;
-  catalogConnectionIds: string[];
-  includeArchiveCount?: boolean;
   onManageProjects: () => void;
+  onManageTerminals: () => void;
   onRefreshAccountRateLimits?: () => Promise<unknown>;
   onSettings: () => void;
   onToggleArchive: () => void;
 }) {
-  const archivedCount = useSelector(() =>
-    includeArchiveCount && !archived ? catalogSummaryModel.count(catalogConnectionIds) : null,
-  );
   return (
     <WorkspaceAccountUsageMenu
       database={accountDatabase}
@@ -53,14 +45,15 @@ export function ThreadListMenu({
           onPress: onManageProjects,
         },
         {
+          icon: "terminal-outline",
+          id: "terminals",
+          label: "Manage terminals",
+          onPress: onManageTerminals,
+        },
+        {
+          icon: archived ? "chatbubbles-outline" : "archive-outline",
           id: "archived",
           label: archived ? "Active threads" : "Archived threads",
-          ...(archivedCount === null
-            ? {}
-            : {
-                description: archivedCount === 1 ? "1 thread" : `${String(archivedCount)} threads`,
-              }),
-          icon: archived ? "chatbubbles-outline" : "archive-outline",
           onPress: onToggleArchive,
         },
         { icon: "settings-outline", id: "settings", label: "Settings", onPress: onSettings },
@@ -68,9 +61,7 @@ export function ThreadListMenu({
       align="end"
       placement="bottom"
     >
-      <Pressable accessibilityLabel="Thread list menu" style={styles.headerIcon}>
-        <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.navigation} />
-      </Pressable>
+      <ThreadListHeaderAction accessibilityLabel="Thread list menu" name="ellipsis-vertical" />
     </WorkspaceAccountUsageMenu>
   );
 }
@@ -153,22 +144,15 @@ export function ThreadFilterMenu({
     }
   };
   const trigger = (
-    <Pressable
+    <ThreadListHeaderAction
       accessibilityLabel={accessibilityLabel}
-      accessibilityRole="button"
       accessibilityState={{ expanded: open, selected: activeCount > 0 }}
-      hitSlop={2}
-      style={({ pressed }) => [styles.threadFilterButton, pressed && styles.pressed]}
+      name={activeCount > 0 ? "filter" : "filter-outline"}
     >
-      <Ionicons
-        color={colors.text}
-        name={activeCount > 0 ? "filter" : "filter-outline"}
-        size={iconSize.action}
-      />
       {activeCount > 0 && (
         <View style={styles.threadFilterActiveDot} testID="thread-filter-active-dot" />
       )}
-    </Pressable>
+    </ThreadListHeaderAction>
   );
   return (
     <ActionMenu

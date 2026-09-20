@@ -9,7 +9,11 @@ import {
   typeWeight,
 } from "../../theme";
 import { conversationChromeEdgeInset } from "../../ui/conversation-chrome-layout";
-import { COMPOSER_CHIP_BOTTOM_INSET, COMPOSER_MIN_HEIGHT } from "./composerLayout";
+import {
+  COMPOSER_CHIP_BOTTOM_INSET,
+  COMPOSER_DOCK_MIN_HEIGHT,
+  COMPOSER_MIN_HEIGHT,
+} from "./composerLayout";
 
 export const styles = StyleSheet.create({
   composer: {
@@ -18,7 +22,7 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     flexShrink: 0,
     gap: spacing.xs,
-    minHeight: touchTarget + COMPOSER_CHIP_BOTTOM_INSET + spacing.compact,
+    minHeight: COMPOSER_DOCK_MIN_HEIGHT,
     minWidth: 0,
     overflow: "visible",
     paddingBottom: spacing.compact,

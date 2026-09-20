@@ -21,7 +21,9 @@ const reactHookTypeScriptFiles = globSync(["app/v1/**/*.ts", "src/**/*.ts"], {
       !file.startsWith("src/presentation/") &&
       !file.startsWith("src/v2/"),
   )
-  .filter((file) => /\buse[A-Z][A-Za-z0-9_]*\s*\(/u.test(readFileSync(new URL(file, import.meta.url), "utf8")));
+  .filter((file) =>
+    /\buse[A-Z][A-Za-z0-9_]*\s*\(/u.test(readFileSync(new URL(file, import.meta.url), "utf8")),
+  );
 const v1OwnedFiles = [
   "app/legacy.tsx",
   "app/v1/**/*.ts",

@@ -13,10 +13,13 @@ import {
   nativeTransport,
   nativeProtocolEngine,
   preparedMicrophone,
+  preparedMicrophoneEffects,
+  communicationAudioModule,
   pairRoute,
   threadRoute,
   manifest,
   nativeCodeHighlighter,
+  diagramPreviewModule,
   nativePackage,
   nativeCodeManager,
   nativeCodeView,
@@ -28,6 +31,7 @@ import {
   nativeFrameStore,
   fileTransferNative,
   gradleProperties,
+  mainApplication,
 } from "./native-sources";
 import { baselineProfile, expoAssetPatch } from "./native-sources-1";
 
@@ -96,6 +100,31 @@ it("preserves native integration contracts — 2", () => {
   expect(deviceKeyStore).not.toContain("private.encoded");
   expect(appPackage.dependencies["heroui-native"]).toBeUndefined();
   expect(appPackage.dependencies.uniwind).toBeUndefined();
+  expect(appPackage.dependencies["react-native-webrtc"]).toBe("124.0.8");
+  expect(mainApplication.indexOf("configureWebRtcCommunicationAudio()")).toBeLessThan(
+    mainApplication.indexOf("loadReactNative(this)"),
+  );
+  expect(mainApplication).toContain(".setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)");
+  expect(mainApplication).toContain(
+    ".setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)",
+  );
+  expect(mainApplication).toContain(
+    ".setUseHardwareAcousticEchoCanceler(AcousticEchoCanceler.isAvailable())",
+  );
+  expect(mainApplication).toContain(
+    ".setUseHardwareNoiseSuppressor(NoiseSuppressor.isAvailable())",
+  );
+  expect(mainApplication).not.toContain("AudioAttributes.USAGE_MEDIA");
+  expect(communicationAudioModule).toContain("AudioManager.MODE_IN_COMMUNICATION");
+  expect(communicationAudioModule).toContain("val previousMode = audioMode.currentMode()");
+  expect(communicationAudioModule).toContain("AudioDeviceInfo.TYPE_BUILTIN_SPEAKER");
+  expect(communicationAudioModule).toContain("audioManager.setCommunicationDevice(device)");
+  expect(communicationAudioModule).toContain("audioManager.clearCommunicationDevice()");
+  expect(communicationAudioModule).toContain("externalAvailable");
+  expect(communicationAudioModule).not.toContain("isSpeakerphoneOn");
+  expect(nativePackage).toContain("GlobalVoiceCommunicationAudioModule(reactContext)");
+  expect(mainApplication).toContain(".setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)");
+  expect(mainApplication).toContain("WebRTCModuleOptions.getInstance().audioDeviceModule");
   expect(rootLayout).toContain("<AppRootProviders>");
   expect(nativeTransport).toContain("pendingEvents.push(event)");
   expect(nativeTransport).toMatch(
@@ -104,7 +133,16 @@ it("preserves native integration contracts — 2", () => {
   expect(nativeTransport).toContain("export function cancelVoiceRecognition");
   expect(nativeModule).toContain("voiceGeneration");
   expect(nativeModule).toContain("finishVoice(generation, recognizer");
-  expect(nativeModule).toContain("fun startPcmCapture(promise: Promise)");
+  expect(nativeModule).toContain(
+    "fun startPcmCapture(token: String, purpose: String, promise: Promise)",
+  );
+  expect(nativeModule).toContain(
+    "fun stopPcmCapture(token: String, purpose: String, promise: Promise)",
+  );
+  expect(nativeModule).toContain('promise.reject("MIC_BUSY"');
+  expect(nativeModule).toContain('promise.reject("MIC_LEASE_STALE"');
+  expect(nativeModule).not.toContain("fun startPcmPlayback(");
+  expect(nativeModule).not.toContain("fun appendPcmPlayback(");
   expect(nativeProtocolEngine).toContain(
     '"companion/dictation/finish" -> maxOf(timeoutMs, DICTATION_FINISH_RPC_TIMEOUT_MS)',
   );
@@ -132,13 +170,16 @@ it("preserves native integration contracts — 2", () => {
   expect(preparedMicrophone.indexOf("MediaRecorder.AudioSource.VOICE_RECOGNITION")).toBeLessThan(
     preparedMicrophone.indexOf("MediaRecorder.AudioSource.MIC"),
   );
-  expect(nativeModule).toContain("val capture = microphone.start()");
+  expect(nativeModule).toContain("val activeCapture = microphone.start()");
   expect(preparedMicrophone).toContain("recorder.startRecording()");
-  expect(nativeModule).toContain('putString("source", capture.source.label)');
+  expect(nativeModule).toContain('putString("source", activeCapture.source.label)');
   expect(nativeModule).not.toContain("AUDIO_SAMPLE_RATE = 24_000");
-  expect(preparedMicrophone).toContain("NoiseSuppressor.create(recorder.audioSessionId)");
-  expect(preparedMicrophone).toContain("AutomaticGainControl.create(recorder.audioSessionId)");
-  expect(nativeModule).not.toContain("AcousticEchoCanceler");
+  expect(preparedMicrophone).toContain("effectsFactory.create(recorder.audioSessionId)");
+  expect(preparedMicrophoneEffects).toContain("AcousticEchoCanceler.create(audioSessionId)");
+  expect(preparedMicrophoneEffects).toContain("NoiseSuppressor.create(audioSessionId)");
+  expect(preparedMicrophoneEffects).toContain("AutomaticGainControl.create(audioSessionId)");
+  expect(nativeModule).toContain('putBoolean("acousticEchoCancelerSupported"');
+  expect(nativeModule).toContain('putBoolean("acousticEchoCancelerEnabled"');
   expect(nativeTransport).toContain('emitter.addListener("CodeWideAudioEvent"');
   expect(nativeTransport).toContain("const info = isPcmCaptureInfo(capture) ? capture : null");
   expect(nativeTransport).toContain('info.source === "mic"');
@@ -199,12 +240,24 @@ it("preserves native integration contracts — 2", () => {
   expect(mermaidDocument).not.toContain("pinchAndPan: true");
   expect(mermaidRuntime).toContain('globalThis["mermaid"]');
   expect(asciiDiagramDocument).toContain("window.renderAsciiDiagram");
+  expect(asciiDiagramDocument).toContain("window.diagramUseV1AsciiPresentation");
+  expect(asciiDiagramDocument).toContain("type: 'preview-ready'");
   expect(asciiDiagramDocument).toContain("'wasm-unsafe-eval'");
   expect(asciiDiagramDocument).toContain(
     "script, foreignObject, iframe, object, embed, image, use",
   );
   expect(asciiDiagramRuntime).toContain("WebAssembly.instantiate(");
   expect(asciiDiagramRuntime).toContain("window.renderSvgbob");
+  expect(diagramPreviewModule).toContain("private var browser: WebView? = null");
+  expect(diagramPreviewModule).toContain(
+    'ASCII("ascii", "file:///android_asset/ascii-diagram-renderer.html"',
+  );
+  expect(diagramPreviewModule).toContain(
+    'MERMAID("mermaid", "file:///android_asset/mermaid-renderer.html"',
+  );
+  expect(diagramPreviewModule).toContain(
+    'const val PREVIEW_CACHE_DIRECTORY = "diagram-previews-v5"',
+  );
   expect(nativeFrameStore).toContain(
     "applyPendingRequestEvents(connectionId, fresh.mapNotNull { it.pendingRequestPayload })",
   );

@@ -12,10 +12,12 @@ import {
   subscribePerformanceExperiments,
 } from "../data/performance-experiments";
 import {
+  armNextThreadNavigationProfile,
   getThreadNavigationProfileSnapshot,
   subscribeThreadNavigationProfiles,
 } from "../data/thread-navigation-metrics";
 import {
+  armNextNavigationHermesProfile,
   captureHermesHeapSnapshot,
   getPerformanceMetricsSnapshot,
   setPerformanceMonitoringEnabled,
@@ -60,6 +62,10 @@ const diagnosticsInput: DiagnosticsSourceAdapterInput = {
 export const v2PerformanceDiagnosticsSource = createDiagnosticsSource(diagnosticsInput);
 
 export const v2NavigationDiagnosticsSource = createNavigationDiagnosticsSource({
+  async armHermesProfile() {
+    await armNextNavigationHermesProfile();
+    armNextThreadNavigationProfile();
+  },
   captureHeap: captureHermesHeapSnapshot,
   async copy(profile) {
     await setStringAsync(JSON.stringify(profile, null, 2));

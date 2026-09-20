@@ -1,0 +1,23 @@
+package dev.codewide.app.remote
+
+/** Generated from apps/companion/contract/v1.json globalSupervisorLimitsV1. */
+internal object GlobalSupervisorLimitsV1 {
+  const val VERSION = 1
+  const val LIVE_CHANNEL_MAX_ENVELOPES = 256
+  const val LIVE_CHANNEL_MAX_BYTES = 4_194_304
+  const val LIVE_ENVELOPE_MAX_BYTES = 262_144
+  const val MICROPHONE_INPUT_BUFFER_MAX_DURATION_MS = 2_000
+  const val MICROPHONE_INPUT_BUFFER_MAX_BYTES = 262_144
+  const val OUTPUT_PLAYBACK_BUFFER_MAX_DURATION_MS = 5_000
+  const val OUTPUT_PLAYBACK_BUFFER_MAX_BYTES = 524_288
+  const val DYNAMIC_TOOL_INPUT_MAX_BYTES = 65_536
+  const val DYNAMIC_TOOL_OUTPUT_MAX_BYTES = 262_144
+  const val LIST_CHATS_PAGE_MAX_ENTRIES = 100
+  const val READ_CHAT_PAGE_MAX_ITEMS = 100
+  const val READ_CHAT_PAGE_MAX_BYTES = 262_144
+  const val EVENT_COALESCING_MAX_DISTINCT_SOURCES = 32
+  const val EVENT_COALESCING_WINDOW_MS = 2_000
+  const val REALTIME_STARTUP_TIMEOUT_MS = 15_000
+  const val INTERRUPTION_ACK_TIMEOUT_MS = 2_000
+  const val REALTIME_STOP_CLOSE_TIMEOUT_MS = 5_000
+}

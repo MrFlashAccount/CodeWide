@@ -62,7 +62,6 @@ export function useConversationScopeFeatures(props: {
   const threadRenameBinding = useThreadRename(activation.composerScope);
   const timelineState = useConversationTimelineState({
     composerScope: activation.composerScope,
-    composerState: props.readInputs.composerState,
     draftConnectionId: activation.draftConnectionId,
     draftThreadId: activation.draftThreadId,
     readInputs: props.readInputs,

@@ -144,30 +144,58 @@ export async function runOptimisticPendingMutation(
   }
 }
 
+type DeliverTextRequest = {
+  readonly commandId: string;
+  readonly connectionId: string;
+  readonly mode: SendMode;
+  readonly options: TurnSendOptions;
+  readonly text: string;
+  readonly threadId: string;
+};
+
+type ExplicitCommandTextRequest = {
+  readonly commandId: string;
+  readonly connectionId: string;
+  readonly text: string;
+  readonly threadId: string;
+};
+
+async function sendSystemTextWithCommandId(request: ExplicitCommandTextRequest): Promise<string> {
+  const command = createTextOutboxCommand(
+    request.connectionId,
+    request.threadId,
+    request.text,
+    { type: "start" },
+    {},
+    request.commandId,
+  );
+  await enqueueNativeCommand(
+    request.connectionId,
+    command.commandId,
+    command.method,
+    command.params,
+  );
+  return command.commandId;
+}
+
 /** Native admission and optimistic reconciliation share one durable boundary. */
 export function createCommandDelivery(
   getDetails: () => ThreadDetailDatabase | null,
   randomUUID: () => string,
 ) {
-  const sendText = async (
-    connectionId: string,
-    threadId: string,
-    text: string,
-    mode: SendMode = { type: "start" },
-    options: TurnSendOptions = {},
-  ): Promise<string> => {
+  const deliverText = async ({
+    commandId,
+    connectionId,
+    mode,
+    options,
+    text,
+    threadId,
+  }: DeliverTextRequest): Promise<string> => {
     const details = getDetails();
     if (details === null) {
       throw new Error("Local timeline database is not ready");
     }
-    const command = createTextOutboxCommand(
-      connectionId,
-      threadId,
-      text,
-      mode,
-      options,
-      `android-${randomUUID()}`,
-    );
+    const command = createTextOutboxCommand(connectionId, threadId, text, mode, options, commandId);
     const presentation = mode.type === "queue" ? ("queue" as const) : ("delivery" as const);
     const pending = details.createPending({
       attachments: options.attachments ?? [],
@@ -239,6 +267,21 @@ export function createCommandDelivery(
     }
     return command.commandId;
   };
+  const sendText = async (
+    connectionId: string,
+    threadId: string,
+    text: string,
+    mode: SendMode = { type: "start" },
+    options: TurnSendOptions = {},
+  ): Promise<string> =>
+    deliverText({
+      commandId: `android-${randomUUID()}`,
+      connectionId,
+      mode,
+      options,
+      text,
+      threadId,
+    });
   const retryFailedMessage = async (connectionId: string, commandId: string): Promise<void> => {
     const details = getDetails();
     const original = (await listNativeCommands()).find(
@@ -270,7 +313,7 @@ export function createCommandDelivery(
     );
   };
 
-  return { retryFailedMessage, sendText };
+  return { retryFailedMessage, sendSystemTextWithCommandId, sendText };
 }
 
 /** Projects native delivery notifications independently into their existing view owners. */

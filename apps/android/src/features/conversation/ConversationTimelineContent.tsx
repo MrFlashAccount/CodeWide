@@ -14,6 +14,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       commitInitialTimelineLoad={
         props.timelineRead.historyAnchorActionsBinding.commitInitialTimelineLoad
       }
+      completeTimelineJump={props.timelineRead.timelineJumpActionsBinding.completeTimelineJump}
       composerScope={props.composerScope}
       conversationInsets={props.conversationInsets}
       displayedTimeline={props.timelineRead.timelineSearchProjectionBinding.displayedTimeline}
@@ -22,9 +23,9 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       emptyContent={
         <ConversationEmptyState
           cwd={props.cwd}
-          emptyRemoteThread={props.timelineRead.emptyRemoteThread}
           historyActivityModel={props.historyActivityModel}
           historyActivityResourceId={props.historyActivityResourceId}
+          newChat={props.timelineRead.newChat}
           onChangeWorkspaceMode={props.projectsInputs.onChangeWorkspaceMode}
           openProjectPicker={props.composerProjectSelectionBinding.openProjectPicker}
           threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
@@ -65,6 +66,8 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       lastTimelineOffsetYRef={
         props.timelineState.timelineViewportStateBinding.lastTimelineOffsetYRef
       }
+      latestUnreadAgentRef={props.timelineState.unreadReceiptStateBinding.latestUnreadAgentRef}
+      latestUnreadAgentTurnId={props.timelineRead.unreadReceiptBinding.latestUnreadAgentTurnId}
       liveStatusVisible={props.liveStatusVisible}
       loadNewerAtTimelineEnd={
         props.timelineRead.timelineViewportActionsBinding.loadNewerAtTimelineEnd
@@ -90,6 +93,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
         props.timelineState.timelineViewportStateBinding.scrollGestureStartedAtRef
       }
       scrollOffsetRef={props.timelineState.timelineViewportStateBinding.scrollOffsetRef}
+      searchMessageItemId={props.timelineRead.searchMessageItemId}
       setAwayFromLatest={props.timelineState.historyAnchorStateBinding.setAwayFromLatest}
       setTimelineGestureActive={
         props.timelineState.timelineViewportStateBinding.setTimelineGestureActive
@@ -102,12 +106,13 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       timelineContentHeightRef={
         props.timelineState.timelineViewportStateBinding.timelineContentHeightRef
       }
-      timelineInitialPosition={props.timelineRead.timelineInitialPosition}
+      timelineJumpRequest={props.timelineRead.timelineJumpActionsBinding.timelineJumpRequest}
       timelinePositioned={props.timelineRead.timelinePositioned}
       timelineRef={props.timelineState.timelineViewportStateBinding.timelineRef}
       timelineViewportHeightRef={
         props.timelineState.timelineViewportStateBinding.timelineViewportHeightRef
       }
+      timelineViewportRef={props.timelineState.timelineViewportStateBinding.timelineViewportRef}
       trimPaginationWindow={props.paginationTrimBinding.trimPaginationWindow}
       windowLayout={props.windowLayout}
     />
@@ -117,7 +122,6 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       awayFromLatest={props.timelineState.historyAnchorStateBinding.awayFromLatest}
       bottomChromeHeight={props.timelineState.timelineViewportStateBinding.bottomChromeHeight}
       commitUnreadReceipt={props.timelineRead.unreadReceiptActionsBinding.commitUnreadReceipt}
-      completeLatestJump={props.timelineRead.historyAnchorActionsBinding.completeLatestJump}
       composerScope={props.composerScope}
       draftConnectionId={props.draftConnectionId}
       draftThreadId={props.draftThreadId}
@@ -126,9 +130,6 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       historyActivityModel={props.historyActivityModel}
       historyActivityResourceId={props.historyActivityResourceId}
       historyViewport={props.historyViewport}
-      initialRestoreAnchorTurnId={
-        props.timelineState.historyAnchorStateBinding.initialRestoreAnchorTurnId
-      }
       latestUnreadReceiptKey={props.timelineRead.unreadReceiptBinding.latestUnreadReceiptKey}
       liveStatusVisible={props.liveStatusVisible}
       liveTurnPlan={props.timelineRead.conversationPresentationBinding.liveTurnPlan}

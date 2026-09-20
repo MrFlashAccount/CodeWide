@@ -9,6 +9,7 @@ import type { SearchResultTarget, ServerSearchResult } from "./searchResultTypes
 export type renderGlobalSearchViewInput = {
   autoFocus: boolean;
   calendar: SearchDateField | null;
+  clear: () => void;
   close: () => void;
   didFocus: () => void;
   dismissCalendar: () => void;

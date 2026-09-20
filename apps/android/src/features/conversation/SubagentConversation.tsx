@@ -2,7 +2,6 @@ import type { RenderBlock } from "@codewide/renderers";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { ThreadDetailDatabase } from "../../data/thread-detail-database-contract";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
-import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../../data/use-thread-history-controller";
 import { ContentReviewComposer } from "../../rendering/ContentReviewHost";
 import type { TurnChangedFile } from "../../rendering/turn-changes";
@@ -125,9 +124,18 @@ export function SubagentConversation({
     openTimelineDocument,
   );
   const openChildren = useEvent(
-    (_children: readonly StoredThreadSummary[], initialThreadId: string | null = null) => {
+    (
+      children: Parameters<typeof routeNavigation.openAgents>[0]["summaries"],
+      initialThreadId: string | null = null,
+    ) => {
+      // A nested workspace keeps the captured V1 catalog usable when its background refresh fails.
       void refresh?.(thread.id).catch(() => undefined);
-      routeNavigation.openAgents(initialThreadId, thread.id);
+      routeNavigation.openAgents({
+        initialThreadId,
+        parentThread: thread,
+        parentThreadId: thread.id,
+        summaries: children,
+      });
     },
   );
   const presentTerminal = useEvent(() => {

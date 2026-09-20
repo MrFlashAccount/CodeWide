@@ -35,7 +35,6 @@ export function ConversationComposition(
     currentOutcome: props.read.currentOutcome,
     draftConnectionId: scoped.activation.draftConnectionId,
     draftThreadId: scoped.activation.draftThreadId,
-    historyRestoreReady: props.read.historyRestoreReady,
     historyViewport: props.read.historyViewport,
     messageListState: props.read.messageListState,
     newChat: props.surface.newChat,
@@ -133,13 +132,18 @@ export function ConversationComposition(
     composerScope: scoped.activation.composerScope,
     composerStateBinding: scoped.composerStateBinding,
     conversationOwner: scoped.activation.conversationOwner,
+    createAndOpenTerminal: toolsBinding.terminalActionsBinding.createAndOpenTerminal,
     currentTurnId: timelineRead.conversationPresentationBinding.currentTurnId,
     draftConnectionId: scoped.activation.draftConnectionId,
     draftThreadId: scoped.activation.draftThreadId,
-    goalEnabled: props.goal.onSetGoal !== undefined && props.goal.onClearGoal !== undefined,
+    onSetGoal: props.goal.onSetGoal,
     openDrawing: toolsBinding.drawingFeatureBinding.openDrawing,
     queueInputs: props.queue,
     remoteThread: props.read.remoteThread,
+    terminalEnabled:
+      !props.surface.newChat &&
+      scoped.activation.draftConnectionId !== null &&
+      scoped.activation.draftThreadId !== null,
     threadLifecycleActive: timelineRead.conversationPresentationBinding.threadLifecycleActive,
     voiceController: props.composer.voiceController,
   });

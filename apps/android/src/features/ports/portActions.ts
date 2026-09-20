@@ -7,17 +7,23 @@ export function usePortActions(props: PortForwardingManagerProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [pendingPort, setPendingPort] = useState<number | null>(null);
-  const [webMenuId, setWebMenuId] = useState<string | null>(null);
+  const [actionMenuProfileId, setActionMenuProfileId] = useState<string | null>(null);
   const runProfileAction = useEvent(async (id: string, action: () => Promise<void>) => {
     setPendingId(id);
     setActionError(null);
-    setWebMenuId(null);
+    setActionMenuProfileId(null);
     try {
       await action();
     } catch (error) {
       setActionError(message(error, "Could not update port forwarding"));
     }
     setPendingId((current) => (current === id ? null : current));
+  });
+  const activateProfileAction = useEvent((id: string, action: () => Promise<void>): void => {
+    runProfileAction(id, action).catch((error: unknown) => {
+      setPendingId((current) => (current === id ? null : current));
+      setActionError(message(error, "Could not update port forwarding"));
+    });
   });
   const choosePort = useEvent(async (candidate: PortForwardingCandidate) => {
     setPendingPort(candidate.port);
@@ -41,12 +47,12 @@ export function usePortActions(props: PortForwardingManagerProps) {
   });
   return {
     actionError,
+    actionMenuProfileId,
+    activateProfileAction,
     choosePort,
     excludePort,
     pendingId,
     pendingPort,
-    runProfileAction,
-    setWebMenuId,
-    webMenuId,
+    setActionMenuProfileId,
   };
 }

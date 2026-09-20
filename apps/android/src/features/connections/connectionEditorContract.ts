@@ -1,4 +1,4 @@
-import type { AccountPoolSnapshot } from "../../data/account-pool";
+import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { ConnectionUpdateInput } from "../../data/connection-validation";
 
@@ -11,8 +11,12 @@ export type ConnectionEditorProps = {
     profileId: string,
   ) => Promise<AccountPoolSnapshot>;
   onCancelAccountLogin?: (connectionId: string, loginId: string) => Promise<void>;
+  onConsumeAccountResetCredit?: (
+    connectionId: string,
+    profileId: string,
+    creditId: string | null,
+  ) => Promise<AccountResetCreditConsumption>;
   onDelete: (connectionId: string) => Promise<void>;
-  onMove: (connectionId: string, direction: -1 | 1) => Promise<void>;
   onReconnect: (connectionId: string) => Promise<void>;
   onRefreshAccountPool?: (connectionId: string) => Promise<AccountPoolSnapshot>;
   onRemoveAccountProfile?: (

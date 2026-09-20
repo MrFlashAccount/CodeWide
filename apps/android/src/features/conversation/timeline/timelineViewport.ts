@@ -64,7 +64,6 @@ import { recordThreadHistoryTelemetry } from "../../../data/thread-history-telem
 import type { ThreadHistoryViewport } from "../../../data/use-thread-history-controller";
 import { useEvent } from "../../../react/useEvent";
 import type { createFullscreenScrollOwnership } from "../../../ui/fullscreen-scroll-ownership";
-import { timelineItemKey } from "./timelineProjection";
 import type { TimelineItem } from "./timelineTypes";
 export function usePaginationTrim({
   fullscreenScrollOwnership,
@@ -92,7 +91,6 @@ export function usePaginationTrim({
     }
     cancelScheduledPaginationTrim();
     const direction = paginationEdgeLockRef.current;
-    paginationEdgeLockRef.current = null;
     if (direction !== null) {
       historyViewport.trimAfterGesture(direction).catch(() => undefined);
     }
@@ -112,9 +110,7 @@ export function useTimelineViewportActions({
   displayedTimeline,
   draftConnectionId,
   draftThreadId,
-  firstVisibleHistoryAnchorKeyRef,
   firstVisibleHistoryAnchorRef,
-  firstVisibleHistoryAnchorStatusRef,
   fullscreenScrollOwnership,
   historyViewport,
   lastTimelineOffsetYRef,
@@ -132,11 +128,7 @@ export function useTimelineViewportActions({
   | "timelineViewportHeightRef"
   | "timelineContentHeightRef"
 > & {
-  firstVisibleHistoryAnchorKeyRef: import("react").RefObject<string | null>;
   firstVisibleHistoryAnchorRef: import("react").RefObject<string | null>;
-  firstVisibleHistoryAnchorStatusRef: import("react").RefObject<
-    import("@codewide/codex-protocol/v0.147.0/v2").Turn["status"] | null
-  >;
 } & {
   displayedTimeline: TimelineItem[];
   draftConnectionId: string | null;
@@ -167,8 +159,6 @@ export function useTimelineViewportActions({
         }
       }
       firstVisibleHistoryAnchorRef.current = anchor?.id ?? null;
-      firstVisibleHistoryAnchorKeyRef.current = anchor === null ? null : timelineItemKey(anchor);
-      firstVisibleHistoryAnchorStatusRef.current = anchor?.turn.status ?? null;
       reportHistoryViewport();
     },
   );

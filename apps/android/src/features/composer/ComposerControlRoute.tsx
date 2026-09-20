@@ -10,9 +10,11 @@ type ControlRouteRequest = Extract<
 export function ComposerControlRoute({
   onClose,
   request,
+  visible,
 }: {
   readonly onClose: () => void;
   readonly request: ControlRouteRequest;
+  readonly visible: boolean;
 }): React.JSX.Element {
   return (
     <ResourceComposerMenu
@@ -34,7 +36,7 @@ export function ComposerControlRoute({
       selectedPersonality={request.selectedPersonality}
       thread={request.thread}
       toolPage={null}
-      visible
+      visible={visible}
       voiceScope={request.voiceScope}
       {...(request.getTransferAccess === undefined
         ? {}

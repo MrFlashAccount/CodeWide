@@ -67,7 +67,9 @@ export function ComposerControlChips({
     async () => (load === undefined ? EMPTY_TURN_CONTROLS : load(cwd)),
   );
   const controls = resource?.value ?? EMPTY_TURN_CONTROLS;
-  const loading = resource?.status === "loading" && resource.value === null;
+  const initialLoading =
+    load !== undefined &&
+    (resource === null || (resource.status === "loading" && resource.value === null));
   const refreshing = resource?.status === "loading" || resource?.status === "refreshing";
   const pending = load !== undefined && (resource === null || refreshing);
   const effectiveError = error ?? resource?.error ?? null;
@@ -92,8 +94,8 @@ export function ComposerControlChips({
     effectivePermissions === null
       ? executionPermissionsLabel(serverExecution, pending)
       : permissionProfileLabel(effectivePermissions);
-  const modelPending = pending && effectiveModel === null;
-  const permissionsPending = pending && effectivePermissions === null;
+  const modelPending = initialLoading;
+  const permissionsPending = initialLoading;
   return (
     <>
       {readOnly ? (
@@ -107,9 +109,13 @@ export function ComposerControlChips({
         </View>
       ) : (
         <ModelThinkingMenu
-          accessibilityLabel={`Model and thinking: ${modelLabel}, ${effectiveEffort ?? "not specified"}`}
+          accessibilityLabel={
+            modelPending
+              ? "Loading model"
+              : `Model and thinking: ${modelLabel}, ${effectiveEffort ?? "not specified"}`
+          }
           error={effectiveError}
-          loading={loading}
+          loading={initialLoading}
           models={controls.models}
           onClose={() => {
             onClose("model-menu");
@@ -150,9 +156,11 @@ export function ComposerControlChips({
         </View>
       ) : (
         <PermissionsMenu
-          accessibilityLabel={`Permissions: ${permissionLabel}`}
+          accessibilityLabel={
+            permissionsPending ? "Loading access" : `Permissions: ${permissionLabel}`
+          }
           error={effectiveError}
-          loading={loading}
+          loading={initialLoading}
           onClose={() => {
             onClose("permissions-menu");
           }}

@@ -67,6 +67,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       {...read.searchProjection}
       {...read.viewportActions}
       {...read.anchorActions}
+      {...read.jumpActions}
       {...props.pagination}
       awayFromLatest={read.anchor.awayFromLatest}
       awayFromLatestRef={read.anchor.awayFromLatestRef}
@@ -77,9 +78,9 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       emptyContent={
         <ConversationEmptyState
           cwd={props.remoteThread.cwd}
-          emptyRemoteThread={props.remoteThread.turns.length === 0}
           historyActivityModel={null}
           historyActivityResourceId={null}
+          newChat={false}
           onChangeWorkspaceMode={undefined}
           openProjectPicker={() => undefined}
           threadSearchActive={read.searchProjection.threadSearchActive}
@@ -93,13 +94,16 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       fullscreenScrollOwnership={props.overlayState.fullscreenScrollOwnership}
       historyViewport={read.historyViewport}
       inlineQueueExpanded={false}
+      latestUnreadAgentRef={read.unread.latestUnreadAgentRef}
+      latestUnreadAgentTurnId={null}
       liveStatusVisible={liveStatusVisible}
       renderTimelineItem={rows.renderTimelineItem}
       scheduleUnreadAgentVisibilityCheck={read.unreadActions.scheduleUnreadAgentVisibilityCheck}
+      searchMessageItemId={null}
       setAwayFromLatest={read.anchor.setAwayFromLatest}
       timelineCompact={props.compact || read.narrow}
-      timelineInitialPosition={read.timelineInitialPosition}
       timelinePositioned={timelinePositioned}
+      timelineViewportRef={props.viewport.timelineViewportRef}
       windowLayout={read.windowLayout}
     />
   );
@@ -135,7 +139,6 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       historyActivityModel={null}
       historyActivityResourceId={null}
       historyViewport={read.historyViewport}
-      initialRestoreAnchorTurnId={read.anchor.initialRestoreAnchorTurnId}
       latestUnreadReceiptKey={null}
       liveStatusVisible={liveStatusVisible}
       liveTurnPlan={read.presentation.liveTurnPlan}

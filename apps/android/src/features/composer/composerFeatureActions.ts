@@ -5,8 +5,10 @@ import type { ComposerMenuPage, ComposerAccessoryAction } from "./composerTypes"
 export function useComposerFeatureActions(
   pickComposerAttachment: () => Promise<void>,
   openDrawing: () => void,
+  createAndOpenTerminal: () => void,
   openControls: (page: ComposerMenuPage) => void,
   openGoalAttachment: () => void,
+  focusComposer: () => void,
 ) {
   const dialog = useAppDialog();
   const run = useEvent((operation: () => Promise<unknown>, fallback: string): void => {
@@ -23,8 +25,13 @@ export function useComposerFeatureActions(
       openDrawing();
       return;
     }
+    if (action === "terminal") {
+      createAndOpenTerminal();
+      return;
+    }
     if (action === "goal") {
       openGoalAttachment();
+      requestAnimationFrame(focusComposer);
       return;
     }
     openControls(action);

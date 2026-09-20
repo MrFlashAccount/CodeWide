@@ -1,4 +1,5 @@
 import type { useConversationOwner } from "../../ui/use-conversation-owner";
+import type { ConversationGoalCapabilities } from "../goal/conversationGoalCapabilities";
 import { useGoalDetails } from "../goal/GoalFeature";
 import type { QueueWorkspaceCapabilities } from "../queue/queueWorkspaceCapabilities";
 import { useComposerAccessoryActions } from "./ComposerAccessoryTray";
@@ -14,13 +15,15 @@ export function useComposerInteractions({
   composerScope,
   composerStateBinding,
   conversationOwner,
+  createAndOpenTerminal,
   currentTurnId,
   draftConnectionId,
   draftThreadId,
-  goalEnabled,
+  onSetGoal,
   openDrawing,
   queueInputs,
   remoteThread,
+  terminalEnabled,
   threadLifecycleActive,
   voiceController,
 }: {
@@ -29,29 +32,45 @@ export function useComposerInteractions({
   composerScope: string;
   composerStateBinding: ReturnType<typeof useComposerState>;
   conversationOwner: ReturnType<typeof useConversationOwner>;
+  createAndOpenTerminal: Parameters<typeof useComposerFeatureActions>[2];
   currentTurnId: string | null;
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  goalEnabled: boolean;
+  onSetGoal: ConversationGoalCapabilities["onSetGoal"];
   openDrawing: Parameters<typeof useComposerFeatureActions>[1];
   queueInputs: QueueWorkspaceCapabilities;
   remoteThread: Parameters<typeof useComposerDelivery>[0]["remoteThread"];
+  terminalEnabled: boolean;
   threadLifecycleActive: boolean;
   voiceController: ComposerWorkspaceCapabilities["voiceController"];
 }) {
   const composerFeatureActionsBinding = useComposerFeatureActions(
     composerCommands.composerAttachmentsBinding.pickComposerAttachment,
     openDrawing,
+    createAndOpenTerminal,
     composerCommands.composerControlActionsBinding.openControls,
     composerStateBinding.composerMenuStateBinding.openGoalAttachment,
+    () => {
+      composerStateBinding.composerEditingBinding.composerInputRef.current?.focus();
+    },
   );
   const composerAccessoryActionsBinding = useComposerAccessoryActions({
     fileAttachmentEnabled: composerCommands.composerAttachmentsBinding.fileAttachmentEnabled,
-    goalEnabled,
+    goalEnabled: onSetGoal !== undefined,
     openComposerFeature: composerFeatureActionsBinding.openComposerFeature,
     setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
+    terminalEnabled,
   });
   const openGoalDetails = useGoalDetails(composerAccessoryActionsBinding.openAccessoryAction);
+  const goalSubmission =
+    composerStateBinding.composerMenuStateBinding.goalAttachmentVisible && onSetGoal !== undefined
+      ? {
+          close: composerStateBinding.composerMenuStateBinding.closeGoalAttachment,
+          submit: async (objective: string): Promise<void> => {
+            await onSetGoal({ objective, status: "active" });
+          },
+        }
+      : null;
   const composerDeliveryBinding = useComposerDelivery({
     attachments: composerStateBinding.composerEditingBinding.attachments,
     cancelQueuedComposerEdit: composerCommands.queueEditActionsBinding.cancelQueuedComposerEdit,
@@ -61,8 +80,9 @@ export function useComposerInteractions({
     clearComposerText: composerStateBinding.composerEditingBinding.clearComposerText,
     clearContentReviewAttachmentId:
       composerStateBinding.reviewAttachmentIdsBinding.clearContentReviewAttachmentId,
-    composerMarkdownRef: composerStateBinding.composerEditingBinding.composerMarkdownRef,
+    composerInputRef: composerStateBinding.composerEditingBinding.composerInputRef,
     composerScope,
+    composerSession: composerStateBinding.composerEditingBinding.composerSession,
     composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
     contentReviewAttachmentId:
       composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
@@ -72,10 +92,7 @@ export function useComposerInteractions({
     draftConnectionId,
     draftSelectionRef: composerStateBinding.composerEditingBinding.draftSelectionRef,
     draftThreadId,
-    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
-    latestComposerPreferencesRef:
-      composerStateBinding.composerEditingBinding.latestComposerPreferencesRef,
-    latestDraftRef: composerStateBinding.composerEditingBinding.latestDraftRef,
+    goalSubmission,
     onEditQueued: queueInputs.onEditQueued,
     onInterrupt: composerInputs.onInterrupt,
     onListQueue: queueInputs.onListQueue,

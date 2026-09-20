@@ -9,8 +9,8 @@ import type { ThreadDetailDatabase } from "../../data/thread-detail-database-con
 import type { ThreadHistoryModel, ThreadHistoryRow } from "../../data/thread-history-model";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
 import type { ThreadUiStateDatabase } from "../../data/thread-ui-state-database-contract";
-import type { ThreadUiStateRow } from "../../data/thread-ui-state-types";
 import type { ThreadHistoryViewport } from "../../data/use-thread-history-controller";
+import type { ThreadUiStateRead } from "../../data/use-thread-ui-state";
 import type { MessageListState } from "../../ui/MessageListBoundary";
 import type { SearchConversationWindow } from "../search/search-conversation-window";
 /** Existing qualified model handles and history mutation authority for destination reads. */
@@ -24,7 +24,7 @@ export type ConversationDetailResources = {
 };
 /** A progressive transcript snapshot published after local editor restoration. */
 export type ConversationDetailSnapshot = {
-  composerState: ThreadUiStateRow;
+  composerState: ThreadUiStateRead;
   currentOutcome?: ThreadCurrentOutcome | null;
   currentUsage?: TurnUsageProjection | null;
   cwd?: string;

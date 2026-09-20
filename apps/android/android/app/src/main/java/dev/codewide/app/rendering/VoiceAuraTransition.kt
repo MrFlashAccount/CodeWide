@@ -81,10 +81,13 @@ internal class VoiceAuraTransition {
     return 0.3f * inverse * inverse * t + 3f * inverse * t * t + t * t * t
   }
 
-  private companion object {
+  internal companion object {
     // Reacticx Apple Intelligence showcase: cubic-bezier(0.25, 0.1, 0.25, 1).
-    const val INTRO_SECONDS = 1.1f
-    const val OUTRO_SECONDS = 0.52f
-    const val FADE_SECONDS = 0.2f
+    private const val INTRO_SECONDS = 1.1f
+    private const val OUTRO_MILLIS = 520L
+    private const val FADE_MILLIS = 200L
+    internal const val CLOSE_DURATION_MILLIS = OUTRO_MILLIS + FADE_MILLIS
+    private const val OUTRO_SECONDS = OUTRO_MILLIS / 1_000f
+    private const val FADE_SECONDS = FADE_MILLIS / 1_000f
   }
 }

@@ -22,8 +22,8 @@ export function ConnectionRowEditor({
   connection,
   onActivateAccountProfile,
   onCancelAccountLogin,
+  onConsumeAccountResetCredit,
   onDelete,
-  onMove,
   onReconnect,
   onRefreshAccountPool,
   onRemoveAccountProfile,
@@ -76,8 +76,6 @@ export function ConnectionRowEditor({
       label: "Reconnect",
     },
     { disabled: actionPending, icon: "pencil-outline", id: "edit", label: "Edit server" },
-    { disabled: actionPending, icon: "arrow-up", id: "move-up", label: "Move up" },
-    { disabled: actionPending, icon: "arrow-down", id: "move-down", label: "Move down" },
     {
       destructive: true,
       disabled: actionPending,
@@ -111,14 +109,6 @@ export function ConnectionRowEditor({
       }, "Could not reconnect server");
     } else if (id === "edit") {
       setEditing(true);
-    } else if (id === "move-up") {
-      runAction(async () => {
-        await onMove(connection.id, -1);
-      }, "Could not move server");
-    } else if (id === "move-down") {
-      runAction(async () => {
-        await onMove(connection.id, 1);
-      }, "Could not move server");
     } else if (id === "delete") {
       dialog.alert("Delete server?", `Remove ${connection.displayName} from this device?`, [
         { style: "cancel", text: "Cancel" },
@@ -208,6 +198,7 @@ export function ConnectionRowEditor({
           {onRefreshAccountPool !== undefined &&
             onStartAccountLogin !== undefined &&
             onCancelAccountLogin !== undefined &&
+            onConsumeAccountResetCredit !== undefined &&
             onActivateAccountProfile !== undefined &&
             onUpdateAccountProfile !== undefined &&
             onRemoveAccountProfile !== undefined && (
@@ -216,6 +207,7 @@ export function ConnectionRowEditor({
                 connectionId={connection.id}
                 onActivate={onActivateAccountProfile}
                 onCancelLogin={onCancelAccountLogin}
+                onConsumeResetCredit={onConsumeAccountResetCredit}
                 onRefresh={onRefreshAccountPool}
                 onRemove={onRemoveAccountProfile}
                 onStartLogin={onStartAccountLogin}

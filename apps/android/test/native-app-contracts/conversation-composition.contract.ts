@@ -48,6 +48,8 @@ it("preserves conversation composition integration contracts", () => {
   expect(ownerConversationWorkspaceContent).toContain("onStartVoiceTranscription");
   expect(ownerActiveConversationScope).toContain("&& selectedThread === null;");
   expect(ownerConversationDestinationSurface).not.toContain("defaultDesktopThreadId");
+  expect(ownerConversationDestinationSurface).not.toContain("<Suspense");
+  expect(ownerConversationDestinationSurface).not.toContain("ConversationNavigationFallback");
   expect(ownerConversationTools).toContain(
     "useImagePreviewAnnotationHandler(drawingFeatureBinding.annotateImage)",
   );
@@ -116,18 +118,9 @@ it("preserves conversation composition integration contracts", () => {
   expect(ownerConversationDetail).toContain(
     "const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)",
   );
-  expect(ownerConversationDetail).toContain(
-    "const [initialHistoryAnchorTurnId, setHistoryAnchorTurnId] = useConversationState(",
-  );
-  expect(ownerConversationDetail).toMatch(
-    /\(\) => composerState\.historyAnchorTurnId \?\? null,?\s*\)/,
-  );
-  expect(ownerConversationDetail).toContain(
-    "anchorTurnId: searchWindow === null ? initialHistoryAnchorTurnId : null",
-  );
-  expect(ownerConversationDetail).toContain(
-    "anchorTurnId: searchWindow === null ? initialHistoryAnchorTurnId : null",
-  );
+  expect(ownerConversationDetail).not.toContain("initialHistoryAnchorTurnId");
+  expect(ownerConversationDetail).not.toContain("setHistoryAnchorTurnId");
+  expect(ownerConversationDetail).toContain("anchorTurnId: null");
   expect(ownerConversationDetail.indexOf("const composerState = useThreadUiState")).toBeLessThan(
     ownerConversationDetail.indexOf(
       "const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)",

@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { RouteUnavailable } from "../../../../../../src/components/navigation/RouteUnavailable";
 import { RouteDocumentPreview } from "../../../../../../src/features/attachments/RouteDocumentPreview";
 import { RouteCodeDocumentReview } from "../../../../../../src/features/changes/RouteCodeDocumentReview";
+import { ConversationRouteFullscreenOverlay } from "../../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
 import { changesRouteSessions } from "../../../../../../src/services/changes/changesRouteSession";
 import { documentRouteService } from "../../../../../../src/services/documents/documentRouteService";
 import {
@@ -79,11 +80,20 @@ export default function V1DocumentRoute(): React.JSX.Element {
         : () => undefined,
   );
   if (sessions.status === "valid" && codeSession?.request.kind === "codeDocument") {
+    const request = codeSession.request;
     const closeCodeDocument = (): void => {
       changesRouteSessions.close(codeSession.id);
       router.back();
     };
-    return <RouteCodeDocumentReview onClose={closeCodeDocument} request={codeSession.request} />;
+    return (
+      <ConversationRouteFullscreenOverlay
+        onDismiss={closeCodeDocument}
+        render={(closeOverlay) => (
+          <RouteCodeDocumentReview onClose={closeOverlay} request={request} />
+        )}
+        scope={`code-document:${codeSession.id}`}
+      />
+    );
   }
   if (sessions.status === "invalid" || documentSession === null) {
     return (
@@ -99,20 +109,26 @@ export default function V1DocumentRoute(): React.JSX.Element {
     router.back();
   };
   return (
-    <RouteDocumentPreview
-      onClose={close}
-      onOpenDocument={(request) => {
-        const nested = documentRouteService.open(documentSession.owner, request);
-        router.push({
-          params: {
-            connectionId: sessions.thread.connectionId.value,
-            sessionId: nested.id,
-            threadId: sessions.thread.threadId.value,
-          },
-          pathname: "/v1/threads/[connectionId]/[threadId]/documents/[sessionId]",
-        });
-      }}
-      request={documentSession.request}
+    <ConversationRouteFullscreenOverlay
+      onDismiss={close}
+      render={(closeOverlay) => (
+        <RouteDocumentPreview
+          onClose={closeOverlay}
+          onOpenDocument={(request) => {
+            const nested = documentRouteService.open(documentSession.owner, request);
+            router.push({
+              params: {
+                connectionId: sessions.thread.connectionId.value,
+                sessionId: nested.id,
+                threadId: sessions.thread.threadId.value,
+              },
+              pathname: "/v1/threads/[connectionId]/[threadId]/documents/[sessionId]",
+            });
+          }}
+          request={documentSession.request}
+        />
+      )}
+      scope={`document:${documentSession.id}`}
     />
   );
 }

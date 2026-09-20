@@ -17,6 +17,10 @@ export type LiveMarkdownProjection = LiveTextProjection & {
 };
 
 const liveTextProjectionCache = new Map<string, LiveTextProjection>();
+const liveMarkdownProjectionCache = new Map<
+  string,
+  { complete: boolean; source: string; value: LiveMarkdownProjection }
+>();
 let liveTextProjectionSourceChars = 0;
 
 /**
@@ -45,6 +49,7 @@ export function projectCachedLiveText(cacheKey: string, source: string): LiveTex
       liveTextProjectionSourceChars -= evicted.source.length;
     }
     liveTextProjectionCache.delete(oldest);
+    liveMarkdownProjectionCache.delete(oldest);
   }
   return projection;
 }
@@ -60,13 +65,19 @@ export function projectCachedLiveMarkdown(
   source: string,
   complete = false,
 ): LiveMarkdownProjection {
+  const cached = liveMarkdownProjectionCache.get(cacheKey);
+  if (cached?.source === source && cached.complete === complete) {
+    return cached.value;
+  }
   const projection = projectCachedLiveText(cacheKey, source);
   const visibleRemainder = projectLiveMarkdownTail(projection.remainder, complete).visible;
-  return {
+  const value = {
     ...projection,
     visibleRemainder,
     visibleSource: [...projection.segments, visibleRemainder].join(""),
   };
+  liveMarkdownProjectionCache.set(cacheKey, { complete, source, value });
+  return value;
 }
 
 export function liveTextProjectionCacheStats(): { entries: number; sourceChars: number } {
@@ -75,6 +86,7 @@ export function liveTextProjectionCacheStats(): { entries: number; sourceChars: 
 
 export function clearLiveTextProjectionCache(): void {
   liveTextProjectionCache.clear();
+  liveMarkdownProjectionCache.clear();
   liveTextProjectionSourceChars = 0;
 }
 

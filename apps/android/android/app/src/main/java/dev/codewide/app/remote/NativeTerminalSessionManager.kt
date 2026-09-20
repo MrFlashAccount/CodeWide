@@ -9,6 +9,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedOutputStream
 import java.io.File
@@ -189,6 +190,36 @@ internal class NativeTerminalSessionManager(
       .put("hasMore", chunk.hasMore)
       .put("finished", session.finished)
       .toString()
+  }
+
+  /** Returns the native-owned V1 sessions that can still carry terminal traffic. */
+  fun listRunning(): String {
+    val running = sessions.values.mapNotNull { session ->
+      synchronized(session) {
+        if (session.disposed.get() || session.finished) {
+          null
+        } else {
+          RunningSession(
+            id = session.id,
+            connectionId = session.connectionId,
+            threadId = session.threadId,
+            cwd = session.cwd,
+            open = session.open,
+          )
+        }
+      }
+    }.sortedBy { it.id }
+    return JSONArray().apply {
+      running.forEach { session ->
+        put(JSONObject().apply {
+          put("sessionId", session.id)
+          put("connectionId", session.connectionId)
+          put("threadId", session.threadId)
+          put("cwd", session.cwd ?: JSONObject.NULL)
+          put("status", if (session.open) "open" else "connecting")
+        })
+      }
+    }.toString()
   }
 
   fun closeConnection(connectionId: String) {
@@ -501,4 +532,12 @@ internal class NativeTerminalSessionManager(
       )
     }
   }
+
+  private data class RunningSession(
+    val id: String,
+    val connectionId: String,
+    val threadId: String,
+    val cwd: String?,
+    val open: Boolean,
+  )
 }

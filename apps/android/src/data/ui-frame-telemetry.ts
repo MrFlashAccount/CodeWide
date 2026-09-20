@@ -22,10 +22,6 @@ export function recordFrameContext(
   }
 }
 
-export function hasFrameContext(): boolean {
-  return contexts.length > 0;
-}
-
 function contextAt(timestamp: number): FrameContext | undefined {
   return contexts.findLast((context) => context.selectedAtUnixMs <= timestamp);
 }

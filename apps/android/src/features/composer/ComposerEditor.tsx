@@ -19,7 +19,6 @@ type Props = Pick<
   | "handleComposerLargePaste"
   | "draft"
   | "handleComposerTextChange"
-  | "handleComposerMarkdownChange"
   | "draftSelectionRef"
   | "pendingVoiceSelection"
   | "voiceController"
@@ -40,7 +39,6 @@ export function ComposerEditor({
   getStableTransferAccess,
   getTransferAccess,
   handleComposerLargePaste,
-  handleComposerMarkdownChange,
   handleComposerTextChange,
   pastedAttachmentPending,
   pendingVoiceSelection,
@@ -67,8 +65,7 @@ export function ComposerEditor({
               onLargePaste: handleComposerLargePaste,
             }
           : {})}
-        onChangeMarkdown={handleComposerMarkdownChange}
-        onChangeText={handleComposerTextChange}
+        onChangeValue={handleComposerTextChange}
         onSelectionChange={(selection) => {
           draftSelectionRef.current = selection;
           if (

@@ -1,7 +1,10 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { authoritativeTimelineRowId, type ThreadDetailRow } from "../src/data/thread-detail-projection";
+import {
+  authoritativeTimelineRowId,
+  type ThreadDetailRow,
+} from "../src/data/thread-detail-projection";
 import { residentThreadWindow } from "../src/data/resident-thread-window";
 import { ThreadSyncLane } from "../src/data/thread-cursor-sync";
 
@@ -37,7 +40,8 @@ vi.mock("../src/data/thread-detail-sqlite.native", () => ({
         historyBytesEvicted: 0,
       }),
       begin: () => {
-        if (transaction !== null) throw new Error("Thread detail SQLite transaction is already open");
+        if (transaction !== null)
+          throw new Error("Thread detail SQLite transaction is already open");
         transaction = [];
       },
       write: (change: { type: string; key?: string; value?: { id: string } }) => {
@@ -74,7 +78,10 @@ vi.mock("../src/data/ui-cache-persistence.native", () => ({
   registerUiCacheCollectionFlusher: () => () => undefined,
 }));
 
-import { createThreadDetailDatabase, threadWindowCoverage } from "../src/data/thread-detail-database.native";
+import {
+  createThreadDetailDatabase,
+  threadWindowCoverage,
+} from "../src/data/thread-detail-database.native";
 
 function authoritativeThread(commandId: string): Thread {
   const turn = completedTurn("remote-turn", commandId);
@@ -114,11 +121,13 @@ function liveThread(commandId: string): Thread {
   return {
     ...authoritativeThread(commandId),
     status: { type: "active", activeFlags: [] },
-    turns: [{
-      ...sparseCompletedTurn("remote-turn", commandId),
-      status: "inProgress",
-      completedAt: null,
-    } as Turn],
+    turns: [
+      {
+        ...sparseCompletedTurn("remote-turn", commandId),
+        status: "inProgress",
+        completedAt: null,
+      } as Turn,
+    ],
   } as unknown as Thread;
 }
 
@@ -157,9 +166,8 @@ function resolvedWindow(firstOrdinal: number, lastOrdinal: number) {
     historyEpoch: 0,
     latestSealedOrdinal: 47,
     earliestSealedOrdinal: 0,
-    turnRows: Array.from(
-      { length: lastOrdinal - firstOrdinal + 1 },
-      (_, index) => sealedTurnRow(lastOrdinal - index),
+    turnRows: Array.from({ length: lastOrdinal - firstOrdinal + 1 }, (_, index) =>
+      sealedTurnRow(lastOrdinal - index),
     ),
     detailRows: [],
     liveRows: [],
@@ -174,19 +182,42 @@ function completeResolvedWindow() {
     earliestSealedOrdinal: 1,
     turnRows: [{ ...sealedTurnRow(1), turn }],
     detailRows: [],
-    liveRows: [{
-      ...sealedTurnRow(-1),
-      id: "server\u0000thread\u0000thread",
-      kind: "thread" as const,
-      remoteTurnId: null,
-      sealed: false,
-      historyCursor: "older-page",
-      historyHadTurns: true,
-      historyCoverageMinOrdinal: 1,
-      historyCoverageMaxOrdinal: 1,
-      thread: { ...authoritativeThread("command-1"), turns: [] },
-      turn: null,
-    }],
+    liveRows: [
+      {
+        ...sealedTurnRow(-1),
+        id: "server\u0000thread\u0000thread",
+        kind: "thread" as const,
+        remoteTurnId: null,
+        sealed: false,
+        historyCursor: "older-page",
+        historyHadTurns: true,
+        historyCoverageMinOrdinal: 1,
+        historyCoverageMaxOrdinal: 1,
+        thread: { ...authoritativeThread("command-1"), turns: [] },
+        turn: null,
+      },
+    ],
+  };
+}
+
+function completeEmptyResolvedWindow() {
+  const metadata = completeResolvedWindow().liveRows[0]!;
+  return {
+    historyEpoch: 0,
+    latestSealedOrdinal: null,
+    earliestSealedOrdinal: null,
+    turnRows: [],
+    detailRows: [],
+    liveRows: [
+      {
+        ...metadata,
+        historyCursor: null,
+        historyHadTurns: false,
+        historyCoverageMinOrdinal: null,
+        historyCoverageMaxOrdinal: null,
+        thread: { ...authoritativeThread("unused"), turns: [] },
+      },
+    ],
   };
 }
 
@@ -196,13 +227,19 @@ describe("thread detail ownership races", () => {
     harness.commits.length = 0;
     harness.failNextWrite = false;
     harness.rollbacks = 0;
-    harness.loadBoundary.mockReset().mockImplementation(async (
-      _connectionId: string,
-      _threadId: string,
-      _historyEpoch: number,
-      direction: "asc" | "desc",
-    ) => sealedTurnRow(direction === "asc" ? 0 : 47));
-    harness.loadAdjacentWindow.mockReset().mockResolvedValue({ turnRows: [], detailRows: [], liveRows: [] });
+    harness.loadBoundary
+      .mockReset()
+      .mockImplementation(
+        async (
+          _connectionId: string,
+          _threadId: string,
+          _historyEpoch: number,
+          direction: "asc" | "desc",
+        ) => sealedTurnRow(direction === "asc" ? 0 : 47),
+      );
+    harness.loadAdjacentWindow
+      .mockReset()
+      .mockResolvedValue({ turnRows: [], detailRows: [], liveRows: [] });
     harness.loadResolvedWindow.mockReset().mockResolvedValue({
       historyEpoch: 0,
       latestSealedOrdinal: null,
@@ -218,13 +255,15 @@ describe("thread detail ownership races", () => {
     await details.prepare();
     harness.failNextWrite = true;
 
-    await expect(details.importThreadSnapshot("server", authoritativeThread("command-1"), "recovery"))
-      .rejects.toThrow("simulated projection failure");
+    await expect(
+      details.importThreadSnapshot("server", authoritativeThread("command-1"), "recovery"),
+    ).rejects.toThrow("simulated projection failure");
     expect(harness.rollbacks).toBe(1);
     expect(details.getThread("server", "thread")).toBeNull();
 
-    await expect(details.importThreadSnapshot("server", authoritativeThread("command-1"), "recovery"))
-      .resolves.toBeUndefined();
+    await expect(
+      details.importThreadSnapshot("server", authoritativeThread("command-1"), "recovery"),
+    ).resolves.toBeUndefined();
     expect(details.getThread("server", "thread")?.turns).toHaveLength(1);
     await details.close();
   });
@@ -234,70 +273,169 @@ describe("thread detail ownership races", () => {
     Object.defineProperty(globalThis, "structuredClone", { configurable: true, value: undefined });
     const details = createThreadDetailDatabase();
     const coldThread = authoritativeThread("command-1");
-    coldThread.turns = [{
-      ...coldThread.turns[0]!,
-      itemsView: "full",
-      items: [
-        coldThread.turns[0]!.items[0]!,
-        { type: "reasoning", id: "reasoning-1", summary: ["thought"] } as unknown as Turn["items"][number],
-        coldThread.turns[0]!.items[1]!,
-      ],
-    }];
+    coldThread.turns = [
+      {
+        ...coldThread.turns[0]!,
+        itemsView: "full",
+        items: [
+          coldThread.turns[0]!.items[0]!,
+          {
+            type: "reasoning",
+            id: "reasoning-1",
+            summary: ["thought"],
+          } as unknown as Turn["items"][number],
+          coldThread.turns[0]!.items[1]!,
+        ],
+      },
+    ];
     try {
       await details.prepare();
-      await expect(details.importThreadSnapshot("server", coldThread, "recovery"))
-        .resolves.toBeUndefined();
+      await expect(
+        details.importThreadSnapshot("server", coldThread, "recovery"),
+      ).resolves.toBeUndefined();
       expect(details.getThread("server", "thread")?.turns).toHaveLength(1);
     } finally {
       await details.close();
-      Object.defineProperty(globalThis, "structuredClone", { configurable: true, value: originalStructuredClone });
+      Object.defineProperty(globalThis, "structuredClone", {
+        configurable: true,
+        value: originalStructuredClone,
+      });
     }
   });
 
   it("reveals a complete SQLite window immediately and refreshes its bounded head on activation", async () => {
     let releaseRefresh!: () => void;
-    const refresh = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    const refresh = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
     harness.loadResolvedWindow.mockResolvedValue(completeResolvedWindow());
     const hydrateWindow = vi.fn(async () => await refresh);
     const details = createThreadDetailDatabase();
-    const reconcilePending = vi.fn(async ({ connectionId, threadId }: { connectionId: string; threadId: string }) => {
-      await details.reconcileNativeCommands(connectionId, threadId, [{
-        connectionId,
-        commandId: "pending-command",
-        targetCommandId: null,
-        method: "turn/start",
-        threadId,
-        text: "pending prompt",
-        attachments: [],
-        state: "accepted",
-        attempts: 0,
-        lastError: null,
-        createdAt: 1_000_000,
-        updatedAt: 1_000_001,
-      }]);
+    const reconcilePending = vi.fn(
+      async ({ connectionId, threadId }: { connectionId: string; threadId: string }) => {
+        await details.reconcileNativeCommands(connectionId, threadId, [
+          {
+            connectionId,
+            commandId: "pending-command",
+            targetCommandId: null,
+            method: "turn/start",
+            threadId,
+            text: "pending prompt",
+            attachments: [],
+            state: "accepted",
+            attempts: 0,
+            lastError: null,
+            createdAt: 1_000_000,
+            updatedAt: 1_000_001,
+          },
+        ]);
+      },
+    );
+    details.setRemoteLoader({
+      reconcilePending,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
     });
-    details.setRemoteLoader({ reconcilePending, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
     await details.prepare();
 
-    const resource = details.windowResource({ connectionId: "server", threadId: "thread", anchorTurnId: null });
+    const resource = details.windowResource({
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: null,
+    });
     await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
 
-    expect(hydrateWindow).toHaveBeenCalledWith(expect.objectContaining({
-      cachedThread: expect.objectContaining({ id: "thread" }),
-      requireAuthoritative: true,
-      reason: "activation",
-    }));
+    expect(hydrateWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cachedThread: expect.objectContaining({ id: "thread" }),
+        requireAuthoritative: true,
+        reason: "activation",
+      }),
+    );
     expect(reconcilePending).toHaveBeenCalledWith({ connectionId: "server", threadId: "thread" });
     expect(details.hasPendingDelivery("server", "thread", "pending-command")).toBe(true);
-    expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
-      .toContainEqual(expect.objectContaining({
+    expect(
+      details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds),
+    ).toContainEqual(
+      expect.objectContaining({
         kind: "pending",
         pending: expect.objectContaining({ commandId: "pending-command", text: "pending prompt" }),
-      }));
+      }),
+    );
     expect(details.chat.window$("server", "thread").peek().status).toBe("ready");
     expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(true);
     releaseRefresh();
-    await vi.waitFor(() => expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false));
+    await vi.waitFor(() =>
+      expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false),
+    );
+    await details.close();
+  });
+
+  it("does not reveal a cached empty thread before its activation refresh confirms the head", async () => {
+    const refresh = Promise.withResolvers<void>();
+    harness.loadResolvedWindow
+      .mockResolvedValueOnce(completeEmptyResolvedWindow())
+      .mockResolvedValueOnce(completeResolvedWindow());
+    const hydrateWindow = vi.fn(async () => await refresh.promise);
+    const details = createThreadDetailDatabase();
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
+    await details.prepare();
+
+    const resource = details.windowResource({
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: null,
+    });
+    await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledTimes(1));
+
+    expect(resource.ready$.peek()).not.toBe(true);
+    expect(details.chat.window$("server", "thread").peek()).toEqual(
+      expect.objectContaining({ status: "initial-loading", turnRowIds: [] }),
+    );
+
+    refresh.resolve();
+    await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
+    expect(details.chat.window$("server", "thread").peek()).toEqual(
+      expect.objectContaining({
+        status: "ready",
+        turnRowIds: ["turn:server:thread:turn-1"],
+      }),
+    );
+    await details.close();
+  });
+
+  it("falls back to a cached empty thread when its activation refresh is unavailable", async () => {
+    harness.loadResolvedWindow.mockResolvedValue(completeEmptyResolvedWindow());
+    const details = createThreadDetailDatabase();
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow: async () => {
+        throw new Error("offline");
+      },
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
+    await details.prepare();
+
+    const resource = details.windowResource({
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: null,
+    });
+    await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
+
+    expect(details.chat.window$("server", "thread").peek()).toEqual(
+      expect.objectContaining({ status: "ready", turnRowIds: [] }),
+    );
     await details.close();
   });
 
@@ -306,21 +444,40 @@ describe("thread detail ownership races", () => {
     const lane = new ThreadSyncLane<void>();
     const snapshot = Promise.withResolvers<void>();
     const followUpSnapshot = Promise.withResolvers<void>();
-    const hydrateWindow = vi.fn(async () => await lane.run("server/thread", async () => await snapshot.promise, "afterCurrent"));
+    const hydrateWindow = vi.fn(
+      async () =>
+        await lane.run("server/thread", async () => await snapshot.promise, "afterCurrent"),
+    );
     const details = createThreadDetailDatabase();
-    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
     await details.prepare();
-    const resource = details.windowResource({ connectionId: "server", threadId: "thread", anchorTurnId: null });
+    const resource = details.windowResource({
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: null,
+    });
     await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
     expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(true);
 
     let followUpInstalled = false;
-    const followUp = lane.run("server/thread", async () => {
-      await followUpSnapshot.promise;
-      followUpInstalled = true;
-    }, "afterCurrent");
+    const followUp = lane.run(
+      "server/thread",
+      async () => {
+        await followUpSnapshot.promise;
+        followUpInstalled = true;
+      },
+      "afterCurrent",
+    );
     snapshot.resolve();
-    await vi.waitFor(() => expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false));
+    await vi.waitFor(() =>
+      expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false),
+    );
     expect(details.chat.window$("server", "thread").peek().status).toBe("ready");
     expect(followUpInstalled).toBe(false);
 
@@ -330,23 +487,37 @@ describe("thread detail ownership races", () => {
     await details.close();
   });
 
-  it("refreshes a complete cached head again when navigation opens a new generation", async () => {
+  it("does not refresh a complete cached head for a repeated resource read", async () => {
     harness.loadResolvedWindow.mockResolvedValue(completeResolvedWindow());
     const hydrateWindow = vi.fn(async () => undefined);
     const details = createThreadDetailDatabase();
-    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
     await details.prepare();
 
-    details.windowResource({ connectionId: "server", threadId: "thread", anchorTurnId: null, openGeneration: 1 });
+    const request = {
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: null,
+    };
+    const first = details.windowResource(request);
     await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledTimes(1));
 
-    details.windowResource({ connectionId: "server", threadId: "thread", anchorTurnId: null, openGeneration: 2 });
-    await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledTimes(2));
+    const repeated = details.windowResource(request);
 
-    expect(hydrateWindow).toHaveBeenLastCalledWith(expect.objectContaining({
-      requireAuthoritative: true,
-      reason: "activation",
-    }));
+    expect(repeated.ready$).toBe(first.ready$);
+    expect(hydrateWindow).toHaveBeenCalledTimes(1);
+    expect(hydrateWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        requireAuthoritative: true,
+        reason: "activation",
+      }),
+    );
     expect(harness.loadResolvedWindow).toHaveBeenCalledTimes(1);
     await details.close();
   });
@@ -369,20 +540,29 @@ describe("thread detail ownership races", () => {
     const complete = residentThreadWindow(request, rows, previous);
     expect(complete?.turnRows.map((row) => row.ordinal)).toEqual([2, 1, 0]);
     expect(complete?.turnRows[1]).toBe(missing);
-    expect(complete?.liveRows).toContainEqual(expect.objectContaining({ sealed: false, kind: "turn" }));
-    expect(residentThreadWindow({ ...request, anchorTurnId: "not-resident" }, rows, previous)).toBeNull();
+    expect(complete?.liveRows).toContainEqual(
+      expect.objectContaining({ sealed: false, kind: "turn" }),
+    );
+    expect(
+      residentThreadWindow({ ...request, anchorTurnId: "not-resident" }, rows, previous),
+    ).toBeNull();
     await details.close();
   });
 
   it("selects a bounded saved-anchor window without including the rest of the resident history", async () => {
     const details = createThreadDetailDatabase();
-    const rows: ThreadDetailRow[] = [{
-      ...completeResolvedWindow().liveRows[0]!,
-      historyCoverageMinOrdinal: 0,
-      historyCoverageMaxOrdinal: 99,
-    }];
+    const rows: ThreadDetailRow[] = [
+      {
+        ...completeResolvedWindow().liveRows[0]!,
+        historyCoverageMinOrdinal: 0,
+        historyCoverageMaxOrdinal: 99,
+      },
+    ];
     for (let ordinal = 0; ordinal < 100; ordinal += 1) {
-      rows.push({ ...sealedTurnRow(ordinal), turn: completedTurn(`turn-${ordinal}`, `command-${ordinal}`) });
+      rows.push({
+        ...sealedTurnRow(ordinal),
+        turn: completedTurn(`turn-${ordinal}`, `command-${ordinal}`),
+      });
     }
     const window = residentThreadWindow(
       { connectionId: "server", threadId: "thread", anchorTurnId: "turn-30" },
@@ -390,7 +570,9 @@ describe("thread detail ownership races", () => {
       details.chat.window$("server", "thread").peek(),
     );
     expect(window?.turnRows).toHaveLength(15);
-    expect(window?.turnRows.map((row) => row.ordinal)).toEqual(Array.from({ length: 15 }, (_, index) => 35 - index));
+    expect(window?.turnRows.map((row) => row.ordinal)).toEqual(
+      Array.from({ length: 15 }, (_, index) => 35 - index),
+    );
     expect(window?.turnRows.some((row) => row.remoteTurnId === "turn-30")).toBe(true);
     expect(window?.turnRows.some((row) => row.remoteTurnId === "turn-99")).toBe(false);
     expect(window?.latestSealedOrdinal).toBe(99);
@@ -401,16 +583,31 @@ describe("thread detail ownership races", () => {
   it("publishes a cold server hydration from committed memory without rereading SQLite", async () => {
     const details = createThreadDetailDatabase();
     const hydrateWindow = vi.fn(async () => {
-      await details.replaceThreadSnapshot("server", authoritativeThread("fresh-command"), "recovery", null);
+      await details.replaceThreadSnapshot(
+        "server",
+        authoritativeThread("fresh-command"),
+        "recovery",
+        null,
+      );
     });
-    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
     await details.prepare();
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
     expect(harness.loadResolvedWindow).toHaveBeenCalledTimes(1);
     const rows = details.readWindowRows(details.chat.window$("server", "thread").peek());
     expect(rows.turnRows.map((row) => row.turn?.id)).toEqual(["remote-turn"]);
-    expect(rows.turnRows[0]?.turn?.items).toContainEqual(expect.objectContaining({ clientId: "fresh-command" }));
-    expect(harness.persisted).toContainEqual(expect.objectContaining({ value: expect.objectContaining({ kind: "turn" }) }));
+    expect(rows.turnRows[0]?.turn?.items).toContainEqual(
+      expect.objectContaining({ clientId: "fresh-command" }),
+    );
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({ value: expect.objectContaining({ kind: "turn" }) }),
+    );
     await details.close();
   });
 
@@ -418,17 +615,34 @@ describe("thread detail ownership races", () => {
     harness.loadResolvedWindow.mockResolvedValue(completeResolvedWindow());
     const details = createThreadDetailDatabase();
     const hydrateWindow = vi.fn(async () => {
-      await details.replaceThreadSnapshot("server", authoritativeThread("other-device-command"), "recovery", null);
+      await details.replaceThreadSnapshot(
+        "server",
+        authoritativeThread("other-device-command"),
+        "recovery",
+        null,
+      );
     });
-    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
-    const resource = details.windowResource({ connectionId: "server", threadId: "thread", anchorTurnId: null });
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
+    const resource = details.windowResource({
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: null,
+    });
     await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
     await vi.waitFor(() => expect(resource.window$.peek().backendRefreshing).toBe(false));
     expect(hydrateWindow).toHaveBeenCalledOnce();
     expect(harness.loadResolvedWindow).toHaveBeenCalledOnce();
     const rows = details.readWindowRows(resource.window$.peek());
     expect(rows.turnRows.map((row) => row.turn?.id)).toEqual(["remote-turn"]);
-    expect(rows.turnRows[0]?.turn?.items).toContainEqual(expect.objectContaining({ clientId: "other-device-command" }));
+    expect(rows.turnRows[0]?.turn?.items).toContainEqual(
+      expect.objectContaining({ clientId: "other-device-command" }),
+    );
     await details.close();
   });
 
@@ -445,19 +659,29 @@ describe("thread detail ownership races", () => {
       .mockResolvedValueOnce(completeResolvedWindow());
     const hydrateWindow = vi.fn(async () => undefined);
     const details = createThreadDetailDatabase();
-    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
     await details.prepare();
 
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
 
     expect(hydrateWindow).toHaveBeenCalledOnce();
-    expect(hydrateWindow).toHaveBeenCalledWith(expect.objectContaining({
-      cachedThread: null,
-      requireAuthoritative: true,
-      reason: "metadata-missing",
-    }));
+    expect(hydrateWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cachedThread: null,
+        requireAuthoritative: true,
+        reason: "metadata-missing",
+      }),
+    );
     expect(harness.loadResolvedWindow).toHaveBeenCalledTimes(2);
-    expect(details.chat.window$("server", "thread").peek().turnRowIds).toEqual(["turn:server:thread:turn-1"]);
+    expect(details.chat.window$("server", "thread").peek().turnRowIds).toEqual([
+      "turn:server:thread:turn-1",
+    ]);
     await details.close();
   });
 
@@ -473,11 +697,18 @@ describe("thread detail ownership races", () => {
     harness.loadResolvedWindow.mockResolvedValue(empty);
     const hydrateWindow = vi.fn(async () => undefined);
     const details = createThreadDetailDatabase();
-    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
     await details.prepare();
 
-    await expect(details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null }))
-      .rejects.toThrow("Authoritative thread hydration left no readable turns");
+    await expect(
+      details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null }),
+    ).rejects.toThrow("Authoritative thread hydration left no readable turns");
 
     expect(hydrateWindow).toHaveBeenCalledOnce();
     expect(details.chat.window$("server", "thread").peek().status).toBe("initial-error");
@@ -487,7 +718,9 @@ describe("thread detail ownership races", () => {
 
   it("reveals a cached SQLite window before its authoritative repair resolves", async () => {
     let releaseRepair!: () => void;
-    const repair = new Promise<void>((resolve) => { releaseRepair = resolve; });
+    const repair = new Promise<void>((resolve) => {
+      releaseRepair = resolve;
+    });
     const cached = completeResolvedWindow();
     const live = liveThread("command-2").turns[0]!;
     harness.loadResolvedWindow
@@ -495,16 +728,24 @@ describe("thread detail ownership races", () => {
       .mockResolvedValueOnce(completeResolvedWindow());
     const hydrateWindow = vi.fn(async () => await repair);
     const details = createThreadDetailDatabase();
-    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
     await details.prepare();
     const request = { connectionId: "server", threadId: "thread", anchorTurnId: null };
 
     const resource = details.windowResource(request);
     await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledOnce());
-    expect(hydrateWindow).toHaveBeenCalledWith(expect.objectContaining({
-      requireAuthoritative: true,
-      reason: "mutable-head",
-    }));
+    expect(hydrateWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requireAuthoritative: true,
+        reason: "mutable-head",
+      }),
+    );
     await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
 
     expect(details.chat.window$("server", "thread").peek().status).toBe("ready");
@@ -512,49 +753,98 @@ describe("thread detail ownership races", () => {
     expect(harness.loadResolvedWindow).toHaveBeenCalledTimes(1);
 
     releaseRepair();
-    await vi.waitFor(() => expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false));
+    await vi.waitFor(() =>
+      expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false),
+    );
     expect(harness.loadResolvedWindow).toHaveBeenCalledTimes(1);
     await details.close();
   });
 
-  it("repairs a newly mutable head when a resident chat is opened again", async () => {
+  it("publishes completed hydration after an adopted preload is superseded by another gesture", async () => {
+    const hydration = Promise.withResolvers<void>();
     const cached = completeResolvedWindow();
-    const live = liveThread("command-reopened").turns[0]!;
-    const mutable = { ...cached, liveRows: [...cached.liveRows, mutableTurnRow(live)] };
-    harness.loadResolvedWindow
-      .mockResolvedValueOnce(mutable)
-      .mockResolvedValueOnce(cached)
-      .mockResolvedValueOnce(mutable)
-      .mockResolvedValueOnce(cached);
-    const hydrateWindow = vi.fn(async () => undefined);
+    const live = liveThread("command-live").turns[0]!;
+    const shortWindow = {
+      ...cached,
+      earliestSealedOrdinal: null,
+      latestSealedOrdinal: null,
+      turnRows: [],
+      liveRows: [
+        {
+          ...cached.liveRows[0]!,
+          historyCursor: null,
+          historyCoverageMinOrdinal: null,
+          historyCoverageMaxOrdinal: null,
+          historyHadTurns: true,
+        },
+        mutableTurnRow(live),
+      ],
+    };
+    const completeWindow = {
+      ...cached,
+      earliestSealedOrdinal: 1,
+      latestSealedOrdinal: 3,
+      turnRows: [3, 2, 1].map((ordinal) => ({
+        ...sealedTurnRow(ordinal),
+        turn: completedTurn(`turn-${ordinal}`, `command-${ordinal}`),
+      })),
+      liveRows: [
+        {
+          ...cached.liveRows[0]!,
+          historyCursor: null,
+          historyCoverageMinOrdinal: 1,
+          historyCoverageMaxOrdinal: 3,
+        },
+      ],
+    };
+    harness.loadResolvedWindow.mockImplementation(async ({ threadId }) =>
+      threadId === "thread" && harness.loadResolvedWindow.mock.calls.length === 1
+        ? shortWindow
+        : completeWindow,
+    );
+    const hydrateWindow = vi.fn(async ({ request }) => {
+      if (request.threadId === "thread") {
+        await hydration.promise;
+      }
+    });
     const details = createThreadDetailDatabase();
-    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, repairProjection: async () => undefined, loadOlder: async () => undefined, loadNewer: async () => ({ status: "superseded" }) });
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow,
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
     await details.prepare();
-
-    const first = details.windowResource({
+    const request = {
+      anchorTurnId: null,
       connectionId: "server",
       threadId: "thread",
-      anchorTurnId: null,
-      openGeneration: 1,
-    });
-    await vi.waitFor(() => expect(first.ready$.peek()).toBe(true));
-    await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false));
+    };
 
-    details.windowResource({
+    const resource = details.windowResource(request);
+    await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
+    await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledOnce());
+    const releaseMounted = resource.retain(() => undefined);
+    expect(details.readWindowRows(resource.window$.peek()).liveRows).toContainEqual(
+      expect.objectContaining({ remoteTurnId: "remote-turn" }),
+    );
+
+    const other = details.windowResource({
+      anchorTurnId: null,
       connectionId: "server",
-      threadId: "thread",
-      anchorTurnId: null,
-      openGeneration: 2,
+      threadId: "other",
     });
+    await other.ready$.peek();
+    hydration.resolve();
 
-    await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledTimes(2));
-    expect(hydrateWindow).toHaveBeenLastCalledWith(expect.objectContaining({
-      requireAuthoritative: true,
-      reason: "mutable-head",
-    }));
-    await vi.waitFor(() => expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false));
-    expect(harness.loadResolvedWindow).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false),
+    );
+    expect(
+      details.readWindowRows(details.chat.window$("server", "thread").peek()).turnRows,
+    ).toHaveLength(3);
+    releaseMounted();
     await details.close();
   });
 
@@ -576,50 +866,81 @@ describe("thread detail ownership races", () => {
       complete: false,
       reason: "history-evicted",
     });
-    expect(threadWindowCoverage({ anchorTurnId: null }, {
-      ...rows,
-      liveRows: [{ ...metadata, historyHadTurns: false }],
-    })).toEqual({ complete: true, reason: "complete" });
-    expect(threadWindowCoverage({ anchorTurnId: null }, {
-      ...rows,
-      liveRows: [{ ...metadata, historyHadTurns: true }],
-    })).toEqual({ complete: false, reason: "history-evicted" });
+    expect(
+      threadWindowCoverage(
+        { anchorTurnId: null },
+        {
+          ...rows,
+          liveRows: [{ ...metadata, historyHadTurns: false }],
+        },
+      ),
+    ).toEqual({ complete: true, reason: "complete" });
+    expect(
+      threadWindowCoverage(
+        { anchorTurnId: null },
+        {
+          ...rows,
+          liveRows: [{ ...metadata, historyHadTurns: true }],
+        },
+      ),
+    ).toEqual({ complete: false, reason: "history-evicted" });
   });
 
   it("rejects an unproven or gapped cached range", () => {
     const metadata = completeResolvedWindow().liveRows[0]!;
-    expect(threadWindowCoverage({ anchorTurnId: null }, {
-      turnRows: [{ ...sealedTurnRow(3), turn: completedTurn("turn-3", "command-3") }],
-      liveRows: [{ ...metadata, historyCoverageMinOrdinal: undefined, historyCoverageMaxOrdinal: undefined }],
-    })).toEqual({ complete: false, reason: "coverage-unproven" });
-    expect(threadWindowCoverage({ anchorTurnId: null }, {
-      turnRows: [
-        { ...sealedTurnRow(3), turn: completedTurn("turn-3", "command-3") },
-        { ...sealedTurnRow(1), turn: completedTurn("turn-1", "command-1") },
-      ],
-      liveRows: [{ ...metadata, historyCoverageMinOrdinal: 1, historyCoverageMaxOrdinal: 3 }],
-    })).toEqual({ complete: false, reason: "history-evicted" });
+    expect(
+      threadWindowCoverage(
+        { anchorTurnId: null },
+        {
+          turnRows: [{ ...sealedTurnRow(3), turn: completedTurn("turn-3", "command-3") }],
+          liveRows: [
+            {
+              ...metadata,
+              historyCoverageMinOrdinal: undefined,
+              historyCoverageMaxOrdinal: undefined,
+            },
+          ],
+        },
+      ),
+    ).toEqual({ complete: false, reason: "coverage-unproven" });
+    expect(
+      threadWindowCoverage(
+        { anchorTurnId: null },
+        {
+          turnRows: [
+            { ...sealedTurnRow(3), turn: completedTurn("turn-3", "command-3") },
+            { ...sealedTurnRow(1), turn: completedTurn("turn-1", "command-1") },
+          ],
+          liveRows: [{ ...metadata, historyCoverageMinOrdinal: 1, historyCoverageMaxOrdinal: 3 }],
+        },
+      ),
+    ).toEqual({ complete: false, reason: "history-evicted" });
   });
 
   it("requires authoritative repair while the cached tail still has a mutable turn", () => {
     const cached = completeResolvedWindow();
     const live = liveThread("command-2").turns[0]!;
 
-    expect(threadWindowCoverage({ anchorTurnId: null }, {
-      turnRows: cached.turnRows,
-      liveRows: [
-        ...cached.liveRows,
-        mutableTurnRow(live),
-      ],
-    })).toEqual({ complete: false, reason: "mutable-head" });
+    expect(
+      threadWindowCoverage(
+        { anchorTurnId: null },
+        {
+          turnRows: cached.turnRows,
+          liveRows: [...cached.liveRows, mutableTurnRow(live)],
+        },
+      ),
+    ).toEqual({ complete: false, reason: "mutable-head" });
   });
 
   it("keeps three pages resident and trims only after the gesture without dropping the mutable head", async () => {
     harness.loadResolvedWindow.mockResolvedValue(resolvedWindow(38, 47));
     harness.loadAdjacentWindow.mockImplementation(async ({ boundaryOrdinal, direction }) => {
-      if (direction === "older" && boundaryOrdinal === 38) return { ...resolvedWindow(33, 37), liveRows: [] };
-      if (direction === "older" && boundaryOrdinal === 33) return { ...resolvedWindow(28, 32), liveRows: [] };
-      if (direction === "newer" && boundaryOrdinal === 42) return { ...resolvedWindow(43, 47), liveRows: [] };
+      if (direction === "older" && boundaryOrdinal === 38)
+        return { ...resolvedWindow(33, 37), liveRows: [] };
+      if (direction === "older" && boundaryOrdinal === 33)
+        return { ...resolvedWindow(28, 32), liveRows: [] };
+      if (direction === "newer" && boundaryOrdinal === 42)
+        return { ...resolvedWindow(43, 47), liveRows: [] };
       return { turnRows: [], detailRows: [], liveRows: [] };
     });
     const details = createThreadDetailDatabase();
@@ -679,7 +1000,9 @@ describe("thread detail ownership races", () => {
 
   it("coalesces repeated edge callbacks into one SQLite range pull", async () => {
     let releaseOlder!: () => void;
-    const olderRead = new Promise<void>((resolve) => { releaseOlder = resolve; });
+    const olderRead = new Promise<void>((resolve) => {
+      releaseOlder = resolve;
+    });
     harness.loadResolvedWindow.mockResolvedValue(resolvedWindow(24, 47));
     harness.loadAdjacentWindow.mockImplementation(async () => {
       await olderRead;
@@ -704,36 +1027,56 @@ describe("thread detail ownership races", () => {
     const second = completedTurn("turn-2", "command-2");
     const third = completedTurn("turn-3", "command-3");
     const initial = completeResolvedWindow();
-    initial.turnRows = [{
-      ...sealedTurnRow(1),
-      id: authoritativeTimelineRowId("server", "thread", first),
-      turn: first,
-    }];
-    initial.liveRows = [{
-      ...initial.liveRows[0]!,
-      thread: { ...authoritativeThread("command-1"), turns: [] },
-    }];
+    initial.turnRows = [
+      {
+        ...sealedTurnRow(1),
+        id: authoritativeTimelineRowId("server", "thread", first),
+        turn: first,
+      },
+    ];
+    initial.liveRows = [
+      {
+        ...initial.liveRows[0]!,
+        thread: { ...authoritativeThread("command-1"), turns: [] },
+      },
+    ];
     harness.loadResolvedWindow.mockResolvedValue(initial);
     harness.loadAdjacentWindow
       .mockResolvedValueOnce({ turnRows: [], detailRows: [], liveRows: [] })
       .mockResolvedValueOnce({
         turnRows: [
-          { ...sealedTurnRow(3), id: authoritativeTimelineRowId("server", "thread", third), turn: third },
-          { ...sealedTurnRow(2), id: authoritativeTimelineRowId("server", "thread", second), turn: second },
+          {
+            ...sealedTurnRow(3),
+            id: authoritativeTimelineRowId("server", "thread", third),
+            turn: third,
+          },
+          {
+            ...sealedTurnRow(2),
+            id: authoritativeTimelineRowId("server", "thread", second),
+            turn: second,
+          },
         ],
         detailRows: [],
         liveRows: [],
       });
     const details = createThreadDetailDatabase();
-    const loadNewer = vi.fn(async ({ afterTurnId, historyEpoch }: {
-      afterTurnId: string;
-      historyEpoch: number;
-    }) => {
-      const persisted = await details.appendTurnsAfter("server", "thread", historyEpoch, afterTurnId, [second, third], "source", () => true, undefined);
-      return persisted.accepted
-        ? { status: "persisted" as const, lastTurnId: "turn-3", hasMore: false }
-        : { status: "superseded" as const };
-    });
+    const loadNewer = vi.fn(
+      async ({ afterTurnId, historyEpoch }: { afterTurnId: string; historyEpoch: number }) => {
+        const persisted = await details.appendTurnsAfter(
+          "server",
+          "thread",
+          historyEpoch,
+          afterTurnId,
+          [second, third],
+          "source",
+          () => true,
+          undefined,
+        );
+        return persisted.accepted
+          ? { status: "persisted" as const, lastTurnId: "turn-3", hasMore: false }
+          : { status: "superseded" as const };
+      },
+    );
     details.setRemoteLoader({
       reconcilePending: async () => undefined,
       hydrateWindow: async () => undefined,
@@ -752,8 +1095,9 @@ describe("thread detail ownership races", () => {
       historyEpoch: 0,
     });
     const window = details.chat.window$("server", "thread").peek();
-    expect(details.chat.readRows(window.turnRowIds).map(({ remoteTurnId }) => remoteTurnId))
-      .toEqual(["turn-3", "turn-2", "turn-1"]);
+    expect(
+      details.chat.readRows(window.turnRowIds).map(({ remoteTurnId }) => remoteTurnId),
+    ).toEqual(["turn-3", "turn-2", "turn-1"]);
     await expect(details.pullRange("server", "thread", "newer")).resolves.toBe(false);
     expect(loadNewer).toHaveBeenCalledOnce();
     await details.close();
@@ -777,42 +1121,51 @@ describe("thread detail ownership races", () => {
     const initial = completeResolvedWindow();
     initial.latestSealedOrdinal = 4;
     initial.turnRows = [firstRow];
-    initial.liveRows = [{
-      ...initial.liveRows[0]!,
-      historyCoverageMaxOrdinal: 4,
-      thread: { ...authoritativeThread("command-1"), turns: [] },
-    }];
+    initial.liveRows = [
+      {
+        ...initial.liveRows[0]!,
+        historyCoverageMaxOrdinal: 4,
+        thread: { ...authoritativeThread("command-1"), turns: [] },
+      },
+    ];
     harness.loadResolvedWindow.mockResolvedValue(initial);
     harness.loadAdjacentWindow
       .mockResolvedValueOnce({ turnRows: [fourthRow], detailRows: [], liveRows: [] })
       .mockResolvedValueOnce({
         turnRows: [
           fourthRow,
-          { ...sealedTurnRow(3), id: authoritativeTimelineRowId("server", "thread", third), turn: third },
-          { ...sealedTurnRow(2), id: authoritativeTimelineRowId("server", "thread", second), turn: second },
+          {
+            ...sealedTurnRow(3),
+            id: authoritativeTimelineRowId("server", "thread", third),
+            turn: third,
+          },
+          {
+            ...sealedTurnRow(2),
+            id: authoritativeTimelineRowId("server", "thread", second),
+            turn: second,
+          },
         ],
         detailRows: [],
         liveRows: [],
       });
     const details = createThreadDetailDatabase();
-    const loadNewer = vi.fn(async ({ afterTurnId, historyEpoch }: {
-      afterTurnId: string;
-      historyEpoch: number;
-    }) => {
-      const persisted = await details.appendTurnsAfter(
-        "server",
-        "thread",
-        historyEpoch,
-        afterTurnId,
-        [second, third, fourth],
-        "source",
-        () => true,
-        undefined,
-      );
-      return persisted.accepted
-        ? { status: "persisted" as const, lastTurnId: "turn-4", hasMore: false }
-        : { status: "superseded" as const };
-    });
+    const loadNewer = vi.fn(
+      async ({ afterTurnId, historyEpoch }: { afterTurnId: string; historyEpoch: number }) => {
+        const persisted = await details.appendTurnsAfter(
+          "server",
+          "thread",
+          historyEpoch,
+          afterTurnId,
+          [second, third, fourth],
+          "source",
+          () => true,
+          undefined,
+        );
+        return persisted.accepted
+          ? { status: "persisted" as const, lastTurnId: "turn-4", hasMore: false }
+          : { status: "superseded" as const };
+      },
+    );
     details.setRemoteLoader({
       reconcilePending: async () => undefined,
       hydrateWindow: async () => undefined,
@@ -821,13 +1174,18 @@ describe("thread detail ownership races", () => {
       loadNewer,
     });
     await details.prepare();
-    await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: "turn-1" });
+    await details.loadWindow({
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: "turn-1",
+    });
 
     await expect(details.pullRange("server", "thread", "newer")).resolves.toBe(true);
     expect(loadNewer).toHaveBeenCalledOnce();
     const window = details.chat.window$("server", "thread").peek();
-    expect(details.chat.readRows(window.turnRowIds).map(({ remoteTurnId }) => remoteTurnId))
-      .toEqual(["turn-4", "turn-3", "turn-2", "turn-1"]);
+    expect(
+      details.chat.readRows(window.turnRowIds).map(({ remoteTurnId }) => remoteTurnId),
+    ).toEqual(["turn-4", "turn-3", "turn-2", "turn-1"]);
     await details.close();
   });
 
@@ -837,11 +1195,17 @@ describe("thread detail ownership races", () => {
       .mockResolvedValueOnce(resolvedWindow(12, 47));
     const details = createThreadDetailDatabase();
     await details.prepare();
-    await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: "turn-12" });
+    await details.loadWindow({
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: "turn-12",
+    });
 
     expect(await details.pullRange("server", "thread", "latest")).toBe(true);
     const latest = details.chat.window$("server", "thread").peek();
-    const remoteTurnIds = details.chat.readRows(latest.turnRowIds).map(({ remoteTurnId }) => remoteTurnId);
+    const remoteTurnIds = details.chat
+      .readRows(latest.turnRowIds)
+      .map(({ remoteTurnId }) => remoteTurnId);
     expect(latest.turnRowIds).toHaveLength(15);
     expect(remoteTurnIds).toContain("turn-47");
     expect(remoteTurnIds).not.toContain("turn-0");
@@ -856,21 +1220,27 @@ describe("thread detail ownership races", () => {
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
 
     expect(await details.pullRange("server", "thread", "older")).toBe(false);
-    const remotePage = Array.from({ length: 12 }, (_, index) => completedTurn(`turn-${12 + index}`, `command-${index}`));
+    const remotePage = Array.from({ length: 12 }, (_, index) =>
+      completedTurn(`turn-${12 + index}`, `command-${index}`),
+    );
     const result = await details.prependTurns("server", "thread", 0, remotePage, "older-page-2");
     const range = details.chat.window$("server", "thread").peek();
 
     expect(result).toMatchObject({ accepted: true, extendedMinimum: true });
     expect(range.turnRowIds).toHaveLength(36);
-    expect(details.chat.readRows(range.turnRowIds).map(({ remoteTurnId }) => remoteTurnId)).toContain("turn-12");
+    expect(
+      details.chat.readRows(range.turnRowIds).map(({ remoteTurnId }) => remoteTurnId),
+    ).toContain("turn-12");
     expect(range.turnRowIds).toContain("turn:server:thread:turn-47");
     expect(harness.persisted.length).toBeGreaterThan(0);
     await details.close();
   });
 
-  it("drops a superseded press preload and transfers the winner to the mounted conversation", async () => {
+  it("keeps the selected resource retained while another route load settles", async () => {
     let releaseFirst!: () => void;
-    const firstRead = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstRead = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
     harness.loadResolvedWindow.mockImplementation(async ({ connectionId, threadId, turnLimit }) => {
       if (threadId === "first") await firstRead;
       const row = {
@@ -908,24 +1278,27 @@ describe("thread detail ownership races", () => {
       anchorTurnId: null,
     });
 
-    const cancelFirst = details.preloadWindow(request("first"));
+    const firstResource = details.windowResource(request("first"));
     await vi.waitFor(() => expect(harness.loadResolvedWindow).toHaveBeenCalledTimes(1));
-    const cancelSecond = details.preloadWindow(request("second"));
     const secondResource = details.windowResource(request("second"));
+    const releaseMounted = secondResource.retain(() => undefined);
     releaseFirst();
-    await secondResource.ready$.peek();
+    await Promise.all([firstResource.ready$.peek(), secondResource.ready$.peek()]);
 
-    expect(harness.loadResolvedWindow.mock.calls.map(([input]) => input.threadId)).toEqual(["first", "second"]);
-    expect(details.chat.window$("server", "second").peek().turnRowIds).toEqual(["turn:server:second:turn-1"]);
-    const releaseMounted = details.retainWindow("server", "second");
-    cancelFirst();
-    cancelSecond();
-    expect(details.chat.residentRowCount()).toBe(1);
+    expect(harness.loadResolvedWindow.mock.calls.map(([input]) => input.threadId)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(details.chat.window$("server", "second").peek().turnRowIds).toEqual([
+      "turn:server:second:turn-1",
+    ]);
+    expect(details.chat.residentRowCount()).toBe(2);
     releaseMounted();
-    await Promise.resolve();
-    // Component teardown alone is not navigation away from the resource.
-    expect(details.chat.residentRowCount()).toBe(1);
-    expect(details.chat.window$("server", "second").peek().turnRowIds).toEqual(["turn:server:second:turn-1"]);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(details.chat.residentRowCount()).toBe(2);
+    expect(details.chat.window$("server", "second").peek().turnRowIds).toEqual([
+      "turn:server:second:turn-1",
+    ]);
     await details.close();
     expect(details.chat.residentRowCount()).toBe(0);
   });
@@ -953,8 +1326,41 @@ describe("thread detail ownership races", () => {
     optimistic.rollback();
     await details.commitPendingMutation({ upserts: [], deletes: [pending.id] }, { durable: true });
 
-    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual(["remote-turn"]);
-    expect(harness.persisted.some((change) => change.type === "delete" && change.key === pending.id)).toBe(false);
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual([
+      "remote-turn",
+    ]);
+    expect(
+      harness.persisted.some((change) => change.type === "delete" && change.key === pending.id),
+    ).toBe(false);
+    await details.close();
+  });
+
+  it("publishes a staged send into the already visible chat before native admission settles", async () => {
+    harness.loadResolvedWindow.mockResolvedValue(completeResolvedWindow());
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
+    const pending = details.createPending({
+      attachments: [],
+      attempts: 0,
+      commandId: "fresh-command",
+      connectionId: "server",
+      createdAt: 1_000_000,
+      lastError: null,
+      method: "turn/start",
+      presentation: "delivery",
+      state: "queued",
+      text: "fresh message",
+      threadId: "thread",
+      updatedAt: 1_000_000,
+    });
+
+    const staged = details.stagePendingMutation({ deletes: [], upserts: [pending] });
+    const snapshot = details.chat.window$("server", "thread").peek();
+
+    expect(snapshot.liveRowIds).toContain(pending.id);
+    expect(details.chat.readRows(snapshot.liveRowIds)).toContain(pending);
+    staged.complete();
     await details.close();
   });
 
@@ -993,16 +1399,21 @@ describe("thread detail ownership races", () => {
 
     expect(details.hasPendingDelivery("server", "thread", "command")).toBe(true);
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
-    expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
-      .toContainEqual(expect.objectContaining({
+    expect(
+      details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds),
+    ).toContainEqual(
+      expect.objectContaining({
         kind: "pending",
         pending: expect.objectContaining({ state: "companionAccepted" }),
-      }));
+      }),
+    );
 
     await details.importThreadSnapshot("server", authoritativeThread("command"), "recovery");
 
     expect(details.hasPendingDelivery("server", "thread", "command")).toBe(false);
-    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual(["remote-turn"]);
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual([
+      "remote-turn",
+    ]);
     await details.close();
   });
 
@@ -1137,7 +1548,9 @@ describe("thread detail ownership races", () => {
     ]);
 
     expect(details.hasPendingDelivery("server", "thread", "historical-direct")).toBe(false);
-    expect(details.listQueued("server", "thread").map(({ commandId }) => commandId)).toEqual(["queued-prompt"]);
+    expect(details.listQueued("server", "thread").map(({ commandId }) => commandId)).toEqual([
+      "queued-prompt",
+    ]);
     await details.close();
   });
 
@@ -1161,18 +1574,20 @@ describe("thread detail ownership races", () => {
     });
     await details.commitPending(queued);
 
-    await details.replaceQueued("server", "thread", [{
-      commandId: "queued-prompt",
-      remoteThreadId: "thread",
-      params: { threadId: "thread", input: [{ type: "text", text: "next prompt" }] },
-      presentation: "queue",
-      workspaceRequestId: null,
-      state: "delivered",
-      order: 1,
-      createdAt: 1_000_000,
-      updatedAt: 1_000_001,
-      lastError: null,
-    }]);
+    await details.replaceQueued("server", "thread", [
+      {
+        commandId: "queued-prompt",
+        remoteThreadId: "thread",
+        params: { threadId: "thread", input: [{ type: "text", text: "next prompt" }] },
+        presentation: "queue",
+        workspaceRequestId: null,
+        state: "delivered",
+        order: 1,
+        createdAt: 1_000_000,
+        updatedAt: 1_000_001,
+        lastError: null,
+      },
+    ]);
 
     expect(details.listQueued("server", "thread")).toEqual([]);
     // The queue admission command has finished; there is no direct native
@@ -1180,15 +1595,18 @@ describe("thread detail ownership races", () => {
     await details.reconcileNativeCommands("server", "thread", []);
     expect(details.hasPendingDelivery("server", "thread", "queued-prompt")).toBe(true);
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
-    expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
-      .toContainEqual(expect.objectContaining({
+    expect(
+      details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds),
+    ).toContainEqual(
+      expect.objectContaining({
         kind: "pending",
         pending: expect.objectContaining({
           commandId: "queued-prompt",
           presentation: "delivery",
           state: "appServerAccepted",
         }),
-      }));
+      }),
+    );
 
     await details.importThreadSnapshot("server", authoritativeThread("queued-prompt"), "recovery");
     expect(details.hasPendingDelivery("server", "thread", "queued-prompt")).toBe(false);
@@ -1200,18 +1618,20 @@ describe("thread detail ownership races", () => {
     await details.prepare();
     await details.importThreadSnapshot("server", authoritativeThread("canonical"), "initial");
 
-    await details.replaceQueued("server", "thread", [{
-      commandId: "restored-queue-prompt",
-      remoteThreadId: "thread",
-      params: { threadId: "thread", input: [{ type: "text", text: "restored prompt" }] },
-      presentation: "queue",
-      workspaceRequestId: null,
-      state: "delivered",
-      order: 1,
-      createdAt: 1_000_000,
-      updatedAt: 1_000_001,
-      lastError: null,
-    }]);
+    await details.replaceQueued("server", "thread", [
+      {
+        commandId: "restored-queue-prompt",
+        remoteThreadId: "thread",
+        params: { threadId: "thread", input: [{ type: "text", text: "restored prompt" }] },
+        presentation: "queue",
+        workspaceRequestId: null,
+        state: "delivered",
+        order: 1,
+        createdAt: 1_000_000,
+        updatedAt: 1_000_001,
+        lastError: null,
+      },
+    ]);
 
     expect(details.listQueued("server", "thread")).toEqual([]);
     expect(details.hasPendingDelivery("server", "thread", "restored-queue-prompt")).toBe(false);
@@ -1253,31 +1673,45 @@ describe("thread detail ownership races", () => {
       updatedAt: 1_000_001,
     });
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
-    expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
-      .toContainEqual(expect.objectContaining({
+    expect(
+      details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds),
+    ).toContainEqual(
+      expect.objectContaining({
         kind: "pending",
-        pending: expect.objectContaining({ commandId: "current-direct", state: "companionAccepted" }),
-      }));
+        pending: expect.objectContaining({
+          commandId: "current-direct",
+          state: "companionAccepted",
+        }),
+      }),
+    );
 
-    await details.replaceQueued("server", "thread", [{
-      commandId: "current-direct",
-      remoteThreadId: "thread",
-      params: { threadId: "thread", input: [{ type: "text", text: "current prompt" }] },
-      presentation: "delivery",
-      workspaceRequestId: null,
-      state: "delivered",
-      order: 1,
-      createdAt: 1_000_000,
-      updatedAt: 1_000_002,
-      lastError: null,
-    }]);
+    await details.replaceQueued("server", "thread", [
+      {
+        commandId: "current-direct",
+        remoteThreadId: "thread",
+        params: { threadId: "thread", input: [{ type: "text", text: "current prompt" }] },
+        presentation: "delivery",
+        workspaceRequestId: null,
+        state: "delivered",
+        order: 1,
+        createdAt: 1_000_000,
+        updatedAt: 1_000_002,
+        lastError: null,
+      },
+    ]);
 
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
-    expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
-      .toContainEqual(expect.objectContaining({
+    expect(
+      details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds),
+    ).toContainEqual(
+      expect.objectContaining({
         kind: "pending",
-        pending: expect.objectContaining({ commandId: "current-direct", state: "appServerAccepted" }),
-      }));
+        pending: expect.objectContaining({
+          commandId: "current-direct",
+          state: "appServerAccepted",
+        }),
+      }),
+    );
 
     await details.applyCommandDelivery({
       connectionId: "server",
@@ -1293,11 +1727,17 @@ describe("thread detail ownership races", () => {
       createdAt: 1_000_000,
       updatedAt: 1_000_003,
     });
-    expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
-      .toContainEqual(expect.objectContaining({
+    expect(
+      details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds),
+    ).toContainEqual(
+      expect.objectContaining({
         kind: "pending",
-        pending: expect.objectContaining({ commandId: "current-direct", state: "appServerAccepted" }),
-      }));
+        pending: expect.objectContaining({
+          commandId: "current-direct",
+          state: "appServerAccepted",
+        }),
+      }),
+    );
 
     await details.importThreadSnapshot("server", authoritativeThread("current-direct"), "recovery");
     expect(details.hasPendingDelivery("server", "thread", "current-direct")).toBe(false);
@@ -1324,67 +1764,109 @@ describe("thread detail ownership races", () => {
     });
     await details.commitPending(pending, { durable: true });
 
-    await details.replaceQueued("server", "thread", [{
-      commandId: "rejected-direct",
-      remoteThreadId: "thread",
-      params: { threadId: "thread", input: [{ type: "text", text: "current prompt" }] },
-      presentation: "delivery",
-      workspaceRequestId: null,
-      state: "failed",
-      order: 1,
-      createdAt: 1_000_000,
-      updatedAt: 1_000_001,
-      lastError: "thread not found",
-    }]);
+    await details.replaceQueued("server", "thread", [
+      {
+        commandId: "rejected-direct",
+        remoteThreadId: "thread",
+        params: { threadId: "thread", input: [{ type: "text", text: "current prompt" }] },
+        presentation: "delivery",
+        workspaceRequestId: null,
+        state: "failed",
+        order: 1,
+        createdAt: 1_000_000,
+        updatedAt: 1_000_001,
+        lastError: "thread not found",
+      },
+    ]);
 
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
-    expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
-      .toContainEqual(expect.objectContaining({
+    expect(
+      details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds),
+    ).toContainEqual(
+      expect.objectContaining({
         kind: "pending",
         pending: expect.objectContaining({ state: "failed", lastError: "thread not found" }),
-      }));
+      }),
+    );
     await details.close();
   });
 
-  it.each(["turn/start", "turn/steer"] as const)("keeps a committed %s when a pre-enqueue ledger read arrives before the canonical user item", async (method) => {
-    const details = createThreadDetailDatabase();
-    await details.prepare();
-    await details.importThreadSnapshot("server", authoritativeThread("previous"), "initial");
-    const pending = details.createPending({
-      connectionId: "server", threadId: "thread", commandId: "new-command",
-      method, presentation: "delivery", text: "New prompt",
-      attachments: [], state: "queued", attempts: 0, lastError: null,
-      createdAt: 3_000, updatedAt: 3_000,
-    });
-    const staged = details.stagePendingMutation({ upserts: [pending], deletes: [] });
-    await details.commitPending(pending, { durable: true });
-    staged.complete();
+  it.each(["turn/start", "turn/steer"] as const)(
+    "keeps a committed %s when a pre-enqueue ledger read arrives before the canonical user item",
+    async (method) => {
+      const details = createThreadDetailDatabase();
+      await details.prepare();
+      await details.importThreadSnapshot("server", authoritativeThread("previous"), "initial");
+      const pending = details.createPending({
+        connectionId: "server",
+        threadId: "thread",
+        commandId: "new-command",
+        method,
+        presentation: "delivery",
+        text: "New prompt",
+        attachments: [],
+        state: "queued",
+        attempts: 0,
+        lastError: null,
+        createdAt: 3_000,
+        updatedAt: 3_000,
+      });
+      const staged = details.stagePendingMutation({ upserts: [pending], deletes: [] });
+      await details.commitPending(pending, { durable: true });
+      staged.complete();
 
-    // listNativeCommands began before enqueue; its empty result arrives after
-    // the durable send. Absence from that snapshot is not delivery evidence.
-    await details.reconcileNativeCommands("server", "thread", []);
-    expect(details.hasPendingDelivery("server", "thread", "new-command")).toBe(true);
-    expect(details.chat.row$(pending.id).peek()?.pending?.text).toBe("New prompt");
-    const streaming: Turn = {
-      ...completedTurn("new-turn", "new-command"), status: "inProgress", startedAt: 3,
-      items: [{ type: "agentMessage", id: "answer", text: "Working", phase: "commentary", memoryCitation: null }],
-    };
-    await details.replaceActiveThread("server", { ...authoritativeThread("previous"), turns: [streaming] });
-    expect(details.hasPendingDelivery("server", "thread", "new-command")).toBe(true);
-    expect(details.chat.row$(pending.id).peek()?.pending?.text).toBe("New prompt");
-    expect(details.getThread("server", "thread")?.turns.find((turn) => turn.id === "new-turn")?.items)
-      .toEqual(streaming.items);
+      // listNativeCommands began before enqueue; its empty result arrives after
+      // the durable send. Absence from that snapshot is not delivery evidence.
+      await details.reconcileNativeCommands("server", "thread", []);
+      expect(details.hasPendingDelivery("server", "thread", "new-command")).toBe(true);
+      expect(details.chat.row$(pending.id).peek()?.pending?.text).toBe("New prompt");
+      const streaming: Turn = {
+        ...completedTurn("new-turn", "new-command"),
+        status: "inProgress",
+        startedAt: 3,
+        items: [
+          {
+            type: "agentMessage",
+            id: "answer",
+            text: "Working",
+            phase: "commentary",
+            memoryCitation: null,
+          },
+        ],
+      };
+      await details.replaceActiveThread("server", {
+        ...authoritativeThread("previous"),
+        turns: [streaming],
+      });
+      expect(details.hasPendingDelivery("server", "thread", "new-command")).toBe(true);
+      expect(details.chat.row$(pending.id).peek()?.pending?.text).toBe("New prompt");
+      expect(
+        details.getThread("server", "thread")?.turns.find((turn) => turn.id === "new-turn")?.items,
+      ).toEqual(streaming.items);
 
-    const canonical: Turn = { ...streaming, items: [
-      { type: "userMessage", id: "user", clientId: "new-command", content: [{ type: "text", text: "New prompt", text_elements: [] }] },
-      ...streaming.items,
-    ] };
-    await details.replaceActiveThread("server", { ...authoritativeThread("previous"), turns: [canonical] });
-    expect(details.hasPendingDelivery("server", "thread", "new-command")).toBe(false);
-    expect(details.getThread("server", "thread")?.turns.find((turn) => turn.id === "new-turn")?.items)
-      .toEqual(canonical.items);
-    await details.close();
-  });
+      const canonical: Turn = {
+        ...streaming,
+        items: [
+          {
+            type: "userMessage",
+            id: "user",
+            clientId: "new-command",
+            content: [{ type: "text", text: "New prompt", text_elements: [] }],
+          },
+          ...streaming.items,
+        ],
+      };
+      await details.replaceActiveThread("server", {
+        ...authoritativeThread("previous"),
+        turns: [canonical],
+      });
+      expect(details.hasPendingDelivery("server", "thread", "new-command")).toBe(false);
+      expect(
+        details.getThread("server", "thread")?.turns.find((turn) => turn.id === "new-turn")?.items,
+      ).toEqual(canonical.items);
+      await details.close();
+    },
+  );
 
   it("keeps staged and committed sends until canonical handoff, without resurrecting them on reload", async () => {
     harness.loadResolvedWindow.mockResolvedValue(resolvedWindow(24, 47));
@@ -1415,14 +1897,20 @@ describe("thread detail ownership races", () => {
     await details.reconcileNativeCommands("server", "thread", []);
     expect(details.hasPendingDelivery("server", "thread", pending.pending!.commandId)).toBe(true);
 
-    await details.importThreadSnapshot("server", {
-      ...authoritativeThread("canonical"), turns: [completedTurn("new-turn", "in-flight")],
-    }, "recovery");
+    await details.importThreadSnapshot(
+      "server",
+      {
+        ...authoritativeThread("canonical"),
+        turns: [completedTurn("new-turn", "in-flight")],
+      },
+      "recovery",
+    );
     expect(details.hasPendingDelivery("server", "thread", pending.pending!.commandId)).toBe(false);
 
     await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
-    expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
-      .not.toContainEqual(expect.objectContaining({ kind: "pending" }));
+    expect(
+      details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds),
+    ).not.toContainEqual(expect.objectContaining({ kind: "pending" }));
     await details.close();
   });
 
@@ -1447,24 +1935,30 @@ describe("thread detail ownership races", () => {
   it("overlays a complete canonical tail onto a short cached window idempotently", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
-    const tail = Array.from(
-      { length: 15 },
-      (_, index) => completedTurn(`turn-${index}`, `command-${index}`),
+    const tail = Array.from({ length: 15 }, (_, index) =>
+      completedTurn(`turn-${index}`, `command-${index}`),
     );
-    await details.importThreadSnapshot("server", {
-      ...authoritativeThread("partial"),
-      turns: tail.slice(-4),
-    }, "initial", "stale-older-page");
+    await details.importThreadSnapshot(
+      "server",
+      {
+        ...authoritativeThread("partial"),
+        turns: tail.slice(-4),
+      },
+      "initial",
+      "stale-older-page",
+    );
     harness.persisted.length = 0;
 
     await details.mergeTailTurns("server", "thread", tail, "canonical-older-page");
     await details.mergeTailTurns("server", "thread", tail, "canonical-older-page");
 
-    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id))
-      .toEqual(tail.map(({ id }) => id));
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual(
+      tail.map(({ id }) => id),
+    );
     expect(details.historyCursor("server", "thread")).toBe("canonical-older-page");
-    await expect(details.prependTurns("server", "thread", 1, [], "next-older-page"))
-      .resolves.toMatchObject({ accepted: true, historyEpoch: 1 });
+    await expect(
+      details.prependTurns("server", "thread", 1, [], "next-older-page"),
+    ).resolves.toMatchObject({ accepted: true, historyEpoch: 1 });
     expect(harness.persisted).not.toContainEqual(expect.objectContaining({ type: "delete" }));
     await details.close();
   });
@@ -1473,20 +1967,26 @@ describe("thread detail ownership races", () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
     const active = liveThread("active-command").turns[0]!;
-    await details.importThreadSnapshot("server", {
-      ...authoritativeThread("active-command"),
-      status: { type: "active", activeFlags: [] },
-      turns: [active],
-    }, "initial", "stale-page");
-    const tail = Array.from(
-      { length: 15 },
-      (_, index) => completedTurn(`sealed-${index}`, `sealed-command-${index}`),
+    await details.importThreadSnapshot(
+      "server",
+      {
+        ...authoritativeThread("active-command"),
+        status: { type: "active", activeFlags: [] },
+        turns: [active],
+      },
+      "initial",
+      "stale-page",
+    );
+    const tail = Array.from({ length: 15 }, (_, index) =>
+      completedTurn(`sealed-${index}`, `sealed-command-${index}`),
     );
 
     await details.mergeTailTurns("server", "thread", tail, "canonical-page");
 
-    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id))
-      .toEqual([...tail.map(({ id }) => id), active.id]);
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual([
+      ...tail.map(({ id }) => id),
+      active.id,
+    ]);
     expect(details.getThread("server", "thread")?.turns.at(-1)).toEqual(active);
     await details.close();
   });
@@ -1522,11 +2022,19 @@ describe("thread detail ownership races", () => {
     const projected = await details.applyEvents("server", events);
     await projected.checkpoint;
 
-    const userItems = details.getThread("server", "thread")?.turns[0]?.items.filter((item) => item.type === "userMessage");
+    const userItems = details
+      .getThread("server", "thread")
+      ?.turns[0]?.items.filter((item) => item.type === "userMessage");
     expect(userItems).toEqual([
       expect.objectContaining({ clientId: "initial" }),
-      expect.objectContaining({ clientId: "android-test", content: [expect.objectContaining({ text: "Test" })] }),
-      expect.objectContaining({ clientId: "android-test-2", content: [expect.objectContaining({ text: "Test2" })] }),
+      expect.objectContaining({
+        clientId: "android-test",
+        content: [expect.objectContaining({ text: "Test" })],
+      }),
+      expect.objectContaining({
+        clientId: "android-test-2",
+        content: [expect.objectContaining({ text: "Test2" })],
+      }),
     ]);
     await details.close();
   });
@@ -1553,10 +2061,12 @@ describe("thread detail ownership races", () => {
             connectionId: "server",
             thread: {
               ...liveThread("initial"),
-              turns: [{
-                ...liveThread("initial").turns[0]!,
-                items: [...liveThread("initial").turns[0]!.items, recoveredAgent],
-              }],
+              turns: [
+                {
+                  ...liveThread("initial").turns[0]!,
+                  items: [...liveThread("initial").turns[0]!.items, recoveredAgent],
+                },
+              ],
             },
             mode: "merge",
             historyCursor: null,
@@ -1572,26 +2082,36 @@ describe("thread detail ownership races", () => {
       loadNewer: async () => ({ status: "superseded" }),
     });
 
-    const projected = await details.applyEvents("server", [{
-      cursor: 1,
-      payload: {
-        method: "item/agentMessage/delta",
-        params: { threadId: "thread", turnId: "remote-turn", itemId: "recovered-agent", delta: " delta" },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: "thread",
-          operation: { kind: "itemTextDelta", itemType: "agentMessage" },
+    const projected = await details.applyEvents("server", [
+      {
+        cursor: 1,
+        payload: {
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "thread",
+            turnId: "remote-turn",
+            itemId: "recovered-agent",
+            delta: " delta",
+          },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "thread",
+            operation: { kind: "itemTextDelta", itemType: "agentMessage" },
+          },
         },
       },
-    }]);
+    ]);
     await projected.checkpoint;
 
     expect(repaired).toBe(true);
-    expect(details.getThread("server", "thread")?.turns[0]?.items)
-      .toContainEqual(expect.objectContaining({ id: "recovered-agent", text: "recovered" }));
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({ kind: "thread", projectionCursor: 1 }),
-    }));
+    expect(details.getThread("server", "thread")?.turns[0]?.items).toContainEqual(
+      expect.objectContaining({ id: "recovered-agent", text: "recovered" }),
+    );
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({ kind: "thread", projectionCursor: 1 }),
+      }),
+    );
     expect(harness.commits.at(-1)).toEqual({ durable: true });
     await details.close();
   });
@@ -1610,23 +2130,31 @@ describe("thread detail ownership races", () => {
       loadNewer: async () => ({ status: "superseded" }),
     });
 
-    const projected = await details.applyEvents("server", [{
-      cursor: 1,
-      payload: {
-        method: "item/agentMessage/delta",
-        params: { threadId: "thread", turnId: "remote-turn", itemId: "background-agent", delta: "new" },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: "thread",
-          operation: { kind: "itemTextDelta", itemType: "agentMessage" },
+    const projected = await details.applyEvents("server", [
+      {
+        cursor: 1,
+        payload: {
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "thread",
+            turnId: "remote-turn",
+            itemId: "background-agent",
+            delta: "new",
+          },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "thread",
+            operation: { kind: "itemTextDelta", itemType: "agentMessage" },
+          },
         },
       },
-    }]);
+    ]);
     await projected.checkpoint;
 
     expect(repairProjection).not.toHaveBeenCalled();
-    expect(details.getThread("server", "thread")?.turns[0]?.items)
-      .not.toContainEqual(expect.objectContaining({ id: "background-agent" }));
+    expect(details.getThread("server", "thread")?.turns[0]?.items).not.toContainEqual(
+      expect.objectContaining({ id: "background-agent" }),
+    );
     await details.close();
   });
 
@@ -1642,22 +2170,30 @@ describe("thread detail ownership races", () => {
       memoryCitation: null,
     } satisfies Turn["items"][number];
     const finishSnapshot = details.beginProjectionSnapshot("server", "thread");
-    const pendingProjection = details.applyEvents("server", [{
-      cursor: 2,
-      payload: {
-        method: "item/completed",
-        params: { threadId: "thread", turnId: "remote-turn", item: tailItem },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: "thread",
-          operation: { kind: "itemUpsert", itemPhase: "completed", turnId: "remote-turn", item: tailItem },
+    const pendingProjection = details.applyEvents("server", [
+      {
+        cursor: 2,
+        payload: {
+          method: "item/completed",
+          params: { threadId: "thread", turnId: "remote-turn", item: tailItem },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "thread",
+            operation: {
+              kind: "itemUpsert",
+              itemPhase: "completed",
+              turnId: "remote-turn",
+              item: tailItem,
+            },
+          },
         },
       },
-    }]);
+    ]);
 
     await Promise.resolve();
-    expect(details.getThread("server", "thread")?.turns[0]?.items)
-      .not.toContainEqual(expect.objectContaining({ id: "tail-agent" }));
+    expect(details.getThread("server", "thread")?.turns[0]?.items).not.toContainEqual(
+      expect.objectContaining({ id: "tail-agent" }),
+    );
     await details.synchronizeThread({
       connectionId: "server",
       thread: liveThread("initial"),
@@ -1670,8 +2206,9 @@ describe("thread detail ownership races", () => {
     const projected = await pendingProjection;
     await projected.checkpoint;
 
-    expect(details.getThread("server", "thread")?.turns[0]?.items)
-      .toContainEqual(expect.objectContaining({ id: "tail-agent", text: "after snapshot" }));
+    expect(details.getThread("server", "thread")?.turns[0]?.items).toContainEqual(
+      expect.objectContaining({ id: "tail-agent", text: "after snapshot" }),
+    );
     await details.close();
   });
 
@@ -1682,10 +2219,14 @@ describe("thread detail ownership races", () => {
       ...completedTurn("remote-turn", "command"),
       codewide: { diff: "stable" },
     } as Turn;
-    await details.importThreadSnapshot("server", {
-      ...authoritativeThread("command"),
-      turns: [stable],
-    }, "initial");
+    await details.importThreadSnapshot(
+      "server",
+      {
+        ...authoritativeThread("command"),
+        turns: [stable],
+      },
+      "initial",
+    );
 
     const conflicting = {
       ...completedTurn("remote-turn", "command"),
@@ -1693,8 +2234,10 @@ describe("thread detail ownership races", () => {
     } as Turn;
     await details.appendTurns("server", "thread", [conflicting]);
 
-    expect((details.getThread("server", "thread")!.turns[0] as Turn & { codewide?: { diff?: string } }).codewide?.diff)
-      .toBe("stable");
+    expect(
+      (details.getThread("server", "thread")!.turns[0] as Turn & { codewide?: { diff?: string } })
+        .codewide?.diff,
+    ).toBe("stable");
     await details.close();
   });
 
@@ -1738,14 +2281,20 @@ describe("thread detail ownership races", () => {
       loadOlder: async () => undefined,
       loadNewer: async () => ({ status: "superseded" }),
     });
-    await details.importThreadSnapshot("server", {
-      ...authoritativeThread("command"),
-      status: { type: "active", activeFlags: [] },
-      turns: [live],
-    }, "initial");
+    await details.importThreadSnapshot(
+      "server",
+      {
+        ...authoritativeThread("command"),
+        status: { type: "active", activeFlags: [] },
+        turns: [live],
+      },
+      "initial",
+    );
 
-    expect(details.getThread("server", "thread")?.turns[0]?.items.map(({ id }) => id))
-      .toEqual(["remote-turn-user", "remote-turn-tool"]);
+    expect(details.getThread("server", "thread")?.turns[0]?.items.map(({ id }) => id)).toEqual([
+      "remote-turn-user",
+      "remote-turn-tool",
+    ]);
 
     const completedFull = {
       ...live,
@@ -1753,35 +2302,39 @@ describe("thread detail ownership races", () => {
       completedAt: 2,
       items: [user, tool, final],
     } as Turn;
-    const projected = await details.applyEvents("server", [{
-      cursor: 1,
-      payload: {
-        method: "turn/completed",
-        params: { threadId: "thread", turn: completedFull },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: "thread",
-          operation: { kind: "turnCompleted", turn: completedFull },
+    const projected = await details.applyEvents("server", [
+      {
+        cursor: 1,
+        payload: {
+          method: "turn/completed",
+          params: { threadId: "thread", turn: completedFull },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "thread",
+            operation: { kind: "turnCompleted", turn: completedFull },
+          },
         },
       },
-    }]);
+    ]);
     await projected.checkpoint;
 
     expect(details.getThread("server", "thread")?.turns[0]).toMatchObject({
       itemsView: "full",
       items: expect.arrayContaining([expect.objectContaining({ id: "remote-turn-tool" })]),
     });
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({
-        kind: "turn",
-        remoteTurnId: "remote-turn",
-        sealed: false,
-        turn: expect.objectContaining({
-          itemsView: "full",
-          items: expect.arrayContaining([expect.objectContaining({ id: "remote-turn-tool" })]),
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({
+          kind: "turn",
+          remoteTurnId: "remote-turn",
+          sealed: false,
+          turn: expect.objectContaining({
+            itemsView: "full",
+            items: expect.arrayContaining([expect.objectContaining({ id: "remote-turn-tool" })]),
+          }),
         }),
       }),
-    }));
+    );
 
     await details.appendTurns("server", "thread", [summary]);
 
@@ -1789,14 +2342,18 @@ describe("thread detail ownership races", () => {
       itemsView: "full",
       items: expect.arrayContaining([expect.objectContaining({ id: "remote-turn-tool" })]),
     });
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({
-        kind: "activity",
-        remoteTurnId: "remote-turn",
-        sealed: true,
-        activityItems: expect.arrayContaining([expect.objectContaining({ id: "remote-turn-tool" })]),
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({
+          kind: "activity",
+          remoteTurnId: "remote-turn",
+          sealed: true,
+          activityItems: expect.arrayContaining([
+            expect.objectContaining({ id: "remote-turn-tool" }),
+          ]),
+        }),
       }),
-    }));
+    );
     await details.close();
   });
 
@@ -1827,24 +2384,28 @@ describe("thread detail ownership races", () => {
       loadNewer: async () => ({ status: "superseded" }),
     });
     await details.importThreadSnapshot("server", liveThread("command"), "initial");
-    const projected = await details.applyEvents("server", [{
-      cursor: 1,
-      payload: {
-        method: "turn/completed",
-        params: { threadId: "thread", turn: sparse },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: "thread",
-          operation: { kind: "turnCompleted", turn: sparse },
+    const projected = await details.applyEvents("server", [
+      {
+        cursor: 1,
+        payload: {
+          method: "turn/completed",
+          params: { threadId: "thread", turn: sparse },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "thread",
+            operation: { kind: "turnCompleted", turn: sparse },
+          },
         },
       },
-    }]);
+    ]);
     await projected.checkpoint;
 
     expect(details.getThread("server", "thread")?.turns).toEqual([repaired]);
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({ kind: "turn", remoteTurnId: "remote-turn", sealed: true }),
-    }));
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({ kind: "turn", remoteTurnId: "remote-turn", sealed: true }),
+      }),
+    );
     await details.close();
   });
 
@@ -1861,31 +2422,43 @@ describe("thread detail ownership races", () => {
       itemsView: "notLoaded",
     } as unknown as Turn;
 
-    await expect(details.importThreadSnapshot("server", {
-      ...authoritativeThread("command"),
-      turns: [incomplete],
-    }, "recovery")).resolves.toBeUndefined();
+    await expect(
+      details.importThreadSnapshot(
+        "server",
+        {
+          ...authoritativeThread("command"),
+          turns: [incomplete],
+        },
+        "recovery",
+      ),
+    ).resolves.toBeUndefined();
 
-    expect(details.getThread("server", "thread")?.turns).toEqual([{
-      ...incomplete,
-      items: [],
-    }]);
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({
-        kind: "turn",
-        remoteTurnId: "remote-turn",
-        sealed: false,
-        turn: expect.objectContaining({ items: [], itemsView: "notLoaded" }),
+    expect(details.getThread("server", "thread")?.turns).toEqual([
+      {
+        ...incomplete,
+        items: [],
+      },
+    ]);
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({
+          kind: "turn",
+          remoteTurnId: "remote-turn",
+          sealed: false,
+          turn: expect.objectContaining({ items: [], itemsView: "notLoaded" }),
+        }),
       }),
-    }));
+    );
 
     const repaired = completedTurn("remote-turn", "command");
     await details.appendTurns("server", "thread", [repaired]);
 
     expect(details.getThread("server", "thread")?.turns).toEqual([repaired]);
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({ kind: "turn", remoteTurnId: "remote-turn", sealed: true }),
-    }));
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({ kind: "turn", remoteTurnId: "remote-turn", sealed: true }),
+      }),
+    );
     await details.close();
   });
 
@@ -1898,27 +2471,37 @@ describe("thread detail ownership races", () => {
       itemsView: "notLoaded",
     } satisfies Turn;
 
-    await expect(details.importThreadSnapshot("server", {
-      ...authoritativeThread("command"),
-      turns: [incomplete],
-    }, "recovery")).resolves.toBeUndefined();
+    await expect(
+      details.importThreadSnapshot(
+        "server",
+        {
+          ...authoritativeThread("command"),
+          turns: [incomplete],
+        },
+        "recovery",
+      ),
+    ).resolves.toBeUndefined();
 
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({
-        kind: "turn",
-        remoteTurnId: "remote-turn",
-        sealed: false,
-        turn: incomplete,
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({
+          kind: "turn",
+          remoteTurnId: "remote-turn",
+          sealed: false,
+          turn: incomplete,
+        }),
       }),
-    }));
+    );
 
     const repaired = completedTurn("remote-turn", "command");
     await details.appendTurns("server", "thread", [repaired]);
 
     expect(details.getThread("server", "thread")?.turns).toEqual([repaired]);
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({ kind: "turn", remoteTurnId: "remote-turn", sealed: true }),
-    }));
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({ kind: "turn", remoteTurnId: "remote-turn", sealed: true }),
+      }),
+    );
     await details.close();
   });
 
@@ -1933,13 +2516,20 @@ describe("thread detail ownership races", () => {
       itemsView: "notLoaded",
     } satisfies Turn;
 
-    await expect(details.importThreadSnapshot("server", {
-      ...complete,
-      turns: [incomplete],
-    }, "reconnect")).resolves.toBeUndefined();
+    await expect(
+      details.importThreadSnapshot(
+        "server",
+        {
+          ...complete,
+          turns: [incomplete],
+        },
+        "reconnect",
+      ),
+    ).resolves.toBeUndefined();
 
-    expect(details.getThread("server", "thread")?.turns[0]?.items)
-      .toEqual(complete.turns[0]?.items);
+    expect(details.getThread("server", "thread")?.turns[0]?.items).toEqual(
+      complete.turns[0]?.items,
+    );
     await details.close();
   });
 
@@ -1948,19 +2538,31 @@ describe("thread detail ownership races", () => {
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("command"), "initial");
 
-    await details.applySnapshot("server", [{
-      thread: { ...authoritativeThread("command"), name: "Renamed", turns: [] },
-      archived: false,
-    }], 17);
+    await details.applySnapshot(
+      "server",
+      [
+        {
+          thread: { ...authoritativeThread("command"), name: "Renamed", turns: [] },
+          archived: false,
+        },
+      ],
+      17,
+    );
 
     expect(details.getThread("server", "thread")).toMatchObject({
       name: "Renamed",
       status: { type: "active" },
     });
     expect(details.getThread("server", "thread")?.turns).toEqual(liveThread("command").turns);
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({ kind: "turn", remoteTurnId: "remote-turn", sealed: false }),
-    }));
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({
+          kind: "turn",
+          remoteTurnId: "remote-turn",
+          sealed: false,
+        }),
+      }),
+    );
 
     const repaired = completedTurn("remote-turn", "command");
     await details.appendTurns("server", "thread", [repaired]);
@@ -1972,37 +2574,46 @@ describe("thread detail ownership races", () => {
   it("does not acknowledge live projection updates before their durable SQLite commit", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
-    await details.importThreadSnapshot("server", authoritativeThread("command"), "initial", "older");
+    await details.importThreadSnapshot(
+      "server",
+      authoritativeThread("command"),
+      "initial",
+      "older",
+    );
 
     harness.commits.length = 0;
-    const semanticBoundary = await details.applyEvents("server", [{
-      cursor: 1,
-      payload: {
-        method: "diagnostic/not-a-boundary",
-        params: { threadId: "thread", status: { type: "active", activeFlags: [] } },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: "thread",
-          operation: { kind: "threadStatus", status: { type: "active", activeFlags: [] } },
+    const semanticBoundary = await details.applyEvents("server", [
+      {
+        cursor: 1,
+        payload: {
+          method: "diagnostic/not-a-boundary",
+          params: { threadId: "thread", status: { type: "active", activeFlags: [] } },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "thread",
+            operation: { kind: "threadStatus", status: { type: "active", activeFlags: [] } },
+          },
         },
       },
-    }]);
+    ]);
     await semanticBoundary.checkpoint;
     expect(harness.commits).toEqual([{ durable: true }]);
 
     harness.commits.length = 0;
-    const rawBoundary = await details.applyEvents("server", [{
-      cursor: 2,
-      payload: {
-        method: "thread/status/changed",
-        params: { threadId: "thread", threadName: "Raw method is irrelevant" },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: "thread",
-          operation: { kind: "threadName", threadName: "Raw method is irrelevant" },
+    const rawBoundary = await details.applyEvents("server", [
+      {
+        cursor: 2,
+        payload: {
+          method: "thread/status/changed",
+          params: { threadId: "thread", threadName: "Raw method is irrelevant" },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "thread",
+            operation: { kind: "threadName", threadName: "Raw method is irrelevant" },
+          },
         },
       },
-    }]);
+    ]);
     await rawBoundary.checkpoint;
     expect(harness.commits).toEqual([{ durable: true }]);
     await details.close();
@@ -2022,8 +2633,10 @@ describe("thread detail ownership races", () => {
     await details.replaceActiveThread("server", active);
 
     expect(details.getThread("server", "thread")?.status).toEqual(active.status);
-    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id))
-      .toEqual(["remote-turn", "active-turn"]);
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual([
+      "remote-turn",
+      "active-turn",
+    ]);
     expect(harness.commits).toEqual([{ durable: true }]);
     await details.close();
   });
@@ -2049,18 +2662,20 @@ describe("thread detail ownership races", () => {
       phase: null,
     } as Turn["items"][number];
 
-    const projected = await details.applyEvents("server", [{
-      cursor: 1,
-      payload: {
-        method: "item/completed",
-        params: { threadId: "thread", turnId: "active-turn", item },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: "thread",
-          operation: { kind: "itemUpsert", itemPhase: "completed", turnId: "active-turn", item },
+    const projected = await details.applyEvents("server", [
+      {
+        cursor: 1,
+        payload: {
+          method: "item/completed",
+          params: { threadId: "thread", turnId: "active-turn", item },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "thread",
+            operation: { kind: "itemUpsert", itemPhase: "completed", turnId: "active-turn", item },
+          },
         },
       },
-    }]);
+    ]);
     await projected.checkpoint;
     harness.commits.length = 0;
 
@@ -2073,10 +2688,13 @@ describe("thread detail ownership races", () => {
       expectedLiveRevision: revision,
     });
 
-    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id))
-      .toEqual(["sealed-turn", "active-turn"]);
-    expect(details.getThread("server", "thread")?.turns[1]?.items)
-      .toContainEqual(expect.objectContaining({ id: "streamed-agent", text: "newer live text" }));
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual([
+      "sealed-turn",
+      "active-turn",
+    ]);
+    expect(details.getThread("server", "thread")?.turns[1]?.items).toContainEqual(
+      expect.objectContaining({ id: "streamed-agent", text: "newer live text" }),
+    );
     expect(harness.commits).toHaveLength(1);
     await details.close();
   });
@@ -2084,7 +2702,12 @@ describe("thread detail ownership races", () => {
   it("replaces a disconnected sealed history when the server returns reset", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
-    await details.importThreadSnapshot("server", authoritativeThread("stale"), "initial", "stale-older");
+    await details.importThreadSnapshot(
+      "server",
+      authoritativeThread("stale"),
+      "initial",
+      "stale-older",
+    );
     const replacement: Thread = {
       ...authoritativeThread("fresh"),
       turns: [completedTurn("fresh-turn", "fresh")],
@@ -2093,7 +2716,9 @@ describe("thread detail ownership races", () => {
 
     await details.replaceThreadSnapshot("server", replacement, "recovery", "fresh-older");
 
-    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual(["fresh-turn"]);
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual([
+      "fresh-turn",
+    ]);
     expect(details.historyCursor("server", "thread")).toBe("fresh-older");
     expect(harness.commits).toHaveLength(commitsBeforeReset + 1);
     await details.close();
@@ -2110,8 +2735,9 @@ describe("thread detail ownership races", () => {
     };
     harness.failNextWrite = true;
 
-    await expect(details.replaceThreadSnapshot("server", replacement, "recovery", "fresh-older"))
-      .rejects.toThrow("simulated projection failure");
+    await expect(
+      details.replaceThreadSnapshot("server", replacement, "recovery", "fresh-older"),
+    ).rejects.toThrow("simulated projection failure");
 
     expect(details.getThread("server", "thread")?.turns).toEqual(stale.turns);
     expect(details.historyCursor("server", "thread")).toBe("stale-older");
@@ -2121,18 +2747,32 @@ describe("thread detail ownership races", () => {
   it("persists the older-history cursor with the durable thread epoch", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
-    await details.importThreadSnapshot("server", authoritativeThread("first"), "initial", "older-1");
+    await details.importThreadSnapshot(
+      "server",
+      authoritativeThread("first"),
+      "initial",
+      "older-1",
+    );
 
     expect(details.historyCursor("server", "thread")).toBe("older-1");
-    expect(harness.persisted).toContainEqual(expect.objectContaining({
-      value: expect.objectContaining({ kind: "thread", historyHadTurns: true }),
-    }));
-    await details.appendTurns("server", "thread", [completedTurn("second", "second")], "tail-refresh");
+    expect(harness.persisted).toContainEqual(
+      expect.objectContaining({
+        value: expect.objectContaining({ kind: "thread", historyHadTurns: true }),
+      }),
+    );
+    await details.appendTurns(
+      "server",
+      "thread",
+      [completedTurn("second", "second")],
+      "tail-refresh",
+    );
     expect(details.historyCursor("server", "thread")).toBe("older-1");
 
     await details.prependTurns("server", "thread", 0, [], "older-2");
     expect(details.historyCursor("server", "thread")).toBe("older-2");
-    expect(harness.persisted.some((change) => change.value?.historyCursor === "older-2")).toBe(true);
+    expect(harness.persisted.some((change) => change.value?.historyCursor === "older-2")).toBe(
+      true,
+    );
     await details.close();
   });
 

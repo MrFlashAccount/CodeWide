@@ -21,8 +21,10 @@ describe("append-only live text projection", () => {
     }
     expect(liveTextProjectionCacheStats()).toEqual({
       entries: LIVE_TEXT_CACHE_MAX_ENTRIES,
-      sourceChars: Array.from({ length: LIVE_TEXT_CACHE_MAX_ENTRIES }, (_, index) => `value-${index + 5}`.length)
-        .reduce((sum, length) => sum + length, 0),
+      sourceChars: Array.from(
+        { length: LIVE_TEXT_CACHE_MAX_ENTRIES },
+        (_, index) => `value-${index + 5}`.length,
+      ).reduce((sum, length) => sum + length, 0),
     });
   });
 
@@ -61,6 +63,14 @@ describe("append-only live text projection", () => {
     expect([...second.segments, second.remainder].join("")).toBe(second.source);
   });
 
+  it("reuses an unchanged Markdown projection when another turn item arrives", () => {
+    clearLiveTextProjectionCache();
+    const first = projectCachedLiveMarkdown("stable-agent", "Already complete.", true);
+    const afterToolCall = projectCachedLiveMarkdown("stable-agent", "Already complete.", true);
+
+    expect(afterToolCall).toBe(first);
+  });
+
   it("reveals sentence punctuation before completion and uses completion for an unfinished tail", () => {
     clearLiveTextProjectionCache();
     const sentence = projectCachedLiveMarkdown("sentence-agent", "This fix will ship.");
@@ -77,7 +87,9 @@ describe("append-only live text projection", () => {
     const projection = projectLiveTextAppend(null, source);
 
     expect(projection.segments.length).toBeGreaterThan(0);
-    expect(Math.max(...projection.segments.map((segment) => segment.length))).toBeLessThanOrEqual(LIVE_TEXT_MAX_PENDING_CHARS);
+    expect(Math.max(...projection.segments.map((segment) => segment.length))).toBeLessThanOrEqual(
+      LIVE_TEXT_MAX_PENDING_CHARS,
+    );
     expect([...projection.segments, projection.remainder].join("")).toBe(source);
   });
 
@@ -85,7 +97,9 @@ describe("append-only live text projection", () => {
     const source = Array.from({ length: 2_000 }, (_, index) => `paragraph ${index}\n\n`).join("");
     const projection = projectLiveTextAppend(null, source);
 
-    expect(Math.max(...projection.segments.map((segment) => segment.length))).toBeLessThan(LIVE_TEXT_TARGET_SEGMENT_CHARS + 32);
+    expect(Math.max(...projection.segments.map((segment) => segment.length))).toBeLessThan(
+      LIVE_TEXT_TARGET_SEGMENT_CHARS + 32,
+    );
     expect([...projection.segments, projection.remainder].join("")).toBe(source);
   });
 
@@ -94,12 +108,17 @@ describe("append-only live text projection", () => {
     const projection = projectLiveTextAppend(null, source);
 
     expect(projection.segments.length).toBeGreaterThan(1);
-    expect(Math.max(...projection.segments.map((segment) => segment.length))).toBeLessThan(LIVE_TEXT_MAX_PENDING_CHARS + 32);
+    expect(Math.max(...projection.segments.map((segment) => segment.length))).toBeLessThan(
+      LIVE_TEXT_MAX_PENDING_CHARS + 32,
+    );
     expect(projection.remainder.length).toBeLessThan(LIVE_TEXT_MAX_PENDING_CHARS + 32);
   });
 
   it("resets safely when an authoritative value replaces the live prefix", () => {
-    let projection: LiveTextProjection | null = projectLiveTextAppend(null, `${"a".repeat(900)}\n\nold`);
+    let projection: LiveTextProjection | null = projectLiveTextAppend(
+      null,
+      `${"a".repeat(900)}\n\nold`,
+    );
     projection = projectLiveTextAppend(projection, "replacement\n\nvalue");
 
     expect([...projection.segments, projection.remainder].join("")).toBe("replacement\n\nvalue");

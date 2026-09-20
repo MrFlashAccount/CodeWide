@@ -1,9 +1,4 @@
-import {
-  useComposerDraftCommands,
-  useComposerDraftState,
-  useComposerEditorEvents,
-  useComposerSeed,
-} from "./draft";
+import { useComposerDraftCommands, useComposerDraftState, useComposerEditorEvents } from "./draft";
 import { useComposerSettings } from "./settings";
 import { useComposerSuggestions } from "./suggestions";
 /** Composes the existing ComposerEditing owners without adding state or lifecycle policy. */
@@ -15,7 +10,6 @@ export function useComposerEditing({
   cwd,
   draftConnectionId,
   draftThreadId,
-  loadDraft,
   newChat,
   onLoadControls,
   onUpdateSettings,
@@ -23,7 +17,6 @@ export function useComposerEditing({
   saveComposerPreferences,
   saveDraft,
   saveDraftAttachments,
-  setQueuedComposerEdit,
   voiceController,
   workspaceResources,
 }: {
@@ -34,7 +27,6 @@ export function useComposerEditing({
   cwd: Parameters<typeof useComposerSuggestions>[0]["cwd"];
   draftConnectionId: Parameters<typeof useComposerDraftCommands>[0]["draftConnectionId"];
   draftThreadId: Parameters<typeof useComposerDraftCommands>[0]["draftThreadId"];
-  loadDraft: Parameters<typeof useComposerSeed>[2];
   newChat: Parameters<typeof useComposerSettings>[0]["newChat"];
   onLoadControls: Parameters<typeof useComposerSuggestions>[0]["onLoadControls"];
   onUpdateSettings: Parameters<typeof useComposerSettings>[0]["onUpdateSettings"];
@@ -42,7 +34,6 @@ export function useComposerEditing({
   saveComposerPreferences: Parameters<typeof useComposerSettings>[0]["saveComposerPreferences"];
   saveDraft: Parameters<typeof useComposerDraftCommands>[0]["saveDraft"];
   saveDraftAttachments: Parameters<typeof useComposerDraftCommands>[0]["saveDraftAttachments"];
-  setQueuedComposerEdit: Parameters<typeof useComposerDraftCommands>[0]["setQueuedComposerEdit"];
   voiceController: Parameters<typeof useComposerEditorEvents>[0]["voiceController"];
   workspaceResources: Parameters<typeof useComposerSettings>[0]["workspaceResources"];
 }) {
@@ -50,15 +41,11 @@ export function useComposerEditing({
     attachmentCount,
     attachments,
     composerInputRef,
-    composerMarkdownRef,
     composerPreferences,
-    composerStateMissing,
+    composerSession,
     composerUploadScope,
     draft,
     draftSelectionRef,
-    latestAttachmentsRef,
-    latestComposerPreferencesRef,
-    latestDraftRef,
     uploadsBlockSend,
   } = useComposerDraftState(composerScope, composerState, queuedComposerEdit);
   const {
@@ -79,30 +66,27 @@ export function useComposerEditing({
   } = useComposerSettings({
     composerPreferences,
     composerScope,
+    composerSession,
     controlsResourceId,
     conversationOwner,
     cwd,
     draftConnectionId,
     draftThreadId,
-    latestComposerPreferencesRef,
     newChat,
     onLoadControls,
     onUpdateSettings,
     saveComposerPreferences,
     workspaceResources,
   });
-  useComposerSeed(composerScope, composerStateMissing, loadDraft, draftConnectionId, draftThreadId);
-  const { captureDraftMutations, updateAttachments, updateDraft } = useComposerDraftCommands({
-    composerMarkdownRef,
-    draftConnectionId,
-    draftThreadId,
-    latestAttachmentsRef,
-    latestDraftRef,
-    queuedComposerEdit,
-    saveDraft,
-    saveDraftAttachments,
-    setQueuedComposerEdit,
-  });
+  const { captureDraftMutations, updateAttachments, updateDraft, updateText } =
+    useComposerDraftCommands({
+      composerSession,
+      draftConnectionId,
+      draftThreadId,
+      queuedComposerEdit,
+      saveDraft,
+      saveDraftAttachments,
+    });
   const {
     handleComposerTextChange,
     insertSkillInvocation,
@@ -111,18 +95,17 @@ export function useComposerEditing({
   } = useComposerSuggestions({
     composerInputRef,
     composerScope,
+    composerSession,
     currentControlsResource,
     cwd,
-    draft,
     draftSelectionRef,
-    latestComposerPreferencesRef,
     onLoadControls,
     updateComposerPreferences,
     updateDraft,
+    updateText,
     voiceController,
   });
-  const { clearComposerText, handleComposerMarkdownChange } = useComposerEditorEvents({
-    composerMarkdownRef,
+  const { clearComposerText } = useComposerEditorEvents({
     composerScope,
     draftSelectionRef,
     updateDraft,
@@ -136,18 +119,14 @@ export function useComposerEditing({
     capturePreferenceUpdate,
     clearComposerText,
     composerInputRef,
-    composerMarkdownRef,
+    composerSession,
     composerUploadScope,
     controlError,
     currentControlsResource,
     draft,
     draftSelectionRef,
-    handleComposerMarkdownChange,
     handleComposerTextChange,
     insertSkillInvocation,
-    latestAttachmentsRef,
-    latestComposerPreferencesRef,
-    latestDraftRef,
     requestControls,
     searchComposerSuggestions,
     selectComposerMention,

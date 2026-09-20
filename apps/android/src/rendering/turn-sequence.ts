@@ -13,6 +13,15 @@ export type CompletedTurnContent = {
   history: RenderBlock[];
 };
 
+const ACTIVE_SEQUENCE_CACHE_MAX_ENTRIES = 64;
+const activeSequenceCache = new Map<string, ActiveTurnSequencePart[]>();
+type ActiveSequenceBuilder = {
+  collapsed: number[];
+  liveBlocks: RenderBlock[];
+  runKey: string;
+  sequenceScope: string;
+};
+
 export function chronologicalTurnSequence(blocks: RenderBlock[]): TurnSequencePart[] {
   const parts: TurnSequencePart[] = [];
   let activity: RenderBlock[] = [];
@@ -56,48 +65,147 @@ export function chronologicalTurnSequence(blocks: RenderBlock[]): TurnSequencePa
 export function activeTurnSequence(
   liveEntries: Array<{ block: RenderBlock; index: number }>,
   collapsedIndexes: number[],
+  sequenceScope: string,
 ): ActiveTurnSequencePart[] {
   const parts: ActiveTurnSequencePart[] = [];
   const liveByIndex = new Map(liveEntries.map((entry) => [entry.index, entry.block]));
   const orderedIndexes = [...collapsedIndexes, ...liveEntries.map((entry) => entry.index)].sort(
     (left, right) => left - right,
   );
-  let liveBlocks: RenderBlock[] = [];
-  let collapsed: number[] = [];
-
-  const flushLive = () => {
-    if (liveBlocks.length === 0) {
-      return;
-    }
-    parts.push(...chronologicalTurnSequence(liveBlocks));
-    liveBlocks = [];
-  };
-  const flushCollapsed = () => {
-    const first = collapsed[0];
-    if (first === undefined) {
-      return;
-    }
-    parts.push({
-      indexes: collapsed,
-      key: `collapsed:${String(first)}`,
-      kind: "collapsedActivity",
-    });
-    collapsed = [];
+  const builder: ActiveSequenceBuilder = {
+    collapsed: [],
+    liveBlocks: [],
+    runKey: `activity:${sequenceScope}:start`,
+    sequenceScope,
   };
 
   for (const index of orderedIndexes) {
     const block = liveByIndex.get(index);
     if (block === undefined) {
-      flushLive();
-      collapsed.push(index);
+      builder.collapsed.push(index);
     } else {
-      flushCollapsed();
-      liveBlocks.push(block);
+      appendActiveSequenceBlock(parts, builder, block);
     }
   }
-  flushCollapsed();
-  flushLive();
-  return parts;
+  flushActivityRun(parts, builder, false);
+  return retainUnchangedSequenceParts(sequenceScope, parts);
+}
+
+function appendActiveSequenceBlock(
+  parts: ActiveTurnSequencePart[],
+  builder: ActiveSequenceBuilder,
+  block: RenderBlock,
+): void {
+  if (block.kind === "agentMessage" && (block.body ?? "").trim() !== "") {
+    flushActivityRun(parts, builder, true);
+    parts.push({ block, key: `agent:${block.key}`, kind: "agent" });
+    builder.runKey = `activity:${builder.sequenceScope}:after:${block.key}`;
+    return;
+  }
+  if (block.kind !== "userMessage" && block.kind !== "agentMessage") {
+    builder.liveBlocks.push(block);
+  }
+}
+
+function flushActivityRun(
+  parts: ActiveTurnSequencePart[],
+  builder: ActiveSequenceBuilder,
+  followedByAgent: boolean,
+): void {
+  if (builder.collapsed.length > 0) {
+    parts.push({
+      indexes: builder.collapsed,
+      key: `${builder.runKey}:collapsed`,
+      kind: "collapsedActivity",
+    });
+  }
+  if (builder.liveBlocks.length > 0) {
+    parts.push({
+      blocks: builder.liveBlocks,
+      followedByAgent,
+      key: `${builder.runKey}:live`,
+      kind: "activity",
+    });
+  }
+  builder.collapsed = [];
+  builder.liveBlocks = [];
+}
+
+function retainUnchangedSequenceParts(
+  sequenceScope: string,
+  next: ActiveTurnSequencePart[],
+): ActiveTurnSequencePart[] {
+  const previous = activeSequenceCache.get(sequenceScope);
+  const previousByKey = new Map(previous?.map((part) => [part.key, part] as const) ?? []);
+  const retained = next.map((part) => {
+    const candidate = previousByKey.get(part.key);
+    return candidate !== undefined && sameSequencePart(candidate, part) ? candidate : part;
+  });
+  const value = previous !== undefined && sameReferences(previous, retained) ? previous : retained;
+  activeSequenceCache.delete(sequenceScope);
+  activeSequenceCache.set(sequenceScope, value);
+  while (activeSequenceCache.size > ACTIVE_SEQUENCE_CACHE_MAX_ENTRIES) {
+    const oldest = activeSequenceCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    activeSequenceCache.delete(oldest);
+  }
+  return value;
+}
+
+function sameSequencePart(previous: ActiveTurnSequencePart, next: ActiveTurnSequencePart): boolean {
+  if (previous.kind !== next.kind) {
+    return false;
+  }
+  if (previous.kind === "agent") {
+    return sameAgentSequencePart(previous, next);
+  }
+  if (previous.kind === "activity") {
+    return sameActivitySequencePart(previous, next);
+  }
+  return sameCollapsedSequencePart(previous, next);
+}
+
+function sameAgentSequencePart(
+  previous: Extract<ActiveTurnSequencePart, { kind: "agent" }>,
+  next: ActiveTurnSequencePart,
+): boolean {
+  if (next.kind !== "agent") {
+    return false;
+  }
+  return previous.block === next.block;
+}
+
+function sameActivitySequencePart(
+  previous: Extract<ActiveTurnSequencePart, { kind: "activity" }>,
+  next: ActiveTurnSequencePart,
+): boolean {
+  if (next.kind !== "activity") {
+    return false;
+  }
+  if (previous.followedByAgent !== next.followedByAgent) {
+    return false;
+  }
+  return sameReferences(previous.blocks, next.blocks);
+}
+
+function sameCollapsedSequencePart(
+  previous: Extract<ActiveTurnSequencePart, { kind: "collapsedActivity" }>,
+  next: ActiveTurnSequencePart,
+): boolean {
+  if (next.kind !== "collapsedActivity") {
+    return false;
+  }
+  return sameNumbers(previous.indexes, next.indexes);
+}
+
+function sameReferences<Value>(previous: readonly Value[], next: readonly Value[]): boolean {
+  return previous.length === next.length && previous.every((value, index) => value === next[index]);
+}
+
+function sameNumbers(previous: readonly number[], next: readonly number[]): boolean {
+  return previous.length === next.length && previous.every((value, index) => value === next[index]);
 }
 
 export function completedTurnContent(blocks: RenderBlock[]): CompletedTurnContent {

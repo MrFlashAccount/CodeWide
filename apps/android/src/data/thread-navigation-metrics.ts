@@ -110,6 +110,7 @@ const STAGE_TIMINGS: Partial<Record<ThreadNavigationStage, TimingMetric>> = {
 let activeNavigation: ThreadNavigation | null = null;
 let recentNavigation: { expiresAtMs: number; navigation: ThreadNavigation } | null = null;
 let profileSnapshot: ThreadNavigationProfileSnapshot = { active: null, last: null };
+let nextNavigationProfileArmed = false;
 const profileListeners = new Set<() => void>();
 const POST_NAVIGATION_OBSERVATION_MS = 5000;
 const MAX_VISUAL_EVENTS = 256;
@@ -118,10 +119,14 @@ export function beginThreadNavigation(
   connectionId: string,
   threadId: string,
   trigger = "thread_list",
-): string {
+): string | null {
   if (activeNavigation !== null) {
     emitStage(activeNavigation, "superseded", {}, true);
   }
+  if (!nextNavigationProfileArmed) {
+    return null;
+  }
+  nextNavigationProfileArmed = false;
   const startedAtMs = performance.now();
   activeNavigation = {
     committedRowKeys: new Set(),
@@ -140,6 +145,11 @@ export function beginThreadNavigation(
   recordFrameContext(connectionId, threadId, activeNavigation.id);
   emitStage(activeNavigation, "selection_requested");
   return activeNavigation.id;
+}
+
+/** Arms detailed JS navigation instrumentation for exactly one subsequent chat selection. */
+export function armNextThreadNavigationProfile(): void {
+  nextNavigationProfileArmed = true;
 }
 
 export function markThreadNavigationStage(
@@ -322,7 +332,7 @@ export function measureThreadNavigationWork<T>(
   work: () => T,
   details: StageDetails = {},
 ): T {
-  if (threadId === null) {
+  if (threadId === null || !isThreadNavigationActiveFor(connectionId, threadId)) {
     return work();
   }
   const startedAtMs = performance.now();
@@ -520,6 +530,7 @@ function createId(): string {
 
 export function resetThreadNavigationMetricsForTests(): void {
   activeNavigation = null;
+  nextNavigationProfileArmed = false;
   recentNavigation = null;
   profileSnapshot = { active: null, last: null };
 }

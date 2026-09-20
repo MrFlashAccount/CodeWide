@@ -69,7 +69,12 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain(
     'requireStore(storeRef.current).setConnectionState(connectionId, "connecting")',
   );
-  expect(ownerWorkspaceRuntime).toContain("createThreadSummaryDatabase()");
+  expect(ownerWorkspaceRuntime).toContain("createThreadSummaryDatabase({");
+  expect(ownerWorkspaceRuntime).toContain("globalSupervisorStorage: globalSupervisor.storage");
+  expect(ownerWorkspaceRuntime).toContain("visibility: globalSupervisor.visibility");
+  expect(
+    ownerWorkspaceRuntime.indexOf("await createGlobalSupervisorWorkspaceBinding"),
+  ).toBeLessThan(ownerWorkspaceRuntime.indexOf("createThreadSummaryDatabase({"));
   expect(voiceWorkspace).not.toContain("reconcileBeforeSummary");
   expect(uiCachePersistence).toContain("registerUiCacheCollectionFlusher");
   expect(uiCachePersistence).not.toContain("createReactNativeSQLitePersistence");
@@ -80,13 +85,11 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain("mirrorQueuedCommands");
   expect(voiceWorkspace).not.toContain("sameConnections(");
   expect(ownerWorkspaceRuntime).toContain("supervisor.replaceConnections(initialProfiles)");
-  for (const owner of ["LocalhostPreview", "ForwardedLoopbackBrowser"]) {
-    const styles = readFileSync(
-      new URL(`../../src/features/ports/${owner}.styles.ts`, import.meta.url),
-      "utf8",
-    );
-    expect(styles).toContain("backgroundColor: colors.errorContainer");
-  }
+  const browserWorkspaceStyles = readFileSync(
+    new URL("../../src/features/browser/BrowserWorkspace.styles.ts", import.meta.url),
+    "utf8",
+  );
+  expect(browserWorkspaceStyles).toContain("backgroundColor: colors.errorContainer");
   const composerDeliveryMenu = readFileSync(
     new URL("../../src/features/composer/ComposerDeliveryMenu.native.tsx", import.meta.url),
     "utf8",

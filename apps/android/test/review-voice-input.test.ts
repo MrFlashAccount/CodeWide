@@ -80,8 +80,8 @@ describe("review voice input", () => {
     expect(imagePreviewHost).not.toContain("annotationDraft");
   });
 
-  it("connects review voice capture and fullscreen overlays to the shared native glow", () => {
+  it("keeps review voice capture independent from fullscreen window targeting", () => {
     expect(changesRoute).toContain("voiceRuntime={request.voiceRuntime}");
-    expect(fullscreenModal).toContain("setNativeVoiceAuraTarget(reactTag)");
+    expect(fullscreenModal).not.toContain("setNativeVoiceAuraTarget");
   });
 });

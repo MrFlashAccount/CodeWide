@@ -3,8 +3,15 @@ import { sameRouteSessionOwner, type V1RouteSessionOwner } from "../threads/thre
 
 const MAX_BROWSER_SESSIONS = 4;
 
+type BrowserRouteDestination = {
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly title: string;
+  readonly url: string;
+};
+
 /** Bounded browser destination retained outside route parameters. */
 type BrowserRouteSession = {
+  readonly headers?: Readonly<Record<string, string>>;
   readonly id: string;
   readonly owner: V1RouteSessionOwner;
   readonly title: string;
@@ -12,20 +19,21 @@ type BrowserRouteSession = {
   readonly url: string;
 };
 
-/** Retains secret-bearing forwarded URLs behind bounded opaque route identifiers. */
+/** Retains secret-bearing browser destinations behind bounded opaque route identifiers. */
 class BrowserRouteSessionService {
   readonly #sessions = new RouteSessionRegistry<BrowserRouteSession>({
     limit: MAX_BROWSER_SESSIONS,
     ttlMs: ROUTE_SESSION_TTL_MS,
   });
 
-  open(owner: V1RouteSessionOwner, title: string, url: string): BrowserRouteSession {
+  open(owner: V1RouteSessionOwner, destination: BrowserRouteDestination): BrowserRouteSession {
     const session = {
+      ...(destination.headers === undefined ? {} : { headers: destination.headers }),
       id: `browser-${globalThis.crypto.randomUUID()}`,
       owner,
-      title,
+      title: destination.title,
       touchedAt: Date.now(),
-      url,
+      url: destination.url,
     };
     this.#sessions.admit(session);
     return session;

@@ -1,11 +1,8 @@
 import { NativeEventEmitter, NativeModules } from "react-native";
 import { useSyncExternalStore } from "react";
 
-import { setOperationalDiagnosticsEnabled } from "../data/operational-metrics";
 import { resetPerformanceExperiments } from "../data/performance-experiments";
-import { setTelemetryEnabled } from "../data/telemetry";
 import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
-import { startFrameIncidentReporting } from "./frame-incidents.native";
 import { parseWindowFrameReport, type WindowFrameReport } from "../data/window-frame-report";
 
 export type PerformanceMetricPoint = {
@@ -68,6 +65,14 @@ export type HermesHeapSnapshot = {
   uri: string;
 };
 
+export type SavedNavigationProfile = {
+  collectedAtMs: number;
+  location: string;
+  name: string;
+  sizeBytes: number;
+  uri: string;
+};
+
 export type MemoryCheckpoint = {
   artAllocatedBytes: number | null;
   artFreedBytes: number | null;
@@ -101,6 +106,7 @@ export type MemoryReclamationActionResult = {
 
 type PerformanceBridge = {
   addListener: (eventName: string) => void;
+  armNextNavigationHermesProfile?: () => Promise<boolean>;
   beginNavigationTrace?: (traceId: string) => Promise<boolean>;
   captureHermesHeapSnapshot?: () => Promise<HermesHeapSnapshot>;
   captureMemoryCheckpoint?: () => Promise<unknown>;
@@ -115,10 +121,12 @@ type PerformanceBridge = {
   getWindowFrameReport?: () => Promise<unknown>;
   purgeNativeAllocator?: (exhaustive: boolean) => Promise<unknown>;
   removeListeners: (count: number) => void;
+  saveNavigationProfile?: (report: string) => Promise<unknown>;
   setPerformanceMonitoringEnabled: (enabled: boolean) => Promise<PerformanceMetricsSnapshot>;
 };
 
 const EVENT_NAME = "CodexPerformanceSnapshot";
+const HISTORY_CAPACITY = 60;
 // WHY: React Native's untyped module registry is the runtime capability boundary for this
 // optional native performance module; no generated declaration is available.
 // oxlint-disable-next-line typescript/no-unsafe-type-assertion
@@ -131,7 +139,7 @@ let snapshot: PerformanceMetricsSnapshot = {
   available: bridge !== undefined,
   current: null,
   enabled: false,
-  historyCapacity: 3600,
+  historyCapacity: HISTORY_CAPACITY,
   historySamples: 0,
   peakCpuPercent: 0,
   peakPssBytes: 0,
@@ -144,22 +152,42 @@ let snapshot: PerformanceMetricsSnapshot = {
 };
 
 function publish(next: PerformanceMetricsSnapshot): void {
-  snapshot = next;
-  setOperationalDiagnosticsEnabled(next.enabled);
-  setTelemetryEnabled(next.enabled);
+  const current = next.current;
+  const recent =
+    next.recent.length > 0 || current === null
+      ? next.recent
+      : appendRecentMetric(snapshot.recent, current);
+  snapshot = recent === next.recent ? next : { ...next, recent };
   listeners.forEach((listener) => {
     listener();
   });
 }
 
-function ensureNativeSubscription(): void {
-  if (bridge === undefined || emitter === null) {
-    return;
+function appendRecentMetric(
+  recent: readonly PerformanceMetricPoint[],
+  current: CurrentPerformanceMetrics,
+): PerformanceMetricPoint[] {
+  if (recent.at(-1)?.sampledAtMs === current.sampledAtMs) {
+    return recent.slice();
   }
-  if (subscription === null) {
-    subscription = emitter.addListener(EVENT_NAME, (next: PerformanceMetricsSnapshot) => {
-      publish(next);
-    });
+  return [
+    ...recent.slice(-(HISTORY_CAPACITY - 1)),
+    {
+      cpuPercent: current.cpuPercent,
+      jankPercent: current.jankPercent,
+      p95FrameMs: current.p95FrameMs,
+      pssBytes: current.pssBytes,
+      renderedFps: current.renderedFps,
+      rxBytesPerSecond: current.rxBytesPerSecond,
+      sampledAtMs: current.sampledAtMs,
+      txBytesPerSecond: current.txBytesPerSecond,
+    },
+  ];
+}
+
+function loadNativeSnapshot(): void {
+  if (bridge === undefined) {
+    return;
   }
   if (loading === null) {
     loading = bridge
@@ -175,17 +203,15 @@ function ensureNativeSubscription(): void {
 // Restore the persisted Data for geeks state during app bootstrap. Navigation
 // may happen before Settings is ever opened, so diagnostics cannot be lazily
 // enabled by the settings screen itself.
-ensureNativeSubscription();
-const drainFrameIncidents = bridge?.drainFrameIncidents;
-if (typeof drainFrameIncidents === "function") {
-  startFrameIncidentReporting({
-    drainFrameIncidents: async () => drainFrameIncidents.call(bridge),
-  });
-}
-
+loadNativeSnapshot();
 export function subscribePerformanceMetrics(listener: () => void): () => void {
   listeners.add(listener);
-  ensureNativeSubscription();
+  if (subscription === null && emitter !== null) {
+    subscription = emitter.addListener(EVENT_NAME, (next: PerformanceMetricsSnapshot) => {
+      publish(next);
+    });
+  }
+  loadNativeSnapshot();
   return () => {
     listeners.delete(listener);
     if (listeners.size === 0) {
@@ -200,6 +226,14 @@ export function usePerformanceMetrics(): PerformanceMetricsSnapshot {
     subscribePerformanceMetrics,
     () => snapshot,
     () => snapshot,
+  );
+}
+
+export function usePerformanceMonitoringEnabled(): boolean {
+  return useSyncExternalStore(
+    subscribePerformanceMetrics,
+    () => snapshot.enabled,
+    () => snapshot.enabled,
   );
 }
 
@@ -229,6 +263,13 @@ export async function beginNavigationFrameTrace(traceId: string): Promise<boolea
   return bridge.beginNavigationTrace(traceId).catch(() => false);
 }
 
+export async function armNextNavigationHermesProfile(): Promise<void> {
+  if (bridge === undefined || typeof bridge.armNextNavigationHermesProfile !== "function") {
+    throw new Error("Hermes navigation profiling requires a newer Android APK");
+  }
+  await bridge.armNextNavigationHermesProfile();
+}
+
 export async function endNavigationFrameTrace(
   traceId: string,
 ): Promise<ThreadNavigationFrameProfile | null> {
@@ -243,6 +284,30 @@ export async function captureHermesHeapSnapshot(): Promise<HermesHeapSnapshot> {
     throw new Error("Hermes heap capture requires a newer Android APK");
   }
   return bridge.captureHermesHeapSnapshot();
+}
+
+export async function saveNavigationProfile(report: string): Promise<SavedNavigationProfile> {
+  if (bridge === undefined || typeof bridge.saveNavigationProfile !== "function") {
+    throw new Error("Saving a navigation profile requires a newer Android APK");
+  }
+  const saved = await bridge.saveNavigationProfile(report);
+  if (!isSavedNavigationProfile(saved)) {
+    throw new Error("Android returned an invalid saved navigation profile");
+  }
+  return saved;
+}
+
+function isSavedNavigationProfile(value: unknown): value is SavedNavigationProfile {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof Reflect.get(value, "collectedAtMs") === "number" &&
+    typeof Reflect.get(value, "location") === "string" &&
+    typeof Reflect.get(value, "name") === "string" &&
+    typeof Reflect.get(value, "sizeBytes") === "number" &&
+    typeof Reflect.get(value, "uri") === "string"
+  );
 }
 
 const MAX_MEMORY_REPORT_CHARACTERS = 512 * 1024;

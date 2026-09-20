@@ -17,6 +17,28 @@ export type CachedTurnProjection = {
   userBlocks: RenderBlock[];
 };
 
+type CachedRenderBlock = { key: string; value: RenderBlock };
+type RawTurnItem = Thread["turns"][number]["items"][number];
+
+const TURN_PROJECTION_CACHE_MAX_ENTRIES = 64;
+const TURN_PROJECTION_REFERENCE_FIELDS = [
+  "compactionBlocks",
+  "latestAgentBlock",
+  "liveActivityBlocks",
+  "preTurnBlocks",
+  "renderWindow",
+  "userBlocks",
+] as const;
+const RENDER_WINDOW_REFERENCE_FIELDS = [
+  "collapsedActivityIndexes",
+  "compactionIndexes",
+  "liveActivityIndexes",
+  "preTurnActivityIndexes",
+  "userItemIndexes",
+] as const;
+const renderBlockCache = new WeakMap<RawTurnItem, CachedRenderBlock>();
+const turnProjectionCache = new Map<string, CachedTurnProjection>();
+
 export function projectTurnProjection(
   turn: Extract<TimelineItem, { kind: "turn" }>,
 ): CachedTurnProjection {
@@ -44,14 +66,74 @@ export function projectTurnProjection(
     const item = rawTurn.items[index];
     return item === undefined ? [] : [projectThreadItem(turn, item, index)];
   });
-  return {
+  return retainTurnProjection(turn.key, {
     compactionBlocks,
     latestAgentBlock,
     liveActivityBlocks,
     preTurnBlocks,
     renderWindow,
     userBlocks,
+  });
+}
+
+function retainTurnProjection(key: string, next: CachedTurnProjection): CachedTurnProjection {
+  const previous = turnProjectionCache.get(key);
+  if (previous === undefined) {
+    storeTurnProjection(key, next);
+    return next;
+  }
+  const value: CachedTurnProjection = {
+    compactionBlocks: retainReferences(previous.compactionBlocks, next.compactionBlocks),
+    latestAgentBlock: next.latestAgentBlock,
+    liveActivityBlocks: retainReferences(previous.liveActivityBlocks, next.liveActivityBlocks),
+    preTurnBlocks: retainReferences(previous.preTurnBlocks, next.preTurnBlocks),
+    renderWindow: retainRenderWindow(previous.renderWindow, next.renderWindow),
+    userBlocks: retainReferences(previous.userBlocks, next.userBlocks),
   };
+  const retained = projectionReferencesEqual(previous, value) ? previous : value;
+  storeTurnProjection(key, retained);
+  return retained;
+}
+
+function storeTurnProjection(key: string, value: CachedTurnProjection): void {
+  turnProjectionCache.delete(key);
+  turnProjectionCache.set(key, value);
+  while (turnProjectionCache.size > TURN_PROJECTION_CACHE_MAX_ENTRIES) {
+    const oldest = turnProjectionCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    turnProjectionCache.delete(oldest);
+  }
+}
+
+function retainRenderWindow(
+  previous: CachedTurnProjection["renderWindow"] | undefined,
+  next: CachedTurnProjection["renderWindow"],
+): CachedTurnProjection["renderWindow"] {
+  if (
+    previous !== undefined &&
+    previous.latestAgentIndex === next.latestAgentIndex &&
+    RENDER_WINDOW_REFERENCE_FIELDS.every((field) => sameValues(previous[field], next[field]))
+  ) {
+    return previous;
+  }
+  return next;
+}
+
+function projectionReferencesEqual(
+  previous: CachedTurnProjection,
+  next: CachedTurnProjection,
+): boolean {
+  return TURN_PROJECTION_REFERENCE_FIELDS.every((field) => previous[field] === next[field]);
+}
+
+function retainReferences<Value>(previous: Value[] | undefined, next: Value[]): Value[] {
+  return previous !== undefined && sameValues(previous, next) ? previous : next;
+}
+
+function sameValues<Value>(previous: readonly Value[], next: readonly Value[]): boolean {
+  return previous.length === next.length && previous.every((value, index) => value === next[index]);
 }
 
 export function preTurnBlockUsesDisclosure(block: RenderBlock): boolean {
@@ -76,9 +158,20 @@ export function projectThreadItem(
   rawItem: Thread["turns"][number]["items"][number],
   index: number,
 ): RenderBlock {
-  return toRenderBlock(
-    normalizeThreadItem(connectionId(row.connectionId), row.threadId, row.turn.id, rawItem, index),
+  const normalized = normalizeThreadItem(
+    connectionId(row.connectionId),
+    row.threadId,
+    row.turn.id,
+    rawItem,
+    index,
   );
+  const cached = renderBlockCache.get(rawItem);
+  if (cached?.key === normalized.key) {
+    return cached.value;
+  }
+  const value = toRenderBlock(normalized);
+  renderBlockCache.set(rawItem, { key: normalized.key, value });
+  return value;
 }
 
 export function completedActivityItemCount(turn: Thread["turns"][number]): number {
@@ -174,6 +267,10 @@ export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number])
 }
 
 import { projectAgentArtifacts } from "../../../rendering/agent-artifacts";
+import {
+  attachmentSourceKey,
+  type UserMessageAttachment,
+} from "../../../rendering/user-message-attachments";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
 import {
   projectCachedLiveMarkdown,
@@ -182,6 +279,12 @@ import {
 import { richMarkdownLayout } from "../../../rendering/rich-markdown-layout";
 import { isAgentMessageStillStreaming } from "../../../rendering/thread-render-window";
 import { activeTurnSequence } from "../../../rendering/turn-sequence";
+
+const agentArtifactCache = new Map<string, UserMessageAttachment[]>();
+const visibleAgentPartCache = new WeakMap<
+  Extract<TurnSequencePart, { kind: "agent" }>,
+  { body: string; value: Extract<TurnSequencePart, { kind: "agent" }> }
+>();
 /** Builds a turn's visible presentation from the retained projection and current search intent. */
 export function projectTurnPresentation(
   turn: Extract<TimelineItem, { kind: "turn" }>,
@@ -190,7 +293,7 @@ export function projectTurnPresentation(
   hasPendingRequest: boolean,
 ) {
   const rawTurn = turn.turn;
-  const artifacts = projectAgentArtifacts(rawTurn);
+  const artifacts = retainAgentArtifacts(turn.key, projectAgentArtifacts(rawTurn));
   const {
     compactionBlocks,
     latestAgentBlock,
@@ -221,7 +324,7 @@ export function projectTurnPresentation(
   );
   const liveActivitySequence =
     rawTurn.status === "inProgress"
-      ? activeTurnSequence(liveActivityEntries, renderWindow.collapsedActivityIndexes)
+      ? activeTurnSequence(liveActivityEntries, renderWindow.collapsedActivityIndexes, turn.key)
       : [];
   const liveMarkdownProjections = new Map<string, LiveMarkdownProjection>();
   const visibleLiveActivitySequence = liveActivitySequence.map((part) => {
@@ -235,7 +338,7 @@ export function projectTurnPresentation(
       itemId !== null && !isAgentMessageStillStreaming(rawTurn, itemId),
     );
     liveMarkdownProjections.set(part.block.key, projection);
-    return { ...part, block: { ...part.block, body: projection.visibleSource } };
+    return visibleAgentPart(part, projection.visibleSource);
   });
   const latestAgentProjection =
     rawTurn.status === "inProgress" && latestAgentBlock !== null
@@ -310,4 +413,56 @@ export function projectTurnPresentation(
     userBlocks,
     visibleLiveActivitySequence,
   };
+}
+
+function visibleAgentPart(
+  part: Extract<TurnSequencePart, { kind: "agent" }>,
+  body: string,
+): Extract<TurnSequencePart, { kind: "agent" }> {
+  if ((part.block.body ?? "") === body) {
+    return part;
+  }
+  const cached = visibleAgentPartCache.get(part);
+  if (cached?.body === body) {
+    return cached.value;
+  }
+  const value: Extract<TurnSequencePart, { kind: "agent" }> = {
+    ...part,
+    block: { ...part.block, body },
+  };
+  visibleAgentPartCache.set(part, { body, value });
+  return value;
+}
+
+function retainAgentArtifacts(key: string, next: UserMessageAttachment[]): UserMessageAttachment[] {
+  const previous = agentArtifactCache.get(key);
+  const value = previous !== undefined && sameAttachments(previous, next) ? previous : next;
+  agentArtifactCache.delete(key);
+  agentArtifactCache.set(key, value);
+  while (agentArtifactCache.size > TURN_PROJECTION_CACHE_MAX_ENTRIES) {
+    const oldest = agentArtifactCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    agentArtifactCache.delete(oldest);
+  }
+  return value;
+}
+
+function sameAttachments(
+  previous: readonly UserMessageAttachment[],
+  next: readonly UserMessageAttachment[],
+): boolean {
+  return (
+    previous.length === next.length &&
+    previous.every((value, index) => {
+      const candidate = next[index];
+      return (
+        candidate !== undefined &&
+        value.kind === candidate.kind &&
+        value.name === candidate.name &&
+        attachmentSourceKey(value.source) === attachmentSourceKey(candidate.source)
+      );
+    })
+  );
 }

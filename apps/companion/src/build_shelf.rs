@@ -11,6 +11,7 @@ use serde_json::json;
 
 const REQUEST_HEADERS: &[&str] = &[
     "accept",
+    "accept-encoding",
     "if-none-match",
     "range",
     "expo-current-update-id",

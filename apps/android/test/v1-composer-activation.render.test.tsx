@@ -5,15 +5,13 @@ import type {
   StoredComposerPreferences,
   StoredDraftAttachment,
 } from "../src/data/thread-ui-state-types";
+import { composerSessionFixture } from "./composer-session-fixture";
 
 type DraftCapabilities = Parameters<typeof useComposerDraftCommands>[0];
 function draftCapabilities(threadId: string): DraftCapabilities {
   return {
+    composerSession: composerSessionFixture(threadId),
     queuedComposerEdit: null,
-    setQueuedComposerEdit: () => undefined,
-    latestDraftRef: { current: { latest: threadId } },
-    latestAttachmentsRef: { current: { latest: [] } },
-    composerMarkdownRef: { current: threadId },
     draftConnectionId: "server",
     draftThreadId: threadId,
     saveDraft: jest.fn(async () => undefined),
@@ -49,10 +47,10 @@ it("retains captured draft mutation ownership while current editor callbacks fol
   });
   expect(first.saveDraft).toHaveBeenCalledWith("server", "first", "Recovered first draft");
   expect(first.saveDraftAttachments).toHaveBeenCalledWith("server", "first", [attachment]);
-  expect(first.latestAttachmentsRef.current.latest[0]).toBe(attachment);
-  expect(second.latestAttachmentsRef.current.latest).toEqual([]);
+  expect(first.composerSession.read().attachments[0]).toBe(attachment);
+  expect(second.composerSession.read().attachments).toEqual([]);
   expect(second.saveDraft).toHaveBeenCalledWith("server", "second", "Second draft edited");
-  expect(second.latestDraftRef.current.latest).toBe("Second draft edited");
+  expect(second.composerSession.read().plainText).toBe("Second draft edited");
 });
 
 const preferences: StoredComposerPreferences = {
@@ -65,7 +63,9 @@ const preferences: StoredComposerPreferences = {
 };
 type SettingsCapabilities = Parameters<typeof useComposerSettings>[0];
 function settingsCapabilities(scope: string): SettingsCapabilities {
+  const composerSession = composerSessionFixture(scope, preferences);
   return {
+    composerSession,
     composerScope: scope,
     newChat: true,
     cwd: "/workspace",
@@ -74,9 +74,6 @@ function settingsCapabilities(scope: string): SettingsCapabilities {
     workspaceResources: null,
     controlsResourceId: null,
     composerPreferences: preferences,
-    latestComposerPreferencesRef: {
-      current: { scope, rendered: preferences, latest: preferences },
-    },
     conversationOwner: { isCurrent: () => true, hasReplacement: () => false },
     onLoadControls: undefined,
     onUpdateSettings: undefined,
@@ -103,12 +100,12 @@ it("restores captured skill preferences to the outgoing draft without replacing 
     }));
     restore((current) => ({ ...current, skillPaths: ["/skills/first"] }));
   });
-  expect(first.latestComposerPreferencesRef.current.latest.skillPaths).toEqual(["/skills/first"]);
-  expect(second.latestComposerPreferencesRef.current.latest.model).toBe("new-model");
-  expect(second.latestComposerPreferencesRef.current.latest.skillPaths).toEqual([]);
+  expect(first.composerSession.read().preferences.skillPaths).toEqual(["/skills/first"]);
+  expect(second.composerSession.read().preferences.model).toBe("new-model");
+  expect(second.composerSession.read().preferences.skillPaths).toEqual([]);
   expect(first.saveComposerPreferences).toHaveBeenCalledWith(
     "server",
     "first",
-    first.latestComposerPreferencesRef.current.latest,
+    first.composerSession.read().preferences,
   );
 });

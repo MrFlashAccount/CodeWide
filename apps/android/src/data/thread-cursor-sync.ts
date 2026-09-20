@@ -1,6 +1,6 @@
 import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
-import { projectedTurnMetadata } from "@codewide/sync-client";
+import { projectedTurnMetadata, reconcileActiveTurnItems } from "@codewide/sync-client";
 
 import { isThreadHistorySourceWitness } from "./thread-history-source-witness";
 
@@ -228,33 +228,11 @@ function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | nul
   const previous = cached?.turns.find(
     (turn) => turn.id === checkpoint.id && turn.status === "inProgress",
   );
-  if (
-    previous === undefined ||
-    checkpoint.itemsView !== "summary" ||
-    previous.itemsView === "notLoaded"
-  ) {
+  if (previous === undefined || previous.itemsView === "notLoaded") {
     return checkpoint;
   }
 
-  const checkpointItems = new Map(checkpoint.items.map((item) => [item.id, item]));
-  const items = previous.items.map((item) => {
-    const current = checkpointItems.get(item.id);
-    if (current === undefined) {
-      return item;
-    }
-    checkpointItems.delete(item.id);
-    if (
-      item.type === "agentMessage" &&
-      current.type === "agentMessage" &&
-      item.text.startsWith(current.text)
-    ) {
-      return item.text === current.text ? current : { ...current, text: item.text };
-    }
-    return current;
-  });
-  for (const item of checkpointItems.values()) {
-    items.push(item);
-  }
+  const items = reconcileActiveTurnItems(previous.items, checkpoint.items);
 
   const previousMetadata = projectedTurnMetadata(previous);
   const checkpointMetadata = projectedTurnMetadata(checkpoint);
@@ -273,7 +251,10 @@ function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | nul
     ...checkpoint,
     ...codewide,
     items,
-    itemsView: previous.itemsView,
+    itemsView:
+      previous.itemsView === "full" || checkpoint.itemsView === "notLoaded"
+        ? previous.itemsView
+        : checkpoint.itemsView,
   };
 }
 

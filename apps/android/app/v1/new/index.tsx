@@ -1,5 +1,5 @@
 import { useSelector } from "@legendapp/state/react";
-import { useRouter } from "expo-router";
+import { useIsFocused, useRouter } from "expo-router";
 
 import { workspaceRuntime } from "../../../src/data/workspace-runtime";
 import { ActiveWorkspaceConversation } from "../../../src/features/conversation/ConversationWorkspace";
@@ -23,6 +23,7 @@ const ignoreRoute = (): void => undefined;
 /** Composes the private V1 draft resource or asks for its server qualification. */
 export default function V1NewThreadRoute(): React.JSX.Element {
   const router = useRouter();
+  const visible = useIsFocused();
   const resources = useWorkspaceRouteResources();
   const draft = useSelector(() => newThreadService.draft$.get());
   const owner = draft === null ? null : draftRouteSessionOwner(draft.id);
@@ -93,7 +94,7 @@ export default function V1NewThreadRoute(): React.JSX.Element {
     openTool,
     openTurnChanges: ignoreRoute,
   };
-  const destination = draft === null ? null : { draft, generation: 0, kind: "draft" as const };
+  const destination = draft === null ? null : { draft, kind: "draft" as const };
   if (draft === null) {
     return (
       <NewThreadServerSheet
@@ -110,7 +111,7 @@ export default function V1NewThreadRoute(): React.JSX.Element {
           return Promise.resolve();
         }}
         servers={resources.list.servers}
-        visible
+        visible={visible}
       />
     );
   }

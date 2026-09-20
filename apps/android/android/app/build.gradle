@@ -12,8 +12,8 @@ def releaseKeyAlias = System.getenv("CODEWIDE_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("CODEWIDE_RELEASE_KEY_PASSWORD")
 def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL") ?: "https://updates.example.invalid/api/updates"
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isBlank() }
-def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "160").toInteger()
-def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.147"
+def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "185").toInteger()
+def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.172"
 def nativeCodeAssetsDir = file("$buildDir/generated/nativeCodeAssets")
 def iconFontAssetsDir = file("$buildDir/generated/iconFontAssets")
 def iconFontSourceDir = file("$projectRoot/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts")
@@ -258,6 +258,21 @@ tasks.named("preBuild").configure {
     dependsOn("prepareIconFontAssets")
 }
 
+// Metro names bundled resources from their physical pnpm path. When a peer
+// dependency changes that path, its output task leaves the old resource names
+// behind and Android packages both copies. Clear only Metro's release resource
+// output before rebundling; Gradle and Metro recreate the complete directory.
+def cleanReleaseReactResources = tasks.register("cleanReleaseReactResources") {
+    outputs.upToDateWhen { false }
+    doLast {
+        delete(file("$buildDir/generated/res/react/release"))
+    }
+}
+
+tasks.matching { it.name == "createBundleReleaseJsAndAssets" }.configureEach {
+    dependsOn(cleanReleaseReactResources)
+}
+
 gradle.taskGraph.whenReady { graph ->
     def signedArtifactRequested = graph.allTasks.any { it.path.endsWith(":assembleRelease") || it.path.endsWith(":bundleRelease") }
     if (signedArtifactRequested && !hasReleaseSigning) {
@@ -288,8 +303,17 @@ gradle.taskGraph.whenReady { graph ->
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    // react-native-webrtc declares org.jitsi:webrtc with a dynamic 124.+ selector.
+    // Keep the binary media engine reproducible across APK builds.
+    implementation("org.jitsi:webrtc") {
+        version {
+            strictly("124.0.0")
+        }
+    }
     // Public DialogWindowProvider is the window boundary used by Expo's Compose sheets.
     implementation("androidx.compose.ui:ui-android:1.10.6")
+    // The system overlay is outside React Native's view tree; AndroidX owns its interruptible spring motion.
+    implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     baselineProfile project(":baselineprofile")
     testImplementation("junit:junit:4.13.2")

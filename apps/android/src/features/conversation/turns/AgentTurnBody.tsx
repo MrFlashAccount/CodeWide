@@ -102,7 +102,7 @@ export function renderAgentTurnBody(
               <LiveAgentResponse
                 animateNew={animateLiveUpdates}
                 cacheKey={part.block.key}
-                fill={richMarkdownLayout(part.block.body) === "fill"}
+                fill={richMarkdownLayout(renderBlockBody(part.block)) === "fill"}
                 key={part.key}
                 projection={liveMarkdownProjection(presentation, part.block.key)}
                 streamMetricKey={
@@ -139,7 +139,7 @@ export function renderAgentTurnBody(
               {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
             />
             {presentation.artifacts.some((attachment) => attachment.kind !== "image") && (
-              <MessageAttachmentGrid>
+              <MessageAttachmentGrid style={styles.agentAttachmentGrid}>
                 {presentation.artifacts
                   .filter((attachment) => attachment.kind !== "image")
                   .map((attachment) => (
@@ -171,6 +171,10 @@ export function renderAgentTurnBody(
       </BubbleContent>
     </ArtifactImageReferences.Provider>
   );
+}
+
+function renderBlockBody(block: { body: string | null }): string {
+  return block.body ?? "";
 }
 
 function liveMarkdownProjection(

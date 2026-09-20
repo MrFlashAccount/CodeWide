@@ -31,7 +31,9 @@ it("preserves composer integration contracts", () => {
       "onClose();",
     ]),
   ).toBe(true);
-  expect(ownerComposerControlChips).toContain("accessibilityLabel={`Model and thinking:");
+  expect(ownerComposerControlChips).toContain(
+    "`Model and thinking: ${modelLabel}, ${effectiveEffort ?? \"not specified\"}`",
+  );
   expect(ownerComposerControlChips).toContain("<ModelThinkingMenu");
   expect(ownerComposerControlChips).toContain("<PermissionsMenu");
   expect(ownerComposerControlChips).toMatch(
@@ -83,7 +85,7 @@ it("preserves composer integration contracts", () => {
   );
   expect(ownerComposerFeature).toContain("if (open)");
   expect(ownerComposerFeature).toContain("props.dismissComposerKeyboardForOverlay();");
-  expect(ownerComposerAccessoryTray).not.toContain('icon: "terminal-outline"');
+  expect(ownerComposerAccessoryTray).toContain('icon: "terminal-outline"');
   expect(ownerComposerAccessoryTray).not.toContain('id: "ports"');
   const composerContextChip = sourceObjectDeclaration(composerControlStyles, "composerContextChip");
   expect(composerContextChip).toContain("flexGrow: 0");

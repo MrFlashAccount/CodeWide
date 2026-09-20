@@ -65,12 +65,12 @@ import { rollbackOwnedModelSelection } from "./submissionRecovery";
 export function useComposerSettings({
   composerPreferences,
   composerScope,
+  composerSession,
   controlsResourceId,
   conversationOwner,
   cwd,
   draftConnectionId,
   draftThreadId,
-  latestComposerPreferencesRef,
   newChat,
   onLoadControls,
   onUpdateSettings,
@@ -89,11 +89,12 @@ export function useComposerSettings({
     () => null,
   );
 
-  const updateCurrentPreferences = (
+  const updatePreferences = (
+    owner: Pick<typeof composerSession, "read" | "updatePreferences">,
     apply: (current: StoredComposerPreferences) => StoredComposerPreferences,
   ) => {
-    const next = apply(latestComposerPreferencesRef.current.latest);
-    latestComposerPreferencesRef.current.latest = next;
+    const next = apply(owner.read().preferences);
+    owner.updatePreferences(() => next);
     if (
       saveComposerPreferences !== undefined &&
       draftConnectionId !== null &&
@@ -101,6 +102,11 @@ export function useComposerSettings({
     ) {
       void saveComposerPreferences(draftConnectionId, draftThreadId, next).catch(() => undefined);
     }
+  };
+  const updateCurrentPreferences = (
+    apply: (current: StoredComposerPreferences) => StoredComposerPreferences,
+  ) => {
+    updatePreferences(composerSession, apply);
   };
 
   // Existing threads are configured via thread/settings/update. Re-sending a
@@ -244,7 +250,12 @@ export function useComposerSettings({
     });
   });
   const updateComposerPreferences = useEvent(updateCurrentPreferences);
-  const capturePreferenceUpdate = useEvent(() => updateCurrentPreferences);
+  const capturePreferenceUpdate = useEvent(() => {
+    const owner = composerSession.capture();
+    return (apply: (current: StoredComposerPreferences) => StoredComposerPreferences) => {
+      updatePreferences(owner, apply);
+    };
+  });
   return {
     captureControlsResource,
     capturePreferenceUpdate,

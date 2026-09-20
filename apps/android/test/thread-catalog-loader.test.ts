@@ -52,7 +52,7 @@ describe("bounded thread catalog page", () => {
     expect(page.threads).toEqual([{ thread: root, archived: false }]);
     expect(page.nextCursor).toBe("next");
     expect(test.rpc).toHaveBeenCalledExactlyOnceWith("thread/list", expect.objectContaining({
-      archived: false, cursor: null, limit: 36, useStateDbOnly: true,
+      archived: false, cursor: null, limit: 36, sortKey: "recency_at", useStateDbOnly: true,
     }));
   });
 

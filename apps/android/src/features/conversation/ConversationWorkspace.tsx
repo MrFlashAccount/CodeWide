@@ -5,7 +5,7 @@ import {
 } from "../../data/workspace-resource-keys";
 import { useTurnChangesLoader } from "../changes/turnChanges";
 import { useGoalCommands } from "../goal/goalCommands";
-import { useLoopbackNavigation } from "../ports/browserNavigation";
+import { useLoopbackNavigation } from "../ports/loopbackNavigation";
 import { useActiveProjectSelection } from "../projects/activeProjectSelection";
 import { createNewChatSubmission } from "../projects/newChatSubmission";
 import { useQueueCommands } from "../queue/queueCommands";
@@ -139,7 +139,6 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
               threadUiStateDatabase: props.runtime.threadUiState,
             },
             threadId: scope.activeRemoteThreadId,
-            threadOpenGeneration: scope.threadOpenGeneration,
           }
         : null;
   const conversationActions = createConversationScopeBindings(

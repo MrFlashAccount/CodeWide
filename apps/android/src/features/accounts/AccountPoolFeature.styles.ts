@@ -10,7 +10,20 @@ import {
   typeWeight,
 } from "../../theme";
 
+const RESET_METER_WIDTH = 112;
+const RESET_PROGRESS_HEIGHT = 5;
+
 export const styles = StyleSheet.create({
+  accountBankedReset: {
+    alignItems: "center",
+    borderRadius: radii.small,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: touchTarget,
+  },
+  accountBankedResetPressed: {
+    backgroundColor: colors.surfaceContainerHigh,
+  },
   accountLoginCode: {
     color: colors.text,
     ...typeScale.heading,
@@ -90,12 +103,6 @@ export const styles = StyleSheet.create({
     color: colors.text,
     ...typeScale.heading,
   },
-  accountPoolAddButton: {
-    flexDirection: "row",
-    gap: spacing.xs,
-    marginTop: spacing.xs,
-    minHeight: controlSize.regular,
-  },
   accountPoolEditor: {
     gap: 0,
     marginTop: spacing.md,
@@ -107,21 +114,86 @@ export const styles = StyleSheet.create({
     marginBottom: spacing.xs,
     minHeight: controlSize.touch,
   },
-  accountPoolLimit: {
-    color: colors.text,
-    flexShrink: 0,
-    ...typeScale.label,
-    fontVariant: ["tabular-nums"],
-    fontWeight: typeWeight.semibold,
-  },
-  accountPoolLimitPending: {
-    color: colors.textDim,
-    fontWeight: typeWeight.semibold,
-  },
   accountPoolMenuAnchor: {
     flexShrink: 0,
     height: touchTarget,
     width: touchTarget,
+  },
+  accountResetDetails: {
+    gap: spacing.xs,
+  },
+  accountResetDetailsSeparator: {
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  accountResetDetailsSurface: {
+    backgroundColor: colors.surfaceContainer,
+    paddingBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  accountResetDetailsSurfaceLast: {
+    borderBottomLeftRadius: radii.medium,
+    borderBottomRightRadius: radii.medium,
+  },
+  accountResetError: {
+    color: colors.red,
+    ...typeScale.caption,
+  },
+  accountResetProgressFill: {
+    borderRadius: radii.pill,
+    height: "100%",
+  },
+  accountResetProgressTrack: {
+    backgroundColor: colors.surfaceContainerHighest,
+    borderRadius: radii.pill,
+    height: RESET_PROGRESS_HEIGHT,
+    overflow: "hidden",
+    width: "100%",
+  },
+  accountResetSectionTitle: {
+    color: colors.text,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+    marginTop: spacing.xxs,
+  },
+  accountResetStatus: {
+    color: colors.textDim,
+    ...typeScale.label,
+  },
+  accountResetUnavailable: {
+    color: colors.textDim,
+    ...typeScale.label,
+  },
+  accountResetWindow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: controlSize.regular,
+  },
+  accountResetWindowCopy: {
+    flex: 1,
+    gap: spacing.optical,
+  },
+  accountResetWindowLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  accountResetWindowMeter: {
+    alignItems: "flex-end",
+    gap: spacing.xxs,
+    width: RESET_METER_WIDTH,
+  },
+  accountResetWindowRemaining: {
+    color: colors.text,
+    ...typeScale.label,
+    fontVariant: ["tabular-nums"],
+    fontWeight: typeWeight.semibold,
+  },
+  accountResetWindowTime: {
+    color: colors.textDim,
+    ...typeScale.caption,
+    fontVariant: ["tabular-nums"],
   },
   connectionMiniButton: {
     alignItems: "center",
@@ -129,11 +201,6 @@ export const styles = StyleSheet.create({
     height: touchTarget,
     justifyContent: "center",
     width: touchTarget,
-  },
-  connectionStateDot: {
-    borderRadius: radii.pill,
-    height: 7,
-    width: 7,
   },
   disabled: { opacity: 0.42 },
   errorText: {
@@ -166,19 +233,6 @@ export const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: colors.onPrimary,
-    fontWeight: typeWeight.semibold,
-  },
-  secondaryButton: {
-    alignItems: "center",
-    borderColor: colors.outline,
-    borderRadius: radii.medium,
-    borderWidth: 1,
-    justifyContent: "center",
-    minHeight: touchTarget,
-    paddingHorizontal: spacing.md,
-  },
-  secondaryButtonText: {
-    color: colors.text,
     fontWeight: typeWeight.semibold,
   },
 });

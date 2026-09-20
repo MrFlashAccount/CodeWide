@@ -18,14 +18,14 @@ const ownerVoice = readFileSync(
   "utf8",
 );
 
-const ownerHistoryAnchor = readFileSync(
-  new URL("../src/features/conversation/timeline/historyAnchor.ts", import.meta.url),
+const ownerTimelineJump = readFileSync(
+  new URL("../src/features/conversation/timeline/timelineJump.ts", import.meta.url),
   "utf8",
 );
 
-const anchor = compactSource(
+const timelineJump = compactSource(
   readFileSync(
-    new URL("../src/features/conversation/timeline/historyAnchor.ts", import.meta.url),
+    new URL("../src/features/conversation/timeline/timelineJump.ts", import.meta.url),
     "utf8",
   ),
 );
@@ -70,9 +70,9 @@ describe("composer delivery mode", () => {
   });
 
   it("loads the latest range before asking LegendList to reveal a new turn", () => {
-    expect(anchor).toMatch(/void historyViewport\s*\.loadLatest\(\)\s*\.then\(\(\) => \{/u);
-    expect(ownerHistoryAnchor).toContain(
-      "timelineRef.current?.scrollToEnd({ animated: false }).catch(() => undefined);",
+    expect(timelineJump).toMatch(/void historyViewport\s*\.loadLatest\(\)\s*\.then\(\(\) => \{/u);
+    expect(ownerTimelineJump).toContain(
+      "await list.scrollToEnd({ animated: false }).catch(() => undefined);",
     );
     expect(screen).not.toContain("historyViewport.revealLatest");
     expect(screen).not.toContain("markTimelineAtLatest");

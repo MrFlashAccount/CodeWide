@@ -114,10 +114,13 @@ apps/android/src/                                  existing anchor
 │   ├── terminal/ [E/M]                            terminal UI lifecycle ← screen + ui/TerminalWorkspace
 │   │   ├── TerminalFeature.tsx                    tabs and explicit open/close over retained native store
 │   │   └── backgroundTerminals.tsx                background process list/termination
-│   ├── ports/ [E/M]                               forwarding/browser interaction ← screen + ui forwarding/browser
-│   │   ├── PortsFeature.tsx                       create/revoke/open tunnel capabilities
-│   │   ├── browserNavigation.ts                   loopback opening and browser session policy
-│   │   └── browser/ [M]                           existing browser/ family + ui/InternalBrowser platform family
+│   ├── ports/ [E/M]                               forwarding and tunnel interaction
+│   │   ├── PortsFeature.tsx                       create/revoke tunnel and invoke injected browser capability
+│   │   └── loopbackNavigation.ts                  qualify and start forwards before browser handoff
+│   ├── browser/ [E/M]                             standalone in-app browser and feedback interaction
+│   │   ├── BrowserWorkspace.tsx           fullscreen browser surface
+│   │   ├── InternalBrowser.native.tsx             WebView navigation and DevTools composition
+│   │   └── feedbackSubmission.ts                  narrow feedback delivery capability
 │   └── diagnostics/ [E/M]                         diagnostics UI ← screen recovery + ui/PerformanceDiagnostics
 │       ├── DiagnosticsFeature.tsx                 diagnostic/experiment surface
 │       └── renderRecovery.ts                      recovery-thread action; metrics remain below UI
@@ -153,6 +156,91 @@ The **feature-facing** `useRemoteWorkspace` aggregation is a temporary migration
 No dependency-injection container is needed. Ordinary functions bind stable model handles and callbacks once per existing owner lifetime. No global context carries all features or mirrors server data.
 
 The decision addresses unrelated interaction policies concentrated in the 18,792-line screen and its broad runtime facade. Component-only moves do not close ownership; replacing the whole runtime lifecycle is unnecessary for this target. No new domain model, process, service, event bus, DI container or generic feature framework is introduced. These are responsibility zones; strategic/tactical DDD artifacts are not needed because entity identity and schema authority remain unchanged.
+
+## Approved Global Supervisor extension
+
+Status: **implemented source contract; physical-device WebRTC proof is pending**. This extension is additive to the implemented M0–M8 ownership model. It does not reopen the earlier migration or change V2.
+
+Global Voice Mode is an explicitly toggled, process-lifetime V1 feature backed by one ordinary App Server thread on a selected home `connectionId`. It remains active across application navigation and backgrounding until explicit Stop or terminal failure. The App Server remains the transcript and history authority. CodeWide persists only a schema-versioned, content-free `SupervisorBinding` and uses the exact qualified binding to exclude that thread from ordinary active, archived, search, project, aggregate-count, default-selection and direct-route surfaces. A title or other display metadata is never a classifier. An unresolved create is reconciled by its exact creation token; it must not automatically issue another `thread/start`.
+
+V1 settings expose one `Voice Assistant` page with two deliberately separate device-wide contracts: the synthesized realtime voice and one bounded personality profile containing character, communication style and rules. The existing `global-voice` record remains readable so upgrades preserve the selected audio voice; absence of the new versioned personality record preserves the previous supervisor instructions. The current personality snapshot is composed with the fixed capability instructions both when a hidden thread is created and for every `realtimeStartInstructions` request, including existing hidden threads. A running activation is immutable with respect to settings changes; saved changes apply on the next explicit activation.
+
+The public feature surface is one composition factory, one stable model-owned render resource, one app-level `toggle`, and internal `enter`, `start`, `stop` plus typed recovery actions. Every action keeps the V1 `() => void | Promise<void>` contract. The hidden supervisor is an ordinary Codex thread and retains the built-in tools, skills, MCP servers, plugins and approval policy supplied by its home App Server. Cross-chat operations accept only a `QualifiedChatRef` containing both `connectionId` and `threadId`; CodeWide adds six dynamic tools: `createChat`, `listChats`, `readChat`, `followChat`, `sendText` and `unfollowChat`. Created workers remain ordinary visible top-level Codex chats. Reads use authoritative App Server history; sends reuse the existing durable command-delivery and receipt path with a content-free request-derived idempotency identity. No generic CodeWide RPC tool, second outbox, optimistic supervisor message or parallel transcript store is introduced.
+
+The supervisor thread remains the orchestration and reporting context. Brief actions may run inline; substantial, long-running, noisy, specialized or parallel work is delegated into separate visible top-level chats through `createChat`, while existing relevant chats are enrolled through `followChat` or implicitly by `sendText`. Workers receive concrete objectives and return distilled progress/results so execution traces do not consume the supervisor context. Ordinary subagents remain available for bounded internal implementation details but are not the owner of the cross-chat notification relation.
+
+### Worker attention decision
+
+The option space was evaluated before implementation:
+
+- **Incremental — active-only completion callback: FAIL.** It is cheap, but races activation startup/reconnect, cannot preserve qualified relation and replay-deduplication state, and cannot provide durable acknowledgement.
+- **Structural — Android attention projection over the existing Companion journal: PASS.** App Server thread events retain their existing ordered at-least-once transport. One Android data owner persists qualified supervisor/worker relations, projects only important transitions, deduplicates by stable event identity and commits before the source cursor is acknowledged.
+- **Radical — supervisor-specific broker inside Companion: FAIL for this scope.** It could centralize delivery later, but today it would move product policy below its owner, complicate cross-connection aggregation and enlarge the privacy boundary. The cheapest future experiment is a relay-only prototype that forwards the same typed envelopes without owning relation semantics.
+
+`createChat` persists a creation relation before `thread/start`; `thread/started` or snapshot reconciliation converts it to an exact qualified relation without polling. `followChat` and `sendText` persist an active relation; `unfollowChat` and worker close/archive/delete stop future projection. Relations and attention rows are partitioned by both supervisor and worker connection/thread identity, so multiple supervisor sessions and equal thread ids on different connections cannot cross-deliver.
+
+Only terminal turn completion with a bounded preview, failed/interrupted turns, blocked/system-error states, and pending user decision/approval become attention events. Full transcripts and tool output remain behind explicit `readChat`. Multiple active-session events are ordered by source time then stable event id, stored independently, delivered at least once and acknowledged idempotently. Events observed while Global Voice is off are stored already acknowledged as replay tombstones. Resolved pending requests are retired from the inbox. Reconnect/restart replay cannot recreate an acknowledged row.
+
+The relation and deduplication store exists independently of voice activation, while the pending inbox is activation-scoped. Enable atomically acknowledges any inactive backlog before new events may become pending; disable acknowledges the remaining queue before transport cleanup. While voice is active, one event at a time is appended as untrusted developer context only when speech is idle; the next event waits for the assistant response to finish. The live delivery queue never interrupts an utterance, and there is no timer or hidden polling loop.
+
+### Owned modules and dependency direction
+
+- `features/globalSupervisor/**` owns binding/capability/activation presentation state, user actions, route-ready composition and the transient active transcript/activity view. Its nearest ownership contract is [`apps/android/src/features/globalSupervisor/CONTEXT.md`](../apps/android/src/features/globalSupervisor/CONTEXT.md).
+- `data/globalSupervisorBinding*`, `data/globalSupervisorVisibility*`, `data/globalSupervisorThread*`, `data/globalSupervisorTools*`, `data/globalSupervisorToolRouter*`, `data/globalSupervisorAttention*`, `data/globalSupervisorEventSignals*` and `data/globalSupervisorRuntime*` own persistence and validated adapters. They do not import feature UI or routes.
+- The neutral process-lifetime V1 microphone lease owner is lower than both dictation and Global Voice Mode. It grants a generation-fenced lease for purpose `dictation` or `globalSupervisor`; a busy acquire rejects without stopping the incumbent, and stale release cannot stop a later capture.
+- The Android WebRTC adapter owns the peer connection, microphone/output media tracks, Android microphone foreground-service token, SDP application and media teardown behind the matching lease. It owns no App Server RPC, binding or transcript. Companion carries only the SDP/control plane; audio never becomes JSON or enters the authenticated sync socket.
+- Companion owns only the closed realtime-method classifier, authenticated live-channel correlation and bounds, the closed pending-request classifier, and durable server-response correlation. It owns no supervisor tool names or UI policy.
+- Existing catalog/history/session/delivery/user-request owners remain authoritative and must not import the feature. V1 continues to exclude `src/v2/**`, `@codewide/sync-client/v2` and V2 storage.
+
+The live-only Companion-to-native channel shares the authenticated sync socket but is diverted before Companion `ordered_ingest` and before Android's generic event branch. `liveSubscribe` binds a random content-free channel id and exact supervisor thread to the issuing socket; `liveEvent` carries a channel-local monotonic sequence; `liveOverflow`, unsubscribe, socket loss or terminal realtime close destroys the channel. Realtime notifications never enter Companion replay, `IndexStore`, `NativeFrameStore`, checkpoint JSON or inactive delivery. There is no cursor, catch-up or replay. A gap, stale channel, thread mismatch, repeated/out-of-order sequence, event outside the active session or bound breach terminates the activation instead of guessing.
+
+Pending requests use one closed classification. The existing five approval/input methods are `userInteraction`; only `item/tool/call` is `systemDynamicTool`. Both classes may use the existing generic Companion/native pending-request persistence, but JS fans them out to disjoint consumers. `PendingRequestDatabase` and approval UI continue to admit only `userInteraction`. The in-memory supervisor router accepts `systemDynamicTool` only for the ready binding's exact home connection and supervisor thread; every other dynamic tool fails closed. Resolution continues through the existing durable `serverRequest/resolved` path.
+
+### Schema-owned correctness limits
+
+`apps/companion/contract/v1.json` is the sole machine-readable owner of `globalSupervisorLimitsV1`, whose discriminator is `version: 1`. Generated/shared Rust, Kotlin and TypeScript surfaces consume exactly these values. Product modules may tighten private operating targets but must not restate or relax these maxima. A stricter pinned protocol cap wins; relaxing any value requires `GlobalSupervisorLimitsV2`.
+
+| Field                                |        V1 value | Boundary behavior                                                                                  |
+| ------------------------------------ | --------------: | -------------------------------------------------------------------------------------------------- |
+| `liveChannelMaxEnvelopes`            |             256 | terminate before envelope 257 is queued                                                            |
+| `liveChannelMaxBytes`                | 4,194,304 bytes | terminate before queued bytes exceed the cap                                                       |
+| `liveEnvelopeMaxBytes`               |   262,144 bytes | reject and terminate before queueing or native emission                                            |
+| `microphoneInputBufferMaxDurationMs` |        2,000 ms | reserved compatibility cap for the removed WebSocket PCM path; WebRTC does not allocate this queue |
+| `microphoneInputBufferMaxBytes`      |   262,144 bytes | reserved compatibility cap for the removed WebSocket PCM path; WebRTC does not allocate this queue |
+| `outputPlaybackBufferMaxDurationMs`  |        5,000 ms | reserved compatibility cap for the removed WebSocket PCM path; WebRTC does not allocate this queue |
+| `outputPlaybackBufferMaxBytes`       |   524,288 bytes | reserved compatibility cap for the removed WebSocket PCM path; WebRTC does not allocate this queue |
+| `dynamicToolInputMaxBytes`           |    65,536 bytes | fixed bounded failure before Android persistence/dispatch                                          |
+| `dynamicToolOutputMaxBytes`          |   262,144 bytes | replace an oversized result with a fixed bounded failure                                           |
+| `listChatsPageMaxEntries`            |     100 entries | bounded page plus opaque continuation                                                              |
+| `readChatPageMaxItems`               |       100 items | stop at the first item/byte cap and return continuation                                            |
+| `readChatPageMaxBytes`               |   262,144 bytes | stop at the first item/byte cap and return continuation                                            |
+| `eventCoalescingMaxDistinctSources`  |      32 sources | coalesce repeats and drop later distinct sources in-window                                         |
+| `eventCoalescingWindowMs`            |        2,000 ms | reset the distinct-source window                                                                   |
+| `realtimeStartupTimeoutMs`           |       15,000 ms | terminate activation and release channel/lease                                                     |
+| `interruptionAckTimeoutMs`           |        2,000 ms | reserved compatibility bound; terminal WebRTC state tears down the activation directly             |
+| `realtimeStopCloseTimeoutMs`         |        5,000 ms | force local teardown and unsubscribe without `closed`                                              |
+
+All limits are enforced before the next copy, queue insertion, persistence, materialization or emission. Queue owners maintain incremental totals; list/read stop without materializing the remainder. The first cap reached wins for dual duration/byte bounds. No over-limit path spills to another queue, persists partial realtime media or retries with an unbounded representation.
+
+### Composition and validation contract
+
+Global Voice has no application route or dedicated screen. `V1WorkspaceRouteComposition` obtains the already-created `GlobalSupervisorFeatureContract` from `createWorkspaceFeatures`, derives only the boolean active projection and passes `{ active, onToggle }` into both persistent thread-list headers. The inactive live-assistant signal starts or recovers the supervisor; the active stop icon ends it. Navigation, Back, route unmount and app backgrounding never call cleanup. The control performs no RPC, SQLite, filesystem or native reads. Escaping callbacks use `useEvent`; no `useCallback` or `useMemo` is added.
+
+Validation is a release gate, not an implementation suggestion:
+
+| Contract                    | Required evidence                                                                                                                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| binding and hiding          | crash-point reconciliation plus active/archive/search/project/count/default/direct-route exclusion while authoritative history remains readable                                                   |
+| schema parity and bounds    | Rust/Kotlin/TypeScript parity plus at-limit and one-over tests for all 17 fields, including earlier-wins dual caps                                                                                |
+| live-only transport         | sequence/overflow/reconnect tests and negative inspection of Companion replay, `IndexStore`, `NativeFrameStore`, checkpoints and inactive delivery                                                |
+| request classification      | method-class matrix, hello/reconnect retention, disjoint JS consumers, durable resolution removal and unchanged five user methods                                                                 |
+| tool execution              | validation/pagination tests and replay proof of one target `turn/start` plus one response for `sendText`                                                                                          |
+| microphone/audio            | busy and stale-token rejection, dictation parity, permission/interruption handling, background continuation, explicit teardown, SDP answer application and physical-device headset/media evidence |
+| activation and presentation | state-machine tests for every declared state/recovery, one-button start/stop settlement, active accessibility state, absence of a route and forbidden component dependencies                      |
+| pinned App Server substrate | disposable-thread proof for exact tools, resume, realtime voice probe/V3 WebRTC audio, interruption/close/reconnect, zero journal bytes and readable history                                      |
+| integrated V1               | focused owner tests followed by `pnpm validate:android:v1`; no hygiene-baseline expansion or bypassed gate                                                                                        |
+
+Failure of the pinned realtime/tool proof, any journal persistence, duplicate supervisor creation/send, hidden-thread leakage, request-class crossover, capture preemption/stale release or continued audio after terminal state blocks approval. Publishing is outside this architecture slice.
 
 ## Context and containers
 

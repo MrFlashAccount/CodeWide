@@ -93,7 +93,6 @@ import {
   type ThreadDetailSqliteControls,
   type ThreadDetailSqliteDiagnostics,
 } from "./thread-detail-sqlite.native";
-import { ThreadWindowIntentController } from "./thread-window-intent";
 import { THREAD_HISTORY_PAGE_SIZE, THREAD_RESIDENT_TURN_LIMIT } from "./thread-pagination";
 import {
   advanceThreadUsage,
@@ -468,11 +467,14 @@ async function runThreadDetailTransaction<T>(
 export function createThreadDetailDatabase(): ThreadDetailDatabase {
   const sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const source = new ThreadDetailSource();
+  let remoteLoader: ThreadRemoteLoader | null = null;
   const chat = createThreadChatModel({
     onEvictWindow: (connectionId, threadId) => {
       source.removeThreadLoaded(connectionId, threadId);
     },
     onResidentRowCountChange: setThreadDetailResidentRows,
+    onRetainWindow: (connectionId, threadId) =>
+      remoteLoader?.observe?.({ connectionId, threadId }) ?? (() => undefined),
   });
   // A new thread can receive its first turn before React switches from the
   // synthetic New Chat scope to the real thread query. Keep only a bounded
@@ -486,7 +488,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   let disposed = false;
   let closePromise: Promise<void> | null = null;
   const writes = new SerialTaskQueue();
-  const windowIntents = new ThreadWindowIntentController();
   const rangePulls = new Map<string, Promise<boolean>>();
   // Process-local only: this counter closes the RPC-response/live-patch write
   // race. It is not a protocol cursor, persisted epoch, or replay mechanism.
@@ -495,7 +496,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   const reportedStalledOptimisticFingerprintByThread = new Map<string, string>();
   let storageDiagnosticsPromise: Promise<ThreadDetailSqliteDiagnostics> | null = null;
   let storageDiagnosticsReported = false;
-  let remoteLoader: ThreadRemoteLoader | null = null;
   const newerExhaustedTurnIdByThread = new Map<string, string>();
   const olderExhaustedTurnIdByThread = new Map<string, string>();
   let historyExhaustionRevision = 0;
@@ -1652,13 +1652,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     return true;
   };
 
-  const loadWindow = async (
-    request: ThreadChatWindowRequest,
-    navigationToken?: number,
-  ): Promise<void> => {
-    if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
-      return;
-    }
+  const loadWindow = async (request: ThreadChatWindowRequest): Promise<void> => {
     const navigationId = activeThreadNavigationIdFor(request.connectionId, request.threadId);
     const requestedAt = performance.now();
     recordThreadNavigationVisualEvent(
@@ -1668,7 +1662,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       {
         tags: {
           anchor: request.anchorTurnId === null ? "tail" : "saved",
-          source: navigationToken === undefined ? "render" : "press_preload",
         },
         values: { residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT },
       },
@@ -1684,12 +1677,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       const installed =
         loaded === installedResidentWindow ||
         (await writes.run(async () => {
-          const installedWindow = await Promise.resolve().then(() => {
-            if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
-              return false;
-            }
-            return installStoredWindow(request, generation, loaded, requestedAt, navigationId);
-          });
+          const installedWindow = await Promise.resolve(
+            installStoredWindow(request, generation, loaded, requestedAt, navigationId),
+          );
           return installedWindow;
         }));
       if (!installed || remoteLoader === null) {
@@ -1714,13 +1704,16 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         chat.window$(request.connectionId, request.threadId).peek(),
       );
       if (resident !== null) {
-        if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
+        const hasTimelineRows = resolvedWindowHasTimelineRows(resident);
+        if (
+          hasTimelineRows &&
+          !installStoredWindow(request, generation, resident, requestedAt, navigationId)
+        ) {
           return;
         }
-        if (!installStoredWindow(request, generation, resident, requestedAt, navigationId)) {
-          return;
+        if (hasTimelineRows) {
+          installedResidentWindow = resident;
         }
-        installedResidentWindow = resident;
         cachedWindow = resident;
         recordThreadOpeningMeasure(request.connectionId, request.threadId, "queue_wait", 0);
       } else {
@@ -1738,18 +1731,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             "chat_window_write_lane_wait",
             laneEnteredAt - requestedAt,
           );
-          // Superseded press intents that have not reached SQLite are skipped
-          // instead of making the selected destination wait behind useless work.
-          if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
-            return null;
-          }
           return readStoredWindow(request, requestedAt);
         });
       }
-      if (cachedWindow === null) {
-        return;
-      }
-
       recordThreadOpeningMeasure(
         request.connectionId,
         request.threadId,
@@ -1773,9 +1757,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           : null;
       hadUsableCachedThread = cachedThread !== null;
       // Observing only attaches future live events. Every newly opened window
-      // therefore performs one bounded head read after revealing SQLite, even
-      // when the local coverage itself is complete: the thread may have moved
-      // while another chat was observed or while this client was offline.
+      // therefore performs one bounded head read even when local coverage is
+      // complete: the thread may have moved while another chat was observed or
+      // while this client was offline. Reveal useful cached rows immediately,
+      // but do not publish stale empty metadata as a confirmed empty thread.
       const activationRefresh = coverage.complete && cachedThread !== null;
       const requiresHydration = !coverage.complete || cachedThread === null;
       if ((activationRefresh || requiresHydration) && remoteLoader !== null) {
@@ -1793,9 +1778,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
               request,
               requireAuthoritative: true,
             });
-            if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
-              return;
-            }
             const refreshedWindow = await writes.run(async () =>
               readStoredWindow(request, requestedAt),
             );
@@ -1829,9 +1811,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           }
         };
 
-        if (cachedThread !== null) {
-          // A materializable SQLite window is immediately usable even when its
-          // coverage cursor says that an authoritative repair is desirable.
+        if (cachedThread !== null && resolvedWindowHasTimelineRows(cachedWindow)) {
+          // A materializable SQLite window with timeline rows is immediately
+          // usable even when its coverage cursor says that an authoritative repair is desirable.
           // Resolve the navigation resource from local data; the background
           // cursor sync must never hold an already-cached chat behind network
           // recovery.
@@ -1845,17 +1827,15 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           return;
         }
 
-        // A true local miss keeps the transcript loading until the backend
-        // window is durably written and installed; surrounding controls are usable.
+        // A local miss or metadata-only empty cache keeps the transcript loading
+        // until the backend window is durably written and installed; surrounding
+        // controls remain usable.
         await hydrateAndInstall();
         return;
       }
 
       await installAndReconcilePending(cachedWindow);
     } catch (error) {
-      if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) {
-        return;
-      }
       if (cachedWindow !== null && hadUsableCachedThread) {
         await installAndReconcilePending(cachedWindow);
         return;
@@ -1873,9 +1853,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   };
 
   const database: ThreadDetailDatabase = {
-    adoptPreloadedWindow(connectionId, threadId) {
-      windowIntents.adopt(threadChatScope(connectionId, threadId));
-    },
     async appendTurns(connectionId, threadId, turns, historyCursor) {
       return writes.run(async () => {
         const currentRows = source.rowsForThread(connectionId, threadId);
@@ -2208,7 +2185,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         return closePromise;
       }
       closing = true;
-      windowIntents.close();
       for (const snapshot of projectionSnapshots.values()) {
         snapshot.resolve();
       }
@@ -2365,19 +2341,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     },
     planQueuedRemoval(connectionId, commandId) {
       return planQueuedRemovalMutation(source.pendingRow(connectionId, commandId));
-    },
-    preloadWindow(request) {
-      const scope = threadChatScope(request.connectionId, request.threadId);
-      const lease = windowIntents.begin(scope, threadChatRequestKey(request), () =>
-        chat.retainWindow(request.connectionId, request.threadId),
-      );
-      const resource = chat.resource(request, async () => {
-        await loadWindow(request, lease.token);
-      });
-      void Promise.resolve(resource.ready$.peek()).catch(() => undefined);
-      return () => {
-        windowIntents.cancel(lease);
-      };
     },
     async prepare() {
       await detailStorage.prepare();
@@ -3066,15 +3029,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         });
       });
     },
-    retainWindow(connectionId, threadId) {
-      const release = chat.retainWindow(connectionId, threadId);
-      windowIntents.adopt(threadChatScope(connectionId, threadId));
-      // Retention is the model-owned subscription boundary. Unlike tap or
-      // press-in, it also runs when the app restores directly into an already
-      // open conversation after a process or OTA restart.
-      remoteLoader?.observe?.({ connectionId, threadId });
-      return release;
-    },
     sessionId,
     setRemoteLoader(loader) {
       remoteLoader = loader;
@@ -3561,6 +3515,13 @@ export function threadWindowCoverage(
     }
   }
   return { complete: true, reason: "complete" };
+}
+
+function resolvedWindowHasTimelineRows(window: ResolvedThreadDetailWindow): boolean {
+  return (
+    window.turnRows.length > 0 ||
+    window.liveRows.some((row) => row.kind === "turn" || row.kind === "pending")
+  );
 }
 
 function turnRow(
