@@ -18,7 +18,7 @@
     },
     {
       "id": "linux-companion-host",
-      "paths": ["apps/companion/"],
+      "paths": ["apps/companion-linux/"],
       "files": [
         "scripts/build-companion.sh",
         "scripts/cargo-target-budget.sh",
@@ -28,7 +28,7 @@
     },
     {
       "id": "macos-app",
-      "paths": ["apps/macos/", "brand/macos/"],
+      "paths": ["apps/companion-macos/", "brand/macos/"],
       "files": [".github/workflows/macos-release.yml", "scripts/release-macos"],
       "dependsOn": ["companion-swift-ffi"]
     },
@@ -149,7 +149,8 @@
     "AGENTS.md",
     "LICENSE",
     "README.md",
-    "apps/companion/README.md",
+    "apps/companion-linux/README.md",
+    "apps/companion-macos/README.md",
     "apps/relay/README.md",
     "crates/companion-core/README.md",
     "crates/companion-swift-ffi/README.md",

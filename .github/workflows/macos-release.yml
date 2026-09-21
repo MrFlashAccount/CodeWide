@@ -87,8 +87,8 @@ jobs:
           fi
           echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
-          echo "DMG_PATH=apps/macos/dist/CodeWide-$version.dmg" >> "$GITHUB_ENV"
-          echo "APPCAST_PATH=apps/macos/dist/appcast.xml" >> "$GITHUB_ENV"
+          echo "DMG_PATH=apps/companion-macos/dist/CodeWide-$version.dmg" >> "$GITHUB_ENV"
+          echo "APPCAST_PATH=apps/companion-macos/dist/appcast.xml" >> "$GITHUB_ENV"
 
       - name: Show toolchains
         run: |
@@ -115,24 +115,24 @@ jobs:
           CODEWIDE_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_ED25519_PUBLIC_KEY }}
         run: |
           test -n "$CODEWIDE_SPARKLE_PUBLIC_KEY"
-          baseline_archive=$(CODEWIDE_CORE_VERSION=0.0.0 apps/macos/scripts/build-rust-ffi.sh)
+          baseline_archive=$(CODEWIDE_CORE_VERSION=0.0.0 apps/companion-macos/scripts/build-rust-ffi.sh)
           CODEWIDE_VERSION=0.0.0 \
           CODEWIDE_BUILD_NUMBER=1 \
           CODEWIDE_FFI_ARCHIVE="$baseline_archive" \
           CODEWIDE_APP_OUTPUT="$RUNNER_TEMP/baseline/CodeWide.app" \
-            apps/macos/scripts/build-app.sh
-          release_archive=$(CODEWIDE_CORE_VERSION="$CODEWIDE_VERSION" apps/macos/scripts/build-rust-ffi.sh)
+            apps/companion-macos/scripts/build-app.sh
+          release_archive=$(CODEWIDE_CORE_VERSION="$CODEWIDE_VERSION" apps/companion-macos/scripts/build-rust-ffi.sh)
           CODEWIDE_BUILD_NUMBER="$((100000 + GITHUB_RUN_NUMBER))" \
           CODEWIDE_FFI_ARCHIVE="$release_archive" \
-            apps/macos/scripts/build-app.sh
-          apps/macos/scripts/build-dmg.sh "$CODEWIDE_VERSION"
+            apps/companion-macos/scripts/build-app.sh
+          apps/companion-macos/scripts/build-dmg.sh "$CODEWIDE_VERSION"
 
       - name: Prove update, state migration, and runtime recovery
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
           CODEWIDE_ALLOW_DESTRUCTIVE_UPDATE_E2E: "1"
         run: |
-          apps/macos/scripts/update-e2e.sh \
+          apps/companion-macos/scripts/update-e2e.sh \
             "$RUNNER_TEMP/baseline/CodeWide.app" \
             "$DMG_PATH" \
             "$SPARKLE_BIN" \
@@ -148,7 +148,7 @@ jobs:
             --download-url-prefix "https://github.com/MrFlashAccount/CodeWide/releases/download/$RELEASE_TAG/" \
             --link "https://github.com/MrFlashAccount/CodeWide" \
             --maximum-versions 1 \
-            apps/macos/dist
+            apps/companion-macos/dist
           xmllint --noout "$APPCAST_PATH"
           grep -q 'sparkle:edSignature=' "$APPCAST_PATH"
           grep -q 'sparkle-signatures:' "$APPCAST_PATH"
@@ -157,9 +157,9 @@ jobs:
 
       - name: Verify ad-hoc artifact
         run: |
-          codesign --verify --deep --strict --verbose=2 apps/macos/.build/app/CodeWide.app
+          codesign --verify --deep --strict --verbose=2 apps/companion-macos/.build/app/CodeWide.app
           hdiutil verify "$DMG_PATH"
-          if spctl --assess --type execute apps/macos/.build/app/CodeWide.app; then
+          if spctl --assess --type execute apps/companion-macos/.build/app/CodeWide.app; then
             echo "Gatekeeper accepted the ad-hoc app."
           else
             echo "Expected: this build is ad-hoc signed and not notarized."

@@ -25,7 +25,7 @@ describe("release graph", () => {
   });
 
   it("releases only macOS for a native menu app change", () => {
-    expect(targets(["apps/macos/Sources/CodeWide/CodeWideApp.swift"])).toEqual(["macos"]);
+    expect(targets(["apps/companion-macos/Sources/CodeWide/CodeWideApp.swift"])).toEqual(["macos"]);
   });
 
   it("selects OTA for JavaScript-only Android changes", () => {
@@ -54,7 +54,8 @@ describe("release graph", () => {
       "docs/macos-companion.md",
       "crates/companion-core/README.md",
       "crates/companion-swift-ffi/README.md",
-      "apps/companion/README.md",
+      "apps/companion-linux/README.md",
+      "apps/companion-macos/README.md",
       "apps/relay/README.md",
     ]);
     expect(plan.targets).toEqual([]);

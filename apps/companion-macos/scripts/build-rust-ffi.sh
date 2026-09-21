@@ -36,7 +36,7 @@ header=$(find "$generated" -maxdepth 1 -type f -name '*.h' -print -quit)
 perl -0pi -e 's/[ \t]+(?=\r?$)//mg; s/(?:\r?\n)+\z/\n/' "$swift_source" "$header"
 if ! cmp -s "$swift_source" "$mac_root/Sources/CompanionSwiftFFI/companion_swift_ffi.swift" || \
    ! cmp -s "$header" "$mac_root/Sources/CompanionSwiftFFIFFI/include/companion_swift_ffiFFI.h"; then
-  echo "Committed UniFFI bindings are stale; run apps/macos/scripts/generate-swift-bindings.sh." >&2
+  echo "Committed UniFFI bindings are stale; run apps/companion-macos/scripts/generate-swift-bindings.sh." >&2
   exit 1
 fi
 

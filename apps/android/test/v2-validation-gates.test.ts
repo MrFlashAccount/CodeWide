@@ -41,11 +41,11 @@ const syncClientTests = readdirSync(
   .filter((entry) => entry.isFile() && /^v2-.*\.test\.ts$/u.test(entry.name))
   .map((entry) => new URL(`../../../packages/sync-client/test/${entry.name}`, import.meta.url));
 const companionIntegrationTests = readdirSync(
-  new URL("../../../apps/companion/tests/", import.meta.url),
+  new URL("../../../apps/companion-linux/tests/", import.meta.url),
   { withFileTypes: true },
 )
   .filter((entry) => entry.isFile() && /^(?:live_v2|v2_).*\.rs$/u.test(entry.name))
-  .map((entry) => new URL(`../../../apps/companion/tests/${entry.name}`, import.meta.url));
+  .map((entry) => new URL(`../../../apps/companion-linux/tests/${entry.name}`, import.meta.url));
 describe("V2 validation gates", () => {
   it("discovers every V2 protocol and Companion test family", () => {
     const command = packageJson.scripts["validate:sync:v2"] ?? "";
@@ -53,8 +53,8 @@ describe("V2 validation gates", () => {
     expect(command).toBe("sh ./scripts/validate-sync-v2.sh");
     expect(syncGate).toContain("packages/sync-client/test/v2-*.test.ts");
     expect(syncGate).toContain("cargo test -p codewide-companion sync_v2 --lib");
-    expect(syncGate).toContain('"$repo_root"/apps/companion/tests/v2_*.rs');
-    expect(syncGate).toContain('"$repo_root"/apps/companion/tests/live_v2*.rs');
+    expect(syncGate).toContain('"$repo_root"/apps/companion-linux/tests/v2_*.rs');
+    expect(syncGate).toContain('"$repo_root"/apps/companion-linux/tests/live_v2*.rs');
     expect(syncGate).toContain('cargo test -p codewide-companion --test "$target"');
     expect(syncGate).toContain("export CARGO_INCREMENTAL=0");
     expect(syncGate).not.toContain("--ignored");

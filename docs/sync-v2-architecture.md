@@ -82,7 +82,7 @@ capability.
 | Context | Owner | Owns | Does not own |
 | --- | --- | --- | --- |
 | V2 server protocol | `crates/companion-core/src/sync_v2/**` | decoding, semantic records, epoch state, queue accounting, snapshot cut, normalized changes, query dispatch, command lifecycle, action routing | V1 replay or V1 client behavior |
-| V2 upstream composition | `apps/companion/src/main.rs` | creation of the dedicated V2 `UpstreamHandle` and injection into the V2 semantic source | V2 policy, event normalization, or subscription routing |
+| V2 upstream composition | `apps/companion-linux/src/main.rs` | creation of the dedicated V2 `UpstreamHandle` and injection into the V2 semantic source | V2 policy, event normalization, or subscription routing |
 | V2 upstream integration | `sync_v2/production.rs` and `sync_v2/production/source_impl.rs` | `UpstreamSemanticSource`, generation monitoring, source-to-semantic adapters, and production capability dispatch | public wire types or downstream persistence |
 | V2 semantic source seam | `sync_v2/source.rs` | `SemanticSource`, V2-only `SubscriptionCoordinator`, recipient intent, audience selection, and routing invalidation | App Server wire decoding or deployment construction |
 | Source capabilities | existing Companion catalog, history, rollout, project, workspace, resource, queue, account, auth, and store modules | bounded protocol-neutral reads and mutations | V2 framing or client projection rules |

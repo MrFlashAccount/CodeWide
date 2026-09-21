@@ -32,11 +32,11 @@ thin conversions over `companion-core`; domain behavior does not belong here.
 Swift LaunchAgent -> UniFFI bindings -> companion-swift-ffi -> companion-core
 ```
 
-Generated Swift and C surfaces live under `apps/macos/Sources/`. Regenerate
+Generated Swift and C surfaces live under `apps/companion-macos/Sources/`. Regenerate
 them after changing an exported UniFFI type or method:
 
 ```sh
-apps/macos/scripts/generate-swift-bindings.sh
+apps/companion-macos/scripts/generate-swift-bindings.sh
 ```
 
 ## Validation
@@ -44,5 +44,5 @@ apps/macos/scripts/generate-swift-bindings.sh
 ```sh
 cargo test -p companion-swift-ffi
 cargo clippy -p companion-swift-ffi --all-targets -- -D warnings
-apps/macos/scripts/validate-boundaries.sh
+apps/companion-macos/scripts/validate-boundaries.sh
 ```

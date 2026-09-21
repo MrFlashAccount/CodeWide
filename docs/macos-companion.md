@@ -67,9 +67,9 @@ Local macOS 26 build:
 
 ```sh
 export CODEWIDE_SPARKLE_PUBLIC_KEY='...'
-apps/macos/scripts/generate-swift-bindings.sh
-apps/macos/scripts/build-app.sh
-apps/macos/scripts/build-dmg.sh 0.1.0
+apps/companion-macos/scripts/generate-swift-bindings.sh
+apps/companion-macos/scripts/build-app.sh
+apps/companion-macos/scripts/build-dmg.sh 0.1.0
 ```
 
 ## Plugins are still two separate decisions

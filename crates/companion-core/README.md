@@ -34,7 +34,7 @@ endpoint.
 
 ## Consumers
 
-- `apps/companion`: Linux host and CLI;
+- `apps/companion-linux`: Linux host and CLI;
 - `crates/companion-swift-ffi`: narrow adapter for the Swift LaunchAgent;
 - contract generators and compatibility tests for Android and sync clients.
 

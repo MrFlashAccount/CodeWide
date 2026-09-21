@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "apps/companion",
+    "apps/companion-linux",
     "apps/relay",
     "crates/companion-core",
     "crates/companion-swift-ffi",

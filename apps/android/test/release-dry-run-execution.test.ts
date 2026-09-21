@@ -33,15 +33,15 @@ describe("release dry runs", () => {
     copyFixtureFile(fixture, "scripts/build-companion.sh");
     copyFixtureFile(fixture, "scripts/cargo-target-budget.sh");
     for (const path of [
-      "apps/companion/deploy/memory-watch.sh",
-      "apps/companion/deploy/codewide-companion.service",
-      "apps/companion/deploy/codewide-companion-memory-watch.service",
-      "apps/companion/deploy/codewide-companion-memory-watch.timer",
+      "apps/companion-linux/deploy/memory-watch.sh",
+      "apps/companion-linux/deploy/codewide-companion.service",
+      "apps/companion-linux/deploy/codewide-companion-memory-watch.service",
+      "apps/companion-linux/deploy/codewide-companion-memory-watch.timer",
     ]) copyFixtureFile(fixture, path);
     chmodSync(join(fixture, "scripts/release-companion"), 0o755);
     chmodSync(join(fixture, "scripts/build-companion.sh"), 0o755);
     chmodSync(join(fixture, "scripts/cargo-target-budget.sh"), 0o755);
-    chmodSync(join(fixture, "apps/companion/deploy/memory-watch.sh"), 0o755);
+    chmodSync(join(fixture, "apps/companion-linux/deploy/memory-watch.sh"), 0o755);
 
     const commands = createCommandDirectory(fixture);
     const commandLog = join(fixture, "commands.log");

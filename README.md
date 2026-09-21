@@ -152,7 +152,7 @@ Build and install the companion as a user service:
 ```sh
 pnpm build:companion
 target/release/codewide-companion create-token
-apps/companion/deploy/install.sh
+apps/companion-linux/deploy/install.sh
 codewide-companion pair
 ```
 

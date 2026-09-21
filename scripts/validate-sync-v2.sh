@@ -13,8 +13,8 @@ pnpm exec vitest run packages/sync-client/test/v2-*.test.ts
 cargo test -p codewide-companion sync_v2 --lib
 
 for source in \
-  "$repo_root"/apps/companion/tests/v2_*.rs \
-  "$repo_root"/apps/companion/tests/live_v2*.rs
+  "$repo_root"/apps/companion-linux/tests/v2_*.rs \
+  "$repo_root"/apps/companion-linux/tests/live_v2*.rs
 do
   [ -f "$source" ] || continue
   target=${source##*/}
