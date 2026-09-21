@@ -1,0 +1,202 @@
+name: macOS Release
+run-name: macOS ${{ inputs.version }} (${{ inputs.request_id || github.run_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version, for example 0.1.0 or v0.1.0"
+        required: true
+        type: string
+      base:
+        description: "Git ref to compare against; defaults to the latest version tag"
+        required: false
+        type: string
+      dry_run:
+        description: "Build and prove the update without publishing a tag or release"
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: "Allow a release even when the release graph does not select macOS"
+        required: false
+        default: false
+        type: boolean
+      request_id:
+        description: "Correlation id used by the one-shot release command"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      base:
+        required: false
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+      force:
+        required: false
+        default: false
+        type: boolean
+      request_id:
+        required: false
+        type: string
+    secrets:
+      SPARKLE_ED25519_PUBLIC_KEY:
+        required: true
+      SPARKLE_ED25519_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify macOS is affected
+        if: ${{ inputs.force != true }}
+        env:
+          REQUESTED_BASE: ${{ inputs.base }}
+        run: |
+          base="$REQUESTED_BASE"
+          if [[ -z "$base" ]]; then
+            base=$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          fi
+          node scripts/release-plan.ts --base "$base" --head "$GITHUB_SHA" --assert-target macos
+
+      - name: Resolve version
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+        run: |
+          version="${RAW_VERSION#v}"
+          if [[ ! "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $RAW_VERSION"
+            exit 1
+          fi
+          echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
+          echo "DMG_PATH=apps/macos/dist/CodeWide-$version.dmg" >> "$GITHUB_ENV"
+          echo "APPCAST_PATH=apps/macos/dist/appcast.xml" >> "$GITHUB_ENV"
+
+      - name: Show toolchains
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          rustc --version
+
+      - name: Download pinned Sparkle tools
+        run: |
+          archive="$RUNNER_TEMP/Sparkle-2.10.0.tar.xz"
+          destination="$RUNNER_TEMP/sparkle"
+          curl --fail --location --silent --show-error \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz \
+            --output "$archive"
+          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0  $archive" \
+            | shasum --algorithm 256 --check
+          mkdir -p "$destination"
+          tar -xJf "$archive" -C "$destination"
+          echo "SPARKLE_BIN=$destination/bin" >> "$GITHUB_ENV"
+
+      - name: Build baseline and release app
+        env:
+          CODEWIDE_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_ED25519_PUBLIC_KEY }}
+        run: |
+          test -n "$CODEWIDE_SPARKLE_PUBLIC_KEY"
+          baseline_archive=$(CODEWIDE_CORE_VERSION=0.0.0 apps/macos/scripts/build-rust-ffi.sh)
+          CODEWIDE_VERSION=0.0.0 \
+          CODEWIDE_BUILD_NUMBER=1 \
+          CODEWIDE_FFI_ARCHIVE="$baseline_archive" \
+          CODEWIDE_APP_OUTPUT="$RUNNER_TEMP/baseline/CodeWide.app" \
+            apps/macos/scripts/build-app.sh
+          release_archive=$(CODEWIDE_CORE_VERSION="$CODEWIDE_VERSION" apps/macos/scripts/build-rust-ffi.sh)
+          CODEWIDE_BUILD_NUMBER="$((100000 + GITHUB_RUN_NUMBER))" \
+          CODEWIDE_FFI_ARCHIVE="$release_archive" \
+            apps/macos/scripts/build-app.sh
+          apps/macos/scripts/build-dmg.sh "$CODEWIDE_VERSION"
+
+      - name: Prove update, state migration, and runtime recovery
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+          CODEWIDE_ALLOW_DESTRUCTIVE_UPDATE_E2E: "1"
+        run: |
+          apps/macos/scripts/update-e2e.sh \
+            "$RUNNER_TEMP/baseline/CodeWide.app" \
+            "$DMG_PATH" \
+            "$SPARKLE_BIN" \
+            "$CODEWIDE_VERSION"
+
+      - name: Generate signed production feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SPARKLE_BIN/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/MrFlashAccount/CodeWide/releases/download/$RELEASE_TAG/" \
+            --link "https://github.com/MrFlashAccount/CodeWide" \
+            --maximum-versions 1 \
+            apps/macos/dist
+          xmllint --noout "$APPCAST_PATH"
+          grep -q 'sparkle:edSignature=' "$APPCAST_PATH"
+          grep -q 'sparkle-signatures:' "$APPCAST_PATH"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SPARKLE_BIN/sign_update" \
+            --ed-key-file - --verify "$APPCAST_PATH"
+
+      - name: Verify ad-hoc artifact
+        run: |
+          codesign --verify --deep --strict --verbose=2 apps/macos/.build/app/CodeWide.app
+          hdiutil verify "$DMG_PATH"
+          if spctl --assess --type execute apps/macos/.build/app/CodeWide.app; then
+            echo "Gatekeeper accepted the ad-hoc app."
+          else
+            echo "Expected: this build is ad-hoc signed and not notarized."
+          fi
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: CodeWide-${{ env.CODEWIDE_VERSION }}
+          path: |
+            ${{ env.DMG_PATH }}
+            ${{ env.APPCAST_PATH }}
+          if-no-files-found: error
+
+      - name: Create release tag
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$RELEASE_TAG" -m "CodeWide $RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+
+      - name: Publish GitHub release
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="CodeWide $RELEASE_TAG. Ad-hoc signed and not notarized; macOS may warn on first launch."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$DMG_PATH" "$APPCAST_PATH" --clobber
+            gh release edit "$RELEASE_TAG" --latest
+          else
+            gh release create "$RELEASE_TAG" "$DMG_PATH" "$APPCAST_PATH" \
+              --title "CodeWide $RELEASE_TAG" --notes "$notes" --latest
+          fi

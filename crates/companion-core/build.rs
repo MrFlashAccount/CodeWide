@@ -4,6 +4,17 @@ use serde_json::{Map, Value};
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=contract/v1.json");
+    println!("cargo:rerun-if-env-changed=CODEWIDE_CORE_VERSION");
+    let core_version = env::var("CODEWIDE_CORE_VERSION")
+        .unwrap_or_else(|_| env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".to_owned()));
+    if core_version.is_empty() || core_version.chars().any(char::is_control) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "CODEWIDE_CORE_VERSION must be a non-empty single-line value",
+        )
+        .into());
+    }
+    println!("cargo:rustc-env=CODEWIDE_CORE_VERSION={core_version}");
     let raw = fs::read_to_string("contract/v1.json")?;
     let contract: Value = serde_json::from_str(&raw)?;
     let limits = contract

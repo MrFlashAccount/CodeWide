@@ -1,0 +1,10 @@
+[package]
+name = "companion-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Transport-neutral control semantics for CodeWide Companion hosts"
+
+[lints]
+workspace = true

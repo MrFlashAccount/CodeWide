@@ -27,7 +27,7 @@ const MAX_TERMINAL_EXIT_CODE = 4_294_967_295;
 describe("Sync V2 generated contract authority", () => {
   it("binds TypeScript runtime validation to the exact executable schema", () => {
     const source = readFileSync(
-      new URL("../../../apps/companion/contract/v2.json", import.meta.url),
+      new URL("../../../crates/companion-core/contract/v2.json", import.meta.url),
       "utf8",
     );
     const contract = JSON.parse(source) as { "x-codewide": { limits: unknown } };

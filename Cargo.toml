@@ -1,5 +1,11 @@
 [workspace]
-members = ["apps/companion", "apps/relay"]
+members = [
+    "apps/companion",
+    "apps/relay",
+    "crates/companion-control",
+    "crates/companion-core",
+    "crates/companion-swift-ffi",
+]
 exclude = ["openai-codex/codex-rs"]
 resolver = "2"
 

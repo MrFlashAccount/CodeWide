@@ -24,7 +24,7 @@ const nativeManager = readFileSync(
   "utf8",
 );
 const companionPorts = readFileSync(
-  new URL("../../companion/src/ports.rs", import.meta.url),
+  new URL("../../../crates/companion-core/src/ports.rs", import.meta.url),
   "utf8",
 );
 

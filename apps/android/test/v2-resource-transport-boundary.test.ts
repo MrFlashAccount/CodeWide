@@ -75,7 +75,7 @@ describe("V2 resource transport boundary", () => {
     const manager = read(
       "../android/app/src/main/java/dev/codewide/app/remote/NativePortForwardManager.kt",
     );
-    const companion = read("../../companion/src/sync_v2/ports.rs");
+    const companion = read("../../../crates/companion-core/src/sync_v2/ports.rs");
     expect(ports).toContain('NativeModules["CodeWideNative"]');
     expect(ports).toContain("listPortForwards");
     expect(ports).toContain("upsertPortForward");

@@ -6,7 +6,10 @@ import { globalSupervisorLimitsV1 } from "../src/data/globalSupervisorLimitsV1";
 
 describe("GlobalSupervisorLimitsV1", () => {
   it("matches the Companion contract and Kotlin generated surface", () => {
-    const contractPath = resolve(import.meta.dirname, "../../companion/contract/v1.json");
+    const contractPath = resolve(
+      import.meta.dirname,
+      "../../../crates/companion-core/contract/v1.json",
+    );
     const contractValue: unknown = JSON.parse(readFileSync(contractPath, "utf8"));
     if (
       contractValue === null ||

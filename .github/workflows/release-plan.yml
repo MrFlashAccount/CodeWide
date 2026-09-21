@@ -1,0 +1,67 @@
+name: Release Plan
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Base Git ref"
+        required: false
+        default: "origin/main"
+        type: string
+      head:
+        description: "Head Git ref"
+        required: false
+        default: "HEAD"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Resolve comparison
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          INPUT_BASE: ${{ inputs.base }}
+          INPUT_HEAD: ${{ inputs.head }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            echo "RELEASE_BASE=$PR_BASE" >> "$GITHUB_ENV"
+            echo "RELEASE_HEAD=$PR_HEAD" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_BASE=${INPUT_BASE:-origin/main}" >> "$GITHUB_ENV"
+            echo "RELEASE_HEAD=${INPUT_HEAD:-HEAD}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Calculate release plan
+        run: |
+          node scripts/release-plan.ts --base "$RELEASE_BASE" --head "$RELEASE_HEAD"
+          node scripts/release-plan.ts --base "$RELEASE_BASE" --head "$RELEASE_HEAD" --json > release-plan.json
+          {
+            echo '## Release plan'
+            echo '```text'
+            node scripts/release-plan.ts --base "$RELEASE_BASE" --head "$RELEASE_HEAD"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-plan
+          path: release-plan.json
+          if-no-files-found: error

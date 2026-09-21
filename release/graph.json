@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "id": "relay-runtime",
+      "paths": ["apps/relay/"],
+      "files": ["Cargo.toml", "Cargo.lock"]
+    },
+    {
+      "id": "companion-control",
+      "paths": ["crates/companion-control/"],
+      "dependsOn": []
+    },
+    {
+      "id": "companion-core",
+      "paths": ["crates/companion-core/"],
+      "dependsOn": ["companion-control", "relay-runtime"]
+    },
+    {
+      "id": "companion-swift-ffi",
+      "paths": ["crates/companion-swift-ffi/"],
+      "dependsOn": ["companion-control", "companion-core"]
+    },
+    {
+      "id": "linux-companion-host",
+      "paths": ["apps/companion/"],
+      "files": [
+        "scripts/build-companion.sh",
+        "scripts/cargo-target-budget.sh",
+        "scripts/release-companion"
+      ],
+      "dependsOn": ["companion-core"]
+    },
+    {
+      "id": "macos-app",
+      "paths": ["apps/macos/", "brand/macos/"],
+      "files": [".github/workflows/macos-release.yml", "scripts/release-macos"],
+      "dependsOn": ["companion-swift-ffi"]
+    },
+    {
+      "id": "codex-protocol",
+      "paths": ["packages/codex-protocol/"],
+      "dependsOn": []
+    },
+    {
+      "id": "app-server-client",
+      "paths": ["packages/app-server-client/"],
+      "dependsOn": ["codex-protocol"]
+    },
+    {
+      "id": "domain",
+      "paths": ["packages/domain/"],
+      "dependsOn": ["codex-protocol"]
+    },
+    {
+      "id": "fixtures",
+      "paths": ["packages/fixtures/"],
+      "dependsOn": ["codex-protocol"]
+    },
+    {
+      "id": "renderers",
+      "paths": ["packages/renderers/"],
+      "dependsOn": ["codex-protocol", "domain", "fixtures"]
+    },
+    {
+      "id": "rendering-core",
+      "paths": ["packages/rendering-core/"],
+      "dependsOn": []
+    },
+    {
+      "id": "file-types",
+      "paths": ["packages/file-types/"],
+      "dependsOn": []
+    },
+    {
+      "id": "sync-client",
+      "paths": ["packages/sync-client/"],
+      "dependsOn": ["codex-protocol"]
+    },
+    {
+      "id": "tanstack-db-sqlite",
+      "paths": ["packages/tanstack-db-sqlite/"],
+      "dependsOn": []
+    },
+    {
+      "id": "android-js",
+      "paths": ["apps/android/app/", "apps/android/assets/", "apps/android/src/"],
+      "files": [
+        "apps/android/babel.config.js",
+        "apps/android/metro.config.js",
+        "apps/android/tsconfig.json"
+      ],
+      "dependsOn": [
+        "app-server-client",
+        "codex-protocol",
+        "domain",
+        "file-types",
+        "renderers",
+        "rendering-core",
+        "sync-client",
+        "tanstack-db-sqlite"
+      ]
+    },
+    {
+      "id": "android-native",
+      "paths": ["android-modules/", "apps/android/android/", "patches/"],
+      "files": [
+        "apps/android/app.json",
+        "apps/android/package.json",
+        "pnpm-lock.yaml"
+      ],
+      "dependsOn": []
+    }
+  ],
+  "targets": [
+    {
+      "id": "macos",
+      "component": "macos-app",
+      "command": "./scripts/release-macos <version>",
+      "runner": "macos-26"
+    },
+    {
+      "id": "companion-linux",
+      "component": "linux-companion-host",
+      "command": "./scripts/release-companion",
+      "runner": "linux"
+    },
+    {
+      "id": "android-ota",
+      "component": "android-js",
+      "command": "./scripts/release-ota",
+      "runner": "linux",
+      "supersededBy": ["android-apk"]
+    },
+    {
+      "id": "android-apk",
+      "component": "android-native",
+      "command": "./scripts/release-apk",
+      "runner": "linux"
+    }
+  ],
+  "ignoredPaths": [
+    ".codex/",
+    ".github/ISSUE_TEMPLATE/",
+    "apps/android/test/",
+    "builds/",
+    "docs/",
+    "openai-codex/",
+    "screenshots/"
+  ],
+  "ignoredFiles": [
+    ".gitignore",
+    ".github/workflows/release-plan.yml",
+    "AGENTS.md",
+    "LICENSE",
+    "README.md",
+    "package.json",
+    "release/graph.json",
+    "packages/release-tools/test/release-plan.test.ts",
+    "scripts/release-plan.ts"
+  ]
+}

@@ -198,7 +198,7 @@ Pending requests use one closed classification. The existing five approval/input
 
 ### Schema-owned correctness limits
 
-`apps/companion/contract/v1.json` is the sole machine-readable owner of `globalSupervisorLimitsV1`, whose discriminator is `version: 1`. Generated/shared Rust, Kotlin and TypeScript surfaces consume exactly these values. Product modules may tighten private operating targets but must not restate or relax these maxima. A stricter pinned protocol cap wins; relaxing any value requires `GlobalSupervisorLimitsV2`.
+`crates/companion-core/contract/v1.json` is the sole machine-readable owner of `globalSupervisorLimitsV1`, whose discriminator is `version: 1`. Generated/shared Rust, Kotlin and TypeScript surfaces consume exactly these values. Product modules may tighten private operating targets but must not restate or relax these maxima. A stricter pinned protocol cap wins; relaxing any value requires `GlobalSupervisorLimitsV2`.
 
 | Field                                |        V1 value | Boundary behavior                                                                                  |
 | ------------------------------------ | --------------: | -------------------------------------------------------------------------------------------------- |

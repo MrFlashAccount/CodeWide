@@ -34,7 +34,7 @@
 - `/servers` is the only aggregate All URL. Every single-server and nested V2 route uses `savedServerId`; thread and subsurface routes must preserve the owning `savedServerId`. `connectionId` is not a V2 route or domain term.
 - V1 modules must not import `apps/android/src/v2/**`, `@codewide/sync-client/v2`, or V2 storage. V2 modules must not import `CodeWideScreen`, `apps/android/src/data/**`, legacy native or container modules, V1 stores, or the package-root `@codewide/sync-client` export.
 - `packages/sync-client/src/v2/**` is the sole client owner of epoch/barrier/reconnect, projection reduction and active/retained `V2ProjectionStore`, command admission/receipts and `V2OperationStore`, and `SyncV2Session` lifecycle. Android may implement persistence adapters and route-qualified read resources but must not duplicate those state machines or contracts.
-- `apps/companion/contract/v2.json` is the sole machine-readable V2 wire authority. Generated TypeScript/Kotlin artifacts are compatibility surfaces, not schema owners, and runtime validation remains mandatory. V2 code must not call V1 routes, handlers, DTOs, generic RPC, V1 Terminal URLs, or `companion/dictation/*`.
+- `crates/companion-core/contract/v2.json` is the sole machine-readable V2 wire authority. Generated TypeScript/Kotlin artifacts are compatibility surfaces, not schema owners, and runtime validation remains mandatory. V2 code must not call V1 routes, handlers, DTOs, generic RPC, V1 Terminal URLs, or `companion/dictation/*`.
 - `SyncV2ContractGenerated.kt`, `V2VoiceCaptureModule.kt`, the authenticated transport lease, and their `CodeWidePackage.kt` entries are the V2 native boundary. Terminal is protocol data over the shared authenticated lease, not a separately registered native transport stack. `MainApplication.kt` already registers `CodeWidePackage`; keep registration reachable through that seam.
 - Protocol-neutral shared Views live under `apps/android/src/presentation/**`, accept only display props and typed capabilities, and must not import V1/V2 models, stores, routes, transport, persistence, or native modules. Extraction edits the shared target and its legacy source atomically.
 - `apps/android/src/v2/domain/**` is runtime-neutral. It must not import React, React Native, Expo, routes, features, UI, application services, or infrastructure.
@@ -82,7 +82,9 @@ Use only the repository-owned one-shot release commands:
 - Publish an OTA update: `./scripts/release-ota`
 - Build and publish a new APK: `./scripts/release-apk`
 - Build, validate, and publish Companion: `./scripts/release-companion`
-- Validate either release path without publishing: append `--dry-run`
+- Build, validate, and publish the macOS app: `./scripts/release-macos <version>`
+- Calculate affected release targets: `pnpm release:plan -- --base <ref> --head <ref>`
+- Validate a release path without publishing: append `--dry-run`
 
 Rules:
 

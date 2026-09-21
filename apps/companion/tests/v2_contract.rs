@@ -34,7 +34,7 @@ use tokio_tungstenite::{
 };
 
 const TOKEN: &str = "v2-contract-token-that-is-long-enough";
-const CONTRACT: &str = include_str!("../contract/v2.json");
+const CONTRACT: &str = include_str!("../../../crates/companion-core/contract/v2.json");
 
 #[test]
 fn executable_schema_matches_the_rust_registry_and_closed_scalar_rules() {

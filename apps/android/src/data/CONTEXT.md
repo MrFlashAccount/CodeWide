@@ -48,7 +48,7 @@ Worker attention is distinct from realtime signaling. The generic Companion jour
 
 Realtime is live-only. Companion diverts its closed `thread/realtime/*` control-notification set before durable ingest; native ingress handles `liveEvent` and `liveOverflow` before generic event journaling. Data adapters consume only the transient, channel/thread/sequence-fenced listener. They never write SDP, transcript or realtime envelopes to `IndexStore`, replay, `NativeFrameStore`, checkpoints or inactive buffers. Audio stays on the device-owned WebRTC media tracks. Socket generation change, sequence ambiguity, overflow or terminal state tears down instead of replaying or catching up. A completed `contextCompaction` for the exact active home thread reasserts that activation's captured developer instructions before later realtime input; failure to restore them terminates the activation instead of continuing with weakened behavior.
 
-All queue, page, coalescing and timeout values come from generated/shared `GlobalSupervisorLimitsV1` surfaces whose only machine-readable owner is `apps/companion/contract/v1.json`. Product data modules do not restate numeric limits. Enforcement happens before the next copy, materialization, persistence, queue insertion or emission, with incremental counters rather than a duplicate collection.
+All queue, page, coalescing and timeout values come from generated/shared `GlobalSupervisorLimitsV1` surfaces whose only machine-readable owner is `crates/companion-core/contract/v1.json`. Product data modules do not restate numeric limits. Enforcement happens before the next copy, materialization, persistence, queue insertion or emission, with incremental counters rather than a duplicate collection.
 
 ## Runtime facade disposition
 

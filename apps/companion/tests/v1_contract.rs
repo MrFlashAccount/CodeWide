@@ -96,7 +96,7 @@ struct ThreadProjectionOperation {
 
 #[test]
 fn companion_implements_the_frozen_v1_contract() -> Result<(), Box<dyn std::error::Error>> {
-    let raw = include_str!("../contract/v1.json");
+    let raw = include_str!("../../../crates/companion-core/contract/v1.json");
     let contract: V1Contract = serde_json::from_str(raw)?;
 
     assert_eq!(contract.protocol_version, 1);

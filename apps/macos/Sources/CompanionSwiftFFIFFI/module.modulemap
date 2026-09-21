@@ -1,0 +1,4 @@
+module companion_swift_ffiFFI {
+    header "include/companion_swift_ffiFFI.h"
+    export *
+}

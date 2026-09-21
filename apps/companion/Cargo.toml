@@ -8,9 +8,10 @@ description = "Crash-safe companion for CodeWide"
 
 [features]
 default = []
-e2e-command-fault = []
+e2e-command-fault = ["companion-core/e2e-command-fault"]
 
 [dependencies]
+companion-core = { path = "../../crates/companion-core" }
 codewide-relay = { path = "../relay" }
 async-trait = "0.1.89"
 axum = { version = "0.8.4", features = ["ws"] }

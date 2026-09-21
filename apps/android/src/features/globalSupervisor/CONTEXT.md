@@ -64,7 +64,7 @@ Worker relations and replay tombstones exist independently of voice activation, 
 
 ## Lower contracts consumed
 
-The feature treats every binding row, App Server response/event/request and native callback as external input. Lower adapters validate and convert them before they enter feature state. `apps/companion/contract/v1.json` is the only machine-readable owner of the 17-field `globalSupervisorLimitsV1`; this feature consumes generated/shared TypeScript/Kotlin values and does not restate them.
+The feature treats every binding row, App Server response/event/request and native callback as external input. Lower adapters validate and convert them before they enter feature state. `crates/companion-core/contract/v1.json` is the only machine-readable owner of the 17-field `globalSupervisorLimitsV1`; this feature consumes generated/shared TypeScript/Kotlin values and does not restate them.
 
 The realtime control adapter is live-only and channel/thread/sequence fenced. SDP, transcript and lifecycle notifications bypass Companion replay and Android `NativeFrameStore`; microphone and generated speech stay on WebRTC media tracks and never enter Companion JSON. The feature cannot request catch-up or replay. Pending requests arrive as a closed classification: five existing approval/input methods remain `userInteraction`, and only `item/tool/call` is `systemDynamicTool`. The feature receives only bound-home system requests from the purpose-specific router and never reads the approval database.
 

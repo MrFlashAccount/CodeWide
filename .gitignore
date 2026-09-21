@@ -8,6 +8,7 @@ node_modules/
 
 # Rust, Python, Android and Gradle outputs.
 target/
+apps/macos/.build/
 __pycache__/
 *.py[cod]
 .pytest_cache/

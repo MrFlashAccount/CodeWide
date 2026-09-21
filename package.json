@@ -30,6 +30,7 @@
     "ota:publish:raw": "tsx scripts/publish-android-ota.ts",
     "release:ota": "tsx scripts/release-android.ts ota",
     "release:apk": "tsx scripts/release-android.ts apk",
+    "release:plan": "node scripts/release-plan.ts",
     "test:ota": "python3 scripts/test-ota-server.py",
     "security:scan-artifacts": "tsx scripts/scan-release-artifacts.ts",
     "security:scan-secrets": "tsx scripts/scan-secrets.ts",

@@ -14,7 +14,7 @@ adapter, fallback, or compatibility surface.
 
 ## Contract authority
 
-- `apps/companion/contract/v2.json` is the executable wire contract. Rust,
+- `crates/companion-core/contract/v2.json` is the executable wire contract. Rust,
   TypeScript, and Kotlin validators must be generated from it and must reject
   unknown fields and unlisted variants.
 - This document owns the structural decisions: boundaries, responsibility,
@@ -22,7 +22,7 @@ adapter, fallback, or compatibility surface.
 - Source readers and App Server APIs are implementation details behind V2
   adapters. Their DTOs, method names, cursors, errors, and state transitions are
   not V2 protocol terms.
-- `apps/companion/contract/v1.json` continues to own V1. Neither contract
+- `crates/companion-core/contract/v1.json` continues to own V1. Neither contract
   imports, extends, or falls back to the other.
 
 Changing a V2 capability requires a contract revision that freezes its semantic
@@ -81,7 +81,7 @@ capability.
 
 | Context | Owner | Owns | Does not own |
 | --- | --- | --- | --- |
-| V2 server protocol | `apps/companion/src/sync_v2/**` | decoding, semantic records, epoch state, queue accounting, snapshot cut, normalized changes, query dispatch, command lifecycle, action routing | V1 replay or V1 client behavior |
+| V2 server protocol | `crates/companion-core/src/sync_v2/**` | decoding, semantic records, epoch state, queue accounting, snapshot cut, normalized changes, query dispatch, command lifecycle, action routing | V1 replay or V1 client behavior |
 | V2 upstream composition | `apps/companion/src/main.rs` | creation of the dedicated V2 `UpstreamHandle` and injection into the V2 semantic source | V2 policy, event normalization, or subscription routing |
 | V2 upstream integration | `sync_v2/production.rs` and `sync_v2/production/source_impl.rs` | `UpstreamSemanticSource`, generation monitoring, source-to-semantic adapters, and production capability dispatch | public wire types or downstream persistence |
 | V2 semantic source seam | `sync_v2/source.rs` | `SemanticSource`, V2-only `SubscriptionCoordinator`, recipient intent, audience selection, and routing invalidation | App Server wire decoding or deployment construction |
@@ -230,7 +230,7 @@ subscriptions; every affected connection initializes authoritatively again.
 ## Semantic capability registry
 
 The initial registry is closed. Exact records and validators live in
-`apps/companion/contract/v2.json`.
+`crates/companion-core/contract/v2.json`.
 
 - Queries: capabilities, models, catalog page, bidirectional history page,
   thread resources, projects, workspace inspection, queue, and accounts.
