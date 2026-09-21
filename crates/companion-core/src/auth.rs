@@ -73,7 +73,7 @@ pub struct Device {
     pub last_seen_at: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct DeviceStatus {
     pub device: Device,
     pub active_connections: u32,

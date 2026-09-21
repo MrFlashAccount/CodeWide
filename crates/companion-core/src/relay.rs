@@ -181,8 +181,7 @@ impl RelayRuntime {
         } else {
             RelayConnectionStatus::Disabled
         });
-        *running = adapter
-            .map(|adapter| RunningAdapter::start(adapter, self.0.connection.clone()));
+        *running = adapter.map(|adapter| RunningAdapter::start(adapter, self.0.connection.clone()));
     }
 }
 
@@ -199,9 +198,7 @@ impl RunningAdapter {
                     let mapped = match *status_changes.borrow_and_update() {
                         AdapterConnectionState::Connecting => RelayConnectionStatus::Connecting,
                         AdapterConnectionState::Connected => RelayConnectionStatus::Online,
-                        AdapterConnectionState::Reconnecting => {
-                            RelayConnectionStatus::Reconnecting
-                        }
+                        AdapterConnectionState::Reconnecting => RelayConnectionStatus::Reconnecting,
                     };
                     let _ = status_connection.send(mapped);
                     if status_changes.changed().await.is_err() {
