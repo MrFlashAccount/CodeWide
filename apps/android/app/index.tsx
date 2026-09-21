@@ -1,5 +1,6 @@
-import { RootGenerationGate } from "../src/boot/RootGenerationGate";
+import { Redirect } from "expo-router";
 
-export default function HomeRoute() {
-  return <RootGenerationGate />;
+/** Opens the V1 workspace without a persisted generation gate. */
+export default function IndexRoute(): React.JSX.Element {
+  return <Redirect href="/v1" />;
 }

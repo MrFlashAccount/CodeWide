@@ -22,7 +22,7 @@ The approved Global Voice Mode extension adds `features/globalSupervisor/**` wit
 - Runtime startup, session authority, persistence, command publication, source-qualified read lanes and shared caches belong below features. Never duplicate a model, cache, DTO schema or transport state machine for a feature.
 - Global-supervisor binding/reconciliation, exact hidden-thread admission, realtime/tool/event adapters and request classification belong to their lower data/native/Companion owners. The feature consumes narrow capabilities and may not become a second transcript, pending-request, delivery or connection authority.
 - Generic UI/rendering primitives remain at their proven owners. Shared review hosts/formats and voice-input scope synchronization are retained; not all existing UI modules are protocol-neutral Views.
-- `presentation/`, `boot/` and `v2/` retain their existing [V2/generation-neutral contracts](../../../docs/android-v2-client-architecture.md). This context does not override those contracts or move their runtime/native responsibilities.
+- `presentation/` retains live V1 view consumers; `boot/runtimeSlot.ts` serializes the V1 native lifetime. The Android V2 frontend and generation chooser were removed; see the [retirement audit](../../../docs/android-v2-retirement.md). Companion and sync-client V2 remain independent.
 
 ## Allowed relationships and forbidden dependencies
 

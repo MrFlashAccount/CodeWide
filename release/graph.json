@@ -20,16 +20,28 @@
       "id": "linux-companion-host",
       "paths": ["apps/companion-linux/"],
       "files": [
+        ".github/workflows/companion-linux-release.yml",
+        "install/companion",
+        "packaging/homebrew/codewide-companion.rb.in",
+        "scripts/build-companion-linux",
         "scripts/build-companion.sh",
         "scripts/cargo-target-budget.sh",
-        "scripts/release-companion"
+        "scripts/install-companion.test.sh",
+        "scripts/release-companion",
+        "scripts/release-companion-linux",
+        "scripts/update-homebrew-tap"
       ],
       "dependsOn": ["companion-core"]
     },
     {
       "id": "macos-app",
       "paths": ["apps/companion-macos/", "brand/macos/"],
-      "files": [".github/workflows/macos-release.yml", "scripts/release-macos"],
+      "files": [
+        ".github/workflows/macos-release.yml",
+        "packaging/homebrew/codewide.rb.in",
+        "scripts/release-macos",
+        "scripts/update-homebrew-tap"
+      ],
       "dependsOn": ["companion-swift-ffi"]
     },
     {
@@ -117,7 +129,7 @@
     {
       "id": "companion-linux",
       "component": "linux-companion-host",
-      "command": "./scripts/release-companion",
+      "command": "./scripts/release-companion-linux <version>",
       "runner": "linux"
     },
     {

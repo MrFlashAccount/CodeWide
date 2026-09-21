@@ -131,8 +131,7 @@ describe("conversation chrome layout", () => {
     expect(composerInput).toContain("maxHeight: COMPOSER_MAX_HEIGHT");
   });
 
-  it("does not paint transcript backdrops over loading, unpositioned or empty history", () => {
-    // The composition contract applies to both opaque panels.
+  it("keeps fixed header chrome opaque without painting the composer over empty history", () => {
     expect(timelineRead).toContain(
       "timelinePositioned && conversationTimelineBinding.timeline.length > 0",
     );
@@ -140,7 +139,10 @@ describe("conversation chrome layout", () => {
       ownerConversationLayout.match(
         /conversationBackdropVisible && \( <ConversationPanelUnderlay/g,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(ownerConversationLayout).toContain(
+      "<ConversationPanelUnderlay style={[ styles.conversationHeaderUnderlay",
+    );
   });
   it("reuses the existing neutral surfaces instead of inventing a palette", () => {
     expect(colors.threadListSurface).toBe(darkScheme.background);

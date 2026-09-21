@@ -237,8 +237,8 @@ describe("CodeWide effect ownership", () => {
   it("keeps the workspace route effect limited to native runtime synchronization", () => {
     expect(runtimeShell.match(/\buseEffect\s*\(/gu)).toHaveLength(1);
     expect(runtimeShell).not.toMatch(/\buseLayoutEffect\s*\(/u);
-    expect(runtimeShell).toContain('activateRuntime("legacy"');
-    expect(runtimeShell).toContain('stopRuntime("legacy")');
+    expect(runtimeShell).toContain("activateRuntime(");
+    expect(runtimeShell).toContain("stopRuntime()");
     expect(screen).not.toContain("transitionConversationScope");
     expect(projectWorkspace).toContain("useRemoteProjectCatalog(");
     expect(workspaceDeepLinks).not.toMatch(/\b(?:fetch|load|hydrate)[A-Z_a-z]*\s*\(/u);

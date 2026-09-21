@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { projectTimelineRows } from "../src/features/conversation/timeline/timelineRows";
+import {
+  projectTimelineRows,
+  timelineRowKey,
+} from "../src/features/conversation/timeline/timelineRows";
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
 
 type TurnRow = Extract<TimelineItem, { kind: "turn" }>;
@@ -35,6 +38,28 @@ function turnRow(id: string, source: string, status: "completed" | "inProgress" 
       items: [{ id: `${id}-agent`, phase: "final_answer", text: source, type: "agentMessage" }],
       startedAt: 1,
       status,
+    },
+  };
+  // WHY: The generated protocol union has no narrow test factory, so the fixture cannot be
+  // constructed safely while supplying only the fields consumed by the timeline projection.
+  return value as TurnRow;
+}
+
+function streamingTurnRow(id: string, items: readonly unknown[]): TurnRow {
+  const value: unknown = {
+    connectionId: "server",
+    id,
+    key: `server/thread/${id}`,
+    kind: "turn",
+    scope: "server/thread",
+    threadId: "thread",
+    turn: {
+      completedAt: null,
+      durationMs: null,
+      id,
+      items,
+      startedAt: 1,
+      status: "inProgress",
     },
   };
   // WHY: The generated protocol union has no narrow test factory, so the fixture cannot be
@@ -110,6 +135,55 @@ describe("feature-flagged conversation rows", () => {
 
     expect(second[0]).toBe(first[0]);
     expect(second[1]).not.toBe(first[1]);
+  });
+
+  it("keeps the physical row key stable when a streaming message gains a tool call", () => {
+    const userMessage = {
+      clientId: null,
+      content: [{ text: "Run the tests", text_elements: [], type: "text" }],
+      id: "user-1",
+      type: "userMessage",
+    };
+    const agentMessage = {
+      id: "agent-1",
+      memoryCitation: null,
+      phase: "commentary",
+      text: "Working",
+      type: "agentMessage",
+    };
+    const toolCall = {
+      aggregatedOutput: "",
+      command: "pnpm test",
+      durationMs: null,
+      id: "tool-1",
+      status: "inProgress",
+      type: "commandExecution",
+    };
+    const before = projectTimelineRows(
+      [streamingTurnRow("streaming-with-tool", [userMessage, agentMessage])],
+      enabled,
+    );
+    const after = projectTimelineRows(
+      [streamingTurnRow("streaming-with-tool", [userMessage, agentMessage, toolCall])],
+      enabled,
+    );
+
+    expect(before).toMatchObject([
+      { kind: "turnSlice", parts: [{ kind: "markdownBlock" }], placement: "single" },
+    ]);
+    expect(after).toMatchObject([
+      {
+        kind: "turnSlice",
+        parts: [{ kind: "markdownBlock" }, { kind: "activity" }],
+        placement: "single",
+      },
+    ]);
+    const beforeRow = before[0];
+    const afterRow = after[0];
+    if (beforeRow === undefined || afterRow === undefined) {
+      throw new Error("Expected one projected row before and after the streaming update");
+    }
+    expect(timelineRowKey(afterRow)).toBe(timelineRowKey(beforeRow));
   });
 
   it("reprojects a stable item when pagination changes its timeline index", () => {

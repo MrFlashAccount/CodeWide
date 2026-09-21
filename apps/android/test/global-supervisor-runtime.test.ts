@@ -55,7 +55,7 @@ describe("GlobalSupervisorRuntime", () => {
       attention: attentionFixture(),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
-        setLevel: vi.fn(),
+        setPlaybackLevel: vi.fn(),
       }),
       binding: () => ({
         bind: vi.fn(async () => HOME),
@@ -81,6 +81,7 @@ describe("GlobalSupervisorRuntime", () => {
       startWebRtc: vi.fn(async () => ({
         acceptAnswer: vi.fn(async () => undefined),
         offerSdp: "v=0\r\no=offer",
+        setMicrophoneMuted: vi.fn(async () => undefined),
         stop: vi.fn(async () => undefined),
       })),
     });
@@ -99,10 +100,14 @@ describe("GlobalSupervisorRuntime", () => {
     const session = sessionFixture();
     const acceptAnswer = vi.fn(async () => undefined);
     const stopWebRtc = vi.fn(async () => undefined);
+    const setMicrophoneMuted = vi.fn(async () => undefined);
     const foregroundRelease = vi.fn(async () => undefined);
+    const setPlaybackLevel = vi.fn();
     const finishAttentionStop = Promise.withResolvers<void>();
     const finishRemoteStop = Promise.withResolvers<void>();
     const calls: string[] = [];
+    const published: Array<{ readonly event: string }> = [];
+    let publishPlaybackLevel: (level: number) => void = () => undefined;
     const subscribeLive = vi.fn(async (_connectionId, channelId, threadId) => {
       calls.push("subscribe");
       ingress.publishLive("home", { channelId, event: "subscribed", threadId });
@@ -157,7 +162,7 @@ describe("GlobalSupervisorRuntime", () => {
             method: "thread/realtime/closed",
             params: { threadId: "supervisor" },
           },
-          sequence: 3,
+          sequence: 5,
           threadId: "supervisor",
         });
       }
@@ -185,7 +190,7 @@ describe("GlobalSupervisorRuntime", () => {
       attention,
       acquireForegroundLease: async () => ({
         release: foregroundRelease,
-        setLevel: vi.fn(),
+        setPlaybackLevel,
       }),
       binding: () => binding,
       enabledConnectionIds: () => ["home"],
@@ -216,15 +221,17 @@ describe("GlobalSupervisorRuntime", () => {
       recordStartupStage,
       requestMicrophonePermission: vi.fn(async () => "granted"),
       rpcAfterAttach,
-      startWebRtc: vi.fn(async ({ mode }) => {
+      startWebRtc: vi.fn(async ({ mode, onPlaybackLevel }) => {
         calls.push("webrtc");
         expect(mode).toBe("interactive");
+        publishPlaybackLevel = onPlaybackLevel;
         return {
           acceptAnswer: async (sdp) => {
             calls.push("answer");
             await acceptAnswer(sdp);
           },
           offerSdp: "v=0\r\no=offer",
+          setMicrophoneMuted,
           stop: async () => {
             calls.push("media-stop");
             await stopWebRtc();
@@ -237,13 +244,46 @@ describe("GlobalSupervisorRuntime", () => {
       home: HOME,
       status: "ready",
     });
-    const activation = await runtime.start(HOME, vi.fn());
+    const activation = await runtime.start(HOME, (event) => published.push(event));
     expect(attention.enableDelivery).toHaveBeenCalledWith(HOME);
     expect(runtime.isActive()).toBe(true);
     expect(microphoneLeases.currentOwner()).toEqual({
       activationId: "activation",
       kind: "globalSupervisor",
     });
+    ingress.publishLive("home", {
+      channelId: "channel",
+      event: "payload",
+      payload: {
+        method: "thread/realtime/itemAdded",
+        params: { threadId: "supervisor" },
+      },
+      sequence: 3,
+      threadId: "supervisor",
+    });
+    publishPlaybackLevel(0.73);
+    ingress.publishLive("home", {
+      channelId: "channel",
+      event: "payload",
+      payload: {
+        method: "thread/realtime/transcript/done",
+        params: { role: "assistant", text: "Done", threadId: "supervisor" },
+      },
+      sequence: 4,
+      threadId: "supervisor",
+    });
+    expect(setPlaybackLevel).toHaveBeenLastCalledWith(0.73);
+    expect(
+      published
+        .map((event) => event.event)
+        .filter((event) => ["listening", "thinking", "speaking"].includes(event)),
+    ).toEqual(["listening", "thinking", "speaking", "listening"]);
+
+    await activation.setMicrophoneMuted(true);
+    await activation.setMicrophoneMuted(false);
+    expect(setMicrophoneMuted.mock.calls).toEqual([[true], [false]]);
+    expect(stopWebRtc).not.toHaveBeenCalled();
+    expect(runtime.isActive()).toBe(true);
 
     const stopping = activation.stop();
     expect(runtime.isActive()).toBe(false);
@@ -343,7 +383,10 @@ describe("GlobalSupervisorRuntime", () => {
     const identifiers = ["logical-activation", "channel-before-vpn", "channel-after-vpn"];
     const runtime = createGlobalSupervisorRuntime({
       attention: attentionFixture(),
-      acquireForegroundLease: async () => ({ release: foregroundRelease, setLevel: vi.fn() }),
+      acquireForegroundLease: async () => ({
+        release: foregroundRelease,
+        setPlaybackLevel: vi.fn(),
+      }),
       binding: () => ({
         bind: vi.fn(async () => HOME),
         invalidateDeletedConnections: vi.fn(async () => undefined),
@@ -378,6 +421,7 @@ describe("GlobalSupervisorRuntime", () => {
         return {
           acceptAnswer: vi.fn(async () => undefined),
           offerSdp: "v=0\r\no=offer",
+          setMicrophoneMuted: vi.fn(async () => undefined),
           stop: vi.fn(async () => undefined),
         };
       }),
@@ -475,7 +519,10 @@ describe("GlobalSupervisorRuntime", () => {
     ];
     const runtime = createGlobalSupervisorRuntime({
       attention: attentionFixture(),
-      acquireForegroundLease: async () => ({ release: foregroundRelease, setLevel: vi.fn() }),
+      acquireForegroundLease: async () => ({
+        release: foregroundRelease,
+        setPlaybackLevel: vi.fn(),
+      }),
       binding: () => {
         throw new Error("unused");
       },
@@ -507,6 +554,7 @@ describe("GlobalSupervisorRuntime", () => {
         return {
           acceptAnswer: vi.fn(async () => undefined),
           offerSdp: "v=0\r\no=offer",
+          setMicrophoneMuted: vi.fn(async () => undefined),
           stop: vi.fn(async () => {
             if (stopped) return;
             stopped = true;
@@ -617,7 +665,7 @@ describe("GlobalSupervisorRuntime", () => {
       attention: attentionFixture(),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
-        setLevel: vi.fn(),
+        setPlaybackLevel: vi.fn(),
       }),
       binding: () => binding,
       enabledConnectionIds: () => ["home"],
@@ -644,6 +692,7 @@ describe("GlobalSupervisorRuntime", () => {
       startWebRtc: vi.fn(async () => ({
         acceptAnswer: vi.fn(async () => undefined),
         offerSdp: "v=0\r\no=offer",
+        setMicrophoneMuted: vi.fn(async () => undefined),
         stop: vi.fn(async () => undefined),
       })),
     });
@@ -733,7 +782,7 @@ describe("GlobalSupervisorRuntime", () => {
       attention: attentionFixture(),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
-        setLevel: vi.fn(),
+        setPlaybackLevel: vi.fn(),
       }),
       binding: () => binding,
       enabledConnectionIds: () => ["home"],
@@ -760,6 +809,7 @@ describe("GlobalSupervisorRuntime", () => {
       startWebRtc: vi.fn(async () => ({
         acceptAnswer: vi.fn(async () => undefined),
         offerSdp: "v=0\r\no=offer",
+        setMicrophoneMuted: vi.fn(async () => undefined),
         stop: vi.fn(async () => undefined),
       })),
     });
@@ -825,7 +875,7 @@ describe("GlobalSupervisorRuntime", () => {
       attention: attentionFixture(),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
-        setLevel: vi.fn(),
+        setPlaybackLevel: vi.fn(),
       }),
       binding: () => {
         throw new Error("unused");
@@ -854,6 +904,7 @@ describe("GlobalSupervisorRuntime", () => {
       startWebRtc: vi.fn(async () => ({
         acceptAnswer: vi.fn(async () => undefined),
         offerSdp: "v=0\r\no=offer",
+        setMicrophoneMuted: vi.fn(async () => undefined),
         stop: vi.fn(async () => undefined),
       })),
     });
@@ -874,7 +925,7 @@ describe("GlobalSupervisorRuntime", () => {
       attention,
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
-        setLevel: vi.fn(),
+        setPlaybackLevel: vi.fn(),
       }),
       binding: () => {
         throw new Error("unused");
@@ -896,6 +947,7 @@ describe("GlobalSupervisorRuntime", () => {
       startWebRtc: vi.fn(async () => ({
         acceptAnswer: vi.fn(async () => undefined),
         offerSdp: "v=0\r\no=offer",
+        setMicrophoneMuted: vi.fn(async () => undefined),
         stop: vi.fn(async () => undefined),
       })),
     });

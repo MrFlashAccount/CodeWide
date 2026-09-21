@@ -9,6 +9,17 @@ import type {
 } from "./projectManagementContract";
 import type { SidebarProject } from "./sidebarProjects";
 
+function projectCatalogVersion(projects: readonly SidebarProject[]): string {
+  let version = `${String(projects.length)};`;
+  for (const project of projects) {
+    version += `${String(project.key.length)}:${project.key}`;
+    version += `${String(project.name.length)}:${project.name}`;
+    version += `${String(project.subtitle.length)}:${project.subtitle}`;
+    version += `${project.pinned ? "1" : "0"}:${String(project.lastUsedAt)};`;
+  }
+  return version;
+}
+
 export function useProjectManagement({ errors, projects, servers }: ProjectManagementProps) {
   const [pending, setPending] = useState<string | null>(null);
   const { fontScale } = useWindowDimensions();
@@ -94,6 +105,15 @@ export function useProjectManagement({ errors, projects, servers }: ProjectManag
       },
     );
   });
-  return { change, choosingServer, pending, pinned, rowIconSize, rows, setChoosingServer };
+  return {
+    change,
+    choosingServer,
+    dataVersion: projectCatalogVersion(projects),
+    pending,
+    pinned,
+    rowIconSize,
+    rows,
+    setChoosingServer,
+  };
 }
 export type ProjectManagementState = ReturnType<typeof useProjectManagement>;

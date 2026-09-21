@@ -106,11 +106,15 @@ it("saves one structured personality without changing the synthesized voice", as
   const savePersonality = jest.fn(async () => undefined);
   const view = render(
     <VoiceAssistantSettings
+      onEnrollPersonalVoice={async () => undefined}
       onPreviewVoice={previewVoice}
       onSavePersonality={savePersonality}
+      onSetPersonalVoiceFilterEnabled={async () => undefined}
       onSelectOrbStyle={async () => undefined}
       onSelectVoice={selectVoice}
       personality={{ character: "", communicationStyle: "", rules: "" }}
+      personalVoiceFilterEnabled={false}
+      personalVoiceProfileAvailable={false}
       selectedOrbStyle="nebula"
       selectedVoice="cove"
     />,
@@ -146,13 +150,17 @@ it("saves one structured personality without changing the synthesized voice", as
 it("keeps an unsaved personality draft visible when persistence fails", async () => {
   const view = render(
     <VoiceAssistantSettings
+      onEnrollPersonalVoice={async () => undefined}
       onPreviewVoice={async () => undefined}
       onSavePersonality={async () => {
         throw new Error("disk unavailable");
       }}
+      onSetPersonalVoiceFilterEnabled={async () => undefined}
       onSelectOrbStyle={async () => undefined}
       onSelectVoice={async () => undefined}
       personality={{ character: "", communicationStyle: "", rules: "" }}
+      personalVoiceFilterEnabled={false}
+      personalVoiceProfileAvailable={false}
       selectedOrbStyle="nebula"
       selectedVoice="cove"
     />,
@@ -173,11 +181,15 @@ it("shows deterministic orb previews and switches only the visual preference", a
   const savePersonality = jest.fn(async () => undefined);
   const view = render(
     <VoiceAssistantSettings
+      onEnrollPersonalVoice={async () => undefined}
       onPreviewVoice={async () => undefined}
       onSavePersonality={savePersonality}
+      onSetPersonalVoiceFilterEnabled={async () => undefined}
       onSelectOrbStyle={selectOrbStyle}
       onSelectVoice={selectVoice}
       personality={{ character: "", communicationStyle: "", rules: "" }}
+      personalVoiceFilterEnabled={false}
+      personalVoiceProfileAvailable={false}
       selectedOrbStyle="nebula"
       selectedVoice="cove"
     />,
@@ -194,4 +206,35 @@ it("shows deterministic orb previews and switches only the visual preference", a
   await waitFor(() => expect(selectOrbStyle).toHaveBeenCalledWith("particles"));
   expect(selectVoice).not.toHaveBeenCalled();
   expect(savePersonality).not.toHaveBeenCalled();
+});
+
+it("records and enables the experimental personal voice filter explicitly", async () => {
+  const enroll = jest.fn(async () => undefined);
+  const setEnabled = jest.fn(async () => undefined);
+  const baseProps = {
+    onEnrollPersonalVoice: enroll,
+    onPreviewVoice: async () => undefined,
+    onSavePersonality: async () => undefined,
+    onSelectOrbStyle: async () => undefined,
+    onSelectVoice: async () => undefined,
+    onSetPersonalVoiceFilterEnabled: setEnabled,
+    personality: { character: "", communicationStyle: "", rules: "" },
+    personalVoiceFilterEnabled: false,
+    selectedOrbStyle: "nebula" as const,
+    selectedVoice: "cove" as const,
+  };
+  const view = render(
+    <VoiceAssistantSettings {...baseProps} personalVoiceProfileAvailable={false} />,
+  );
+
+  const disabledFilter = view.getByTestId("personal-voice-filter-switch");
+  expect(disabledFilter).toBeDisabled();
+  fireEvent.press(view.getByRole("button", { name: "Record personal voice profile" }));
+  await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
+
+  view.rerender(<VoiceAssistantSettings {...baseProps} personalVoiceProfileAvailable={true} />);
+  const enabledFilter = view.getByTestId("personal-voice-filter-switch");
+  fireEvent(enabledFilter, "valueChange", true);
+  await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(true));
+  expect(view.getByText(/opens new local voice segments optimistically/iu)).toBeTruthy();
 });

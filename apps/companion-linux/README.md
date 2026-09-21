@@ -44,6 +44,22 @@ Do not infer production security from the default local listen address. The
 authenticated device protocol, relay route, administrator token, state paths,
 and mutation mode must be configured by the deployment owner.
 
+## Distribution
+
+The portable `x86_64-unknown-linux-musl` release bundle contains the headless
+host, bundled Git provider, memory watcher, and user-systemd units. After a
+release is published, the checksummed standalone installer installs and starts
+that bundle with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/companion | sh
+```
+
+The same release asset feeds the `codewide-companion` formula in
+`MrFlashAccount/homebrew-codewide`. The curl installer owns user-systemd
+activation and rollback; the Homebrew formula uses `brew services` and prints
+the required one-time state and Git-provider initialization commands.
+
 ## Validation and release
 
 ```sh
@@ -55,5 +71,7 @@ cargo clippy -p codewide-companion --all-targets -- -D warnings
 Publishing is owned by the repository one-shot command:
 
 ```sh
-./scripts/release-companion
+./scripts/release-companion-linux <version>
 ```
+
+`./scripts/release-companion` remains the validated local deployment command.

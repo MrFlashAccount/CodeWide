@@ -168,8 +168,15 @@ set -lx CODEWIDE_SERVER_EMOJI '🏠'
 codewide-companion pair
 ```
 
-Build the standalone Linux Relay with `cargo build --release -p codewide-relay`
-and run `target/release/codewide-relay --port 8780`. Android and Companion
+Build the standalone Linux Relay release artifact with
+`./scripts/build-relay-linux`. After a Relay release is published, install its
+verified portable `x86_64` Linux binary with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
+```
+
+Run `codewide-relay --port 8780`. Android and Companion
 both connect outbound to that Relay address. Plain WebSocket connections carry
 opaque inner-TLS bytes, while TLS 1.3 connections on the same port carry health,
 pairing, and control. On the Relay host, `codewide-relay invite` creates an
@@ -480,7 +487,12 @@ and writes a mode-`0600` evidence bundle under ignored `test-results/`. An
 upgrade run additionally requires `--suite upgrade --previous-apk <old.apk>` and
 fails if the package UID or first-install identity changes.
 
-Run the complete Android-to-Observer E2E suite with one command:
+The Android V2 frontend was retired; see [scope and UI reuse audit](docs/android-v2-retirement.md).
+Use `pnpm validate:android:v1` and `pnpm --filter @codewide/android compile:android` for the current
+frontend. The historical generation-parity runner below still includes V2 scenarios and must be
+adapted before it can certify the V1-only application.
+
+Historical Android-to-Observer E2E command:
 
 ```sh
 pnpm test:android:e2e

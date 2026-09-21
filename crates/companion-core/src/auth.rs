@@ -73,6 +73,12 @@ pub struct Device {
     pub last_seen_at: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceStatus {
+    pub device: Device,
+    pub active_connections: u32,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredDevice {
@@ -128,6 +134,28 @@ pub struct DeviceRegistry {
     state: tokio::sync::Mutex<RegistryState>,
     trusted_client_spki: TrustedClientSpki,
     authorization_changes: tokio::sync::broadcast::Sender<AuthorizationChange>,
+    active_connections: Arc<std::sync::Mutex<HashMap<String, u32>>>,
+}
+
+pub struct DeviceConnectionLease {
+    device_id: String,
+    active_connections: Arc<std::sync::Mutex<HashMap<String, u32>>>,
+}
+
+impl Drop for DeviceConnectionLease {
+    fn drop(&mut self) {
+        let mut active = self
+            .active_connections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let remove = active.get_mut(&self.device_id).is_some_and(|count| {
+            *count = count.saturating_sub(1);
+            *count == 0
+        });
+        if remove {
+            active.remove(&self.device_id);
+        }
+    }
 }
 
 /// A synchronous, live view of device public keys trusted for mTLS handshakes.
@@ -316,6 +344,7 @@ impl DeviceRegistry {
             }),
             trusted_client_spki,
             authorization_changes,
+            active_connections: Arc::new(std::sync::Mutex::new(HashMap::new())),
         };
         if registry_requires_persist {
             let state = opened.state.lock().await;
@@ -562,6 +591,36 @@ impl DeviceRegistry {
             .values()
             .cloned()
             .map(Into::into)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn connection_lease(&self, device_id: String) -> DeviceConnectionLease {
+        let mut active = self
+            .active_connections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let count = active.entry(device_id.clone()).or_default();
+        *count = count.saturating_add(1);
+        drop(active);
+        DeviceConnectionLease {
+            device_id,
+            active_connections: self.active_connections.clone(),
+        }
+    }
+
+    pub async fn device_statuses(&self) -> Vec<DeviceStatus> {
+        let devices = self.devices().await;
+        let active = self
+            .active_connections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        devices
+            .into_iter()
+            .map(|device| DeviceStatus {
+                active_connections: active.get(&device.id).copied().unwrap_or_default(),
+                device,
+            })
             .collect()
     }
 

@@ -2,7 +2,7 @@
 
 Status: **M0–M8 capability ownership implemented; application-navigation ownership subsequently migrated to Expo Router**. Baseline: `3630ca4ed87a90916bd0a7cb4beaaba230fa28ce`. The source tree below records the M8 feature-extraction checkpoint. Its workspace/navigation entries are historical and are superseded by [V1 route architecture](android-v1-route-architecture.md). Device-only interaction and relative performance remain explicitly unverified. Source paths abbreviated as `data/`, `ui/`, `rendering/` or `features/` are relative to `apps/android/src/`; historical screen line references identify the baseline.
 
-This is the selected V1 capability-ownership entrypoint. Use the [feature migration ledger](android-v1-feature-migration.md) for the historical extraction map and [route architecture](android-v1-route-architecture.md) with its [route ledger](android-v1-route-migration.md) for current application navigation. Use [V1 source context](../apps/android/src/CONTEXT.md) and [runtime/data context](../apps/android/src/data/CONTEXT.md) for local placement rules. Existing [V2 architecture](android-v2-client-architecture.md) remains a separate contract.
+This is the selected V1 capability-ownership entrypoint. Use the [feature migration ledger](android-v1-feature-migration.md) for the historical extraction map and [route architecture](android-v1-route-architecture.md) with its [route ledger](android-v1-route-migration.md) for current application navigation. Use [V1 source context](../apps/android/src/CONTEXT.md) and [runtime/data context](../apps/android/src/data/CONTEXT.md) for local placement rules. The Android V2 frontend is retired; see the [retirement scope and UI audit](android-v2-retirement.md).
 
 ## M8 checkpoint subtree: additions and extractions only
 
@@ -48,7 +48,7 @@ apps/android/src/                                  existing anchor
 │   │   ├── connectionPresentation.ts             connection/status display transformations
 │   │   └── ConnectionActivityIndicator.tsx        activity view; JSX stays in .tsx
 │   ├── settings/ [E/M]                           settings-section composition ← screen + ui/SettingsSheet family
-│   │   └── SettingsFeature.tsx                   opens existing security/generation capabilities
+│   │   └── SettingsFeature.tsx                   opens existing security/diagnostics capabilities
 │   ├── accounts/ [E/M]                           account/login/usage interaction ← screen + ui usage family
 │   │   ├── AccountPoolFeature.tsx                login, explicit cancellation and profile controls
 │   │   └── accountUsage.tsx                      usage resource binding and presentation

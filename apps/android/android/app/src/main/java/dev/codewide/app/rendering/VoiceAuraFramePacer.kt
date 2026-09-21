@@ -1,35 +1,47 @@
 package dev.codewide.app.rendering
 
-/** Bounds expensive full-screen aura filter replacement without limiting the window refresh rate. */
+/** Selects stable draw deadlines without quantizing just below a display refresh boundary. */
 internal class VoiceAuraFramePacer(
   private val intervalNanos: Long = DEFAULT_INTERVAL_NANOS,
 ) {
-  private var lastDrawNanos = Long.MIN_VALUE
+  private val deadlineToleranceNanos = minOf(MAX_DEADLINE_TOLERANCE_NANOS, intervalNanos / 8L)
+  private var lastFrameNanos = Long.MIN_VALUE
+  private var nextDrawNanos = Long.MIN_VALUE
 
   init {
     require(intervalNanos > 0L) { "Aura frame interval must be positive" }
   }
 
   fun shouldDraw(frameTimeNanos: Long): Boolean {
-    val previous = lastDrawNanos
-    if (
-      previous == Long.MIN_VALUE ||
-      frameTimeNanos < previous ||
-      frameTimeNanos - previous >= intervalNanos
-    ) {
-      lastDrawNanos = frameTimeNanos
+    val previousFrame = lastFrameNanos
+    if (previousFrame == Long.MIN_VALUE || frameTimeNanos < previousFrame) {
+      lastFrameNanos = frameTimeNanos
+      nextDrawNanos = frameTimeNanos + intervalNanos
       return true
     }
-    return false
+    lastFrameNanos = frameTimeNanos
+
+    val deadline = nextDrawNanos
+    if (frameTimeNanos + deadlineToleranceNanos < deadline) return false
+
+    val elapsedIntervals = if (frameTimeNanos < deadline) {
+      1L
+    } else {
+      (frameTimeNanos - deadline) / intervalNanos + 1L
+    }
+    nextDrawNanos = deadline + elapsedIntervals * intervalNanos
+    return true
   }
 
   fun reset() {
-    lastDrawNanos = Long.MIN_VALUE
+    lastFrameNanos = Long.MIN_VALUE
+    nextDrawNanos = Long.MIN_VALUE
   }
 
   private companion object {
-    // Replacing a full-window RenderEffect at 60 fps can starve input dispatch on mid-range
-    // devices. The aura remains fluid at 30 fps while leaving alternate frames for interaction.
+    const val MAX_DEADLINE_TOLERANCE_NANOS = 1_000_000L
+    // Ambient motion stays at 30 fps. The overlay owner uses a separate 60 fps pacer only while
+    // the bounded launch/release wave owns the full-window content effect.
     const val DEFAULT_INTERVAL_NANOS = 33_333_334L
   }
 }

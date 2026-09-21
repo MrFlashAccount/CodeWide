@@ -1,26 +1,48 @@
 import { describe, expect, it } from "vitest";
 
-import { globalVoiceWebRtcAudioLevel } from "../src/native/globalVoiceWebRtcAudioLevel";
+import {
+  globalVoiceWebRtcPlaybackLevel,
+  globalVoiceWebRtcTransportSnapshot,
+} from "../src/native/globalVoiceWebRtcAudioLevel";
 
-describe("Global Voice WebRTC audio level", () => {
-  it("selects the highest bounded microphone media-source level", () => {
+describe("Global Voice WebRTC playback level", () => {
+  it("selects only the highest bounded inbound audio level", () => {
     const report = new Map([
-      ["codec", { audioLevel: 0.9, type: "codec" }],
-      ["quiet-microphone", { audioLevel: 0.2, type: "media-source" }],
-      ["active-microphone", { audioLevel: 1.4, type: "media-source" }],
+      ["microphone", { audioLevel: 0.95, kind: "audio", type: "media-source" }],
+      ["video", { audioLevel: 0.99, kind: "video", type: "inbound-rtp" }],
+      ["quiet-assistant", { audioLevel: 0.2, kind: "audio", type: "inbound-rtp" }],
+      ["active-assistant", { audioLevel: 1.4, mediaType: "audio", type: "inbound-rtp" }],
     ]);
 
-    expect(globalVoiceWebRtcAudioLevel(report)).toBe(1);
+    expect(globalVoiceWebRtcPlaybackLevel(report)).toBe(1);
   });
 
   it("falls back to silence for an empty or malformed stats report", () => {
-    expect(globalVoiceWebRtcAudioLevel(null)).toBe(0);
-    expect(globalVoiceWebRtcAudioLevel({})).toBe(0);
-    expect(globalVoiceWebRtcAudioLevel(new Map())).toBe(0);
+    expect(globalVoiceWebRtcPlaybackLevel(null)).toBe(0);
+    expect(globalVoiceWebRtcPlaybackLevel({})).toBe(0);
+    expect(globalVoiceWebRtcPlaybackLevel(new Map())).toBe(0);
     expect(
-      globalVoiceWebRtcAudioLevel(
-        new Map([["microphone", { audioLevel: Number.NaN, type: "media-source" }]]),
+      globalVoiceWebRtcPlaybackLevel(
+        new Map([["assistant", { audioLevel: Number.NaN, kind: "audio", type: "inbound-rtp" }]]),
       ),
     ).toBe(0);
+  });
+
+  it("keeps content-free outbound audio counters separate from playback level", () => {
+    const report = new Map([
+      ["assistant", { audioLevel: 0.4, kind: "audio", type: "inbound-rtp" }],
+      ["microphone-a", { bytesSent: 1_000, kind: "audio", packetsSent: 10, type: "outbound-rtp" }],
+      [
+        "microphone-b",
+        { bytesSent: 500, mediaType: "audio", packetsSent: 5, type: "outbound-rtp" },
+      ],
+      ["video", { bytesSent: 9_999, kind: "video", packetsSent: 99, type: "outbound-rtp" }],
+    ]);
+
+    expect(globalVoiceWebRtcPlaybackLevel(report)).toBe(0.4);
+    expect(globalVoiceWebRtcTransportSnapshot(report)).toEqual({
+      outboundAudioBytes: 1_500,
+      outboundAudioPackets: 15,
+    });
   });
 });

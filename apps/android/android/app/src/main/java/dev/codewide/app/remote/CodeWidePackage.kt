@@ -23,9 +23,9 @@ class CodeWidePackage : ReactPackage {
       CodexPerformanceModule(reactContext),
       ContentReviewSelectionModule(reactContext),
       DiagramPreviewModule(reactContext),
-      GlobalVoiceCommunicationAudioModule(reactContext),
       GlobalVoiceForegroundModule(reactContext),
       LargePasteModule(reactContext),
+      PersonalVoiceFilterModule(reactContext),
       V2VoiceCaptureModule(reactContext),
     )
 

@@ -268,25 +268,33 @@ internal class ParticlesOrbSimulation(initialState: VoiceAssistantOrbState = Voi
   private var time = 0f
   private var angleY = 0f
   private var connectingPhase = 0f
-  private var inputLevelSmoothed = 0f
+  private var sourceLevelSmoothed = 0f
   private var levelSmoothed = 0f
 
   fun advance(
     state: VoiceAssistantOrbState,
-    liveListeningLevel: Float?,
+    inputLevel: Float?,
+    playbackLevel: Float?,
     deltaSeconds: Float,
     isStatic: Boolean = false,
   ): ParticlesOrbFrame {
     if (isStatic) time = ParticlesOrbModel.STATIC_TIME_SECONDS else time += deltaSeconds
     val easeDelta = if (isStatic) 60f else deltaSeconds
     val weights = stateMix.update(state, easeDelta)
-    val targetLevel = if (!isStatic && state == VoiceAssistantOrbState.LISTENING && liveListeningLevel != null) {
-      liveListeningLevel.coerceIn(0f, 1f)
-    } else {
-      ParticlesOrbModel.stateEnergy(state, time)
+    val targetLevel = when {
+      isStatic -> ParticlesOrbModel.stateEnergy(state, time)
+      state == VoiceAssistantOrbState.LISTENING -> inputLevel?.coerceIn(0f, 1f) ?: 0f
+      state == VoiceAssistantOrbState.SPEAKING -> playbackLevel?.coerceIn(0f, 1f) ?: 0f
+      else -> ParticlesOrbModel.stateEnergy(state, time)
     }
-    inputLevelSmoothed = ParticlesOrbModel.approach(inputLevelSmoothed, targetLevel, 7.7f, easeDelta)
-    levelSmoothed = ParticlesOrbModel.approach(levelSmoothed, inputLevelSmoothed, 9f, easeDelta)
+    val envelopeRate = if (targetLevel > sourceLevelSmoothed) 14f else 4f
+    sourceLevelSmoothed = ParticlesOrbModel.approach(
+      sourceLevelSmoothed,
+      targetLevel,
+      envelopeRate,
+      easeDelta,
+    )
+    levelSmoothed = ParticlesOrbModel.approach(levelSmoothed, sourceLevelSmoothed, 9f, easeDelta)
 
     val ripple = weights.listening
     val pulse = weights.thinking
@@ -328,36 +336,38 @@ internal class ParticlesOrbView(context: Context) : VoiceAssistantOrbView(contex
   private val density = resources.displayMetrics.density
   private var simulation = ParticlesOrbSimulation()
   private val projection = MutableParticlesOrbProjection()
-  private var liveListeningLevel: Float? = null
-  private var frame = simulation.advance(orbState, null, 0f)
+  private var inputLevel: Float? = null
+  private var playbackLevel: Float? = null
+  private var frame = simulation.advance(orbState, null, null, 0f)
   private var hasAdvanced = false
 
   init {
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
   }
 
-  override fun setLevel(rawLevel: Double) {
-    liveListeningLevel = if (rawLevel >= 0.0) rawLevel.toFloat().coerceIn(0f, 1f) else null
+  override fun setAudioLevels(inputLevel: Double, playbackLevel: Double) {
+    this.inputLevel = inputLevel.normalizedLevel()
+    this.playbackLevel = playbackLevel.normalizedLevel()
   }
 
   override fun advanceAnimation(deltaSeconds: Float) {
     hasAdvanced = true
-    frame = simulation.advance(orbState, liveListeningLevel, deltaSeconds)
+    frame = simulation.advance(orbState, inputLevel, playbackLevel, deltaSeconds)
   }
 
   override fun onOrbStateChanged() {
     if (!hasAdvanced) {
       simulation = ParticlesOrbSimulation(orbState)
-      frame = simulation.advance(orbState, liveListeningLevel, 0f)
+      frame = simulation.advance(orbState, inputLevel, playbackLevel, 0f)
     }
-    if (reducedMotion) frame = simulation.advance(orbState, null, 0f, isStatic = true)
+    if (reducedMotion) frame = simulation.advance(orbState, null, null, 0f, isStatic = true)
   }
 
   override fun onReducedMotionChanged() {
     frame = if (reducedMotion) {
-      simulation.advance(orbState, null, 0f, isStatic = true)
+      simulation.advance(orbState, null, null, 0f, isStatic = true)
     } else {
-      simulation.advance(orbState, liveListeningLevel, 0f)
+      simulation.advance(orbState, inputLevel, playbackLevel, 0f)
     }
   }
 
@@ -374,4 +384,7 @@ internal class ParticlesOrbView(context: Context) : VoiceAssistantOrbView(contex
     }
     particlePaint.xfermode = null
   }
+
+  private fun Double.normalizedLevel(): Float? =
+    if (isFinite() && this >= 0.0) toFloat().coerceIn(0f, 1f) else null
 }

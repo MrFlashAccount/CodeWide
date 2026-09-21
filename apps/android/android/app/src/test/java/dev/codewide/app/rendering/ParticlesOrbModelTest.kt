@@ -64,7 +64,8 @@ class ParticlesOrbModelTest {
   fun rendererCreatedInAnActiveStateStartsFromThatStateWithoutAnIdleFlash() {
     val frame = ParticlesOrbSimulation(VoiceAssistantOrbState.SPEAKING).advance(
       VoiceAssistantOrbState.SPEAKING,
-      liveListeningLevel = null,
+      inputLevel = null,
+      playbackLevel = null,
       deltaSeconds = 0f,
     )
 
@@ -74,7 +75,17 @@ class ParticlesOrbModelTest {
 
   @Test
   fun listeningUsesLiveLevelAndLatitudeRipple() {
-    val frame = settledFrame(VoiceAssistantOrbState.LISTENING, liveLevel = 0.8f)
+    val frame = settledFrame(VoiceAssistantOrbState.LISTENING, inputLevel = 0.8f)
+    val sameInputWithPlayback = settledFrame(
+      VoiceAssistantOrbState.LISTENING,
+      inputLevel = 0.8f,
+      playbackLevel = 1f,
+    )
+    val playbackOnly = settledFrame(
+      VoiceAssistantOrbState.LISTENING,
+      inputLevel = 0f,
+      playbackLevel = 1f,
+    )
     val point = ParticlesOrbModel.buildSphere()[173]
     val rippled = ParticlesOrbModel.project(point, 173, frame, SIZE, 1f)
     val withoutRipple = ParticlesOrbModel.project(point, 173, frame.copy(ripple = 0f), SIZE, 1f)
@@ -83,6 +94,8 @@ class ParticlesOrbModelTest {
     assertEquals(0f, frame.pulse, 0.001f)
     assertEquals(0f, frame.flow, 0.001f)
     assertEquals(0.8f, frame.level, 0.01f)
+    assertEquals(frame.level, sameInputWithPlayback.level, 0.000001f)
+    assertEquals(0f, playbackOnly.level, 0.01f)
     assertTrue(frame.additiveGlow)
     assertTrue(abs(rippled.x - withoutRipple.x) + abs(rippled.y - withoutRipple.y) > 0.1f)
   }
@@ -104,18 +117,57 @@ class ParticlesOrbModelTest {
   }
 
   @Test
-  fun speakingExpandsAndUsesProceduralEnergyWhenPlaybackLevelIsUnavailable() {
-    val quietInput = settledFrame(VoiceAssistantOrbState.SPEAKING, liveLevel = 0f)
-    val loudInput = settledFrame(VoiceAssistantOrbState.SPEAKING, liveLevel = 1f)
+  fun speakingUsesPlaybackLevelAndNeverMicrophoneLevel() {
+    val quietPlayback = settledFrame(
+      VoiceAssistantOrbState.SPEAKING,
+      inputLevel = 1f,
+      playbackLevel = 0f,
+    )
+    val loudPlayback = settledFrame(
+      VoiceAssistantOrbState.SPEAKING,
+      inputLevel = 0f,
+      playbackLevel = 1f,
+    )
+    val samePlaybackDifferentInput = settledFrame(
+      VoiceAssistantOrbState.SPEAKING,
+      inputLevel = 1f,
+      playbackLevel = 1f,
+    )
     val point = ParticlesOrbModel.buildSphere()[121]
-    val flowing = ParticlesOrbModel.project(point, 121, quietInput, SIZE, 1f)
-    val withoutFlow = ParticlesOrbModel.project(point, 121, quietInput.copy(flow = 0f), SIZE, 1f)
+    val flowing = ParticlesOrbModel.project(point, 121, loudPlayback, SIZE, 1f)
+    val withoutFlow = ParticlesOrbModel.project(point, 121, loudPlayback.copy(flow = 0f), SIZE, 1f)
 
-    assertEquals(quietInput.level, loudInput.level, 0.000001f)
-    assertEquals(1f, quietInput.flow, 0.001f)
-    assertTrue(quietInput.radiusScale > 1f)
+    assertEquals(0f, quietPlayback.level, 0.01f)
+    assertEquals(1f, loudPlayback.level, 0.01f)
+    assertEquals(loudPlayback.level, samePlaybackDifferentInput.level, 0.000001f)
+    assertEquals(1f, loudPlayback.flow, 0.001f)
+    assertTrue(loudPlayback.radiusScale > quietPlayback.radiusScale)
     assertTrue(abs(flowing.x - withoutFlow.x) + abs(flowing.y - withoutFlow.y) > 0.1f)
-    assertTrue(quietInput.additiveGlow)
+    assertTrue(loudPlayback.additiveGlow)
+  }
+
+  @Test
+  fun thinkingIsAutonomousAndIgnoresBothAudioSources() {
+    val quiet = settledFrame(VoiceAssistantOrbState.THINKING, inputLevel = 0f, playbackLevel = 0f)
+    val loud = settledFrame(VoiceAssistantOrbState.THINKING, inputLevel = 1f, playbackLevel = 1f)
+
+    assertEquals(quiet.level, loud.level, 0.000001f)
+    assertEquals(quiet.radiusScale, loud.radiusScale, 0.000001f)
+    assertEquals(1f, quiet.pulse, 0.001f)
+  }
+
+  @Test
+  fun playbackEnvelopeAttacksQuicklyAndDecaysInsteadOfDropping() {
+    val simulation = ParticlesOrbSimulation(VoiceAssistantOrbState.SPEAKING)
+    val attack = simulation.advance(VoiceAssistantOrbState.SPEAKING, 0f, 1f, 0.07f)
+    var release = attack
+    repeat(12) {
+      release = simulation.advance(VoiceAssistantOrbState.SPEAKING, 0f, 0f, 0.07f)
+    }
+
+    assertTrue(attack.level > 0f)
+    assertTrue(release.level > 0f)
+    assertTrue(release.level < attack.level)
   }
 
   @Test
@@ -159,7 +211,8 @@ class ParticlesOrbModelTest {
   fun reducedMotionProducesAStaticUpstreamFrameWithoutAdditiveBlend() {
     val frame = ParticlesOrbSimulation().advance(
       VoiceAssistantOrbState.LISTENING,
-      liveListeningLevel = 1f,
+      inputLevel = 1f,
+      playbackLevel = 1f,
       deltaSeconds = 0f,
       isStatic = true,
     )
@@ -190,12 +243,13 @@ class ParticlesOrbModelTest {
 
   private fun settledFrame(
     state: VoiceAssistantOrbState,
-    liveLevel: Float? = null,
+    inputLevel: Float? = null,
+    playbackLevel: Float? = null,
   ): ParticlesOrbFrame {
     val simulation = ParticlesOrbSimulation()
-    var frame = simulation.advance(state, liveLevel, 0f)
+    var frame = simulation.advance(state, inputLevel, playbackLevel, 0f)
     repeat(240) {
-      frame = simulation.advance(state, liveLevel, 1f / 60f)
+      frame = simulation.advance(state, inputLevel, playbackLevel, 1f / 60f)
     }
     return frame
   }

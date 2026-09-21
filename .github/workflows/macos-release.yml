@@ -50,6 +50,8 @@ on:
         required: true
       SPARKLE_ED25519_PRIVATE_KEY:
         required: true
+      HOMEBREW_TAP_DEPLOY_KEY:
+        required: true
 
 permissions:
   contents: write
@@ -200,3 +202,37 @@ jobs:
             gh release create "$RELEASE_TAG" "$DMG_PATH" "$APPCAST_PATH" \
               --title "CodeWide $RELEASE_TAG" --notes "$notes" --latest
           fi
+
+      - name: Update Homebrew tap
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          test -n "$TAP_DEPLOY_KEY"
+          tap_root="$RUNNER_TEMP/homebrew-codewide"
+          ssh_root="$RUNNER_TEMP/homebrew-ssh"
+          mkdir -p "$ssh_root"
+          chmod 0700 "$ssh_root"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$ssh_root/id_ed25519"
+          chmod 0600 "$ssh_root/id_ed25519"
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' > "$ssh_root/known_hosts"
+          GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+            git clone git@github.com:MrFlashAccount/homebrew-codewide.git "$tap_root"
+          sha256=$(shasum --algorithm 256 "$DMG_PATH" | awk '{print $1}')
+          ./scripts/update-homebrew-tap macos "$CODEWIDE_VERSION" "$sha256" "$tap_root"
+          git -C "$tap_root" config user.name "github-actions[bot]"
+          git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$tap_root" add Casks/codewide.rb
+          if git -C "$tap_root" diff --cached --quiet; then
+            exit 0
+          fi
+          git -C "$tap_root" commit -m "codewide $CODEWIDE_VERSION"
+          attempt=0
+          until GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+            git -C "$tap_root" push origin HEAD:main; do
+            attempt=$((attempt + 1))
+            test "$attempt" -lt 3
+            GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+              git -C "$tap_root" pull --rebase origin main
+          done

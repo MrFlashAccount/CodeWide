@@ -75,15 +75,20 @@ describe("native Android voice aura", () => {
     expect(nativeVoiceAura).toContain("if (auraShader == null) return");
     expect(nativeVoiceAura).toContain("override fun isOpaque(): Boolean = false");
     expect(nativeVoiceAura).toContain("paint.shader = shader");
-    expect(nativeVoiceAura).toContain(
-      "canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)",
-    );
+    expect(nativeVoiceAura).toContain("canvas.clipPath(drawRegion)");
+    expect(nativeVoiceAura).toContain("drawRegion.addRect(0f, 0f, width.toFloat(), band");
+    expect(nativeVoiceAura).toContain("drawRegion.addCircle(");
     expect(nativeVoiceAura).toContain(
       'RenderEffect.createRuntimeShaderEffect(runtimeShader, "contents")',
     );
     expect(nativeVoiceAura).toContain("if (effectApplied) target?.setRenderEffect(null)");
-    expect(nativeVoiceAura).toContain("private val framePacer = VoiceAuraFramePacer()");
-    expect(nativeVoiceAura).toContain("reducedMotion || framePacer.shouldDraw(frameTimeNanos)");
+    expect(nativeVoiceAura).toContain("private val ambientFramePacer = VoiceAuraFramePacer()");
+    expect(nativeVoiceAura).toContain(
+      "private val transitionFramePacer = VoiceAuraFramePacer(TRANSITION_FRAME_INTERVAL_NANOS)",
+    );
+    expect(nativeVoiceAura).toContain("transitionFramePacer.shouldDraw(frameTimeNanos)");
+    expect(nativeVoiceAura).toContain("ambientFramePacer.shouldDraw(frameTimeNanos)");
+    expect(nativeVoiceAura).toContain("if (reducedMotion || !transitionAnimating)");
     expect(nativeVoiceAura).toContain("if (!reducedMotion)");
     expect(nativeVoiceAura).toContain("private fun configureShaderGeometry");
     expect(nativeVoiceAura).toContain("uniform shader contents;");

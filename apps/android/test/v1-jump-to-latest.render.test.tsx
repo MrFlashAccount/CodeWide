@@ -60,6 +60,7 @@ function timelineViewportProps(
     liveStatusVisible: false,
     loadNewerAtTimelineEnd: () => undefined,
     loadOlderAtTimelineStart: () => undefined,
+    newChat: false,
     onTimelineFirstVisibleItemChanged: () => undefined,
     paginationEdgeLockRef: { current: null },
     persistTimelineAtEnd: () => undefined,
@@ -153,6 +154,17 @@ it("delegates tail maintenance to LegendList without retaining bootstrap positio
   expect(timeline.props.maintainScrollAtEnd).toBe(true);
   expect(timeline.props.maintainVisibleContentPosition).toBe(true);
   expect(timeline.props.maintainScrollAtEndThreshold).toBe(0.02);
+});
+
+it("keeps new-chat content stationary while the keyboard opens", () => {
+  const props = timelineViewportProps(() => undefined);
+  props.newChat = true;
+  const view = render(<TimelineViewport {...props} />);
+
+  expect(view.getByTestId("conversation-timeline").props.keyboardLiftBehavior).toBe("never");
+
+  view.rerender(<TimelineViewport {...props} newChat={false} />);
+  expect(view.getByTestId("conversation-timeline").props.keyboardLiftBehavior).toBe("always");
 });
 
 it("uses the same two-percent viewport boundary for the latest indicator", () => {

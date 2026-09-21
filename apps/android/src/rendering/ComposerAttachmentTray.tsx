@@ -20,7 +20,11 @@ import {
   useImagePreview,
   useRegisterImagePreviewItem,
 } from "./ImagePreviewHost";
-import { PrivateImageAccessProvider, usePrivateAssetUri } from "./use-private-image-uri";
+import {
+  createPrivateImageDetailRequest,
+  PrivateImageAccessProvider,
+  usePrivateAssetUri,
+} from "./use-private-image-uri";
 
 interface ComposerAttachmentTrayProps {
   readonly attachments: readonly StoredDraftAttachment[];
@@ -157,9 +161,17 @@ function ComposerCard(props: ComposerCardProps) {
     { access: owner.getAccess, revision: attachment.editor?.revision },
   );
   const uri = localUri ?? image.uri;
+  const detail =
+    attachment.kind === "image" && ready
+      ? createPrivateImageDetailRequest(source, {
+          accessScope: owner.scope,
+          getAccess: owner.getAccess,
+          revision: attachment.editor?.revision ?? 0,
+        })
+      : null;
   const groupId = `composer:${owner.scope}`;
   const item = {
-    detail: image.detail,
+    detail,
     draft: { attachmentId: attachment.id, scope: owner.scope },
     id: attachment.id,
     label: attachment.name,

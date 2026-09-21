@@ -70,14 +70,12 @@ export function ConversationLayout({
             </KeyboardGestureArea>
           </View>
 
-          {conversationBackdropVisible && (
-            <ConversationPanelUnderlay
-              style={[
-                styles.conversationHeaderUnderlay,
-                { height: conversationHeaderChromeHeight(threadSearchVisible) },
-              ]}
-            />
-          )}
+          <ConversationPanelUnderlay
+            style={[
+              styles.conversationHeaderUnderlay,
+              { height: conversationHeaderChromeHeight(threadSearchVisible) },
+            ]}
+          />
 
           <KeyboardStickyView
             enabled

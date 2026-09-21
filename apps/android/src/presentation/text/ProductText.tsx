@@ -6,6 +6,11 @@ import { productFonts } from "../../ui/product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../../ui/typography-policy";
 import { AppTextInput, type AppTextInputProps } from "../../ui/Typography";
 
+const EMPTY_TEXT_STYLE: TextStyle = {};
+const REGULAR_FONT_WEIGHT = 400;
+const MEDIUM_FONT_WEIGHT = 500;
+const BOLD_FONT_WEIGHT = 700;
+
 type ProductTextTone = "default" | "dim" | "muted" | "danger" | "success" | "warning";
 type ProductTextWeight = "medium" | "regular" | "semibold";
 
@@ -54,17 +59,29 @@ export function PresentationTextInput(inputProps: AppTextInputProps): React.JSX.
 }
 
 function presentationFontStyle(style: StyleProp<TextStyle>): TextStyle | null {
-  const flattened = StyleSheet.flatten(style);
-  if (flattened?.fontFamily !== undefined) return null;
-  const rawWeight = flattened?.fontWeight;
-  const weight = rawWeight === "bold" ? 700 : Number.parseInt(String(rawWeight ?? 400), 10);
+  const flattened = flattenTextStyle(style);
+  if (flattened.fontFamily !== undefined) {
+    return null;
+  }
+  const rawWeight = flattened.fontWeight;
+  const weight =
+    rawWeight === "bold"
+      ? BOLD_FONT_WEIGHT
+      : Number.parseInt(String(rawWeight ?? REGULAR_FONT_WEIGHT), 10);
   const fontFamily =
-    weight <= 400
+    weight <= REGULAR_FONT_WEIGHT
       ? productFonts.regular
-      : weight <= 500
+      : weight <= MEDIUM_FONT_WEIGHT
         ? productFonts.medium
         : productFonts.semibold;
-  return { fontFamily, fontWeight: "400" };
+  return { fontFamily, fontWeight: typeWeight.regular };
+}
+
+function flattenTextStyle(style: StyleProp<TextStyle>): TextStyle {
+  if (style === undefined || style === null || style === false || style === "") {
+    return EMPTY_TEXT_STYLE;
+  }
+  return StyleSheet.flatten(style);
 }
 
 const tones = StyleSheet.create<Record<ProductTextTone, TextStyle>>({

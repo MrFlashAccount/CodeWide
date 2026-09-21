@@ -1,7 +1,11 @@
 package dev.codewide.app.rendering
 
 import android.content.Context
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.view.Gravity
+import android.view.View
 import android.widget.FrameLayout
 
 /** Owns one interchangeable Voice Assistant renderer and replays its live inputs on replacement. */
@@ -9,7 +13,9 @@ class VoiceAssistantOrbSlotView(context: Context) : FrameLayout(context) {
   private var orbStyle = VoiceAssistantOrbStyle.NEBULA
   private var orbState = VoiceAssistantOrbState.IDLE
   private var reducedMotion = false
-  private var level = -1.0
+  private var inputLevel = 0.0
+  private var microphoneMuted = false
+  private var playbackLevel = 0.0
   private var renderer: VoiceAssistantOrbView = createRenderer(orbStyle)
 
   init {
@@ -30,9 +36,28 @@ class VoiceAssistantOrbSlotView(context: Context) : FrameLayout(context) {
     renderer.setOrbState(state)
   }
 
-  fun setLevel(nextLevel: Double) {
-    level = nextLevel
-    renderer.setLevel(nextLevel)
+  fun setAudioLevels(nextInputLevel: Double, nextPlaybackLevel: Double) {
+    inputLevel = nextInputLevel
+    playbackLevel = nextPlaybackLevel
+    renderer.setAudioLevels(nextInputLevel, nextPlaybackLevel)
+  }
+
+  fun setInputLevel(nextInputLevel: Double) {
+    setAudioLevels(nextInputLevel, playbackLevel)
+  }
+
+  fun setPlaybackLevel(nextPlaybackLevel: Double) {
+    setAudioLevels(inputLevel, nextPlaybackLevel)
+  }
+
+  fun setMicrophoneMuted(muted: Boolean) {
+    if (microphoneMuted == muted) return
+    microphoneMuted = muted
+    if (muted) {
+      setLayerType(View.LAYER_TYPE_HARDWARE, MUTED_LAYER_PAINT)
+    } else {
+      setLayerType(View.LAYER_TYPE_NONE, null)
+    }
   }
 
   fun setReducedMotion(reduced: Boolean) {
@@ -43,7 +68,7 @@ class VoiceAssistantOrbSlotView(context: Context) : FrameLayout(context) {
   private fun createRenderer(style: VoiceAssistantOrbStyle): VoiceAssistantOrbView =
     VoiceAssistantOrbRendererFactory.create(context, style).also { nextRenderer ->
       nextRenderer.setOrbState(orbState)
-      nextRenderer.setLevel(level)
+      nextRenderer.setAudioLevels(inputLevel, playbackLevel)
       nextRenderer.setReducedMotion(reducedMotion)
     }
 
@@ -51,4 +76,11 @@ class VoiceAssistantOrbSlotView(context: Context) : FrameLayout(context) {
     LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
       gravity = Gravity.CENTER
     }
+
+  private companion object {
+    private val MUTED_LAYER_PAINT = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      alpha = 190
+      colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
+    }
+  }
 }

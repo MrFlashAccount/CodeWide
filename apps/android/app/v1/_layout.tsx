@@ -1,8 +1,6 @@
-import { Redirect } from "expo-router";
 import { useEffect } from "react";
 
 import { activateRuntime, stopRuntime } from "../../src/boot/runtimeSlot";
-import { useUiGenerationSnapshot } from "../../src/boot/useUiGenerationSnapshot";
 import {
   startLegacyNativeRuntimeResources,
   stopLegacyNativeRuntimeResources,
@@ -17,17 +15,7 @@ import { newThreadService } from "../../src/services/threads/newThreadService";
 export const unstable_settings = { anchor: "index", initialRouteName: "index" };
 
 /** Keeps the V1 runtime mounted while Expo Router owns destination history. */
-export default function V1WorkspaceLayout(): React.JSX.Element | null {
-  const generation = useUiGenerationSnapshot();
-  if (generation.status === "loading") {
-    return null;
-  }
-  if (generation.status === "error") {
-    return <Redirect href="/" />;
-  }
-  if (generation.generation === "v2") {
-    return <Redirect href="/servers" />;
-  }
+export default function V1WorkspaceLayout(): React.JSX.Element {
   return <MountedV1Workspace />;
 }
 
@@ -35,7 +23,7 @@ export default function V1WorkspaceLayout(): React.JSX.Element | null {
 export function MountedV1Workspace(): React.JSX.Element {
   useEffect(() => {
     // Effects cannot await runtime activation; the attached handler reports every rejection.
-    void activateRuntime("legacy", () => ({
+    void activateRuntime(() => ({
       start: startLegacyNativeRuntimeResources,
       stop: stopLegacyNativeRuntimeResources,
     })).catch((error: unknown) => {
@@ -45,7 +33,7 @@ export function MountedV1Workspace(): React.JSX.Element {
       disposeAllRouteSessions();
       newThreadService.dispose();
       // Effect cleanup cannot await runtime shutdown; the attached handler reports every rejection.
-      void stopRuntime("legacy").catch((error: unknown) => {
+      void stopRuntime().catch((error: unknown) => {
         reportGlobalError(error, "manual", true);
       });
     };

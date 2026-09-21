@@ -11,9 +11,14 @@ class VoiceAssistantOrbManager : SimpleViewManager<VoiceAssistantOrbSlotView>() 
   override fun createViewInstance(reactContext: ThemedReactContext): VoiceAssistantOrbSlotView =
     VoiceAssistantOrbSlotView(reactContext)
 
-  @ReactProp(name = "level", defaultDouble = -1.0)
-  fun setLevel(view: VoiceAssistantOrbSlotView, level: Double) {
-    view.setLevel(level)
+  @ReactProp(name = "inputLevel", defaultDouble = 0.0)
+  fun setInputLevel(view: VoiceAssistantOrbSlotView, level: Double) {
+    view.setInputLevel(level)
+  }
+
+  @ReactProp(name = "playbackLevel", defaultDouble = 0.0)
+  fun setPlaybackLevel(view: VoiceAssistantOrbSlotView, level: Double) {
+    view.setPlaybackLevel(level)
   }
 
   @ReactProp(name = "orbState")

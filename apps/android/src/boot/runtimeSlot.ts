@@ -1,30 +1,22 @@
+/** Native resources owned by the mounted V1 workspace, separate from process-level JS state. */
 export interface ApplicationRuntimeHandle {
-  start?(): Promise<void> | void;
-  stop(): Promise<void> | void;
+  start?: () => Promise<void> | void;
+  stop: () => Promise<void> | void;
 }
 
-type RuntimeGeneration = "legacy" | "v2";
-
-interface ActiveRuntime {
-  generation: RuntimeGeneration;
-  handle: ApplicationRuntimeHandle;
-}
-
-let active: ActiveRuntime | null = null;
+let active: ApplicationRuntimeHandle | null = null;
 let transition: Promise<void> = Promise.resolve();
 
+/** Serializes native activation behind any preceding workspace cleanup. */
 export async function activateRuntime(
-  generation: RuntimeGeneration,
   create: () => ApplicationRuntimeHandle,
 ): Promise<ApplicationRuntimeHandle> {
   return serializeRuntimeTransition(async () => {
-    if (active?.generation === generation) return active.handle;
     if (active !== null) {
-      await active.handle.stop();
-      active = null;
+      return active;
     }
     const handle = create();
-    active = { generation, handle };
+    active = handle;
     try {
       await handle.start?.();
       return handle;
@@ -39,20 +31,18 @@ export async function activateRuntime(
   });
 }
 
-export async function stopRuntime(generation: RuntimeGeneration): Promise<void> {
+/** Releases the mounted workspace's native resources before another activation can begin. */
+export async function stopRuntime(): Promise<void> {
   await serializeRuntimeTransition(async () => {
-    if (active?.generation !== generation) return;
-    await active.handle.stop();
+    if (active === null) {
+      return;
+    }
+    await active.stop();
     active = null;
   });
 }
 
-/** @testOnly Observes the otherwise private runtime slot in lifecycle regression tests. */
-export function activeRuntimeGeneration(): RuntimeGeneration | null {
-  return active?.generation ?? null;
-}
-
-function serializeRuntimeTransition<T>(operation: () => Promise<T>): Promise<T> {
+async function serializeRuntimeTransition<T>(operation: () => Promise<T>): Promise<T> {
   const result = transition.then(operation, operation);
   transition = result.then(
     () => undefined,

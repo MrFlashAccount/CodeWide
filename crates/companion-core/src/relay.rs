@@ -1,6 +1,6 @@
 //! Durable pairing and outbound carrier for the standalone relay application.
 use codewide_relay::{
-    adapter::Adapter,
+    adapter::{Adapter, AdapterConnectionState},
     auth,
     pairing::{InvitationBundle, PairRequest, PairResponse},
     registry::validate_route_id,
@@ -15,7 +15,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::{
+    sync::{Mutex, watch},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 
 const CONFIG_VERSION: u8 = 3;
@@ -55,6 +58,17 @@ pub struct RelayEnabledCommand {
 pub struct RelayStatus {
     pub configured: bool,
     pub enabled: bool,
+    pub connection: RelayConnectionStatus,
+    pub public_endpoint: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RelayConnectionStatus {
+    Disabled,
+    Connecting,
+    Online,
+    Reconnecting,
 }
 
 #[derive(Clone)]
@@ -65,6 +79,7 @@ struct RelayRuntimeInner {
     device_target: SocketAddr,
     pairing_target: SocketAddr,
     running: Mutex<Option<RunningAdapter>>,
+    connection: watch::Sender<RelayConnectionStatus>,
 }
 
 struct RunningAdapter {
@@ -88,11 +103,13 @@ impl RelayRuntime {
         device_target: SocketAddr,
         pairing_target: SocketAddr,
     ) -> Result<Self, RelayError> {
+        let (connection, _) = watch::channel(RelayConnectionStatus::Disabled);
         let runtime = Self(Arc::new(RelayRuntimeInner {
             config_path,
             device_target,
             pairing_target,
             running: Mutex::new(None),
+            connection,
         }));
         let config = RelayConfig::load(&runtime.0.config_path)?
             .filter(RelayConfig::is_enabled)
@@ -115,10 +132,7 @@ impl RelayRuntime {
             config.adapter(self.0.device_target, self.0.pairing_target),
         ))
         .await;
-        Ok(RelayStatus {
-            configured: true,
-            enabled: true,
-        })
+        self.status()
     }
 
     /// Enables or disables Relay without restarting Companion.
@@ -133,10 +147,7 @@ impl RelayRuntime {
             None
         };
         self.replace(adapter).await;
-        Ok(RelayStatus {
-            configured: true,
-            enabled,
-        })
+        self.status()
     }
 
     /// Reads the durable rollout state.
@@ -147,28 +158,62 @@ impl RelayRuntime {
             Some(config) => RelayStatus {
                 configured: true,
                 enabled: config.is_enabled(),
+                connection: if config.is_enabled() {
+                    *self.0.connection.borrow()
+                } else {
+                    RelayConnectionStatus::Disabled
+                },
+                public_endpoint: Some(config.public_endpoint()),
             },
             None => RelayStatus {
                 configured: false,
                 enabled: false,
+                connection: RelayConnectionStatus::Disabled,
+                public_endpoint: None,
             },
         })
     }
 
     async fn replace(&self, adapter: Option<Adapter>) {
         let mut running = self.0.running.lock().await;
-        *running = adapter.map(RunningAdapter::start);
+        let _ = self.0.connection.send(if adapter.is_some() {
+            RelayConnectionStatus::Connecting
+        } else {
+            RelayConnectionStatus::Disabled
+        });
+        *running = adapter
+            .map(|adapter| RunningAdapter::start(adapter, self.0.connection.clone()));
     }
 }
 
 impl RunningAdapter {
-    fn start(adapter: Adapter) -> Self {
+    fn start(adapter: Adapter, connection: watch::Sender<RelayConnectionStatus>) -> Self {
         let stop = CancellationToken::new();
         let worker_stop = stop.clone();
         let task = tokio::spawn(async move {
-            if let Err(error) = adapter.run(worker_stop).await {
+            let (adapter_status, mut status_changes) =
+                watch::channel(AdapterConnectionState::Connecting);
+            let status_connection = connection.clone();
+            let status_task = tokio::spawn(async move {
+                loop {
+                    let mapped = match *status_changes.borrow_and_update() {
+                        AdapterConnectionState::Connecting => RelayConnectionStatus::Connecting,
+                        AdapterConnectionState::Connected => RelayConnectionStatus::Online,
+                        AdapterConnectionState::Reconnecting => {
+                            RelayConnectionStatus::Reconnecting
+                        }
+                    };
+                    let _ = status_connection.send(mapped);
+                    if status_changes.changed().await.is_err() {
+                        return;
+                    }
+                }
+            });
+            if let Err(error) = adapter.run_with_status(worker_stop, adapter_status).await {
                 tracing::error!(err = ?error, "Relay adapter stopped");
             }
+            status_task.abort();
+            let _ = connection.send(RelayConnectionStatus::Reconnecting);
         });
         Self { stop, task }
     }

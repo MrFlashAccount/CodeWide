@@ -68,19 +68,4 @@ describe("opaque authenticated transport lease", () => {
       'CodexConnectionService.instance ?: error("Connection service is not running")',
     );
   });
-
-  it("prevents V2 consumers from importing raw transport construction", () => {
-    const adapter = read("../src/v2/infrastructure/connection/sharedConnectionAdapter.native.ts");
-    expect(adapter).toContain("acquireAuthenticatedTransportLease");
-    expect(adapter).toContain('lease.openDuplex("sync-v2")');
-    for (const forbidden of [
-      "native-transport",
-      "mintNativeSession",
-      "nativeCompanionHttpOrigin",
-      "listNativeConnectionConfigs",
-      "WebSocket",
-    ]) {
-      expect(adapter).not.toContain(forbidden);
-    }
-  });
 });

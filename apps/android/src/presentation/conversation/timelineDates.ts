@@ -24,8 +24,8 @@ export class TimelineDateSequence {
 
 /** Separate placements are required when a response crosses midnight within a turn. */
 export interface TimelineTurnDateLabels {
-  before: string | null;
   agent: string | null;
+  before: string | null;
 }
 
 function sameDate(left: Date, right: Date): boolean {

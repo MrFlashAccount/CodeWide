@@ -12,7 +12,7 @@ module.exports = {
     "<rootDir>/test/setup-expo-render-runtime.cjs",
     "react-native-gesture-handler/jestSetup.js",
   ],
-  setupFilesAfterEnv: ["<rootDir>/test/setup-v2-render-console.cjs"],
+  setupFilesAfterEnv: ["<rootDir>/test/setup-render-console.cjs"],
   testMatch: [
     "<rootDir>/test/app-popover.native.test.tsx",
     "<rootDir>/test/global-search.render.test.tsx",
@@ -20,7 +20,7 @@ module.exports = {
     "<rootDir>/test/settings-sheet.native.test.tsx",
     "<rootDir>/test/v1-route-sheet-focus.native.test.tsx",
     "<rootDir>/test/v1-*.render.test.tsx",
-    "<rootDir>/test/root-generation-gate.render.test.tsx",
+    "<rootDir>/test/root-keyboard-geometry.render.test.tsx",
     "<rootDir>/test/workspace-navigation.render.test.tsx",
   ],
   moduleNameMapper: {
@@ -43,7 +43,6 @@ module.exports = {
     // WHY: Reanimated's native worklet runtime cannot initialize in the Node render-test process.
     "^react-native-reanimated$": "<rootDir>/test/mocks/Reanimated.ts",
     "^react-native-keyboard-controller$": "<rootDir>/test/mocks/KeyboardController.tsx",
-    "^.*/V2Application$": "<rootDir>/test/mocks/V2Application.ts",
     "^(?:.*/rendering/|\\./)RichMarkdown$": "<rootDir>/test/mocks/RichMarkdown.tsx",
     "^.*/surfaces/PresentationSheetView$": "<rootDir>/test/mocks/PresentationSheetView.tsx",
     "^(?:.*/ui/|\\./)ActionMenu$": "<rootDir>/test/mocks/ActionMenu.tsx",

@@ -1,0 +1,145 @@
+name: Companion Linux Release
+run-name: Companion Linux ${{ inputs.version }} (${{ inputs.request_id || github.run_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version, for example 0.1.0 or v0.1.0"
+        required: true
+        type: string
+      base:
+        description: "Git ref to compare against; defaults to the latest Companion Linux tag"
+        required: false
+        type: string
+      dry_run:
+        description: "Build and validate without publishing a tag, release, or tap update"
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: "Allow a release even when the release graph does not select Companion Linux"
+        required: false
+        default: false
+        type: boolean
+      request_id:
+        description: "Correlation id used by the one-shot release command"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify Companion Linux is affected
+        if: ${{ inputs.force != true }}
+        env:
+          REQUESTED_BASE: ${{ inputs.base }}
+        run: |
+          base="$REQUESTED_BASE"
+          if [[ -z "$base" ]]; then
+            base=$(git describe --tags --match 'companion-linux-v[0-9]*' --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          fi
+          node scripts/release-plan.ts --base "$base" --head "$GITHUB_SHA" --assert-target companion-linux
+
+      - name: Resolve version
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+        run: |
+          version="${RAW_VERSION#v}"
+          if [[ ! "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $RAW_VERSION"
+            exit 1
+          fi
+          echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=companion-linux-v$version" >> "$GITHUB_ENV"
+          echo "ASSET=dist/companion-linux/codewide-companion-$version-x86_64-unknown-linux-musl.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Build portable bundle
+        run: ./scripts/build-companion-linux
+
+      - name: Validate installer
+        env:
+          CODEWIDE_COMPANION_DIST_DIR: ${{ github.workspace }}/dist/companion-linux
+        run: ./scripts/install-companion.test.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: codewide-companion-${{ env.CODEWIDE_VERSION }}-linux-x86_64
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          if-no-files-found: error
+
+      - name: Create release tag
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$RELEASE_TAG" -m "CodeWide Companion Linux $RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+
+      - name: Publish GitHub release
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="CodeWide Companion Linux $CODEWIDE_VERSION. Portable static x86_64 bundle with a checksummed standalone installer."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" \
+              --title "CodeWide Companion Linux $CODEWIDE_VERSION" \
+              --notes "$notes" \
+              --latest=false
+          fi
+
+      - name: Update Homebrew tap
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          test -n "$TAP_DEPLOY_KEY"
+          tap_root="$RUNNER_TEMP/homebrew-codewide"
+          ssh_root="$RUNNER_TEMP/homebrew-ssh"
+          mkdir -p "$ssh_root"
+          chmod 0700 "$ssh_root"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$ssh_root/id_ed25519"
+          chmod 0600 "$ssh_root/id_ed25519"
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' > "$ssh_root/known_hosts"
+          GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+            git clone git@github.com:MrFlashAccount/homebrew-codewide.git "$tap_root"
+          sha256=$(awk '{print $1}' "$ASSET.sha256")
+          ./scripts/update-homebrew-tap linux "$CODEWIDE_VERSION" "$sha256" "$tap_root"
+          git -C "$tap_root" config user.name "github-actions[bot]"
+          git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$tap_root" add Formula/codewide-companion.rb versions/companion-linux
+          if git -C "$tap_root" diff --cached --quiet; then
+            exit 0
+          fi
+          git -C "$tap_root" commit -m "codewide-companion $CODEWIDE_VERSION"
+          attempt=0
+          until GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+            git -C "$tap_root" push origin HEAD:main; do
+            attempt=$((attempt + 1))
+            test "$attempt" -lt 3
+            GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+              git -C "$tap_root" pull --rebase origin main
+          done

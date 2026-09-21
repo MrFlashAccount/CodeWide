@@ -2,7 +2,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 import { useEffect, useState, type ReactNode } from "react";
 import { Pressable, Text } from "react-native";
 
-import { AppPopover } from "../src/presentation/overlay/AppPopover.android";
+import { ContentMenu as AppPopover } from "../src/ui/ContentMenu.android";
 import { useEvent } from "../src/react/useEvent";
 import { radii } from "../src/theme";
 

@@ -2,6 +2,7 @@ import { RpcResponseError } from "@codewide/sync-client";
 
 import type { NativeLiveRealtimeEvent } from "../native/native-engine-contract";
 import type { MicrophonePermission } from "../native/native-transport";
+import { appLogger } from "../observability/logger";
 import type {
   GlobalSupervisorWebRtcSession,
   GlobalSupervisorWebRtcSessionFactory,
@@ -103,6 +104,7 @@ export type GlobalSupervisorLowerRuntime = {
     readonly home: GlobalSupervisorQualifiedChatRef;
     readonly pause: () => Promise<void>;
     readonly resume: () => Promise<void>;
+    readonly setMicrophoneMuted: (muted: boolean) => Promise<void>;
     readonly stop: () => Promise<void>;
   }>;
 };
@@ -114,7 +116,7 @@ async function settledReconnectOperation(): Promise<void> {
 type GlobalSupervisorRuntimeAuthority = {
   readonly acquireForegroundLease: () => Promise<{
     readonly release: () => Promise<void>;
-    readonly setLevel: (level: number) => void;
+    readonly setPlaybackLevel: (level: number) => void;
   }>;
   readonly attention: GlobalSupervisorAttentionOwner;
   readonly binding: () => GlobalSupervisorBindingOwner;
@@ -170,6 +172,7 @@ type LiveSessionState = {
   realtimeSdpReceived: boolean;
   realtimeStarted: boolean;
   realtimeStartRequested: boolean;
+  speechPhase: "listening" | "speaking" | "thinking" | null;
   stopping: boolean;
   transcriptSequence: number;
   readonly webRtc: GlobalSupervisorWebRtcSession;
@@ -178,6 +181,7 @@ type LiveSessionState = {
 const MAX_VOICE_NAME_CHARACTERS = 32;
 const MAX_SUPPORTED_VOICES = 64;
 const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE = -32_061;
+const GLOBAL_SUPERVISOR_SPEAKING_LEVEL_THRESHOLD = 0.01;
 
 function liveSessionOrNull(
   authority: GlobalSupervisorRuntimeAuthority,
@@ -289,6 +293,17 @@ function closeRealtime(state: LiveSessionState): void {
   }
 }
 
+function publishSpeechPhase(
+  state: LiveSessionState,
+  phase: "listening" | "speaking" | "thinking",
+): void {
+  if (state.speechPhase === phase) {
+    return;
+  }
+  state.speechPhase = phase;
+  state.publish({ activationId: state.activationId, event: phase });
+}
+
 function acceptStarted(
   context: LiveEventContext,
   params: Readonly<Record<string, unknown>> | null,
@@ -318,6 +333,10 @@ function acceptTranscript(
     return;
   }
   state.transcriptSequence += 1;
+  appLogger.info({
+    event: "global_voice.realtime.transcript_accepted",
+    fields: { role, sequence: state.transcriptSequence },
+  });
   state.publish({
     activationId: state.activationId,
     event: "transcript",
@@ -328,7 +347,7 @@ function acceptTranscript(
     },
   });
   state.attentionDelivery?.setSpeechBusy(role !== "assistant");
-  state.publish({ activationId: state.activationId, event: "listening" });
+  publishSpeechPhase(state, "listening");
 }
 
 function acceptActivePayload(
@@ -346,7 +365,9 @@ function acceptActivePayload(
       return;
     case "thread/realtime/itemAdded":
       state.attentionDelivery?.setSpeechBusy(true);
-      state.publish({ activationId: state.activationId, event: "thinking" });
+      if (state.speechPhase !== "speaking") {
+        publishSpeechPhase(state, "thinking");
+      }
       return;
     case "thread/realtime/error":
     case "thread/realtime/closed":
@@ -394,7 +415,7 @@ function acceptSdp(
         return;
       }
       context.recordStartupStage("peerConnected");
-      state.publish({ activationId: state.activationId, event: "listening" });
+      publishSpeechPhase(state, "listening");
       control.resolve();
     },
     (error: unknown) => {
@@ -632,12 +653,13 @@ export function createGlobalSupervisorRuntime(
           reconnectReady.resolve({
             pause: settledReconnectOperation,
             resume: settledReconnectOperation,
+            setMicrophoneMuted: settledReconnectOperation,
             start: settledReconnectOperation,
             stop: settledReconnectOperation,
           });
           throw error;
         }
-        const startTransport = async (onTerminal: () => void) => {
+        const startTransport = async (onTerminal: () => void, microphoneMuted: boolean) => {
           const attemptSession = requireLiveSession(authority, home.connectionId);
           const supervisor = authority.getSupervisor();
           if (supervisor === null) {
@@ -648,8 +670,18 @@ export function createGlobalSupervisorRuntime(
           let terminatedBeforeState = false;
           const didTerminateBeforeState = (): boolean => terminatedBeforeState;
           const webRtc = await media.start({
+            initiallyMuted: microphoneMuted,
             mode: "interactive",
-            onLevel: foregroundLease.setLevel,
+            onPlaybackLevel(level) {
+              foregroundLease.setPlaybackLevel(level);
+              if (
+                state !== null &&
+                state.speechPhase === "thinking" &&
+                level > GLOBAL_SUPERVISOR_SPEAKING_LEVEL_THRESHOLD
+              ) {
+                publishSpeechPhase(state, "speaking");
+              }
+            },
             onTerminal() {
               if (state === null) {
                 terminatedBeforeState = true;
@@ -689,6 +721,7 @@ export function createGlobalSupervisorRuntime(
             realtimeSdpReceived: false,
             realtimeStarted: false,
             realtimeStartRequested: false,
+            speechPhase: null,
             stopping: false,
             transcriptSequence: 0,
             webRtc,
@@ -778,6 +811,9 @@ export function createGlobalSupervisorRuntime(
           attentionDelivery.setSpeechBusy(false);
           let stopped = false;
           return {
+            async setMicrophoneMuted(muted: boolean): Promise<void> {
+              await state.webRtc.setMicrophoneMuted(muted);
+            },
             async stop(): Promise<void> {
               if (stopped) {
                 return;
@@ -860,6 +896,7 @@ export function createGlobalSupervisorRuntime(
           home: globalSupervisorQualifiedChatRef(home.connectionId, home.threadId),
           pause: reconnect.pause,
           resume: reconnect.resume,
+          setMicrophoneMuted: reconnect.setMicrophoneMuted,
           async stop() {
             cleanupPromise ??= (async () => {
               if (activeActivationId === activationId) {

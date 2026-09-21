@@ -26,6 +26,12 @@ export type PrivateImageDetailRequest = {
   source: Exclude<PrivateAssetSource, { kind: "direct" }>;
 };
 
+export type PrivateImageDetailOptions = {
+  readonly accessScope: string;
+  readonly getAccess: GetTransferAccess | null;
+  readonly revision: number;
+};
+
 type PrivateImageSource = {
   detail: PrivateImageDetailRequest | null;
   failed: boolean;
@@ -123,14 +129,10 @@ export function usePrivateAssetUri(
       }),
   );
   const state = currentPrivateImageState(resource.status, resource.value);
-  const detail = privateImageDetailRequest({
-    accessScope,
-    getAccess,
-    revision,
-    source,
-    sourceKey: identity.sourceKey,
-    variant,
-  });
+  const detail =
+    variant === "preview"
+      ? createPrivateImageDetailRequest(source, { accessScope, getAccess, revision })
+      : null;
   return {
     detail,
     failed: state.failed,
@@ -160,46 +162,30 @@ function privateImageIdentity({
   revision: number;
   source: PrivateAssetSource | null;
   variant: PrivateAssetImageVariant;
-}): { key: string | null; sourceKey: string | null } {
+}): { key: string | null } {
   if (source === null) {
-    return { key: null, sourceKey: null };
+    return { key: null };
   }
   const sourceKey = privateImageResourceKey(source);
   return {
     key: `private-asset:${accessScope}:${String(revision)}:${variant}:${sourceKey}`,
-    sourceKey,
   };
 }
 
-function privateImageDetailRequest({
-  accessScope,
-  getAccess,
-  revision,
-  source,
-  sourceKey,
-  variant,
-}: {
-  accessScope: string;
-  getAccess: GetTransferAccess | null;
-  revision: number;
-  source: PrivateAssetSource | null;
-  sourceKey: string | null;
-  variant: PrivateAssetImageVariant;
-}): PrivateImageDetailRequest | null {
-  if (
-    variant !== "preview" ||
-    source === null ||
-    source.kind === "direct" ||
-    getAccess === null ||
-    sourceKey === null
-  ) {
+/** Describes a lazy detail fetch without materializing another thumbnail first. */
+export function createPrivateImageDetailRequest(
+  source: PrivateAssetSource | null,
+  options: PrivateImageDetailOptions,
+): PrivateImageDetailRequest | null {
+  if (source === null || source.kind === "direct" || options.getAccess === null) {
     return null;
   }
+  const sourceKey = privateImageResourceKey(source);
   return {
-    accessScope,
-    getAccess,
-    resourceKey: `${accessScope}:${String(revision)}:${sourceKey}`,
-    revision,
+    accessScope: options.accessScope,
+    getAccess: options.getAccess,
+    resourceKey: `${options.accessScope}:${String(options.revision)}:${sourceKey}`,
+    revision: options.revision,
     source,
   };
 }

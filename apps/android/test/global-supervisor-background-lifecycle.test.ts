@@ -28,6 +28,24 @@ describe("Global Voice background lifecycle", () => {
       ),
       "utf8",
     );
+    const applicationSource = readFileSync(
+      new URL("../android/app/src/main/java/dev/codewide/app/MainApplication.kt", import.meta.url),
+      "utf8",
+    );
+    const levelOwnerSource = readFileSync(
+      new URL(
+        "../android/app/src/main/java/dev/codewide/app/remote/GlobalVoiceAudioLevelOwner.kt",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const captureHealthSource = readFileSync(
+      new URL(
+        "../android/app/src/main/java/dev/codewide/app/remote/GlobalVoiceCaptureHealthOwner.kt",
+        import.meta.url,
+      ),
+      "utf8",
+    );
     const webRtcSessionSource = readFileSync(
       new URL("../src/native/globalSupervisorWebRtcSession.native.ts", import.meta.url),
       "utf8",
@@ -67,6 +85,7 @@ describe("Global Voice background lifecycle", () => {
     expect(bridgeSource).toContain("VoiceCaptureForegroundService.release(token)");
     expect(bridgeSource).toContain("Settings.ACTION_MANAGE_OVERLAY_PERMISSION");
     expect(bridgeSource).toContain("CodeWideGlobalVoiceOverlayStop");
+    expect(bridgeSource).toContain("CodeWideGlobalVoiceOverlayMicrophoneToggle");
     expect(bridgeSource).toContain("VoiceAssistantOrbStyle.fromWireValue(style)");
     expect(bridgeSource).toContain("VoiceAssistantOrbState.fromWireValue(state)");
     expect(bridgeSource).toContain("fun setOrbLaunchOrigin(");
@@ -78,10 +97,28 @@ describe("Global Voice background lifecycle", () => {
     expect(serviceSource).toContain(
       "globalVoiceOverlay.hide(GlobalVoiceForegroundModule.visibleOrbReturnTarget())",
     );
-    expect(serviceSource).toContain("fun updateOrbLevel(level: Double)");
+    expect(applicationSource).toContain(".setSamplesReadyCallback { samples ->");
+    expect(applicationSource).toContain(".setAudioRecordErrorCallback(");
+    expect(applicationSource).toContain(".setAudioRecordStateCallback(");
+    expect(applicationSource).toContain("VoiceCaptureForegroundService.acceptWebRtcInputSamples(");
+    expect(serviceSource).toContain("GlobalVoiceAudioLevelOwner(");
+    expect(serviceSource).toContain("fun acceptWebRtcInputSamples(");
+    expect(serviceSource).toContain("fun updatePlaybackLevel(level: Double)");
+    expect(levelOwnerSource).toContain("if (!active) return");
+    expect(levelOwnerSource).not.toContain("AppState");
+    expect(captureHealthSource).toContain("class GlobalVoiceCaptureHealthOwner");
+    expect(captureHealthSource).toContain("GlobalVoiceCaptureHealthEventKind.INTERRUPTED");
+    expect(serviceSource).toContain("Intent.ACTION_SCREEN_OFF");
+    expect(serviceSource).toContain("GlobalVoiceForegroundModule.requestCaptureRecovery()\n");
+    expect(serviceSource).not.toContain("WakeLock");
     expect(webRtcSessionSource).toContain("setInterval(");
-    expect(webRtcSessionSource).toContain("peer.getStats(audioTrack)");
-    expect(webRtcSessionSource).toContain("options.options.onLevel(");
+    expect(webRtcSessionSource).toContain("peer.getStats()");
+    expect(webRtcSessionSource).toContain("options.options.onPlaybackLevel(");
+    expect(webRtcSessionSource).not.toContain("peer.getStats(audioTrack)");
+    expect(webRtcSessionSource).toContain(
+      'publishTerminal(owner, onTerminal, "disconnectedTimeout")',
+    );
+    expect(webRtcSessionSource).toContain('"CodeWideGlobalVoiceCaptureInterrupted"');
     expect(overlaySource).toContain("OverlayGestureThreshold");
     expect(overlaySource).toContain("OverlayReleasePlacement.Free");
     expect(overlaySource).toContain("OverlaySnapTrajectory");
@@ -91,10 +128,13 @@ describe("Global Voice background lifecycle", () => {
     );
     expect(overlaySource).toContain("VoiceOverlayIconButton");
     expect(overlaySource).toContain('"Stop Voice Assistant"');
-    expect(overlaySource).toContain('"More Voice Assistant controls"');
+    expect(overlaySource).toContain('"Mic off"');
+    expect(overlaySource).toContain('"Mic on"');
+    expect(overlaySource).not.toContain("VoiceOverlayIcon.MORE");
     expect(overlaySource).toContain("FLAG_WATCH_OUTSIDE_TOUCH");
     expect(overlaySource).not.toContain("TextView");
     expect(orbSlotSource).toContain("VoiceAssistantOrbRendererFactory.create(context, style)");
+    expect(orbSlotSource).toContain("setLayerType(View.LAYER_TYPE_HARDWARE, MUTED_LAYER_PAINT)");
     expect(orbSlotSource.indexOf("removeView(previous)")).toBeLessThan(
       orbSlotSource.indexOf("renderer = createRenderer(style)"),
     );

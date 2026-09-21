@@ -17,6 +17,7 @@ export const GLOBAL_SUPERVISOR_RECONNECT_POLICY: GlobalSupervisorReconnectPolicy
 };
 
 export type GlobalSupervisorTransport = {
+  readonly setMicrophoneMuted: (muted: boolean) => Promise<void>;
   readonly stop: () => Promise<void>;
 };
 
@@ -30,7 +31,7 @@ type GlobalSupervisorReconnectOwnerOptions<Transport extends GlobalSupervisorTra
   readonly onExhausted: () => void;
   readonly onReconnecting: () => void;
   readonly policy?: GlobalSupervisorReconnectPolicy;
-  readonly startTransport: (onTerminal: () => void) => Promise<Transport>;
+  readonly startTransport: (onTerminal: () => void, microphoneMuted: boolean) => Promise<Transport>;
 };
 
 type Attempt<Transport extends GlobalSupervisorTransport> = {
@@ -43,6 +44,7 @@ type OwnerMode = "new" | "paused" | "running" | "stopped";
 export type GlobalSupervisorReconnectController = {
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
+  readonly setMicrophoneMuted: (muted: boolean) => Promise<void>;
   readonly start: () => Promise<void>;
   readonly stop: () => Promise<void>;
 };
@@ -93,18 +95,23 @@ export function createGlobalSupervisorReconnectOwner<Transport extends GlobalSup
   let generation = 0;
   let mode: OwnerMode = "new";
   let retriesUsed = 0;
+  let microphoneMuted = false;
   let wait: CancelableWait | null = null;
   let workPromise: Promise<void> | null = null;
   const readMode = (): OwnerMode => mode;
 
   const beginAttempt = async (): Promise<Attempt<Transport>> => {
     const attempt: Attempt<Transport> = { terminal: false, transport: null };
+    const initialMicrophoneMuted = microphoneMuted;
     const transport = await options.startTransport(() => {
       attempt.terminal = true;
       if (current === attempt) {
         scheduleReconnect();
       }
-    });
+    }, initialMicrophoneMuted);
+    if (initialMicrophoneMuted !== microphoneMuted) {
+      await transport.setMicrophoneMuted(microphoneMuted);
+    }
     attempt.transport = transport;
     return attempt;
   };
@@ -222,6 +229,22 @@ export function createGlobalSupervisorReconnectOwner<Transport extends GlobalSup
       const expectedGeneration = generation;
       trackWork(runResume(expectedGeneration));
       await workPromise;
+    },
+    async setMicrophoneMuted(muted): Promise<void> {
+      microphoneMuted = muted;
+      const attempt = current;
+      const transport = attempt?.transport;
+      if (transport === null || transport === undefined) {
+        return;
+      }
+      try {
+        await transport.setMicrophoneMuted(muted);
+      } catch (error) {
+        if (current === attempt && microphoneMuted === muted) {
+          microphoneMuted = !muted;
+          throw error;
+        }
+      }
     },
     async start(): Promise<void> {
       if (mode === "stopped" || mode === "paused" || mode === "running") {

@@ -35,9 +35,8 @@ describe("V1 feature gate coverage", () => {
       "react-doctor/jsx-no-new-object-as-prop": "off",
     });
     expect(hygiene.ignorePatterns).not.toContain("app/legacy.tsx");
-    expect(hygiene.ignorePatterns).toEqual(
-      expect.arrayContaining(["src/boot/**", "src/presentation/**", "src/v2/**"]),
-    );
+    expect(hygiene.ignorePatterns).not.toContain("src/boot/**");
+    expect(hygiene.ignorePatterns).not.toContain("src/presentation/**");
 
     const knip = (await import(new URL("../knip.v1.config.mjs", import.meta.url))).default;
     expect(knip.entry).toEqual(

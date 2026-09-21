@@ -51,7 +51,7 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
     invalidate()
   }
 
-  abstract fun setLevel(rawLevel: Double)
+  abstract fun setAudioLevels(inputLevel: Double, playbackLevel: Double)
 
   fun setReducedMotion(reduced: Boolean) {
     if (reducedMotion == reduced) return

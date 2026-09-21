@@ -6,9 +6,9 @@ import type { ComposeIconName } from "./composeIconNames";
 import { composeIconSources } from "./composeIconSources";
 
 interface ComposeNamedIconProps {
+  color: string;
   name: ComposeIconName;
   size: number;
-  color: string;
 }
 
 /** A decorative native icon inside an existing Compose Host; never embeds RN content. */
@@ -17,7 +17,7 @@ export function ComposeNamedIcon(props: ComposeNamedIconProps): ReactElement {
   // Reserve the slot independently so loading/recycling never moves adjacent text.
   return (
     <Box modifiers={[size(props.size, props.size)]}>
-      <Icon source={composeIconSources[props.name]} size={props.size} tint={props.color} />
+      <Icon size={props.size} source={composeIconSources[props.name]} tint={props.color} />
     </Box>
   );
 }

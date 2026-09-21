@@ -6,9 +6,6 @@
     "assets/**",
     "coverage/**",
     "dist/**",
-    "node_modules/**",
-    "src/boot/**",
-    "src/presentation/**",
-    "src/v2/**"
+    "node_modules/**"
   ]
 }

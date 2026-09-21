@@ -161,7 +161,9 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
       else -> source
     }
     if (immediateDiff != null) gutterView.text = immediateDiff.gutter
-    if (textView.text.toString() != presentationSource) textView.text = presentationSource
+    if (textView.text.toString() != presentationSource) {
+      textView.text = codePresentationWithRetainedSpans(textView.text, presentationSource)
+    }
     pendingTask?.cancel(true)
     scheduledHighlight?.let(mainHandler::removeCallbacks)
     val schedule = Runnable {

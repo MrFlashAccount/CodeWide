@@ -99,7 +99,7 @@ export function SidebarProjectsSheet(
 ) {
   const { onBrowse, onClose, servers } = props;
   const state = useProjectManagement(props);
-  const { choosingServer, pending, rows, setChoosingServer } = state;
+  const { choosingServer, dataVersion, pending, rows, setChoosingServer } = state;
 
   return (
     <AppSheet
@@ -144,6 +144,7 @@ export function SidebarProjectsSheet(
       <LegendList
         contentContainerStyle={styles.sheetListContent}
         data={rows}
+        dataVersion={dataVersion}
         drawDistance={320}
         getFixedItemSize={projectManagerItemHeight}
         getItemType={(item) => item.kind}

@@ -10,12 +10,14 @@ class VoiceAuraTransitionTest {
   fun openingMatchesCssBezierAndCompletesAt1100Milliseconds() {
     val transition = VoiceAuraTransition()
     transition.setActive(true, false)
+    assertTrue(transition.isAnimating)
     // On cubic-bezier(.25, .1, .25, 1), parameter t=.5 yields x=.3125 and y=.5375.
     assertEquals(0.5375f, transition.advance(1.1f * 0.3125f), 0.00001f)
     transition.advance(1.1f * (1f - 0.3125f) - 0.01f)
     assertTrue(transition.value < 1f)
     assertEquals(1f, transition.advance(0.011f), 0f)
     assertEquals(1f, transition.opacity, 0f)
+    assertFalse(transition.isAnimating)
   }
 
   @Test
@@ -25,6 +27,7 @@ class VoiceAuraTransitionTest {
     transition.setActive(true, false)
     transition.advance(1.1f)
     transition.setActive(false, false)
+    assertTrue(transition.isAnimating)
     assertEquals(0.25f, transition.advance(0.26f), 0.00001f)
     assertEquals(0f, transition.advance(0.26f), 0f)
     assertEquals(1f, transition.opacity, 0f)
@@ -33,6 +36,7 @@ class VoiceAuraTransitionTest {
     assertEquals(0.5f, transition.opacity, 0.00001f)
     transition.advance(0.101f)
     assertFalse(transition.isVisible)
+    assertFalse(transition.isAnimating)
     assertEquals(0f, transition.opacity, 0f)
   }
 

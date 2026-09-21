@@ -251,7 +251,9 @@ describe("fullscreen workspace presentation", () => {
       new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url),
       "utf8",
     );
-    expect(ownerTimelineViewport).toContain('keyboardLiftBehavior="always"');
+    expect(ownerTimelineViewport).toContain(
+      'keyboardLiftBehavior={props.newChat ? "never" : "always"}',
+    );
     expect(screen).not.toContain("keyboardScrollFrozen");
     expect(timelineList).not.toContain("freeze:");
     expect(timelineList).not.toContain("freeze=");

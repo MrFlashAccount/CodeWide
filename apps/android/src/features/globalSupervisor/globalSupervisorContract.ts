@@ -146,6 +146,7 @@ export type GlobalSupervisorActivation = {
   readonly home: GlobalSupervisorHome;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
+  readonly setMicrophoneMuted: (muted: boolean) => Promise<void>;
   readonly stop: () => Promise<void>;
 };
 
@@ -180,6 +181,7 @@ export type GlobalSupervisorRuntime = {
 /** Stable feature resource and user actions owned by Global Voice Mode. */
 export type GlobalSupervisorFeature = {
   readonly enter: () => Promise<void>;
+  readonly microphoneMuted$: ObservablePrimitive<boolean>;
   readonly pause: () => Promise<void>;
   readonly recover: () => Promise<void>;
   readonly render$: ObservablePrimitive<GlobalSupervisorRenderSnapshot>;
@@ -187,4 +189,5 @@ export type GlobalSupervisorFeature = {
   readonly start: () => Promise<void>;
   readonly stop: () => Promise<void>;
   readonly toggle: () => Promise<void>;
+  readonly toggleMicrophone: () => Promise<void>;
 };

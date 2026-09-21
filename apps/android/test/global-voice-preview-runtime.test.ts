@@ -130,6 +130,7 @@ describe("GlobalVoicePreviewRuntime", () => {
         return {
           acceptAnswer,
           offerSdp: "v=0\r\no=offer",
+          setMicrophoneMuted: vi.fn(async () => undefined),
           stop: stopWebRtc,
         };
       }),
@@ -158,6 +159,7 @@ describe("GlobalVoicePreviewRuntime", () => {
     const startWebRtc = vi.fn(async () => ({
       acceptAnswer: vi.fn(async () => undefined),
       offerSdp: "v=0\r\no=offer",
+      setMicrophoneMuted: vi.fn(async () => undefined),
       stop: vi.fn(async () => undefined),
     }));
     const runtime = createGlobalVoicePreviewRuntime({
@@ -248,6 +250,7 @@ describe("GlobalVoicePreviewRuntime", () => {
       startWebRtc: vi.fn(async () => ({
         acceptAnswer: vi.fn(async () => undefined),
         offerSdp: "v=0\r\no=offer",
+        setMicrophoneMuted: vi.fn(async () => undefined),
         stop: vi.fn(async () => undefined),
       })),
     });

@@ -27,12 +27,7 @@ export default {
     "app/legacy.tsx",
     "app/v1/**/*.{ts,tsx}",
     "test/**/*.{ts,tsx}",
-    // WHY: These excluded Android owners are external consumers of V1 exports. Treating
-    // them as roots prevents Knip from narrowing a cross-generation public contract.
     "app/**/*.{ts,tsx}",
-    "src/boot/**/*.{ts,tsx}",
-    "src/presentation/**/*.{ts,tsx}",
-    "src/v2/**/*.{ts,tsx}",
     // WHY: This unsuffixed public fallback is selected only on unsupported Metro platforms.
     "src/native/authenticated-transport-lease.ts",
     // Metro owns platform selection; Knip cannot infer every native/web counterpart from one root.
@@ -40,13 +35,5 @@ export default {
     "src/**/*.android.{ts,tsx}",
     "src/**/*.web.{ts,tsx}",
   ],
-  project: [
-    "app/legacy.tsx",
-    "app/v1/**/*.{ts,tsx}",
-    "src/**/*.{ts,tsx}",
-    "test/**/*.{ts,tsx}",
-    "!src/boot/**",
-    "!src/presentation/**",
-    "!src/v2/**",
-  ],
+  project: ["app/legacy.tsx", "app/v1/**/*.{ts,tsx}", "src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"],
 };

@@ -3,7 +3,7 @@ import { NativeModules } from "react-native";
 type GlobalVoiceForegroundBridge = {
   readonly acquire: () => Promise<unknown>;
   readonly release: (token: string) => Promise<void>;
-  readonly setLevel: (level: number) => void;
+  readonly setPlaybackLevel: (token: string, level: number) => void;
 };
 
 const MAX_FOREGROUND_TOKEN_CHARACTERS = 128;
@@ -11,7 +11,7 @@ const MAX_FOREGROUND_TOKEN_CHARACTERS = 128;
 /** Exact Android foreground-service lease owned by one interactive WebRTC session. */
 export type GlobalVoiceForegroundLease = {
   readonly release: () => Promise<void>;
-  readonly setLevel: (level: number) => void;
+  readonly setPlaybackLevel: (level: number) => void;
 };
 
 function requireBridge(): GlobalVoiceForegroundBridge {
@@ -43,8 +43,8 @@ export async function acquireGlobalVoiceForegroundLease(): Promise<GlobalVoiceFo
       releasePromise ??= bridge.release(token);
       await releasePromise;
     },
-    setLevel(level): void {
-      bridge.setLevel(Math.max(0, Math.min(1, level)));
+    setPlaybackLevel(level): void {
+      bridge.setPlaybackLevel(token, Math.max(0, Math.min(1, level)));
     },
   };
 }

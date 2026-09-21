@@ -6,6 +6,7 @@ const platform = vi.hoisted(() => {
     bridge: {
       addListener: vi.fn(),
       removeListeners: vi.fn(),
+      setMicrophoneMuted: vi.fn(),
       setOrbReducedMotion: vi.fn(),
       setOrbLaunchOrigin: vi.fn(),
       setOrbState: vi.fn(),
@@ -55,9 +56,12 @@ const ready: GlobalSupervisorRenderSnapshot = {
 describe("Global Voice overlay actions", () => {
   it("routes Stop and live state through the single feature binding", async () => {
     const stop = vi.fn(async () => undefined);
+    const toggleMicrophone = vi.fn(async () => undefined);
     const render$ = observablePrimitive<GlobalSupervisorRenderSnapshot>(ready);
-    bindGlobalVoiceOverlayActions({ render$, stop });
+    const microphoneMuted$ = observablePrimitive(false);
+    bindGlobalVoiceOverlayActions({ microphoneMuted$, render$, stop, toggleMicrophone });
 
+    expect(platform.bridge.setMicrophoneMuted).toHaveBeenLastCalledWith(false);
     expect(platform.bridge.setOrbState).toHaveBeenLastCalledWith("idle");
     render$.set({ ...ready, phase: "listening" });
     expect(platform.bridge.setOrbState).toHaveBeenLastCalledWith("listening");
@@ -69,6 +73,11 @@ describe("Global Voice overlay actions", () => {
     platform.listeners.get("CodeWideGlobalVoiceOverlayStop")?.();
 
     await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+
+    platform.listeners.get("CodeWideGlobalVoiceOverlayMicrophoneToggle")?.();
+    await vi.waitFor(() => expect(toggleMicrophone).toHaveBeenCalledOnce());
+    microphoneMuted$.set(true);
+    expect(platform.bridge.setMicrophoneMuted).toHaveBeenLastCalledWith(true);
   });
 
   it("maps every supervisor phase and live-applies style and reduced motion", async () => {

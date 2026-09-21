@@ -15,12 +15,16 @@ export type GlobalVoiceOrbState =
 type GlobalVoiceOverlayBridge = {
   readonly addListener: (eventName: string) => void;
   readonly removeListeners: (count: number) => void;
+  readonly setMicrophoneMuted: (muted: boolean) => void;
   readonly setOrbReducedMotion: (reducedMotion: boolean) => void;
   readonly setOrbState: (state: GlobalVoiceOrbState) => void;
   readonly setOrbStyle: (style: GlobalVoiceOrbStyle) => void;
 };
 
-const EVENT_NAME = "CodeWideGlobalVoiceOverlayStop";
+const MIC_TOGGLE_EVENT_NAME = "CodeWideGlobalVoiceOverlayMicrophoneToggle";
+const STOP_EVENT_NAME = "CodeWideGlobalVoiceOverlayStop";
+let microphoneToggleAction: (() => Promise<void>) | null = null;
+let microphoneToggleSubscribed = false;
 let stopAction: (() => Promise<void>) | null = null;
 let stopSubscribed = false;
 let reduceMotionSubscribed = false;
@@ -45,6 +49,27 @@ export function applyGlobalVoiceOrbState(state: GlobalVoiceOrbState): void {
   bridgeOrNull()?.setOrbState(state);
 }
 
+/** Applies the feature-owned mute state to the native capture indicator and action label. */
+export function applyGlobalVoiceMicrophoneMuted(muted: boolean): void {
+  bridgeOrNull()?.setMicrophoneMuted(muted);
+}
+
+/** Binds the native microphone action to the current feature owner. */
+export function bindGlobalVoiceOverlayMicrophoneToggle(action: () => Promise<void>): void {
+  microphoneToggleAction = action;
+  const bridge = bridgeOrNull();
+  if (bridge === null || microphoneToggleSubscribed) {
+    return;
+  }
+  microphoneToggleSubscribed = true;
+  const emitter = new NativeEventEmitter(bridge);
+  emitter.addListener(MIC_TOGGLE_EVENT_NAME, () => {
+    void microphoneToggleAction?.().catch(() => {
+      // The confirmed feature state remains authoritative when the media mutation fails.
+    });
+  });
+}
+
 /** Binds the process-lifetime native Stop event to the current feature action. */
 export function bindGlobalVoiceOverlayStop(action: () => Promise<void>): void {
   stopAction = action;
@@ -55,7 +80,7 @@ export function bindGlobalVoiceOverlayStop(action: () => Promise<void>): void {
   if (!stopSubscribed) {
     stopSubscribed = true;
     const emitter = new NativeEventEmitter(bridge);
-    emitter.addListener(EVENT_NAME, () => {
+    emitter.addListener(STOP_EVENT_NAME, () => {
       const activeAction = stopAction;
       if (activeAction === null) {
         return;

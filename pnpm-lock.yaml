@@ -247,9 +247,6 @@ importers:
       '@babel/plugin-transform-dynamic-import':
         specifier: 7.27.1
         version: 7.27.1(@babel/core@7.29.7)
-      '@react-native/eslint-plugin':
-        specifier: 0.86.2
-        version: 0.86.2
       '@react-native/jest-preset':
         specifier: 0.86.2
         version: 0.86.2(@babel/core@7.29.7)(react@19.2.3)
@@ -283,9 +280,6 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
-      eslint-plugin-expo:
-        specifier: 1.1.0
-        version: 1.1.0(eslint@10.8.1(jiti@2.7.0))(typescript@7.0.2)
       eslint-plugin-react-hooks:
         specifier: 7.1.1
         version: 7.1.1(eslint@10.8.1(jiti@2.7.0))
@@ -2498,10 +2492,6 @@ packages:
     resolution: {integrity: sha512-B7L0vKvg+IcEElT7Vpqh1xj5yJAqWUegjbP+bQRaorJMAYnv11GkliTnZV2AdTDfZQJWgOEx8i8LGkHkUg7bnA==}
     engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
 
-  '@react-native/eslint-plugin@0.86.2':
-    resolution: {integrity: sha512-Z2NdVQg8O+PIvzD4lsB00Irk/OMW9qqR+wCdt6WM0tuiFKnh00qX8ptKPkogSSx9ymXLqLNdpZ9Z0f6j+uzIRw==}
-    engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
-
   '@react-native/gradle-plugin@0.86.2':
     resolution: {integrity: sha512-2F6x14NcHMpVmfTTFKfMkpV5dZedZrLiv6PE+c3vgnesV2bjleUBydr4U+NI8VkI7OwW71L0A5qQ76I9LCrfoQ==}
     engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
@@ -4399,12 +4389,6 @@ packages:
     resolution: {integrity: sha512-2NlIDTwUWJN0mRPQOdtQBzbUHvdGY2P1VXSyU83Q3xKxM7WHX2Ql8dKq782Q9TgQUNOLEzEYu9bzLNj1q88I5w==}
     engines: {node: '>=6.0'}
     hasBin: true
-
-  eslint-plugin-expo@1.1.0:
-    resolution: {integrity: sha512-vPP0EPx7IA7ZfP49dY4rq9RV5jqkFWG+Pih3/oGjzIRjMI+ogcOE8i6isYkLXAdw/yvFV2BRZkTaQaiOGQqn6Q==}
-    engines: {node: '>=18.0.0'}
-    peerDependencies:
-      eslint: '>=8.10'
 
   eslint-plugin-perfectionist@5.9.0:
     resolution: {integrity: sha512-8TWzg02zmnBdZwCkWLi8jhzqXI+fE7Z/RwV8SL6xD45tJ8Bp3wGuYL2XtQgfe/Wd0eBqOUX+s6ey73IyszvKTA==}
@@ -10319,8 +10303,6 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@react-native/eslint-plugin@0.86.2': {}
-
   '@react-native/gradle-plugin@0.86.2': {}
 
   '@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3)':
@@ -10354,9 +10336,7 @@ snapshots:
       metro-runtime: 0.84.5
     transitivePeerDependencies:
       - '@babel/core'
-      - bufferutil
       - supports-color
-      - utf-8-validate
 
   '@react-native/normalize-colors@0.74.89': {}
 
@@ -12381,15 +12361,6 @@ snapshots:
       esutils: 2.0.3
     optionalDependencies:
       source-map: 0.6.1
-
-  eslint-plugin-expo@1.1.0(eslint@10.8.1(jiti@2.7.0))(typescript@7.0.2):
-    dependencies:
-      '@typescript-eslint/types': 8.68.0
-      '@typescript-eslint/utils': 8.68.0(eslint@10.8.1(jiti@2.7.0))(typescript@7.0.2)
-      eslint: 10.8.1(jiti@2.7.0)
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
 
   eslint-plugin-perfectionist@5.9.0(eslint@10.8.1(jiti@2.7.0))(typescript@7.0.2):
     dependencies:

@@ -1,5 +1,8 @@
 import { controlSize, radii, spacing } from "../../theme";
 
+const PRESSED_OPACITY = 0.68;
+const FILTER_DOT_SIZE = 6;
+
 /** Shared transparent filter-button geometry and states for list and search filters. */
 export const filterIconButtonLayout = {
   alignItems: "center",
@@ -11,13 +14,13 @@ export const filterIconButtonLayout = {
   width: controlSize.touch,
 } as const;
 
-export const filterIconButtonPressed = { opacity: 0.68 } as const;
+export const filterIconButtonPressed = { opacity: PRESSED_OPACITY } as const;
 
 export const filterIconButtonDotLayout = {
   borderRadius: radii.pill,
-  height: 6,
+  height: FILTER_DOT_SIZE,
   position: "absolute",
   right: spacing.xs,
   top: spacing.xs,
-  width: 6,
+  width: FILTER_DOT_SIZE,
 } as const;

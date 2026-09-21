@@ -10,7 +10,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
-#[command(name = "codewide-relay")]
+#[command(name = "codewide-relay", version)]
 struct Cli {
     #[arg(long, default_value_t = 8780)]
     port: u16,

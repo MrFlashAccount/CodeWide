@@ -2,19 +2,25 @@
 set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-binary="$repo_root/target/release/codewide-companion"
-git_plugin_binary="$repo_root/target/release/codewide-vcs-git"
-unit_source="$repo_root/apps/companion-linux/deploy/codewide-companion.service"
-memory_watch_source="$repo_root/apps/companion-linux/deploy/memory-watch.sh"
-memory_watch_service_source="$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service"
-memory_watch_timer_source="$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer"
-binary_root="$HOME/.local/lib/codewide"
+binary=${CODEWIDE_COMPANION_BINARY:-"$repo_root/target/release/codewide-companion"}
+git_plugin_binary=${CODEWIDE_COMPANION_GIT_PLUGIN_BINARY:-"$repo_root/target/release/codewide-vcs-git"}
+unit_source=${CODEWIDE_COMPANION_UNIT_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion.service"}
+memory_watch_source=${CODEWIDE_COMPANION_MEMORY_WATCH_SOURCE:-"$repo_root/apps/companion-linux/deploy/memory-watch.sh"}
+memory_watch_service_source=${CODEWIDE_COMPANION_MEMORY_WATCH_SERVICE_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service"}
+memory_watch_timer_source=${CODEWIDE_COMPANION_MEMORY_WATCH_TIMER_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer"}
+binary_root=${CODEWIDE_COMPANION_INSTALL_ROOT:-"$HOME/.local/lib/codewide"}
 plugin_root="$binary_root/plugins"
-unit_root="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+unit_root=${CODEWIDE_COMPANION_UNIT_ROOT:-"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"}
 state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
 state_root="$state_home/codewide/companion"
 previous_state_root="$state_home/codewide-rust"
 control_endpoint="${CODEWIDE_CONTROL_ENDPOINT:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/codewide/companion-control.sock}"
+activate=${CODEWIDE_COMPANION_ACTIVATE:-1}
+
+case "$activate" in
+  0|1) ;;
+  *) printf '%s\n' 'CODEWIDE_COMPANION_ACTIVATE must be 0 or 1.' >&2; exit 2 ;;
+esac
 
 test -x "$binary"
 test -x "$git_plugin_binary"
@@ -25,28 +31,38 @@ install -m 0755 "$memory_watch_source" "$binary_root/codewide-companion-memory-w
 install -m 0644 "$unit_source" "$unit_root/codewide-companion.service"
 install -m 0644 "$memory_watch_service_source" "$unit_root/codewide-companion-memory-watch.service"
 install -m 0644 "$memory_watch_timer_source" "$unit_root/codewide-companion-memory-watch.timer"
-systemctl --user daemon-reload
 
 previous_unit=
-for candidate in codewide-host-rust.service codewide-host.service codex-remote-host-rust.service codex-remote-host.service; do
-  if systemctl --user is-active --quiet "$candidate"; then
-    previous_unit=$candidate
-    break
-  fi
-done
+if [ "$activate" -eq 1 ]; then
+  systemctl --user daemon-reload
+  for candidate in codewide-host-rust.service codewide-host.service codex-remote-host-rust.service codex-remote-host.service; do
+    if systemctl --user is-active --quiet "$candidate"; then
+      previous_unit=$candidate
+      break
+    fi
+  done
+fi
 
 restore_previous() {
+  if [ "$activate" -eq 0 ]; then
+    return
+  fi
   systemctl --user stop codewide-companion.service 2>/dev/null || true
   if [ -n "$previous_unit" ]; then
     systemctl --user start "$previous_unit" 2>/dev/null || true
   fi
 }
 
-# No two companion generations may write the same outbox or replay state.
-for legacy in codewide-host-rust-shadow.service codewide-host-rust.service codewide-host.service codex-remote-host-rust-shadow.service codex-remote-host-rust.service codex-remote-host.service; do
-  systemctl --user stop "$legacy" 2>/dev/null || true
-done
+if [ "$activate" -eq 1 ]; then
+  # No two companion generations may write the same outbox or replay state.
+  for legacy in codewide-host-rust-shadow.service codewide-host-rust.service codewide-host.service codex-remote-host-rust-shadow.service codex-remote-host-rust.service codex-remote-host.service; do
+    systemctl --user stop "$legacy" 2>/dev/null || true
+  done
+fi
 
+if [ ! -e "$HOME/.codewide/host.token" ] && [ ! -e "$HOME/.codex-remote" ]; then
+  "$binary_root/codewide-companion" create-token >/dev/null
+fi
 if ! "$binary_root/codewide-companion" migrate-state; then
   restore_previous
   exit 1
@@ -77,6 +93,10 @@ mkdir -p "$state_root"
   --id git \
   --executable "$plugin_root/codewide-vcs-git" \
   --priority=-1000 >/dev/null
+
+if [ "$activate" -eq 0 ]; then
+  exit 0
+fi
 
 systemctl --user enable codewide-companion.service
 systemctl --user enable --now codewide-companion-memory-watch.timer

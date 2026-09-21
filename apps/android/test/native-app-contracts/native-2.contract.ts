@@ -14,7 +14,6 @@ import {
   nativeProtocolEngine,
   preparedMicrophone,
   preparedMicrophoneEffects,
-  communicationAudioModule,
   pairRoute,
   threadRoute,
   manifest,
@@ -101,10 +100,10 @@ it("preserves native integration contracts — 2", () => {
   expect(appPackage.dependencies["heroui-native"]).toBeUndefined();
   expect(appPackage.dependencies.uniwind).toBeUndefined();
   expect(appPackage.dependencies["react-native-webrtc"]).toBe("124.0.8");
-  expect(mainApplication.indexOf("configureWebRtcCommunicationAudio()")).toBeLessThan(
+  expect(mainApplication.indexOf("configureWebRtcAudioDeviceModule()")).toBeLessThan(
     mainApplication.indexOf("loadReactNative(this)"),
   );
-  expect(mainApplication).toContain(".setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)");
+  expect(mainApplication).toContain(".setUsage(AudioAttributes.USAGE_MEDIA)");
   expect(mainApplication).toContain(
     ".setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)",
   );
@@ -114,15 +113,8 @@ it("preserves native integration contracts — 2", () => {
   expect(mainApplication).toContain(
     ".setUseHardwareNoiseSuppressor(NoiseSuppressor.isAvailable())",
   );
-  expect(mainApplication).not.toContain("AudioAttributes.USAGE_MEDIA");
-  expect(communicationAudioModule).toContain("AudioManager.MODE_IN_COMMUNICATION");
-  expect(communicationAudioModule).toContain("val previousMode = audioMode.currentMode()");
-  expect(communicationAudioModule).toContain("AudioDeviceInfo.TYPE_BUILTIN_SPEAKER");
-  expect(communicationAudioModule).toContain("audioManager.setCommunicationDevice(device)");
-  expect(communicationAudioModule).toContain("audioManager.clearCommunicationDevice()");
-  expect(communicationAudioModule).toContain("externalAvailable");
-  expect(communicationAudioModule).not.toContain("isSpeakerphoneOn");
-  expect(nativePackage).toContain("GlobalVoiceCommunicationAudioModule(reactContext)");
+  expect(mainApplication).not.toContain(".setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)");
+  expect(nativePackage).not.toContain("GlobalVoiceCommunicationAudioModule");
   expect(mainApplication).toContain(".setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)");
   expect(mainApplication).toContain("WebRTCModuleOptions.getInstance().audioDeviceModule");
   expect(rootLayout).toContain("<AppRootProviders>");
@@ -184,8 +176,8 @@ it("preserves native integration contracts — 2", () => {
   expect(nativeTransport).toContain("const info = isPcmCaptureInfo(capture) ? capture : null");
   expect(nativeTransport).toContain('info.source === "mic"');
   expect(nativeTransport).toContain('event: "microphone.legacy_capture_started"');
-  expect(pairRoute).toContain('<Redirect href="/legacy" />');
-  expect(threadRoute).toContain('<Redirect href="/legacy" />');
+  expect(pairRoute).toContain('<Redirect href="/v1" />');
+  expect(threadRoute).toContain('<Redirect href="/v1" />');
   expect(pairRoute).not.toContain("<CodeWideScreen />");
   expect(threadRoute).not.toContain("<CodeWideScreen />");
   expect(manifest).toContain(

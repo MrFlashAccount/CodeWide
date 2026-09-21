@@ -78,8 +78,14 @@ class GlobalVoiceForegroundModule(private val context: ReactApplicationContext) 
   }
 
   @ReactMethod
-  fun setLevel(level: Double) {
-    VoiceCaptureForegroundService.updateOrbLevel(level)
+  fun setMicrophoneMuted(muted: Boolean) {
+    VoiceCaptureForegroundService.updateMicrophoneMuted(muted)
+  }
+
+  @ReactMethod
+  fun setPlaybackLevel(token: String, level: Double) {
+    if (!synchronized(this) { activeTokens.contains(token) }) return
+    VoiceCaptureForegroundService.updatePlaybackLevel(level)
   }
 
   @ReactMethod
@@ -139,15 +145,29 @@ class GlobalVoiceForegroundModule(private val context: ReactApplicationContext) 
   }
 
   companion object {
+    private const val CAPTURE_INTERRUPTED_EVENT = "CodeWideGlobalVoiceCaptureInterrupted"
+    private const val OVERLAY_MICROPHONE_TOGGLE_EVENT = "CodeWideGlobalVoiceOverlayMicrophoneToggle"
     private const val OVERLAY_STOP_EVENT = "CodeWideGlobalVoiceOverlayStop"
     @Volatile private var eventContext: ReactApplicationContext? = null
 
     internal fun requestStopFromOverlay() {
+      emitOverlayEvent(OVERLAY_STOP_EVENT)
+    }
+
+    internal fun requestMicrophoneToggleFromOverlay() {
+      emitOverlayEvent(OVERLAY_MICROPHONE_TOGGLE_EVENT)
+    }
+
+    internal fun requestCaptureRecovery() {
+      emitOverlayEvent(CAPTURE_INTERRUPTED_EVENT)
+    }
+
+    private fun emitOverlayEvent(eventName: String) {
       val activeContext = eventContext ?: return
       if (!activeContext.hasActiveReactInstance()) return
       activeContext
         .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-        .emit(OVERLAY_STOP_EVENT, null)
+        .emit(eventName, null)
     }
 
     internal fun visibleOrbReturnTarget(): VoiceOverlayLaunchOrigin? {

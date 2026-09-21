@@ -20,7 +20,10 @@ import com.facebook.react.modules.fresco.FrescoModule
 import com.oney.WebRTCModule.WebRTCModuleOptions
 
 import dev.codewide.app.remote.CodeWidePackage
+import dev.codewide.app.remote.GlobalVoiceAudioRecordFailureKind
 import dev.codewide.app.remote.NativeStartupTrace
+import dev.codewide.app.remote.PersonalVoiceFilterRuntime
+import dev.codewide.app.remote.VoiceCaptureForegroundService
 import dev.codewide.app.rendering.NativeCodeHighlighter
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ExpoReactHostFactory
@@ -42,7 +45,8 @@ class MainApplication : Application(), ReactApplication {
   override fun onCreate() {
     NativeStartupTrace.markApplicationStarted()
     super.onCreate()
-    configureWebRtcCommunicationAudio()
+    PersonalVoiceFilterRuntime.install(this)
+    configureWebRtcAudioDeviceModule()
     DefaultNewArchitectureEntryPoint.releaseLevel = try {
       ReleaseLevel.valueOf(BuildConfig.REACT_NATIVE_RELEASE_LEVEL.uppercase())
     } catch (e: IllegalArgumentException) {
@@ -53,9 +57,9 @@ class MainApplication : Application(), ReactApplication {
     NativeStartupTrace.markApplicationReady()
   }
 
-  private fun configureWebRtcCommunicationAudio() {
+  private fun configureWebRtcAudioDeviceModule() {
     val audioAttributes = AudioAttributes.Builder()
-      .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+      .setUsage(AudioAttributes.USAGE_MEDIA)
       .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
       .build()
     WebRTCModuleOptions.getInstance().audioDeviceModule = JavaAudioDeviceModule.builder(this)
@@ -64,6 +68,50 @@ class MainApplication : Application(), ReactApplication {
       .setUseHardwareNoiseSuppressor(NoiseSuppressor.isAvailable())
       .setAudioAttributes(audioAttributes)
       .setEnableVolumeLogger(false)
+      .setAudioRecordErrorCallback(object : JavaAudioDeviceModule.AudioRecordErrorCallback {
+        override fun onWebRtcAudioRecordInitError(errorMessage: String) {
+          VoiceCaptureForegroundService.reportWebRtcAudioRecordFailure(
+            GlobalVoiceAudioRecordFailureKind.INIT,
+          )
+        }
+
+        override fun onWebRtcAudioRecordStartError(
+          errorCode: JavaAudioDeviceModule.AudioRecordStartErrorCode,
+          errorMessage: String,
+        ) {
+          VoiceCaptureForegroundService.reportWebRtcAudioRecordFailure(
+            GlobalVoiceAudioRecordFailureKind.START,
+          )
+        }
+
+        override fun onWebRtcAudioRecordError(errorMessage: String) {
+          VoiceCaptureForegroundService.reportWebRtcAudioRecordFailure(
+            GlobalVoiceAudioRecordFailureKind.RUNTIME,
+          )
+        }
+      })
+      .setAudioRecordStateCallback(object : JavaAudioDeviceModule.AudioRecordStateCallback {
+        override fun onWebRtcAudioRecordStart() {
+          VoiceCaptureForegroundService.updateWebRtcAudioRecordRunning(true)
+        }
+
+        override fun onWebRtcAudioRecordStop() {
+          VoiceCaptureForegroundService.updateWebRtcAudioRecordRunning(false)
+        }
+      })
+      .setSamplesReadyCallback { samples ->
+        VoiceCaptureForegroundService.acceptWebRtcInputSamples(
+          samples.audioFormat,
+          samples.channelCount,
+          samples.data,
+        )
+        PersonalVoiceFilterRuntime.requireInstalled().acceptSamples(
+          samples.audioFormat,
+          samples.channelCount,
+          samples.sampleRate,
+          samples.data,
+        )
+      }
       .createAudioDeviceModule()
   }
 

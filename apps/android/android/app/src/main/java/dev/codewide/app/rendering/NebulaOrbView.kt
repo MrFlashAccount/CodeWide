@@ -11,7 +11,8 @@ class NebulaOrbView(context: Context) : VoiceAssistantOrbView(context) {
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val shader = RuntimeShader(SHADER_SOURCE)
   private var elapsedSeconds = 0f
-  private val envelope = NebulaOrbEnvelope()
+  private val inputEnvelope = NebulaOrbEnvelope()
+  private val playbackEnvelope = NebulaOrbEnvelope()
 
   init {
     paint.shader = shader
@@ -21,9 +22,10 @@ class NebulaOrbView(context: Context) : VoiceAssistantOrbView(context) {
     shader.setFloatUniform("uEdgeSoftness", 0.01f)
   }
 
-  /** Accepts a normalized microphone energy sample without owning another animation clock. */
-  override fun setLevel(rawLevel: Double) {
-    envelope.accept(rawLevel)
+  /** Accepts independent normalized capture and playback energy without another animation clock. */
+  override fun setAudioLevels(inputLevel: Double, playbackLevel: Double) {
+    inputEnvelope.accept(inputLevel)
+    playbackEnvelope.accept(playbackLevel)
   }
 
   override fun onOrbStateChanged() {
@@ -31,7 +33,8 @@ class NebulaOrbView(context: Context) : VoiceAssistantOrbView(context) {
   }
 
   override fun advanceAnimation(deltaSeconds: Float) {
-    envelope.advance(deltaSeconds)
+    inputEnvelope.advance(deltaSeconds)
+    playbackEnvelope.advance(deltaSeconds)
     elapsedSeconds += deltaSeconds * animationSpeed()
   }
 
@@ -47,9 +50,9 @@ class NebulaOrbView(context: Context) : VoiceAssistantOrbView(context) {
   private fun animationSpeed(): Float = when (orbState) {
     VoiceAssistantOrbState.IDLE -> 0.72f
     VoiceAssistantOrbState.CONNECTING -> 1.35f
-    VoiceAssistantOrbState.LISTENING -> 1f + envelope.value * 1.4f
+    VoiceAssistantOrbState.LISTENING -> 1f + inputEnvelope.value * 1.4f
     VoiceAssistantOrbState.THINKING -> 1.7f
-    VoiceAssistantOrbState.SPEAKING -> 1.55f
+    VoiceAssistantOrbState.SPEAKING -> 1f + playbackEnvelope.value * 1.55f
     VoiceAssistantOrbState.ERROR -> 0f
     VoiceAssistantOrbState.DISABLED -> 0f
   }
@@ -57,9 +60,9 @@ class NebulaOrbView(context: Context) : VoiceAssistantOrbView(context) {
   private fun turbulence(): Float = when (orbState) {
     VoiceAssistantOrbState.IDLE -> 1.2f
     VoiceAssistantOrbState.CONNECTING -> 1.5f
-    VoiceAssistantOrbState.LISTENING -> 1.2f + envelope.value * 0.8f
+    VoiceAssistantOrbState.LISTENING -> 1.2f + inputEnvelope.value * 0.8f
     VoiceAssistantOrbState.THINKING -> 1.85f
-    VoiceAssistantOrbState.SPEAKING -> 1.7f
+    VoiceAssistantOrbState.SPEAKING -> 1.2f + playbackEnvelope.value * 0.9f
     VoiceAssistantOrbState.ERROR -> 0.65f
     VoiceAssistantOrbState.DISABLED -> 0.45f
   }

@@ -150,13 +150,6 @@ export const preparedMicrophoneEffects = readFileSync(
   ),
   "utf8",
 );
-export const communicationAudioModule = readFileSync(
-  new URL(
-    "../../android/app/src/main/java/dev/codewide/app/remote/GlobalVoiceCommunicationAudioModule.kt",
-    import.meta.url,
-  ),
-  "utf8",
-);
 export const opusAudioEncoder = readFileSync(
   new URL(
     "../../android/app/src/main/java/dev/codewide/app/remote/OpusAudioEncoder.kt",

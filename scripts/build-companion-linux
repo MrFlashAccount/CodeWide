@@ -1,0 +1,88 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+target=x86_64-unknown-linux-musl
+dist_root=${CODEWIDE_COMPANION_DIST_DIR:-"$repo_root/dist/companion-linux"}
+build_image=${CODEWIDE_COMPANION_BUILD_IMAGE:-rust:1.97-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900}
+target_volume=${CODEWIDE_COMPANION_TARGET_VOLUME:-codewide-companion-musl-target}
+tmp_root=${TMPDIR:-/tmp}
+
+if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+  printf '%s\n' 'The current Companion release build requires Linux x86_64.' >&2
+  exit 2
+fi
+command -v docker >/dev/null 2>&1 || {
+  printf '%s\n' 'Docker is required to build the portable Linux Companion bundle.' >&2
+  exit 2
+}
+
+case "$dist_root" in
+  /*) ;;
+  *) dist_root="$repo_root/$dist_root" ;;
+esac
+
+mkdir -p "$dist_root"
+build_root=$(mktemp -d "$tmp_root/codewide-companion-linux-build.XXXXXX")
+bundle_root="$build_root/codewide-companion-$target"
+temporary_archive=$(mktemp "$dist_root/.codewide-companion.XXXXXX")
+
+cleanup() {
+  rm -f -- "$temporary_archive"
+  case "$build_root" in
+    "$tmp_root"/codewide-companion-linux-build.*) rm -rf -- "$build_root" ;;
+    *) printf 'Refusing to remove unexpected directory: %s\n' "$build_root" >&2 ;;
+  esac
+}
+trap cleanup EXIT HUP INT TERM
+
+mkdir -p "$bundle_root/bin" "$bundle_root/libexec" "$bundle_root/systemd/user"
+docker run --rm \
+  --volume "$repo_root:/workspace:ro" \
+  --volume "$build_root:/output" \
+  --volume codewide-companion-cargo-registry:/usr/local/cargo/registry \
+  --volume codewide-companion-cargo-git:/usr/local/cargo/git \
+  --volume "$target_volume:/build-target" \
+  --workdir /workspace \
+  --env CARGO_TARGET_DIR=/build-target \
+  "$build_image" \
+  sh -eu -c '
+    apk add --no-cache build-base cmake perl pkgconfig
+    cargo build --locked --release -p codewide-companion --bins --target x86_64-unknown-linux-musl
+    install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-companion /output/codewide-companion-x86_64-unknown-linux-musl/bin/codewide-companion
+    install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-vcs-git /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
+    strip /output/codewide-companion-x86_64-unknown-linux-musl/bin/codewide-companion
+    strip /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
+  '
+
+install -m 0755 "$repo_root/apps/companion-linux/deploy/install.sh" "$bundle_root/install.sh"
+install -m 0755 "$repo_root/apps/companion-linux/deploy/memory-watch.sh" "$bundle_root/libexec/codewide-companion-memory-watch"
+install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion.service" "$bundle_root/systemd/user/codewide-companion.service"
+install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service" "$bundle_root/systemd/user/codewide-companion-memory-watch.service"
+install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer" "$bundle_root/systemd/user/codewide-companion-memory-watch.timer"
+
+for binary in "$bundle_root/bin/codewide-companion" "$bundle_root/libexec/codewide-vcs-git"; do
+  file "$binary" | grep -E 'statically linked|static-pie linked' >/dev/null || {
+    printf 'Companion release binary is not statically linked: %s\n' "$binary" >&2
+    exit 1
+  }
+done
+
+version=$($bundle_root/bin/codewide-companion --version | awk '{print $2}')
+test -n "$version"
+asset_name="codewide-companion-$version-$target.tar.gz"
+archive="$dist_root/$asset_name"
+checksum="$archive.sha256"
+
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+  -czf "$temporary_archive" -C "$build_root" "codewide-companion-$target"
+mv -f -- "$temporary_archive" "$archive"
+temporary_archive=
+(
+  cd "$dist_root"
+  sha256sum "$asset_name" >"$asset_name.sha256"
+)
+
+archive_sha256=$(awk '{print $1}' "$checksum")
+printf '{"artifact":"%s","target":"%s","version":"%s","sha256":"%s"}\n' \
+  "$archive" "$target" "$version" "$archive_sha256"

@@ -22,7 +22,19 @@ interface AppButtonProps extends Omit<PressableProps, "children" | "disabled" | 
   readonly variant?: AppButtonVariant;
 }
 
-/** Shared application button with the small variant set used by both generations. */
+const DISABLED_OPACITY = 0.5;
+const PRESSED_OPACITY = 0.72;
+
+interface ButtonVisualState {
+  isDisabled: boolean;
+  isIconOnly: boolean;
+  pressed: boolean;
+  size: "sm" | "md";
+  style: StyleProp<ViewStyle>;
+  variant: AppButtonVariant;
+}
+
+/** Shared application button with the variants used by V1 surfaces. */
 export function AppButton(props: AppButtonProps): React.JSX.Element {
   const {
     children,
@@ -51,15 +63,7 @@ export function AppButton(props: AppButtonProps): React.JSX.Element {
       disabled={isDisabled}
       onPressIn={pressIn}
       onPressOut={pressOut}
-      style={[
-        styles.base,
-        size === "sm" ? styles.small : styles.medium,
-        isIconOnly && styles.iconOnly,
-        buttonVariantStyles[variant],
-        pressed && !isDisabled && styles.pressed,
-        isDisabled && styles.disabled,
-        style,
-      ]}
+      style={buttonStyle({ isDisabled, isIconOnly, pressed, size, style, variant })}
     >
       {textChild ? (
         <Text style={[styles.label, buttonLabelStyles[variant]]}>{children}</Text>
@@ -68,6 +72,18 @@ export function AppButton(props: AppButtonProps): React.JSX.Element {
       )}
     </Pressable>
   );
+}
+
+function buttonStyle(state: ButtonVisualState): StyleProp<ViewStyle> {
+  return [
+    styles.base,
+    state.size === "sm" ? styles.small : styles.medium,
+    state.isIconOnly && styles.iconOnly,
+    buttonVariantStyles[state.variant],
+    state.pressed && !state.isDisabled && styles.pressed,
+    state.isDisabled && styles.disabled,
+    state.style,
+  ];
 }
 
 const styles = StyleSheet.create({
@@ -80,9 +96,12 @@ const styles = StyleSheet.create({
   },
   danger: { backgroundColor: colors.red },
   dangerSoft: { backgroundColor: colors.errorContainer },
-  disabled: { opacity: 0.5 },
+  disabled: { opacity: DISABLED_OPACITY },
   ghost: { backgroundColor: "transparent" },
-  iconOnly: { paddingHorizontal: 0, width: controlSize.regular },
+  iconOnly: {
+    paddingHorizontal: 0,
+    width: controlSize.regular,
+  },
   label: {
     ...typeScale.body,
     fontWeight: typeWeight.medium,
@@ -93,7 +112,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 1,
   },
-  pressed: { opacity: 0.72 },
+  pressed: { opacity: PRESSED_OPACITY },
   primary: { backgroundColor: colors.primary },
   secondary: { backgroundColor: colors.surfaceContainerHigh },
   small: { minHeight: controlSize.regular },

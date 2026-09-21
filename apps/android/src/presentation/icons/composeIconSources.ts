@@ -161,6 +161,7 @@ import icon156 from "../../../assets/compose-icons/volume-medium-outline.xml";
 import icon157 from "../../../assets/compose-icons/warning.xml";
 import icon158 from "../../../assets/compose-icons/warning-outline.xml";
 
+/** Maps the closed icon vocabulary to statically bundled native vector assets. */
 export const composeIconSources = {
   add: icon0,
   "add-circle-outline": icon1,

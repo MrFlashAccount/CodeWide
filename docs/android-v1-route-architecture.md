@@ -20,7 +20,7 @@ Back history. V1 uses `connectionId`; it does not adopt V2 `savedServerId` termi
 
 The persistent V1 shell is split by cohesive responsibility:
 
-- `app/v1/_layout.tsx` owns generation gating and the legacy native runtime handle;
+- `app/v1/_layout.tsx` owns the serialized V1 native runtime handle;
 - `V1WorkspaceRouteModel.ts` validates the current thread URL and adapts Router commands;
 - `V1WorkspaceRouteComposition.tsx` binds workspace resources and route intents;
 - `V1WorkspaceThreadList.tsx` adapts route resources to the shared thread-list widget;
@@ -62,8 +62,9 @@ app/v1/
     └── {goal,ports,queue,review,runtime,terminal}.tsx
 ```
 
-The `/legacy` compatibility entry redirects to `/v1`. Generation selection remains in the root
-boot owner. `/servers` remains the V2 aggregate route and is not part of V1.
+The root and `/legacy`, `/pair`, `/thread` compatibility entries redirect to `/v1`. V1 owns the
+original process deep links. The V2 route groups and generation chooser were removed;
+see [the retirement audit](android-v2-retirement.md).
 
 ## Route semantics
 

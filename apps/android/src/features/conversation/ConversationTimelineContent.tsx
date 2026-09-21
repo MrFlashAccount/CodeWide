@@ -75,6 +75,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       loadOlderAtTimelineStart={
         props.timelineRead.timelineViewportActionsBinding.loadOlderAtTimelineStart
       }
+      newChat={props.timelineRead.newChat}
       onTimelineFirstVisibleItemChanged={
         props.timelineRead.timelineViewportActionsBinding.onTimelineFirstVisibleItemChanged
       }

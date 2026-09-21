@@ -9,6 +9,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
+    sync::watch,
     task::JoinSet,
 };
 use tokio_tungstenite::{
@@ -18,6 +19,13 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 
 type RelaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdapterConnectionState {
+    Connecting,
+    Connected,
+    Reconnecting,
+}
 
 #[derive(Clone)]
 pub struct Adapter {
@@ -35,6 +43,18 @@ impl Adapter {
     /// # Errors
     /// Rejects non-loopback targets or invalid configuration before starting.
     pub async fn run(&self, stop: CancellationToken) -> Result<()> {
+        let (status, _) = watch::channel(AdapterConnectionState::Connecting);
+        self.run_with_status(stop, status).await
+    }
+
+    /// Runs the adapter and publishes the control-channel connection state.
+    /// # Errors
+    /// Rejects non-loopback targets or invalid configuration before starting.
+    pub async fn run_with_status(
+        &self,
+        stop: CancellationToken,
+        status: watch::Sender<AdapterConnectionState>,
+    ) -> Result<()> {
         validate_public_url(&self.public_url)?;
         validate_companion_url(&self.companion_url)?;
         pinned_client_config(&self.relay_tls_pin_sha256)?;
@@ -45,10 +65,15 @@ impl Adapter {
         }
         let mut backoff = 1_u64;
         loop {
+            let _ = status.send(if backoff == 1 {
+                AdapterConnectionState::Connecting
+            } else {
+                AdapterConnectionState::Reconnecting
+            });
             let started = tokio::time::Instant::now();
             tokio::select! {
                 () = stop.cancelled() => return Ok(()),
-                _ = self.session() => {},
+                _ = self.session(&status) => {},
             }
             if started.elapsed() > Duration::from_mins(1) {
                 backoff = 1;
@@ -66,7 +91,7 @@ impl Adapter {
         }
     }
 
-    async fn session(&self) -> Result<()> {
+    async fn session(&self, status: &watch::Sender<AdapterConnectionState>) -> Result<()> {
         let mut socket = self
             .connect_control(&format!("/relay/control/{}", self.route_id))
             .await?;
@@ -81,6 +106,7 @@ impl Adapter {
             Control::Welcome { .. } => {}
             Control::Open { .. } => return Err(crate::denied()),
         }
+        let _ = status.send(AdapterConnectionState::Connected);
         eprintln!("relay_adapter connected");
         let mut tasks = JoinSet::new();
         loop {

@@ -1,6 +1,4 @@
-import v2 from "./dependency-cruiser.v2.config.mjs";
-
-const legacySource = "^(?:app/(?:legacy[.]tsx$|v1/)|src/(?!(?:v2|boot|presentation)/))";
+const legacySource = "^(?:app/|src/(?!(?:v2|boot|presentation)/))";
 
 // Exact public modules of completed feature units; private views, styles and session helpers stay local.
 const featurePublicModules = {
@@ -277,20 +275,35 @@ export default {
       name: "v1-does-not-import-v2",
       severity: "error",
       comment:
-        "The generation bridge owns composition; V1 cannot import the V2 runtime or protocol.",
-      from: { path: legacySource },
+        "Android exposes only V1; no route or source owner may revive the retired V2 frontend.",
+      from: { path: "^(?:app/|src/)" },
       to: { path: "^src/v2/|^@codewide/sync-client/v2$|(?:^|/)packages/sync-client/src/v2/" },
     },
   ],
   options: {
     tsPreCompilationDeps: true,
     enhancedResolveOptions: {
-      ...v2.options.enhancedResolveOptions,
+      conditionNames: ["react-native", "import", "require", "node", "default", "types"],
+      exportsFields: ["exports"],
       // Type-only packages expose declarations instead of a JavaScript main file.
-      extensions: [...v2.options.enhancedResolveOptions.extensions, ".d.ts"],
-      mainFields: [...v2.options.enhancedResolveOptions.mainFields, "types", "typings"],
+      extensions: [
+        ".native.tsx",
+        ".native.ts",
+        ".android.tsx",
+        ".android.ts",
+        ".tsx",
+        ".ts",
+        ".jsx",
+        ".js",
+        ".json",
+        ".d.ts",
+      ],
+      mainFields: ["react-native", "browser", "module", "main", "types", "typings"],
     },
-    doNotFollow: v2.options.doNotFollow,
+    doNotFollow: {
+      dependencyTypes: ["npm", "npm-bundled", "npm-dev", "npm-no-pkg", "npm-optional", "npm-peer"],
+      path: "node_modules",
+    },
     tsConfig: { fileName: "tsconfig.json" },
   },
 };

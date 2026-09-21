@@ -23,19 +23,37 @@ export function ProgressiveImageLayer({
   onDimensions: (size: ImageSize) => void;
   preview: ResolvedImageSource;
 }): React.JSX.Element {
-  const [failedUri, setFailedUri] = useState<string | null>(null);
-  const [readyUri, setReadyUri] = useState<string | null>(null);
   const request = progressiveImageRequest(detail);
   const detailSource = usePrivateAssetUri(request.source, request.options).source;
   return (
+    <ProgressiveImageFrames
+      detail={detailSource}
+      label={label}
+      onDecodeStateChange={onDecodeStateChange}
+      onDimensions={onDimensions}
+      preview={preview}
+    />
+  );
+}
+
+/** Keeps a decoded preview above the detail surface until the replacement frame is ready. */
+export function ProgressiveImageFrames({
+  detail,
+  label,
+  onDecodeStateChange,
+  onDimensions,
+  preview,
+}: {
+  detail: ResolvedImageSource | null;
+  label: string;
+  onDecodeStateChange: (state: DecodeState) => void;
+  onDimensions: (size: ImageSize) => void;
+  preview: ResolvedImageSource;
+}): React.JSX.Element {
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const [readyUri, setReadyUri] = useState<string | null>(null);
+  return (
     <>
-      <PreviewImageLayer
-        label={label}
-        onDecodeStateChange={onDecodeStateChange}
-        onDimensions={onDimensions}
-        preview={preview}
-        visible={detailSource === null || readyUri !== detailSource.uri}
-      />
       <DetailImageLayer
         failedUri={failedUri}
         label={label}
@@ -43,8 +61,14 @@ export function ProgressiveImageLayer({
         onDimensions={onDimensions}
         onFailed={setFailedUri}
         onReady={setReadyUri}
-        readyUri={readyUri}
-        source={detailSource}
+        source={detail}
+      />
+      <PreviewImageLayer
+        label={label}
+        onDecodeStateChange={onDecodeStateChange}
+        onDimensions={onDimensions}
+        preview={preview}
+        visible={detail === null || readyUri !== detail.uri}
       />
     </>
   );
@@ -94,7 +118,6 @@ function DetailImageLayer({
   onDimensions,
   onFailed,
   onReady,
-  readyUri,
   source,
 }: {
   failedUri: string | null;
@@ -103,7 +126,6 @@ function DetailImageLayer({
   onDimensions: (size: ImageSize) => void;
   onFailed: (uri: string) => void;
   onReady: (uri: string) => void;
-  readyUri: string | null;
   source: ResolvedImageSource | null;
 }): React.JSX.Element | null {
   if (source === null || failedUri === source.uri) {
@@ -123,7 +145,7 @@ function DetailImageLayer({
       resizeMethod="resize"
       resizeMode="contain"
       source={source}
-      style={[styles.image, detailOpacity(readyUri, source.uri)]}
+      style={styles.image}
     />
   );
 }
@@ -158,10 +180,6 @@ function publishLoadedDimensions(
   if (width > 0 && height > 0) {
     onDimensions({ height, width });
   }
-}
-
-function detailOpacity(readyUri: string | null, sourceUri: string): { opacity: number } {
-  return { opacity: Number(readyUri === sourceUri) };
 }
 
 const styles = StyleSheet.create({

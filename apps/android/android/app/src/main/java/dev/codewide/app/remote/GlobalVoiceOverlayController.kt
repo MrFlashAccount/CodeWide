@@ -1,7 +1,6 @@
 package dev.codewide.app.remote
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -20,7 +19,6 @@ import android.widget.LinearLayout
 import androidx.dynamicanimation.animation.FloatValueHolder
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
-import dev.codewide.app.MainActivity
 import dev.codewide.app.rendering.VoiceAssistantOrbState
 import dev.codewide.app.rendering.VoiceAssistantOrbStyle
 import dev.codewide.app.rendering.VoiceAssistantOrbSlotView
@@ -49,7 +47,9 @@ private data class ActiveOverlayWindowMotion(
 /** Owns the permission-gated, draggable system window for one live Global Voice session. */
 internal class GlobalVoiceOverlayController(
   private val context: Context,
+  private val onMicrophoneToggle: () -> Unit,
   private val onStop: () -> Unit,
+  initialMicrophoneMuted: Boolean,
   initialStyle: VoiceAssistantOrbStyle,
   initialState: VoiceAssistantOrbState,
   initialReducedMotion: Boolean,
@@ -59,7 +59,7 @@ internal class GlobalVoiceOverlayController(
   private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
   private var overlay: DraggableVoiceOverlay? = null
   private var overlayParams: WindowManager.LayoutParams? = null
-  private var controls: View? = null
+  private var controls: VoiceOverlayControls? = null
   private var springAnimation: OverlaySpringAnimation? = null
   private var activeWindowMotion: ActiveOverlayWindowMotion? = null
   private var pendingHideCompletion: (() -> Unit)? = null
@@ -69,6 +69,7 @@ internal class GlobalVoiceOverlayController(
   private var orbState = initialState
   private var reducedMotion = initialReducedMotion
   private var launchOrigin = initialLaunchOrigin
+  private var microphoneMuted = initialMicrophoneMuted
 
   fun show() {
     if (!Settings.canDrawOverlays(context)) return
@@ -97,6 +98,7 @@ internal class GlobalVoiceOverlayController(
       context = context,
       initialStyle = orbStyle,
       initialState = orbState,
+      initialMicrophoneMuted = microphoneMuted,
       initialReducedMotion = reducedMotion,
       windowSize = size,
       onDragStart = {
@@ -205,12 +207,12 @@ internal class GlobalVoiceOverlayController(
     reflow(safeBounds(dp(OVERLAY_SIZE_DP)))
   }
 
-  fun updateLevel(level: Double) {
+  fun updateAudioLevels(levels: GlobalVoiceAudioLevels) {
     if (!Settings.canDrawOverlays(context)) {
       hideImmediately()
       return
     }
-    overlay?.setLevel(level)
+    overlay?.setAudioLevels(levels)
   }
 
   fun updateOrbStyle(style: VoiceAssistantOrbStyle) {
@@ -221,6 +223,12 @@ internal class GlobalVoiceOverlayController(
   fun updateOrbState(state: VoiceAssistantOrbState) {
     orbState = state
     overlay?.setOrbState(state)
+  }
+
+  fun updateMicrophoneMuted(muted: Boolean) {
+    microphoneMuted = muted
+    overlay?.setMicrophoneMuted(muted)
+    controls?.setMicrophoneMuted(muted)
   }
 
   fun updateReducedMotion(reduced: Boolean) {
@@ -516,13 +524,14 @@ internal class GlobalVoiceOverlayController(
     if (controls !== null || !Settings.canDrawOverlays(context)) return
     val panel = VoiceOverlayControls(
       context,
+      microphoneMuted = microphoneMuted,
+      onMicrophoneToggle = {
+        hideControls()
+        onMicrophoneToggle()
+      },
       onStop = {
         hideControls()
         onStop()
-      },
-      onMore = {
-        hideControls()
-        openApp()
       },
       onOutsideTouch = { rawX, rawY ->
         if (!orbParams.contains(rawX, rawY)) {
@@ -566,13 +575,6 @@ internal class GlobalVoiceOverlayController(
     runCatching { windowManager.removeView(view) }
   }
 
-  private fun openApp() {
-    context.startActivity(
-      Intent(context, MainActivity::class.java)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-    )
-  }
-
   private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
   private fun WindowManager.LayoutParams.contains(rawX: Float, rawY: Float): Boolean =
@@ -602,6 +604,7 @@ private class DraggableVoiceOverlay(
   context: Context,
   initialStyle: VoiceAssistantOrbStyle,
   initialState: VoiceAssistantOrbState,
+  initialMicrophoneMuted: Boolean,
   initialReducedMotion: Boolean,
   private val windowSize: Int,
   private val onDragStart: () -> Unit,
@@ -613,10 +616,11 @@ private class DraggableVoiceOverlay(
   private var orbStyle = initialStyle
   private var orbState = initialState
   private var reducedMotion = initialReducedMotion
-  private var level = 0.0
+  private var microphoneMuted = initialMicrophoneMuted
   private val orb = VoiceAssistantOrbSlotView(context).also { slot ->
     slot.setOrbStyle(initialStyle)
     slot.setOrbState(initialState)
+    slot.setMicrophoneMuted(initialMicrophoneMuted)
     slot.setReducedMotion(initialReducedMotion)
   }
   private val orbHost = FrameLayout(context).also { host ->
@@ -637,9 +641,8 @@ private class DraggableVoiceOverlay(
     )
   }
 
-  fun setLevel(level: Double) {
-    this.level = level
-    orb.setLevel(level)
+  fun setAudioLevels(levels: GlobalVoiceAudioLevels) {
+    orb.setAudioLevels(levels.input, levels.playback)
   }
 
   fun setWindowPosition(point: OverlayPoint) {
@@ -656,6 +659,12 @@ private class DraggableVoiceOverlay(
   fun setOrbState(state: VoiceAssistantOrbState) {
     orbState = state
     orb.setOrbState(state)
+    updateContentDescription()
+  }
+
+  fun setMicrophoneMuted(muted: Boolean) {
+    microphoneMuted = muted
+    orb.setMicrophoneMuted(muted)
     updateContentDescription()
   }
 
@@ -793,7 +802,9 @@ private class DraggableVoiceOverlay(
     }
 
   private fun updateContentDescription() {
-    contentDescription = "Voice Assistant controls, ${orbStyle.wireValue} orb, ${orbState.wireValue}"
+    val microphone = if (microphoneMuted) "microphone off" else "microphone on"
+    contentDescription =
+      "Voice Assistant controls, ${orbStyle.wireValue} orb, ${orbState.wireValue}, $microphone"
   }
 
   private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -808,24 +819,36 @@ private class DraggableVoiceOverlay(
 
 private class VoiceOverlayControls(
   context: Context,
+  microphoneMuted: Boolean,
+  onMicrophoneToggle: () -> Unit,
   onStop: () -> Unit,
-  onMore: () -> Unit,
   private val onOutsideTouch: (rawX: Float, rawY: Float) -> Unit,
 ) : LinearLayout(context) {
+  private val microphoneButton = VoiceOverlayIconButton(
+    context,
+    microphoneIcon(microphoneMuted),
+    microphoneLabel(microphoneMuted),
+    onMicrophoneToggle,
+  )
+
   init {
     orientation = HORIZONTAL
     gravity = Gravity.CENTER
     isClickable = true
     addView(
-      VoiceOverlayIconButton(context, VoiceOverlayIcon.STOP, "Stop Voice Assistant", onStop),
+      microphoneButton,
       LayoutParams(dp(BUTTON_SIZE_DP), dp(BUTTON_SIZE_DP)),
     )
     addView(
-      VoiceOverlayIconButton(context, VoiceOverlayIcon.MORE, "More Voice Assistant controls", onMore),
+      VoiceOverlayIconButton(context, VoiceOverlayIcon.STOP, "Stop Voice Assistant", onStop),
       LayoutParams(dp(BUTTON_SIZE_DP), dp(BUTTON_SIZE_DP)).apply {
         marginStart = dp(BUTTON_GAP_DP)
       },
     )
+  }
+
+  fun setMicrophoneMuted(muted: Boolean) {
+    microphoneButton.setIcon(microphoneIcon(muted), microphoneLabel(muted))
   }
 
   fun reveal(anchoredOnRight: Boolean) {
@@ -854,6 +877,11 @@ private class VoiceOverlayControls(
 
   private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+  private fun microphoneIcon(muted: Boolean): VoiceOverlayIcon =
+    if (muted) VoiceOverlayIcon.MIC_ON else VoiceOverlayIcon.MIC_OFF
+
+  private fun microphoneLabel(muted: Boolean): String = if (muted) "Mic on" else "Mic off"
+
   private companion object {
     private const val BUTTON_GAP_DP = 8
     private const val BUTTON_SIZE_DP = 48
@@ -862,11 +890,11 @@ private class VoiceOverlayControls(
   }
 }
 
-private enum class VoiceOverlayIcon { MORE, STOP }
+private enum class VoiceOverlayIcon { MIC_OFF, MIC_ON, STOP }
 
 private class VoiceOverlayIconButton(
   context: Context,
-  private val icon: VoiceOverlayIcon,
+  private var icon: VoiceOverlayIcon,
   accessibilityLabel: String,
   onClick: () -> Unit,
 ) : View(context) {
@@ -890,6 +918,12 @@ private class VoiceOverlayIconButton(
     alpha = if (isPressed) PRESSED_ALPHA else 1f
   }
 
+  fun setIcon(nextIcon: VoiceOverlayIcon, accessibilityLabel: String) {
+    icon = nextIcon
+    contentDescription = accessibilityLabel
+    invalidate()
+  }
+
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     val centerX = width / 2f
@@ -907,12 +941,46 @@ private class VoiceOverlayIconButton(
           iconPaint,
         )
       }
-      VoiceOverlayIcon.MORE -> {
-        val radius = dp(2).toFloat()
-        val gap = dp(6).toFloat()
-        canvas.drawCircle(centerX - gap, centerY, radius, iconPaint)
-        canvas.drawCircle(centerX, centerY, radius, iconPaint)
-        canvas.drawCircle(centerX + gap, centerY, radius, iconPaint)
+      VoiceOverlayIcon.MIC_OFF,
+      VoiceOverlayIcon.MIC_ON,
+      -> {
+        val microphoneHalfWidth = dp(4).toFloat()
+        val microphoneTop = centerY - dp(9)
+        val microphoneBottom = centerY + dp(3)
+        iconPaint.style = Paint.Style.STROKE
+        iconPaint.strokeWidth = dp(2).toFloat()
+        iconPaint.strokeCap = Paint.Cap.ROUND
+        canvas.drawRoundRect(
+          centerX - microphoneHalfWidth,
+          microphoneTop,
+          centerX + microphoneHalfWidth,
+          microphoneBottom,
+          microphoneHalfWidth,
+          microphoneHalfWidth,
+          iconPaint,
+        )
+        canvas.drawArc(
+          centerX - dp(8),
+          centerY - dp(2),
+          centerX + dp(8),
+          centerY + dp(10),
+          0f,
+          180f,
+          false,
+          iconPaint,
+        )
+        canvas.drawLine(centerX, centerY + dp(10), centerX, centerY + dp(14), iconPaint)
+        canvas.drawLine(centerX - dp(5), centerY + dp(14), centerX + dp(5), centerY + dp(14), iconPaint)
+        if (icon == VoiceOverlayIcon.MIC_OFF) {
+          canvas.drawLine(
+            centerX - dp(10),
+            centerY - dp(11),
+            centerX + dp(10),
+            centerY + dp(12),
+            iconPaint,
+          )
+        }
+        iconPaint.style = Paint.Style.FILL
       }
     }
   }

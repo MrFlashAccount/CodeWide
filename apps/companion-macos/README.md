@@ -38,6 +38,19 @@ Shared Companion behavior and durable domain state belong in
 - `scripts`: binding generation, bundle construction, DMG creation, boundary
   validation, and update E2E.
 
+## Current menu and capability boundary
+
+The application currently has no ordinary window. Its menu shows runtime
+status, app/core versions, PID and launch count, applied-update information,
+the latest lifecycle error, update actions, runtime refresh, and Quit. The
+menu-bar icon dims while the runtime is unavailable.
+
+This is a lifecycle and update vertical slice. The current FFI host proves
+state migration, health, update checkpointing, and LaunchAgent recovery, but it
+does not yet compose the production Companion services. Pairing, device
+listing/revocation, online status, and VCS or general plugin management are not
+yet exposed in the macOS UI or XPC contract.
+
 ## Build and validation
 
 The deployment target and build runner are macOS 26. Generate bindings and
@@ -57,3 +70,7 @@ The repository-owned release entrypoint is:
 ```sh
 ./scripts/release-macos <version> --dry-run
 ```
+
+Published DMGs update the `codewide` cask in
+`MrFlashAccount/homebrew-codewide`. The cask does not change the ad-hoc signing
+boundary: Gatekeeper can still require manual approval on first launch.

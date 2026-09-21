@@ -9,10 +9,16 @@ describe("Global Voice media owner", () => {
       vi.fn(async () => ({
         acceptAnswer: vi.fn(async () => undefined),
         offerSdp: "v=0",
+        setMicrophoneMuted: vi.fn(async () => undefined),
         stop: vi.fn(() => nativeStop.promise),
       })),
     );
-    const session = await owner.start({ mode: "interactive", onLevel: vi.fn(), onTerminal: vi.fn() });
+    const session = await owner.start({
+      initiallyMuted: false,
+      mode: "interactive",
+      onPlaybackLevel: vi.fn(),
+      onTerminal: vi.fn(),
+    });
     let closed = false;
     const closing = owner.close().then(() => {
       closed = true;
@@ -30,13 +36,15 @@ describe("Global Voice media owner", () => {
     const nativeStart = Promise.withResolvers<{
       readonly acceptAnswer: () => Promise<void>;
       readonly offerSdp: string;
+      readonly setMicrophoneMuted: (muted: boolean) => Promise<void>;
       readonly stop: () => Promise<void>;
     }>();
     const stop = vi.fn(async () => undefined);
     const owner = createGlobalSupervisorMediaOwner(vi.fn(() => nativeStart.promise));
     const starting = owner.start({
+      initiallyMuted: false,
       mode: "interactive",
-      onLevel: vi.fn(),
+      onPlaybackLevel: vi.fn(),
       onTerminal: vi.fn(),
     });
     const closing = owner.close();
@@ -44,6 +52,7 @@ describe("Global Voice media owner", () => {
     nativeStart.resolve({
       acceptAnswer: vi.fn(async () => undefined),
       offerSdp: "v=0",
+      setMicrophoneMuted: vi.fn(async () => undefined),
       stop,
     });
 

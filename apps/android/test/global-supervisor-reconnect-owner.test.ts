@@ -6,6 +6,7 @@ import {
 } from "../src/data/globalSupervisorReconnectOwner";
 
 type TransportFixture = GlobalSupervisorTransport & {
+  microphoneMuted: boolean;
   readonly terminate: () => void;
 };
 
@@ -24,8 +25,12 @@ function fixture(retryCount = 4) {
     onExhausted: exhausted,
     onReconnecting: reconnecting,
     policy: { retryDelaysMs: Array.from({ length: retryCount }, () => 1) },
-    startTransport: vi.fn(async (onTerminal) => {
+    startTransport: vi.fn(async (onTerminal, microphoneMuted) => {
       const transport: TransportFixture = {
+        microphoneMuted,
+        setMicrophoneMuted: vi.fn(async (muted: boolean) => {
+          transport.microphoneMuted = muted;
+        }),
         stop: vi.fn(async () => undefined),
         terminate: onTerminal,
       };
@@ -43,6 +48,23 @@ async function finishNextRetry(input: ReturnType<typeof fixture>): Promise<void>
 }
 
 describe("Global Voice transport reconnect owner", () => {
+  it("keeps explicit mute through transport replacement and unmute does not reconnect", async () => {
+    const input = fixture();
+    await input.owner.start();
+
+    await input.owner.setMicrophoneMuted(true);
+    expect(input.transports[0]?.microphoneMuted).toBe(true);
+    expect(input.transports).toHaveLength(1);
+
+    input.transports[0]?.terminate();
+    await finishNextRetry(input);
+    expect(input.transports[1]?.microphoneMuted).toBe(true);
+
+    await input.owner.setMicrophoneMuted(false);
+    expect(input.transports[1]?.microphoneMuted).toBe(false);
+    expect(input.transports).toHaveLength(2);
+  });
+
   it("keeps the logical activation alive across the VPN route-change regression", async () => {
     const input = fixture();
     await input.owner.start();

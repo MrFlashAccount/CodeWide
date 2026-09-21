@@ -2,6 +2,24 @@ import type { PropsWithChildren } from "react";
 import { View, type ViewProps } from "react-native";
 
 export const KeyboardController = { dismiss: jest.fn(async () => undefined) };
+const keyboardGeometry = {
+  height: {
+    value: 0,
+    set(value: number) {
+      this.value = value;
+    },
+  },
+  progress: {
+    value: 0,
+    set(value: number) {
+      this.value = value;
+    },
+  },
+};
+
+export function useKeyboardContext() {
+  return { reanimated: keyboardGeometry };
+}
 
 interface KeyboardStickyViewProps extends ViewProps {
   enabled?: boolean;

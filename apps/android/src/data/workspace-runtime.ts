@@ -3,6 +3,7 @@ import { randomUUID } from "expo-crypto";
 import { Platform } from "react-native";
 import { appLogger } from "../observability/logger";
 import { createGlobalSupervisorWebRtcSession } from "../native/globalSupervisorWebRtcSession";
+import type { GlobalSupervisorWebRtcSessionFactory } from "../native/globalSupervisorWebRtcSessionContract";
 import { acquireGlobalVoiceForegroundLease } from "../native/globalVoiceForegroundLease.native";
 import { NativeEngineSupervisor } from "../native/native-engine";
 import {
@@ -51,6 +52,10 @@ import { createGlobalSupervisorRuntimeIngress } from "./globalSupervisorRuntimeI
 import { createGlobalVoicePreviewRuntime } from "./globalVoicePreviewRuntime";
 import { hydrateGlobalVoiceOrbStylePreference } from "./globalVoiceOrbStylePreference";
 import { decodeGlobalVoicePreference, GLOBAL_VOICE_PREFERENCE_ID } from "./globalVoicePreferences";
+import {
+  decodePersonalVoiceFilterPreferences,
+  PERSONAL_VOICE_FILTER_PREFERENCE_ID,
+} from "./personalVoiceFilterPreferences";
 import {
   createGlobalSupervisorWorkspaceBinding,
   createGlobalSupervisorWorkspaceSystemRequests,
@@ -391,6 +396,23 @@ async function readVoiceAssistantPersonality() {
   );
 }
 
+const startConfiguredGlobalVoiceWebRtc: GlobalSupervisorWebRtcSessionFactory = async (options) => {
+  if (options.mode === "preview") {
+    return createGlobalSupervisorWebRtcSession(options);
+  }
+  await userPreferences.ready;
+  const personalVoiceFilterEnabled = decodePersonalVoiceFilterPreferences(
+    userPreferences.collection.get(PERSONAL_VOICE_FILTER_PREFERENCE_ID)?.value,
+  ).enabled;
+  return createGlobalSupervisorWebRtcSession({
+    initiallyMuted: options.initiallyMuted,
+    mode: "interactive",
+    onPlaybackLevel: options.onPlaybackLevel,
+    onTerminal: options.onTerminal,
+    personalVoiceFilterEnabled,
+  });
+};
+
 export const globalSupervisorRuntime = createGlobalSupervisorRuntime({
   acquireForegroundLease: acquireGlobalVoiceForegroundLease,
   attention: globalSupervisorAttention,
@@ -431,7 +453,7 @@ export const globalSupervisorRuntime = createGlobalSupervisorRuntime({
   requestMicrophonePermission: async () =>
     getMicrophonePermission() === "granted" ? "granted" : requestMicrophonePermission(),
   rpcAfterAttach,
-  startWebRtc: createGlobalSupervisorWebRtcSession,
+  startWebRtc: startConfiguredGlobalVoiceWebRtc,
 });
 
 export const globalVoicePreviewRuntime = createGlobalVoicePreviewRuntime({

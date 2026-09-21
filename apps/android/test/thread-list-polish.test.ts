@@ -48,7 +48,7 @@ describe("thread list visual contract", () => {
   it("keeps search and filtering as transparent actions in the shared header", () => {
     const headerRowStyle = sourceObjectDeclaration(header, "row");
     expect(headerRowStyle).toContain("paddingRight: threadListLayout.edgeInset");
-    expect(headerRowStyle).toContain("minHeight: touchTarget");
+    expect(headerRowStyle).toContain("minHeight: layoutSize.header");
     // Header actions and thread cards must share their outer right edge.
     expect(rowStyles).toMatch(/threadRow: \{[^}]*marginHorizontal: threadListLayout\.edgeInset/u);
     expect(filterButtonLayout).toContain("width: controlSize.touch");
@@ -73,7 +73,7 @@ describe("thread list visual contract", () => {
   it("uses the same header row owner on compact, expanded and Search surfaces", () => {
     expect(sidebarHeader).toContain('<ThreadListHeaderRow testID="thread-list-header-row">');
     expect(mobileHeader).toContain('<ThreadListHeaderRow testID="thread-list-header-row">');
-    expect(sourceObjectDeclaration(header, "row")).toContain("minHeight: touchTarget");
+    expect(sourceObjectDeclaration(header, "row")).toContain("minHeight: layoutSize.header");
   });
 
   it("shows the interactive cost without link-like underlining", () => {

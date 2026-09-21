@@ -53,7 +53,7 @@ fn parse_vcs_scope(value: &str) -> Result<VcsScope, Box<dyn std::error::Error>> 
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "codewide-companion")]
+#[command(name = "codewide-companion", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

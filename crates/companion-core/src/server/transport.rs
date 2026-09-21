@@ -13,16 +13,24 @@ async fn sync_upgrade(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let authorization = authorization.unwrap_or(AuthorizationContext::Admin);
+    let presence = match (&state.authorization, authorization.device_id()) {
+        (Authorization::Registry(registry), Some(device_id)) => {
+            Some(registry.connection_lease(device_id.to_owned()))
+        }
+        _ => None,
+    };
     if authorization.device_id().is_none() {
         authorization_changes = None;
     }
     upgrade
         .max_message_size(64 * 1024 * 1024)
         .max_frame_size(64 * 1024 * 1024)
-        .on_upgrade(move |socket| {
+        .on_upgrade(move |socket| async move {
+            let _presence = presence;
             state
                 .sync
                 .serve(socket, authorization, authorization_changes)
+                .await;
         })
 }
 
@@ -63,10 +71,21 @@ async fn sync_v2_upgrade(
     if headers.get("origin").is_some() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    let presence = match (&state.authorization, authorization.device_id()) {
+        (Authorization::Registry(registry), Some(device_id)) => {
+            Some(registry.connection_lease(device_id.to_owned()))
+        }
+        _ => None,
+    };
     upgrade
         .max_message_size(16 * 1024 * 1024)
         .max_frame_size(16 * 1024 * 1024)
-        .on_upgrade(move |socket| runtime.serve(socket, authorization, authorization_changes))
+        .on_upgrade(move |socket| async move {
+            let _presence = presence;
+            runtime
+                .serve(socket, authorization, authorization_changes)
+                .await;
+        })
 }
 
 async fn e2ee_tunnel(

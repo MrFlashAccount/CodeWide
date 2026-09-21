@@ -6,12 +6,25 @@ import org.junit.Test
 
 class VoiceAuraFramePacerTest {
   @Test
-  fun defaultCadenceLeavesAlternateSixtyHertzFramesForInput() {
+  fun defaultCadenceDoesNotQuantizeSixtyHertzInputDownToTwentyFps() {
     val pacer = VoiceAuraFramePacer()
 
     assertTrue(pacer.shouldDraw(0L))
-    assertFalse(pacer.shouldDraw(16_666_667L))
-    assertTrue(pacer.shouldDraw(33_333_334L))
+    assertFalse(pacer.shouldDraw(16_666_666L))
+    assertTrue(pacer.shouldDraw(33_333_333L))
+    assertFalse(pacer.shouldDraw(49_999_999L))
+    assertTrue(pacer.shouldDraw(66_666_666L))
+  }
+
+  @Test
+  fun sixtyFpsTransitionCadenceUsesEveryOtherOneHundredTwentyHertzFrame() {
+    val pacer = VoiceAuraFramePacer(intervalNanos = 16_666_667L)
+
+    assertTrue(pacer.shouldDraw(0L))
+    assertFalse(pacer.shouldDraw(8_333_333L))
+    assertTrue(pacer.shouldDraw(16_666_666L))
+    assertFalse(pacer.shouldDraw(24_999_999L))
+    assertTrue(pacer.shouldDraw(33_333_332L))
   }
 
   @Test
