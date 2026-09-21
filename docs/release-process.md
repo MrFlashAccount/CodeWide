@@ -26,8 +26,8 @@ answer.
 
 Current target policy:
 
-- shared `companion-core` or `companion-control` changes affect both the Linux
-  Companion and the native macOS app;
+- shared `companion-core` changes affect both the Linux Companion and the
+  native macOS app;
 - Swift/XPC/menu-app-only changes affect macOS only;
 - Android TypeScript and shared package changes select OTA;
 - Android native/configuration/lockfile changes select APK, which supersedes

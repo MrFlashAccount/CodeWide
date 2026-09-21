@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use companion_control::{RuntimeHealth, RuntimePhase, UpdateStatus};
-use companion_core::runtime_host::{RuntimeHost, RuntimeHostError};
+use companion_core::runtime_host::{
+    RuntimeHealth, RuntimeHost, RuntimeHostError, RuntimePhase, UpdateStatus,
+};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum CompanionFfiError {

@@ -5,7 +5,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use companion_control::{RuntimeHealth, RuntimePhase, RuntimeVersions, UpdateStatus};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -13,6 +12,49 @@ use thiserror::Error;
 const STATE_SCHEMA_VERSION: u32 = 1;
 const STATE_FILE_NAME: &str = "runtime-state.json";
 const LOCK_FILE_NAME: &str = "runtime.lock";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimePhase {
+    Starting,
+    Running,
+    PreparingUpdate,
+    Degraded { reason: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeVersions {
+    pub app: String,
+    pub host: String,
+    pub core: String,
+    pub state_schema: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UpdateStatus {
+    None,
+    Prepared {
+        from_version: String,
+        target_version: String,
+    },
+    Applied {
+        from_version: String,
+        to_version: String,
+    },
+    Failed {
+        target_version: String,
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeHealth {
+    pub phase: RuntimePhase,
+    pub versions: RuntimeVersions,
+    pub process_id: u32,
+    pub launch_count: u64,
+    pub started_at_unix_ms: u64,
+    pub update: UpdateStatus,
+}
 
 #[derive(Debug, Error)]
 pub enum RuntimeHostError {

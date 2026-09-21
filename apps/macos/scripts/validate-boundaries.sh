@@ -10,8 +10,9 @@ if rg -n 'axum|reqwest|UnixListener|UnixStream|\.sock|/healthz' \
   exit 1
 fi
 if rg -n 'NSXPC|UnixStream|reqwest|axum|http::' \
-  "$repo_root/crates/companion-control"; then
-  echo "companion-control contains transport-specific types." >&2
+  "$repo_root/crates/companion-core/src/runtime_host.rs" \
+  "$repo_root/crates/companion-swift-ffi"; then
+  echo "macOS runtime/FFI boundary contains transport-specific types." >&2
   exit 1
 fi
 if rg -n 'codewide-companion|control\.sock' \

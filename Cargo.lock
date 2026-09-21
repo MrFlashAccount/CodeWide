@@ -818,10 +818,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
-name = "companion-control"
-version = "0.1.0"
-
-[[package]]
 name = "companion-core"
 version = "0.1.0"
 dependencies = [
@@ -833,7 +829,6 @@ dependencies = [
  "bytes",
  "clap",
  "codewide-relay",
- "companion-control",
  "flate2",
  "fs2",
  "futures-util",
@@ -885,7 +880,6 @@ dependencies = [
 name = "companion-swift-ffi"
 version = "0.1.0"
 dependencies = [
- "companion-control",
  "companion-core",
  "thiserror 2.0.20",
  "uniffi",

@@ -7,19 +7,14 @@
       "files": ["Cargo.toml", "Cargo.lock"]
     },
     {
-      "id": "companion-control",
-      "paths": ["crates/companion-control/"],
-      "dependsOn": []
-    },
-    {
       "id": "companion-core",
       "paths": ["crates/companion-core/"],
-      "dependsOn": ["companion-control", "relay-runtime"]
+      "dependsOn": ["relay-runtime"]
     },
     {
       "id": "companion-swift-ffi",
       "paths": ["crates/companion-swift-ffi/"],
-      "dependsOn": ["companion-control", "companion-core"]
+      "dependsOn": ["companion-core"]
     },
     {
       "id": "linux-companion-host",
@@ -154,6 +149,10 @@
     "AGENTS.md",
     "LICENSE",
     "README.md",
+    "apps/companion/README.md",
+    "apps/relay/README.md",
+    "crates/companion-core/README.md",
+    "crates/companion-swift-ffi/README.md",
     "package.json",
     "release/graph.json",
     "packages/release-tools/test/release-plan.test.ts",

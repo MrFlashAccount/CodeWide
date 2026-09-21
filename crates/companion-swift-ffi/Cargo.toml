@@ -14,7 +14,6 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
-companion-control = { path = "../companion-control" }
 companion-core = { path = "../companion-core" }
 thiserror = "2.0.16"
 uniffi = { version = "0.32.1", features = ["cli"] }

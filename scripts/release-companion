@@ -120,7 +120,6 @@ run_quiet 'checking source diff' git diff --check -- \
   Cargo.lock \
   clippy.toml \
   apps/companion \
-  crates/companion-control \
   crates/companion-core \
   scripts/build-companion.sh \
   scripts/cargo-target-budget.sh \

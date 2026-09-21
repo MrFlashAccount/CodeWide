@@ -111,6 +111,7 @@ export function createReleasePlan(graph: ReleaseGraph, inputFiles: readonly stri
   const unmatchedFiles: string[] = [];
 
   for (const file of changedFiles) {
+    if (isIgnored(graph, file)) continue;
     let matched = false;
     for (const component of graph.components) {
       if (matchesComponent(component, file)) {
@@ -118,7 +119,7 @@ export function createReleasePlan(graph: ReleaseGraph, inputFiles: readonly stri
         matched = true;
       }
     }
-    if (!matched && !isIgnored(graph, file)) unmatchedFiles.push(file);
+    if (!matched) unmatchedFiles.push(file);
   }
 
   const affected = new Map<string, Set<string>>();

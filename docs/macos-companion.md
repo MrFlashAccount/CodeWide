@@ -6,8 +6,8 @@ newer. It does not bundle or launch the Linux CLI.
 ## Runtime boundary
 
 - `companion-core` owns the shared Rust runtime and domain modules.
-- `companion-control` owns transport-neutral lifecycle commands, replies, and
-  events.
+- `companion-core::runtime_host` owns the transport-neutral runtime health and
+  update-checkpoint values used by platform hosts.
 - `companion-swift-ffi` is the narrow UniFFI/static-library adapter used by the
   Swift runtime host.
 - `CodeWide.app` registers a Swift LaunchAgent with `SMAppService.agent`.

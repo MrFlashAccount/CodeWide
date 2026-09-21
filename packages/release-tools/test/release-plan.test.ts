@@ -50,7 +50,13 @@ describe("release graph", () => {
   });
 
   it("does not release artifacts for documentation-only changes", () => {
-    const plan = createReleasePlan(graph, ["docs/macos-companion.md"]);
+    const plan = createReleasePlan(graph, [
+      "docs/macos-companion.md",
+      "crates/companion-core/README.md",
+      "crates/companion-swift-ffi/README.md",
+      "apps/companion/README.md",
+      "apps/relay/README.md",
+    ]);
     expect(plan.targets).toEqual([]);
     expect(plan.unmatchedFiles).toEqual([]);
   });

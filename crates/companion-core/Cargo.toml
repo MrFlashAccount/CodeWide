@@ -11,7 +11,6 @@ default = []
 e2e-command-fault = []
 
 [dependencies]
-companion-control = { path = "../companion-control" }
 codewide-relay = { path = "../../apps/relay" }
 async-trait = "0.1.89"
 axum = { version = "0.8.4", features = ["ws"] }
