@@ -12,8 +12,12 @@ newer. It does not bundle or launch the Linux CLI.
   Swift runtime host.
 - `CodeWide.app` registers a Swift LaunchAgent with `SMAppService.agent`.
 - The LaunchAgent hosts `companion-core` in-process and exposes only a typed
-  Mach/XPC service to the menu app. There is no CLI, local HTTP listener, or
-  Unix socket in the macOS bundle.
+  Mach/XPC management service to the menu app. There is no CLI, fixed local
+  management HTTP listener, or Unix socket in the macOS bundle.
+- The production device data plane uses two random loopback TLS listeners only
+  as private targets of the outbound Relay adapter. Bootstrap requires the
+  one-time pairing proof; normal traffic requires registered-device mTLS. They
+  are not app-management endpoints and are never advertised as localhost APIs.
 - The Linux executable imports `companion-core` directly. Its pre-existing
   CLI-to-running-daemon control socket remains a compatibility surface; it is
   not a host-to-core boundary and this slice adds no new Linux IPC.
@@ -51,6 +55,30 @@ signed appcast, then performs a real Sparkle update from a baseline bundle. It
 requires the new app, LaunchAgent, and core versions to come up with preserved
 state. It then sends `SIGKILL` to the runtime and requires launchd to return a
 new PID and higher launch count before publishing.
+
+## Menu workflows
+
+On first launch, the app presents one temporary native setup window with
+animated transitions through local Companion readiness, optional Relay setup,
+and device pairing. The whole flow can be skipped and reopened later from the
+menu bar. Its persisted completion marker controls presentation only; every
+readiness state comes from the live runtime.
+
+The menu-bar panel exposes four production workflows over signed XPC:
+
+- current runtime state and recovery failures;
+- Relay pairing from `host:port` plus the one-time JSON invitation, live
+  `connecting / online / reconnecting / disabled` reachability, and enable or
+  disable;
+- device pairing as a native QR code containing the route-qualified Relay
+  endpoint, one-time token, Companion TLS pin, and identity expiry;
+- paired device inventory with active sync-connection count, durable last-seen
+  time, and immediate revoke.
+
+Online is not inferred from a recent timestamp. It is owned by scoped leases on
+actual V1/V2 sync WebSockets; the final disconnect updates durable last-seen
+state. Revoke removes authorization, closes subscribed live transports, and
+purges device-owned transient runtime state.
 
 There is no implicit binary downgrade. A failed feed signature or download
 leaves the old app running. A failed pre-install checkpoint stalls installation.

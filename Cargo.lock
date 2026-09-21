@@ -882,6 +882,7 @@ version = "0.1.0"
 dependencies = [
  "companion-core",
  "thiserror 2.0.20",
+ "tokio",
  "uniffi",
 ]
 

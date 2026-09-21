@@ -54,6 +54,9 @@ rm -rf -- "$state_dir"
 mkdir -p "$state_dir" "$HOME/Applications" "$feed_dir"
 printf '%s\n' '{"schemaVersion":0,"launchCount":0,"lastCoreVersion":"0.0.0"}' \
   > "$state_dir/runtime-state.json"
+printf '%s\n' '{"version":5,"devices":[],"pairings":[]}' > "$state_dir/devices.json"
+chmod 0600 "$state_dir/devices.json"
+printf '%s\n' 'preserve-across-update' > "$state_dir/update-state-sentinel"
 ditto "$baseline_app" "$test_app"
 cp "$target_dmg" "$feed_dir/"
 
@@ -102,6 +105,8 @@ if [ "$updated" != true ]; then
 fi
 
 test -f "$state_dir/runtime-state.v0.backup.json"
+test "$(cat "$state_dir/update-state-sentinel")" = preserve-across-update
+test "$(jq -r '.version' "$state_dir/devices.json")" = 5
 old_pid=$(jq -r '.processId' "$report")
 old_launch_count=$(jq -r '.launchCount' "$report")
 kill -9 "$old_pid"
@@ -125,6 +130,8 @@ if [ "$recovered" != true ]; then
   cat "$report" >&2 || true
   exit 1
 fi
+test "$(cat "$state_dir/update-state-sentinel")" = preserve-across-update
+test "$(jq -r '.version' "$state_dir/devices.json")" = 5
 
 jq -n \
   --arg version "$target_version" \

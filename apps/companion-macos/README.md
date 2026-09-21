@@ -40,16 +40,31 @@ Shared Companion behavior and durable domain state belong in
 
 ## Current menu and capability boundary
 
-The application currently has no ordinary window. Its menu shows runtime
-status, app/core versions, PID and launch count, applied-update information,
-the latest lifecycle error, update actions, runtime refresh, and Quit. The
-menu-bar icon dims while the runtime is unavailable.
+The application has no ordinary window. Clicking the menu-bar icon opens a
+native panel with Companion health, live Relay reachability, Relay invitation
+setup and enable/disable control, QR device pairing, paired devices, exact live
+connection presence, durable last-seen time, and revoke. Update and quit actions
+live in the panel footer.
 
-This is a lifecycle and update vertical slice. The current FFI host proves
-state migration, health, update checkpointing, and LaunchAgent recovery, but it
-does not yet compose the production Companion services. Pairing, device
-listing/revocation, online status, and VCS or general plugin management are not
-yet exposed in the macOS UI or XPC contract.
+On first launch, a native animated setup assistant opens as the application's
+only temporary ordinary window. It verifies the local LaunchAgent, offers an
+optional Relay connection, waits for the first device pairing, and can be
+skipped completely. Its completion marker controls presentation only: live
+step status always comes from the runtime. `Run Setup Again` in the menu-bar
+panel reopens the flow. The assistant uses the native macOS 26 Liquid Glass
+APIs and the canonical CodeWide accent (`#5878FF`), graphite, warm-white, and
+C/W mark assets; reduced-motion and system appearance remain authoritative.
+
+The Swift LaunchAgent composes the production Companion services in-process
+through `companion-core`. Menu management uses only authenticated typed XPC.
+The Rust data plane owns two random loopback TLS listeners used exclusively by
+the outbound Relay adapter: bootstrap is token-and-signature protected and the
+normal device path requires registered-device mTLS. There is no fixed local
+management HTTP port, CLI, or Unix control socket in the application bundle.
+
+VCS-provider selection and a general arbitrary plugin system remain explicitly
+out of scope; they are separate contracts and are not represented by one
+placeholder UI.
 
 ## Build and validation
 

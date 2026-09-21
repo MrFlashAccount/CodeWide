@@ -497,6 +497,30 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -545,6 +569,10 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol CoreHostProtocol: AnyObject, Sendable {
 
+    func createPairing() throws  -> FfiPairing
+
+    func devices()  -> [FfiDeviceStatus]
+
     /**
      * Returns the current lifecycle and version proof.
      *
@@ -553,6 +581,8 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      * Returns an adapter error if another thread poisoned the runtime lock.
      */
     func health() throws  -> FfiRuntimeHealth
+
+    func pairRelay(relayAddress: String, invitationJson: String) throws  -> FfiRelayStatus
 
     /**
      * Persists the update checkpoint before Swift terminates the host.
@@ -563,6 +593,12 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      * fails, or another thread poisoned the runtime lock.
      */
     func prepareForUpdate(targetVersion: String) throws  -> FfiRuntimeHealth
+
+    func relayStatus() throws  -> FfiRelayStatus
+
+    func revokeDevice(deviceId: String) throws  -> Bool
+
+    func setRelayEnabled(enabled: Bool) throws  -> FfiRelayStatus
 
 }
 open class CoreHost: CoreHostProtocol, @unchecked Sendable {
@@ -612,12 +648,13 @@ open class CoreHost: CoreHostProtocol, @unchecked Sendable {
      * Returns an adapter error when the state directory cannot be opened,
      * migrated, exclusively locked, or durably checkpointed.
      */
-public convenience init(stateDirectory: String, appVersion: String, hostVersion: String)throws  {
+public convenience init(stateDirectory: String, codexHome: String, appVersion: String, hostVersion: String)throws  {
     let handle =
         try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
     uniffi_companion_swift_ffi_fn_constructor_corehost_new(
         FfiConverterString.lower(stateDirectory),
+        FfiConverterString.lower(codexHome),
         FfiConverterString.lower(appVersion),
         FfiConverterString.lower(hostVersion),uniffiCallStatus
     )
@@ -637,6 +674,24 @@ public convenience init(stateDirectory: String, appVersion: String, hostVersion:
 
 
 
+open func createPairing()throws  -> FfiPairing  {
+    return try  FfiConverterTypeFfiPairing_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_create_pairing(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func devices() -> [FfiDeviceStatus]  {
+    return try!  FfiConverterSequenceTypeFfiDeviceStatus.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_devices(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
     /**
      * Returns the current lifecycle and version proof.
      *
@@ -649,6 +704,17 @@ open func health()throws  -> FfiRuntimeHealth  {
         uniffiCallStatus in
     uniffi_companion_swift_ffi_fn_method_corehost_health(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func pairRelay(relayAddress: String, invitationJson: String)throws  -> FfiRelayStatus  {
+    return try  FfiConverterTypeFfiRelayStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_pair_relay(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(relayAddress),
+        FfiConverterString.lower(invitationJson),uniffiCallStatus
     )
 })
 }
@@ -667,6 +733,35 @@ open func prepareForUpdate(targetVersion: String)throws  -> FfiRuntimeHealth  {
     uniffi_companion_swift_ffi_fn_method_corehost_prepare_for_update(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(targetVersion),uniffiCallStatus
+    )
+})
+}
+
+open func relayStatus()throws  -> FfiRelayStatus  {
+    return try  FfiConverterTypeFfiRelayStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_relay_status(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func revokeDevice(deviceId: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_revoke_device(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(deviceId),uniffiCallStatus
+    )
+})
+}
+
+open func setRelayEnabled(enabled: Bool)throws  -> FfiRelayStatus  {
+    return try  FfiConverterTypeFfiRelayStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_set_relay_enabled(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(enabled),uniffiCallStatus
     )
 })
 }
@@ -717,6 +812,188 @@ public func FfiConverterTypeCoreHost_lower(_ value: CoreHost) -> UInt64 {
 }
 
 
+
+
+public struct FfiDeviceStatus: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var createdAtUnixMs: UInt64
+    public var lastSeenAtUnixMs: UInt64
+    public var activeConnections: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, createdAtUnixMs: UInt64, lastSeenAtUnixMs: UInt64, activeConnections: UInt32) {
+        self.id = id
+        self.name = name
+        self.createdAtUnixMs = createdAtUnixMs
+        self.lastSeenAtUnixMs = lastSeenAtUnixMs
+        self.activeConnections = activeConnections
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiDeviceStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDeviceStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDeviceStatus {
+        return
+            try FfiDeviceStatus(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                createdAtUnixMs: FfiConverterUInt64.read(from: &buf),
+                lastSeenAtUnixMs: FfiConverterUInt64.read(from: &buf),
+                activeConnections: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDeviceStatus, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterUInt64.write(value.createdAtUnixMs, into: &buf)
+        FfiConverterUInt64.write(value.lastSeenAtUnixMs, into: &buf)
+        FfiConverterUInt32.write(value.activeConnections, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDeviceStatus_lift(_ buf: RustBuffer) throws -> FfiDeviceStatus {
+    return try FfiConverterTypeFfiDeviceStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDeviceStatus_lower(_ value: FfiDeviceStatus) -> RustBuffer {
+    return FfiConverterTypeFfiDeviceStatus.lower(value)
+}
+
+
+public struct FfiPairing: Equatable, Hashable {
+    public var link: String
+    public var expiresAtUnixMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(link: String, expiresAtUnixMs: UInt64) {
+        self.link = link
+        self.expiresAtUnixMs = expiresAtUnixMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiPairing: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPairing: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPairing {
+        return
+            try FfiPairing(
+                link: FfiConverterString.read(from: &buf),
+                expiresAtUnixMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPairing, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.link, into: &buf)
+        FfiConverterUInt64.write(value.expiresAtUnixMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPairing_lift(_ buf: RustBuffer) throws -> FfiPairing {
+    return try FfiConverterTypeFfiPairing.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPairing_lower(_ value: FfiPairing) -> RustBuffer {
+    return FfiConverterTypeFfiPairing.lower(value)
+}
+
+
+public struct FfiRelayStatus: Equatable, Hashable {
+    public var configured: Bool
+    public var enabled: Bool
+    public var connection: String
+    public var publicEndpoint: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(configured: Bool, enabled: Bool, connection: String, publicEndpoint: String?) {
+        self.configured = configured
+        self.enabled = enabled
+        self.connection = connection
+        self.publicEndpoint = publicEndpoint
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiRelayStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRelayStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRelayStatus {
+        return
+            try FfiRelayStatus(
+                configured: FfiConverterBool.read(from: &buf),
+                enabled: FfiConverterBool.read(from: &buf),
+                connection: FfiConverterString.read(from: &buf),
+                publicEndpoint: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRelayStatus, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.configured, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterString.write(value.connection, into: &buf)
+        FfiConverterOptionString.write(value.publicEndpoint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRelayStatus_lift(_ buf: RustBuffer) throws -> FfiRelayStatus {
+    return try FfiConverterTypeFfiRelayStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRelayStatus_lower(_ value: FfiRelayStatus) -> RustBuffer {
+    return FfiConverterTypeFfiRelayStatus.lower(value)
+}
 
 
 public struct FfiRuntimeHealth: Equatable, Hashable {
@@ -921,6 +1198,31 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiDeviceStatus: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiDeviceStatus]
+
+    public static func write(_ value: [FfiDeviceStatus], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiDeviceStatus.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiDeviceStatus] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiDeviceStatus]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiDeviceStatus.read(from: &buf))
+        }
+        return seq
+    }
+}
+
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
@@ -936,13 +1238,31 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_create_pairing() != 24063) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_devices() != 59987) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_health() != 9536) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_pair_relay() != 26655) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_prepare_for_update() != 40305) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 57157) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_relay_status() != 25248) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_revoke_device() != 41963) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_set_relay_enabled() != 49856) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 64369) {
         return InitializationResult.apiChecksumMismatch
     }
 

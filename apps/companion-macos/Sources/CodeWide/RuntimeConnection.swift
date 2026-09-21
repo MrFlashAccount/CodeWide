@@ -6,6 +6,8 @@ import ServiceManagement
 @MainActor
 final class RuntimeConnection: ObservableObject {
     @Published private(set) var health: RuntimeHealthPayload?
+    @Published private(set) var relay: RelayStatusPayload?
+    @Published private(set) var devices: [DeviceStatusPayload] = []
     @Published private(set) var status = "Starting"
     @Published private(set) var lastError: String?
     @Published private(set) var requiresApproval = false
@@ -42,18 +44,29 @@ final class RuntimeConnection: ObservableObject {
 
     func refresh() async {
         do {
-            let payload = try await requestHealth()
-            guard validatesRuntime(payload) else {
+            let health = try await requestHealth()
+            guard validatesRuntime(health) else {
                 throw RuntimeConnectionError.untrustedRuntime
             }
-            health = payload
-            status = payload.phase == "running" ? "Running" : payload.phase
-            lastError = payload.degradedReason ?? payload.updateFailureReason
-            writeUpdateE2EReport(payload)
+            self.health = health
+            status = health.phase == "running" ? "Running" : health.phase
+            lastError = health.degradedReason ?? health.updateFailureReason
+            writeUpdateE2EReport(health)
         } catch {
             disconnect()
-            health = nil
+            self.health = nil
+            self.relay = nil
+            self.devices = []
             status = "Unavailable"
+            lastError = error.localizedDescription
+            return
+        }
+
+        do {
+            relay = try await requestRelayStatus()
+            let deviceList = try await requestDevices()
+            devices = deviceList.devices
+        } catch {
             lastError = error.localizedDescription
         }
     }
@@ -76,6 +89,50 @@ final class RuntimeConnection: ObservableObject {
 
     func openLoginItemsSettings() {
         SMAppService.openSystemSettingsLoginItems()
+    }
+
+    func pairRelay(address: String, invitationJSON: String) async throws {
+        relay = try await requestPairRelay(address: address, invitationJSON: invitationJSON)
+        await refresh()
+    }
+
+    func setRelayEnabled(_ enabled: Bool) async throws {
+        relay = try await requestSetRelayEnabled(enabled)
+        await refresh()
+    }
+
+    func createPairing() async throws -> PairingPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.createPairing { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    func revokeDevice(id: String) async throws {
+        let removed: Bool = try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.revokeDevice(id: id) { removed, error in
+                if let error {
+                    gate.resume(with: .failure(error))
+                } else {
+                    gate.resume(with: .success(removed))
+                }
+            }
+        }
+        guard removed else {
+            throw RuntimeConnectionError.deviceNotFound
+        }
+        await refresh()
     }
 
     private func registerAgent() async {
@@ -122,6 +179,61 @@ final class RuntimeConnection: ObservableObject {
                 return
             }
             proxy.prepareForUpdate(targetVersion: targetVersion) { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestRelayStatus() async throws -> RelayStatusPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.relayStatus { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestDevices() async throws -> DeviceListPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.devices { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestPairRelay(
+        address: String,
+        invitationJSON: String
+    ) async throws -> RelayStatusPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.pairRelay(address: address, invitationJSON: invitationJSON) { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestSetRelayEnabled(_ enabled: Bool) async throws -> RelayStatusPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.setRelayEnabled(enabled) { payload, error in
                 gate.resume(with: Self.result(payload: payload, error: error))
             }
         }
@@ -207,10 +319,10 @@ final class RuntimeConnection: ObservableObject {
         }
     }
 
-    nonisolated private static func result(
-        payload: RuntimeHealthPayload?,
+    nonisolated private static func result<Payload>(
+        payload: Payload?,
         error: NSError?
-    ) -> Result<RuntimeHealthPayload, Error> {
+    ) -> Result<Payload, Error> {
         if let error {
             return .failure(error)
         }
@@ -226,6 +338,7 @@ enum RuntimeConnectionError: LocalizedError {
     case invalidProxy
     case untrustedRuntime
     case updateCheckpointRejected
+    case deviceNotFound
 
     var errorDescription: String? {
         switch self {
@@ -237,6 +350,8 @@ enum RuntimeConnectionError: LocalizedError {
             "The XPC peer is not the ad-hoc signed runtime inside this app bundle."
         case .updateCheckpointRejected:
             "The runtime did not persist the update checkpoint."
+        case .deviceNotFound:
+            "The device is no longer registered."
         }
     }
 }

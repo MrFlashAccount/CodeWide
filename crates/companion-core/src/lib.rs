@@ -14,6 +14,7 @@ pub mod history;
 pub mod history_service;
 pub mod identity;
 pub mod image_previews;
+pub mod managed_runtime;
 pub mod media;
 pub mod message_search;
 pub mod pairing_qr;

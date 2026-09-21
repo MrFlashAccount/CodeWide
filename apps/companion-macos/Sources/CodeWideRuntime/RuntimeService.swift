@@ -37,6 +37,86 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         }
     }
 
+    func relayStatus(
+        withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void
+    ) {
+        do {
+            reply(relayPayload(from: try core.relayStatus()), nil)
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    func pairRelay(
+        address: String,
+        invitationJSON: String,
+        withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void
+    ) {
+        do {
+            let status = try core.pairRelay(
+                relayAddress: address,
+                invitationJson: invitationJSON
+            )
+            reply(relayPayload(from: status), nil)
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    func setRelayEnabled(
+        _ enabled: Bool,
+        withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void
+    ) {
+        do {
+            reply(relayPayload(from: try core.setRelayEnabled(enabled: enabled)), nil)
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    func createPairing(
+        withReply reply: @escaping @Sendable (PairingPayload?, NSError?) -> Void
+    ) {
+        do {
+            let pairing = try core.createPairing()
+            reply(
+                PairingPayload(
+                    link: pairing.link,
+                    expiresAtUnixMilliseconds: pairing.expiresAtUnixMs
+                ),
+                nil
+            )
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    func devices(
+        withReply reply: @escaping @Sendable (DeviceListPayload?, NSError?) -> Void
+    ) {
+        let devices = core.devices().map { device in
+            DeviceStatusPayload(
+                id: device.id,
+                name: device.name,
+                createdAtUnixMilliseconds: device.createdAtUnixMs,
+                lastSeenAtUnixMilliseconds: device.lastSeenAtUnixMs,
+                activeConnections: device.activeConnections
+            )
+        }
+        reply(DeviceListPayload(devices: devices), nil)
+    }
+
+    func revokeDevice(
+        id: String,
+        withReply reply: @escaping @Sendable (Bool, NSError?) -> Void
+    ) {
+        do {
+            reply(try core.revokeDevice(deviceId: id), nil)
+        } catch {
+            reply(false, error as NSError)
+        }
+    }
+
     private func payload(from health: FfiRuntimeHealth) -> RuntimeHealthPayload {
         RuntimeHealthPayload(
             phase: health.phase,
@@ -53,6 +133,15 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
             updateTargetVersion: health.updateTargetVersion,
             updateFailureReason: health.updateFailureReason,
             hostExecutablePath: runtimeExecutablePath
+        )
+    }
+
+    private func relayPayload(from status: FfiRelayStatus) -> RelayStatusPayload {
+        RelayStatusPayload(
+            configured: status.configured,
+            enabled: status.enabled,
+            connection: status.connection,
+            publicEndpoint: status.publicEndpoint
         )
     }
 }

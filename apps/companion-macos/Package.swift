@@ -6,7 +6,11 @@ import PackageDescription
 let ffiArchive = ProcessInfo.processInfo.environment["CODEWIDE_FFI_ARCHIVE"]
 
 let ffiLinkerSettings: [LinkerSetting] = ffiArchive.map {
-    [.unsafeFlags([$0])]
+    [
+        .unsafeFlags([$0]),
+        .linkedFramework("CoreFoundation"),
+        .linkedFramework("Security"),
+    ]
 } ?? []
 
 let package = Package(

@@ -14,9 +14,11 @@ async fn sync_upgrade(
     }
     let authorization = authorization.unwrap_or(AuthorizationContext::Admin);
     let presence = match (&state.authorization, authorization.device_id()) {
-        (Authorization::Registry(registry), Some(device_id)) => {
-            Some(registry.connection_lease(device_id.to_owned()))
-        }
+        (Authorization::Registry(registry), Some(device_id)) => Some((
+            registry.connection_lease(device_id.to_owned()),
+            registry.clone(),
+            device_id.to_owned(),
+        )),
         _ => None,
     };
     if authorization.device_id().is_none() {
@@ -26,11 +28,16 @@ async fn sync_upgrade(
         .max_message_size(64 * 1024 * 1024)
         .max_frame_size(64 * 1024 * 1024)
         .on_upgrade(move |socket| async move {
-            let _presence = presence;
             state
                 .sync
                 .serve(socket, authorization, authorization_changes)
                 .await;
+            if let Some((lease, registry, device_id)) = presence {
+                drop(lease);
+                if let Err(error) = registry.mark_device_disconnected(&device_id).await {
+                    tracing::warn!(err = ?error, "device last-seen checkpoint failed");
+                }
+            }
         })
 }
 
@@ -72,19 +79,26 @@ async fn sync_v2_upgrade(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let presence = match (&state.authorization, authorization.device_id()) {
-        (Authorization::Registry(registry), Some(device_id)) => {
-            Some(registry.connection_lease(device_id.to_owned()))
-        }
+        (Authorization::Registry(registry), Some(device_id)) => Some((
+            registry.connection_lease(device_id.to_owned()),
+            registry.clone(),
+            device_id.to_owned(),
+        )),
         _ => None,
     };
     upgrade
         .max_message_size(16 * 1024 * 1024)
         .max_frame_size(16 * 1024 * 1024)
         .on_upgrade(move |socket| async move {
-            let _presence = presence;
             runtime
                 .serve(socket, authorization, authorization_changes)
                 .await;
+            if let Some((lease, registry, device_id)) = presence {
+                drop(lease);
+                if let Err(error) = registry.mark_device_disconnected(&device_id).await {
+                    tracing::warn!(err = ?error, "device last-seen checkpoint failed");
+                }
+            }
         })
 }
 

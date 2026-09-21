@@ -624,6 +624,18 @@ impl DeviceRegistry {
             .collect()
     }
 
+    /// Persists the latest completed device connection timestamp.
+    /// # Errors
+    /// Returns an error when the durable registry cannot be updated.
+    pub async fn mark_device_disconnected(&self, device_id: &str) -> Result<(), AuthError> {
+        let mut state = self.state.lock().await;
+        let Some(device) = state.devices.get_mut(device_id) else {
+            return Ok(());
+        };
+        device.last_seen_at = unix_time_ms();
+        self.persist_locked(&state).await
+    }
+
     /// Revokes a device and its transient challenges and sessions.
     ///
     /// # Errors
@@ -879,6 +891,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connection_leases_publish_exact_live_device_presence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let registry = DeviceRegistry::open(
+            Arc::from("admin-token-that-is-long-enough-for-tests"),
+            directory.path().join("devices.json"),
+            Some(60_000),
+        )
+        .await?;
+        registry.state.lock().await.devices.insert(
+            "device-live".to_owned(),
+            StoredDevice {
+                id: "device-live".to_owned(),
+                name: "Phone".to_owned(),
+                token_hash: "hash".to_owned(),
+                public_key_spki: None,
+                created_at: 1,
+                last_seen_at: 2,
+            },
+        );
+
+        let first = registry.connection_lease("device-live".to_owned());
+        let second = registry.connection_lease("device-live".to_owned());
+        assert_eq!(registry.device_statuses().await[0].active_connections, 2);
+        drop(first);
+        assert_eq!(registry.device_statuses().await[0].active_connections, 1);
+        drop(second);
+        assert_eq!(registry.device_statuses().await[0].active_connections, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn pairing_and_signed_session_survive_registry_restart()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
@@ -966,8 +1010,14 @@ mod tests {
             })
             .await?;
         let repaired_bearer = format!("Bearer {}", repaired.capability_token);
+        let last_seen_before_disconnect = registry.devices().await[0].last_seen_at;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        registry
+            .mark_device_disconnected(&claimed.device_id)
+            .await?;
 
         let reopened = DeviceRegistry::open(admin, path, None).await?;
+        assert!(reopened.devices().await[0].last_seen_at > last_seen_before_disconnect);
         assert!(matches!(
             reopened.authorization_context(Some(&repaired_bearer)).await,
             Some(AuthorizationContext::Device { device_id }) if device_id == claimed.device_id

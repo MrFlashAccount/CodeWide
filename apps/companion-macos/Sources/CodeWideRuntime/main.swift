@@ -8,6 +8,8 @@ do {
     let metadata = try AppBundleMetadata.load(runtimeExecutableURL: executableURL)
     let core = try CoreHost(
         stateDirectory: RuntimeConstants.stateDirectory.path,
+        codexHome: FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: ".codex", directoryHint: .isDirectory).path,
         appVersion: metadata.version,
         hostVersion: metadata.version
     )

@@ -4,6 +4,39 @@ use qrcode::{Color, EcLevel, QrCode};
 
 const QUIET_ZONE_MODULES: usize = 4;
 
+pub struct PairingLinkInput<'a> {
+    pub endpoint: &'a url::Url,
+    pub pairing_token: &'a str,
+    pub expires_at: u64,
+    pub display_name: &'a str,
+    pub emoji: &'a str,
+    pub tls_pin_sha256: &'a str,
+    pub identity_expires_at: Option<u64>,
+}
+
+/// Builds the canonical mobile pairing deep link shared by every host.
+///
+/// # Errors
+///
+/// Returns an error if the canonical pairing URL cannot be parsed.
+pub fn build_link(input: &PairingLinkInput<'_>) -> Result<url::Url, url::ParseError> {
+    let mut link = url::Url::parse("codewide://pair")?;
+    let mut query = link.query_pairs_mut();
+    query
+        .append_pair("v", "1")
+        .append_pair("e", input.endpoint.as_str())
+        .append_pair("t", input.pairing_token)
+        .append_pair("x", &input.expires_at.to_string())
+        .append_pair("n", input.display_name)
+        .append_pair("i", input.emoji)
+        .append_pair("p", input.tls_pin_sha256);
+    if let Some(expires_at) = input.identity_expires_at {
+        query.append_pair("y", &expires_at.to_string());
+    }
+    drop(query);
+    Ok(link)
+}
+
 #[derive(Debug)]
 struct Matrix {
     modules: Vec<bool>,

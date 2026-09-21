@@ -30,3 +30,25 @@ import Testing
     #expect(decoded.updateFromVersion == "1.0.0")
     #expect(decoded.launchCount == 3)
 }
+
+@Test func managementPayloadsSecureCodingRoundTrip() throws {
+    let original = DeviceListPayload(devices: [
+        DeviceStatusPayload(
+            id: "device-1",
+            name: "Phone",
+            createdAtUnixMilliseconds: 10,
+            lastSeenAtUnixMilliseconds: 20,
+            activeConnections: 2
+        ),
+    ])
+    let data = try NSKeyedArchiver.archivedData(
+        withRootObject: original,
+        requiringSecureCoding: true
+    )
+    let decoded = try #require(
+        NSKeyedUnarchiver.unarchivedObject(ofClass: DeviceListPayload.self, from: data)
+    )
+    #expect(decoded.devices.count == 1)
+    #expect(decoded.devices[0].name == "Phone")
+    #expect(decoded.devices[0].activeConnections == 2)
+}

@@ -52,6 +52,7 @@ cp "$mac_root/Resources/Info.plist" "$contents/Info.plist"
 cp "$mac_root/Resources/dev.codewide.runtime.plist" "$agents_dir/dev.codewide.runtime.plist"
 cp "$repo_root/brand/macos/CodeWideMenuBarTemplate.png" "$resources_dir/CodeWideMenuBarTemplate.png"
 cp "$repo_root/brand/macos/CodeWideMenuBarTemplate@2x.png" "$resources_dir/CodeWideMenuBarTemplate@2x.png"
+cp "$repo_root/brand/codewide-menubar-template-64.png" "$resources_dir/CodeWideBrandMark.png"
 
 icon_dir=$(mktemp -d "${TMPDIR:-/tmp}/codewide-icon.XXXXXX")
 trap 'rm -rf -- "$icon_dir"' EXIT HUP INT TERM

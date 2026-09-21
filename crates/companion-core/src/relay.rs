@@ -12,7 +12,10 @@ use std::{
     net::SocketAddr,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::{
@@ -80,6 +83,7 @@ struct RelayRuntimeInner {
     pairing_target: SocketAddr,
     running: Mutex<Option<RunningAdapter>>,
     connection: watch::Sender<RelayConnectionStatus>,
+    generation: Arc<AtomicU64>,
 }
 
 struct RunningAdapter {
@@ -110,6 +114,7 @@ impl RelayRuntime {
             pairing_target,
             running: Mutex::new(None),
             connection,
+            generation: Arc::new(AtomicU64::new(0)),
         }));
         let config = RelayConfig::load(&runtime.0.config_path)?
             .filter(RelayConfig::is_enabled)
@@ -176,31 +181,48 @@ impl RelayRuntime {
 
     async fn replace(&self, adapter: Option<Adapter>) {
         let mut running = self.0.running.lock().await;
-        let _ = self.0.connection.send(if adapter.is_some() {
+        let generation = self.0.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.0.connection.send_replace(if adapter.is_some() {
             RelayConnectionStatus::Connecting
         } else {
             RelayConnectionStatus::Disabled
         });
-        *running = adapter.map(|adapter| RunningAdapter::start(adapter, self.0.connection.clone()));
+        *running = adapter.map(|adapter| {
+            RunningAdapter::start(
+                adapter,
+                self.0.connection.clone(),
+                self.0.generation.clone(),
+                generation,
+            )
+        });
     }
 }
 
 impl RunningAdapter {
-    fn start(adapter: Adapter, connection: watch::Sender<RelayConnectionStatus>) -> Self {
+    fn start(
+        adapter: Adapter,
+        connection: watch::Sender<RelayConnectionStatus>,
+        current_generation: Arc<AtomicU64>,
+        generation: u64,
+    ) -> Self {
         let stop = CancellationToken::new();
         let worker_stop = stop.clone();
         let task = tokio::spawn(async move {
             let (adapter_status, mut status_changes) =
                 watch::channel(AdapterConnectionState::Connecting);
             let status_connection = connection.clone();
+            let status_generation = current_generation.clone();
             let status_task = tokio::spawn(async move {
                 loop {
+                    if status_generation.load(Ordering::Acquire) != generation {
+                        return;
+                    }
                     let mapped = match *status_changes.borrow_and_update() {
                         AdapterConnectionState::Connecting => RelayConnectionStatus::Connecting,
                         AdapterConnectionState::Connected => RelayConnectionStatus::Online,
                         AdapterConnectionState::Reconnecting => RelayConnectionStatus::Reconnecting,
                     };
-                    let _ = status_connection.send(mapped);
+                    status_connection.send_replace(mapped);
                     if status_changes.changed().await.is_err() {
                         return;
                     }
@@ -210,7 +232,9 @@ impl RunningAdapter {
                 tracing::error!(err = ?error, "Relay adapter stopped");
             }
             status_task.abort();
-            let _ = connection.send(RelayConnectionStatus::Reconnecting);
+            if current_generation.load(Ordering::Acquire) == generation {
+                connection.send_replace(RelayConnectionStatus::Reconnecting);
+            }
         });
         Self { stop, task }
     }
@@ -546,10 +570,21 @@ mod tests {
             })
             .await?;
         wait_for_ready(address, &pin, reqwest::StatusCode::NO_CONTENT).await?;
+        wait_for_connection(&runtime, RelayConnectionStatus::Online).await?;
         runtime.set_enabled(false).await?;
+        assert_eq!(
+            runtime.status()?.connection,
+            RelayConnectionStatus::Disabled
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            runtime.status()?.connection,
+            RelayConnectionStatus::Disabled
+        );
         wait_for_ready(address, &pin, reqwest::StatusCode::SERVICE_UNAVAILABLE).await?;
         runtime.set_enabled(true).await?;
         wait_for_ready(address, &pin, reqwest::StatusCode::NO_CONTENT).await?;
+        wait_for_connection(&runtime, RelayConnectionStatus::Online).await?;
         stop.cancel();
         relay_task.await?;
         Ok(())
@@ -572,6 +607,25 @@ mod tests {
                     .send()
                     .await
                     .is_ok_and(|response| response.status() == expected)
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn wait_for_connection(
+        runtime: &RelayRuntime,
+        expected: RelayConnectionStatus,
+    ) -> codewide_relay::Result<()> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if runtime
+                    .status()
+                    .is_ok_and(|status| status.connection == expected)
                 {
                     return;
                 }
