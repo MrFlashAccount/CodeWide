@@ -161,7 +161,7 @@ jobs:
           curl --fail --location --silent --show-error \
             https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz \
             --output "$archive"
-          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0  $archive" \
+          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c  $archive" \
             | shasum --algorithm 256 --check
           mkdir -p "$destination"
           tar -xJf "$archive" -C "$destination"
