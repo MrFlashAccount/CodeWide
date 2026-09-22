@@ -1,6 +1,6 @@
 import Foundation
 
-final class XPCReplyGate<Value>: @unchecked Sendable {
+final class XPCReplyGate<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Value, Error>?
 
@@ -8,7 +8,7 @@ final class XPCReplyGate<Value>: @unchecked Sendable {
         self.continuation = continuation
     }
 
-    func resume(with result: Result<Value, Error>) {
+    func resume(with result: sending Result<Value, Error>) {
         lock.lock()
         let pending = continuation
         continuation = nil
