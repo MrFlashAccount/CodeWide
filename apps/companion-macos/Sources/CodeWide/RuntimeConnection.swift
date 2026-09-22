@@ -18,14 +18,6 @@ final class RuntimeConnection: ObservableObject {
     private var connection: NSXPCConnection?
     private var refreshTask: Task<Void, Never>?
 
-    init() {
-        if let reportPath = ProcessInfo.processInfo.environment[
-            "CODEWIDE_UPDATE_E2E_REPORT_PATH"
-        ] {
-            UserDefaults.standard.set(reportPath, forKey: "CodeWideUpdateE2EReportPath")
-        }
-    }
-
     func start() {
         guard refreshTask == nil else {
             return
@@ -294,18 +286,24 @@ final class RuntimeConnection: ObservableObject {
     }
 
     private func writeUpdateE2EReport(_ payload: RuntimeHealthPayload) {
-        guard
-            let path = UserDefaults.standard.string(forKey: "CodeWideUpdateE2EReportPath"),
-            !path.isEmpty
-        else {
+        let markerURL = RuntimeConstants.stateDirectory.appending(
+            path: "update-e2e.enabled",
+            directoryHint: .notDirectory
+        )
+        guard FileManager.default.fileExists(atPath: markerURL.path) else {
             return
         }
+        let reportURL = RuntimeConstants.stateDirectory.appending(
+            path: "update-e2e-health.json",
+            directoryHint: .notDirectory
+        )
         var report: [String: Any] = [
             "phase": payload.phase,
             "appVersion": payload.appVersion,
             "hostVersion": payload.hostVersion,
             "coreVersion": payload.coreVersion,
             "stateSchema": payload.stateSchema,
+            "appProcessId": ProcessInfo.processInfo.processIdentifier,
             "processId": payload.processID,
             "launchCount": payload.launchCount,
             "updateStatus": payload.updateStatus,
@@ -316,7 +314,7 @@ final class RuntimeConnection: ObservableObject {
         report["updateFailureReason"] = payload.updateFailureReason
         do {
             let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
-            try data.write(to: URL(fileURLWithPath: path), options: [.atomic])
+            try data.write(to: reportURL, options: [.atomic])
         } catch {
             lastError = "Update E2E report failed: \(error.localizedDescription)"
         }

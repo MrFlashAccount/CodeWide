@@ -23,10 +23,11 @@ fi
 root=$(mktemp -d "${TMPDIR:-/tmp}/codewide-update-e2e.XXXXXX")
 test_app="$HOME/Applications/CodeWide-E2E-$$.app"
 feed_dir="$root/feed"
-report="$root/runtime-health.json"
 app_log="$root/app.log"
 server_log="$root/http.log"
 state_dir="$HOME/Library/Application Support/CodeWide/Companion"
+report="$state_dir/update-e2e-health.json"
+report_marker="$state_dir/update-e2e.enabled"
 server_pid=
 
 dump_diagnostics() {
@@ -107,6 +108,8 @@ printf '%s\n' '{"schemaVersion":0,"launchCount":0,"lastCoreVersion":"0.0.0"}' \
 printf '%s\n' '{"version":5,"devices":[],"pairings":[]}' > "$state_dir/devices.json"
 chmod 0600 "$state_dir/devices.json"
 printf '%s\n' 'preserve-across-update' > "$state_dir/update-state-sentinel"
+printf '%s\n' 'enabled' > "$report_marker"
+chmod 0600 "$report_marker"
 ditto "$baseline_app" "$test_app"
 cp "$target_dmg" "$feed_dir/"
 
@@ -125,7 +128,6 @@ server_pid=$!
 
 CODEWIDE_UPDATE_E2E=1 \
 CODEWIDE_UPDATE_FEED_URL="http://127.0.0.1:$port/appcast.xml" \
-CODEWIDE_UPDATE_E2E_REPORT_PATH="$report" \
   "$test_app/Contents/MacOS/CodeWide" >"$app_log" 2>&1 &
 
 baseline_ready=false
@@ -149,15 +151,22 @@ if [ "$baseline_ready" != true ]; then
   dump_diagnostics
   exit 1
 fi
+baseline_app_pid=$(jq -er '.appProcessId' "$report")
+baseline_runtime_pid=$(jq -er '.processId' "$report")
 
 updated=false
 attempt=0
 while [ "$attempt" -lt 180 ]; do
-  if [ -f "$report" ] && jq -e --arg version "$target_version" '
+  if [ -f "$report" ] && jq -e \
+    --arg version "$target_version" \
+    --argjson baselineAppPid "$baseline_app_pid" \
+    --argjson baselineRuntimePid "$baseline_runtime_pid" '
     .phase == "running" and
     .appVersion == $version and
     .hostVersion == $version and
     .coreVersion == $version and
+    .appProcessId != $baselineAppPid and
+    .processId != $baselineRuntimePid and
     .stateSchema == 1 and
     .updateStatus == "applied" and
     .updateFromVersion == "0.0.0" and
