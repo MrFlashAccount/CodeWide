@@ -29,6 +29,37 @@ server_log="$root/http.log"
 state_dir="$HOME/Library/Application Support/CodeWide/Companion"
 server_pid=
 
+dump_diagnostics() {
+  echo "--- CodeWide app log ---" >&2
+  cat "$app_log" >&2 || true
+  echo "--- Sparkle feed log ---" >&2
+  cat "$server_log" >&2 || true
+  echo "--- Runtime health report ---" >&2
+  if [ -f "$report" ]; then
+    cat "$report" >&2
+  else
+    echo "missing: $report" >&2
+  fi
+  echo "--- Runtime state ---" >&2
+  for state_file in \
+    "$state_dir/runtime-state.json" \
+    "$state_dir/runtime-state.v0.backup.json" \
+    "$state_dir/devices.json"; do
+    if [ -f "$state_file" ]; then
+      stat -f '%Sp %Su:%Sg %N' "$state_file" >&2 || true
+      cat "$state_file" >&2 || true
+    else
+      echo "missing: $state_file" >&2
+    fi
+  done
+  echo "--- launchd job ---" >&2
+  launchctl print "gui/$(id -u)/dev.codewide.runtime" >&2 || true
+  echo "--- Relevant unified log ---" >&2
+  log show --style compact --last 10m \
+    --predicate 'process == "CodeWideRuntime" OR eventMessage CONTAINS[c] "dev.codewide.runtime"' \
+    >&2 || true
+}
+
 cleanup() {
   launchctl bootout "gui/$(id -u)/dev.codewide.runtime" >/dev/null 2>&1 || true
   if [ -n "$server_pid" ]; then
@@ -78,10 +109,33 @@ CODEWIDE_UPDATE_FEED_URL="http://127.0.0.1:$port/appcast.xml" \
 CODEWIDE_UPDATE_E2E_REPORT_PATH="$report" \
   "$test_app/Contents/MacOS/CodeWide" >"$app_log" 2>&1 &
 
+baseline_ready=false
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+  if [ -f "$report" ] && jq -e '
+    .appVersion == "0.0.0" and
+    .hostVersion == "0.0.0" and
+    .coreVersion == "0.0.0" and
+    .stateSchema == 1 and
+    .updateStatus == "none"
+  ' "$report" >/dev/null; then
+    baseline_ready=true
+    break
+  fi
+  sleep 1
+  attempt=$((attempt + 1))
+done
+if [ "$baseline_ready" != true ]; then
+  echo "Baseline app did not produce a healthy runtime before the update check." >&2
+  dump_diagnostics
+  exit 1
+fi
+
 updated=false
 attempt=0
 while [ "$attempt" -lt 180 ]; do
   if [ -f "$report" ] && jq -e --arg version "$target_version" '
+    .phase == "running" and
     .appVersion == $version and
     .hostVersion == $version and
     .coreVersion == $version and
@@ -98,9 +152,7 @@ while [ "$attempt" -lt 180 ]; do
 done
 if [ "$updated" != true ]; then
   echo "Sparkle update did not produce a healthy new runtime." >&2
-  cat "$app_log" >&2 || true
-  cat "$server_log" >&2 || true
-  test -f "$report" && cat "$report" >&2
+  dump_diagnostics
   exit 1
 fi
 

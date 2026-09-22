@@ -301,6 +301,7 @@ final class RuntimeConnection: ObservableObject {
             return
         }
         var report: [String: Any] = [
+            "phase": payload.phase,
             "appVersion": payload.appVersion,
             "hostVersion": payload.hostVersion,
             "coreVersion": payload.coreVersion,
@@ -311,6 +312,8 @@ final class RuntimeConnection: ObservableObject {
         ]
         report["updateFromVersion"] = payload.updateFromVersion
         report["updateTargetVersion"] = payload.updateTargetVersion
+        report["degradedReason"] = payload.degradedReason
+        report["updateFailureReason"] = payload.updateFailureReason
         do {
             let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
             try data.write(to: URL(fileURLWithPath: path), options: [.atomic])
