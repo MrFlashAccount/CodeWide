@@ -12,7 +12,7 @@ module.exports = {
     "<rootDir>/test/setup-expo-render-runtime.cjs",
     "react-native-gesture-handler/jestSetup.js",
   ],
-  setupFilesAfterEnv: ["<rootDir>/test/setup-v2-render-console.cjs"],
+  setupFilesAfterEnv: ["<rootDir>/test/setup-render-console.cjs"],
   testMatch: [
     "<rootDir>/test/app-popover.native.test.tsx",
     "<rootDir>/test/global-search.render.test.tsx",
@@ -20,7 +20,7 @@ module.exports = {
     "<rootDir>/test/settings-sheet.native.test.tsx",
     "<rootDir>/test/v1-route-sheet-focus.native.test.tsx",
     "<rootDir>/test/v1-*.render.test.tsx",
-    "<rootDir>/test/root-generation-gate.render.test.tsx",
+    "<rootDir>/test/root-keyboard-geometry.render.test.tsx",
     "<rootDir>/test/workspace-navigation.render.test.tsx",
   ],
   moduleNameMapper: {
@@ -42,8 +42,8 @@ module.exports = {
       "<rootDir>/test/mocks/ReanimatedSwipeable.tsx",
     // WHY: Reanimated's native worklet runtime cannot initialize in the Node render-test process.
     "^react-native-reanimated$": "<rootDir>/test/mocks/Reanimated.ts",
+    "^react-native-worklets$": "<rootDir>/test/mocks/Worklets.ts",
     "^react-native-keyboard-controller$": "<rootDir>/test/mocks/KeyboardController.tsx",
-    "^.*/V2Application$": "<rootDir>/test/mocks/V2Application.ts",
     "^(?:.*/rendering/|\\./)RichMarkdown$": "<rootDir>/test/mocks/RichMarkdown.tsx",
     "^.*/surfaces/PresentationSheetView$": "<rootDir>/test/mocks/PresentationSheetView.tsx",
     "^(?:.*/ui/|\\./)ActionMenu$": "<rootDir>/test/mocks/ActionMenu.tsx",
@@ -57,7 +57,15 @@ module.exports = {
     "^.+\\.xml$": "@react-native/jest-preset/jest/assetFileTransformer.js",
     "^.+\\.(js|ts|tsx)$": [
       "babel-jest",
-      { babelrc: false, configFile: false, presets: ["module:@react-native/babel-preset"] },
+      {
+        babelrc: false,
+        configFile: false,
+        presets: ["module:@react-native/babel-preset"],
+        plugins: [[
+          require.resolve("babel-plugin-react-compiler", { paths: [require.resolve("babel-preset-expo")] }),
+          require("./react-compiler.config.cjs"),
+        ]],
+      },
     ],
   },
   // WHY: Private icons use ESM-only hashes; real TanStack collections depend on ESM-only fractional-indexing.

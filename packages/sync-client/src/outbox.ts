@@ -1,5 +1,5 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 
 import { RpcResponseError } from "./session";
 import { threadContainsClientMessage } from "./thread-events";

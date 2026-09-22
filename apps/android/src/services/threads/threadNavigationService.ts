@@ -16,6 +16,7 @@ import {
   threadRouteSessionOwner,
   v1ThreadDestination,
   type V1ThreadRouteParams,
+  type V1ThreadDestination,
 } from "./threadRouteParams";
 
 export type ThreadNavigationReadCapability = {
@@ -30,60 +31,57 @@ export type ThreadNavigationReadCapability = {
   ) => Promise<SearchConversationPage>;
 };
 
+/** Declarative destination shared by list links and non-visual thread selection. */
+export type ThreadLink = {
+  readonly dismissTo: boolean;
+  readonly href: V1ThreadDestination;
+};
+
+/** List navigation prepares observation independently from the Link-owned transition. */
+export type ThreadListNavigation = {
+  readonly getThreadLink: (thread: {
+    readonly id: string;
+    readonly serverId: string;
+  }) => ThreadLink;
+  readonly prepareThreadLink: (selectionKey: string) => void;
+};
+
 export type V1ThreadRouter = {
   readonly currentThread: V1ThreadRouteParams | null;
+  readonly dismissTo: (destination: V1ThreadDestination) => void;
   readonly dismissToAll: () => void;
-  readonly push: (
-    destination: ReturnType<typeof v1ThreadDestination>,
-    searchWindowId?: string,
-  ) => void;
-  readonly replace: (
-    destination: ReturnType<typeof v1ThreadDestination>,
-    searchWindowId?: string,
-  ) => void;
-  readonly reset: (
-    destination: ReturnType<typeof v1ThreadDestination>,
-    searchWindowId?: string,
-  ) => void;
-  readonly searchSelectionMode: "push" | "reset";
-  readonly selectionMode: "push" | "replace" | "reset";
+  readonly link: (destination: V1ThreadDestination) => ThreadLink;
+  readonly navigate: (destination: V1ThreadDestination) => void;
+  readonly push: (destination: V1ThreadDestination, searchWindowId?: string) => void;
+  readonly replace: (destination: V1ThreadDestination, searchWindowId?: string) => void;
+  readonly searchSelectionMode: "push" | "replace";
 };
 
 /** Qualified thread navigation commands consumed by the mounted workspace. */
-export type ThreadNavigationService = {
+export type ThreadNavigationService = ThreadListNavigation & {
   readonly closeActiveThread: () => void;
   readonly openSearchThread: (target: LocatedSearchHit, query: string) => void;
   readonly selectThread: (selectionKey: string | null) => void;
 };
-
-type OpenThreadInput = {
-  readonly mode: "push" | "replace" | "reset";
-  readonly navigationId?: string;
-  readonly params: V1ThreadRouteParams;
-  readonly searchWindowId?: string;
-};
-
-function isCurrentThread(
-  current: V1ThreadRouteParams | null,
-  params: V1ThreadRouteParams,
-): boolean {
-  return (
-    current?.connectionId.value === params.connectionId.value &&
-    current.threadId.value === params.threadId.value
-  );
-}
 
 /** Preserves V1 observer, IME, and timing order around Router commands. */
 export function useThreadNavigationService(
   remote: ThreadNavigationReadCapability,
   router: V1ThreadRouter,
 ): ThreadNavigationService {
-  const open = useEvent(({ mode, navigationId, params, searchWindowId }: OpenThreadInput): void => {
+  const prepare = useEvent((params: V1ThreadRouteParams): void => {
     const current = router.currentThread;
     const changed =
       current === null ||
       current.connectionId.value !== params.connectionId.value ||
       current.threadId.value !== params.threadId.value;
+    if (!changed) {
+      return;
+    }
+    const navigationId = beginThreadNavigation(params.connectionId.value, params.threadId.value);
+    if (navigationId !== null) {
+      void beginNavigationFrameTrace(navigationId).catch(() => undefined);
+    }
     // Observer attachment is background work and this handler consumes every rejection.
     void remote.observeThread(params.connectionId.value, params.threadId.value).catch(() => {
       appLogger.warn({
@@ -94,15 +92,12 @@ export function useThreadNavigationService(
         },
       });
     });
-    if (changed) {
-      void KeyboardController.dismiss({ animated: false, keepFocus: false }).catch(() => undefined);
-    }
+    void KeyboardController.dismiss({ animated: false, keepFocus: false }).catch(() => undefined);
     const startedAt = performance.now();
-    router[mode](v1ThreadDestination(params), searchWindowId);
     requestAnimationFrame(() => {
       const elapsed = performance.now() - startedAt;
       recordTiming("thread_selection_next_frame_ms", elapsed);
-      if (navigationId !== undefined) {
+      if (navigationId !== null) {
         markThreadNavigationStage(
           params.connectionId.value,
           params.threadId.value,
@@ -129,16 +124,26 @@ export function useThreadNavigationService(
     if (params === null) {
       return;
     }
-    const navigationId = beginThreadNavigation(params.connectionId.value, params.threadId.value);
-    if (navigationId !== null) {
-      // Frame tracing is explicitly armed diagnostic work and does not control route admission.
-      void beginNavigationFrameTrace(navigationId).catch(() => undefined);
+    prepare(params);
+    const link = router.link(v1ThreadDestination(params));
+    if (link.dismissTo) {
+      router.dismissTo(link.href);
+    } else {
+      router.navigate(link.href);
     }
-    open({
-      mode: isCurrentThread(router.currentThread, params) ? "replace" : router.selectionMode,
-      ...(navigationId === null ? {} : { navigationId }),
-      params,
+  });
+
+  // Render callback: link props must use this render's route, before layout effects publish handlers.
+  const getThreadLink = (thread: { readonly id: string; readonly serverId: string }): ThreadLink =>
+    router.link({
+      params: { connectionId: thread.serverId, threadId: thread.id },
+      pathname: "/threads/[connectionId]/[threadId]",
     });
+  const prepareThreadLink = useEvent((selectionKey: string): void => {
+    const params = parseThreadSelectionKey(selectionKey);
+    if (params !== null) {
+      prepare(params);
+    }
   });
 
   const openSearchThread = useEvent((target: LocatedSearchHit, query: string): void => {
@@ -156,15 +161,12 @@ export function useThreadNavigationService(
       searchConversation: remote.searchConversation,
       target,
     });
-    open({
-      mode: router.searchSelectionMode,
-      params,
-      ...(searchWindowId === null ? {} : { searchWindowId }),
-    });
+    prepare(params);
+    router[router.searchSelectionMode](v1ThreadDestination(params), searchWindowId ?? undefined);
   });
 
   const closeActiveThread = useEvent((): void => {
     router.dismissToAll();
   });
-  return { closeActiveThread, openSearchThread, selectThread };
+  return { closeActiveThread, getThreadLink, openSearchThread, prepareThreadLink, selectThread };
 }

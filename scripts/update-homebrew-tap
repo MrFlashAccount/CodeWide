@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  printf 'Usage: %s <linux|macos> <version> <sha256> <tap-root>\n' "$0" >&2
+  exit 2
+}
+
+[ "$#" -eq 4 ] || usage
+product=$1
+version=${2#v}
+sha256=$3
+tap_root=$4
+
+printf '%s\n' "$version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$' || usage
+printf '%s\n' "$sha256" | grep -Eq '^[0-9a-f]{64}$' || usage
+mkdir -p "$tap_root/Formula" "$tap_root/Casks"
+
+case "$product" in
+  linux)
+    formula="$tap_root/Formula/codewide-companion.rb"
+    mkdir -p "$tap_root/versions"
+    sed \
+      -e "s/@VERSION@/$version/g" \
+      -e "s/@SHA256@/$sha256/g" \
+      "$(dirname -- "$0")/../packaging/homebrew/codewide-companion.rb.in" >"$formula"
+    printf '%s\n' "$version" >"$tap_root/versions/companion-linux"
+    ;;
+  macos)
+    cask="$tap_root/Casks/codewide.rb"
+    sed \
+      -e "s/@VERSION@/$version/g" \
+      -e "s/@SHA256@/$sha256/g" \
+      "$(dirname -- "$0")/../packaging/homebrew/codewide.rb.in" >"$cask"
+    ;;
+  *) usage ;;
+esac

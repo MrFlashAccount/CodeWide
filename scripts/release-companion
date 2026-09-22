@@ -81,10 +81,10 @@ run_quiet() {
 validate_release_payload() {
   test -x target/release/codewide-companion
   test -x target/release/codewide-vcs-git
-  test -x apps/companion/deploy/memory-watch.sh
-  test -r apps/companion/deploy/codewide-companion.service
-  test -r apps/companion/deploy/codewide-companion-memory-watch.service
-  test -r apps/companion/deploy/codewide-companion-memory-watch.timer
+  test -x apps/companion-linux/deploy/memory-watch.sh
+  test -r apps/companion-linux/deploy/codewide-companion.service
+  test -r apps/companion-linux/deploy/codewide-companion-memory-watch.service
+  test -r apps/companion-linux/deploy/codewide-companion-memory-watch.timer
 }
 
 finish_release() {
@@ -119,7 +119,8 @@ run_quiet 'checking source diff' git diff --check -- \
   Cargo.toml \
   Cargo.lock \
   clippy.toml \
-  apps/companion \
+  apps/companion-linux \
+  crates/companion-core \
   scripts/build-companion.sh \
   scripts/cargo-target-budget.sh \
   scripts/release-companion
@@ -156,8 +157,8 @@ backup_target "$UNIT_ROOT/codewide-companion-memory-watch.service" memory-watch-
 backup_target "$UNIT_ROOT/codewide-companion-memory-watch.timer" memory-watch-timer
 
 DEPLOYMENT_STARTED=1
-run_quiet 'installing companion' ./apps/companion/deploy/install.sh
-run_quiet 'verifying installation' ./apps/companion/deploy/verify.sh
+run_quiet 'installing companion' ./apps/companion-linux/deploy/install.sh
+run_quiet 'verifying installation' ./apps/companion-linux/deploy/verify.sh
 DEPLOYMENT_STARTED=0
 
 BINARY_SHA256=$(sha256sum "$INSTALL_ROOT/codewide-companion" | cut -d ' ' -f 1)

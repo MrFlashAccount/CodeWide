@@ -1,5 +1,4 @@
 import { useId, useState } from "react";
-import { ActivityIndicator, Pressable, View } from "react-native";
 
 import { privateAssetCacheKey } from "../../data/private-transfer";
 import { useEphemeralAsyncResource } from "../../rendering/async-resource-store";
@@ -8,9 +7,10 @@ import {
   type DocumentPreviewRequest,
 } from "../../rendering/DocumentPreviewHost";
 import { materializePrivateAsset } from "../../rendering/private-asset";
+import { createPrivateImageDetailRequest } from "../../rendering/use-private-image-uri";
 import { useEvent } from "../../react/useEvent";
-import { AppText as Text } from "../../ui/Typography";
 import { RouteImagePreview } from "./RouteImagePreview";
+import { RouteImagePreviewStatus } from "./RouteImagePreviewStatus";
 
 /** Loads one private image for the Router-owned image surface. */
 export function RouteImageDocumentPreview({
@@ -31,7 +31,7 @@ export function RouteImageDocumentPreview({
       materializePrivateAsset(source, {
         getAccess: request.getTransferAccess,
         signal,
-        variant: "detail",
+        variant: "preview",
       }),
   );
   const retry = useEvent(() => {
@@ -41,6 +41,11 @@ export function RouteImageDocumentPreview({
   if (image.status === "ready" && image.value !== null) {
     return (
       <RouteImagePreview
+        detail={createPrivateImageDetailRequest(source, {
+          accessScope: ownerId,
+          getAccess: request.getTransferAccess,
+          revision,
+        })}
         download={download}
         id={`route-image:${request.path}`}
         label={request.name}
@@ -52,18 +57,11 @@ export function RouteImageDocumentPreview({
   }
   if (image.status === "error") {
     return (
-      <View className="flex-1 items-center justify-center gap-3 bg-background px-6">
-        <Text selectable>{image.error ?? "Image preview failed"}</Text>
-        <Pressable accessibilityRole="button" onPress={retry}>
-          <Text>Retry</Text>
-        </Pressable>
-      </View>
+      <RouteImagePreviewStatus
+        onClose={onClose}
+        state={{ message: image.error ?? "Image preview failed", retry, status: "error" }}
+      />
     );
   }
-  return (
-    <View className="flex-1 items-center justify-center gap-3 bg-background px-6">
-      <ActivityIndicator />
-      <Text>Loading image…</Text>
-    </View>
-  );
+  return <RouteImagePreviewStatus onClose={onClose} state={{ status: "loading" }} />;
 }

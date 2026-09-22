@@ -2,7 +2,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadDetailRow } from "../src/data/thread-detail-projection";
 import type { TurnUsageProjection } from "@codewide/sync-client";
@@ -70,6 +70,12 @@ import { createThreadDetailDatabase, threadWindowCoverage, type ThreadRemoteLoad
 
 function thread(): Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id: "thread", extra: null, sessionId: "session", forkedFromId: null, parentThreadId: null,
     preview: "", ephemeral: false, section: null, sectionEnteredAt: null, historyMode: "paginated",
     modelProvider: "test", createdAt: 1, updatedAt: 2, recencyAt: null, status: { type: "idle" },
@@ -80,7 +86,7 @@ function thread(): Thread {
 
 function turn(id: string): Turn {
   return { id, status: "completed", itemsView: "full", error: null, startedAt: 1, completedAt: 2, durationMs: 1,
-    items: [{ type: "agentMessage", id: `${id}-answer`, text: `Answer ${id}`, phase: "final_answer", memoryCitation: null }] };
+    items: [{ delivery: null, questions: null, type: "agentMessage", id: `${id}-answer`, text: `Answer ${id}`, phase: "final_answer", memoryCitation: null }] };
 }
 
 function row(id: string, ordinal = 0): ThreadDetailRow {
@@ -844,7 +850,7 @@ describe("relational thread history", () => {
     const storage = createThreadDetailSqlite(() => undefined);
     await storage.prepare();
     const value: ThreadDetailRow = { ...row("a"), turn: { ...turn("a"), items: [
-      { type: "agentMessage", id: "answer", text: "ёж", phase: "final_answer", memoryCitation: null },
+      { delivery: null, questions: null, type: "agentMessage", id: "answer", text: "ёж", phase: "final_answer", memoryCitation: null },
     ] } };
     await write(storage, [meta(), value, pending()]);
     const actual = () => database().prepare(`SELECT COALESCE(SUM(LENGTH(CAST(${historyContentPayload()} AS BLOB))),0) AS history_bytes FROM codewide_history_content c WHERE sealed=1`).get();

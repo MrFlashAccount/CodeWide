@@ -1,0 +1,209 @@
+name: Android APK Release
+run-name: Android APK ${{ inputs.version }} (${{ inputs.request_id || github.run_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version, for example 0.2.177"
+        required: true
+        type: string
+      base:
+        description: "Git ref to compare against; defaults to the latest Android tag"
+        required: false
+        type: string
+      dry_run:
+        description: "Build, sign, and scan without publishing a tag or release"
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: "Allow a release even when Nx does not select Android"
+        required: false
+        default: false
+        type: boolean
+      request_id:
+        description: "Correlation id used by the release-set workflow"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      base:
+        required: false
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+      force:
+        required: false
+        default: false
+        type: boolean
+      request_id:
+        required: false
+        type: string
+    secrets:
+      ANDROID_RELEASE_KEYSTORE_BASE64:
+        required: true
+      ANDROID_RELEASE_STORE_PASSWORD:
+        required: true
+      ANDROID_RELEASE_KEY_ALIAS:
+        required: true
+      ANDROID_RELEASE_KEY_PASSWORD:
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      NX_CACHE_DIRECTORY: .nx/cache
+      NX_TUI: "false"
+      CODEWIDE_UPDATE_URL: ${{ vars.CODEWIDE_UPDATE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Restore Nx task cache
+        uses: actions/cache@v5
+        with:
+          path: .nx/cache
+          key: nx-android-release-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nx-android-release-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Android is affected
+        if: ${{ inputs.force != true }}
+        env:
+          REQUESTED_BASE: ${{ inputs.base }}
+        run: |
+          base="$REQUESTED_BASE"
+          if [[ -z "$base" ]]; then
+            base=$(git describe --tags --match 'android-v[0-9]*' --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          fi
+          node scripts/release-plan.ts --base "$base" --head "$GITHUB_SHA" --assert-target android-apk
+
+      - name: Resolve Android version
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+        run: |
+          version="${RAW_VERSION#v}"
+          if [[ ! "$version" =~ ^([0-9]+)[.]([0-9]+)[.]([0-9]+)$ ]]; then
+            echo "Invalid Android version: $RAW_VERSION"
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          if (( major > 20 || minor > 999 || patch > 99999 )); then
+            echo "Android version cannot be represented as a monotonic versionCode: $version"
+            exit 1
+          fi
+          version_code=$((major * 100000000 + minor * 100000 + patch))
+          echo "CODEWIDE_ANDROID_VERSION=$version" >> "$GITHUB_ENV"
+          echo "CODEWIDE_ANDROID_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=android-v$version" >> "$GITHUB_ENV"
+          echo "APK_PATH=apps/android/android/app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_ENV"
+
+      - name: Materialize Android signing credentials
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64"
+          test -n "$STORE_PASSWORD"
+          signing_root="$RUNNER_TEMP/android-signing"
+          mkdir -p "$signing_root"
+          chmod 0700 "$signing_root"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$signing_root/release.keystore"
+          printf '%s\n' "$STORE_PASSWORD" > "$signing_root/release.password"
+          chmod 0600 "$signing_root/release.keystore" "$signing_root/release.password"
+          echo "CODEWIDE_RELEASE_STORE_FILE=$signing_root/release.keystore" >> "$GITHUB_ENV"
+          echo "CODEWIDE_RELEASE_PASSWORD_FILE=$signing_root/release.password" >> "$GITHUB_ENV"
+
+      - name: Build, sign, and validate APK
+        env:
+          CODEWIDE_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          CODEWIDE_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          CODEWIDE_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          test -n "$CODEWIDE_RELEASE_STORE_PASSWORD"
+          test -n "$CODEWIDE_RELEASE_KEY_ALIAS"
+          test -n "$CODEWIDE_RELEASE_KEY_PASSWORD"
+          ./scripts/release-apk --dry-run \
+            --version "$CODEWIDE_ANDROID_VERSION" \
+            --version-code "$CODEWIDE_ANDROID_VERSION_CODE"
+          sha256sum "$APK_PATH" | tee "$APK_PATH.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: CodeWide-Android-${{ env.CODEWIDE_ANDROID_VERSION }}
+          path: |
+            ${{ env.APK_PATH }}
+            ${{ env.APK_PATH }}.sha256
+          if-no-files-found: error
+
+      - name: Create release tag
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$RELEASE_TAG" -m "CodeWide Android $RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+
+      - name: Publish GitHub release
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="CodeWide-$CODEWIDE_ANDROID_VERSION-$CODEWIDE_ANDROID_VERSION_CODE.apk"
+          cp "$APK_PATH" "$RUNNER_TEMP/$asset"
+          (cd "$RUNNER_TEMP" && sha256sum "$asset" > "$asset.sha256")
+          notes="CodeWide Android $CODEWIDE_ANDROID_VERSION (versionCode $CODEWIDE_ANDROID_VERSION_CODE). Signed APK; OTA publication is intentionally separate."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/$asset" "$RUNNER_TEMP/$asset.sha256" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$RUNNER_TEMP/$asset" "$RUNNER_TEMP/$asset.sha256" \
+              --title "CodeWide Android $CODEWIDE_ANDROID_VERSION" --notes "$notes" --latest=false
+          fi

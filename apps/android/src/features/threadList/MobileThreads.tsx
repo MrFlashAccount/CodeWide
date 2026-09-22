@@ -1,5 +1,6 @@
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { MobileThreadsHeader } from "./MobileThreadsHeader";
+import { useThreadListViewportPaging } from "./threadListViewportPaging";
 import { LegendList } from "@legendapp/list/react-native";
 import { View } from "react-native";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
@@ -39,7 +40,6 @@ export function MobileThreads(props: MobileThreadsProps) {
     onNewThread,
     onOffsetChange,
     onOpenProject,
-    onSelectThread,
     onTogglePin,
     onUnarchive,
     project,
@@ -50,6 +50,7 @@ export function MobileThreads(props: MobileThreadsProps) {
     searchContent,
     servers,
     serverScope,
+    threadNavigation,
     threads,
   } = props;
 
@@ -77,11 +78,18 @@ export function MobileThreads(props: MobileThreadsProps) {
     mode === "archived" ? "archive" : project === null ? "global" : "project",
   );
   const listKey = `${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`;
-  const scroll = useThreadListScrollController(mobileRows, listKey, onOffsetChange);
+  const scroll = useThreadListScrollController(mobileRows, listKey, {
+    keyFor: sidebarRowKey,
+    onOffsetChange,
+  });
+  const paging = useThreadListViewportPaging(
+    listKey,
+    project === null ? onLoadMore : projectSource.loadMore,
+  );
 
   return (
     <View style={styles.mobileList}>
-      <MobileThreadsHeader props={props} />
+      {props.headerVisible !== false && <MobileThreadsHeader props={props} />}
       <View style={styles.threadListContentSurface}>
         <ThreadListRouteTransition routeKey={searchContent === null ? "list" : "search"}>
           {searchContent ??
@@ -94,6 +102,7 @@ export function MobileThreads(props: MobileThreadsProps) {
                 data={scroll.rows}
                 dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
                 drawDistance={320}
+                extraData={props.selectedThreadKey}
                 getFixedItemSize={threadListRowHeight}
                 getItemType={(item) => item.kind}
                 initialScrollOffset={initialOffset}
@@ -119,8 +128,10 @@ export function MobileThreads(props: MobileThreadsProps) {
                   ) : null
                 }
                 maintainVisibleContentPosition={THREAD_LIST_VISIBLE_CONTENT_POSITION}
-                onEndReached={project === null ? onLoadMore : projectSource.loadMore}
+                onContentSizeChange={paging.onContentSizeChange}
+                onEndReached={paging.onEndReached}
                 onEndReachedThreshold={0.4}
+                onLayout={paging.onLayout}
                 onMomentumScrollBegin={scroll.onMomentumScrollBegin}
                 onMomentumScrollEnd={scroll.onMomentumScrollEnd}
                 onScrollBeginDrag={scroll.onScrollBeginDrag}
@@ -138,14 +149,15 @@ export function MobileThreads(props: MobileThreadsProps) {
                     />
                   ) : (
                     <ThreadRow
+                      link={threadNavigation.getThreadLink(item.thread)}
                       onArchive={async () => onArchive(item.thread)}
                       onMarkRead={async () => onMarkRead(item.thread)}
-                      onPress={() => {
-                        onSelectThread(threadSelectionKey(item.thread));
+                      onNavigate={() => {
+                        threadNavigation.prepareThreadLink(threadSelectionKey(item.thread));
                       }}
                       onTogglePin={async () => onTogglePin(item.thread)}
                       onUnarchive={async () => onUnarchive(item.thread)}
-                      selected={false}
+                      selected={props.selectedThreadKey === threadSelectionKey(item.thread)}
                       server={
                         serverScope.kind === "all" && servers.length > 1
                           ? servers.find((entry) => entry.id === item.thread.serverId)

@@ -1,4 +1,4 @@
-/** Generated from apps/companion/contract/v1.json globalSupervisorLimitsV1. */
+/** Generated from crates/companion-core/contract/v1.json globalSupervisorLimitsV1. */
 const dynamicToolInputMaxBytes = 65_536;
 const dynamicToolOutputMaxBytes = 262_144;
 const eventCoalescingMaxDistinctSources = 32;

@@ -1,7 +1,7 @@
 import type {
   AccountRateLimitsUpdatedNotification,
   GetAccountRateLimitsResponse,
-} from "@codewide/codex-protocol/v0.147.0/v2";
+} from "@codewide/codex-protocol/v0.155.1/v2";
 import type { Collection } from "@tanstack/react-db";
 import type { AccountRateLimitsRow } from "./account-rate-limits";
 import type { AccountPoolSnapshot } from "./account-pool";

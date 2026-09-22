@@ -86,18 +86,6 @@ internal class OverlayDragCoordinates(initialPosition: OverlayPoint = OverlayPoi
   )
 }
 
-/** Reports only real safe-area changes so repeated inset dispatch cannot cancel motion. */
-internal class OverlaySafeBoundsTracker(initialBounds: OverlaySafeBounds) {
-  var currentBounds: OverlaySafeBounds = initialBounds
-    private set
-
-  fun update(bounds: OverlaySafeBounds): Boolean {
-    if (bounds == currentBounds) return false
-    currentBounds = bounds
-    return true
-  }
-}
-
 internal sealed interface OverlayReleasePlacement {
   val point: OverlayPoint
 

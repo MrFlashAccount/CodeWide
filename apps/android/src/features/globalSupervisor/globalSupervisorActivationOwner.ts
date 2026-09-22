@@ -1,3 +1,5 @@
+import { observablePrimitive, type ObservablePrimitive } from "@legendapp/state";
+
 import {
   type GlobalSupervisorActivation,
   type GlobalSupervisorFailureKind,
@@ -13,6 +15,8 @@ type ActivationAttempt = {
   activation: GlobalSupervisorActivation | null;
   readonly bufferedEvents: GlobalSupervisorRuntimeEvent[];
   cleanupPromise: Promise<boolean> | null;
+  microphoneMutation: Promise<void> | null;
+  requestedMicrophoneMuted: boolean;
   terminal: boolean;
   terminalProjection: {
     readonly failure: GlobalSupervisorFailureKind;
@@ -23,10 +27,12 @@ type ActivationAttempt = {
 /** Owns one activation attempt, its admitted events and its cleanup authority. */
 export type GlobalSupervisorActivationOwner = {
   readonly hasActivation: () => boolean;
+  readonly microphoneMuted$: ObservablePrimitive<boolean>;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
   readonly start: (home: GlobalSupervisorHome) => Promise<void>;
   readonly stop: () => Promise<void>;
+  readonly toggleMicrophone: () => Promise<void>;
 };
 
 const reconnectRecovery = {
@@ -34,9 +40,14 @@ const reconnectRecovery = {
   label: "Reconnect home server",
 } as const;
 
-async function releaseActivation(activation: GlobalSupervisorActivation): Promise<boolean> {
+async function releaseActivation(attempt: ActivationAttempt): Promise<boolean> {
+  const activation = attempt.activation;
+  if (activation === null) {
+    return true;
+  }
   try {
     await activation.stop();
+    await attempt.microphoneMutation?.catch(() => undefined);
     return true;
   } catch {
     return false;
@@ -73,6 +84,7 @@ export function createGlobalSupervisorActivationOwner(
 ): GlobalSupervisorActivationOwner {
   let currentAttempt: ActivationAttempt | null = null;
   let pausedForAppLock = false;
+  const microphoneMuted$ = observablePrimitive(false);
 
   const beginTerminalCleanup = (
     attempt: ActivationAttempt,
@@ -85,7 +97,7 @@ export function createGlobalSupervisorActivationOwner(
     }
     attempt.terminal = true;
     attempt.terminalProjection = { failure, recovery };
-    const cleanup = releaseActivation(activation).then((released) => {
+    const cleanup = releaseActivation(attempt).then((released) => {
       if (attempt.cleanupPromise === cleanup) {
         attempt.cleanupPromise = null;
       }
@@ -97,6 +109,7 @@ export function createGlobalSupervisorActivationOwner(
         return false;
       }
       currentAttempt = null;
+      microphoneMuted$.set(false);
       render.fail(failure, recovery);
       return true;
     });
@@ -186,6 +199,7 @@ export function createGlobalSupervisorActivationOwner(
 
   return {
     hasActivation: () => currentAttempt !== null,
+    microphoneMuted$,
     async pause() {
       pausedForAppLock = true;
       const settled = settledAttempt(currentAttempt);
@@ -214,7 +228,7 @@ export function createGlobalSupervisorActivationOwner(
         beginTerminalCleanup(settled.attempt, "realtimeFailed", reconnectRecovery);
         return;
       }
-      if (attemptIsLive(settled.attempt)) {
+      if (attemptIsLive(settled.attempt) && render.render$.peek().phase === "reconnecting") {
         render.publishRuntimeEvent({
           activationId: settled.activation.activationId,
           event: "listening",
@@ -229,10 +243,13 @@ export function createGlobalSupervisorActivationOwner(
         activation: null,
         bufferedEvents: [],
         cleanupPromise: null,
+        microphoneMutation: null,
+        requestedMicrophoneMuted: false,
         terminal: false,
         terminalProjection: null,
       };
       currentAttempt = attempt;
+      microphoneMuted$.set(false);
       render.publishStarting(home);
       try {
         const activation = await runtime.start(home, (event) => {
@@ -257,8 +274,9 @@ export function createGlobalSupervisorActivationOwner(
       }
       if (!attempt.terminal) {
         render.publishStopping(activation.home);
+        attempt.terminal = true;
       }
-      if (!(await releaseActivation(activation))) {
+      if (!(await releaseActivation(attempt))) {
         attempt.terminal = true;
         render.fail("cleanupFailed", reconnectRecovery);
         throw new Error("Global Voice Mode cleanup failed");
@@ -267,10 +285,40 @@ export function createGlobalSupervisorActivationOwner(
         return;
       }
       currentAttempt = null;
+      microphoneMuted$.set(false);
       if (attempt.terminalProjection !== null) {
         render.fail(attempt.terminalProjection.failure, attempt.terminalProjection.recovery);
       } else {
         render.publishReady(activation.home);
+      }
+    },
+    async toggleMicrophone() {
+      const settled = settledAttempt(currentAttempt);
+      if (settled === null || settled.attempt.terminal) {
+        return;
+      }
+      const { activation, attempt } = settled;
+      const muted = !attempt.requestedMicrophoneMuted;
+      attempt.requestedMicrophoneMuted = muted;
+      // The media owner serializes mutations. Deliver mute immediately so it can fence
+      // an in-flight capture acquisition; a feature queue would delay that safety gate.
+      const mutation = activation.setMicrophoneMuted(muted).then(() => {
+        if (attemptIsLive(attempt) && attempt.microphoneMutation === mutation) {
+          microphoneMuted$.set(muted);
+        }
+      });
+      attempt.microphoneMutation = mutation;
+      try {
+        await mutation;
+      } catch (error) {
+        if (attemptIsLive(attempt) && attempt.microphoneMutation === mutation) {
+          beginTerminalCleanup(attempt, "realtimeFailed", reconnectRecovery);
+        }
+        throw error;
+      } finally {
+        if (attempt.microphoneMutation === mutation) {
+          attempt.microphoneMutation = null;
+        }
       }
     },
   };

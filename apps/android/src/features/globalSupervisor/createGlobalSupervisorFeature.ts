@@ -120,6 +120,7 @@ export function createGlobalSupervisorFeature(
 
   return {
     enter,
+    microphoneMuted$: activation.microphoneMuted$,
     pause: activation.pause,
     recover,
     render$: render.render$,
@@ -127,5 +128,6 @@ export function createGlobalSupervisorFeature(
     start,
     stop,
     toggle,
+    toggleMicrophone: activation.toggleMicrophone,
   };
 }

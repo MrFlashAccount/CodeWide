@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { ComposerControlOptions } from "./settings/ComposerControlOptions";
 /** V1 ComposerMenu owner, extracted without changing interaction or resource lifetime. */
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { View } from "react-native";
 import type { GetTransferAccess } from "../../data/private-transfer";

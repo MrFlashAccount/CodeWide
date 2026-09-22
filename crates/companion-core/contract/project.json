@@ -1,0 +1,10 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "companion-sync-contract",
+  "projectType": "library",
+  "sourceRoot": "crates/companion-core/contract",
+  "tags": ["language:json", "type:contract"],
+  "metadata": {
+    "description": "Machine-readable Android to Companion sync contracts"
+  }
+}

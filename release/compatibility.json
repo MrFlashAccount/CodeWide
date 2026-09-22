@@ -1,0 +1,66 @@
+{
+  "$schema": "./compatibility.schema.json",
+  "schemaVersion": 1,
+  "interfaces": {
+    "device-sync": {
+      "versions": [1],
+      "contract": "crates/companion-core/contract/v1.json"
+    },
+    "relay-pairing": {
+      "versions": [4],
+      "contract": "apps/relay/contract/pairing.json"
+    }
+  },
+  "products": {
+    "relay": {
+      "provides": {
+        "relay-pairing": [4]
+      },
+      "requires": {}
+    },
+    "companion-linux": {
+      "provides": {
+        "device-sync": [1]
+      },
+      "requires": {
+        "relay-pairing": [4]
+      }
+    },
+    "macos": {
+      "provides": {
+        "device-sync": [1]
+      },
+      "requires": {
+        "relay-pairing": [4]
+      }
+    },
+    "android-apk": {
+      "provides": {},
+      "requires": {
+        "device-sync": [1]
+      }
+    }
+  },
+  "links": [
+    {
+      "provider": "relay",
+      "consumer": "companion-linux",
+      "interface": "relay-pairing"
+    },
+    {
+      "provider": "relay",
+      "consumer": "macos",
+      "interface": "relay-pairing"
+    },
+    {
+      "provider": "companion-linux",
+      "consumer": "android-apk",
+      "interface": "device-sync"
+    },
+    {
+      "provider": "macos",
+      "consumer": "android-apk",
+      "interface": "device-sync"
+    }
+  ]
+}

@@ -8,7 +8,7 @@ import { compactSource, sourceHasJsxElement } from "./source-contract";
 
 const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
 const screen = compactSource(
-  readFileSync(new URL("../app/v1/V1WorkspaceShell.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/routeComposition/WorkspaceShell.tsx", import.meta.url), "utf8"),
 );
 const largePasteModule = readFileSync(
   new URL(
@@ -64,7 +64,7 @@ const listBinding = compactSource(
 
 const threadRoute = compactSource(
   readFileSync(
-    new URL("../app/v1/threads/[connectionId]/[threadId]/index.tsx", import.meta.url),
+    new URL("../app/(workspace)/threads/[connectionId]/[threadId]/index.tsx", import.meta.url),
     "utf8",
   ),
 );

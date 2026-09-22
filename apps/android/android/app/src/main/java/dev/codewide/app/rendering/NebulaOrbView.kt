@@ -11,7 +11,8 @@ class NebulaOrbView(context: Context) : VoiceAssistantOrbView(context) {
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val shader = RuntimeShader(SHADER_SOURCE)
   private var elapsedSeconds = 0f
-  private val envelope = NebulaOrbEnvelope()
+  private val inputEnvelope = NebulaOrbEnvelope()
+  private val playbackEnvelope = NebulaOrbEnvelope()
 
   init {
     paint.shader = shader
@@ -21,9 +22,11 @@ class NebulaOrbView(context: Context) : VoiceAssistantOrbView(context) {
     shader.setFloatUniform("uEdgeSoftness", 0.01f)
   }
 
-  /** Accepts a normalized microphone energy sample without owning another animation clock. */
-  override fun setLevel(rawLevel: Double) {
-    envelope.accept(rawLevel)
+  /** Accepts independent normalized capture and playback energy without another animation clock. */
+  override fun setAudioLevels(inputLevel: Double, playbackLevel: Double) {
+    recordAudioInput(inputLevel, playbackLevel)
+    inputEnvelope.accept(inputLevel)
+    playbackEnvelope.accept(playbackLevel)
   }
 
   override fun onOrbStateChanged() {
@@ -31,38 +34,26 @@ class NebulaOrbView(context: Context) : VoiceAssistantOrbView(context) {
   }
 
   override fun advanceAnimation(deltaSeconds: Float) {
-    envelope.advance(deltaSeconds)
-    elapsedSeconds += deltaSeconds * animationSpeed()
+    inputEnvelope.advance(deltaSeconds)
+    playbackEnvelope.advance(deltaSeconds)
+    elapsedSeconds += deltaSeconds * NebulaOrbMotion.animationSpeed(orbState, inputEnvelope.value, playbackEnvelope.value)
   }
 
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     if (width <= 0 || height <= 0) return
+    drawBackdrop(canvas, nebulaOrbVisualRadius(width, height))
     shader.setFloatUniform("uResolution", width.toFloat(), height.toFloat())
     shader.setFloatUniform("uTime", elapsedSeconds)
-    shader.setFloatUniform("uTurbulence", turbulence())
+    shader.setFloatUniform("uTurbulence", NebulaOrbMotion.turbulence(orbState, inputEnvelope.value, playbackEnvelope.value))
     canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+    recordRendererFrame()
   }
 
-  private fun animationSpeed(): Float = when (orbState) {
-    VoiceAssistantOrbState.IDLE -> 0.72f
-    VoiceAssistantOrbState.CONNECTING -> 1.35f
-    VoiceAssistantOrbState.LISTENING -> 1f + envelope.value * 1.4f
-    VoiceAssistantOrbState.THINKING -> 1.7f
-    VoiceAssistantOrbState.SPEAKING -> 1.55f
-    VoiceAssistantOrbState.ERROR -> 0f
-    VoiceAssistantOrbState.DISABLED -> 0f
-  }
-
-  private fun turbulence(): Float = when (orbState) {
-    VoiceAssistantOrbState.IDLE -> 1.2f
-    VoiceAssistantOrbState.CONNECTING -> 1.5f
-    VoiceAssistantOrbState.LISTENING -> 1.2f + envelope.value * 0.8f
-    VoiceAssistantOrbState.THINKING -> 1.85f
-    VoiceAssistantOrbState.SPEAKING -> 1.7f
-    VoiceAssistantOrbState.ERROR -> 0.65f
-    VoiceAssistantOrbState.DISABLED -> 0.45f
-  }
+  override fun rendererDiagnostic(): String =
+    "style=nebula input=${inputEnvelope.value} playback=${playbackEnvelope.value} " +
+      "speed=${NebulaOrbMotion.animationSpeed(orbState, inputEnvelope.value, playbackEnvelope.value)} " +
+      "turbulence=${NebulaOrbMotion.turbulence(orbState, inputEnvelope.value, playbackEnvelope.value)}"
 
   private fun updatePalette() {
     if (orbState == VoiceAssistantOrbState.DISABLED) {
@@ -161,4 +152,31 @@ internal class NebulaOrbEnvelope {
     private const val ATTACK_SECONDS = 0.07f
     private const val RELEASE_SECONDS = 0.3f
   }
+}
+
+/** The shader clips at UV radius 0.5; audio changes turbulence, never this disc boundary. */
+internal fun nebulaOrbVisualRadius(width: Int, height: Int): Float = minOf(width, height) / 2f
+
+/** Production uniforms, shared with parameter diagnostics; preserves the existing shader motion. */
+internal object NebulaOrbMotion {
+  fun animationSpeed(orbState: VoiceAssistantOrbState, input: Float, playback: Float): Float = when (orbState) {
+    VoiceAssistantOrbState.IDLE -> 0.72f
+    VoiceAssistantOrbState.CONNECTING -> 1.35f
+    VoiceAssistantOrbState.LISTENING -> 1f + input * 1.4f
+    VoiceAssistantOrbState.THINKING -> 1.7f
+    VoiceAssistantOrbState.SPEAKING -> 1f + playback * 1.55f
+    VoiceAssistantOrbState.ERROR -> 0f
+    VoiceAssistantOrbState.DISABLED -> 0f
+  }
+
+  fun turbulence(orbState: VoiceAssistantOrbState, input: Float, playback: Float): Float = when (orbState) {
+    VoiceAssistantOrbState.IDLE -> 1.2f
+    VoiceAssistantOrbState.CONNECTING -> 1.5f
+    VoiceAssistantOrbState.LISTENING -> 1.2f + input * 0.8f
+    VoiceAssistantOrbState.THINKING -> 1.85f
+    VoiceAssistantOrbState.SPEAKING -> 1.2f + playback * 0.9f
+    VoiceAssistantOrbState.ERROR -> 0.65f
+    VoiceAssistantOrbState.DISABLED -> 0.45f
+  }
+
 }

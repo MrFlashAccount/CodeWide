@@ -118,7 +118,7 @@ The complete [runtime/data ownership contract](../apps/android/src/data/CONTEXT.
 
 ## Source/runtime/schema alignment
 
-The wire source is unchanged; `@codewide/codex-protocol/v0.147.0/v2` in V1 source is a versioned upstream app-server DTO path, **not** the forbidden `@codewide/sync-client/v2` runtime. Do not ban it based on the substring `v2`. V1 sync-client package-root exports, native registrations and database filenames/schema migrations remain unchanged. Native/web/unsuffixed adapter compatibility is checked through all three TypeScript environments.
+The wire source is unchanged; `@codewide/codex-protocol/v0.155.1/v2` in V1 source is a versioned upstream app-server DTO path, **not** the forbidden `@codewide/sync-client/v2` runtime. Do not ban it based on the substring `v2`. V1 sync-client package-root exports, native registrations and database filenames/schema migrations remain unchanged. Native/web/unsuffixed adapter compatibility is checked through all three TypeScript environments.
 
 At the baseline revision, `RemoteWorkspace` type consumers included `browser/send-feedback.native.ts` and `.web.ts`, `data/thread-chat-projection.ts`, `data/thread-chat-timeline.ts`, `rendering/CodeReviewWorkspace.tsx`, `rendering/ContentReviewHost.tsx`, `search/GlobalSearchScreen.tsx` and the unmounted `search/SearchContextScreen.tsx`. Lower data types moved to lower contract owners (delivery/settings/resource types as appropriate); UI features did not become their dependencies. Final closure deleted the unmounted context screen and its unused standalone capability instead of preserving a public orphan.
 
@@ -1110,7 +1110,7 @@ Actual Android camera pairing, sign-in browser handoff, biometric settings, micr
 
 The subsequent route migration deleted the M8 `CodeWideScreen`, `WorkspaceScreen`,
 `WorkspaceOverlays`, `features/navigation/**`, `ComposerMenuComposition`, and duplicate
-agent/Terminal route wrappers. Expo Router now owns V1 destinations under `app/v1/**`; typed
+agent/Terminal route wrappers. Expo Router now owns V1 destinations under `app/(workspace)/**`; typed
 services own cross-route identity and bounded private sessions. Feature capabilities and lower
 runtime owners from M0–M8 remain in place. See the [route ledger](android-v1-route-migration.md) for
 the current source disposition, behavior contracts, test migration and validation state. Final

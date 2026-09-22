@@ -106,6 +106,19 @@ describe("SAF streamed downloads", () => {
     expect(storage.open).not.toHaveBeenCalled();
   });
 
+  it("replaces characters that storage providers reject in downloaded names", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    serve(bytes);
+    const result = await startPreviewDownload(
+      getAccess,
+      await pickDownloadDirectory(),
+      "/thread/message-image:8568",
+      () => undefined,
+    ).promise;
+    expect(result.uri).toBe("content://downloads/message-image-8568");
+    expect(storage.files.get(result.uri ?? "")).toEqual(bytes);
+  });
+
   it("does not append a response arriving after cancellation", async () => {
     let cancel: () => void = () => undefined;
     const served = serve(new Uint8Array([1, 2, 3]), () => cancel());

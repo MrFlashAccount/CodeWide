@@ -4,7 +4,7 @@ import { AppButton as Button } from "../../presentation/controls/AppButton";
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { joinDirectoryPath } from "../../data/remote-projects";
 import { useEvent } from "../../react/useEvent";
-import { colors, controlSize, iconSize } from "../../theme";
+import { colors, controlSize, iconSize, spacing } from "../../theme";
 import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
 import { AppSheetScrollView } from "../../ui/AppSheet";
 import { useAppDialog } from "../../ui/AppDialog";
@@ -55,13 +55,15 @@ export function ProjectPickerContent({
           data={projectRows}
           drawDistance={360}
           getFixedItemSize={(item) =>
-            item.kind === "project" || item.kind === "server-default"
-              ? listRowHeight.double
-              : item.kind === "section"
-                ? controlSize.regular
-                : item.compact
-                  ? 92
-                  : 150
+            item.kind === "server-default"
+              ? listRowHeight.double + spacing.md
+              : item.kind === "project"
+                ? listRowHeight.double
+                : item.kind === "section"
+                  ? controlSize.regular
+                  : item.compact
+                    ? 92
+                    : 150
           }
           keyboardShouldPersistTaps="handled"
           keyExtractor={(item) => item.id}
@@ -99,18 +101,20 @@ export function ProjectPickerContent({
             }
             if (item.kind === "server-default") {
               return (
-                <PickerRow
-                  disabled={busy}
-                  icon="server-outline"
-                  onPress={() => {
-                    if (!busy) {
-                      selectProject(null);
-                    }
-                  }}
-                  selected={false}
-                  subtitle="Let Codex choose the working directory"
-                  title="Server default"
-                />
+                <View style={styles.serverDefault}>
+                  <PickerRow
+                    disabled={busy}
+                    icon="server-outline"
+                    onPress={() => {
+                      if (!busy) {
+                        selectProject(null);
+                      }
+                    }}
+                    selected={false}
+                    subtitle="Let Codex choose the working directory"
+                    title="Server default"
+                  />
+                </View>
               );
             }
             const canPin =

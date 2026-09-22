@@ -11,6 +11,23 @@ import {
   useSheetDismissController,
 } from "../src/ui/sheetNavigation";
 import { v1MobileRouteMotion } from "../src/ui/v1MobileRouteMotion";
+import { useReducedMotionPreference } from "../src/rendering/reduced-motion-store";
+
+// WHY: Exercise the motion contract without relying on the host OS accessibility preference.
+jest.mock("../src/rendering/reduced-motion-store", () => ({
+  useReducedMotionPreference: jest.fn(() => false),
+}));
+
+it("skips page motion when reduced motion is enabled", () => {
+  jest.mocked(useReducedMotionPreference).mockReturnValueOnce(true);
+  const view = render(
+    <SheetPageTransition direction="forward" routeKey="detail">
+      <Text>Detail</Text>
+    </SheetPageTransition>,
+  );
+  expect(view.getByTestId("sheet-page:detail").props.entering).toBeUndefined();
+  expect(view.getByTestId("sheet-page:detail").props.exiting).toBeUndefined();
+});
 
 function Detail({ close }: { readonly close: () => void }): React.JSX.Element {
   useSheetBackHandler(true, close);
@@ -65,7 +82,7 @@ it("handles Back inside the deepest sheet page before closing its sheet", () => 
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
-it("keeps local sheet navigation aligned with the V1 native route motion contract", () => {
+it("keeps shared motion distances and timing aligned with the V1 native route contract", () => {
   const animationDirectory = join(__dirname, "../android/app/src/main/res/anim");
   const pushForeground = readFileSync(join(animationDirectory, "rns_fade_from_bottom.xml"), "utf8");
   const pushBackground = readFileSync(join(animationDirectory, "rns_no_animation_350.xml"), "utf8");

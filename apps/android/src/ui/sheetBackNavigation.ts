@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { useEvent } from "../react/useEvent";
 
@@ -10,21 +10,22 @@ export function useSheetDismissController(
   close: () => void,
   localBack?: () => void,
 ): {
+  readonly canGoBack: boolean;
   readonly register: SheetBackRegistration;
   readonly requestDismiss: () => void;
 } {
-  const handlersRef = useRef<(() => void)[]>([]);
+  const [handlers, setHandlers] = useState<readonly (() => void)[]>([]);
   const register = useEvent((handler: () => void): (() => void) => {
-    handlersRef.current.push(handler);
+    setHandlers((current) => [...current, handler]);
     return () => {
-      const index = handlersRef.current.lastIndexOf(handler);
-      if (index >= 0) {
-        handlersRef.current.splice(index, 1);
-      }
+      setHandlers((current) => {
+        const index = current.lastIndexOf(handler);
+        return index < 0 ? current : current.filter((_handler, position) => position !== index);
+      });
     };
   });
   const requestDismiss = useEvent((): void => {
-    const handler = handlersRef.current.at(-1);
+    const handler = handlers.at(-1);
     if (handler !== undefined) {
       handler();
       return;
@@ -35,7 +36,7 @@ export function useSheetDismissController(
     }
     close();
   });
-  return { register, requestDismiss };
+  return { canGoBack: handlers.length > 0 || localBack !== undefined, register, requestDismiss };
 }
 
 /** Gives Android Back to the deepest visible local sheet page before dismissing its sheet. */

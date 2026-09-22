@@ -5,19 +5,16 @@ import { describe, expect, it } from "vitest";
 import { compactSource } from "./source-contract";
 
 const runtimeShell = compactSource(
-  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 const workspaceComposition = compactSource(
-  readFileSync(new URL("../app/v1/V1WorkspaceRouteComposition.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/routeComposition/WorkspaceRouteComposition.tsx", import.meta.url), "utf8"),
 );
 const workspaceRouteModel = compactSource(
-  readFileSync(new URL("../app/v1/V1WorkspaceRouteModel.ts", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/routeComposition/WorkspaceRouteModel.ts", import.meta.url), "utf8"),
 );
 const workspaceVisualShell = compactSource(
-  readFileSync(new URL("../app/v1/V1WorkspaceShell.tsx", import.meta.url), "utf8"),
-);
-const allRoute = compactSource(
-  readFileSync(new URL("../app/v1/index.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/routeComposition/WorkspaceShell.tsx", import.meta.url), "utf8"),
 );
 const screen = [runtimeShell, workspaceComposition, workspaceRouteModel, workspaceVisualShell].join(
   " ",
@@ -74,7 +71,7 @@ const pairingRouteSessions = compactSource(
   ),
 );
 const newServerRoute = compactSource(
-  readFileSync(new URL("../app/v1/settings/servers/new/index.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/settings/servers/new/index.tsx", import.meta.url), "utf8"),
 );
 
 const reviewVoiceOwner = readFileSync(
@@ -237,8 +234,8 @@ describe("CodeWide effect ownership", () => {
   it("keeps the workspace route effect limited to native runtime synchronization", () => {
     expect(runtimeShell.match(/\buseEffect\s*\(/gu)).toHaveLength(1);
     expect(runtimeShell).not.toMatch(/\buseLayoutEffect\s*\(/u);
-    expect(runtimeShell).toContain('activateRuntime("legacy"');
-    expect(runtimeShell).toContain('stopRuntime("legacy")');
+    expect(runtimeShell).toContain("activateRuntime(");
+    expect(runtimeShell).toContain("stopRuntime()");
     expect(screen).not.toContain("transitionConversationScope");
     expect(projectWorkspace).toContain("useRemoteProjectCatalog(");
     expect(workspaceDeepLinks).not.toMatch(/\b(?:fetch|load|hydrate)[A-Z_a-z]*\s*\(/u);
@@ -372,15 +369,13 @@ describe("CodeWide effect ownership", () => {
     expect(workspaceShell).toContain("v1ThreadRouteParams(routeParams)");
     expect(workspaceShell).not.toContain("createThreadNavigationModel");
     expect(workspaceShell).not.toContain("threadNavigation.destination$");
-    expect(threadNavigation).toContain("router[mode](v1ThreadDestination(params), searchWindowId)");
+    // Link dispatch and mounted-screen reuse are covered by v1-app-link and workspace navigation render tests.
     expect(threadNavigation).toContain("const selectThread = useEvent");
     expect(threadSidebar).toContain("function ThreadSidebar(");
     expect(selectableThread).toContain("function SelectableThreadRow(");
     expect(selectableThread).toContain("selectedThreadKey === selectionKey");
-    expect(allRoute).toContain('scope="v1-desktop-default-thread"');
-    expect(allRoute).toMatch(
-      /onCommit=\{\(\) => \{\s*list\.selectThread\(defaultThread\);\s*\}\}/u,
-    );
+    // Explicit selection with cached rows and width changes is verified by
+    // workspace-navigation.render.test.tsx; the former default-thread effect is retired.
     expect(screen).not.toContain("setThreadSelection(threadNavigation.select(defaultThreadId))");
     expect(screen).not.toContain("extraData={`${activeThreadId");
   });

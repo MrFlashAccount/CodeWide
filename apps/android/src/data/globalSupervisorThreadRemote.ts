@@ -18,18 +18,6 @@ type GlobalSupervisorThreadRemote = {
   readonly startThread: (connectionId: string, source: string) => Promise<string>;
 };
 
-function appendMatchingThreadIds(
-  result: string[],
-  threads: readonly { readonly id: string; readonly threadSource: string | null }[],
-  source: string,
-): void {
-  for (const thread of threads) {
-    if (thread.threadSource === source) {
-      result.push(thread.id);
-    }
-  }
-}
-
 function parseBindingCatalogPage(value: unknown): {
   readonly data: readonly { readonly id: string; readonly threadSource: string | null }[];
   readonly nextCursor: string | null;
@@ -80,16 +68,23 @@ export function createGlobalSupervisorThreadRemote(options: {
     const seen = new Set<string>();
     for (;;) {
       const page = parseBindingCatalogPage(
-        await options.rpcAfterAttach<unknown>(session(connectionId), "thread/list", {
-          archived,
-          cursor,
-          limit: globalSupervisorLimitsV1.listChatsPageMaxEntries,
-          modelProviders: [],
-          sourceKinds: [],
-          useStateDbOnly: true,
-        }),
+        await options.rpcAfterAttach<unknown>(
+          session(connectionId),
+          "companion/supervisor/threadList",
+          {
+            archived,
+            cursor,
+            limit: globalSupervisorLimitsV1.listChatsPageMaxEntries,
+            modelProviders: [],
+            sourceKinds: [],
+            threadSource: source,
+            useStateDbOnly: true,
+          },
+        ),
       );
-      appendMatchingThreadIds(result, page.data, source);
+      for (const thread of page.data) {
+        result.push(thread.id);
+      }
       if (result.length > 1 || page.nextCursor === null) {
         return result;
       }

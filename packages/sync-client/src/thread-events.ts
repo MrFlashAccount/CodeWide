@@ -1,9 +1,10 @@
-import type { Thread, ThreadItem, Turn, TurnPlanStep } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread, ThreadItem, Turn, TurnPlanStep } from "@codewide/codex-protocol/v0.155.1/v2";
 
 import { reconcileActiveTurnItems, reconcileTurnItems } from "./thread-items";
 import { appendCommandOutputReference } from "./command-output";
 
 export type ProjectedTurnMetadata = {
+  questions?: readonly import("./question-history").QuestionHistory[];
   usage?: TurnUsageProjection;
   diff?: string;
   plan?: { explanation: string | null; steps: TurnPlanStep[] };

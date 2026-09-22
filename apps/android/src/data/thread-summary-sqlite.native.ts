@@ -29,6 +29,7 @@ export type ThreadSummarySqlite = {
   close: () => Promise<void>;
   commit: (options?: { durable?: boolean }) => Promise<void>;
   flush: () => Promise<void>;
+  hasMoreViewRows: (request: ThreadSummaryViewRequest) => Promise<boolean>;
   loadAll: () => Promise<StoredThreadSummary[]>;
   loadConnectionRows: (connectionId: string) => Promise<StoredThreadSummary[]>;
   loadRow: (connectionId: string, threadId: string) => Promise<StoredThreadSummary | null>;
@@ -187,6 +188,27 @@ export function createThreadSummarySqlite(): ThreadSummarySqlite {
       return checkpoint;
     },
     flush: flushPending,
+    async hasMoreViewRows(request) {
+      return read(async (executor) => {
+        const { clause, params } = summaryConnectionScope(request);
+        for (const partition of [
+          { condition: "archived = 0 AND pinned = 0", limit: request.recentLimit },
+          { condition: "archived = 1", limit: request.archivedLimit },
+        ]) {
+          if (partition.limit <= 0) {
+            continue;
+          }
+          const result = await executor.execute(
+            `SELECT 1 FROM ${TABLE} WHERE parent_thread_id IS NULL AND delete_command_id IS NULL AND ${partition.condition}${clause} LIMIT 1 OFFSET ?`,
+            [...params, partition.limit],
+          );
+          if (sqliteRows(result).length > 0) {
+            return true;
+          }
+        }
+        return false;
+      });
+    },
     async loadAll() {
       return readRows(`SELECT __payload FROM ${TABLE}`);
     },
@@ -219,14 +241,8 @@ export function createThreadSummarySqlite(): ThreadSummarySqlite {
     },
     async loadView(request) {
       return read(async (executor) => {
-        const connectionClause =
-          (request.connectionId === null ? "" : " AND connection_id = ?") +
-          (request.projectCwd === undefined ? "" : " AND json_extract(__payload, '$.cwd') = ?");
-        const connectionParams: SqliteValue[] =
-          request.connectionId === null ? [] : [request.connectionId];
-        if (request.projectCwd !== undefined) {
-          connectionParams.push(request.projectCwd);
-        }
+        const { clause: connectionClause, params: connectionParams } =
+          summaryConnectionScope(request);
         const [pinned, recent, archived] = await Promise.all([
           executeRows(
             executor,
@@ -384,4 +400,18 @@ async function delay(durationMs: number): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, durationMs);
   });
+}
+
+function summaryConnectionScope(request: ThreadSummaryViewRequest): {
+  clause: string;
+  params: SqliteValue[];
+} {
+  const clause =
+    (request.connectionId === null ? "" : " AND connection_id = ?") +
+    (request.projectCwd === undefined ? "" : " AND json_extract(__payload, '$.cwd') = ?");
+  const params: SqliteValue[] = request.connectionId === null ? [] : [request.connectionId];
+  if (request.projectCwd !== undefined) {
+    params.push(request.projectCwd);
+  }
+  return { clause, params };
 }

@@ -1,0 +1,70 @@
+#!/bin/sh
+set -eu
+
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+TARGET=x86_64-unknown-linux-musl
+DIST_ROOT=${CODEWIDE_RELAY_DIST_DIR:-"$REPO_ROOT/dist/relay"}
+BUILD_IMAGE=${CODEWIDE_RELAY_BUILD_IMAGE:-rust:1.97-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900}
+TMP_ROOT=${TMPDIR:-/tmp}
+
+if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+  printf '%s\n' 'The current Relay release build requires Linux x86_64.' >&2
+  exit 2
+fi
+
+case "$DIST_ROOT" in
+  /*) ;;
+  *) DIST_ROOT="$REPO_ROOT/$DIST_ROOT" ;;
+esac
+
+if ! command -v docker >/dev/null 2>&1; then
+  printf '%s\n' 'Docker is required to build the portable Linux Relay artifact.' >&2
+  exit 2
+fi
+
+artifact_name="codewide-relay-$TARGET"
+artifact="$DIST_ROOT/$artifact_name"
+checksum="$artifact.sha256"
+mkdir -p "$DIST_ROOT"
+build_root=$(mktemp -d "$TMP_ROOT/codewide-relay-linux-build.XXXXXX")
+
+temporary=$(mktemp "$DIST_ROOT/.codewide-relay.XXXXXX")
+cleanup() {
+  rm -f -- "$temporary"
+  case "$build_root" in
+    "$TMP_ROOT"/codewide-relay-linux-build.*) rm -rf -- "$build_root" ;;
+    *) printf 'Refusing to remove unexpected directory: %s\n' "$build_root" >&2 ;;
+  esac
+}
+trap cleanup EXIT HUP INT TERM
+
+docker run --rm \
+  --volume "$REPO_ROOT:/workspace:ro" \
+  --volume "$build_root:/output" \
+  --volume codewide-relay-cargo-registry:/usr/local/cargo/registry \
+  --volume codewide-relay-cargo-git:/usr/local/cargo/git \
+  --volume codewide-relay-musl-target:/build-target \
+  --workdir /workspace \
+  --env CARGO_TARGET_DIR=/build-target \
+  --env CODEWIDE_RELAY_VERSION \
+  "$BUILD_IMAGE" \
+  sh -eu -c 'cargo build --locked --release -p codewide-relay --target x86_64-unknown-linux-musl && install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-relay /output/codewide-relay'
+
+install -m 0755 "$build_root/codewide-relay" "$temporary"
+if ! file "$temporary" | grep -E 'statically linked|static-pie linked' >/dev/null; then
+  printf '%s\n' 'Relay release artifact is not statically linked.' >&2
+  exit 1
+fi
+"$temporary" --version >/dev/null
+mv -f -- "$temporary" "$artifact"
+temporary=
+
+(
+  cd "$DIST_ROOT"
+  sha256sum "$artifact_name" >"$artifact_name.sha256"
+)
+
+binary_version=$($artifact --version | awk '{print $2}')
+binary_sha256=$(awk '{print $1}' "$checksum")
+printf '{"artifact":"%s","target":"%s","version":"%s","sha256":"%s"}\n' \
+  "$artifact" "$TARGET" "$binary_version" "$binary_sha256"

@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import type { Thread, ThreadItem } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread, ThreadItem } from "@codewide/codex-protocol/v0.155.1/v2";
 import { createFixtureThread, fixtureAgentMessage, fixtureUserMessage } from "../packages/fixtures/src/index.js";
 
 const activeItems: ThreadItem[] = [

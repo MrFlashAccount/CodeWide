@@ -12,12 +12,16 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import dev.codewide.app.rendering.VoiceAssistantOrbState
 import dev.codewide.app.rendering.VoiceAssistantOrbStyle
 import java.util.UUID
+import com.oney.WebRTCModule.WebRTCModule
 
 /** Exposes token-scoped microphone foreground ownership to the V1 Global Voice WebRTC adapter. */
+// Class-based lookup in emitOverlayEvent requires this registration in bridgeless React Native.
+@ReactModule(name = GlobalVoiceForegroundModule.NAME)
 class GlobalVoiceForegroundModule(private val context: ReactApplicationContext) : ReactContextBaseJavaModule(context) {
   private val activeTokens = mutableSetOf<String>()
   private var invalidated = false
@@ -26,7 +30,7 @@ class GlobalVoiceForegroundModule(private val context: ReactApplicationContext) 
     eventContext = context
   }
 
-  override fun getName(): String = "CodeWideGlobalVoiceForeground"
+  override fun getName(): String = NAME
 
   @ReactMethod
   fun acquire(promise: Promise) {
@@ -63,6 +67,30 @@ class GlobalVoiceForegroundModule(private val context: ReactApplicationContext) 
   }
 
   @ReactMethod
+  fun observeWebRtc(peerId: Double, promise: Promise) {
+    if (!peerId.isFinite() || peerId < 0 || peerId > Int.MAX_VALUE || peerId % 1.0 != 0.0 ||
+      !synchronized(this) { !invalidated && activeTokens.isNotEmpty() }) {
+      promise.reject("GLOBAL_VOICE_PEER_INVALID", "Global Voice peer ownership is unavailable")
+      return
+    }
+    val module = context.getNativeModule(WebRTCModule::class.java)
+    if (module == null) {
+      promise.reject("GLOBAL_VOICE_PEER_UNAVAILABLE", "WebRTC module is unavailable")
+      return
+    }
+    VoiceCaptureForegroundService.observeWebRtc(peerId.toInt(), module) { accepted ->
+      if (accepted) promise.resolve(null)
+      else promise.reject("GLOBAL_VOICE_PEER_RELEASED", "Global Voice foreground lease was released")
+    }
+  }
+
+  @ReactMethod
+  fun stopObservingWebRtc(peerId: Double) {
+    if (!peerId.isFinite() || peerId < 0 || peerId > Int.MAX_VALUE || peerId % 1.0 != 0.0) return
+    VoiceCaptureForegroundService.stopObservingWebRtc(peerId.toInt())
+  }
+
+  @ReactMethod
   fun setOrbStyle(style: String) {
     VoiceCaptureForegroundService.updateOrbStyle(VoiceAssistantOrbStyle.fromWireValue(style))
   }
@@ -78,8 +106,22 @@ class GlobalVoiceForegroundModule(private val context: ReactApplicationContext) 
   }
 
   @ReactMethod
-  fun setLevel(level: Double) {
-    VoiceCaptureForegroundService.updateOrbLevel(level)
+  fun setOverlayChatTarget(connectionId: String?, threadId: String?) {
+    val target = if (connectionId.isNullOrBlank() || threadId.isNullOrBlank()) null else {
+      VoiceOverlayChatTarget(connectionId, threadId)
+    }
+    VoiceCaptureForegroundService.updateOverlayChatTarget(target)
+  }
+
+  @ReactMethod
+  fun setMicrophoneMuted(muted: Boolean) {
+    VoiceCaptureForegroundService.updateMicrophoneMuted(muted)
+  }
+
+  @ReactMethod
+  fun setPlaybackLevel(token: String, level: Double) {
+    if (!synchronized(this) { activeTokens.contains(token) }) return
+    VoiceCaptureForegroundService.updatePlaybackLevel(level)
   }
 
   @ReactMethod
@@ -139,15 +181,35 @@ class GlobalVoiceForegroundModule(private val context: ReactApplicationContext) 
   }
 
   companion object {
+    const val NAME = "CodeWideGlobalVoiceForeground"
+    private const val CAPTURE_INTERRUPTED_EVENT = "CodeWideGlobalVoiceCaptureInterrupted"
+    private const val OVERLAY_MICROPHONE_TOGGLE_EVENT = "CodeWideGlobalVoiceOverlayMicrophoneToggle"
     private const val OVERLAY_STOP_EVENT = "CodeWideGlobalVoiceOverlayStop"
     @Volatile private var eventContext: ReactApplicationContext? = null
 
     internal fun requestStopFromOverlay() {
+      emitOverlayEvent(OVERLAY_STOP_EVENT)
+    }
+
+    internal fun requestMicrophoneToggleFromOverlay() {
+      emitOverlayEvent(OVERLAY_MICROPHONE_TOGGLE_EVENT)
+    }
+
+    internal fun requestCaptureRecovery() {
+      emitOverlayEvent(CAPTURE_INTERRUPTED_EVENT)
+    }
+
+    private fun emitOverlayEvent(eventName: String) {
       val activeContext = eventContext ?: return
       if (!activeContext.hasActiveReactInstance()) return
+      val payload = if (eventName == OVERLAY_STOP_EVENT || eventName == OVERLAY_MICROPHONE_TOGGLE_EVENT) {
+        val module = activeContext.getNativeModule(GlobalVoiceForegroundModule::class.java) ?: return
+        val token = synchronized(module) { module.activeTokens.singleOrNull() } ?: return
+        com.facebook.react.bridge.Arguments.createMap().apply { putString("token", token) }
+      } else null
       activeContext
         .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-        .emit(OVERLAY_STOP_EVENT, null)
+        .emit(eventName, payload)
     }
 
     internal fun visibleOrbReturnTarget(): VoiceOverlayLaunchOrigin? {

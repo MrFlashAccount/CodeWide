@@ -1,5 +1,11 @@
 # Android V2: independent Expo Router runtime over Sync API V2
 
+> Historical document: the CodeWide V2 implementation and parity harness were removed
+> on 2026-09-21. See [current retirement scope](android-v2-retirement.md).
+
+
+> Historical Android V2 design. The Android frontend was retired on 2026-09-21; see [scope and UI reuse audit](android-v2-retirement.md). Companion and sync-client V2 remain separate.
+
 Port inventory arrives through the shared sync websocket and a coalescing native
 reconciliation worker; client resources do not poll discovery. See
 [Companion-owned port inventory](port-inventory-sync.md).
@@ -18,7 +24,7 @@ This is not a DDD-heavy rewrite. The boundaries exist to keep authority and impo
 - Legacy remains V1-owned and is not refactored into V2.
 - Android V2 owns application policy and adapter implementations.
 - `packages/sync-client/src/v2/**` is the sole client authority for Sync V2 session, epoch, projection, and operation semantics.
-- `apps/companion/contract/v2.json` is the sole machine-readable V2 wire authority.
+- `crates/companion-core/contract/v2.json` is the sole machine-readable V2 wire authority.
 - `apps/android/src/presentation/**` contains protocol-neutral Views shared through display props and capabilities.
 
 The incremental alternative—attaching V2 to `use-remote-workspace.ts`—is rejected because it preserves V1 lifecycle, storage, and import ownership. A separate APK/process remains conditional: it is justified only if the single-runtime invariant cannot be proven inside one Expo bundle.
@@ -72,7 +78,7 @@ Snapshots and projections are read-model records, not entities or caches. Operat
 3. **Android V2:** `apps/android/src/v2/**` owns saved-server/application policy, route-qualified selection, display mapping, capability gating, composition, and concrete adapters. It does not own sync-client epoch, projection, operation, or session semantics.
 4. **Shared presentation:** `apps/android/src/presentation/**` owns protocol-neutral Views only. It imports no V1/V2 models, stores, routes, I/O, or native modules.
 5. **Sync client V2:** `packages/sync-client/src/v2/**` is the sole client owner of generated wire validation, epoch/barrier/reconnect, authoritative projection reduction and active/retained store contract, command admission/receipts and operation store contract, and session lifecycle.
-6. **Companion and native V2 boundary:** `apps/companion/contract/v2.json` and `apps/companion/src/sync_v2/**` own executable wire authority, semantics, authorization, and bounded streaming. The generated Kotlin contract, V2 Terminal/Voice native modules, and their entries in `CodeWidePackage.kt` are part of the same V2 boundary; `MainApplication.kt` remains unchanged because it already registers `CodeWidePackage`. V2 handlers may reuse internal semantic services below the wire boundary but never V1 handlers or DTOs.
+6. **Companion and native V2 boundary:** `crates/companion-core/contract/v2.json` and `crates/companion-core/src/sync_v2/**` own executable wire authority, semantics, authorization, and bounded streaming. The generated Kotlin contract, V2 Terminal/Voice native modules, and their entries in `CodeWidePackage.kt` are part of the same V2 boundary; `MainApplication.kt` remains unchanged because it already registers `CodeWidePackage`. V2 handlers may reuse internal semantic services below the wire boundary but never V1 handlers or DTOs.
 
 ## Public routes and integration surfaces
 
@@ -86,7 +92,7 @@ Snapshots and projections are read-model records, not entities or caches. Operat
 - `/v2/sync` is the authoritative snapshot/change/query/command/action/operation channel.
 - Pairing/session auth, files/media, and port/tunnel contracts use versioned `/v2` endpoints.
 - Terminal uses `/v2/terminals`; Voice uses `/v2/voice`. Neither uses V1 URLs, generic RPC, or `companion/dictation/*`.
-- `apps/companion/contract/v2.json` is the sole schema source for generated TypeScript/Kotlin artifacts and runtime validators.
+- `crates/companion-core/contract/v2.json` is the sole schema source for generated TypeScript/Kotlin artifacts and runtime validators.
 
 ## Three independent state paths
 
@@ -180,7 +186,7 @@ Extraction is a two-sided source edit: create the shared target and edit every l
 | `DictationSession` / `VoiceInputScope` | Entity + qualified input identity                  | `/v2/voice`, controller, chat/review/generic Views                           | V1 dictation path, required-thread owner, content logs                              | V2 schema and bounded server session storage                  | No V1 wrapper; audience/cancel/privacy gates.                                                  |
 | `InteractiveAction`                    | Ephemeral UI execution record; `src/v2/ui/actions` | Shared actionable primitives and capability Promises                         | Feature-local busy/saving; `CommandOperation` mirroring                             | No persistence                                                | Approved V2 parity exception; action/a11y/geometry gates.                                      |
 | `ReusableView`                         | Presentation boundary; `src/presentation`          | Display props/capabilities from V1 or V2 containers                          | DTOs, stores, I/O, native access                                                    | No persistence                                                | Source reuse only; import and fixture-parity gates.                                            |
-| `V2ContractArtifact`                   | Backend-owned schema artifact                      | Generator, Rust validator, TS/Kotlin validators                              | Client-owned schema/type copies                                                     | `apps/companion/contract/v2.json`                             | Generated paths stable; full schema/Rust/generated drift gate.                                 |
+| `V2ContractArtifact`                   | Backend-owned schema artifact                      | Generator, Rust validator, TS/Kotlin validators                              | Client-owned schema/type copies                                                     | `crates/companion-core/contract/v2.json`                     | Generated paths stable; full schema/Rust/generated drift gate.                                 |
 
 ## Module deletion proof
 
@@ -191,7 +197,7 @@ Extraction is a two-sided source edit: create the shared target and edit every l
 - `src/v2/infrastructure` owns concrete persistence/transport/platform implementations and app session leases; deleting it couples policy to SQLite, Expo, and WebSocket. Its registry may not interpret epochs, reduce frames, or transition operations.
 - `src/v2/platform` exists only where native/web variation is real; one-adapter placeholder zones are forbidden.
 - `packages/sync-client/src/v2` owns executable wire/session/epoch/projection/operation semantics; bypassing it necessarily recreates forbidden authority in Android.
-- `apps/companion/src/sync_v2` owns V2 authentication, semantics, and stream bounds; deleting it would force forbidden V1-handler reuse.
+- `crates/companion-core/src/sync_v2` owns V2 authentication, semantics, and stream bounds; deleting it would force forbidden V1-handler reuse.
 
 ## Final annotated repository tree
 

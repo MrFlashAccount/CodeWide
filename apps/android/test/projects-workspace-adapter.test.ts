@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ThreadStartResponse } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadStartResponse } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { createProjectsWorkspaceAdapter } from "../src/features/projects/workspaceAdapter";
 import type { TurnControlsValue } from "../src/data/turn-controls-types";

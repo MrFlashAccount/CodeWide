@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-const source = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
 const detailDatabase = readFileSync(new URL("../src/data/thread-detail-database.native.ts", import.meta.url), "utf8");
 
 const emptyStateOwner = compactSource(readFileSync(new URL("../src/features/conversation/ConversationEmptyState.tsx", import.meta.url), "utf8"));

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1112" height="470" viewBox="0 0 1112 470">
+<rect width="1112" height="470" fill="#10131b"/>
+<g font-family="sans-serif" fill="#e9eaf5"><text x="20" y="26" font-size="18">Global Voice · 3-action inward fan · 48 dp targets · radius 90 dp · 45° step</text>
+<g transform="translate(16 48)"><rect width="360" height="400" rx="18" fill="#202532"/><rect x="8" y="32" width="344" height="360" rx="8" fill="none" stroke="#667082" stroke-dasharray="4 5"/><text x="16" y="20" font-size="13">Right snap</text>
+<line x1="314" y1="210" x2="251.32" y2="274.58" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="251.32" cy="274.58" r="24" fill="#222227" stroke="#77798e"/><text x="251.32" y="278.58" text-anchor="middle" font-size="12">Mic</text>
+<line x1="314" y1="210" x2="224.01" y2="211.34" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="224.01" cy="211.34" r="24" fill="#222227" stroke="#77798e"/><text x="224.01" y="215.34" text-anchor="middle" font-size="12">Open</text>
+<line x1="314" y1="210" x2="249.42" y2="147.32" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="249.42" cy="147.32" r="24" fill="#222227" stroke="#77798e"/><text x="249.42" y="151.32" text-anchor="middle" font-size="12">Stop</text>
+<circle cx="314" cy="210" r="33" fill="#252539" stroke="#a7a3f3"/><text x="314" y="214" text-anchor="middle" font-size="13">Orb</text></g>
+<g transform="translate(384 48)"><rect width="360" height="400" rx="18" fill="#202532"/><rect x="8" y="32" width="344" height="360" rx="8" fill="none" stroke="#667082" stroke-dasharray="4 5"/><text x="16" y="20" font-size="13">Bottom-right corner</text>
+<line x1="314" y1="354" x2="224.04" y2="351.39" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="224.04" cy="351.39" r="24" fill="#222227" stroke="#77798e"/><text x="224.04" y="355.39" text-anchor="middle" font-size="12">Mic</text>
+<line x1="314" y1="354" x2="252.23" y2="288.54" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="252.23" cy="288.54" r="24" fill="#222227" stroke="#77798e"/><text x="252.23" y="292.54" text-anchor="middle" font-size="12">Open</text>
+<line x1="314" y1="354" x2="316.61" y2="264.04" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="316.61" cy="264.04" r="24" fill="#222227" stroke="#77798e"/><text x="316.61" y="268.04" text-anchor="middle" font-size="12">Stop</text>
+<circle cx="314" cy="354" r="33" fill="#252539" stroke="#a7a3f3"/><text x="314" y="358" text-anchor="middle" font-size="13">Orb</text></g>
+<g transform="translate(752 48)"><rect width="360" height="400" rx="18" fill="#202532"/><rect x="8" y="32" width="344" height="360" rx="8" fill="none" stroke="#667082" stroke-dasharray="4 5"/><text x="16" y="20" font-size="13">Top-left corner</text>
+<line x1="46" y1="70" x2="135.96" y2="72.61" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="135.96" cy="72.61" r="24" fill="#222227" stroke="#77798e"/><text x="135.96" y="76.61" text-anchor="middle" font-size="12">Mic</text>
+<line x1="46" y1="70" x2="107.77" y2="135.46" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="107.77" cy="135.46" r="24" fill="#222227" stroke="#77798e"/><text x="107.77" y="139.46" text-anchor="middle" font-size="12">Open</text>
+<line x1="46" y1="70" x2="43.39" y2="159.96" stroke="#83849f" stroke-dasharray="3 4"/><circle cx="43.39" cy="159.96" r="24" fill="#222227" stroke="#77798e"/><text x="43.39" y="163.96" text-anchor="middle" font-size="12">Stop</text>
+<circle cx="46" cy="70" r="33" fill="#252539" stroke="#a7a3f3"/><text x="46" y="74" text-anchor="middle" font-size="13">Orb</text></g>
+</g></svg>

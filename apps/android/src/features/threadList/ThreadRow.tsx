@@ -1,11 +1,13 @@
+import type { ComponentProps } from "react";
+import { AppLink } from "../../ui/AppLink";
 import { useThreadRowActions } from "./threadRowActions";
 import { ThreadRowContent } from "./ThreadRowContent";
 import type { ThreadRowProps } from "./threadRowContract";
 import { ThreadRowWebMenu } from "./ThreadRowWebMenu";
-import { Platform } from "react-native";
 import { Pressable as GesturePressable } from "react-native-gesture-handler";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
-import { ActionMenu } from "../../ui/ActionMenu";
+import { useEvent } from "../../react/useEvent";
+import { ThreadRowMenu } from "./ThreadRowMenu";
 import { CommitOnChangeProbe } from "../../ui/CommitProbe";
 import { ThreadRowCommitBoundary } from "../diagnostics/ThreadNavigationCommit";
 import { copySessionId } from "../turnActions/turnActions";
@@ -13,7 +15,7 @@ import { styles } from "./ThreadRow.styles";
 import { ThreadSwipeAction, ThreadSwipeActions } from "./ThreadSwipeActions";
 
 export function ThreadRow(props: ThreadRowProps) {
-  const { onMarkRead, onPress, onTogglePin, selected, server, thread } = props;
+  const { onMarkRead, onNavigate, onTogglePin, selected, server, thread } = props;
   const actions = useThreadRowActions(props);
   const {
     archiveAction,
@@ -27,68 +29,54 @@ export function ThreadRow(props: ThreadRowProps) {
     swipeEnabled,
   } = actions;
 
-  const row = (
+  const press = useEvent(() => {
+    swipeableRef.current?.close();
+    onNavigate();
+  });
+  const openWebMenu = useEvent(() => {
+    setWebContextVisible(true);
+  });
+  const selectMenuAction = useEvent((id: string) => {
+    if (id === "copy-session-id") {
+      void copySessionId(thread.id).catch((error: unknown) => {
+        dialog.alert(
+          "Copy failed",
+          error instanceof Error ? error.message : "Could not copy session ID",
+        );
+      });
+    } else if (id === "pin") {
+      runThreadAction(onTogglePin, thread.pinned ? "Unpin" : "Pin");
+    } else if (id === "read") {
+      runThreadAction(onMarkRead, "Mark as read");
+    } else if (id === "archive") {
+      runThreadAction(archiveAction, archiveLabel);
+    }
+  });
+  const rowKey = `${thread.serverId}:${thread.id}`;
+  const rowMenu = (
+    <ThreadRowMenu actions={menuActions} key={rowKey} onSelect={selectMenuAction} rowKey={rowKey}>
+      {(openNativeMenu) => (
+        <AppLink {...props.link}>
+          <ThreadRowLinkTrigger
+            accessibilityLabel="Thread actions"
+            {...(selected ? { testID: "selected-thread-row" } : {})}
+            accessibilityRole="link"
+            cancelable
+            delayLongPress={350}
+            onLongPress={openNativeMenu ?? openWebMenu}
+            onPress={press}
+            selected={selected}
+            swipeEnabled={swipeEnabled}
+          >
+            <ThreadRowContent selected={selected} server={server} thread={thread} />
+          </ThreadRowLinkTrigger>
+        </AppLink>
+      )}
+    </ThreadRowMenu>
+  );
+  return (
     <ThreadRowCommitBoundary>
       <CommitOnChangeProbe onCommit={closeSwipe} revision={selected ? 1 : 0} scope={thread.id} />
-      <GesturePressable
-        {...(selected ? { testID: "selected-thread-row" } : {})}
-        accessibilityRole="button"
-        cancelable
-        delayLongPress={350}
-        onPress={() => {
-          swipeableRef.current?.close();
-          onPress();
-        }}
-        {...(Platform.OS === "web"
-          ? {
-              delayLongPress: 350,
-              onLongPress: () => {
-                setWebContextVisible(true);
-              },
-            }
-          : {})}
-        style={({ pressed }) => [
-          styles.threadRow,
-          swipeEnabled && styles.threadRowSwipeChild,
-          selected && styles.threadRowSelected,
-          pressed && styles.pressed,
-        ]}
-      >
-        <ThreadRowContent selected={selected} server={server} thread={thread} />
-      </GesturePressable>
-    </ThreadRowCommitBoundary>
-  );
-  const rowMenu =
-    Platform.OS === "web" ? (
-      row
-    ) : (
-      <ActionMenu
-        accessibilityLabel="Thread actions"
-        actions={menuActions}
-        onSelect={(id) => {
-          if (id === "copy-session-id") {
-            void copySessionId(thread.id).catch((error: unknown) => {
-              dialog.alert(
-                "Copy failed",
-                error instanceof Error ? error.message : "Could not copy session ID",
-              );
-            });
-          } else if (id === "pin") {
-            runThreadAction(onTogglePin, thread.pinned ? "Unpin" : "Pin");
-          } else if (id === "read") {
-            runThreadAction(onMarkRead, "Mark as read");
-          } else if (id === "archive") {
-            runThreadAction(archiveAction, archiveLabel);
-          }
-        }}
-        style={styles.threadContextMenu}
-        trigger="long-press"
-      >
-        {row}
-      </ActionMenu>
-    );
-  return (
-    <>
       {!swipeEnabled ? (
         rowMenu
       ) : (
@@ -148,6 +136,28 @@ export function ThreadRow(props: ThreadRowProps) {
         </Swipeable>
       )}
       <ThreadRowWebMenu actions={actions} props={props} />
-    </>
+    </ThreadRowCommitBoundary>
+  );
+}
+
+// Expo Link's Slot merges style objects. Keep the functional pressed style below that boundary.
+function ThreadRowLinkTrigger({
+  selected,
+  swipeEnabled,
+  ...props
+}: ComponentProps<typeof GesturePressable> & {
+  readonly selected: boolean;
+  readonly swipeEnabled: boolean;
+}): React.JSX.Element {
+  return (
+    <GesturePressable
+      {...props}
+      style={({ pressed }) => [
+        styles.threadRow,
+        swipeEnabled && styles.threadRowSwipeChild,
+        selected && styles.threadRowSelected,
+        pressed && styles.pressed,
+      ]}
+    />
   );
 }

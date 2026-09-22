@@ -1,6 +1,6 @@
 package dev.codewide.app.remote
 
-/** Generated from apps/companion/contract/v1.json globalSupervisorLimitsV1. */
+/** Generated from crates/companion-core/contract/v1.json globalSupervisorLimitsV1. */
 internal object GlobalSupervisorLimitsV1 {
   const val VERSION = 1
   const val LIVE_CHANNEL_MAX_ENVELOPES = 256

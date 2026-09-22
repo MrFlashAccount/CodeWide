@@ -8,13 +8,13 @@ import { writeGlobalVoiceOrbStylePreference } from "../src/data/globalVoiceOrbSt
 
 it("toggles Global Voice without creating an application route", () => {
   const composition = readFileSync(
-    join(__dirname, "../app/v1/V1WorkspaceRouteComposition.tsx"),
+    join(__dirname, "../src/routeComposition/WorkspaceRouteComposition.tsx"),
     "utf8",
   );
-  const shell = readFileSync(join(__dirname, "../app/v1/V1WorkspaceShell.tsx"), "utf8");
+  const shell = readFileSync(join(__dirname, "../src/routeComposition/WorkspaceShell.tsx"), "utf8");
 
-  expect(existsSync(join(__dirname, "../app/v1/global-voice.tsx"))).toBe(false);
-  expect(composition).not.toContain("/v1/global-voice");
+  expect(existsSync(join(__dirname, "../app/(workspace)/global-voice.tsx"))).toBe(false);
+  expect(composition).not.toContain("/global-voice");
   expect(composition).not.toContain("reportGlobalError");
   expect(composition).toContain("useAppNotice");
   expect(shell).not.toContain('name="global-voice"');

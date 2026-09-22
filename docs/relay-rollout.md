@@ -26,9 +26,28 @@ frames remain inner-TLS ciphertext.
 ## Start Relay
 
 ```sh
-cargo build --release -p codewide-relay
-target/release/codewide-relay --port 8780
+./scripts/build-relay-linux
+dist/relay/codewide-relay-x86_64-unknown-linux-musl --version
 ```
+
+The build emits the Linux binary and its SHA-256 manifest under `dist/relay/`.
+The current release target is statically linked Linux `x86_64`, built in a
+digest-pinned musl container so the same artifact runs on glibc and musl hosts.
+ARM64 is rejected explicitly until a matching release artifact exists.
+
+After those two files are published under the matching GitHub Release tag,
+install and verify the binary without cloning the repository:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
+codewide-relay --port 8780
+```
+
+The installer downloads from `relay-v<version>`, verifies the release SHA-256,
+checks the binary-reported version, and atomically installs it to
+`${CODEWIDE_RELAY_INSTALL_DIR:-$HOME/.local/bin}`. It accepts `--version` for a
+pinned older release. Publishing the GitHub Release remains a separate approved
+operation.
 
 The binary binds `0.0.0.0:<port>`; the default port is `8780`. Durable state
 lives under `${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay/`:

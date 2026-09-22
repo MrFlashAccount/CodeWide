@@ -16,6 +16,7 @@ function runtime() {
   let activationCount = 0;
   const pause = vi.fn(async () => undefined);
   const resume = vi.fn(async () => undefined);
+  const setMicrophoneMuted = vi.fn(async () => undefined);
   const stop = vi.fn(async () => undefined);
   const value: GlobalSupervisorRuntime = {
     prepare: vi.fn(async () => ({ home: HOME, status: "ready" as const })),
@@ -28,6 +29,7 @@ function runtime() {
         home: HOME,
         pause,
         resume,
+        setMicrophoneMuted,
         stop,
       };
     }),
@@ -49,12 +51,55 @@ function runtime() {
     },
     pause,
     resume,
+    setMicrophoneMuted,
     stop,
     value,
   };
 }
 
 describe("GlobalSupervisorFeature", () => {
+  it("mutes and unmutes the active microphone without stopping the activation", async () => {
+    const owner = runtime();
+    const feature = createGlobalSupervisorFeature(owner.value);
+    await feature.enter();
+
+    await feature.toggleMicrophone();
+    expect(owner.setMicrophoneMuted).toHaveBeenCalledWith(true);
+    expect(feature.microphoneMuted$.peek()).toBe(true);
+    expect(owner.stop).not.toHaveBeenCalled();
+
+    await feature.toggleMicrophone();
+    expect(owner.setMicrophoneMuted).toHaveBeenLastCalledWith(false);
+    expect(feature.microphoneMuted$.peek()).toBe(false);
+    expect(owner.value.start).toHaveBeenCalledOnce();
+  });
+
+  it("delivers rapid mute intents immediately and publishes only the latest acknowledgement", async () => {
+    const owner = runtime();
+    const feature = createGlobalSupervisorFeature(owner.value);
+    await feature.enter();
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const third = Promise.withResolvers<void>();
+    owner.setMicrophoneMuted.mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise).mockImplementationOnce(() => third.promise);
+    const a = feature.toggleMicrophone();
+    const b = feature.toggleMicrophone();
+    const c = feature.toggleMicrophone();
+    expect(owner.setMicrophoneMuted.mock.calls).toEqual([[true], [false], [true]]);
+    third.resolve();
+    await c;
+    expect(feature.microphoneMuted$.peek()).toBe(true);
+    second.resolve(); first.resolve();
+    await Promise.all([a, b]);
+    expect(feature.microphoneMuted$.peek()).toBe(true);
+    await feature.pause(); await feature.resume();
+    expect(feature.microphoneMuted$.peek()).toBe(true);
+    await Promise.all([feature.stop(), feature.stop()]);
+    await feature.stop();
+    expect(owner.stop).toHaveBeenCalledOnce();
+  });
+
   it("shows startup progress until binding recovery and activation settle", async () => {
     let finishRecovery: (() => void) | null = null;
     const owner = runtime();
@@ -133,6 +178,18 @@ describe("GlobalSupervisorFeature", () => {
       transcript: [],
     });
     expect(owner.value.recover).not.toHaveBeenCalled();
+  });
+
+  it("preserves an authoritative speaking event received while resuming", async () => {
+    const owner = runtime();
+    const feature = createGlobalSupervisorFeature(owner.value);
+    await feature.enter();
+    await feature.pause();
+    owner.resume.mockImplementationOnce(async () => {
+      owner.publish({ activationId: "activation-1", event: "speaking" });
+    });
+    await feature.resume();
+    expect(feature.render$.peek().phase).toBe("speaking");
   });
 
   it("pauses the live transport for app lock and resumes the same activation after unlock", async () => {

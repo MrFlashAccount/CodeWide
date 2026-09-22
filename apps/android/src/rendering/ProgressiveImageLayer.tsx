@@ -23,19 +23,41 @@ export function ProgressiveImageLayer({
   onDimensions: (size: ImageSize) => void;
   preview: ResolvedImageSource;
 }): React.JSX.Element {
-  const [failedUri, setFailedUri] = useState<string | null>(null);
-  const [readyUri, setReadyUri] = useState<string | null>(null);
   const request = progressiveImageRequest(detail);
   const detailSource = usePrivateAssetUri(request.source, request.options).source;
   return (
+    <ProgressiveImageFrames
+      detail={detailSource}
+      label={label}
+      onDecodeStateChange={onDecodeStateChange}
+      onDimensions={onDimensions}
+      preview={preview}
+      resizeMethod={detail === null || detail === undefined ? "resize" : "scale"}
+    />
+  );
+}
+
+/** Keeps a decoded preview above the detail surface until the replacement frame is ready. */
+export function ProgressiveImageFrames({
+  detail,
+  label,
+  onDecodeStateChange,
+  onDimensions,
+  preview,
+  resizeMethod = "resize",
+}: {
+  detail: ResolvedImageSource | null;
+  label: string;
+  onDecodeStateChange: (state: DecodeState) => void;
+  onDimensions: (size: ImageSize) => void;
+  preview: ResolvedImageSource;
+  /** Server derivatives are bounded to 640/2560px; retain those pixels across layout and zoom. */
+  resizeMethod?: "resize" | "scale";
+}): React.JSX.Element {
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const [readyUri, setReadyUri] = useState<string | null>(null);
+  return (
     <>
-      <PreviewImageLayer
-        label={label}
-        onDecodeStateChange={onDecodeStateChange}
-        onDimensions={onDimensions}
-        preview={preview}
-        visible={detailSource === null || readyUri !== detailSource.uri}
-      />
       <DetailImageLayer
         failedUri={failedUri}
         label={label}
@@ -43,8 +65,16 @@ export function ProgressiveImageLayer({
         onDimensions={onDimensions}
         onFailed={setFailedUri}
         onReady={setReadyUri}
-        readyUri={readyUri}
-        source={detailSource}
+        resizeMethod={resizeMethod}
+        source={detail}
+      />
+      <PreviewImageLayer
+        label={label}
+        onDecodeStateChange={onDecodeStateChange}
+        onDimensions={onDimensions}
+        preview={preview}
+        resizeMethod={resizeMethod}
+        visible={detail === null || readyUri !== detail.uri}
       />
     </>
   );
@@ -55,12 +85,14 @@ function PreviewImageLayer({
   onDecodeStateChange,
   onDimensions,
   preview,
+  resizeMethod,
   visible,
 }: {
   label: string;
   onDecodeStateChange: (state: DecodeState) => void;
   onDimensions: (size: ImageSize) => void;
   preview: ResolvedImageSource;
+  resizeMethod: "resize" | "scale";
   visible: boolean;
 }): React.JSX.Element | null {
   if (!visible) {
@@ -79,7 +111,7 @@ function PreviewImageLayer({
       onLoadStart={() => {
         onDecodeStateChange("loading");
       }}
-      resizeMethod="resize"
+      resizeMethod={resizeMethod}
       resizeMode="contain"
       source={preview}
       style={styles.image}
@@ -94,7 +126,7 @@ function DetailImageLayer({
   onDimensions,
   onFailed,
   onReady,
-  readyUri,
+  resizeMethod,
   source,
 }: {
   failedUri: string | null;
@@ -103,7 +135,7 @@ function DetailImageLayer({
   onDimensions: (size: ImageSize) => void;
   onFailed: (uri: string) => void;
   onReady: (uri: string) => void;
-  readyUri: string | null;
+  resizeMethod: "resize" | "scale";
   source: ResolvedImageSource | null;
 }): React.JSX.Element | null {
   if (source === null || failedUri === source.uri) {
@@ -120,10 +152,10 @@ function DetailImageLayer({
         onDecodeStateChange("ready");
         publishLoadedDimensions(nativeEvent.source, onDimensions);
       }}
-      resizeMethod="resize"
+      resizeMethod={resizeMethod}
       resizeMode="contain"
       source={source}
-      style={[styles.image, detailOpacity(readyUri, source.uri)]}
+      style={styles.image}
     />
   );
 }
@@ -158,10 +190,6 @@ function publishLoadedDimensions(
   if (width > 0 && height > 0) {
     onDimensions({ height, width });
   }
-}
-
-function detailOpacity(readyUri: string | null, sourceUri: string): { opacity: number } {
-  return { opacity: Number(readyUri === sourceUri) };
 }
 
 const styles = StyleSheet.create({

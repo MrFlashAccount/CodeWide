@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
 const screen = compactSource(
-  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 const terminal = readFileSync(
   new URL("../src/features/terminal/TerminalWorkspace.native.tsx", import.meta.url),
@@ -29,7 +29,7 @@ const nativeManager = readFileSync(
 
 const ownerTerminalFeature = compactSource(
   readFileSync(
-    new URL("../app/v1/threads/[connectionId]/[threadId]/terminal.tsx", import.meta.url),
+    new URL("../app/(workspace)/threads/[connectionId]/[threadId]/terminal.tsx", import.meta.url),
     "utf8",
   ),
 );
@@ -60,11 +60,11 @@ const ownerThreadListMenu = readFileSync(
   "utf8",
 );
 const ownerWorkspaceComposition = readFileSync(
-  new URL("../app/v1/V1WorkspaceRouteComposition.tsx", import.meta.url),
+  new URL("../src/routeComposition/WorkspaceRouteComposition.tsx", import.meta.url),
   "utf8",
 );
 const ownerWorkspaceShell = readFileSync(
-  new URL("../app/v1/V1WorkspaceShell.tsx", import.meta.url),
+  new URL("../src/routeComposition/WorkspaceShell.tsx", import.meta.url),
   "utf8",
 );
 
@@ -119,7 +119,7 @@ describe("native terminal integration", () => {
     expect(ownerWorkspaceComposition).toContain("refreshNativeTerminalInventory()");
     expect(ownerWorkspaceComposition).toContain("focusInteractiveTerminalSession(terminal)");
     expect(ownerWorkspaceComposition).toContain("closeInteractiveTerminalSession(sessionId)");
-    expect(ownerWorkspaceComposition).not.toContain('pathname: "/v1/terminals');
+    expect(ownerWorkspaceComposition).not.toContain('pathname: "/terminals');
     expect(ownerWorkspaceShell).not.toContain('name="terminals/');
     expect(nativeInventory).toContain("listNativeTerminals()");
     expect(nativeManager).toContain("fun listRunning(): String");

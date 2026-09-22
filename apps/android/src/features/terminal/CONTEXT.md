@@ -1,6 +1,6 @@
 # V1 terminal
 
-Public surfaces: `app/v1/threads/[connectionId]/[threadId]/terminal.tsx` retains the fullscreen presentation beyond the opening conversation mount; `TerminalWorkspace` renders the route-owned activation; `terminalActions` opens or explicitly creates tabs and closes the captured workspace after successful thread deletion; `backgroundTerminals` presents process resources; `ComposerTerminalContextChip` reads the retained native store.
+Public surfaces: `app/(workspace)/threads/[connectionId]/[threadId]/terminal.tsx` retains the fullscreen presentation beyond the opening conversation mount; `TerminalWorkspace` renders the route-owned activation; `terminalActions` opens or explicitly creates tabs and closes the captured workspace after successful thread deletion; `backgroundTerminals` presents process resources; `ComposerTerminalContextChip` reads the retained native store.
 
 Private TerminalTab owns native rendering synchronization, PTY offset acknowledgement and fullscreen layout reconciliation. interactive-terminal-store and native session/transport implementations remain authoritative. Minimize never closes tabs or releases the native persistent session. Background termination remains pending through its activation-captured refresh, with an error on failed refresh.
 

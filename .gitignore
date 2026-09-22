@@ -4,10 +4,13 @@ node_modules/
 .expo/
 .turbo/
 .cache/
+.nx/cache/
+.nx/workspace-data/
 *.tsbuildinfo
 
 # Rust, Python, Android and Gradle outputs.
 target/
+apps/companion-macos/.build/
 __pycache__/
 *.py[cod]
 .pytest_cache/

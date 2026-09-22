@@ -2,11 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import type { ComponentProps, ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
-import {
-  filterIconButtonLayout,
-  filterIconButtonPressed,
-} from "../input/filterIconButtonLayout";
-import { colors, iconSize, spacing, touchTarget } from "../../theme";
+import { filterIconButtonLayout, filterIconButtonPressed } from "../input/filterIconButtonLayout";
+import { colors, iconSize, layoutSize, spacing } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
 
 type ThreadListHeaderActionProps = {
@@ -56,7 +53,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.optical,
-    minHeight: touchTarget,
+    minHeight: layoutSize.header,
     paddingLeft: spacing.md,
     paddingRight: threadListLayout.edgeInset,
   },

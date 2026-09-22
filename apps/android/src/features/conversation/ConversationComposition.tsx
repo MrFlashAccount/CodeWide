@@ -1,3 +1,4 @@
+import { QuestionConversationProvider } from "../requests/QuestionFeature";
 import { useComposerInteractions } from "../composer/composerInteractions";
 import { ThreadGoalChip } from "../goal/ThreadGoalChip";
 import { projectInlineQueue } from "../queue/QueueFeature";
@@ -186,5 +187,28 @@ export function ConversationComposition(
     visibleQueuedPrompts,
   });
 
-  return frameBinding.frame;
+  return (
+    <QuestionConversationProvider
+      value={{
+        activeTurnId: timelineRead.conversationPresentationBinding.currentTurnId,
+        connectionId: scoped.activation.draftConnectionId ?? "",
+        entries: questionTimelineEntries(props.read),
+        latestHistoryPresent: props.read.historyViewport.containsLatest,
+        onRespond: props.requests.onRespondToRequest,
+        pendingRequest: props.requests.pendingRequest,
+        sendAnswer: props.requests.sendQuestionAnswer,
+        summaries: props.requests.questionSummaries,
+        threadId: scoped.activation.draftThreadId ?? "",
+      }}
+    >
+      {frameBinding.frame}
+    </QuestionConversationProvider>
+  );
+}
+
+function questionTimelineEntries(read: ConversationCompositionCapabilities["read"]) {
+  return (
+    read.timelineEntries ??
+    (read.remoteThread?.turns ?? []).map((turn) => ({ kind: "turn" as const, turn }))
+  );
 }

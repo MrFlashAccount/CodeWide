@@ -1,22 +1,47 @@
+import * as summaryView from "../src/data/use-thread-summary-view";
+import { summary } from "./fixtures/thread-summary";
+import { MobileThreads } from "../src/features/threadList/MobileThreads";
+import { ThreadSidebar } from "../src/features/threadList/ThreadSidebar";
 import { useSelector } from "@legendapp/state/react";
-import { act, fireEvent, render, renderHook, waitFor, within } from "@testing-library/react-native";
-import { Dimensions, Linking, StyleSheet, Text } from "react-native";
+import {
+  act,
+  fireEvent,
+  fireEventAsync,
+  render,
+  renderAsync,
+  renderHook,
+  waitFor,
+  within,
+} from "@testing-library/react-native";
+import { useState } from "react";
+import { ThreadRow } from "../src/features/threadList/ThreadRow";
+import { KeyboardController } from "react-native-keyboard-controller";
+import { useEvent } from "../src/react/useEvent";
+import { Dimensions, Linking, Pressable, StyleSheet, Text, TextInput } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { V1WorkspaceRouteComposition } from "../app/v1/V1WorkspaceRouteComposition";
-import { MountedV1Workspace } from "../app/v1/_layout";
-import V1DrawingRoute from "../app/v1/drawing/[sessionId]";
-import V1AllRoute from "../app/v1/index";
-import V1DraftContentRoute from "../app/v1/new/content/[sessionId]";
-import V1DraftModelRoute from "../app/v1/new/controls/model";
-import V1AgentThreadRoute from "../app/v1/threads/[connectionId]/[threadId]/agents/[agentThreadId]";
-import V1ThreadLayout from "../app/v1/threads/[connectionId]/[threadId]/_layout";
-import V1ThreadRoute from "../app/v1/threads/[connectionId]/[threadId]/index";
-import { useThreadRouteNavigation } from "../app/v1/threads/[connectionId]/[threadId]/threadRouteNavigation";
-import { ensureV1NewThreadRoute, useV1WorkspaceRouteModel } from "../app/v1/V1WorkspaceRouteModel";
+import { WorkspaceRouteComposition } from "../src/routeComposition/WorkspaceRouteComposition";
+import { MountedV1Workspace } from "../app/(workspace)/_layout";
+import V1DrawingRoute from "../app/(workspace)/drawing/[sessionId]";
+import UnmatchedRoute from "../app/+not-found";
+import V1ListLayout from "../app/(workspace)/(lists)/_layout";
+import V1AllRoute from "../app/(workspace)/(lists)/index";
+import V1SearchRoute from "../app/(workspace)/search";
+import V1ProjectListRoute from "../app/(workspace)/(lists)/project/[sessionId]";
+import { projectListRouteSessions } from "../src/services/projects/projectListRouteSession";
+import { useWorkspaceListRouteResources } from "../src/routeComposition/workspaceListRouteResources";
+import V1DraftContentRoute from "../app/(workspace)/new/content/[sessionId]";
+import V1DraftModelRoute from "../app/(workspace)/new/controls/model";
+import V1AgentThreadRoute from "../app/(workspace)/threads/[connectionId]/[threadId]/agents/[agentThreadId]";
+import V1ThreadLayout from "../app/(workspace)/threads/[connectionId]/[threadId]/_layout";
+import V1ThreadRoute from "../app/(workspace)/threads/[connectionId]/[threadId]/index";
+import { useThreadRouteNavigation } from "../src/routeComposition/threadRouteNavigation";
+import {
+  ensureV1NewThreadRoute,
+  useWorkspaceRouteModel,
+} from "../src/routeComposition/WorkspaceRouteModel";
 import { recoverUnavailableRoute } from "../src/components/navigation/routeRecovery";
 import { workspaceRuntime } from "../src/data/workspace-runtime";
-import { createGlobalSupervisorVisibilityPolicy } from "../src/data/globalSupervisorVisibility";
 import { useConversationRouteNavigation } from "../src/features/conversation/conversationRouteNavigation";
 import { createNewChatSubmission } from "../src/features/projects/newChatSubmission";
 import { radii } from "../src/theme";
@@ -29,7 +54,6 @@ import { agentRouteSessions } from "../src/services/agents/agentRouteSession";
 import { drawingRouteSessions } from "../src/services/drawing/drawingRouteSession";
 import { disposeAllRouteSessions, ROUTE_SESSION_TTL_MS } from "../src/services/routeSessionPolicy";
 import { searchRouteSessions } from "../src/services/search/searchRouteSession";
-import { useServerScope } from "../src/services/servers/serverScope";
 import { NewThreadService, newThreadService } from "../src/services/threads/newThreadService";
 import {
   useThreadNavigationService,
@@ -48,6 +72,7 @@ import {
   clearMockRoutes,
   mockRouterHistory,
   registerMockRoute,
+  registerMockLayout,
   resetMockRouter,
   router,
   setMockLocalSearchParams,
@@ -61,7 +86,7 @@ const remote: ThreadNavigationReadCapability = {
 const testNotice = { show: jest.fn() };
 
 function useMountedThreadNavigation(readCapability: ThreadNavigationReadCapability = remote) {
-  const route = useV1WorkspaceRouteModel();
+  const route = useWorkspaceRouteModel();
   const navigation = useThreadNavigationService(readCapability, route.threadRouter);
   return { navigation, route };
 }
@@ -80,6 +105,13 @@ const threadSearchTarget = {
     turnId: "",
   },
 };
+
+beforeEach(() => {
+  registerMockLayout("lists", ["/", "/project/[sessionId]"], V1ListLayout);
+  registerMockRoute("/", V1AllRoute);
+  registerMockRoute("/search", V1SearchRoute);
+  registerMockRoute("/project/[sessionId]", V1ProjectListRoute);
+});
 
 afterEach(() => {
   testNotice.show.mockClear();
@@ -101,7 +133,7 @@ function V1RouteTree({ layout = false }: { readonly layout?: boolean }): React.J
     >
       <AppNoticeContext.Provider value={testNotice}>
         <AppFullscreenOverlayProvider>
-          {layout ? <MountedV1Workspace /> : <V1WorkspaceRouteComposition />}
+          {layout ? <MountedV1Workspace /> : <WorkspaceRouteComposition />}
           <AppFullscreenOverlayHost />
         </AppFullscreenOverlayProvider>
       </AppNoticeContext.Provider>
@@ -123,9 +155,9 @@ function setWindowSize(width: number, height: number): void {
 }
 
 function registerV1NavigationRoutes(): void {
-  registerMockRoute("/v1", V1AllRoute);
-  registerMockRoute("/v1/drawing/[sessionId]", V1DrawingRoute);
-  registerMockRoute("/v1/threads/[connectionId]/[threadId]", V1ThreadRoute);
+  registerMockRoute("/", V1AllRoute);
+  registerMockRoute("/drawing/[sessionId]", V1DrawingRoute);
+  registerMockRoute("/threads/[connectionId]/[threadId]", V1ThreadRoute);
 }
 
 it("presents an asynchronous Global Voice failure through the application notice", async () => {
@@ -183,10 +215,8 @@ function AttachmentLauncher(): React.JSX.Element {
 }
 
 it("opens thread children for the current URL when the retained layout has stale local params", () => {
-  const previousVisibility = workspaceRuntime.globalSupervisorVisibility;
-  workspaceRuntime.globalSupervisorVisibility = createGlobalSupervisorVisibilityPolicy(() => null);
   try {
-    const pathname = "/v1/threads/[connectionId]/[threadId]";
+    const pathname = "/threads/[connectionId]/[threadId]";
     registerMockRoute(pathname, AttachmentLauncher);
     resetMockRouter({
       params: { connectionId: "server", threadId: "current" },
@@ -203,29 +233,11 @@ it("opens thread children for the current URL when the retained layout has stale
         sessionId: expect.stringMatching(/^attachments-/u),
         threadId: "current",
       },
-      pathname: "/v1/threads/[connectionId]/[threadId]/attachments",
+      pathname: "/threads/[connectionId]/[threadId]/attachments",
     });
     view.unmount();
   } finally {
-    workspaceRuntime.globalSupervisorVisibility = previousVisibility;
   }
-});
-
-it("consumes desktop default selection after the first thread choice", () => {
-  const resetThreadList = jest.fn();
-  const { result } = renderHook(() => useServerScope([], resetThreadList));
-
-  expect(result.current.desktopDefaultThreadEnabled).toBe(true);
-  act(() => {
-    result.current.consumeDesktopDefaultThread();
-  });
-  expect(result.current.desktopDefaultThreadEnabled).toBe(false);
-});
-
-it("does not arm desktop default selection over an initial thread route", () => {
-  const { result } = renderHook(() => useServerScope([], jest.fn(), false));
-
-  expect(result.current.desktopDefaultThreadEnabled).toBe(false);
 });
 
 it("retains the route-owned draft across view remounts and closes it explicitly", () => {
@@ -245,7 +257,7 @@ it("retains the route-owned draft across view remounts and closes it explicitly"
 });
 
 it("mounts the real V1 workspace route composition", async () => {
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   const initialUrl = Promise.withResolvers<string | null>();
   jest.spyOn(Linking, "getInitialURL").mockReturnValue(initialUrl.promise);
   const view = render(<V1RouteTree />);
@@ -260,7 +272,7 @@ it("mounts the real V1 workspace route composition", async () => {
 it("shows a chat-selection placeholder in an empty desktop destination", () => {
   holdInitialDeepLink();
   registerV1NavigationRoutes();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   const view = render(<V1RouteTree />);
   setWindowSize(1_400, 800);
 
@@ -275,7 +287,7 @@ it("shows a chat-selection placeholder in an empty desktop destination", () => {
 it("clips the desktop chat destination to its rounded left boundary", () => {
   holdInitialDeepLink();
   registerV1NavigationRoutes();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   const view = render(<V1RouteTree />);
   setWindowSize(1_400, 800);
 
@@ -304,7 +316,7 @@ it("clips the desktop chat destination to its rounded left boundary", () => {
 it("keeps the selected route mounted while phone rotation opens the two-pane workspace", () => {
   holdInitialDeepLink();
   registerV1NavigationRoutes();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   setWindowSize(400, 800);
   const view = render(<V1RouteTree />);
   const { result } = renderHook(useMountedThreadNavigation);
@@ -323,7 +335,7 @@ it("keeps the selected route mounted while phone rotation opens the two-pane wor
   expect(view.getByText("Threads")).toBeVisible();
   expect(view.getByText("Server unavailable")).toBeVisible();
   expect(view.getByTestId("v1-workspace-destination")).toBe(destination);
-  expect(mockRouterHistory().at(-1)?.pathname).toBe("/v1/threads/[connectionId]/[threadId]");
+  expect(mockRouterHistory().at(-1)?.pathname).toBe("/threads/[connectionId]/[threadId]");
 
   setWindowSize(400, 800);
 
@@ -336,10 +348,10 @@ it("keeps the selected route mounted while phone rotation opens the two-pane wor
 it("stretches the single-column workspace across compact phone landscape", () => {
   holdInitialDeepLink();
   registerV1NavigationRoutes();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   setWindowSize(700, 360);
   const view = render(<V1RouteTree />);
-  const list = view.getByTestId("v1-workspace-list");
+  const list = view.getByTestId("v1-workspace-destination");
   const listStyle = StyleSheet.flatten(list.props.style);
 
   expect(listStyle).toEqual(expect.objectContaining({ flex: 1 }));
@@ -356,9 +368,7 @@ it("stretches the single-column workspace across compact phone landscape", () =>
     view.getByTestId("v1-workspace-destination").props.style,
   );
 
-  expect(destinationStyle).toEqual(
-    expect.objectContaining({ bottom: 0, left: 0, right: 0, top: 0 }),
-  );
+  expect(destinationStyle).toEqual(expect.objectContaining({ flex: 1 }));
   expect(destinationStyle).not.toHaveProperty("maxWidth");
   expect(view.getByText("Server unavailable")).toBeVisible();
 
@@ -368,7 +378,7 @@ it("stretches the single-column workspace across compact phone landscape", () =>
 
 it("carries the selected thread into a browser attachment modal", () => {
   holdInitialDeepLink();
-  const pathname = "/v1/threads/[connectionId]/[threadId]";
+  const pathname = "/threads/[connectionId]/[threadId]";
   registerMockRoute(pathname, BrowserLauncher);
   resetMockRouter({
     params: { connectionId: "server", threadId: "selected" },
@@ -384,20 +394,20 @@ it("carries the selected thread into a browser attachment modal", () => {
       sessionId: expect.stringMatching(/^browser-/u),
       threadId: "selected",
     },
-    pathname: "/v1/browser/[sessionId]",
+    pathname: "/browser/[sessionId]",
   });
   view.unmount();
 });
 
 it("replaces the mobile thread list with global search instead of the conversation pane", () => {
   holdInitialDeepLink();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   const view = render(<V1RouteTree />);
 
   fireEvent.press(view.getByLabelText("Search threads and messages"));
 
   expect(view.getByTestId("sidebar-search")).toBeTruthy();
-  expect(mockRouterHistory().at(-1)?.pathname).toBe("/v1/search");
+  expect(mockRouterHistory().at(-1)?.pathname).toBe("/search");
   const searchSessionId = mockRouterHistory().at(-1)?.params.globalSearchSessionId;
   if (searchSessionId === undefined) {
     throw new Error("Expected global search session id");
@@ -409,7 +419,7 @@ it("replaces the mobile thread list with global search instead of the conversati
         globalSearchSessionId: searchSessionId,
         threadId: "result",
       },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
     });
   });
   expect(searchRouteSessions.get(searchSessionId, workspaceRouteSessionOwner)).not.toBeNull();
@@ -425,7 +435,7 @@ it.each([
   ["desktop", 1_400],
 ] as const)("keeps %s Threads and Search actions in one stable header row", (_mode, width) => {
   holdInitialDeepLink();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   setWindowSize(width, 800);
   const view = render(<V1RouteTree />);
   const threadsHeader = view.getByTestId("thread-list-header-row");
@@ -453,56 +463,62 @@ it.each([
   view.unmount();
 });
 
-it("unmounts the covered mobile conversation while global search is open", () => {
-  holdInitialDeepLink();
-  registerV1NavigationRoutes();
-  resetMockRouter("/v1");
-  const view = render(<V1RouteTree />);
-  const { result } = renderHook(useMountedThreadNavigation);
-  act(() => {
-    result.current.navigation.selectThread(
-      threadSelectionKey({ id: "selected", serverId: "server" }),
-    );
-  });
-
-  let searchControl = view.getByLabelText("Search threads and messages", {
-    includeHiddenElements: true,
-  });
-  while (typeof searchControl.props.onPress !== "function") {
-    const parent = searchControl.parent;
-    if (parent === null) {
-      throw new Error("Expected the hidden mobile search control to expose its press action");
+it.each([400, 1400])(
+  "preserves the previous conversation when Search opens at width %s",
+  (width) => {
+    setWindowSize(width, 800);
+    holdInitialDeepLink();
+    registerV1NavigationRoutes();
+    resetMockRouter("/");
+    let openWorkspaceSearch = (): void => {
+      throw new Error("Search capability unavailable");
+    };
+    function ConversationSearchProbe(): React.JSX.Element {
+      openWorkspaceSearch = useWorkspaceListRouteResources().openGlobalSearch;
+      return <Text>Selected conversation</Text>;
     }
-    searchControl = parent;
-  }
-  act(searchControl.props.onPress);
+    registerMockRoute("/threads/[connectionId]/[threadId]", ConversationSearchProbe);
+    const view = render(<V1RouteTree />);
+    const { result } = renderHook(useMountedThreadNavigation);
+    act(() => {
+      result.current.navigation.selectThread(
+        threadSelectionKey({ id: "selected", serverId: "server" }),
+      );
+    });
 
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/v1", "/v1/search"]);
-  expect(mockRouterHistory().at(-1)?.params.threadId).toBe("selected");
+    act(() => openWorkspaceSearch());
 
-  let closeControl = view.getByLabelText("Back to threads");
-  while (typeof closeControl.props.onPress !== "function") {
-    const parent = closeControl.parent;
-    if (parent === null) {
-      throw new Error("Expected the mobile search close control to expose its press action");
+    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+      "/",
+      "/threads/[connectionId]/[threadId]",
+      "/search",
+    ]);
+    expect(mockRouterHistory().at(-1)?.params.threadId).toBe("selected");
+
+    let closeControl = view.getByLabelText("Back to threads");
+    while (typeof closeControl.props.onPress !== "function") {
+      const parent = closeControl.parent;
+      if (parent === null) {
+        throw new Error("Expected the mobile search close control to expose its press action");
+      }
+      closeControl = parent;
     }
-    closeControl = parent;
-  }
-  act(closeControl.props.onPress);
+    act(closeControl.props.onPress);
 
-  expect(mockRouterHistory()).toEqual([
-    { params: {}, pathname: "/v1" },
-    {
-      params: { connectionId: "server", threadId: "selected" },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
-    },
-  ]);
-  view.unmount();
-});
+    expect(mockRouterHistory()).toEqual([
+      { params: {}, pathname: "/" },
+      {
+        params: { connectionId: "server", threadId: "selected" },
+        pathname: "/threads/[connectionId]/[threadId]",
+      },
+    ]);
+    view.unmount();
+  },
+);
 
 it("closes desktop search without reverting the chat selected from its results", () => {
   holdInitialDeepLink();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   const view = render(<V1RouteTree />);
   setWindowSize(1_400, 800);
 
@@ -512,20 +528,20 @@ it("closes desktop search without reverting the chat selected from its results",
     throw new Error("Expected global search session id");
   }
   act(() => {
-    router.replace({
+    router.push({
       params: {
         connectionId: "server",
         globalSearchSessionId: searchSessionId,
         threadId: "result",
       },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
     });
   });
   fireEvent.press(view.getByLabelText("Back to threads"));
 
   expect(mockRouterHistory().at(-1)).toEqual({
     params: { connectionId: "server", threadId: "result" },
-    pathname: "/v1/threads/[connectionId]/[threadId]",
+    pathname: "/threads/[connectionId]/[threadId]",
   });
   setWindowSize(400, 800);
   view.unmount();
@@ -533,8 +549,8 @@ it("closes desktop search without reverting the chat selected from its results",
 
 it("keeps the real shell mounted while Router Back disposes the rendered drawing route", () => {
   holdInitialDeepLink();
-  registerMockRoute("/v1/drawing/[sessionId]", V1DrawingRoute);
-  resetMockRouter("/v1");
+  registerMockRoute("/drawing/[sessionId]", V1DrawingRoute);
+  resetMockRouter("/");
   const admitted = drawingRouteSessions.open(workspaceRouteSessionOwner, {
     commit: async () => true,
     editing: true,
@@ -550,7 +566,7 @@ it("keeps the real shell mounted while Router Back disposes the rendered drawing
   act(() => {
     router.push({
       params: { sessionId: admitted.session.id },
-      pathname: "/v1/drawing/[sessionId]",
+      pathname: "/drawing/[sessionId]",
     });
   });
   expect(view.getByTestId("v1-workspace-shell")).toBe(shell);
@@ -574,12 +590,12 @@ it("keeps the real shell mounted while Router Back disposes the rendered drawing
   act(() => {
     router.push({
       params: { sessionId: replacement.session.id },
-      pathname: "/v1/drawing/[sessionId]",
+      pathname: "/drawing/[sessionId]",
     });
   });
   expect(drawingRouteSessions.get(replacement.session.id)).not.toBeNull();
   act(() => {
-    router.replace("/v1/settings");
+    router.replace("/settings");
   });
   expect(view.getByTestId("v1-workspace-shell")).toBe(shell);
   expect(drawingRouteSessions.get(replacement.session.id)).toBeNull();
@@ -590,7 +606,7 @@ it("keeps a mounted drawing available at its deadline and retires it on unmount"
   jest.useFakeTimers();
   jest.setSystemTime(0);
   holdInitialDeepLink();
-  registerMockRoute("/v1/drawing/[sessionId]", V1DrawingRoute);
+  registerMockRoute("/drawing/[sessionId]", V1DrawingRoute);
   const pending = Promise.withResolvers<boolean>();
   const admitted = drawingRouteSessions.open(workspaceRouteSessionOwner, {
     commit: () => pending.promise,
@@ -603,7 +619,7 @@ it("keeps a mounted drawing available at its deadline and retires it on unmount"
   }
   resetMockRouter({
     params: { sessionId: admitted.session.id },
-    pathname: "/v1/drawing/[sessionId]",
+    pathname: "/drawing/[sessionId]",
   });
   const view = render(<V1RouteTree />);
   const settlement = drawingRouteSessions.commit(admitted.session.id, {
@@ -626,30 +642,30 @@ it("keeps a mounted drawing available at its deadline and retires it on unmount"
 it.each([
   {
     component: V1DrawingRoute,
-    destination: "/v1",
+    destination: "/",
     params: { sessionId: "missing" },
-    pathname: "/v1/drawing/[sessionId]",
+    pathname: "/drawing/[sessionId]",
     title: "Drawing unavailable",
   },
   {
     component: V1DraftContentRoute,
-    destination: "/v1/new",
+    destination: "/new",
     params: { sessionId: "missing" },
-    pathname: "/v1/new/content/[sessionId]",
+    pathname: "/new/content/[sessionId]",
     title: "Content unavailable",
   },
   {
     component: V1DraftModelRoute,
-    destination: "/v1/new",
+    destination: "/new",
     params: { sessionId: "missing" },
-    pathname: "/v1/new/controls/model",
+    pathname: "/new/controls/model",
     title: "Model controls unavailable",
   },
 ])(
   "recovers the rendered $title direct entry through its visible control",
   ({ component, destination, params, pathname, title }) => {
     holdInitialDeepLink();
-    if (destination === "/v1/new") {
+    if (destination === "/new") {
       newThreadService.open("server", null);
     }
     registerMockRoute(pathname, component);
@@ -669,7 +685,7 @@ it.each([
   { agentThreadId: "missing-agent", kind: "unknown" },
 ])("keeps a rendered $kind agent detail out of the master route", async ({ agentThreadId }) => {
   holdInitialDeepLink();
-  const pathname = "/v1/threads/[connectionId]/[threadId]/agents/[agentThreadId]";
+  const pathname = "/threads/[connectionId]/[threadId]/agents/[agentThreadId]";
   registerMockRoute(pathname, V1AgentThreadRoute);
   resetMockRouter({
     params: { agentThreadId, connectionId: "server", threadId: "parent" },
@@ -683,7 +699,7 @@ it.each([
   expect(mockRouterHistory()).toEqual([
     {
       params: { connectionId: "server", threadId: "parent" },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
     },
   ]);
   view.unmount();
@@ -691,7 +707,7 @@ it.each([
 
 it("disposes owner work exactly once when the real V1 layout unmounts", () => {
   holdInitialDeepLink();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   const session = searchRouteSessions.open(workspaceRouteSessionOwner);
   const cancelPending = jest.spyOn(session.session, "cancelPending");
   const view = render(<V1RouteTree layout />);
@@ -716,7 +732,7 @@ it("replaces a rendered peer destination so Back cannot reveal it", () => {
   registerV1NavigationRoutes();
   resetMockRouter({
     params: { sessionId: "missing" },
-    pathname: "/v1/drawing/[sessionId]",
+    pathname: "/drawing/[sessionId]",
   });
   const view = render(<V1RouteTree />);
   const { result } = renderHook(useMountedThreadNavigation);
@@ -732,7 +748,7 @@ it("replaces a rendered peer destination so Back cannot reveal it", () => {
   expect(mockRouterHistory()).toEqual([
     {
       params: { connectionId: "server", threadId: "selected" },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
     },
   ]);
   expect(view.getByText("Server unavailable")).toBeTruthy();
@@ -741,18 +757,165 @@ it("replaces a rendered peer destination so Back cannot reveal it", () => {
   act(() => {
     router.back();
   });
-  expect(mockRouterHistory()[0]?.pathname).toBe("/v1/threads/[connectionId]/[threadId]");
+  expect(mockRouterHistory()[0]?.pathname).toBe("/threads/[connectionId]/[threadId]");
   expect(view.getByText("Server unavailable")).toBeTruthy();
   expect(view.queryByText("Drawing unavailable")).toBeNull();
   view.unmount();
 });
 
+function RetainedDraftProbe(): React.JSX.Element {
+  const [draft, setDraft] = useState("");
+  const change = useEvent((value: string): void => {
+    setDraft(value);
+  });
+  return <TextInput accessibilityLabel="Retained draft" value={draft} onChangeText={change} />;
+}
+
+function ThreadLinkProbe({
+  connectionId,
+  readCapability,
+}: {
+  readonly connectionId: string;
+  readonly readCapability: ThreadNavigationReadCapability;
+}): React.JSX.Element {
+  const { navigation } = useMountedThreadNavigation(readCapability);
+  const thread = {
+    id: "selected",
+    serverId: connectionId,
+    title: "Selected thread",
+    preview: "",
+    pinned: false,
+    unread: 0,
+  };
+  const prepare = useEvent(() => navigation.prepareThreadLink(threadSelectionKey(thread)));
+  return (
+    <ThreadRow
+      link={navigation.getThreadLink(thread)}
+      onNavigate={prepare}
+      selected={false}
+      server={undefined}
+      thread={thread}
+    />
+  );
+}
+
+it.each(["server", "server/with space"])(
+  "keeps the mounted conversation and edited draft after repeated real row taps on %s",
+  async (connectionId) => {
+    holdInitialDeepLink();
+    registerMockRoute("/threads/[connectionId]/[threadId]", RetainedDraftProbe);
+    resetMockRouter({
+      params: { connectionId, threadId: "selected" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+    const observeThread = jest.fn(async () => undefined);
+    const view = await renderAsync(
+      <>
+        <V1RouteTree />
+        <ThreadLinkProbe
+          connectionId={connectionId}
+          readCapability={{ ...remote, observeThread }}
+        />
+      </>,
+    );
+    const input = view.getByLabelText("Retained draft");
+    await fireEventAsync.changeText(input, "Keep this draft");
+    expect(view.getByDisplayValue("Keep this draft")).toBe(input);
+    const dismiss = jest.spyOn(KeyboardController, "dismiss");
+    dismiss.mockClear();
+    const link = view.getByRole("link", { name: "Thread actions" });
+    expect(link.props.href).toBe(`/threads/${encodeURIComponent(connectionId)}/selected`);
+    await fireEventAsync.press(link);
+    await fireEventAsync.press(link);
+    expect(view.getByDisplayValue("Keep this draft")).toBe(input);
+    expect(mockRouterHistory()).toHaveLength(1);
+    expect(observeThread).not.toHaveBeenCalled();
+    expect(dismiss).not.toHaveBeenCalled();
+    await view.unmountAsync();
+  },
+);
+
+it.each(["/threads/[connectionId]/[threadId]/queue", "/drawing/[sessionId]", "/search"])(
+  "returns from %s through the row link without retaining the child screen",
+  async (pathname) => {
+    resetMockRouter("/");
+    router.push({
+      params: { connectionId: "server", threadId: "selected" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+    router.push({
+      params: { connectionId: "server", threadId: "selected", sessionId: "child" },
+      pathname,
+    });
+    const view = await renderAsync(
+      <ThreadLinkProbe connectionId="server" readCapability={remote} />,
+    );
+    await fireEventAsync.press(view.getByRole("link"));
+    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+      "/",
+      "/threads/[connectionId]/[threadId]",
+    ]);
+    await view.unmountAsync();
+  },
+);
+
+it("preserves the visible search window on reselection without leaking it to another thread", async () => {
+  resetMockRouter({
+    pathname: "/threads/[connectionId]/[threadId]",
+    params: {
+      connectionId: "first",
+      threadId: "selected",
+      globalSearchSessionId: "search",
+      searchWindowId: "window",
+    },
+  });
+  const view = await renderAsync(<ThreadLinkProbe connectionId="first" readCapability={remote} />);
+  await fireEventAsync.press(view.getByRole("link"));
+  expect(mockRouterHistory().at(-1)?.params).toMatchObject({
+    globalSearchSessionId: "search",
+    searchWindowId: "window",
+  });
+  await view.rerenderAsync(<ThreadLinkProbe connectionId="second" readCapability={remote} />);
+  await fireEventAsync.press(view.getByRole("link"));
+  expect(mockRouterHistory().at(-1)?.params).toEqual({
+    connectionId: "second",
+    threadId: "selected",
+    globalSearchSessionId: "search",
+  });
+  await view.unmountAsync();
+});
+
+it("resolves a recycled row link to the latest server and observes that qualified thread once", async () => {
+  resetMockRouter("/");
+  router.push({
+    params: { connectionId: "first", threadId: "selected" },
+    pathname: "/threads/[connectionId]/[threadId]",
+  });
+  const observeThread = jest.fn(async () => undefined);
+  const capability = { ...remote, observeThread };
+  const view = await renderAsync(
+    <ThreadLinkProbe connectionId="first" readCapability={capability} />,
+  );
+  await view.rerenderAsync(<ThreadLinkProbe connectionId="second" readCapability={capability} />);
+  await fireEventAsync.press(view.getByRole("link"));
+  expect(mockRouterHistory().at(-1)?.params).toEqual({
+    connectionId: "second",
+    threadId: "selected",
+  });
+  expect(mockRouterHistory()).toHaveLength(2);
+  expect(observeThread).toHaveBeenCalledTimes(1);
+  expect(observeThread).toHaveBeenCalledWith("second", "selected");
+  await fireEventAsync.press(view.getByRole("link"));
+  expect(observeThread).toHaveBeenCalledTimes(1);
+  await view.unmountAsync();
+});
+
 it("unmounts the previous conversation when selecting another thread", () => {
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   act(() => {
     router.push({
       params: { connectionId: "server", threadId: "previous" },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
     });
   });
   const { result } = renderHook(useMountedThreadNavigation);
@@ -764,64 +927,59 @@ it("unmounts the previous conversation when selecting another thread", () => {
   });
 
   expect(mockRouterHistory()).toEqual([
-    { params: {}, pathname: "/v1" },
+    { params: {}, pathname: "/" },
     {
       params: { connectionId: "server", threadId: "selected" },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
     },
   ]);
 });
 
-it("pushes from the rendered All destination and Back renders All again", () => {
-  holdInitialDeepLink();
-  registerV1NavigationRoutes();
-  resetMockRouter("/v1");
-  const view = render(<V1RouteTree />);
-  const { result } = renderHook(useMountedThreadNavigation);
-  const destination = view.getByTestId("v1-workspace-destination", {
-    includeHiddenElements: true,
-  });
-  const list = view.getByTestId("v1-workspace-list");
+it.each(["system", "header"] as const)(
+  "pushes from All and %s Back renders All again",
+  async (backKind) => {
+    holdInitialDeepLink();
+    setWindowSize(400, 800);
+    registerV1NavigationRoutes();
+    resetMockRouter("/");
+    const view = await renderAsync(<V1RouteTree />);
+    const { result } = renderHook(useMountedThreadNavigation);
+    const destination = view.getByTestId("v1-workspace-destination", {
+      includeHiddenElements: true,
+    });
 
-  expect(view.getByText("Threads")).toBeTruthy();
-  expect(list.props.pointerEvents).toBe("auto");
-  expect(destination.props.pointerEvents).toBe("none");
-  act(() => {
-    result.current.navigation.selectThread(
-      threadSelectionKey({ id: "selected", serverId: "server" }),
+    expect(view.getByText("Threads")).toBeTruthy();
+    await act(async () => {
+      result.current.navigation.selectThread(
+        threadSelectionKey({ id: "selected", serverId: "server" }),
+      );
+    });
+    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+      "/",
+      "/threads/[connectionId]/[threadId]",
+    ]);
+    expect(view.getByText("Server unavailable")).toBeTruthy();
+    expect(view.queryByText("Threads")).toBeNull();
+    expect(view.getByTestId("v1-workspace-destination")).toBe(destination);
+
+    await act(async () => {
+      if (backKind === "system") router.back();
+      else result.current.navigation.closeActiveThread();
+    });
+    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/"]);
+    expect(view.getByText("Threads")).toBeTruthy();
+    expect(view.queryByText("Server unavailable")).toBeNull();
+    expect(view.getByTestId("v1-workspace-destination", { includeHiddenElements: true })).toBe(
+      destination,
     );
-  });
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
-    "/v1",
-    "/v1/threads/[connectionId]/[threadId]",
-  ]);
-  expect(view.getByText("Server unavailable")).toBeTruthy();
-  expect(view.queryByText("Threads")).toBeNull();
-  expect(view.getByText("Threads", { includeHiddenElements: true })).toBeTruthy();
-  expect(view.getByTestId("v1-workspace-list", { includeHiddenElements: true })).toBe(list);
-  expect(list.props.pointerEvents).toBe("none");
-  expect(view.getByTestId("v1-workspace-destination")).toBe(destination);
-  expect(destination.props.pointerEvents).toBe("auto");
-
-  act(() => {
-    router.back();
-  });
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/v1"]);
-  expect(view.getByText("Threads")).toBeTruthy();
-  expect(view.queryByText("Server unavailable")).toBeNull();
-  expect(view.getByTestId("v1-workspace-list")).toBe(list);
-  expect(list.props.pointerEvents).toBe("auto");
-  expect(view.getByTestId("v1-workspace-destination", { includeHiddenElements: true })).toBe(
-    destination,
-  );
-  expect(destination.props.pointerEvents).toBe("none");
-  view.unmount();
-});
+    await view.unmountAsync();
+  },
+);
 
 it("keeps the newer rendered destination after an older observer settles", async () => {
   holdInitialDeepLink();
   registerV1NavigationRoutes();
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   const observation = Promise.withResolvers<void>();
   const controlledRemote: ThreadNavigationReadCapability = {
     observeThread: jest.fn(() => observation.promise),
@@ -838,7 +996,7 @@ it("keeps the newer rendered destination after an older observer settles", async
   act(() => {
     router.push({
       params: { sessionId: "missing" },
-      pathname: "/v1/drawing/[sessionId]",
+      pathname: "/drawing/[sessionId]",
     });
   });
   expect(view.getByText("Drawing unavailable")).toBeTruthy();
@@ -854,8 +1012,10 @@ it("keeps the newer rendered destination after an older observer settles", async
   view.unmount();
 });
 
-it("replaces /v1/new after successful first admission and retires only the captured draft", async () => {
-  resetMockRouter("/v1/new");
+it("replaces /new after successful first admission and retires only the captured draft", async () => {
+  // The real workspace anchor inserts the list beneath a cold /new link.
+  resetMockRouter("/");
+  router.push("/new");
   const drafts = new NewThreadService();
   const captured = drafts.open("server", null);
   const commands = {
@@ -878,17 +1038,17 @@ it("replaces /v1/new after successful first admission and retires only the captu
 
   expect(drafts.current()).toBeNull();
   expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
-    "/v1",
-    "/v1/threads/[connectionId]/[threadId]",
+    "/",
+    "/threads/[connectionId]/[threadId]",
   ]);
   act(() => {
     router.back();
   });
-  expect(mockRouterHistory()[0]?.pathname).toBe("/v1");
+  expect(mockRouterHistory()[0]?.pathname).toBe("/");
 });
 
-it("retains the exact draft and /v1/new destination when first admission fails", async () => {
-  resetMockRouter("/v1/new");
+it("retains the exact draft and /new destination when first admission fails", async () => {
+  resetMockRouter("/new");
   const drafts = new NewThreadService();
   const captured = drafts.open("server", null);
   const commands = {
@@ -912,37 +1072,37 @@ it("retains the exact draft and /v1/new destination when first admission fails",
   ).rejects.toThrow("admission failed");
 
   expect(drafts.current()).toBe(captured);
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/v1/new"]);
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/new"]);
 });
 
-it("does not add a second /v1/new entry when its server picker is already mounted", () => {
-  resetMockRouter("/v1/new");
-  const { result } = renderHook(useV1WorkspaceRouteModel);
+it("does not add a second /new entry when its server picker is already mounted", () => {
+  resetMockRouter("/new");
+  const { result } = renderHook(useWorkspaceRouteModel);
   act(() => {
     ensureV1NewThreadRoute(result.current.router, result.current.pathname);
   });
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/v1/new"]);
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/new"]);
 });
 
 it("removes retained peer conversations before opening a new-thread destination", () => {
-  resetMockRouter("/v1");
+  resetMockRouter("/");
   act(() => {
     router.push({
       params: { connectionId: "server", threadId: "first" },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
     });
-    router.push({ params: { sessionId: "child" }, pathname: "/v1/drawing/[sessionId]" });
+    router.push({ params: { sessionId: "child" }, pathname: "/drawing/[sessionId]" });
   });
-  const { result } = renderHook(useV1WorkspaceRouteModel);
+  const { result } = renderHook(useWorkspaceRouteModel);
 
   act(() => {
     ensureV1NewThreadRoute(result.current.router, result.current.pathname);
   });
 
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/v1", "/v1/new"]);
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/", "/new"]);
 });
 
-it.each(["/v1/browser/[sessionId]", "/v1/drawing/[sessionId]"])(
+it.each(["/browser/[sessionId]", "/drawing/[sessionId]"])(
   "keeps the owning thread selected under the root modal %s",
   (pathname) => {
     resetMockRouter({
@@ -953,7 +1113,7 @@ it.each(["/v1/browser/[sessionId]", "/v1/drawing/[sessionId]"])(
       },
       pathname,
     });
-    const { result } = renderHook(useV1WorkspaceRouteModel);
+    const { result } = renderHook(useWorkspaceRouteModel);
 
     expect(result.current.currentThread).toEqual({
       connectionId: { kind: "connectionId", value: "server" },
@@ -962,103 +1122,61 @@ it.each(["/v1/browser/[sessionId]", "/v1/drawing/[sessionId]"])(
   },
 );
 
-it("keeps global search in the desktop list pane while replacing the conversation result", () => {
-  const session = searchRouteSessions.open(workspaceRouteSessionOwner);
-  resetMockRouter({
-    params: {
-      connectionId: "server",
-      globalSearchSessionId: session.id,
-      threadId: "current",
-    },
-    pathname: "/v1/search",
-  });
-  const { result } = renderHook(() => {
-    const route = useV1WorkspaceRouteModel(true);
-    const navigation = useThreadNavigationService(remote, route.threadRouter);
-    return { navigation, route };
-  });
-  expect(result.current.route.currentThread?.threadId.value).toBe("current");
-
-  act(() => {
-    result.current.navigation.openSearchThread(threadSearchTarget, "query");
-  });
-
-  expect(mockRouterHistory()).toEqual([
-    {
-      params: {},
-      pathname: "/v1",
-    },
-    {
-      params: {
-        connectionId: "server",
-        globalSearchSessionId: session.id,
-        threadId: "search-result",
-      },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
-    },
-  ]);
-  expect(result.current.route.currentThread?.threadId.value).toBe("search-result");
-  expect(result.current.route.globalSearchSessionId).toBe(session.id);
-});
-
-it("removes the previous desktop conversation when search selects another thread", () => {
-  const session = searchRouteSessions.open(workspaceRouteSessionOwner);
-  resetMockRouter("/v1");
-  act(() => {
+it.each([400, 1400])(
+  "preserves search and its origin through repeated result selection at width %s",
+  (width) => {
+    setWindowSize(width, 800);
+    const session = searchRouteSessions.open(workspaceRouteSessionOwner);
+    session.session.changeText("retained query");
+    session.session.submit();
+    session.session.rememberScroll(180);
+    resetMockRouter("/");
     router.push({
       params: { connectionId: "server", threadId: "previous" },
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
     });
     router.push({
-      params: {
-        connectionId: "server",
-        globalSearchSessionId: session.id,
-        threadId: "previous",
-      },
-      pathname: "/v1/search",
+      params: { connectionId: "server", globalSearchSessionId: session.id, threadId: "previous" },
+      pathname: "/search",
     });
-  });
-  const { result } = renderHook(() => {
-    const route = useV1WorkspaceRouteModel(true);
-    return useThreadNavigationService(remote, route.threadRouter);
-  });
-
-  act(() => {
-    result.current.openSearchThread(threadSearchTarget, "query");
-  });
-
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
-    "/v1",
-    "/v1/threads/[connectionId]/[threadId]",
-  ]);
-  expect(mockRouterHistory().at(-1)?.params.threadId).toBe("search-result");
-});
-
-it("pushes a mobile search result so Back returns to the search list", () => {
-  const session = searchRouteSessions.open(workspaceRouteSessionOwner);
-  resetMockRouter({
-    params: { globalSearchSessionId: session.id },
-    pathname: "/v1/search",
-  });
-  const { result } = renderHook(useMountedThreadNavigation);
-
-  act(() => {
-    result.current.navigation.openSearchThread(threadSearchTarget, "query");
-  });
-
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
-    "/v1/search",
-    "/v1/threads/[connectionId]/[threadId]",
-  ]);
-  expect(mockRouterHistory().at(-1)?.params.globalSearchSessionId).toBe(session.id);
-});
+    const { result } = renderHook(useMountedThreadNavigation);
+    act(() => result.current.navigation.openSearchThread(threadSearchTarget, "query"));
+    act(() =>
+      result.current.navigation.openSearchThread(
+        {
+          ...threadSearchTarget,
+          hit: { ...threadSearchTarget.hit, threadId: "second-result" },
+        },
+        "query",
+      ),
+    );
+    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+      "/",
+      "/threads/[connectionId]/[threadId]",
+      "/search",
+      "/threads/[connectionId]/[threadId]",
+    ]);
+    expect(mockRouterHistory().at(-1)?.params.threadId).toBe("second-result");
+    setWindowSize(width === 400 ? 1400 : 400, 800);
+    act(() => result.current.navigation.closeActiveThread());
+    expect(mockRouterHistory().at(-1)?.pathname).toBe("/search");
+    expect(result.current.route.globalSearchSessionId).toBe(session.id);
+    expect(searchRouteSessions.get(session.id, workspaceRouteSessionOwner)?.session).toBe(
+      session.session,
+    );
+    expect(session.session.text$.peek()).toBe("retained query");
+    expect(session.session.scrollOffset).toBe(180);
+    act(() => router.back());
+    expect(mockRouterHistory().at(-1)?.params.threadId).toBe("previous");
+  },
+);
 
 it("falls back deterministically from an unavailable direct entry", () => {
-  resetMockRouter("/v1/drawing/missing");
+  resetMockRouter("/drawing/missing");
   act(() => {
-    recoverUnavailableRoute(router, "/v1");
+    recoverUnavailableRoute(router, "/");
   });
-  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/v1"]);
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/"]);
 });
 
 it("retires the previous route session on replacement and the current one on unmount", () => {
@@ -1087,7 +1205,7 @@ it("captures the original V1 subagent workspace before opening its route", () =>
   }
   resetMockRouter({
     params: { agentThreadId: "agent-a", connectionId: "server", threadId: "root" },
-    pathname: "/v1/threads/[connectionId]/[threadId]/agents/[agentThreadId]",
+    pathname: "/threads/[connectionId]/[threadId]/agents/[agentThreadId]",
   });
   const view = renderHook(() => useThreadRouteNavigation(router, parsed.value));
   const summaries = [];
@@ -1107,7 +1225,7 @@ it("captures the original V1 subagent workspace before opening its route", () =>
       sessionId: expect.stringMatching(/^agents-/u),
       threadId: "root",
     },
-    pathname: "/v1/threads/[connectionId]/[threadId]/agents",
+    pathname: "/threads/[connectionId]/[threadId]/agents",
   });
   const sessionId = destination?.params?.sessionId;
   expect(typeof sessionId).toBe("string");
@@ -1131,7 +1249,7 @@ it("carries the owning thread into the root drawing modal", () => {
   }
   resetMockRouter({
     params: { connectionId: "server", threadId: "root" },
-    pathname: "/v1/threads/[connectionId]/[threadId]",
+    pathname: "/threads/[connectionId]/[threadId]",
   });
   const view = renderHook(() => useThreadRouteNavigation(router, parsed.value));
 
@@ -1150,6 +1268,352 @@ it("carries the owning thread into the root drawing modal", () => {
       sessionId: expect.stringMatching(/^drawing-/u),
       threadId: "root",
     },
-    pathname: "/v1/drawing/[sessionId]",
+    pathname: "/drawing/[sessionId]",
   });
+});
+
+const projectListFixture = {
+  connectionId: "project-server",
+  key: "project-key",
+  lastUsedAt: 1,
+  name: "Example project",
+  path: "/private/example",
+  pinned: true,
+  serverLabel: null,
+  subtitle: "/private/example",
+  unread: false,
+};
+
+function ProjectLaunchRoot(): React.JSX.Element {
+  const resources = useWorkspaceListRouteResources();
+  return (
+    <>
+      <Pressable onPress={() => resources.openSidebarProject(projectListFixture)}>
+        <Text>Open example project</Text>
+      </Pressable>
+      <V1AllRoute />
+    </>
+  );
+}
+
+it("opens a project through native-stack history without changing the root sidebar scope", () => {
+  holdInitialDeepLink();
+  setWindowSize(400, 800);
+  resetMockRouter("/");
+  registerMockRoute("/", ProjectLaunchRoot, { retainWhenCovered: true });
+  const view = render(<V1RouteTree />);
+  const header = view.getByTestId("thread-list-header-row");
+  const orb = view.getByTestId("global-voice-slot");
+  const search = view.getByLabelText("Search threads and messages");
+  fireEvent.press(view.getByText("Open example project"));
+  const entry = mockRouterHistory().at(-1);
+  expect(entry?.pathname).toBe("/project/[sessionId]");
+  expect(JSON.stringify(entry?.params)).not.toContain(projectListFixture.path);
+  expect(view.getByLabelText("Project Example project")).toBeVisible();
+  expect(view.getAllByLabelText("Search threads and messages")).toHaveLength(1);
+  expect(view.getAllByTestId("global-voice-slot")).toHaveLength(1);
+  expect(view.getByTestId("thread-list-header-row")).toBe(header);
+  expect(view.getByTestId("global-voice-slot")).toBe(orb);
+  expect(view.getByLabelText("Search threads and messages")).toBe(search);
+  expect(
+    within(view.getByTestId("workspace-list-scenes")).queryByTestId("thread-list-header-row", {
+      includeHiddenElements: true,
+    }),
+  ).toBeNull();
+  fireEvent.press(view.getByLabelText("Back to projects"));
+  expect(mockRouterHistory().map((route) => route.pathname)).toEqual(["/"]);
+  expect(view.getByText("Threads")).toBeVisible();
+  expect(view.queryByLabelText("Project Example project")).toBeNull();
+  expect(view.getByTestId("thread-list-header-row")).toBe(header);
+  expect(view.getByTestId("global-voice-slot")).toBe(orb);
+  expect(view.getByLabelText("Search threads and messages")).toBe(search);
+  view.unmount();
+});
+
+it("preserves the project destination when opening a chat and closing it through the header", () => {
+  const session = projectListRouteSessions.open(projectListFixture);
+  resetMockRouter("/");
+  act(() => router.push({ pathname: "/project/[sessionId]", params: { sessionId: session.id } }));
+  const { result } = renderHook(useMountedThreadNavigation);
+  act(() =>
+    result.current.navigation.selectThread(
+      threadSelectionKey({ id: "project-chat", serverId: projectListFixture.connectionId }),
+    ),
+  );
+  expect(mockRouterHistory().map((route) => route.pathname)).toEqual([
+    "/",
+    "/project/[sessionId]",
+    "/threads/[connectionId]/[threadId]",
+  ]);
+  expect(mockRouterHistory().at(-1)?.params.projectListSessionId).toBe(session.id);
+  act(() => result.current.navigation.closeActiveThread());
+  expect(mockRouterHistory().at(-1)).toEqual({
+    pathname: "/project/[sessionId]",
+    params: { sessionId: session.id },
+  });
+});
+
+it("keeps the project below search and returns to it when search closes", () => {
+  holdInitialDeepLink();
+  setWindowSize(400, 800);
+  resetMockRouter("/");
+  registerMockRoute("/", ProjectLaunchRoot);
+  registerMockRoute("/project/[sessionId]", V1ProjectListRoute, { retainWhenCovered: true });
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByText("Open example project"));
+  const projectEntry = mockRouterHistory().at(-1);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+    "/",
+    "/project/[sessionId]",
+    "/search",
+  ]);
+  expect(mockRouterHistory().at(-1)?.params.projectListSessionId).toBe(
+    projectEntry?.params.sessionId,
+  );
+  fireEvent.press(view.getByLabelText("Back to threads"));
+  expect(mockRouterHistory().at(-1)).toEqual(projectEntry);
+  expect(view.getByLabelText("Project Example project")).toBeVisible();
+  view.unmount();
+});
+
+it("pushes a draft above the project and keeps project paths out of draft route parameters", () => {
+  resetMockRouter("/");
+  router.push({ pathname: "/project/[sessionId]", params: { sessionId: "project-session" } });
+  ensureV1NewThreadRoute(router, "/project/project-session");
+  expect(mockRouterHistory().map((route) => route.pathname)).toEqual([
+    "/",
+    "/project/[sessionId]",
+    "/new",
+  ]);
+  router.back();
+  expect(mockRouterHistory().at(-1)?.params.sessionId).toBe("project-session");
+});
+
+it("replaces the admitted draft while preserving its project parent", () => {
+  resetMockRouter("/");
+  router.push({ pathname: "/project/[sessionId]", params: { sessionId: "project-session" } });
+  ensureV1NewThreadRoute(router, "/project/project-session", "project-session");
+  const { result } = renderHook(useMountedThreadNavigation);
+  act(() =>
+    result.current.navigation.selectThread(
+      threadSelectionKey({ id: "admitted", serverId: "project-server" }),
+    ),
+  );
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+    "/",
+    "/project/[sessionId]",
+    "/threads/[connectionId]/[threadId]",
+  ]);
+  act(() => result.current.navigation.closeActiveThread());
+  expect(mockRouterHistory().at(-1)?.params.sessionId).toBe("project-session");
+});
+
+it("recovers an unmatched URL to the rendered thread list without leaving the bad URL in history", async () => {
+  holdInitialDeepLink();
+  setWindowSize(400, 800);
+  registerMockRoute("/missing/deep/link", UnmatchedRoute);
+  resetMockRouter("/missing/deep/link");
+  const view = await renderAsync(<V1RouteTree />);
+  await waitFor(() => {
+    expect(view.getByText("Threads")).toBeTruthy();
+  });
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/"]);
+  expect(view.queryByText("Page unavailable")).toBeNull();
+  await view.unmountAsync();
+});
+
+it.each([400, 1400])(
+  "requires explicit thread selection even with cached rows at initial width %s",
+  (width) => {
+    holdInitialDeepLink();
+    setWindowSize(width, 800);
+    resetMockRouter("/");
+    jest.spyOn(summaryView, "useThreadSummaryView").mockReturnValue({
+      archived: [],
+      error: null,
+      phase: "ready",
+      pinned: [],
+      recent: [summary("cached-thread", { preview: "Cached preview" })],
+      requestKey: null,
+      revision: 1,
+      selected: [],
+      subagents: [],
+    });
+    const view = render(<V1RouteTree />);
+    expect(view.getByText("cached-thread")).toBeVisible();
+    expect(mockRouterHistory()).toEqual([{ params: {}, pathname: "/" }]);
+    setWindowSize(width === 400 ? 1400 : 400, 800);
+    expect(view.getByText("cached-thread")).toBeVisible();
+    expect(mockRouterHistory()).toEqual([{ params: {}, pathname: "/" }]);
+    view.unmount();
+  },
+);
+
+it("retains the wide conversation through project and filter changes", () => {
+  holdInitialDeepLink();
+  setWindowSize(1400, 800);
+  resetMockRouter({
+    pathname: "/threads/[connectionId]/[threadId]",
+    params: { connectionId: "server", threadId: "selected" },
+  });
+  registerMockRoute("/threads/[connectionId]/[threadId]", () => (
+    <Text testID="retained-conversation">Selected chat</Text>
+  ));
+  const view = render(<V1RouteTree />);
+  const conversation = view.getByTestId("retained-conversation");
+  const threadEntry = mockRouterHistory().at(-1);
+  act(() => view.UNSAFE_getByType(ThreadSidebar).props.onOpenProject(projectListFixture));
+  expect(view.getByLabelText("Project Example project")).toBeVisible();
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onFilterChange("unread"));
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onModeChange("archived"));
+  expect(mockRouterHistory().at(-1)).toEqual(threadEntry);
+  expect(view.getByTestId("retained-conversation")).toBe(conversation);
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onBackToProjects());
+  expect(mockRouterHistory().at(-1)).toEqual(threadEntry);
+  expect(view.getByTestId("retained-conversation")).toBe(conversation);
+  view.unmount();
+});
+
+it("restores the same project page and offset in either list presentation", () => {
+  holdInitialDeepLink();
+  setWindowSize(400, 800);
+  resetMockRouter("/");
+  registerMockRoute("/", ProjectLaunchRoot);
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByText("Open example project"));
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onLoadMoreProject(84));
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onOffsetChange(260));
+  act(() => router.back());
+  setWindowSize(1400, 800);
+  act(() => view.UNSAFE_getByType(ThreadSidebar).props.onOpenProject(projectListFixture));
+  expect(view.UNSAFE_getByType(MobileThreads).props.projectLimit).toBe(84);
+  expect(view.UNSAFE_getByType(MobileThreads).props.initialOffset).toBe(260);
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onLoadMoreProject(120));
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onOffsetChange(400));
+  act(() =>
+    view
+      .UNSAFE_getByType(MobileThreads)
+      .props.onOpenProject({ ...projectListFixture, key: "other", path: "/other", name: "Other" }),
+  );
+  expect(view.UNSAFE_getByType(MobileThreads).props.projectLimit).not.toBe(120);
+  expect(view.UNSAFE_getByType(MobileThreads).props.initialOffset).toBe(0);
+  fireEvent.press(view.getByLabelText("Back to projects"));
+  setWindowSize(400, 800);
+  fireEvent.press(view.getByText("Open example project"));
+  expect(view.UNSAFE_getByType(MobileThreads).props.projectLimit).toBe(120);
+  expect(view.UNSAFE_getByType(MobileThreads).props.initialOffset).toBe(400);
+  view.unmount();
+});
+
+it.each([400, 1400])(
+  "keeps one catalog header and history through project navigation and resize from %s",
+  (width) => {
+    holdInitialDeepLink();
+    setWindowSize(width, 800);
+    resetMockRouter("/");
+    registerMockRoute("/", ProjectLaunchRoot);
+    const view = render(<V1RouteTree />);
+    const header = view.getByTestId("thread-list-header-row");
+    const orb = view.getByTestId("global-voice-slot");
+    const search = view.getByLabelText("Search threads and messages");
+    fireEvent.press(view.getByText("Open example project"));
+    const history = mockRouterHistory();
+    expect(history.at(-1)?.pathname).toBe("/project/[sessionId]");
+    expect(view.getByLabelText("Project Example project")).toBeVisible();
+    setWindowSize(width === 400 ? 1400 : 400, 800);
+    expect(mockRouterHistory()).toEqual(history);
+    expect(view.getByLabelText("Project Example project")).toBeVisible();
+    expect(view.getByTestId("thread-list-header-row")).toBe(header);
+    expect(view.getByTestId("global-voice-slot")).toBe(orb);
+    expect(view.getByLabelText("Search threads and messages")).toBe(search);
+    fireEvent.press(view.getByLabelText("Back to projects"));
+    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(["/"]);
+    expect(view.queryByLabelText("Project Example project")).toBeNull();
+    expect(view.getByText("Threads")).toBeVisible();
+    view.unmount();
+  },
+);
+
+it("returns to the project browsed beside a retained chat after folding", () => {
+  holdInitialDeepLink();
+  setWindowSize(400, 800);
+  resetMockRouter("/");
+  registerMockRoute("/", ProjectLaunchRoot);
+  registerMockRoute("/threads/[connectionId]/[threadId]", () => (
+    <Text testID="retained-chat">Chat</Text>
+  ));
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByText("Open example project"));
+  const { result } = renderHook(useMountedThreadNavigation);
+  act(() =>
+    result.current.navigation.selectThread(
+      threadSelectionKey({ serverId: "server", id: "selected" }),
+    ),
+  );
+  const chat = view.getByTestId("retained-chat");
+  setWindowSize(1400, 800);
+  act(() =>
+    view
+      .UNSAFE_getByType(MobileThreads)
+      .props.onOpenProject({ ...projectListFixture, key: "other", path: "/other", name: "Other" }),
+  );
+  expect(view.getByLabelText("Project Other")).toBeVisible();
+  expect(view.getByTestId("retained-chat")).toBe(chat);
+  expect(mockRouterHistory().at(-1)?.params.threadId).toBe("selected");
+  setWindowSize(400, 800);
+  expect(view.getByTestId("retained-chat")).toBe(chat);
+  act(() => result.current.navigation.closeActiveThread());
+  expect(view.getByLabelText("Project Other")).toBeVisible();
+  expect(view.queryByLabelText("Project Example project")).toBeNull();
+  view.unmount();
+});
+
+it("keeps wide project chrome mounted while its catalog suspends", () => {
+  holdInitialDeepLink();
+  setWindowSize(1400, 800);
+  resetMockRouter("/");
+  registerMockRoute("/", ProjectLaunchRoot);
+  const loading = new Promise<never>(() => undefined);
+  jest.spyOn(summaryView, "useThreadSummaryView").mockImplementation((_database, request) => {
+    if (request?.projectCwd === projectListFixture.path) throw loading;
+    return null;
+  });
+  const view = render(<V1RouteTree />);
+  const header = view.getByTestId("thread-list-header-row");
+  const orb = view.getByTestId("global-voice-slot");
+  fireEvent.press(view.getByText("Open example project"));
+  expect(view.getByLabelText("Project Example project")).toBeVisible();
+  expect(view.getByTestId("thread-list-header-row")).toBe(header);
+  expect(view.getByTestId("global-voice-slot")).toBe(orb);
+  fireEvent.press(view.getByLabelText("Back to projects"));
+  expect(view.getByText("Threads")).toBeVisible();
+  view.unmount();
+});
+
+it("opens a project draft above the selected catalog while a wide conversation is active", () => {
+  holdInitialDeepLink();
+  setWindowSize(1400, 800);
+  resetMockRouter("/");
+  registerMockRoute("/", ProjectLaunchRoot);
+  registerMockRoute("/threads/[connectionId]/[threadId]", () => <Text>Chat</Text>);
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByText("Open example project"));
+  const { result } = renderHook(useMountedThreadNavigation);
+  act(() =>
+    result.current.navigation.selectThread(
+      threadSelectionKey({ serverId: "server", id: "selected" }),
+    ),
+  );
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onNewThread());
+  expect(newThreadService.current()?.cwd).toBe(projectListFixture.path);
+  expect(newThreadService.current()?.connectionId).toBe(projectListFixture.connectionId);
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+    "/",
+    "/project/[sessionId]",
+    "/new",
+  ]);
+  act(() => router.back());
+  expect(view.getByLabelText("Project Example project")).toBeVisible();
+  view.unmount();
 });

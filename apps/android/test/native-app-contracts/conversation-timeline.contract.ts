@@ -49,7 +49,7 @@ it("preserves conversation timeline integration contracts", () => {
   expect(ownerOverlayScrollOwnership).toContain(
     "KeyboardController.dismiss({ animated: true, keepFocus: false })",
   );
-  expect(ownerTimelineViewport).toContain('keyboardLiftBehavior="always"');
+  // Keyboard lift and question-editing anchor behavior are exercised by v1-jump-to-latest.render.
   expect(ownerTimelineViewport).toContain("onScrollBeginDrag={gestures.onScrollBeginDrag}");
   expect(ownerTimelineViewport).toContain("keyboardOffset={props.conversationInsets.bottom}");
   expect(ownerUnreadReceipt).toContain("claimUnreadReceipt(");
@@ -83,8 +83,7 @@ it("preserves conversation timeline integration contracts", () => {
   );
   expect(ownerTimelineViewport).toContain("onStartReached={props.loadOlderAtTimelineStart}");
   expect(ownerTimelineViewport).toContain("showsVerticalScrollIndicator={false}");
-  expect(ownerTimelineViewport).toContain('row.kind === "turnSlice"');
-  expect(ownerTimelineViewport).toContain("`markdown:${row.parts[0].block.node.type}`");
+  expect(ownerTimelineViewport).not.toContain("getItemType");
   expect(ownerHistoryAnchor).not.toContain("timelineInitialPosition");
   expect(gestureBindings).toMatch(
     /const distance = Math\.max\(\s*0,\s*nativeEvent\.contentSize\.height -\s*nativeEvent\.layoutMeasurement\.height -\s*nativeEvent\.contentOffset\.y,?\s*\)/,

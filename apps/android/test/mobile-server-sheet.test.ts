@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compactSource, sourceHasJsxElement } from "./source-contract";
 
 const screen = compactSource(
-  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 
 const sidebarBody = compactSource(
@@ -33,7 +33,10 @@ const serverSelection = compactSource(
   readFileSync(new URL("../src/services/servers/serverScope.ts", import.meta.url), "utf8"),
 );
 const newChat = compactSource(
-  readFileSync(new URL("../app/v1/V1WorkspaceRouteComposition.tsx", import.meta.url), "utf8"),
+  readFileSync(
+    new URL("../src/routeComposition/WorkspaceRouteComposition.tsx", import.meta.url),
+    "utf8",
+  ),
 );
 const newThreadButton = compactSource(
   readFileSync(
@@ -47,10 +50,6 @@ const listFilters = compactSource(
 const rowContent = compactSource(
   readFileSync(new URL("../src/features/threadList/ThreadRowContent.tsx", import.meta.url), "utf8"),
 );
-const projectList = compactSource(
-  readFileSync(new URL("../src/features/threadList/projectThreadList.ts", import.meta.url), "utf8"),
-);
-
 const ownerWorkspaceThreadList = compactSource(
   readFileSync(
     new URL("../src/features/workspace/WorkspaceThreadList.tsx", import.meta.url),
@@ -131,7 +130,6 @@ describe("unified thread filters", () => {
     expect(selectServer).toContain("setRequested(next)");
     expect(selectServer).toContain("readonly select: (next: ServerScope) => void");
     expect(selectServer).not.toContain("setActiveThreadId(");
-    expect(selectServer).toContain("consumeDesktopDefaultThread()");
     for (const body of [sidebarBody, mobileBody])
       expect(body.match(/serverScope\.kind === "all" && servers\.length > 1/gu)).toHaveLength(1);
     expect(rowContent).toContain("accessibilityLabel={`Server ${server.name}`}");
@@ -140,9 +138,6 @@ describe("unified thread filters", () => {
     );
     expect(ownerWorkspaceThreadList).toMatch(
       /onOffsetChange: \(offset\) => \{\s*mobileThreadOffset\.write\(sidebarScopeKey, offset\);\s*\}/u,
-    );
-    expect(projectList).toContain(
-      '`${serverScopeKey}:${sidebarMode}${sidebarProject === null ? "" : `:${sidebarProject.key}`}`',
     );
   });
 

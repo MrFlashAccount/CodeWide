@@ -7,7 +7,7 @@ import {
   resolveComposerSendMode,
 } from "../src/features/composer/deliveryMode";
 
-const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
 
 const ownerSubmission = readFileSync(
   new URL("../src/features/composer/submission.ts", import.meta.url),

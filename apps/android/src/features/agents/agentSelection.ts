@@ -1,5 +1,5 @@
 /** V1 agentSelection owner, extracted without changing interaction or resource lifetime. */
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { subagentDisplayName } from "../../data/subagent-projection";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import type { ThreadListItem } from "../threadList/threadListTypes";

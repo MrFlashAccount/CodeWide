@@ -9,18 +9,18 @@ import android.graphics.Typeface
 import android.icu.text.CompactDecimalFormat
 import android.icu.text.NumberFormat
 import android.icu.util.Currency
+import android.util.TypedValue
 import android.view.View
 import android.view.animation.PathInterpolator
 import com.facebook.react.common.assets.ReactFontManager
-import com.facebook.react.uimanager.PixelUtil
 import java.util.Locale
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
 class AnimatedNumberView(context: Context) : View(context) {
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
     color = Color.WHITE
-    textSize = PixelUtil.toPixelFromSP(14f)
     fontFeatureSettings = "tnum"
   }
   private var pendingValue = 0.0
@@ -33,6 +33,7 @@ class AnimatedNumberView(context: Context) : View(context) {
   private var pendingColor: Int? = null
   private var pendingFontSize = 14f
   private var pendingLineHeight = 18f
+  private var pendingMaxFontSizeMultiplier = 0f
   private var pendingFontFamily: String? = null
   private var pendingFontWeight: String? = null
   private var pendingTextAlign = "left"
@@ -44,7 +45,7 @@ class AnimatedNumberView(context: Context) : View(context) {
   private var targetText = ""
   private var progress = 1f
   private var direction = 1f
-  private var lineHeightPx = PixelUtil.toPixelFromDIP(18f)
+  private var lineHeightPx = 0f
   private var animator: ValueAnimator? = null
 
   init {
@@ -61,6 +62,7 @@ class AnimatedNumberView(context: Context) : View(context) {
   fun setPendingSuffix(value: String?) { pendingSuffix = value ?: "" }
   fun setPendingColor(value: Int?) { pendingColor = value }
   fun setPendingFontSize(value: Float) { pendingFontSize = value }
+  fun setPendingMaxFontSizeMultiplier(value: Float) { pendingMaxFontSizeMultiplier = value }
   fun setPendingLineHeight(value: Float) { pendingLineHeight = value }
   fun setPendingFontFamily(value: String?) { pendingFontFamily = value }
   fun setPendingFontWeight(value: String?) { pendingFontWeight = value }
@@ -70,8 +72,7 @@ class AnimatedNumberView(context: Context) : View(context) {
 
   fun commitProps() {
     paint.color = pendingColor ?: Color.WHITE
-    paint.textSize = PixelUtil.toPixelFromSP(max(1f, pendingFontSize))
-    lineHeightPx = PixelUtil.toPixelFromDIP(max(pendingFontSize, pendingLineHeight))
+    refreshTextMetrics()
     val typefaceStyle = if (fontWeight() >= 600) Typeface.BOLD else Typeface.NORMAL
     paint.typeface = pendingFontFamily?.let {
       ReactFontManager.getInstance().getTypeface(it, typefaceStyle, context.assets)
@@ -113,6 +114,9 @@ class AnimatedNumberView(context: Context) : View(context) {
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     if (targetText.isEmpty()) return
+    // Window density can change without a React prop transaction. Read this
+    // view's metrics at draw time; process-global RN screen metrics can be stale.
+    refreshTextMetrics()
     canvas.save()
     canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
     val baseline = (height - paint.fontMetrics.descent - paint.fontMetrics.ascent) / 2f
@@ -160,6 +164,22 @@ class AnimatedNumberView(context: Context) : View(context) {
   fun release() {
     animator?.cancel()
     animator = null
+  }
+
+  private fun refreshTextMetrics() {
+    // Match RN TextAttributes: font size rounds up, line height remains fractional.
+    paint.textSize = ceil(scaledTextPixels(max(1f, pendingFontSize)))
+    lineHeightPx = scaledTextPixels(max(pendingFontSize, pendingLineHeight))
+  }
+
+  private fun scaledTextPixels(size: Float): Float {
+    val metrics = resources.displayMetrics
+    val scaled = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, metrics)
+    return if (pendingMaxFontSizeMultiplier >= 1f) {
+      min(scaled, size * metrics.density * pendingMaxFontSizeMultiplier)
+    } else {
+      scaled
+    }
   }
 
   private fun formatter(): NumberFormat {

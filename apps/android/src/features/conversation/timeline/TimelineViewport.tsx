@@ -77,18 +77,11 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       contentInsetAdjustmentBehavior="never"
       data={timelineRows}
       extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}`}
-      getItemType={(row) =>
-        row.kind === "turnSlice"
-          ? row.parts.length === 1 && row.parts[0]?.kind === "markdownBlock"
-            ? `markdown:${row.parts[0].block.node.type}`
-            : "turnSlice"
-          : row.item.kind
-      }
       initialScrollAtEnd={!props.timelinePositioned}
       itemSizeEstimate={timelineRowSizeEstimate(timelineRows)}
       key={props.composerScope}
       keyboardDismissMode="interactive"
-      keyboardLiftBehavior="always"
+      keyboardLiftBehavior={props.newChat ? "never" : "always"}
       keyboardOffset={props.conversationInsets.bottom}
       keyboardShouldPersistTaps="handled"
       keyExtractor={timelineRowKey}

@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import { MemorySyncCache, MultiConnectionSupervisor, SyncSession, type SocketLike } from "../src/index.js";
@@ -869,6 +869,12 @@ async function waitForAllCursors(cache: MemorySyncCache, connectionIds: string[]
 
 function thread(id: string): Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id,
     extra: null,
     sessionId: id,
@@ -886,7 +892,7 @@ function thread(id: string): Thread {
     status: { type: "notLoaded" },
     path: null,
     cwd: "/workspace",
-    cliVersion: "0.147.0",
+    cliVersion: "0.155.1",
     source: "appServer",
     canAcceptDirectInput: null,
     threadSource: null,

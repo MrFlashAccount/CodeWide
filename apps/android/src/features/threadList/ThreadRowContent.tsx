@@ -31,28 +31,34 @@ export function ThreadRowContent({
               <ThreadTitle running={false} value={thread.title} />
             )}
           </View>
-          {thread.state !== undefined && thread.state !== "running" && (
+          {thread.state === "failed" && (
             <View
               accessibilityLabel={`Thread ${thread.state}`}
               accessible
               style={styles.threadStatusIcon}
             >
-              <Ionicons
-                color={thread.state === "failed" ? colors.red : colors.amber}
-                name={thread.state === "approval" ? "shield-checkmark" : "alert-circle"}
-                size={iconSize.inline}
-              />
+              <Ionicons color={colors.red} name="alert-circle" size={iconSize.inline} />
             </View>
           )}
           <View style={styles.threadMeta}>
-            {thread.unread > 0 && (
-              <View style={styles.unreadSlot}>
-                <View
-                  accessibilityLabel={`${String(thread.unread)} unread ${thread.unread === 1 ? "message" : "messages"}`}
-                  accessible
-                  style={styles.unreadDot}
-                />
+            {thread.needsAttention === true ? (
+              <View
+                accessibilityLabel="Требуется твоё внимание"
+                accessible
+                style={styles.threadAttentionIcon}
+              >
+                <Ionicons color={colors.text} name="hand-left-outline" size={iconSize.indicator} />
               </View>
+            ) : (
+              thread.unread > 0 && (
+                <View style={styles.unreadSlot}>
+                  <View
+                    accessibilityLabel={`${String(thread.unread)} unread ${thread.unread === 1 ? "message" : "messages"}`}
+                    accessible
+                    style={styles.unreadDot}
+                  />
+                </View>
+              )
             )}
             <Text numberOfLines={1} style={styles.threadTime} testID="thread-time">
               {thread.time ?? formatThreadTime(thread.timestamp ?? 0)}

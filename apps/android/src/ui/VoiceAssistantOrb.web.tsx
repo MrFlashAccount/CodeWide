@@ -8,9 +8,10 @@ export type { VoiceAssistantOrbProps } from "./VoiceAssistantOrb.types";
 
 /** Static browser fallback that still reflects the selected renderer style. */
 export function VoiceAssistantOrb({
-  level,
+  inputLevel,
   orbState,
   orbStyle,
+  playbackLevel,
   style,
   ...props
 }: VoiceAssistantOrbProps): React.JSX.Element {
@@ -19,7 +20,13 @@ export function VoiceAssistantOrb({
     return (
       <NebulaOrb
         {...props}
-        level={level ?? 0}
+        level={
+          orbState === "listening"
+            ? (inputLevel ?? 0)
+            : orbState === "speaking"
+              ? (playbackLevel ?? 0)
+              : 0
+        }
         style={[styles.orb, styles.nebula, disabledStyle, style]}
       />
     );

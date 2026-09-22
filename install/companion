@@ -1,0 +1,262 @@
+#!/bin/sh
+set -eu
+
+version=${CODEWIDE_COMPANION_VERSION:-}
+default_install_root="$HOME/.local/lib/codewide"
+default_unit_root="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+install_root=${CODEWIDE_COMPANION_INSTALL_ROOT:-"$default_install_root"}
+unit_root=${CODEWIDE_COMPANION_UNIT_ROOT:-"$default_unit_root"}
+download_base_url=${CODEWIDE_COMPANION_DOWNLOAD_BASE_URL:-}
+allow_insecure_download=${CODEWIDE_COMPANION_ALLOW_INSECURE_DOWNLOAD:-0}
+activate=1
+tmp_root=${TMPDIR:-/tmp}
+
+usage() {
+  printf '%s\n' 'Usage: install-companion [--version VERSION] [--install-root DIRECTORY] [--unit-root DIRECTORY] [--download-base-url URL] [--no-start]'
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --version)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      version=$2
+      shift 2
+      ;;
+    --install-root)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      install_root=$2
+      shift 2
+      ;;
+    --unit-root)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      unit_root=$2
+      shift 2
+      ;;
+    --download-base-url)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      download_base_url=$2
+      shift 2
+      ;;
+    --no-start)
+      activate=0
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ "$(uname -s)" != Linux ]; then
+  printf '%s\n' 'CodeWide Companion standalone bundles currently support Linux only.' >&2
+  exit 2
+fi
+if [ "$(uname -m)" != x86_64 ]; then
+  printf 'Unsupported Linux architecture: %s\n' "$(uname -m)" >&2
+  exit 2
+fi
+
+for command in curl tar; do
+  command -v "$command" >/dev/null 2>&1 || {
+    printf '%s is required to install CodeWide Companion.\n' "$command" >&2
+    exit 2
+  }
+done
+if [ -z "$version" ]; then
+  version=$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+    https://raw.githubusercontent.com/MrFlashAccount/homebrew-codewide/main/versions/companion-linux)
+fi
+case "$version" in
+  ''|*[!0-9A-Za-z._-]*) printf 'Invalid Companion version: %s\n' "$version" >&2; exit 2 ;;
+esac
+
+target=x86_64-unknown-linux-musl
+asset="codewide-companion-$version-$target.tar.gz"
+bundle_name="codewide-companion-$target"
+if [ -z "$download_base_url" ]; then
+  download_base_url="https://github.com/MrFlashAccount/CodeWide/releases/download/companion-linux-v$version"
+fi
+download_base_url=${download_base_url%/}
+
+case "$download_base_url" in
+  https://*) ;;
+  http://*|file://*)
+    if [ "$allow_insecure_download" != 1 ]; then
+      printf '%s\n' 'Refusing a non-HTTPS download URL.' >&2
+      exit 2
+    fi
+    ;;
+  *) printf 'Unsupported download URL: %s\n' "$download_base_url" >&2; exit 2 ;;
+esac
+if [ "$activate" -eq 1 ]; then
+  if [ "$install_root" != "$default_install_root" ] || [ "$unit_root" != "$default_unit_root" ]; then
+    printf '%s\n' 'Custom install or unit roots require --no-start.' >&2
+    exit 2
+  fi
+  command -v systemctl >/dev/null 2>&1 || {
+    printf '%s\n' 'systemctl is required unless --no-start is used.' >&2
+    exit 2
+  }
+fi
+
+umask 077
+temporary_root=$(mktemp -d "$tmp_root/codewide-companion-install.XXXXXX")
+backup_root="$temporary_root/backup"
+archive="$temporary_root/$asset"
+checksum="$temporary_root/$asset.sha256"
+deployment_started=0
+service_was_active=0
+
+cleanup() {
+  case "$temporary_root" in
+    "$tmp_root"/codewide-companion-install.*) rm -rf -- "$temporary_root" ;;
+    *) printf 'Refusing to remove unexpected directory: %s\n' "$temporary_root" >&2 ;;
+  esac
+}
+
+backup_target() {
+  source_path=$1
+  backup_name=$2
+  if [ -e "$source_path" ]; then
+    cp -p -- "$source_path" "$backup_root/$backup_name"
+  else
+    : >"$backup_root/$backup_name.missing"
+  fi
+}
+
+restore_target() {
+  backup_name=$1
+  target_path=$2
+  mode=$3
+  if [ -f "$backup_root/$backup_name" ]; then
+    install -D -m "$mode" "$backup_root/$backup_name" "$target_path"
+  elif [ -f "$backup_root/$backup_name.missing" ]; then
+    rm -f -- "$target_path"
+  fi
+}
+
+finish() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$status" -ne 0 ] && [ "$deployment_started" -eq 1 ]; then
+    printf '%s\n' 'Companion installation failed; restoring the previous files.' >&2
+    if [ "$activate" -eq 1 ]; then
+      systemctl --user stop codewide-companion.service 2>/dev/null || true
+    fi
+    restore_target companion "$install_root/codewide-companion" 0755
+    restore_target vcs-git "$install_root/plugins/codewide-vcs-git" 0755
+    restore_target memory-watch "$install_root/codewide-companion-memory-watch" 0755
+    restore_target unit "$unit_root/codewide-companion.service" 0644
+    restore_target memory-watch-unit "$unit_root/codewide-companion-memory-watch.service" 0644
+    restore_target memory-watch-timer "$unit_root/codewide-companion-memory-watch.timer" 0644
+    if [ "$activate" -eq 1 ]; then
+      systemctl --user daemon-reload || true
+      if [ "$service_was_active" -eq 1 ]; then
+        systemctl --user restart codewide-companion.service || true
+      fi
+    fi
+  fi
+  cleanup
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 130' HUP INT TERM
+
+download() {
+  source_url=$1
+  destination=$2
+  if [ "$allow_insecure_download" = 1 ]; then
+    curl --fail --silent --show-error --location --retry 3 --output "$destination" "$source_url"
+  else
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+      --location --retry 3 --output "$destination" "$source_url"
+  fi
+}
+
+download "$download_base_url/$asset" "$archive"
+download "$download_base_url/$asset.sha256" "$checksum"
+
+line_count=$(wc -l <"$checksum" | tr -d ' ')
+expected=$(awk 'NR == 1 { print $1 }' "$checksum")
+recorded_name=$(awk 'NR == 1 { print $2 }' "$checksum")
+recorded_name=${recorded_name#\*}
+case "$expected" in
+  ????????????????????????????????????????????????????????????????) ;;
+  *) printf '%s\n' 'Companion checksum has an invalid length.' >&2; exit 1 ;;
+esac
+case "$expected" in
+  *[!0-9a-f]*) printf '%s\n' 'Companion checksum is malformed.' >&2; exit 1 ;;
+esac
+if [ "$line_count" != 1 ] || [ "$recorded_name" != "$asset" ]; then
+  printf '%s\n' 'Companion checksum manifest is malformed.' >&2
+  exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  actual=$(sha256sum "$archive" | awk '{ print $1 }')
+elif command -v shasum >/dev/null 2>&1; then
+  actual=$(shasum -a 256 "$archive" | awk '{ print $1 }')
+else
+  printf '%s\n' 'sha256sum or shasum is required to verify CodeWide Companion.' >&2
+  exit 2
+fi
+if [ "$actual" != "$expected" ]; then
+  printf '%s\n' 'CodeWide Companion checksum verification failed.' >&2
+  exit 1
+fi
+
+if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+  printf '%s\n' 'Companion archive contains an unsafe path.' >&2
+  exit 1
+fi
+tar -xzf "$archive" -C "$temporary_root"
+payload="$temporary_root/$bundle_name"
+test -x "$payload/bin/codewide-companion"
+test -x "$payload/libexec/codewide-vcs-git"
+test -x "$payload/libexec/codewide-companion-memory-watch"
+test -x "$payload/install.sh"
+test -r "$payload/systemd/user/codewide-companion.service"
+test -r "$payload/systemd/user/codewide-companion-memory-watch.service"
+test -r "$payload/systemd/user/codewide-companion-memory-watch.timer"
+
+reported_version=$($payload/bin/codewide-companion --version)
+if [ "$reported_version" != "codewide-companion $version" ]; then
+  printf 'Downloaded Companion version mismatch: %s\n' "$reported_version" >&2
+  exit 1
+fi
+
+mkdir -p "$backup_root"
+if [ "$activate" -eq 1 ] && systemctl --user is-active --quiet codewide-companion.service; then
+  service_was_active=1
+fi
+backup_target "$install_root/codewide-companion" companion
+backup_target "$install_root/plugins/codewide-vcs-git" vcs-git
+backup_target "$install_root/codewide-companion-memory-watch" memory-watch
+backup_target "$unit_root/codewide-companion.service" unit
+backup_target "$unit_root/codewide-companion-memory-watch.service" memory-watch-unit
+backup_target "$unit_root/codewide-companion-memory-watch.timer" memory-watch-timer
+
+deployment_started=1
+CODEWIDE_COMPANION_BINARY="$payload/bin/codewide-companion" \
+CODEWIDE_COMPANION_GIT_PLUGIN_BINARY="$payload/libexec/codewide-vcs-git" \
+CODEWIDE_COMPANION_MEMORY_WATCH_SOURCE="$payload/libexec/codewide-companion-memory-watch" \
+CODEWIDE_COMPANION_UNIT_SOURCE="$payload/systemd/user/codewide-companion.service" \
+CODEWIDE_COMPANION_MEMORY_WATCH_SERVICE_SOURCE="$payload/systemd/user/codewide-companion-memory-watch.service" \
+CODEWIDE_COMPANION_MEMORY_WATCH_TIMER_SOURCE="$payload/systemd/user/codewide-companion-memory-watch.timer" \
+CODEWIDE_COMPANION_INSTALL_ROOT="$install_root" \
+CODEWIDE_COMPANION_UNIT_ROOT="$unit_root" \
+CODEWIDE_COMPANION_ACTIVATE="$activate" \
+  "$payload/install.sh"
+deployment_started=0
+
+printf 'Installed codewide-companion %s to %s/codewide-companion\n' "$version" "$install_root"
+if [ "$activate" -eq 1 ]; then
+  printf '%s\n' 'Started codewide-companion.service and its memory monitor.'
+else
+  printf '%s\n' 'Service activation skipped.'
+fi

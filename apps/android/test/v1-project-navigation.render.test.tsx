@@ -1,8 +1,12 @@
-import { act, renderHook } from "@testing-library/react-native";
+import { LegendList } from "@legendapp/list/react-native";
+import { act, render, renderHook, waitFor } from "@testing-library/react-native";
 import { KeyboardController } from "react-native-keyboard-controller";
 
 import { useComposerProjectSelection } from "../src/features/projects/composerProjectSelection";
 import { useProjectPickerSession } from "../src/features/projects/projectPickerSession";
+import { SidebarProjectsSheet } from "../src/features/projects/SidebarProjects";
+import { useRemoteProjectCatalog } from "../src/features/projects/useRemoteProjectCatalog";
+import type { SidebarProject } from "../src/features/projects/sidebarProjects";
 import {
   threadSelectionKey,
   v1ThreadRouteParams,
@@ -25,6 +29,28 @@ function routeParams(connectionId: string, threadId: string): V1ThreadRouteParam
   if (parsed.status === "invalid") throw new Error("Expected valid route parameters");
   return parsed.value;
 }
+
+const managedProject: SidebarProject = {
+  connectionId: "server",
+  key: "server:/workspace/project",
+  lastUsedAt: 1,
+  name: "Project",
+  path: "/workspace/project",
+  pinned: false,
+  serverLabel: null,
+  subtitle: "/workspace/project",
+  unread: false,
+};
+
+const projectManagementProps = {
+  errors: [],
+  onBrowse: () => undefined,
+  onClose: () => undefined,
+  onMove: async () => undefined,
+  onToggle: async () => undefined,
+  servers: [{ id: "server", name: "Server" }],
+  visible: true,
+};
 
 it("records project-picker navigation direction without animating its initial page", () => {
   const props = {
@@ -60,6 +86,83 @@ it("records project-picker navigation direction without animating its initial pa
   expect(result.current.navigationDirection).toBe("back");
 });
 
+it("publishes an acknowledged project mutation without remounting the project route", () => {
+  const connectionId = "mutation-publication-server";
+  const updated = {
+    addedAt: 1,
+    lastUsedAt: 2,
+    name: "Project",
+    path: "/workspace/project",
+    pinned: true,
+  };
+  const { result } = renderHook(() => useRemoteProjectCatalog(false, [], async () => []));
+
+  act(() => result.current.mergeProject(connectionId, updated));
+
+  expect(result.current.projectsByConnection[connectionId]).toEqual([updated]);
+});
+
+it("replaces an already loaded project immediately after a pin acknowledgement", async () => {
+  const connectionId = "loaded-mutation-publication-server";
+  const initial = {
+    addedAt: 1,
+    lastUsedAt: 1,
+    name: "Project",
+    path: "/workspace/project",
+    pinned: false,
+  };
+  const updated = { ...initial, lastUsedAt: 2, pinned: true };
+  const { result } = renderHook(() =>
+    useRemoteProjectCatalog(
+      true,
+      [{ enabled: true, id: connectionId, state: "live" }],
+      async () => [initial],
+    ),
+  );
+
+  await waitFor(() => expect(result.current.projectsByConnection[connectionId]).toEqual([initial]));
+  act(() => result.current.mergeProject(connectionId, updated));
+
+  expect(result.current.projectsByConnection[connectionId]).toEqual([updated]);
+});
+
+it("invalidates the recycled management list when a pin acknowledgement changes rows", () => {
+  const view = render(
+    <SidebarProjectsSheet {...projectManagementProps} projects={[managedProject]} />,
+  );
+  const initialVersion = view.UNSAFE_getByType(LegendList).props.dataVersion;
+
+  view.rerender(
+    <SidebarProjectsSheet
+      {...projectManagementProps}
+      projects={[{ ...managedProject, pinned: true }]}
+    />,
+  );
+
+  expect(view.getByText("Pinned")).toBeVisible();
+  const pinnedVersion = view.UNSAFE_getByType(LegendList).props.dataVersion;
+  expect(pinnedVersion).not.toBe(initialVersion);
+
+  view.rerender(
+    <SidebarProjectsSheet
+      {...projectManagementProps}
+      projects={[
+        { ...managedProject, pinned: true },
+        {
+          ...managedProject,
+          key: "server:/workspace/added",
+          name: "Added",
+          path: "/workspace/added",
+          subtitle: "/workspace/added",
+        },
+      ]}
+    />,
+  );
+
+  expect(view.getByText("Added")).toBeVisible();
+  expect(view.UNSAFE_getByType(LegendList).props.dataVersion).not.toBe(pinnedVersion);
+});
+
 it("publishes the qualified route before observer hydration settles and keeps stable intents", async () => {
   const observation = pending();
   const observeThread = jest.fn(() => observation.promise);
@@ -73,9 +176,10 @@ it("publishes the qualified route before observer hydration settles and keeps st
     },
     prefetch: jest.fn(),
     push,
-    reset: jest.fn(),
+    navigate: push,
+    dismissTo: jest.fn(),
+    link: (href: V1ThreadDestination) => ({ dismissTo: false, href }),
     searchSelectionMode: "push" as const,
-    selectionMode: "push" as const,
     replace: jest.fn(),
     dismissToAll: jest.fn(),
   };
@@ -91,13 +195,10 @@ it("publishes the qualified route before observer hydration settles and keeps st
   );
   const select = result.current.selectThread;
   act(() => select(threadSelectionKey({ serverId: "server", id: "chat" })));
-  expect(push).toHaveBeenCalledWith(
-    {
-      pathname: "/v1/threads/[connectionId]/[threadId]",
-      params: { connectionId: "server", threadId: "chat" },
-    },
-    undefined,
-  );
+  expect(push).toHaveBeenCalledWith({
+    pathname: "/threads/[connectionId]/[threadId]",
+    params: { connectionId: "server", threadId: "chat" },
+  });
   expect(observeThread).toHaveBeenCalledWith("server", "chat");
   expect(dismiss).toHaveBeenCalledWith({ animated: false, keepFocus: false });
   rerender({});

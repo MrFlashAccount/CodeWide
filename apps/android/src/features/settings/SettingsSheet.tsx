@@ -22,6 +22,8 @@ interface SettingsServer {
 
 interface SettingsSheetProps {
   readonly advanced: ReactNode;
+  readonly entryPage?: "overview" | "voiceAssistant";
+  readonly entryRequest?: string;
   readonly onAddServer: () => void;
   readonly onClose: () => void;
   readonly security: ReactNode;
@@ -49,8 +51,13 @@ type SettingsNavigation = {
 export function SettingsSheet(props: SettingsSheetProps) {
   const [navigation, setNavigation] = useState<SettingsNavigation>({
     direction: null,
-    page: { kind: "overview" },
+    page: { kind: props.entryPage ?? "overview" },
   });
+  const [entryRequest, setEntryRequest] = useState(props.entryRequest);
+  if (entryRequest !== props.entryRequest) {
+    setEntryRequest(props.entryRequest);
+    setNavigation({ direction: null, page: { kind: props.entryPage ?? "overview" } });
+  }
   const { page } = navigation;
   const selectedServer =
     page.kind === "server" ? props.servers.find((server) => server.id === page.id) : undefined;

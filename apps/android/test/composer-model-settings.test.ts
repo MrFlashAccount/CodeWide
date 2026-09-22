@@ -37,7 +37,7 @@ describe("composer model authority", () => {
   });
 
   it("does not send persisted local model overrides with messages in existing threads", () => {
-    const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
+    const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
     expect(ownerSettings).toContain("const selectedModel = newChat ? composerPreferences.model : null;");
     expect(ownerSettings).toContain("const selectedEffort = newChat ? composerPreferences.effort : null;");
     expect(ownerSubmission).toContain("...(selectedModel === null ? {} : { model: selectedModel })");

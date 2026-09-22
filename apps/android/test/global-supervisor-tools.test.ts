@@ -9,9 +9,9 @@ import {
 } from "../src/data/globalSupervisorBinding";
 import { createGlobalSupervisorToolCapabilities } from "../src/data/globalSupervisorTools";
 import {
-  createGlobalSupervisorVisibilityPolicy,
-  type GlobalSupervisorVisibilityPolicy,
-} from "../src/data/globalSupervisorVisibility";
+  createGlobalSupervisorToolTargetPolicy,
+  type GlobalSupervisorToolTargetPolicy,
+} from "../src/data/globalSupervisorToolTarget";
 
 const TARGET = globalSupervisorQualifiedChatRef("target-server", "target-thread");
 
@@ -34,12 +34,12 @@ function capabilities({
   currentConnections = () => [connection("target-server")],
   isRpcAvailable = () => true,
   rpcAfterAttach,
-  visibility = createGlobalSupervisorVisibilityPolicy(() => null),
+  targetPolicy = createGlobalSupervisorToolTargetPolicy(() => null),
 }: {
   readonly currentConnections?: () => StoredConnection[];
   readonly isRpcAvailable?: (connectionId: string) => boolean;
   readonly rpcAfterAttach: ReturnType<typeof vi.fn>;
-  readonly visibility?: GlobalSupervisorVisibilityPolicy;
+  readonly targetPolicy?: GlobalSupervisorToolTargetPolicy;
 }) {
   const session = { rpc: vi.fn(), stop: vi.fn() };
   const sendSystemText = vi.fn(async ({ commandId }) => commandId);
@@ -61,7 +61,7 @@ function capabilities({
       respond: vi.fn(),
       rpcAfterAttach,
       sendSystemText,
-      visibility,
+      targetPolicy,
     }),
   };
 }
@@ -312,7 +312,7 @@ describe("GlobalSupervisorToolCapabilities", () => {
     const hiddenRpc = vi.fn();
     const hidden = capabilities({
       rpcAfterAttach: hiddenRpc,
-      visibility: createGlobalSupervisorVisibilityPolicy(() => binding),
+      targetPolicy: createGlobalSupervisorToolTargetPolicy(() => binding),
     });
     await expect(
       hidden.value.readChat({

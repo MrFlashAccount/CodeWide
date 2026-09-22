@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { createTextOutboxCommand } from "@codewide/sync-client";
 import {
   acknowledgeNativeCommandReceipt,
@@ -313,7 +313,7 @@ export function createCommandDelivery(
     );
   };
 
-  return { retryFailedMessage, sendSystemTextWithCommandId, sendText };
+  return { deliverText, retryFailedMessage, sendSystemTextWithCommandId, sendText };
 }
 
 /** Projects native delivery notifications independently into their existing view owners. */
@@ -326,7 +326,7 @@ export function createCommandDeliveryProjection(
       appLogger.errorCaught({ error: error, event: "timeline.delivery_projection.failed" });
     });
     void summaries.applyCommandDelivery(delivery).catch((error: unknown) => {
-      appLogger.errorCaught({ error: error, event: "thread_delete.delivery_projection.failed" });
+      appLogger.errorCaught({ error: error, event: "thread_summary.delivery_projection.failed" });
     });
   };
 }

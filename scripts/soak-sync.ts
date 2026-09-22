@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { Thread } from "../packages/codex-protocol/src/generated/0.147.0/v2/index.ts";
+import type { Thread } from "../packages/codex-protocol/src/generated/0.155.1/v2/index.ts";
 import {
   MemorySyncCache,
   MultiConnectionSupervisor,
@@ -270,6 +270,12 @@ function positiveInteger(value: string | undefined, fallback: number): number {
 
 function thread(id: string): Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id,
     extra: null,
     sessionId: id,
@@ -287,7 +293,7 @@ function thread(id: string): Thread {
     status: { type: "idle" },
     path: null,
     cwd: "/workspace",
-    cliVersion: "0.147.0",
+    cliVersion: "0.155.1",
     source: "appServer",
     canAcceptDirectInput: null,
     threadSource: null,

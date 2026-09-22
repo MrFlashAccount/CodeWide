@@ -1,5 +1,5 @@
-import { useReducer, useRef } from "react";
-import { View } from "react-native";
+import { useReducer, useRef, useState } from "react";
+import { ActivityIndicator, Switch, View } from "react-native";
 
 import type { GlobalVoiceName } from "../../data/globalVoicePreferences";
 import type { GlobalVoiceOrbStyle } from "../../data/globalVoiceOrbStyle";
@@ -11,11 +11,14 @@ import {
 import { useEvent } from "../../react/useEvent";
 import { AppButton } from "../../presentation/controls/AppButton";
 import { colors } from "../../theme";
+import { AppListRow } from "../../ui/AppListRow";
+import { listRowHeight } from "../../ui/AppListRow.types";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { styles } from "./SettingsFeature.styles";
 import { OrbStyleSettings } from "./OrbStyleSettings";
 import { SettingsSection } from "./SettingsSheet";
 import { VoiceSettings } from "./VoiceSettings";
+import { ConnectedVoiceInputSettings } from "./VoiceInputSettings";
 
 type SaveState =
   | { readonly status: "idle" | "saved" }
@@ -215,21 +218,196 @@ function PersonalitySettings({
   );
 }
 
+type PersonalVoiceFilterSaveState =
+  | { readonly status: "idle" | "saved" }
+  | { readonly operation: "enroll" | "toggle"; readonly status: "saving" }
+  | { readonly message: string; readonly status: "error" };
+
+const PERSONAL_VOICE_FILTER_ICON_SIZE = 20;
+const PERSONAL_VOICE_FILTER_ICON = {
+  color: colors.textMuted,
+  name: "mic",
+  size: PERSONAL_VOICE_FILTER_ICON_SIZE,
+} as const;
+
+function personalVoiceFilterDescription(hasProfile: boolean): string {
+  return hasProfile
+    ? "Apply from the next Voice Assistant session"
+    : "Record a profile before enabling";
+}
+
+function enrollmentAccessibilityLabel(hasProfile: boolean): string {
+  return hasProfile ? "Record personal voice profile again" : "Record personal voice profile";
+}
+
+function enrollmentButtonLabel(hasProfile: boolean, busy: boolean): string {
+  if (busy) {
+    return "Listening for 6 seconds…";
+  }
+  return hasProfile ? "Record profile again" : "Record voice profile";
+}
+
+function PersonalVoiceFilterToggle({
+  busy,
+  enabled,
+  hasProfile,
+  onValueChange,
+}: {
+  readonly busy: boolean;
+  readonly enabled: boolean;
+  readonly hasProfile: boolean;
+  readonly onValueChange: (enabled: boolean) => void;
+}): React.JSX.Element {
+  return (
+    <View style={styles.personalVoiceFilterToggle}>
+      {busy && <ActivityIndicator color={colors.textMuted} size="small" />}
+      <Switch
+        accessibilityLabel="Personal voice filter"
+        disabled={!hasProfile || busy}
+        onValueChange={onValueChange}
+        testID="personal-voice-filter-switch"
+        value={enabled}
+      />
+    </View>
+  );
+}
+
+function PersonalVoiceFilterFeedback({
+  save,
+}: {
+  readonly save: PersonalVoiceFilterSaveState;
+}): React.JSX.Element | null {
+  if (save.status === "saved") {
+    return (
+      <Text accessibilityLiveRegion="polite" style={styles.savedText}>
+        Voice profile saved locally. Enable the filter to test it.
+      </Text>
+    );
+  }
+  if (save.status === "error") {
+    return (
+      <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+        {save.message}
+      </Text>
+    );
+  }
+  return null;
+}
+
+function PersonalVoiceFilterSettings({
+  enabled,
+  hasProfile,
+  onEnroll,
+  onSetEnabled,
+}: {
+  readonly enabled: boolean;
+  readonly hasProfile: boolean;
+  readonly onEnroll: () => Promise<void>;
+  readonly onSetEnabled: (enabled: boolean) => Promise<void>;
+}): React.JSX.Element {
+  const [save, setSave] = useState<PersonalVoiceFilterSaveState>({ status: "idle" });
+  const pending = save.status === "saving";
+  const enrollmentBusy = save.status === "saving" && save.operation === "enroll";
+  const toggleBusy = save.status === "saving" && save.operation === "toggle";
+  const enroll = useEvent(async () => {
+    if (pending) {
+      return;
+    }
+    setSave({ operation: "enroll", status: "saving" });
+    try {
+      await onEnroll();
+      setSave({ status: "saved" });
+    } catch (error) {
+      setSave({
+        message: error instanceof Error ? error.message : "Could not record the voice profile.",
+        status: "error",
+      });
+    }
+  });
+  const requestEnrollment = useEvent(() => {
+    enroll().catch(() => undefined);
+  });
+  const setEnabled = useEvent(async (nextEnabled: boolean) => {
+    if (pending) {
+      return;
+    }
+    setSave({ operation: "toggle", status: "saving" });
+    try {
+      await onSetEnabled(nextEnabled);
+      setSave({ status: "idle" });
+    } catch (error) {
+      setSave({
+        message: error instanceof Error ? error.message : "Could not update the voice filter.",
+        status: "error",
+      });
+    }
+  });
+  const requestEnabledChange = useEvent((nextEnabled: boolean) => {
+    setEnabled(nextEnabled).catch(() => undefined);
+  });
+  const toggle = (
+    <PersonalVoiceFilterToggle
+      busy={toggleBusy}
+      enabled={enabled}
+      hasProfile={hasProfile}
+      onValueChange={requestEnabledChange}
+    />
+  );
+
+  return (
+    <View style={styles.personalVoiceFilterSettings}>
+      <Text style={styles.helpText}>
+        Experimental. Opens new local voice segments optimistically and checks a short rolling
+        spectral match. Continuous rejected audio stays closed until your profile matches. A
+        rejected voice can send a brief prefix. Stop Voice Assistant before recording a profile.
+      </Text>
+      <AppListRow
+        description={personalVoiceFilterDescription(hasProfile)}
+        fixedHeight={listRowHeight.double}
+        leadingIcon={PERSONAL_VOICE_FILTER_ICON}
+        title="Personal voice filter"
+        // WHY: AppListRow's declared custom accessory contract requires this independently interactive Switch as a ReactNode prop.
+        // oxlint-disable-next-line react-doctor/jsx-no-jsx-as-prop
+        trailing={toggle}
+      />
+      <AppButton
+        accessibilityLabel={enrollmentAccessibilityLabel(hasProfile)}
+        accessibilityState={{ busy: enrollmentBusy }}
+        isDisabled={pending}
+        onPress={requestEnrollment}
+        style={styles.saveButton}
+        variant="secondary"
+      >
+        {enrollmentButtonLabel(hasProfile, enrollmentBusy)}
+      </AppButton>
+      <PersonalVoiceFilterFeedback save={save} />
+    </View>
+  );
+}
+
 /** Keeps synthesized voice, behavioral personality, and visual style visibly separate. */
 export function VoiceAssistantSettings({
+  onEnrollPersonalVoice,
   onPreviewVoice,
   onSavePersonality,
   onSelectOrbStyle,
   onSelectVoice,
+  onSetPersonalVoiceFilterEnabled,
   personality,
+  personalVoiceFilterEnabled,
+  personalVoiceProfileAvailable,
   selectedOrbStyle,
   selectedVoice,
 }: {
+  readonly onEnrollPersonalVoice: () => Promise<void>;
   readonly onPreviewVoice: (voice: GlobalVoiceName) => Promise<void>;
   readonly onSavePersonality: (personality: VoiceAssistantPersonality) => Promise<void>;
   readonly onSelectOrbStyle: (style: GlobalVoiceOrbStyle) => Promise<void>;
   readonly onSelectVoice: (voice: GlobalVoiceName) => Promise<void>;
+  readonly onSetPersonalVoiceFilterEnabled: (enabled: boolean) => Promise<void>;
   readonly personality: VoiceAssistantPersonality;
+  readonly personalVoiceFilterEnabled: boolean;
+  readonly personalVoiceProfileAvailable: boolean;
   readonly selectedOrbStyle: GlobalVoiceOrbStyle;
   readonly selectedVoice: GlobalVoiceName;
 }): React.JSX.Element {
@@ -247,6 +425,17 @@ export function VoiceAssistantSettings({
       </SettingsSection>
       <SettingsSection title="Personality">
         <PersonalitySettings onSave={onSavePersonality} personality={personality} />
+      </SettingsSection>
+      <SettingsSection title="Audio input">
+        <ConnectedVoiceInputSettings />
+      </SettingsSection>
+      <SettingsSection title="Microphone filtering">
+        <PersonalVoiceFilterSettings
+          enabled={personalVoiceFilterEnabled}
+          hasProfile={personalVoiceProfileAvailable}
+          onEnroll={onEnrollPersonalVoice}
+          onSetEnabled={onSetPersonalVoiceFilterEnabled}
+        />
       </SettingsSection>
     </View>
   );

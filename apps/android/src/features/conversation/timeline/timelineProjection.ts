@@ -1,5 +1,5 @@
 /** V1 timelineProjection owner, extracted without changing interaction or resource lifetime. */
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { ProjectedThreadChatDelivery } from "../../../data/thread-chat-projection";
 import { protocolTimestampMs } from "../../../data/thread-chat-timeline";
 import { normalizePendingDeliveryState } from "../../../data/thread-delivery-state";

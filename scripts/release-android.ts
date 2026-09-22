@@ -38,13 +38,13 @@ const apkMetadataPath = join(dirname(apkPath), "output-metadata.json");
 const lockPath = join(repoRoot, "builds/.android-release.lock");
 const localShelfUrl = "http://127.0.0.1:4190";
 
-const { mode, dryRun, requestedVersion } = parseArguments(process.argv.slice(2));
+const { mode, dryRun, requestedVersion, requestedVersionCode } = parseArguments(process.argv.slice(2));
 const lock = await acquireLock();
 try {
   const endpoint = await resolveUpdateEndpoint();
   if (!dryRun) await requireHealthyShelf(endpoint);
   if (mode === "ota") await releaseOta(endpoint, dryRun);
-  else await releaseApk(endpoint, dryRun, requestedVersion);
+  else await releaseApk(endpoint, dryRun, requestedVersion, requestedVersionCode);
 } finally {
   await lock.close();
   await rm(lockPath, { force: true });
@@ -107,11 +107,17 @@ async function releaseOta(endpoint: string, dryRun: boolean): Promise<void> {
   }
 }
 
-async function releaseApk(endpoint: string, dryRun: boolean, requestedVersion?: string): Promise<void> {
+async function releaseApk(
+  endpoint: string,
+  dryRun: boolean,
+  requestedVersion?: string,
+  requestedVersionCode?: number,
+): Promise<void> {
   const source = await readReleaseSourceFiles();
   const publishedBaseline = dryRun ? undefined : await findLatestPublishedApkVersion(endpoint);
   const updated = updateAndroidReleaseVersion(source, {
     requestedVersion,
+    requestedVersionCode,
     published: publishedBaseline,
   });
   const signing = await resolveApkSigning();
@@ -572,11 +578,19 @@ function redactedArguments(args: string[]): string[] {
   return args.map((argument, index) => args[index - 1] === "-storepass" ? "<redacted>" : argument);
 }
 
-function parseArguments(args: string[]): { mode: ReleaseMode; dryRun: boolean; requestedVersion?: string } {
+function parseArguments(args: string[]): {
+  mode: ReleaseMode;
+  dryRun: boolean;
+  requestedVersion?: string | undefined;
+  requestedVersionCode?: number | undefined;
+} {
   const mode = args[0];
-  if (mode !== "ota" && mode !== "apk") throw new Error("Usage: release-android.ts <ota|apk> [--dry-run] [--version X.Y.Z]");
+  if (mode !== "ota" && mode !== "apk") {
+    throw new Error("Usage: release-android.ts <ota|apk> [--dry-run] [--version X.Y.Z] [--version-code N]");
+  }
   let dryRun = false;
   let requestedVersion: string | undefined;
+  let requestedVersionCode: number | undefined;
   for (let index = 1; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--") continue;
@@ -585,9 +599,17 @@ function parseArguments(args: string[]): { mode: ReleaseMode; dryRun: boolean; r
       requestedVersion = args[index + 1];
       if (requestedVersion === undefined) throw new Error("--version requires X.Y.Z");
       index += 1;
+    } else if (argument === "--version-code") {
+      const raw = args[index + 1];
+      if (raw === undefined || !/^\d+$/u.test(raw)) throw new Error("--version-code requires a positive integer");
+      requestedVersionCode = Number(raw);
+      if (!Number.isSafeInteger(requestedVersionCode) || requestedVersionCode <= 0) {
+        throw new Error("--version-code requires a positive safe integer");
+      }
+      index += 1;
     } else throw new Error(`Unknown release argument ${argument ?? ""}`);
   }
-  return requestedVersion === undefined ? { mode, dryRun } : { mode, dryRun, requestedVersion };
+  return { mode, dryRun, requestedVersion, requestedVersionCode };
 }
 
 function relativeToRepo(path: string): string {

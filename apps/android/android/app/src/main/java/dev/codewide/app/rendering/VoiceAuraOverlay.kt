@@ -5,6 +5,7 @@ import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
@@ -39,12 +40,16 @@ class VoiceAuraOverlay(
   private val envelope = VoiceAuraEnvelope()
   private var originScreenX: Float? = null
   private var originScreenY: Float? = null
+  private var resolvedOriginX = 0.5f
+  private var resolvedOriginY = 1f
   private var contentTarget: WeakReference<View>? = null
   private val location = IntArray(2)
   private var intensity = 0f
   private val transition = VoiceAuraTransition()
   private val contentEffect = VoiceAuraContentEffect()
-  private val framePacer = VoiceAuraFramePacer()
+  private val ambientFramePacer = VoiceAuraFramePacer()
+  private val transitionFramePacer = VoiceAuraFramePacer(TRANSITION_FRAME_INTERVAL_NANOS)
+  private var previousTransitionAnimating = false
   private var lastFrameNanos = 0L
   private var elapsedSeconds = 0f
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -142,16 +147,27 @@ class VoiceAuraOverlay(
       removeOverlay()
       return
     }
-    if (reducedMotion || framePacer.shouldDraw(frameTimeNanos)) {
-      updateFrame(view)
+    val transitionAnimating = transition.isAnimating
+    if (transitionAnimating != previousTransitionAnimating) {
+      ambientFramePacer.reset()
+      transitionFramePacer.reset()
+      previousTransitionAnimating = transitionAnimating
+    }
+    val shouldDraw = reducedMotion || if (transitionAnimating) {
+      transitionFramePacer.shouldDraw(frameTimeNanos)
+    } else {
+      ambientFramePacer.shouldDraw(frameTimeNanos)
+    }
+    if (shouldDraw) {
+      updateFrame(view, transitionAnimating)
     }
     if (!reducedMotion) {
       postFrame()
     }
   }
 
-  private fun updateFrame(view: VoiceAuraOverlayView) {
-    if (reducedMotion) {
+  private fun updateFrame(view: VoiceAuraOverlayView, transitionAnimating: Boolean) {
+    if (reducedMotion || !transitionAnimating) {
       contentEffect.clear()
     } else {
       resolveContentTarget()?.let { target ->
@@ -173,7 +189,15 @@ class VoiceAuraOverlay(
     runtimeShader.setFloatUniform("uOpacity", transition.opacity)
     runtimeShader.setFloatUniform("uMotion", if (reducedMotion) 0f else 1f)
     setOriginUniform(runtimeShader, view)
-    view.setAuraShader(runtimeShader)
+    val edgeBandPx = (MAX_EDGE_BAND_BASE_DP + MAX_EDGE_BAND_LEVEL_DP * envelope.value) *
+      view.resources.displayMetrics.density
+    view.setAuraShader(
+      runtimeShader,
+      edgeBandPx,
+      resolvedOriginX * view.width,
+      resolvedOriginY * view.height,
+      intensity < HALO_VISIBLE_UNTIL_INTRO,
+    )
   }
 
   private fun shaderFor(view: View): RuntimeShader {
@@ -215,15 +239,15 @@ class VoiceAuraOverlay(
     val screenX = originScreenX
     val screenY = originScreenY
     if (screenX == null || screenY == null) {
-      runtimeShader.setFloatUniform("uWaveOrigin", 0.5f, 1f)
+      resolvedOriginX = 0.5f
+      resolvedOriginY = 1f
+      runtimeShader.setFloatUniform("uWaveOrigin", resolvedOriginX, resolvedOriginY)
       return
     }
     view.getLocationOnScreen(location)
-    runtimeShader.setFloatUniform(
-      "uWaveOrigin",
-      ((screenX - location[0]) / view.width).coerceIn(0f, 1f),
-      ((screenY - location[1]) / view.height).coerceIn(0f, 1f),
-    )
+    resolvedOriginX = ((screenX - location[0]) / view.width).coerceIn(0f, 1f)
+    resolvedOriginY = ((screenY - location[1]) / view.height).coerceIn(0f, 1f)
+    runtimeShader.setFloatUniform("uWaveOrigin", resolvedOriginX, resolvedOriginY)
   }
 
   private fun resolveContentTarget(): View? {
@@ -274,7 +298,9 @@ class VoiceAuraOverlay(
     shaderHeight = 0
     shaderDensity = Float.NaN
     contentEffect.clear()
-    framePacer.reset()
+    ambientFramePacer.reset()
+    transitionFramePacer.reset()
+    previousTransitionAnimating = false
     lastFrameNanos = 0L
   }
 
@@ -310,6 +336,12 @@ class VoiceAuraOverlay(
 
   private companion object {
     private const val LOG_TAG = "CodeWideVoiceAura"
+    private const val TRANSITION_FRAME_INTERVAL_NANOS = 16_666_667L
+    // edgeGlow becomes exactly zero after three shader widths; these are the maximum width
+    // terms for drift=1, with one extra dp retained for rasterization at the clip boundary.
+    private const val MAX_EDGE_BAND_BASE_DP = 35.5f
+    private const val MAX_EDGE_BAND_LEVEL_DP = 54f
+    private const val HALO_VISIBLE_UNTIL_INTRO = 0.35f
     // Let the final 60 Hz animation frame remove the window before the lifecycle fallback does.
     private const val ONE_FRAME_MILLIS = 1_000L / 60L + 1L
     private const val CLOSE_FALLBACK_MILLIS =
@@ -510,7 +542,12 @@ private class VoiceAuraContentEffect {
 
 private class VoiceAuraOverlayView(context: android.content.Context) : View(context) {
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val drawRegion = Path()
   private var auraShader: RuntimeShader? = null
+  private var edgeBandPx = 0f
+  private var haloCenterX = 0f
+  private var haloCenterY = 0f
+  private var haloVisible = false
 
   init {
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
@@ -518,8 +555,18 @@ private class VoiceAuraOverlayView(context: android.content.Context) : View(cont
     setWillNotDraw(false)
   }
 
-  fun setAuraShader(shader: RuntimeShader) {
+  fun setAuraShader(
+    shader: RuntimeShader,
+    nextEdgeBandPx: Float,
+    nextHaloCenterX: Float,
+    nextHaloCenterY: Float,
+    nextHaloVisible: Boolean,
+  ) {
     auraShader = shader
+    edgeBandPx = nextEdgeBandPx
+    haloCenterX = nextHaloCenterX
+    haloCenterY = nextHaloCenterY
+    haloVisible = nextHaloVisible
     paint.shader = shader
     invalidate()
   }
@@ -527,8 +574,31 @@ private class VoiceAuraOverlayView(context: android.content.Context) : View(cont
   override fun onDraw(canvas: Canvas) {
     canvas.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
     if (auraShader == null) return
+    val band = edgeBandPx.coerceAtMost(minOf(width, height) * 0.5f)
+    drawRegion.reset()
+    drawRegion.addRect(0f, 0f, width.toFloat(), band, Path.Direction.CW)
+    drawRegion.addRect(0f, height - band, width.toFloat(), height.toFloat(), Path.Direction.CW)
+    drawRegion.addRect(0f, band, band, height - band, Path.Direction.CW)
+    drawRegion.addRect(width - band, band, width.toFloat(), height - band, Path.Direction.CW)
+    if (haloVisible) {
+      drawRegion.addCircle(
+        haloCenterX,
+        haloCenterY,
+        HALO_DRAW_RADIUS_DP * resources.displayMetrics.density,
+        Path.Direction.CW,
+      )
+    }
+    val checkpoint = canvas.save()
+    canvas.clipPath(drawRegion)
     canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+    canvas.restoreToCount(checkpoint)
   }
 
   override fun isOpaque(): Boolean = false
+
+  private companion object {
+    // The shader halo is at most 36dp with an 8dp Gaussian band; 72dp leaves the discarded
+    // tail below visible precision while avoiding a full-screen fragment pass.
+    const val HALO_DRAW_RADIUS_DP = 72f
+  }
 }

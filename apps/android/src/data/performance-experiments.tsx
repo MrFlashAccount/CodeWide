@@ -21,7 +21,7 @@ let snapshot = DEFAULT_SNAPSHOT;
 const listeners = new Set<() => void>();
 const PerformanceExperimentContext = createContext<PerformanceExperimentSnapshot>(DEFAULT_SNAPSHOT);
 
-export function subscribePerformanceExperiments(listener: () => void): () => void {
+function subscribePerformanceExperiments(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);

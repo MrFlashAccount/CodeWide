@@ -11,6 +11,7 @@ export type AndroidReleaseVersionBaseline = Pick<
 
 export type AndroidReleaseVersionPlan = {
   requestedVersion: string | undefined;
+  requestedVersionCode?: number | undefined;
   published: AndroidReleaseVersionBaseline | undefined;
 };
 
@@ -74,7 +75,10 @@ export function updateAndroidReleaseVersion(
   if (compareVersions(versionName, baselineVersionName) <= 0) {
     throw new Error(`Android version must increase from ${baselineVersionName}, received ${versionName}`);
   }
-  const versionCode = baselineVersionCode + 1;
+  const versionCode = plan.requestedVersionCode ?? baselineVersionCode + 1;
+  if (!Number.isSafeInteger(versionCode) || versionCode <= baselineVersionCode) {
+    throw new Error(`Android version code must increase from ${baselineVersionCode}, received ${versionCode}`);
+  }
   const runtimeVersion = `${versionName}-native-${versionCode}`;
   const parsed = JSON.parse(files.appConfig) as {
     expo?: { version?: unknown; runtimeVersion?: unknown; android?: { versionCode?: unknown } };

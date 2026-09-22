@@ -3,6 +3,7 @@ import { randomUUID } from "expo-crypto";
 import { Platform } from "react-native";
 import { appLogger } from "../observability/logger";
 import { createGlobalSupervisorWebRtcSession } from "../native/globalSupervisorWebRtcSession";
+import type { GlobalSupervisorWebRtcSessionFactory } from "../native/globalSupervisorWebRtcSessionContract";
 import { acquireGlobalVoiceForegroundLease } from "../native/globalVoiceForegroundLease.native";
 import { NativeEngineSupervisor } from "../native/native-engine";
 import {
@@ -45,12 +46,15 @@ import type { GlobalSupervisorBindingOwner } from "./globalSupervisorBinding";
 import { createGlobalSupervisorAttentionOwner } from "./globalSupervisorAttention";
 import { createGlobalSupervisorAttentionProjection } from "./globalSupervisorAttentionProjection";
 import { createGlobalSupervisorAttentionStorage } from "./globalSupervisorAttentionStorage";
-import type { GlobalSupervisorVisibilityPolicy } from "./globalSupervisorVisibility";
 import { createGlobalSupervisorRuntime } from "./globalSupervisorRuntime";
 import { createGlobalSupervisorRuntimeIngress } from "./globalSupervisorRuntimeIngress";
 import { createGlobalVoicePreviewRuntime } from "./globalVoicePreviewRuntime";
 import { hydrateGlobalVoiceOrbStylePreference } from "./globalVoiceOrbStylePreference";
 import { decodeGlobalVoicePreference, GLOBAL_VOICE_PREFERENCE_ID } from "./globalVoicePreferences";
+import {
+  decodePersonalVoiceFilterPreferences,
+  PERSONAL_VOICE_FILTER_PREFERENCE_ID,
+} from "./personalVoiceFilterPreferences";
 import {
   createGlobalSupervisorWorkspaceBinding,
   createGlobalSupervisorWorkspaceSystemRequests,
@@ -111,7 +115,6 @@ class WorkspaceRuntime {
   readonly listeners = new Set<() => void>();
   supervisor: WorkspaceSyncSupervisor | null = null;
   globalSupervisorBinding: GlobalSupervisorBindingOwner | null = null;
-  globalSupervisorVisibility: GlobalSupervisorVisibilityPolicy | null = null;
   voiceController: VoiceInputController | null = null;
   fileTransferController: FileTransferController | null = null;
   startPromise: Promise<void> | null = null;
@@ -181,11 +184,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       rpcAfterAttach,
     });
     workspaceRuntime.globalSupervisorBinding = globalSupervisor.binding;
-    workspaceRuntime.globalSupervisorVisibility = globalSupervisor.visibility;
-    const summaries = createThreadSummaryDatabase({
-      globalSupervisorStorage: globalSupervisor.storage,
-      visibility: globalSupervisor.visibility,
-    });
+    const summaries = createThreadSummaryDatabase();
     const details = createThreadDetailDatabase();
     details.setRemoteLoader(createThreadSyncRemoteLoader(details, workspaceThreadSync));
     createdThreadDetails = details;
@@ -244,7 +243,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       respond: async (request) => deliverServerRequestResponse(request),
       rpcAfterAttach,
       sendSystemText: async (request) => commandDelivery.sendSystemTextWithCommandId(request),
-      visibility: globalSupervisor.visibility,
+      targetPolicy: globalSupervisor.targetPolicy,
     });
     const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
@@ -314,7 +313,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     // read model, so startup reads the native snapshot only for state that is
     // already active (thread deletion) and never persists a second outbox copy.
     try {
-      await summaries.reconcileDeleteCommands(await listNativeCommands());
+      await summaries.reconcileCommands(await listNativeCommands());
     } catch (error) {
       appLogger.warnCaught({ error, event: "workspace.native_command.reconcile.failed" });
     }
@@ -391,6 +390,23 @@ async function readVoiceAssistantPersonality() {
   );
 }
 
+const startConfiguredGlobalVoiceWebRtc: GlobalSupervisorWebRtcSessionFactory = async (options) => {
+  if (options.mode === "preview") {
+    return createGlobalSupervisorWebRtcSession(options);
+  }
+  await userPreferences.ready;
+  const personalVoiceFilterEnabled = decodePersonalVoiceFilterPreferences(
+    userPreferences.collection.get(PERSONAL_VOICE_FILTER_PREFERENCE_ID)?.value,
+  ).enabled;
+  return createGlobalSupervisorWebRtcSession({
+    initiallyMuted: options.initiallyMuted,
+    mode: "interactive",
+    onPlaybackLevel: options.onPlaybackLevel,
+    onTerminal: options.onTerminal,
+    personalVoiceFilterEnabled,
+  });
+};
+
 export const globalSupervisorRuntime = createGlobalSupervisorRuntime({
   acquireForegroundLease: acquireGlobalVoiceForegroundLease,
   attention: globalSupervisorAttention,
@@ -431,7 +447,7 @@ export const globalSupervisorRuntime = createGlobalSupervisorRuntime({
   requestMicrophonePermission: async () =>
     getMicrophonePermission() === "granted" ? "granted" : requestMicrophonePermission(),
   rpcAfterAttach,
-  startWebRtc: createGlobalSupervisorWebRtcSession,
+  startWebRtc: startConfiguredGlobalVoiceWebRtc,
 });
 
 export const globalVoicePreviewRuntime = createGlobalVoicePreviewRuntime({

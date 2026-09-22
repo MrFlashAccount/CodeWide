@@ -1,3 +1,4 @@
+import type { ThreadListNavigation } from "../../services/threads/threadNavigationService";
 import type { ReactNode } from "react";
 import type { ServerScope } from "../../services/servers/serverScope";
 import type { ThreadListServer } from "../connections/connectionPresentation";
@@ -11,11 +12,12 @@ export type MobileThreadsProps = {
   archivedThreads: ThreadListItem[];
   filter: ThreadListFilter;
   globalVoice: GlobalVoiceControl;
+  headerVisible?: boolean;
   initialOffset: number;
   mode: ThreadListMode;
   onArchive: (thread: ThreadListItem) => Promise<void>;
   onFilterChange: (filter: ThreadListFilter) => void;
-  onLoadMore: () => void;
+  onLoadMore: () => Promise<boolean>;
   onManageTerminals: () => void;
   onMarkRead: (thread: ThreadListItem) => Promise<void>;
   onModeChange: (mode: ThreadListMode) => void;
@@ -25,13 +27,14 @@ export type MobileThreadsProps = {
   onQueryChange: (query: string) => void;
   onRefreshAccountRateLimits?: () => Promise<unknown>;
   onSelectServer: (scope: ServerScope) => void;
-  onSelectThread: (id: string) => void;
   onSettings: () => void;
   onTogglePin: (thread: ThreadListItem) => Promise<void>;
   onUnarchive: (thread: ThreadListItem) => Promise<void>;
   query: string;
   searchContent: ReactNode;
+  selectedThreadKey?: string | null;
   servers: ThreadListServer[];
   serverScope: ServerScope;
+  threadNavigation: ThreadListNavigation;
   threads: ThreadListItem[];
 } & SidebarProjectsNavigation;

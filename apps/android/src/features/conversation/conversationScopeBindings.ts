@@ -1,4 +1,4 @@
-import type { ReviewDelivery, ReviewTarget } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ReviewDelivery, ReviewTarget } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { SendMode, TurnSendOptions } from "../../data/thread-delivery-state";
 import type { ThreadSettings } from "../../data/turn-controls-types";
 import type {

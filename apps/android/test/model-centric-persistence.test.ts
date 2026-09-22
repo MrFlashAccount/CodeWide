@@ -33,7 +33,7 @@ describe("model-centric persistence boundary", () => {
       new URL("thread-detail-database.native.ts", dataDirectory),
       "utf8",
     );
-    const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
+    const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
     expect(details).not.toContain("source.replaceLoaded(collection.toArray)");
     expect(screen).not.toContain("useRetainedReadyRows");
   });

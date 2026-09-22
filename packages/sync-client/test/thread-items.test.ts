@@ -1,4 +1,4 @@
-import type { ThreadItem } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadItem } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import { reconcileActiveTurnItems, reconcileTurnItems } from "../src/thread-items";
@@ -8,10 +8,25 @@ function user(id: string, clientId: string | null): ThreadItem {
 }
 
 function agent(id: string, text = "Done"): ThreadItem {
-  return { type: "agentMessage", id, text, phase: "final_answer", memoryCitation: null };
+  return { delivery: null, questions: null, type: "agentMessage", id, text, phase: "final_answer", memoryCitation: null };
 }
 
 describe("turn item reconciliation", () => {
+  it("retains async questions separately from final answers and replayed questions", () => {
+    const question: ThreadItem = {
+      type: "agentMessage", id: "question", text: "Which environment?",
+      phase: "final_answer", memoryCitation: null, delivery: "async",
+      questions: [{ title: "Which environment?", options: ["Test", "Production"] }],
+    };
+    const repeatedQuestion: ThreadItem = { ...question, id: "second-question" };
+    const finalAnswer = agent("final", "Ready");
+    const result = reconcileTurnItems([question], [repeatedQuestion, finalAnswer]);
+
+    expect(result).toEqual([question, repeatedQuestion, finalAnswer]);
+    expect(reconcileTurnItems(result, [question, repeatedQuestion, finalAnswer])).toEqual(result);
+    expect(reconcileActiveTurnItems([finalAnswer], [question])).toEqual([finalAnswer, question]);
+  });
+
   it("matches reconstructed chat boundaries when their item ids rotate", () => {
     const result = reconcileTurnItems(
       [user("live-user", "command"), agent("live-agent")],

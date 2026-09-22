@@ -30,6 +30,10 @@ import {
   encodeVoiceAssistantPersonality,
   VOICE_ASSISTANT_PERSONALITY_FIELD_MAX_LENGTH,
 } from "../src/data/voiceAssistantPersonality";
+import {
+  decodePersonalVoiceFilterPreferences,
+  encodePersonalVoiceFilterPreferences,
+} from "../src/data/personalVoiceFilterPreferences";
 
 const nativeDatabase = readFileSync(
   new URL("../src/data/user-preferences-database.native.ts", import.meta.url),
@@ -91,6 +95,17 @@ describe("user preferences", () => {
       DEFAULT_GLOBAL_VOICE,
     );
     expect(decodeGlobalVoicePreference("not json")).toBe(DEFAULT_GLOBAL_VOICE);
+  });
+
+  it("keeps the experimental personal voice filter opt-in and fail-disabled", () => {
+    expect(decodePersonalVoiceFilterPreferences(null)).toEqual({ enabled: false });
+    expect(
+      decodePersonalVoiceFilterPreferences(encodePersonalVoiceFilterPreferences({ enabled: true })),
+    ).toEqual({ enabled: true });
+    expect(decodePersonalVoiceFilterPreferences('{"enabled":true,"schemaVersion":2}')).toEqual({
+      enabled: false,
+    });
+    expect(decodePersonalVoiceFilterPreferences("not json")).toEqual({ enabled: false });
   });
 
   it("keeps Voice Assistant personality separate, versioned and bounded", () => {

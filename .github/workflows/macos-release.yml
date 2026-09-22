@@ -1,0 +1,293 @@
+name: macOS Release
+run-name: macOS ${{ inputs.bump || inputs.version }} (${{ inputs.request_id || github.run_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version increment"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      base:
+        description: "Git ref to compare against; defaults to the latest version tag"
+        required: false
+        type: string
+      dry_run:
+        description: "Build and prove the update without publishing a tag or release"
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: "Allow a release even when Nx does not select macOS"
+        required: false
+        default: false
+        type: boolean
+      request_id:
+        description: "Correlation id used by the one-shot release command"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      base:
+        required: false
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+      force:
+        required: false
+        default: false
+        type: boolean
+      request_id:
+        required: false
+        type: string
+    secrets:
+      SPARKLE_ED25519_PUBLIC_KEY:
+        required: true
+      SPARKLE_ED25519_PRIVATE_KEY:
+        required: true
+      HOMEBREW_TAP_DEPLOY_KEY:
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+    environment: release
+    env:
+      NX_CACHE_DIRECTORY: .nx/cache
+      NX_TUI: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Restore Nx task cache
+        uses: actions/cache@v5
+        with:
+          path: .nx/cache
+          key: nx-macos-release-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nx-macos-release-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
+
+      - name: Restore Cargo and SwiftPM caches
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            ~/Library/Caches/org.swift.swiftpm
+            ~/.cache/org.swift.swiftpm
+          key: native-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/companion-macos/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            native-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/companion-macos/Package.resolved') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify macOS is affected
+        if: ${{ inputs.force != true }}
+        env:
+          REQUESTED_BASE: ${{ inputs.base }}
+        run: |
+          base="$REQUESTED_BASE"
+          if [[ -z "$base" ]]; then
+            base=$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          fi
+          node scripts/release-plan.ts --base "$base" --head "$GITHUB_SHA" --assert-target macos
+
+      - name: Resolve version
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+          VERSION_BUMP: ${{ inputs.bump }}
+        run: |
+          if [[ -n "$RAW_VERSION" ]]; then
+            version="${RAW_VERSION#v}"
+            if [[ ! "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid version: $RAW_VERSION"
+              exit 1
+            fi
+          else
+            version=$(./scripts/next-macos-version "$VERSION_BUMP")
+          fi
+          echo "Releasing $version."
+          echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
+          echo "DMG_PATH=apps/companion-macos/dist/CodeWide-$version.dmg" >> "$GITHUB_ENV"
+          echo "APPCAST_PATH=apps/companion-macos/dist/appcast.xml" >> "$GITHUB_ENV"
+
+      - name: Show toolchains
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          rustc --version
+
+      - name: Download pinned Sparkle tools
+        run: |
+          archive="$RUNNER_TEMP/Sparkle-2.10.0.tar.xz"
+          destination="$RUNNER_TEMP/sparkle"
+          curl --fail --location --silent --show-error \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz \
+            --output "$archive"
+          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0  $archive" \
+            | shasum --algorithm 256 --check
+          mkdir -p "$destination"
+          tar -xJf "$archive" -C "$destination"
+          echo "SPARKLE_BIN=$destination/bin" >> "$GITHUB_ENV"
+
+      - name: Build baseline and release app
+        env:
+          CODEWIDE_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_ED25519_PUBLIC_KEY }}
+        run: |
+          test -n "$CODEWIDE_SPARKLE_PUBLIC_KEY"
+          baseline_archive=$(CODEWIDE_CORE_VERSION=0.0.0 apps/companion-macos/scripts/build-rust-ffi.sh)
+          CODEWIDE_VERSION=0.0.0 \
+          CODEWIDE_BUILD_NUMBER=1 \
+          CODEWIDE_FFI_ARCHIVE="$baseline_archive" \
+          CODEWIDE_APP_OUTPUT="$RUNNER_TEMP/baseline/CodeWide.app" \
+            apps/companion-macos/scripts/build-app.sh
+          release_archive=$(CODEWIDE_CORE_VERSION="$CODEWIDE_VERSION" apps/companion-macos/scripts/build-rust-ffi.sh)
+          CODEWIDE_BUILD_NUMBER="$((100000 + GITHUB_RUN_NUMBER))" \
+          CODEWIDE_FFI_ARCHIVE="$release_archive" \
+            apps/companion-macos/scripts/build-app.sh
+          apps/companion-macos/scripts/build-dmg.sh "$CODEWIDE_VERSION"
+
+      - name: Prove update, state migration, and runtime recovery
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+          CODEWIDE_ALLOW_DESTRUCTIVE_UPDATE_E2E: "1"
+        run: |
+          apps/companion-macos/scripts/update-e2e.sh \
+            "$RUNNER_TEMP/baseline/CodeWide.app" \
+            "$DMG_PATH" \
+            "$SPARKLE_BIN" \
+            "$CODEWIDE_VERSION"
+
+      - name: Generate signed production feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SPARKLE_BIN/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/MrFlashAccount/CodeWide/releases/download/$RELEASE_TAG/" \
+            --link "https://github.com/MrFlashAccount/CodeWide" \
+            --maximum-versions 1 \
+            apps/companion-macos/dist
+          xmllint --noout "$APPCAST_PATH"
+          grep -q 'sparkle:edSignature=' "$APPCAST_PATH"
+          grep -q 'sparkle-signatures:' "$APPCAST_PATH"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SPARKLE_BIN/sign_update" \
+            --ed-key-file - --verify "$APPCAST_PATH"
+
+      - name: Verify ad-hoc artifact
+        run: |
+          codesign --verify --deep --strict --verbose=2 apps/companion-macos/.build/app/CodeWide.app
+          hdiutil verify "$DMG_PATH"
+          if spctl --assess --type execute apps/companion-macos/.build/app/CodeWide.app; then
+            echo "Gatekeeper accepted the ad-hoc app."
+          else
+            echo "Expected: this build is ad-hoc signed and not notarized."
+          fi
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: CodeWide-${{ env.CODEWIDE_VERSION }}
+          path: |
+            ${{ env.DMG_PATH }}
+            ${{ env.APPCAST_PATH }}
+          if-no-files-found: error
+
+      - name: Create release tag
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$RELEASE_TAG" -m "CodeWide $RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+
+      - name: Publish GitHub release
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="CodeWide $RELEASE_TAG. Ad-hoc signed and not notarized; macOS may warn on first launch."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$DMG_PATH" "$APPCAST_PATH" --clobber
+            gh release edit "$RELEASE_TAG" --latest
+          else
+            gh release create "$RELEASE_TAG" "$DMG_PATH" "$APPCAST_PATH" \
+              --title "CodeWide $RELEASE_TAG" --notes "$notes" --latest
+          fi
+
+      - name: Update Homebrew tap
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          test -n "$TAP_DEPLOY_KEY"
+          tap_root="$RUNNER_TEMP/homebrew-codewide"
+          ssh_root="$RUNNER_TEMP/homebrew-ssh"
+          mkdir -p "$ssh_root"
+          chmod 0700 "$ssh_root"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$ssh_root/id_ed25519"
+          chmod 0600 "$ssh_root/id_ed25519"
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' > "$ssh_root/known_hosts"
+          GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+            git clone git@github.com:MrFlashAccount/homebrew-codewide.git "$tap_root"
+          sha256=$(shasum --algorithm 256 "$DMG_PATH" | awk '{print $1}')
+          ./scripts/update-homebrew-tap macos "$CODEWIDE_VERSION" "$sha256" "$tap_root"
+          git -C "$tap_root" config user.name "github-actions[bot]"
+          git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$tap_root" add Casks/codewide.rb
+          if git -C "$tap_root" diff --cached --quiet; then
+            exit 0
+          fi
+          git -C "$tap_root" commit -m "codewide $CODEWIDE_VERSION"
+          attempt=0
+          until GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+            git -C "$tap_root" push origin HEAD:main; do
+            attempt=$((attempt + 1))
+            test "$attempt" -lt 3
+            GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts" \
+              git -C "$tap_root" pull --rebase origin main
+          done

@@ -6,7 +6,7 @@ import { compactSource } from "./source-contract";
 
 const readSource = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const screen = compactSource(readSource("../app/v1/_layout.tsx"));
+const screen = compactSource(readSource("../app/(workspace)/_layout.tsx"));
 const workspace = readSource("../src/data/thread-sync-projection.ts");
 const nativeTransport = readSource("../src/native/native-transport.native.ts");
 const nativeModule = readSource(

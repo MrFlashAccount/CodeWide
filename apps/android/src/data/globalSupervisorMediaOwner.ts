@@ -35,6 +35,9 @@ export function createGlobalSupervisorMediaOwner(
         await session.acceptAnswer(sdp);
       },
       offerSdp: session.offerSdp,
+      async setMicrophoneMuted(muted): Promise<void> {
+        await session.setMicrophoneMuted(muted);
+      },
       async stop(): Promise<void> {
         stopPromise ??= (async () => {
           try {

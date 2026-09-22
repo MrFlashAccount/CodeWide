@@ -11,7 +11,7 @@ import {
 } from "../src/data/subagent-projection";
 import { threadSummaryDescendantKeys, threadSummaryKey } from "../src/data/thread-summary-projection";
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
-import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 
 function summary(
   id: string,
@@ -134,7 +134,7 @@ describe("subagent projection", () => {
         clientId: null,
         content: [{ type: "text", text: "Audit the renderer boundary.", text_elements: [] }],
       },
-      { type: "agentMessage", id: "child-turn-message", text: "working", phase: "commentary", memoryCitation: null },
+      { delivery: null, questions: null, type: "agentMessage", id: "child-turn-message", text: "working", phase: "commentary", memoryCitation: null },
     ]);
   });
 
@@ -209,7 +209,7 @@ describe("subagent projection", () => {
     const child = thread("child", "root", 200, [{
       ...turn("child-turn", 201, ""),
       items: [
-        { type: "agentMessage", id: "commentary-1", text: "Inspecting", phase: "commentary", memoryCitation: null },
+        { delivery: null, questions: null, type: "agentMessage", id: "commentary-1", text: "Inspecting", phase: "commentary", memoryCitation: null },
         {
           type: "commandExecution",
           id: "command",
@@ -222,8 +222,8 @@ describe("subagent projection", () => {
           exitCode: 0,
           durationMs: 10,
         },
-        { type: "agentMessage", id: "commentary-2", text: "Found it", phase: "commentary", memoryCitation: null },
-        { type: "agentMessage", id: "result", text: "Fixed", phase: "final_answer", memoryCitation: null },
+        { delivery: null, questions: null, type: "agentMessage", id: "commentary-2", text: "Found it", phase: "commentary", memoryCitation: null },
+        { delivery: null, questions: null, type: "agentMessage", id: "result", text: "Fixed", phase: "final_answer", memoryCitation: null },
       ],
     }]);
 
@@ -318,6 +318,6 @@ function turn(id: string, startedAt: number, prompt: string): Turn {
 function agentTurn(id: string, startedAt: number, text: string): Turn {
   return {
     ...turn(id, startedAt, ""),
-    items: [{ type: "agentMessage", id: `${id}-message`, text, phase: "commentary", memoryCitation: null }],
+    items: [{ delivery: null, questions: null, type: "agentMessage", id: `${id}-message`, text, phase: "commentary", memoryCitation: null }],
   };
 }

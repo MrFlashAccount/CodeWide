@@ -17,8 +17,6 @@ internal val processNativeAuthorityLifecycle = NativeAuthorityLifecycle()
 
 /** Every server-scoped capability that must be retired before authority replacement. */
 internal data class NativeAuthorityRevocation(
-  val authenticatedTransports: () -> Unit,
-  val notificationProjection: () -> Unit,
   val legacySession: () -> Unit,
   val portForwards: () -> Unit,
   val terminalSessions: () -> Unit,
@@ -29,8 +27,6 @@ internal data class NativeAuthorityRevocation(
 internal fun revokeNativeAuthority(revocation: NativeAuthorityRevocation) {
   var failure: Throwable? = null
   val actions = listOf(
-    revocation.authenticatedTransports,
-    revocation.notificationProjection,
     revocation.legacySession,
     revocation.portForwards,
     revocation.terminalSessions,

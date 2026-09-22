@@ -51,7 +51,7 @@ const result = spawnSync(
     "json",
     "--no-error-on-unmatched-pattern",
     "app/legacy.tsx",
-    "app/v1",
+    "app/(workspace)",
     "src",
   ],
   {

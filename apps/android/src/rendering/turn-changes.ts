@@ -1,5 +1,5 @@
 import { projectFileChange } from "./file-change-rendering";
-import type { ThreadItem } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadItem } from "@codewide/codex-protocol/v0.155.1/v2";
 
 export interface TurnChangedFile {
   readonly additions: number;

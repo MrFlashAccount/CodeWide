@@ -1,4 +1,4 @@
-import type { GetAccountRateLimitsResponse } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { GetAccountRateLimitsResponse } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import type { AccountPoolSnapshot } from "./account-pool";
 import { accountRateLimitsStale } from "./account-rate-limits";

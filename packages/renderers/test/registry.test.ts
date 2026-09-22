@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 
 import { connectionId, KNOWN_ITEM_TYPES, normalizeThread } from "@codewide/domain";
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { createLargeFixtureThread } from "@codewide/fixtures";
 import { describe, expect, it } from "vitest";
 
@@ -116,10 +116,16 @@ describe("renderer registry", () => {
 
   it("projects a synthetic 20,000-item thread without dropping blocks", () => {
     const synthetic: Thread = {
+      environments: null,
+      projectId: null,
+      model: null,
+      reasoningEffort: null,
+      originator: null,
+      daybreakEnabled: null,
       id: "synthetic-20k", extra: null, sessionId: "synthetic-20k", forkedFromId: null, parentThreadId: null,
       preview: "stress", ephemeral: false, section: null, sectionEnteredAt: null, historyMode: "paginated",
       modelProvider: "openai", createdAt: 1, updatedAt: 1, recencyAt: 1, status: { type: "idle" }, path: null,
-      cwd: "/workspace", cliVersion: "0.147.0", source: "appServer", canAcceptDirectInput: true, threadSource: null,
+      cwd: "/workspace", cliVersion: "0.155.1", source: "appServer", canAcceptDirectInput: true, threadSource: null,
       agentNickname: null, agentRole: null, gitInfo: null, name: "20k renderer stress",
       turns: [{
         id: "turn", itemsView: "full", status: "completed", error: null, startedAt: 1, completedAt: 2, durationMs: 1_000,
@@ -129,6 +135,8 @@ describe("renderer registry", () => {
           text: `Result ${index}`,
           phase: null,
           memoryCitation: null,
+          delivery: null,
+          questions: null,
         })),
       }],
     };

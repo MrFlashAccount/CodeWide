@@ -1,6 +1,6 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { useState, type ReactNode } from "react";
-import { Pressable, Text } from "react-native";
+import { Image, Pressable, Text } from "react-native";
 import { State } from "react-native-gesture-handler";
 import { fireGestureHandler, getByGestureTestId } from "react-native-gesture-handler/jest-utils";
 import { ContentReviewHost, useContentReviewRuntime } from "../src/rendering/ContentReviewHost";
@@ -11,6 +11,7 @@ import {
 } from "../src/rendering/ImagePreviewHost";
 import { OpenableImage } from "../src/features/conversation/protocol/ImageProtocolBlock";
 import { styles as userMessageStyles } from "../src/features/conversation/turns/UserMessageContent.styles";
+import { ProgressiveImageFrames } from "../src/rendering/ProgressiveImageLayer";
 import {
   AppFullscreenOverlayProvider,
   type AppFullscreenOverlayController,
@@ -93,6 +94,44 @@ it("lets the bubble frame own preview width instead of retaining the legacy 220d
   expect(view.getByLabelText("Tall screenshot").props.resizeMode).toBe("cover");
 });
 
+it("keeps the decoded preview above detail until the replacement frame loads", () => {
+  const view = render(
+    <ProgressiveImageFrames
+      detail={{ uri: "file:///detail.webp" }}
+      label="Photo"
+      onDecodeStateChange={() => undefined}
+      onDimensions={() => undefined}
+      preview={{ uri: "file:///preview.webp" }}
+    />,
+  );
+
+  expect(view.UNSAFE_getAllByType(Image).map((node) => node.props.accessibilityLabel)).toEqual([
+    "Photo high quality",
+    "Photo full screen",
+  ]);
+  const detail = view.getByLabelText("Photo high quality");
+  expect(detail).not.toHaveStyle({ opacity: 0 });
+  fireEvent(detail, "load", { nativeEvent: { source: { height: 100, width: 200 } } });
+  expect(view.queryByLabelText("Photo full screen")).toBeNull();
+  expect(view.getByLabelText("Photo high quality")).toBeTruthy();
+});
+
+it("keeps the preview when the detail frame fails", () => {
+  const view = render(
+    <ProgressiveImageFrames
+      detail={{ uri: "file:///detail.webp" }}
+      label="Photo"
+      onDecodeStateChange={() => undefined}
+      onDimensions={() => undefined}
+      preview={{ uri: "file:///preview.webp" }}
+    />,
+  );
+
+  fireEvent(view.getByLabelText("Photo high quality"), "error");
+  expect(view.queryByLabelText("Photo high quality")).toBeNull();
+  expect(view.getByLabelText("Photo full screen")).toBeTruthy();
+});
+
 it("offers both drawing and pins, saves the image comment and restores its point on reopen", async () => {
   const view = render(
     <AppDialogProvider>
@@ -106,6 +145,10 @@ it("offers both drawing and pins, saves the image comment and restores its point
     </AppDialogProvider>,
   );
   fireEvent.press(view.getByText("Open photo"));
+  expect(view.queryByLabelText("Photo full screen")).toBeNull();
+  fireEvent(view.getByTestId("image-preview-viewport"), "layout", {
+    nativeEvent: { layout: { width: 300, height: 300 } },
+  });
   expect(view.getByLabelText("Photo full screen").props.resizeMethod).toBe("resize");
   fireEvent.press(view.getByLabelText("Annotate image in QuickDraw"));
   await waitFor(() => expect(annotate).toHaveBeenCalledWith(image, expect.any(Function)));

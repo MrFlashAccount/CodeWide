@@ -205,7 +205,7 @@ export function v1ThreadRouteParams(input: {
 
 export type V1ThreadDestination = {
   readonly params: { readonly connectionId: string; readonly threadId: string };
-  readonly pathname: "/v1/threads/[connectionId]/[threadId]";
+  readonly pathname: "/threads/[connectionId]/[threadId]";
 };
 
 /** Builds the canonical qualified V1 thread destination. */
@@ -215,6 +215,6 @@ export function v1ThreadDestination(params: V1ThreadRouteParams): V1ThreadDestin
       connectionId: params.connectionId.value,
       threadId: params.threadId.value,
     },
-    pathname: "/v1/threads/[connectionId]/[threadId]",
+    pathname: "/threads/[connectionId]/[threadId]",
   };
 }

@@ -1,6 +1,8 @@
 //! Stable JSON contract for one-time Companion-to-relay pairing.
 use serde::{Deserialize, Serialize};
 
+include!(concat!(env!("OUT_DIR"), "/pairing_version.rs"));
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PairRequest {

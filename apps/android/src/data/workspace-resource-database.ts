@@ -10,7 +10,7 @@ export type {
 } from "./thread-resource-types";
 import { localOnlyCollectionOptions } from "@tanstack/db";
 import { createCollection, type Collection } from "@tanstack/react-db";
-import type { ThreadGoal, ThreadGoalStatus } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadGoal, ThreadGoalStatus } from "@codewide/codex-protocol/v0.155.1/v2";
 
 import { createTurnControlsCollection } from "./turn-controls-collection";
 import {

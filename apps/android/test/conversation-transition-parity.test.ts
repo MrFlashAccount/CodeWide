@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compactSource } from "./source-contract";
 
 const screen = compactSource(
-  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 const subagentSheet = readFileSync(
   new URL("../src/features/agents/SubagentSheet.tsx", import.meta.url),
@@ -134,7 +134,10 @@ const publication = compactSource(
 );
 const agentsRoute = compactSource(
   readFileSync(
-    new URL("../app/v1/threads/[connectionId]/[threadId]/agents/index.tsx", import.meta.url),
+    new URL(
+      "../app/(workspace)/threads/[connectionId]/[threadId]/agents/index.tsx",
+      import.meta.url,
+    ),
     "utf8",
   ),
 );
@@ -156,12 +159,8 @@ describe("conversation transition parity", () => {
     // Main-chat navigation now reveals cached data or a skeleton immediately;
     // retaining the previous destination until hydration is no longer its UX contract.
     expect(mainSelection).not.toContain("startThreadTransition(");
-    expect(mainSelection).toContain("open({");
-    expect(mainSelection).toContain(
-      'mode: isCurrentThread(router.currentThread, params) ? "replace" : router.selectionMode',
-    );
-    expect(mainSelection).toContain("...(navigationId === null ? {} : { navigationId }),");
-    expect(mainSelection).toContain("params,");
+    // Immediate publication and repeat selection are exercised through actual row links in
+    // workspace-navigation.render.test.tsx and Expo's StackRouter in v1-router-state.render.test.tsx.
     expect(mainSelection).not.toContain("setThreadSelection(");
     expect(mainBoundary).not.toContain("<Suspense");
     expect(mainBoundary).not.toContain("ConversationNavigationFallback");

@@ -38,6 +38,7 @@ export type TimelineViewportProps = {
   liveStatusVisible: boolean;
   loadNewerAtTimelineEnd: () => void;
   loadOlderAtTimelineStart: () => void;
+  newChat: boolean;
   onTimelineFirstVisibleItemChanged: ({
     index,
     item,

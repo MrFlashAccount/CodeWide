@@ -64,7 +64,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   private val voiceAura = VoiceAuraOverlay(context)
   private val browserDevTools = BrowserDevToolsBridge(context)
   private val mainHandler = Handler(Looper.getMainLooper())
-  private val authenticatedLeaseGate = LeaseAcquisitionGate(MAX_AUTHENTICATED_LEASES_PER_CONTEXT)
   @Volatile private var invalidated = false
 
   init {
@@ -401,32 +400,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
-  fun setV2ConnectionEnabled(connectionId: String, enabled: Boolean, promise: Promise) {
-    try {
-      require(connectionId.isNotBlank()) { "Connection id is required" }
-      val serviceWasMissing = processNativeAuthorityLifecycle.access {
-        val store = NativeSessionCredentialsStore(context)
-        val saved = store.get(connectionId) ?: throw IllegalStateException("Saved native credentials are missing")
-        val replacement = saved.copy(enabled = enabled)
-        if (replacement == saved) return@access CodexConnectionService.instance == null
-        val service = CodexConnectionService.instance
-        if (service == null) {
-          store.upsert(replacement)
-          true
-        } else {
-          if (enabled) service.activateV2Sync(headless = false)
-          service.replaceSavedServerAuthority(replacement)
-          false
-        }
-      }
-      if (enabled && serviceWasMissing) activateV2ConnectionService()
-      promise.resolve(null)
-    } catch (error: Throwable) {
-      promise.reject("SET_CONNECTION_ENABLED_FAILED", error.message, error)
-    }
-  }
-
-  @ReactMethod
   fun attachSocket(connectionId: String, promise: Promise) {
     try {
       require(connectionId.isNotBlank()) { "Connection id is required" }
@@ -472,133 +445,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       promise.resolve(service.companionHttpOrigin(connectionId))
     } catch (error: Throwable) {
       promise.reject("COMPANION_HTTP_PROXY_FAILED", "Could not open the pinned companion HTTP transport", error)
-    }
-  }
-
-  @ReactMethod
-  fun acquireAuthenticatedTransportLease(savedServerId: String, promise: Promise) {
-    var reservation: LeaseAcquisitionGate.Reservation? = null
-    try {
-      require(savedServerId.isNotBlank()) { "Saved server id is required" }
-      reservation = authenticatedLeaseGate.reserve()
-      activateV2ConnectionService()
-      acquireAuthenticatedTransportLeaseWhenReady(
-        savedServerId,
-        promise,
-        SystemClock.uptimeMillis() + AUTHENTICATED_LEASE_SERVICE_TIMEOUT_MS,
-        reservation,
-      )
-    } catch (error: Throwable) {
-      reservation?.let(authenticatedLeaseGate::discard)
-      promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "Could not acquire the authenticated transport lease", error)
-    }
-  }
-
-  private fun activateV2ConnectionService() {
-    val service = CodexConnectionService.instance
-    if (service != null) {
-      service.activateV2Sync(headless = false)
-      return
-    }
-    ContextCompat.startForegroundService(
-      context,
-      Intent(context, CodexConnectionService::class.java).apply {
-        action = CodexConnectionService.ACTION_ACTIVATE_V2
-      },
-    )
-  }
-
-  private fun acquireAuthenticatedTransportLeaseWhenReady(
-    savedServerId: String,
-    promise: Promise,
-    deadline: Long,
-    reservation: LeaseAcquisitionGate.Reservation,
-  ) {
-    if (invalidated) {
-      authenticatedLeaseGate.discard(reservation)
-      promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "React context is no longer active")
-      return
-    }
-    val service = CodexConnectionService.instance
-    if (service != null) {
-      try {
-        val leaseHandle = service.acquireAuthenticatedTransportLease(savedServerId)
-        val retained = !invalidated && authenticatedLeaseGate.attach(reservation, leaseHandle)
-        if (retained) promise.resolve(leaseHandle)
-        else {
-          service.releaseAuthenticatedTransportLease(leaseHandle)
-          promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "React context is no longer active")
-        }
-      } catch (error: Throwable) {
-        authenticatedLeaseGate.discard(reservation)
-        promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "Could not acquire the authenticated transport lease", error)
-      }
-      return
-    }
-    if (SystemClock.uptimeMillis() >= deadline) {
-      authenticatedLeaseGate.discard(reservation)
-      promise.reject(
-        "AUTHENTICATED_LEASE_UNAVAILABLE",
-        "Connection service did not become ready",
-      )
-      return
-    }
-    mainHandler.postDelayed(
-      { acquireAuthenticatedTransportLeaseWhenReady(savedServerId, promise, deadline, reservation) },
-      AUTHENTICATED_LEASE_SERVICE_RETRY_MS,
-    )
-  }
-
-  @ReactMethod
-  fun openAuthenticatedDuplex(leaseHandle: String, channelId: String, purpose: String, promise: Promise) {
-    try {
-      check(authenticatedLeaseGate.owns(leaseHandle)) { "Authenticated lease is not owned by this React context" }
-      val service = CodexConnectionService.instance ?: error("Connection service is not running")
-      service.openAuthenticatedDuplex(leaseHandle, channelId, purpose)
-      promise.resolve(null)
-    } catch (error: Throwable) {
-      promise.reject("AUTHENTICATED_CHANNEL_UNAVAILABLE", "Could not open the authenticated channel", error)
-    }
-  }
-
-  @ReactMethod
-  fun sendAuthenticatedDuplex(leaseHandle: String, channelId: String, data: String, promise: Promise) {
-    try {
-      check(authenticatedLeaseGate.owns(leaseHandle)) { "Authenticated lease is not owned by this React context" }
-      val service = CodexConnectionService.instance ?: error("Connection service is not running")
-      service.sendAuthenticatedDuplex(leaseHandle, channelId, data)
-      promise.resolve(null)
-    } catch (error: Throwable) {
-      promise.reject("AUTHENTICATED_CHANNEL_SEND_FAILED", "Could not send through the authenticated channel", error)
-    }
-  }
-
-  @ReactMethod
-  fun closeAuthenticatedDuplex(leaseHandle: String, channelId: String, code: Double, reason: String) {
-    if (!authenticatedLeaseGate.owns(leaseHandle)) return
-    CodexConnectionService.instance?.closeAuthenticatedDuplex(leaseHandle, channelId, code.toInt(), reason)
-  }
-
-  @ReactMethod
-  fun authenticatedRequest(leaseHandle: String, purpose: String, input: String, promise: Promise) {
-    try {
-      check(authenticatedLeaseGate.owns(leaseHandle)) { "Authenticated lease is not owned by this React context" }
-      val service = CodexConnectionService.instance ?: error("Connection service is not running")
-      service.authenticatedRequest(leaseHandle, purpose, input) { result ->
-        result.fold(
-          onSuccess = promise::resolve,
-          onFailure = { promise.reject("AUTHENTICATED_REQUEST_FAILED", "Authenticated request failed", it) },
-        )
-      }
-    } catch (error: Throwable) {
-      promise.reject("AUTHENTICATED_REQUEST_FAILED", "Authenticated request failed", error)
-    }
-  }
-
-  @ReactMethod
-  fun releaseAuthenticatedTransportLease(leaseHandle: String) {
-    if (authenticatedLeaseGate.release(leaseHandle)) {
-      CodexConnectionService.instance?.releaseAuthenticatedTransportLease(leaseHandle)
     }
   }
 
@@ -1270,12 +1116,10 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod fun removeListeners(count: Double) = Unit
 
   override fun invalidate() {
-    val service = CodexConnectionService.instance
     invalidated = true
     context.removeLifecycleEventListener(this)
     stopPcmCaptureInternal()
     microphone.close()
-    authenticatedLeaseGate.close().forEach { leaseHandle -> service?.releaseAuthenticatedTransportLease(leaseHandle) }
     mainHandler.removeCallbacksAndMessages(null)
     contexts -= context
     browserDevTools.close()
@@ -1510,7 +1354,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     const val AUDIO_EVENT = "CodeWideAudioEvent"
     const val PORT_FORWARD_EVENT = "CodeWidePortForwardEvent"
     const val TERMINAL_EVENT = "CodeWideTerminalEvent"
-    const val AUTHENTICATED_TRANSPORT_EVENT = "CodeWideAuthenticatedTransportEvent"
     // Native Opus chunks stay smaller than the existing one-second network
     // batches so level feedback remains responsive while upload ordering and
     // acknowledgement continue to belong to RealtimeAudioUploader.
@@ -1527,9 +1370,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     private const val MAX_COMMITTED_FRAME_PAGE = 128
     private const val MAX_COMMITTED_FRAME_BYTES = 512 * 1024
     private const val DOCUMENT_IO_BUFFER_BYTES = 256 * 1024
-    private const val AUTHENTICATED_LEASE_SERVICE_RETRY_MS = 25L
-    private const val AUTHENTICATED_LEASE_SERVICE_TIMEOUT_MS = 5_000L
-    private const val MAX_AUTHENTICATED_LEASES_PER_CONTEXT = 32
     private val contexts = CopyOnWriteArraySet<ReactApplicationContext>()
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val pairingHttpClient = OkHttpClient.Builder()
@@ -1578,16 +1418,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           if (!reactContext.hasActiveReactInstance()) return@runOnUiQueueThread
           reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit(TERMINAL_EVENT, data)
-        }
-      }
-    }
-
-    fun emitAuthenticatedTransportEvent(data: String) {
-      contexts.forEach { reactContext ->
-        reactContext.runOnUiQueueThread {
-          if (!reactContext.hasActiveReactInstance()) return@runOnUiQueueThread
-          reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-            .emit(AUTHENTICATED_TRANSPORT_EVENT, data)
         }
       }
     }

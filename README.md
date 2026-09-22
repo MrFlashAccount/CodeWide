@@ -152,9 +152,28 @@ Build and install the companion as a user service:
 ```sh
 pnpm build:companion
 target/release/codewide-companion create-token
-apps/companion/deploy/install.sh
+apps/companion-linux/deploy/install.sh
 codewide-companion pair
 ```
+
+For an ordinary macOS 26+ desktop, install the native menu-bar app from the
+CodeWide Homebrew tap. It owns the LaunchAgent lifecycle, Relay setup, QR
+pairing, live device presence, revoke, and signed in-app updates:
+
+```sh
+brew tap MrFlashAccount/codewide
+brew install --cask codewide
+```
+
+For a headless x86_64 Linux host, the checksummed standalone installer installs
+the portable Companion bundle and its user-systemd units:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/companion | sh
+```
+
+The same Linux release is also available from the tap as
+`brew install MrFlashAccount/codewide/codewide-companion`.
 
 The packaged service exposes an HTTP carrier. Put it behind any ordinary
 public-CA TLS ingress, Tailscale, ngrok, or another relay. Application traffic
@@ -168,8 +187,15 @@ set -lx CODEWIDE_SERVER_EMOJI '🏠'
 codewide-companion pair
 ```
 
-Build the standalone Linux Relay with `cargo build --release -p codewide-relay`
-and run `target/release/codewide-relay --port 8780`. Android and Companion
+Build the standalone Linux Relay release artifact with
+`./scripts/build-relay-linux`. After a Relay release is published, install its
+verified portable `x86_64` Linux binary with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
+```
+
+Run `codewide-relay --port 8780`. Android and Companion
 both connect outbound to that Relay address. Plain WebSocket connections carry
 opaque inner-TLS bytes, while TLS 1.3 connections on the same port carry health,
 pairing, and control. On the Relay host, `codewide-relay invite` creates an
@@ -480,34 +506,13 @@ and writes a mode-`0600` evidence bundle under ignored `test-results/`. An
 upgrade run additionally requires `--suite upgrade --previous-apk <old.apk>` and
 fails if the package UID or first-install identity changes.
 
-Run the complete Android-to-Observer E2E suite with one command:
+CodeWide uses one Android application and the Companion `/v1` API. The former V2
+frontend, protocol, native modules, and generation-parity runner are removed; see
+[the retirement and UI reuse audit](docs/android-v2-retirement.md).
 
-```sh
-pnpm test:android:e2e
-```
-
-The runner uses Appium with the pinned UiAutomator2 driver. It builds an
-isolated `dev.codexremote.app.e2e` APK, starts Metro and an isolated Companion,
-pairs through the real UI, creates a real Observer thread, sends a foreground
-message, verifies a mobile-originated turn while Android is backgrounded,
-injects another turn directly through the App Server while Android is
-backgrounded, and verifies process-death recovery. It records every scenario
-and writes videos, Appium/Metro/Companion logs, screenshots on failure, and
-`evidence.json` under `test-results/android-e2e/<run-id>/`. Open the generated
-`report.html` to play every recording inline without downloading the MP4 files.
-
-For the V2 command/reinitialize race, the runner builds only its isolated
-Companion with the non-default `e2e-command-fault` Cargo feature. It arms the
-one-shot controller through the mode-`0600` private Unix control socket, performs
-one real Appium activation, waits until the authentic SourceGap has been sent
-and the next live boundary is held, then releases it. The evidence records
-monotonic milestones and requires exactly one structured Companion admission
-with the recovered operation ID before the App Server result is accepted.
-Production Android code has no corresponding fault hook, and an ordinary
-Companion build does not contain the controller or its private routes.
-
-The command requires a running Codex App Server control socket. It uses the
-single connected emulator, or starts the first configured AVD when none is
-running. Set `CODEWIDE_E2E_SERIAL`, `CODEWIDE_E2E_AVD`, or
-`CODEWIDE_E2E_APP_SERVER_SOCKET` to select those resources explicitly. Pass
-`--skip-build` only while iterating on an already built E2E APK and Companion.
+Use `pnpm validate:android:v1` and `pnpm --filter @codewide/android compile:android`
+for source validation. `pnpm test:android-device -- --dry-run` shows the retained
+smoke, lifecycle and layout plan. Select a device with `--serial` and an APK with
+`--apk`; upgrade coverage additionally uses `--suite upgrade --previous-apk`. Source checks are
+not device evidence. The retired two-generation Appium runner no longer certifies
+releases; no replacement live-conversation E2E coverage is claimed.

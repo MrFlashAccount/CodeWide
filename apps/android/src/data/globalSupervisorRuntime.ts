@@ -2,6 +2,7 @@ import { RpcResponseError } from "@codewide/sync-client";
 
 import type { NativeLiveRealtimeEvent } from "../native/native-engine-contract";
 import type { MicrophonePermission } from "../native/native-transport";
+import { appLogger } from "../observability/logger";
 import type {
   GlobalSupervisorWebRtcSession,
   GlobalSupervisorWebRtcSessionFactory,
@@ -18,6 +19,7 @@ import {
 import type { GlobalSupervisorAttentionOwner } from "./globalSupervisorAttention";
 import { createGlobalSupervisorEventSignalSession } from "./globalSupervisorEventSignals";
 import { globalSupervisorLimitsV1 } from "./globalSupervisorLimitsV1";
+import { createGlobalSupervisorSpeechState } from "./globalSupervisorSpeechState";
 import { createGlobalSupervisorMediaOwner } from "./globalSupervisorMediaOwner";
 import {
   createGlobalSupervisorReconnectOwner,
@@ -103,6 +105,7 @@ export type GlobalSupervisorLowerRuntime = {
     readonly home: GlobalSupervisorQualifiedChatRef;
     readonly pause: () => Promise<void>;
     readonly resume: () => Promise<void>;
+    readonly setMicrophoneMuted: (muted: boolean) => Promise<void>;
     readonly stop: () => Promise<void>;
   }>;
 };
@@ -114,7 +117,7 @@ async function settledReconnectOperation(): Promise<void> {
 type GlobalSupervisorRuntimeAuthority = {
   readonly acquireForegroundLease: () => Promise<{
     readonly release: () => Promise<void>;
-    readonly setLevel: (level: number) => void;
+    readonly setPlaybackLevel: (level: number) => void;
   }>;
   readonly attention: GlobalSupervisorAttentionOwner;
   readonly binding: () => GlobalSupervisorBindingOwner;
@@ -170,6 +173,7 @@ type LiveSessionState = {
   realtimeSdpReceived: boolean;
   realtimeStarted: boolean;
   realtimeStartRequested: boolean;
+  readonly speech: ReturnType<typeof createGlobalSupervisorSpeechState>;
   stopping: boolean;
   transcriptSequence: number;
   readonly webRtc: GlobalSupervisorWebRtcSession;
@@ -275,6 +279,7 @@ function failLiveState(state: LiveSessionState, failure: GlobalSupervisorRuntime
     return;
   }
   state.failurePublished = true;
+  state.speech.stop();
   state.onFailure(failure);
 }
 
@@ -318,6 +323,10 @@ function acceptTranscript(
     return;
   }
   state.transcriptSequence += 1;
+  appLogger.info({
+    event: "global_voice.realtime.transcript_accepted",
+    fields: { role, sequence: state.transcriptSequence },
+  });
   state.publish({
     activationId: state.activationId,
     event: "transcript",
@@ -328,7 +337,7 @@ function acceptTranscript(
     },
   });
   state.attentionDelivery?.setSpeechBusy(role !== "assistant");
-  state.publish({ activationId: state.activationId, event: "listening" });
+  state.speech.acceptTranscript(role, true);
 }
 
 function acceptActivePayload(
@@ -341,12 +350,17 @@ function acceptActivePayload(
       // GPT Live WebRTC carries generated speech on the negotiated media track.
       failLiveState(state, "sessionAmbiguous");
       return;
+    case "thread/realtime/transcript/delta":
+      if (params.role === "user" || params.role === "assistant") {
+        state.speech.acceptTranscript(params.role, false);
+      }
+      return;
     case "thread/realtime/transcript/done":
       acceptTranscript(state, params);
       return;
     case "thread/realtime/itemAdded":
       state.attentionDelivery?.setSpeechBusy(true);
-      state.publish({ activationId: state.activationId, event: "thinking" });
+      state.speech.acceptItem(params.item);
       return;
     case "thread/realtime/error":
     case "thread/realtime/closed":
@@ -394,7 +408,7 @@ function acceptSdp(
         return;
       }
       context.recordStartupStage("peerConnected");
-      state.publish({ activationId: state.activationId, event: "listening" });
+      state.speech.start();
       control.resolve();
     },
     (error: unknown) => {
@@ -632,12 +646,13 @@ export function createGlobalSupervisorRuntime(
           reconnectReady.resolve({
             pause: settledReconnectOperation,
             resume: settledReconnectOperation,
+            setMicrophoneMuted: settledReconnectOperation,
             start: settledReconnectOperation,
             stop: settledReconnectOperation,
           });
           throw error;
         }
-        const startTransport = async (onTerminal: () => void) => {
+        const startTransport = async (onTerminal: () => void, microphoneMuted: boolean) => {
           const attemptSession = requireLiveSession(authority, home.connectionId);
           const supervisor = authority.getSupervisor();
           if (supervisor === null) {
@@ -648,14 +663,24 @@ export function createGlobalSupervisorRuntime(
           let terminatedBeforeState = false;
           const didTerminateBeforeState = (): boolean => terminatedBeforeState;
           const webRtc = await media.start({
+            initiallyMuted: microphoneMuted,
             mode: "interactive",
-            onLevel: foregroundLease.setLevel,
+            onPlaybackLevel(level) {
+              if (state === null || state.stopping || state.failurePublished) {
+                return;
+              }
+              foregroundLease.setPlaybackLevel(level);
+              state.speech.setPlaybackLevel(level);
+            },
             onTerminal() {
               if (state === null) {
                 terminatedBeforeState = true;
               } else {
                 failLiveState(state, "realtimeFailed");
               }
+            },
+            onUserSpeaking(speaking) {
+              state?.speech.setUserSpeaking(speaking);
             },
           });
           recordStartupStage("offerReady");
@@ -689,6 +714,13 @@ export function createGlobalSupervisorRuntime(
             realtimeSdpReceived: false,
             realtimeStarted: false,
             realtimeStartRequested: false,
+            speech: createGlobalSupervisorSpeechState({
+              home,
+              now: authority.now,
+              publish: (phase) => {
+                publish({ activationId, event: phase });
+              },
+            }),
             stopping: false,
             transcriptSequence: 0,
             webRtc,
@@ -718,6 +750,9 @@ export function createGlobalSupervisorRuntime(
           const liveSubscription = authority.ingress.subscribeLive(
             createLiveReceiver({ control, home, recordStartupStage, state }),
           );
+          const activitySubscription = authority.ingress.subscribeThreadEvents(
+            state.speech.acceptThreadEvents,
+          );
           try {
             await supervisor.subscribeLive(home.connectionId, channelId, home.threadId);
             recordStartupStage("subscriptionReady");
@@ -735,6 +770,8 @@ export function createGlobalSupervisorRuntime(
             recordStartupStage("startAccepted");
             await withTimeout(startup.promise, globalSupervisorLimitsV1.realtimeStartupTimeoutMs);
           } catch (error) {
+            state.speech.stop();
+            activitySubscription.unsubscribe();
             await webRtc.stop().catch(() => undefined);
             liveSubscription.unsubscribe();
             if (subscribed) {
@@ -778,12 +815,18 @@ export function createGlobalSupervisorRuntime(
           attentionDelivery.setSpeechBusy(false);
           let stopped = false;
           return {
+            async setMicrophoneMuted(muted: boolean): Promise<void> {
+              await state.webRtc.setMicrophoneMuted(muted);
+            },
             async stop(): Promise<void> {
               if (stopped) {
                 return;
               }
               stopped = true;
               state.stopping = true;
+              state.speech.stop();
+              activitySubscription.unsubscribe();
+              foregroundLease.setPlaybackLevel(0);
               const failures: unknown[] = [];
               const recordFailure = (error: unknown): void => {
                 failures.push(error);
@@ -860,6 +903,7 @@ export function createGlobalSupervisorRuntime(
           home: globalSupervisorQualifiedChatRef(home.connectionId, home.threadId),
           pause: reconnect.pause,
           resume: reconnect.resume,
+          setMicrophoneMuted: reconnect.setMicrophoneMuted,
           async stop() {
             cleanupPromise ??= (async () => {
               if (activeActivationId === activationId) {

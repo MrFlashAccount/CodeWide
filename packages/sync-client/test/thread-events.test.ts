@@ -1,10 +1,18 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 import { commandOutputReferences } from "../src/command-output";
 
-import { applyThreadEvent, applyThreadEventsImmutable, applyThreadProjectionPatchesImmutable, MAX_LIVE_FIELD_CHARS, preserveProjectedTurnMetadata, projectedThreadExecutionSettings, projectedTurnMetadata, seedThreadExecutionSettings, threadContainsClientMessage, threadProjectionNeedsAuthoritativeRepair, type TurnUsageProjection } from "../src/index.js";
+import { projectedQuestionHistory, applyThreadEvent, applyThreadEventsImmutable, applyThreadProjectionPatchesImmutable, MAX_LIVE_FIELD_CHARS, preserveProjectedTurnMetadata, projectedThreadExecutionSettings, projectedTurnMetadata, seedThreadExecutionSettings, threadContainsClientMessage, threadProjectionNeedsAuthoritativeRepair, type TurnUsageProjection } from "../src/index.js";
 
 describe("thread event projection", () => {
+  it("preserves rollout question receipts when full App Server history omits the extension", () => {
+    const cached = thread();
+    const questions = [{ itemId: "question-call", questions: [{ id: "q", title: "Where?", secret: false, options: [] }], outcome: { status: "answered", answers: [{ questionId: "q", answer: { kind: "text", values: ["Here"] } }] } }];
+    cached.turns = cached.turns.map((turn) => ({ ...turn, codewide: { questions } }));
+    const merged = preserveProjectedTurnMetadata(thread(), cached);
+    expect(merged.turns.flatMap(projectedQuestionHistory)).toEqual(questions);
+  });
+
   it("keeps lazy output references in order, including repeated chunks, until the final item replaces them", () => {
     const value = thread();
     const reference = { id: "a".repeat(64), byteLength: 4, contentType: "text/plain; charset=utf-8", encoding: "utf-8" };
@@ -184,6 +192,8 @@ describe("thread event projection", () => {
           content: [{ type: "text", text: "go", text_elements: [] }],
         },
         {
+          delivery: null,
+          questions: null,
           type: "agentMessage",
           id: "history-agent",
           text: "hello",
@@ -208,11 +218,11 @@ describe("thread event projection", () => {
     const value = thread();
     value.turns[0]!.items = [
       value.turns[0]!.items[0]!,
-      { type: "agentMessage", id: "turn:agent", text: "Fresh progress", phase: null, memoryCitation: null },
+      { delivery: null, questions: null, type: "agentMessage", id: "turn:agent", text: "Fresh progress", phase: null, memoryCitation: null },
     ];
 
     applyThreadEvent(value, event("item/started", {
-      item: { type: "agentMessage", id: "live-agent", text: "", phase: null, memoryCitation: null },
+      item: { delivery: null, questions: null, type: "agentMessage", id: "live-agent", text: "", phase: null, memoryCitation: null },
     }));
     applyThreadEvent(value, event("item/agentMessage/delta", { itemId: "live-agent", delta: "Fresh " }));
     expect(value.turns[0]!.items.filter((item) => item.type === "agentMessage")).toHaveLength(2);
@@ -223,10 +233,10 @@ describe("thread event projection", () => {
     ]);
 
     applyThreadEvent(value, event("item/completed", {
-      item: { type: "agentMessage", id: "live-agent", text: "Fresh progress", phase: null, memoryCitation: null },
+      item: { delivery: null, questions: null, type: "agentMessage", id: "live-agent", text: "Fresh progress", phase: null, memoryCitation: null },
     }));
     applyThreadEvent(value, event("item/completed", {
-      item: { type: "agentMessage", id: "live-agent", text: "Fresh progress", phase: null, memoryCitation: null },
+      item: { delivery: null, questions: null, type: "agentMessage", id: "live-agent", text: "Fresh progress", phase: null, memoryCitation: null },
     }));
 
     expect(value.turns[0]!.items.filter((item) => item.type === "agentMessage")).toEqual([
@@ -613,16 +623,22 @@ function turnUsageProjection(): TurnUsageProjection {
 
 function thread(): Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id: "thread", extra: null, sessionId: "thread", forkedFromId: null, parentThreadId: null,
     preview: "preview", ephemeral: false, section: null, sectionEnteredAt: null, historyMode: "paginated",
     modelProvider: "openai", createdAt: 1, updatedAt: 1, recencyAt: 1, status: { type: "active", activeFlags: [] },
-    path: null, cwd: "/workspace", cliVersion: "0.147.0", source: "appServer", canAcceptDirectInput: true,
+    path: null, cwd: "/workspace", cliVersion: "0.155.1", source: "appServer", canAcceptDirectInput: true,
     threadSource: null, agentNickname: null, agentRole: null, gitInfo: null, name: "Thread",
     turns: [{
       id: "turn", itemsView: "full", status: "inProgress", error: null, startedAt: 1, completedAt: null, durationMs: null,
       items: [
         { type: "userMessage", id: "user", clientId: "client-1", content: [{ type: "text", text: "go", text_elements: [] }] },
-        { type: "agentMessage", id: "agent", text: "hello", phase: null, memoryCitation: null },
+        { delivery: null, questions: null, type: "agentMessage", id: "agent", text: "hello", phase: null, memoryCitation: null },
         { type: "plan", id: "plan", text: "one" },
         { type: "commandExecution", id: "command", pluginId: null, scriptPath: null, command: "x", cwd: "/workspace", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: "a\n", exitCode: null, durationMs: null },
         { type: "reasoning", id: "reasoning", summary: [], content: [] },

@@ -1,0 +1,47 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "@codewide/android",
+  "projectType": "application",
+  "sourceRoot": "apps/android/src",
+  "tags": ["language:typescript", "type:application", "platform:android"],
+  "implicitDependencies": ["release-contracts"],
+  "metadata": {
+    "description": "CodeWide Expo and React Native Android client",
+    "codewideRelease": {
+      "id": "android-apk",
+      "runner": "linux",
+      "tagPrefix": "android-v",
+      "baselineVersion": "0.2.176",
+      "order": 40
+    }
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm validate:android:v1",
+        "cwd": "."
+      }
+    },
+    "package": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/builds"],
+      "options": {
+        "command": "./scripts/release-apk --dry-run",
+        "cwd": "."
+      }
+    },
+    "release": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./scripts/release-apk",
+        "cwd": ".",
+        "forwardAllArgs": true
+      }
+    }
+  }
+}

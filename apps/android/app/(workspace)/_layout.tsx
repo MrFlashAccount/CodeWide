@@ -1,31 +1,43 @@
-import { Redirect, Stack, useLocalSearchParams, usePathname } from "expo-router";
+import { useEffect } from "react";
 
-import { useUiGenerationSnapshot } from "../../src/boot/useUiGenerationSnapshot";
-import { ServerWorkspaceChrome } from "../../src/v2/features/workspace/ServerWorkspaceChrome";
-import { RecoverableRenderBoundary } from "../../src/v2/ui/RecoverableRenderBoundary";
+import { activateRuntime, stopRuntime } from "../../src/boot/runtimeSlot";
+import {
+  startLegacyNativeRuntimeResources,
+  stopLegacyNativeRuntimeResources,
+} from "../../src/native/native-transport";
+import { WorkspaceRouteComposition } from "../../src/routeComposition/WorkspaceRouteComposition";
+import { reportGlobalError } from "../../src/ui/global-error-store";
+import { disposeAllRouteSessions } from "../../src/services/routeSessionPolicy";
+import { newThreadService } from "../../src/services/threads/newThreadService";
 
-export const unstable_settings = { initialRouteName: "servers/index" };
-const SCREEN_OPTIONS = { animation: "none", headerShown: false } as const;
+// WHY: Expo Router reads this required route-module export before rendering the layout component.
+// oxlint-disable-next-line react-doctor/only-export-components
+export const unstable_settings = { anchor: "(lists)", initialRouteName: "(lists)" };
 
-export default function WorkspaceLayout(): React.JSX.Element {
-  const generation = useUiGenerationSnapshot();
-  const pathname = usePathname();
-  // Local params remain pinned while a transparent modal owns the foreground URL.
-  const savedServerId = useLocalSearchParams<{ savedServerId?: string | string[] }>().savedServerId;
-  if (generation.status !== "ready") return <Redirect href="/" />;
-  if (generation.generation === "legacy") return <Redirect href="/legacy" />;
-  return (
-    <ServerWorkspaceChrome
-      activeSavedServerId={typeof savedServerId === "string" ? savedServerId : null}
-    >
-      <RecoverableRenderBoundary
-        context={`Route: ${pathname}`}
-        label="Workspace route"
-        resetKey={pathname}
-        scope="surface"
-      >
-        <Stack screenOptions={SCREEN_OPTIONS} />
-      </RecoverableRenderBoundary>
-    </ServerWorkspaceChrome>
-  );
+/** Keeps the V1 runtime mounted while Expo Router owns destination history. */
+export default function V1WorkspaceLayout(): React.JSX.Element {
+  return <MountedV1Workspace />;
+}
+
+/** Owns V1 runtime activation and exact workspace teardown around the persistent composition. */
+export function MountedV1Workspace(): React.JSX.Element {
+  useEffect(() => {
+    // Effects cannot await runtime activation; the attached handler reports every rejection.
+    void activateRuntime(() => ({
+      start: startLegacyNativeRuntimeResources,
+      stop: stopLegacyNativeRuntimeResources,
+    })).catch((error: unknown) => {
+      reportGlobalError(error, "manual", true);
+    });
+    return () => {
+      disposeAllRouteSessions();
+      newThreadService.dispose();
+      // Effect cleanup cannot await runtime shutdown; the attached handler reports every rejection.
+      void stopRuntime().catch((error: unknown) => {
+        reportGlobalError(error, "manual", true);
+      });
+    };
+  }, []);
+
+  return <WorkspaceRouteComposition />;
 }

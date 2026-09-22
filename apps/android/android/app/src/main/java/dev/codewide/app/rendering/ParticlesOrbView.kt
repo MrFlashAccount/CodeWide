@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import kotlin.math.PI
+import kotlin.math.hypot
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
@@ -113,6 +114,10 @@ internal object ParticlesOrbModel {
     VoiceAssistantOrbState.DISABLED,
     -> 0f
   }
+
+  /** Outermost painted dot, including projection, state deformation and dot radius. */
+  fun visualExtent(point: MutableParticlesOrbProjection, size: Float): Float =
+    hypot(point.x - size / 2f, point.y - size / 2f) + point.dotRadius
 
   fun project(
     point: ParticlesOrbPoint,
@@ -262,31 +267,48 @@ internal class ParticlesOrbStateMix(initial: VoiceAssistantOrbState = VoiceAssis
   )
 }
 
+/** Each audio source retains its own attack/release history across visual state changes. */
+internal class ParticlesOrbEnvelope {
+  private var source = 0f
+  var value = 0f
+    private set
+
+  fun advance(target: Float, deltaSeconds: Float) {
+    val rate = if (target > source) 14f else 4f
+    source = ParticlesOrbModel.approach(source, target, rate, deltaSeconds)
+    value = ParticlesOrbModel.approach(value, source, 9f, deltaSeconds)
+  }
+}
+
 /** One clock-owned simulation for both production rendering and deterministic frame tests. */
 internal class ParticlesOrbSimulation(initialState: VoiceAssistantOrbState = VoiceAssistantOrbState.IDLE) {
   private val stateMix = ParticlesOrbStateMix(initialState)
   private var time = 0f
   private var angleY = 0f
   private var connectingPhase = 0f
-  private var inputLevelSmoothed = 0f
-  private var levelSmoothed = 0f
+  private val inputEnvelope = ParticlesOrbEnvelope()
+  private val playbackEnvelope = ParticlesOrbEnvelope()
+  private val autonomousEnvelope = ParticlesOrbEnvelope()
 
   fun advance(
     state: VoiceAssistantOrbState,
-    liveListeningLevel: Float?,
+    inputLevel: Float?,
+    playbackLevel: Float?,
     deltaSeconds: Float,
     isStatic: Boolean = false,
   ): ParticlesOrbFrame {
     if (isStatic) time = ParticlesOrbModel.STATIC_TIME_SECONDS else time += deltaSeconds
     val easeDelta = if (isStatic) 60f else deltaSeconds
     val weights = stateMix.update(state, easeDelta)
-    val targetLevel = if (!isStatic && state == VoiceAssistantOrbState.LISTENING && liveListeningLevel != null) {
-      liveListeningLevel.coerceIn(0f, 1f)
-    } else {
-      ParticlesOrbModel.stateEnergy(state, time)
+    inputEnvelope.advance(inputLevel?.coerceIn(0f, 1f) ?: 0f, easeDelta)
+    playbackEnvelope.advance(playbackLevel?.coerceIn(0f, 1f) ?: 0f, easeDelta)
+    autonomousEnvelope.advance(ParticlesOrbModel.stateEnergy(state, time), easeDelta)
+    val levelSmoothed = when {
+      isStatic -> ParticlesOrbModel.stateEnergy(state, time)
+      state == VoiceAssistantOrbState.LISTENING -> inputEnvelope.value
+      state == VoiceAssistantOrbState.SPEAKING -> playbackEnvelope.value
+      else -> autonomousEnvelope.value
     }
-    inputLevelSmoothed = ParticlesOrbModel.approach(inputLevelSmoothed, targetLevel, 7.7f, easeDelta)
-    levelSmoothed = ParticlesOrbModel.approach(levelSmoothed, inputLevelSmoothed, 9f, easeDelta)
 
     val ripple = weights.listening
     val pulse = weights.thinking
@@ -325,53 +347,75 @@ internal class ParticlesOrbView(context: Context) : VoiceAssistantOrbView(contex
   private val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val additiveXfermode = PorterDuffXfermode(PorterDuff.Mode.ADD)
   private val points = ParticlesOrbModel.buildSphere()
+  private val projected = List(points.size) { MutableParticlesOrbProjection() }
   private val density = resources.displayMetrics.density
   private var simulation = ParticlesOrbSimulation()
-  private val projection = MutableParticlesOrbProjection()
-  private var liveListeningLevel: Float? = null
-  private var frame = simulation.advance(orbState, null, 0f)
+  private var inputLevel: Float? = null
+  private var playbackLevel: Float? = null
+  private var frame = simulation.advance(orbState, null, null, 0f)
   private var hasAdvanced = false
 
   init {
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
   }
 
-  override fun setLevel(rawLevel: Double) {
-    liveListeningLevel = if (rawLevel >= 0.0) rawLevel.toFloat().coerceIn(0f, 1f) else null
+  override fun setAudioLevels(inputLevel: Double, playbackLevel: Double) {
+    recordAudioInput(inputLevel, playbackLevel)
+    this.inputLevel = inputLevel.normalizedLevel()
+    this.playbackLevel = playbackLevel.normalizedLevel()
   }
 
   override fun advanceAnimation(deltaSeconds: Float) {
     hasAdvanced = true
-    frame = simulation.advance(orbState, liveListeningLevel, deltaSeconds)
+    frame = simulation.advance(orbState, inputLevel, playbackLevel, deltaSeconds)
   }
 
   override fun onOrbStateChanged() {
     if (!hasAdvanced) {
       simulation = ParticlesOrbSimulation(orbState)
-      frame = simulation.advance(orbState, liveListeningLevel, 0f)
+      frame = simulation.advance(orbState, inputLevel, playbackLevel, 0f)
     }
-    if (reducedMotion) frame = simulation.advance(orbState, null, 0f, isStatic = true)
+    if (reducedMotion) frame = simulation.advance(orbState, null, null, 0f, isStatic = true)
   }
 
   override fun onReducedMotionChanged() {
     frame = if (reducedMotion) {
-      simulation.advance(orbState, null, 0f, isStatic = true)
+      simulation.advance(orbState, null, null, 0f, isStatic = true)
     } else {
-      simulation.advance(orbState, liveListeningLevel, 0f)
+      simulation.advance(orbState, inputLevel, playbackLevel, 0f)
     }
   }
+
+  override fun rendererDiagnostic(): String =
+    "style=particles input=$inputLevel playback=$playbackLevel level=${frame.level} " +
+      "listeningWeight=${frame.weights.listening} ripple=${frame.ripple} " +
+      "radiusScale=${frame.radiusScale} angleY=${frame.angleY} static=${frame.isStatic}"
 
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     if (width <= 0 || height <= 0) return
     val size = minOf(width, height).toFloat()
+    var visualRadius = 0f
+    for (index in points.indices) {
+      val point = projected[index]
+      ParticlesOrbModel.projectInto(points[index], index, frame, size, density, point)
+      visualRadius = maxOf(visualRadius, ParticlesOrbModel.visualExtent(point, size))
+    }
+    drawBackdrop(canvas, visualRadius)
+    // Keep upstream additive blending among particles, never against the overlay backplate.
+    val layer = canvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
     particlePaint.xfermode = if (frame.additiveGlow) additiveXfermode else null
     for (index in points.indices) {
-      ParticlesOrbModel.projectInto(points[index], index, frame, size, density, projection)
+      val projection = projected[index]
       particlePaint.color = projection.color
       particlePaint.alpha = (projection.alpha * 255f).toInt().coerceIn(0, 255)
       canvas.drawCircle(projection.x, projection.y, projection.dotRadius, particlePaint)
     }
     particlePaint.xfermode = null
+    canvas.restoreToCount(layer)
+    recordRendererFrame()
   }
+
+  private fun Double.normalizedLevel(): Float? =
+    if (isFinite() && this >= 0.0) toFloat().coerceIn(0f, 1f) else null
 }

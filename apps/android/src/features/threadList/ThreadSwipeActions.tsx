@@ -12,8 +12,10 @@ export const THREAD_SWIPE_ACTIONS_WIDTH = THREAD_SWIPE_ACTION_WIDTH * 3;
 
 export function ThreadSwipeActions({ children }: { children: ReactNode }) {
   return (
-    <View style={styles.swipeActionsUnderlay}>
-      <View style={styles.swipeActionsRight}>{children}</View>
+    <View style={styles.swipeActionsLayout}>
+      <View style={styles.swipeActionsUnderlay}>
+        <View style={styles.swipeActionsRight}>{children}</View>
+      </View>
     </View>
   );
 }
@@ -71,18 +73,25 @@ const styles = StyleSheet.create({
   swipeActionDanger: { backgroundColor: colors.errorContainer },
   swipeActionNeutral: { backgroundColor: colors.surfaceContainerHigh },
   swipeActionPressed: { opacity: 0.72 },
+  swipeActionsLayout: {
+    alignSelf: "stretch",
+    width: THREAD_SWIPE_ACTIONS_WIDTH,
+  },
   swipeActionsRight: {
     flexDirection: "row",
     height: "100%",
     width: THREAD_SWIPE_ACTIONS_WIDTH,
   },
   swipeActionsUnderlay: {
-    alignSelf: "stretch",
     backgroundColor: colors.surfaceContainerHigh,
     borderRadius: radii.selected,
+    bottom: 0,
+    left: -THREAD_SWIPE_UNDERLAY_OVERLAP,
     overflow: "hidden",
     paddingLeft: THREAD_SWIPE_UNDERLAY_OVERLAP,
-    width: THREAD_SWIPE_ACTIONS_WIDTH + THREAD_SWIPE_UNDERLAY_OVERLAP,
+    position: "absolute",
+    right: 0,
+    top: 0,
   },
   swipeActionText: {
     ...typeScale.label,

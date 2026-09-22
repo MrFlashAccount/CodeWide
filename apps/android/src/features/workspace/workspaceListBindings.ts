@@ -1,6 +1,5 @@
 import type { StoredConnection } from "../../data/connection-profile-types";
 import { useConstant } from "../../react/useConstant";
-import { useEvent } from "../../react/useEvent";
 import { useServerScope } from "../../services/servers/serverScope";
 import {
   useThreadNavigationService,
@@ -8,14 +7,11 @@ import {
 } from "../../services/threads/threadNavigationService";
 import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { ThreadServerProjection } from "../connections/connectionPresentation";
-import { useProjectSelection } from "../projects/projectSelection";
+import type { ProjectSelection } from "../projects/projectSelection";
 import { THREAD_LIST_PAGE_SIZE } from "../threadList/threadListModel";
 import type { ThreadListSources } from "../threadList/threadListSources";
 import { useProjectListState, useThreadListState } from "../threadList/threadListState";
-import {
-  defaultDesktopThreadSelection,
-  useThreadListWorkspace,
-} from "../threadList/threadListWorkspace";
+import { useThreadListWorkspace } from "../threadList/threadListWorkspace";
 import { workspaceFeatures as features } from "./createWorkspaceFeatures";
 import type { WorkspaceBindingContext } from "./workspaceBindingContract";
 
@@ -24,29 +20,22 @@ import type { WorkspaceBindingContext } from "./workspaceBindingContract";
 // oxlint-disable-next-line typescript/explicit-module-boundary-types
 export function useWorkspaceListBindings({
   connections,
-  desktop,
+  projectSelection,
   threadListSources,
   threadRouter,
 }: {
   connections: WorkspaceBindingContext["connections"];
-  desktop: WorkspaceBindingContext["desktop"];
+  projectSelection: ProjectSelection;
   threadListSources: ThreadListSources;
   threadRouter: V1ThreadRouter;
 }) {
   const listState = useThreadListState();
   const projectListState = useProjectListState();
-  const projectSelection = useProjectSelection(listState.setMobileThreadQuery, () => {
-    projectListState.setProjectListMode("active");
-  });
   const serverProjection = useConstant(() => new ThreadServerProjection());
   const servers = serverProjection.project(connections);
-  const server = useServerScope(
-    connections,
-    () => {
-      listState.setThreadListLimit(THREAD_LIST_PAGE_SIZE);
-    },
-    threadRouter.currentThread === null,
-  );
+  const server = useServerScope(connections, () => {
+    listState.setThreadListLimit(THREAD_LIST_PAGE_SIZE);
+  });
   const settingsConnections: StoredConnection[] = connections;
   const {
     archivedThreads,
@@ -62,11 +51,6 @@ export function useWorkspaceListBindings({
     listState.threadListLimit,
     listState.setThreadListLimit,
   );
-  const defaultDesktopThreadId = defaultDesktopThreadSelection(
-    desktop,
-    server.desktopDefaultThreadEnabled,
-    serverThreads,
-  );
   const navigation = useThreadNavigationService(
     {
       observeThread: features.conversation.observeThread,
@@ -74,10 +58,6 @@ export function useWorkspaceListBindings({
     },
     threadRouter,
   );
-  const selectThread = useEvent((selectionKey: string | null): void => {
-    server.consumeDesktopDefaultThread();
-    navigation.selectThread(selectionKey);
-  });
   const selectedThreadKey =
     threadRouter.currentThread === null
       ? null
@@ -87,7 +67,6 @@ export function useWorkspaceListBindings({
         });
   return {
     archivedThreads,
-    defaultDesktopThreadId,
     listState,
     loadedThreadSummaries,
     loadMoreThreads,
@@ -102,6 +81,5 @@ export function useWorkspaceListBindings({
     settingsConnections,
     threadSummaryView,
     ...navigation,
-    selectThread,
   };
 }

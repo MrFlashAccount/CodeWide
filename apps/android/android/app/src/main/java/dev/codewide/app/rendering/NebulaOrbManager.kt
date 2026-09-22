@@ -13,6 +13,6 @@ class NebulaOrbManager : SimpleViewManager<NebulaOrbView>() {
 
   @ReactProp(name = "level", defaultDouble = 0.0)
   fun setLevel(view: NebulaOrbView, level: Double) {
-    view.setLevel(level)
+    view.setAudioLevels(level, 0.0)
   }
 }

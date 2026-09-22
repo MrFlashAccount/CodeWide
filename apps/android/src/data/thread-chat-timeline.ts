@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedTurnMetadata } from "@codewide/sync-client";
 
 import type { NativeCommandDelivery } from "../native/native-transport";
@@ -46,6 +46,7 @@ function hasPresentableTurnItem(item: Thread["turns"][number]["items"][number]):
     case "enteredReviewMode":
     case "exitedReviewMode":
     case "fileChange":
+    case "functionCallOutput":
     case "imageGeneration":
     case "imageView":
     case "mcpToolCall":

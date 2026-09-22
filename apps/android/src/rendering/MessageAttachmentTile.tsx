@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   grid: {
-    alignSelf: "center",
+    alignSelf: "flex-start",
     maxWidth: "100%",
     minWidth: 0,
     width: layoutSize.attachmentTile,

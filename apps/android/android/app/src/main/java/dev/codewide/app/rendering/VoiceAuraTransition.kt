@@ -13,6 +13,7 @@ internal class VoiceAuraTransition {
     private set
   var opacity = 0f
     private set
+  val isAnimating: Boolean get() = phase == Phase.OPENING || phase == Phase.CLOSING
   val isVisible: Boolean get() = phase != Phase.HIDDEN
 
   fun setActive(active: Boolean, reducedMotion: Boolean) {

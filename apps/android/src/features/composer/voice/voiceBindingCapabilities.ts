@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { DraftSelection } from "../../../data/voice-draft";
 import type {
   StartVoiceTranscription,

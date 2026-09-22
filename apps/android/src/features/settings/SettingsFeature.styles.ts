@@ -28,6 +28,14 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     ...typeScale.body,
   },
+  personalVoiceFilterSettings: {
+    gap: spacing.sm,
+  },
+  personalVoiceFilterToggle: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
   saveButton: { alignSelf: "stretch" },
   savedText: {
     color: colors.green,

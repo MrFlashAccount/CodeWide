@@ -1,4 +1,4 @@
-import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -1826,6 +1826,8 @@ describe("thread detail ownership races", () => {
         startedAt: 3,
         items: [
           {
+            delivery: null,
+            questions: null,
             type: "agentMessage",
             id: "answer",
             text: "Working",
@@ -2044,6 +2046,8 @@ describe("thread detail ownership races", () => {
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("initial"), "initial");
     const recoveredAgent = {
+      delivery: null,
+      questions: null,
       type: "agentMessage",
       id: "recovered-agent",
       text: "recovered",
@@ -2163,6 +2167,8 @@ describe("thread detail ownership races", () => {
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("initial"), "initial");
     const tailItem = {
+      delivery: null,
+      questions: null,
       type: "agentMessage",
       id: "tail-agent",
       text: "after snapshot",
@@ -2721,6 +2727,33 @@ describe("thread detail ownership races", () => {
     ]);
     expect(details.historyCursor("server", "thread")).toBe("fresh-older");
     expect(harness.commits).toHaveLength(commitsBeforeReset + 1);
+    await details.close();
+  });
+
+  it("repairs sealed messages in the same turn after a projection reset", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    await details.importThreadSnapshot("server", authoritativeThread("prompt-client"), "initial", null);
+    const correctedTurn: Turn = {
+      ...completedTurn("remote-turn", "prompt-client"),
+      itemsView: "summary",
+      items: [
+        { type: "userMessage", id: "prompt", clientId: "prompt-client", content: [{ type: "text", text: "Original question", text_elements: [] }] },
+        { type: "userMessage", id: "reply", clientId: "reply-client", content: [{ type: "text", text: "Reply with logs", text_elements: [] }] },
+      ],
+    };
+    await details.synchronizeThread({
+      connectionId: "server",
+      thread: { ...authoritativeThread("prompt-client"), turns: [correctedTurn] },
+      mode: "reset",
+      historyCursor: null,
+      throughCursor: 1,
+      expectedLiveRevision: details.liveRevision("server", "thread"),
+    });
+
+    const repaired = details.getThread("server", "thread");
+    expect(repaired?.turns.map(({ id }) => id)).toEqual(["remote-turn"]);
+    expect(repaired?.turns[0]?.items).toEqual(correctedTurn.items);
     await details.close();
   });
 

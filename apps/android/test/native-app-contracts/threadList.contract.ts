@@ -42,6 +42,9 @@ it("preserves threadList integration contracts", () => {
   expect(swipeActionStart).toBeLessThan(closeSwipeStart);
   expect(threadRow).toContain("renderRightActions={() => (");
   expect(threadRow).toContain("<ThreadSwipeActions>");
+  expect(sourceObjectDeclaration(migratedThreadSwipeActions, "swipeActionsLayout")).toContain(
+    "width: THREAD_SWIPE_ACTIONS_WIDTH",
+  );
   expect(sourceObjectDeclaration(migratedThreadRowStyles, "swipeContainer")).toContain(
     'backgroundColor: "transparent"',
   );
@@ -53,7 +56,12 @@ it("preserves threadList integration contracts", () => {
     "swipeActionsUnderlay",
   );
   expect(swipeActionsUnderlay).toContain("backgroundColor: colors.surfaceContainerHigh");
+  expect(swipeActionsUnderlay).toContain("left: -THREAD_SWIPE_UNDERLAY_OVERLAP");
   expect(swipeActionsUnderlay).toContain("paddingLeft: THREAD_SWIPE_UNDERLAY_OVERLAP");
+  expect(swipeActionsUnderlay).toContain('position: "absolute"');
+  expect(swipeActionsUnderlay).not.toContain(
+    "width: THREAD_SWIPE_ACTIONS_WIDTH + THREAD_SWIPE_UNDERLAY_OVERLAP",
+  );
   expect(sourceObjectDeclaration(migratedThreadSwipeActions, "swipeActionsRight")).toContain(
     'height: "100%"',
   );
@@ -61,9 +69,9 @@ it("preserves threadList integration contracts", () => {
     'alignSelf: "stretch"',
   );
   expect(
-    sourceHasJsxElement(threadRow, "GesturePressable", [
+    sourceHasJsxElement(threadRow, "ThreadRowLinkTrigger", [
       '{...(selected ? { testID: "selected-thread-row" } : {})}',
-      'accessibilityRole="button"',
+      'accessibilityRole="link"',
       "cancelable",
       "delayLongPress={350}",
     ]),

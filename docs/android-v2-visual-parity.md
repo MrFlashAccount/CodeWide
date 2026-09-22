@@ -1,5 +1,11 @@
 # Android V2 visual parity matrix
 
+> Historical document: the CodeWide V2 implementation and parity harness were removed
+> on 2026-09-21. See [current retirement scope](android-v2-retirement.md).
+
+
+> Historical Android V2 design. The Android frontend was retired on 2026-09-21; see [scope and UI reuse audit](android-v2-retirement.md). Companion and sync-client V2 remain separate.
+
 V1 is the visual authority. A row is complete only when V1 and V2 are captured on the same Android emulator with the same data, viewport, system insets, keyboard and interaction state, and the resulting image diff has no visible discrepancy. Existing tests do not override the V1 rendering.
 
 Every row below is atomic: one concrete visual state and one paired capture. A row that says “and similar”, combines multiple states, or lacks its own V1/V2 screenshots and diff is not complete.

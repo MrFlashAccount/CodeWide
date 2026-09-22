@@ -1,7 +1,8 @@
+import { isCatalogExcluded } from "./threadCatalogMembership";
 import type {
   AccountRateLimitsUpdatedNotification,
   Thread,
-} from "@codewide/codex-protocol/v0.147.0/v2";
+} from "@codewide/codex-protocol/v0.155.1/v2";
 import { threadIdFromEvent, threadProjectionPatchFromEvent } from "@codewide/sync-client";
 import { appLogger } from "../observability/logger";
 import type { AccountPoolSnapshot } from "./account-pool";
@@ -15,6 +16,7 @@ import type { ThreadDetailDatabase } from "./thread-detail-database";
 import { threadPatchRequiresAuthoritativeRefresh } from "./thread-detail-refresh-policy";
 import type { ThreadProjectionStore } from "./thread-projection-store";
 import { createThreadProjectionStore } from "./thread-projection-store";
+import { createThreadCatalogInvalidation } from "./threadCatalogInvalidation";
 import { projectThreadResourcePatch } from "./thread-resource-projection";
 import type { ThreadSummaryDatabase } from "./thread-summary-database";
 import type { createThreadSyncRuntime } from "./thread-sync-runtime";
@@ -37,6 +39,10 @@ export function createThreadSyncProjection({
   sync: ReturnType<typeof createThreadSyncRuntime>;
 }): ThreadProjectionStore {
   const projection = createThreadProjectionStore({ details, summaries });
+  const refreshCatalogForEvents = createThreadCatalogInvalidation({
+    readSummary: summaries.get,
+    refresh: catalog.refreshConnectionWindows,
+  });
   return {
     async applyEvents(connectionId, events) {
       const projected = await projection.applyEvents(connectionId, events);
@@ -47,19 +53,6 @@ export function createThreadSyncProjection({
       for (const event of events) {
         const params = asRecord(event.payload.params);
         const patch = threadProjectionPatchFromEvent(event.payload);
-        if (
-          event.payload.method === "turn/started" ||
-          event.payload.method === "companion/thread/progress" ||
-          event.payload.method === "companion/thread/invalidated"
-        ) {
-          catalog.refreshConnectionWindows(connectionId);
-        }
-        if (
-          event.payload.method === "thread/archived" ||
-          event.payload.method === "thread/unarchived"
-        ) {
-          catalog.refreshConnectionWindows(connectionId);
-        }
         if (event.payload.method === "account/rateLimits/updated" && params !== null) {
           // WHY: The pre-migration V1 contract forwarded every non-null method-qualified payload.
           // The generic event envelope cannot narrow params statically, and validating here would
@@ -99,7 +92,11 @@ export function createThreadSyncProjection({
             }
           }
         }
-        if (patch !== null && threadPatchRequiresAuthoritativeRefresh(patch.operation.kind)) {
+        if (
+          !isCatalogExcluded(event.payload) &&
+          patch !== null &&
+          threadPatchRequiresAuthoritativeRefresh(patch.operation.kind)
+        ) {
           catalog.refreshInvalidatedThread(
             connectionId,
             patch.threadId,
@@ -143,6 +140,7 @@ export function createThreadSyncProjection({
           }
         }
       }
+      await refreshCatalogForEvents(connectionId, events);
       const receiptThreads: Thread[] = [];
       for (const threadId of receiptThreadIds) {
         const thread = projectedThreads.get(threadId)?.after;

@@ -11,7 +11,29 @@ import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
 import { GlobalVoiceEntryAction } from "./GlobalVoiceEntryAction";
 
-export function MobileThreadsHeader({ props }: { props: MobileThreadsProps }) {
+type MobileThreadsHeaderProps = Pick<
+  MobileThreadsProps,
+  | "filter"
+  | "globalVoice"
+  | "mode"
+  | "onBackToProjects"
+  | "onFilterChange"
+  | "onManageProjects"
+  | "onManageTerminals"
+  | "onModeChange"
+  | "onOpenSearch"
+  | "onQueryChange"
+  | "onRefreshAccountRateLimits"
+  | "onSelectServer"
+  | "onSettings"
+  | "project"
+  | "remote"
+  | "searchContent"
+  | "servers"
+  | "serverScope"
+>;
+
+export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps }) {
   const {
     filter,
     globalVoice,

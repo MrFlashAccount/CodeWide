@@ -25,7 +25,7 @@ describe("V1 feature gate coverage", () => {
     expect(JSON.stringify(hygiene.rules["no-restricted-imports"])).toContain("useCallback");
     expect(JSON.stringify(hygiene.rules["no-restricted-imports"])).toContain("useMemo");
     const compilerOwnedAllocationRules = hygiene.overrides.find(({ files }) =>
-      files?.includes("app/v1/**/*.tsx"),
+      files?.includes("app/(workspace)/**/*.tsx"),
     )?.rules;
     expect(compilerOwnedAllocationRules).toMatchObject({
       "react-doctor/context-provider-value-from-unmemoized-local-literal": "off",
@@ -35,16 +35,15 @@ describe("V1 feature gate coverage", () => {
       "react-doctor/jsx-no-new-object-as-prop": "off",
     });
     expect(hygiene.ignorePatterns).not.toContain("app/legacy.tsx");
-    expect(hygiene.ignorePatterns).toEqual(
-      expect.arrayContaining(["src/boot/**", "src/presentation/**", "src/v2/**"]),
-    );
+    expect(hygiene.ignorePatterns).not.toContain("src/boot/**");
+    expect(hygiene.ignorePatterns).not.toContain("src/presentation/**");
 
     const knip = (await import(new URL("../knip.v1.config.mjs", import.meta.url))).default;
     expect(knip.entry).toEqual(
-      expect.arrayContaining(["app/legacy.tsx", "app/v1/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"]),
+      expect.arrayContaining(["app/legacy.tsx", "app/(workspace)/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"]),
     );
     expect(knip.project).toEqual(
-      expect.arrayContaining(["app/legacy.tsx", "app/v1/**/*.{ts,tsx}", "src/**/*.{ts,tsx}"]),
+      expect.arrayContaining(["app/legacy.tsx", "app/(workspace)/**/*.{ts,tsx}", "src/**/*.{ts,tsx}"]),
     );
   });
 
@@ -156,9 +155,9 @@ describe("V1 feature gate coverage", () => {
         'import type { Composition } from "../../CodeWideScreen"; export type Feature = Composition;',
       "src/services/forbidden/router.ts":
         'import type { Href } from "expo-router"; export type Route = Href;',
-      "app/v1/private.ts": "export type RoutePrivate = { route: true };",
+      "app/(workspace)/private.ts": "export type RoutePrivate = { route: true };",
       "src/components/forbidden/route.ts":
-        'import type { RoutePrivate } from "../../../app/v1/private"; export type View = RoutePrivate;',
+        'import type { RoutePrivate } from "../../../app/(workspace)/private"; export type View = RoutePrivate;',
     };
     try {
       for (const [relativePath, source] of Object.entries(files)) {

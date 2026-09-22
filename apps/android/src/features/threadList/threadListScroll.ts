@@ -32,11 +32,14 @@ function useThreadListScrollSettlement(
   });
 }
 
-/** Defers structural row updates until the active drag or momentum scroll has settled. */
+/** Defers live reordering during a gesture while admitting newly loaded tail rows. */
 export function useThreadListScrollController<Row>(
   rows: readonly Row[],
   scopeKey: string,
-  onOffsetChange: (offset: number) => void,
+  {
+    keyFor,
+    onOffsetChange,
+  }: { keyFor: (row: Row) => string; onOffsetChange: (offset: number) => void },
 ): ThreadListScrollController<Row> {
   const [frozenRows, setFrozenRows] = useState<FrozenThreadListRows<Row> | null>(null);
   const releaseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,6 +76,25 @@ export function useThreadListScrollController<Row>(
     onMomentumScrollEnd,
     onScrollBeginDrag: freezeRows,
     onScrollEndDrag,
-    rows: frozenRows?.scopeKey === scopeKey ? frozenRows.rows : rows,
+    rows:
+      frozenRows?.scopeKey === scopeKey ? appendLoadedTail(frozenRows.rows, rows, keyFor) : rows,
   };
+}
+
+function appendLoadedTail<Row>(
+  frozen: readonly Row[],
+  latest: readonly Row[],
+  keyFor: (row: Row) => string,
+): readonly Row[] {
+  const last = frozen.at(-1);
+  if (last === undefined) {
+    return latest;
+  }
+  const boundary = latest.findIndex((row) => keyFor(row) === keyFor(last));
+  if (boundary < 0 || boundary === latest.length - 1) {
+    return frozen;
+  }
+  const retained = new Set(frozen.map(keyFor));
+  const appended = latest.slice(boundary + 1).filter((row) => !retained.has(keyFor(row)));
+  return appended.length === 0 ? frozen : [...frozen, ...appended];
 }

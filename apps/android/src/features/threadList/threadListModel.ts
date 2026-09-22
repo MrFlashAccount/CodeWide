@@ -1,5 +1,5 @@
 import { useConstant } from "../../react/useConstant";
-import { useEvent } from "../../react/useEvent";
+import { useThreadListPageRequest } from "./threadListPageRequest";
 import type { ThreadListSources } from "./threadListSources";
 import { useThreadSummaryView } from "../../data/use-thread-summary-view";
 import { threadListLayout } from "../../ui/thread-list-layout";
@@ -18,7 +18,7 @@ export type ThreadListRow = SidebarRow<ThreadListItem>;
 export type SidebarProjectsNavigation = {
   catalogState: SidebarListState;
   onBackToProjects: () => void;
-  onLoadMoreProject: () => void;
+  onLoadMoreProject: (limit: number) => void;
   onManageProjects: () => void;
   onOpenProject: (project: SidebarProject) => void;
   project: SidebarProject | null;
@@ -32,13 +32,12 @@ export function useProjectSidebarThreads(
   project: SidebarProject | null,
   mode: ThreadListMode,
   limit: number,
-  onLoadMore: () => void,
+  onLoadMore: (limit: number) => void,
 ) {
   const scopeKey = `${project?.key ?? ""}:${mode}`;
   const projection = useConstant(() => new ThreadListProjection());
   const items = useConstant(() => new ThreadListItemProjection());
-  const view = useThreadSummaryView(
-    remote.threadSummaryDatabase,
+  const request =
     project === null
       ? null
       : {
@@ -51,19 +50,14 @@ export function useProjectSidebarThreads(
           subagentConnectionId: null,
           subagentLimit: 0,
           viewId: `sidebar-project:${scopeKey}`,
-        },
-  );
+        };
+  const loadMore = useThreadListPageRequest(remote.threadSummaryDatabase, request, onLoadMore);
+  const view = useThreadSummaryView(remote.threadSummaryDatabase, request);
   const summaries =
     mode === "archived"
       ? (view?.archived ?? [])
       : deduplicateThreadSummaries([...(view?.pinned ?? []), ...(view?.recent ?? [])]);
   const threads = items.project(projection.project(summaries, remote.pendingRequests));
-  const loadMore = useEvent(() => {
-    if (summaries.length < limit) {
-      return;
-    }
-    onLoadMore();
-  });
   return { loadMore, state: sidebarListState(view?.phase, view?.error ?? null, false), threads };
 }
 
@@ -126,6 +120,7 @@ export function threadListRowsEqual(previous: ThreadListRow, next: ThreadListRow
       left.pinned === right.pinned &&
       left.archived === right.archived &&
       left.unread === right.unread &&
+      left.needsAttention === right.needsAttention &&
       left.state === right.state)
   );
 }

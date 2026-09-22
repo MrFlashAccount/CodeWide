@@ -1,13 +1,17 @@
 import { readFileSync } from "node:fs";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { v1MobileRouteMotion } from "../src/ui/v1MobileRouteMotion";
 
-const routeStyles = readFileSync(
-  new URL("../app/v1/V1WorkspaceShell.styles.ts", import.meta.url),
-  "utf8",
-);
+import {
+  v1MobileRouteScreenOptions,
+  v1ProjectListScreenOptions,
+} from "../src/routeComposition/WorkspaceShell.styles";
+
+vi.mock("react-native", () => ({
+  StyleSheet: { create: <T extends Record<string, unknown>>(styles: T): T => styles },
+}));
 
 function readAndroidTransitionResource(filename: string): string {
   return readFileSync(
@@ -23,16 +27,9 @@ const popForeground = readAndroidTransitionResource("rns_fade_to_bottom.xml");
 const androidTransitionResources = [pushForeground, pushBackground, popBackground, popForeground];
 
 it("uses a symmetric 250 ms Android crossfade with short horizontal travel", () => {
-  const mobileOptions = routeStyles.slice(
-    routeStyles.indexOf("export const v1MobileRouteScreenOptions"),
-    routeStyles.indexOf("export const v1ListScreenOptions"),
-  );
-
-  expect(mobileOptions).toContain('animation: "fade_from_bottom"');
+  expect(v1MobileRouteScreenOptions.animation).toBe("fade_from_bottom");
   expect(v1MobileRouteMotion.durationMs).toBe(250);
-  expect(mobileOptions).toContain("animationDuration: v1MobileRouteMotion.durationMs");
-  expect(mobileOptions).not.toContain('animation: "default"');
-  expect(mobileOptions).not.toContain('animation: "slide_from_right"');
+  expect(v1MobileRouteScreenOptions.animationDuration).toBe(v1MobileRouteMotion.durationMs);
   for (const resource of androidTransitionResources) {
     expect(resource).toContain('android:duration="250"');
     expect(resource).toContain("android:fromXDelta");
@@ -47,4 +44,10 @@ it("uses a symmetric 250 ms Android crossfade with short horizontal travel", () 
   expect(popBackground).toContain('android:fromXDelta="-2%"');
   expect(popForeground).toContain('android:toAlpha="0.0"');
   expect(popForeground).toContain('android:toXDelta="4%"');
+});
+
+it("uses the app fade and short slide for the shared project stack", () => {
+  expect(v1ProjectListScreenOptions.animation).toBe(v1MobileRouteScreenOptions.animation);
+  expect(v1ProjectListScreenOptions.animationDuration).toBe(v1MobileRouteMotion.durationMs);
+  expect(v1ProjectListScreenOptions.headerShown).toBe(false);
 });

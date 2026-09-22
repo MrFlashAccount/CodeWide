@@ -32,7 +32,7 @@ describe("biometric app lock", () => {
 
   it("gates the router behind a durable fail-closed preference", () => {
     const gateStart = rootLayout.indexOf("<AppLockGate>");
-    const gatedNavigation = rootLayout.indexOf('generation.generation === "v2"', gateStart);
+    const gatedNavigation = rootLayout.indexOf("<Slot />", gateStart);
     const gateEnd = rootLayout.indexOf("</AppLockGate>", gatedNavigation);
 
     expect(gateStart).toBeGreaterThanOrEqual(0);

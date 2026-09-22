@@ -1,4 +1,4 @@
-import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { observablePrimitive } from "@legendapp/state";
 
 import type { SearchContextQuery, SearchConversationPage } from "../../data/message-search";

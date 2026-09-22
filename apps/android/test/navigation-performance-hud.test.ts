@@ -6,11 +6,8 @@ const hud = readFileSync(
   "utf8",
 );
 const nativeRoot = readFileSync(new URL("../src/ui/AppRootProviders.tsx", import.meta.url), "utf8");
-const generationHost = readFileSync(
-  new URL("../src/boot/UiGenerationDiagnosticsHost.tsx", import.meta.url),
-  "utf8",
-);
-const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
+const applicationRoot = readFileSync(new URL("../app/_layout.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
 const performanceModule = readFileSync(
   new URL(
     "../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt",
@@ -38,10 +35,8 @@ const ownerThreadTimelineNavigationCommit = readFileSync(
 describe("navigation performance HUD", () => {
   it("profiles virtualized chat navigation without rendering message content", () => {
     expect(nativeRoot).not.toContain("<NavigationPerformanceHud />");
-    expect(generationHost).toContain('props.generation === "legacy"');
-    expect(generationHost).toContain('props.generation === "v2"');
-    expect(generationHost).toContain("<LegacyNavigationPerformanceHud />");
-    expect(generationHost).toContain("<NavigationDiagnosticsFeature");
+    expect(applicationRoot).toContain("<NavigationPerformanceHud />");
+    expect(applicationRoot).not.toContain("UiGenerationDiagnosticsHost");
     expect(hud).toContain("!metrics.enabled");
     expect(hud).toContain("return null;");
     expect(hud).toContain('testID="navigation-performance-hud"');

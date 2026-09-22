@@ -1,5 +1,6 @@
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";
 import { ThreadSidebarHeader } from "./ThreadSidebarHeader";
+import { useThreadListViewportPaging } from "./threadListViewportPaging";
 import { LegendList } from "@legendapp/list/react-native";
 import { useState } from "react";
 import { View } from "react-native";
@@ -40,7 +41,6 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     onNewThread,
     onOffsetChange,
     onOpenProject,
-    onSelect,
     onTogglePin,
     onUnarchive,
     project,
@@ -51,6 +51,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     selectedThreadKey,
     servers,
     serverScope,
+    threadNavigation,
     threads,
     width,
   } = props;
@@ -64,10 +65,8 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
   );
   const hideThreadLists = usePerformanceExperiment("hideThreadLists");
   const [query, setQuery] = useState("");
-  const filtered = (project === null ? threads : projectSource.threads).filter(
-    (thread) =>
-      threadMatchesFilter(thread, filter) &&
-      `${thread.title} ${thread.preview}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+  const filtered = (project === null ? threads : projectSource.threads).filter((thread) =>
+    threadMatchesFilter(thread, filter),
   );
   const filteredArchived = (project === null ? archivedThreads : projectSource.threads).filter(
     (thread) =>
@@ -80,11 +79,20 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     mode === "archived" ? "archive" : project === null ? "global" : "project",
   );
   const listKey = `${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`;
-  const scroll = useThreadListScrollController(rows, listKey, onOffsetChange);
+  const scroll = useThreadListScrollController(rows, listKey, {
+    keyFor: sidebarRowKey,
+    onOffsetChange,
+  });
+  const paging = useThreadListViewportPaging(
+    listKey,
+    project === null ? onLoadMore : projectSource.loadMore,
+  );
 
   return (
     <View style={[styles.threadSidebar, { width }]} testID="thread-list-pane">
-      <ThreadSidebarHeader props={props} setQuery={setQuery} />
+      {props.headerVisible === false ? null : (
+        <ThreadSidebarHeader props={props} setQuery={setQuery} />
+      )}
       <View style={styles.threadListContentSurface}>
         <ThreadListRouteTransition routeKey={searchContent === null ? "list" : "search"}>
           {searchContent ??
@@ -124,8 +132,10 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                   ) : null
                 }
                 maintainVisibleContentPosition={THREAD_LIST_VISIBLE_CONTENT_POSITION}
-                onEndReached={project === null ? onLoadMore : projectSource.loadMore}
+                onContentSizeChange={paging.onContentSizeChange}
+                onEndReached={paging.onEndReached}
                 onEndReachedThreshold={0.4}
+                onLayout={paging.onLayout}
                 onMomentumScrollBegin={scroll.onMomentumScrollBegin}
                 onMomentumScrollEnd={scroll.onMomentumScrollEnd}
                 onScrollBeginDrag={scroll.onScrollBeginDrag}
@@ -144,10 +154,11 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                     />
                   ) : (
                     <SelectableThreadRow
+                      link={threadNavigation.getThreadLink(item.thread)}
                       onArchive={async () => onArchive(item.thread)}
                       onMarkRead={async () => onMarkRead(item.thread)}
-                      onPress={() => {
-                        onSelect(threadSelectionKey(item.thread));
+                      onNavigate={() => {
+                        threadNavigation.prepareThreadLink(threadSelectionKey(item.thread));
                       }}
                       onTogglePin={async () => onTogglePin(item.thread)}
                       onUnarchive={async () => onUnarchive(item.thread)}

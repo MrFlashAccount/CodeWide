@@ -49,3 +49,33 @@ describe("Global Supervisor thread RPC boundary", () => {
     expect(payload).not.toHaveProperty("personality");
   });
 });
+
+it("reconciles through the server's exact-source catalog, including an empty continuation", async () => {
+  const session = sessionFixture();
+  const rpcAfterAttach = vi.fn(async (_session, _method, params) =>
+    params.archived
+      ? { data: [], nextCursor: null }
+      : params.cursor === null
+        ? { data: [], nextCursor: "next" }
+        : {
+            data: [{ id: "home", threadSource: "codewide-global-supervisor:token" }],
+            nextCursor: null,
+          },
+  );
+  const remote = createGlobalSupervisorThreadRemote({
+    getSession: () => session,
+    personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
+    rpcAfterAttach,
+  });
+  await expect(
+    remote.findThreadsBySource("home", "codewide-global-supervisor:token"),
+  ).resolves.toEqual(["home"]);
+  expect(rpcAfterAttach).toHaveBeenCalledWith(
+    session,
+    "companion/supervisor/threadList",
+    expect.objectContaining({ threadSource: "codewide-global-supervisor:token", cursor: "next" }),
+  );
+  expect(
+    rpcAfterAttach.mock.calls.every((call) => call[1] === "companion/supervisor/threadList"),
+  ).toBe(true);
+});

@@ -25,6 +25,7 @@ import { VoiceAssistantSettings } from "./VoiceAssistantSettings";
 import { globalVoiceLabel } from "./globalVoicePresentation";
 import { useGlobalVoicePreference } from "./useGlobalVoicePreference";
 import { useGlobalVoiceOrbStyle } from "./useGlobalVoiceOrbStyle";
+import { usePersonalVoiceFilter } from "./usePersonalVoiceFilter";
 import { useVoiceAssistantPersonality } from "./useVoiceAssistantPersonality";
 
 export function SubscribedConnectionSettings({
@@ -43,6 +44,8 @@ export function SubscribedConnectionSettings({
 export function ConnectionSettings({
   accountRateLimits,
   connections,
+  entryPage = "overview",
+  entryRequest,
   onActivateAccountProfile,
   onAddServer,
   onCancelAccountLogin,
@@ -61,6 +64,8 @@ export function ConnectionSettings({
 }: {
   accountRateLimits: AccountRateLimitsRow[];
   connections: StoredConnection[];
+  entryPage?: "overview" | "voiceAssistant";
+  entryRequest?: string;
   onActivateAccountProfile?: (
     connectionId: string,
     profileId: string,
@@ -99,6 +104,7 @@ export function ConnectionSettings({
   const voicePreference = useGlobalVoicePreference();
   const voiceOrbStyle = useGlobalVoiceOrbStyle();
   const voiceAssistantPersonality = useVoiceAssistantPersonality();
+  const personalVoiceFilter = usePersonalVoiceFilter();
   const changeAppLock = useEvent(async (enabled: boolean) => {
     if (appLockSaving) {
       return;
@@ -114,6 +120,8 @@ export function ConnectionSettings({
   });
   return (
     <SettingsSheet
+      entryPage={entryPage}
+      {...(entryRequest === undefined ? {} : { entryRequest })}
       advanced={
         <SettingsSection title="Diagnostics">
           <PerformanceDiagnostics />
@@ -169,11 +177,15 @@ export function ConnectionSettings({
       voiceAssistant={{
         content: (
           <VoiceAssistantSettings
+            onEnrollPersonalVoice={personalVoiceFilter.enroll}
             onPreviewVoice={onPreviewGlobalVoice}
             onSavePersonality={voiceAssistantPersonality.savePersonality}
             onSelectOrbStyle={voiceOrbStyle.selectStyle}
             onSelectVoice={voicePreference.selectVoice}
+            onSetPersonalVoiceFilterEnabled={personalVoiceFilter.setEnabled}
             personality={voiceAssistantPersonality.personality}
+            personalVoiceFilterEnabled={personalVoiceFilter.enabled}
+            personalVoiceProfileAvailable={personalVoiceFilter.hasProfile}
             selectedOrbStyle={voiceOrbStyle.selectedStyle}
             selectedVoice={voicePreference.selectedVoice}
           />

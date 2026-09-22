@@ -2,7 +2,7 @@
 
 Status: **M0–M8 capability ownership implemented; application-navigation ownership subsequently migrated to Expo Router**. Baseline: `3630ca4ed87a90916bd0a7cb4beaaba230fa28ce`. The source tree below records the M8 feature-extraction checkpoint. Its workspace/navigation entries are historical and are superseded by [V1 route architecture](android-v1-route-architecture.md). Device-only interaction and relative performance remain explicitly unverified. Source paths abbreviated as `data/`, `ui/`, `rendering/` or `features/` are relative to `apps/android/src/`; historical screen line references identify the baseline.
 
-This is the selected V1 capability-ownership entrypoint. Use the [feature migration ledger](android-v1-feature-migration.md) for the historical extraction map and [route architecture](android-v1-route-architecture.md) with its [route ledger](android-v1-route-migration.md) for current application navigation. Use [V1 source context](../apps/android/src/CONTEXT.md) and [runtime/data context](../apps/android/src/data/CONTEXT.md) for local placement rules. Existing [V2 architecture](android-v2-client-architecture.md) remains a separate contract.
+This is the selected V1 capability-ownership entrypoint. Use the [feature migration ledger](android-v1-feature-migration.md) for the historical extraction map and [route architecture](android-v1-route-architecture.md) with its [route ledger](android-v1-route-migration.md) for current application navigation. Use [V1 source context](../apps/android/src/CONTEXT.md) and [runtime/data context](../apps/android/src/data/CONTEXT.md) for local placement rules. The Android V2 frontend is retired; see the [retirement scope and UI audit](android-v2-retirement.md).
 
 ## M8 checkpoint subtree: additions and extractions only
 
@@ -48,7 +48,7 @@ apps/android/src/                                  existing anchor
 │   │   ├── connectionPresentation.ts             connection/status display transformations
 │   │   └── ConnectionActivityIndicator.tsx        activity view; JSX stays in .tsx
 │   ├── settings/ [E/M]                           settings-section composition ← screen + ui/SettingsSheet family
-│   │   └── SettingsFeature.tsx                   opens existing security/generation capabilities
+│   │   └── SettingsFeature.tsx                   opens existing security/diagnostics capabilities
 │   ├── accounts/ [E/M]                           account/login/usage interaction ← screen + ui usage family
 │   │   ├── AccountPoolFeature.tsx                login, explicit cancellation and profile controls
 │   │   └── accountUsage.tsx                      usage resource binding and presentation
@@ -161,7 +161,7 @@ The decision addresses unrelated interaction policies concentrated in the 18,792
 
 Status: **implemented source contract; physical-device WebRTC proof is pending**. This extension is additive to the implemented M0–M8 ownership model. It does not reopen the earlier migration or change V2.
 
-Global Voice Mode is an explicitly toggled, process-lifetime V1 feature backed by one ordinary App Server thread on a selected home `connectionId`. It remains active across application navigation and backgrounding until explicit Stop or terminal failure. The App Server remains the transcript and history authority. CodeWide persists only a schema-versioned, content-free `SupervisorBinding` and uses the exact qualified binding to exclude that thread from ordinary active, archived, search, project, aggregate-count, default-selection and direct-route surfaces. A title or other display metadata is never a classifier. An unresolved create is reconciled by its exact creation token; it must not automatically issue another `thread/start`.
+Global Voice Mode is an explicitly toggled, process-lifetime V1 feature backed by one ordinary App Server thread on a selected home `connectionId`. It remains active across application navigation and backgrounding until explicit Stop or terminal failure. The App Server remains the transcript authority. Companion excludes reserved supervisor sources from ordinary active, archived, search, project and aggregate-count surfaces; ordinary thread sync rejects these identities. Device binding state is not a presentation classifier. Private recovery uses the exact-source `companion/supervisor/threadList` endpoint. A title or other display metadata is never a classifier. An unresolved create is reconciled by its exact creation token; it must not automatically issue another `thread/start`.
 
 V1 settings expose one `Voice Assistant` page with two deliberately separate device-wide contracts: the synthesized realtime voice and one bounded personality profile containing character, communication style and rules. The existing `global-voice` record remains readable so upgrades preserve the selected audio voice; absence of the new versioned personality record preserves the previous supervisor instructions. The current personality snapshot is composed with the fixed capability instructions both when a hidden thread is created and for every `realtimeStartInstructions` request, including existing hidden threads. A running activation is immutable with respect to settings changes; saved changes apply on the next explicit activation.
 
@@ -186,7 +186,7 @@ The relation and deduplication store exists independently of voice activation, w
 ### Owned modules and dependency direction
 
 - `features/globalSupervisor/**` owns binding/capability/activation presentation state, user actions, route-ready composition and the transient active transcript/activity view. Its nearest ownership contract is [`apps/android/src/features/globalSupervisor/CONTEXT.md`](../apps/android/src/features/globalSupervisor/CONTEXT.md).
-- `data/globalSupervisorBinding*`, `data/globalSupervisorVisibility*`, `data/globalSupervisorThread*`, `data/globalSupervisorTools*`, `data/globalSupervisorToolRouter*`, `data/globalSupervisorAttention*`, `data/globalSupervisorEventSignals*` and `data/globalSupervisorRuntime*` own persistence and validated adapters. They do not import feature UI or routes.
+- `data/globalSupervisorBinding*`, `data/globalSupervisorToolTarget*`, `data/globalSupervisorThread*`, `data/globalSupervisorTools*`, `data/globalSupervisorToolRouter*`, `data/globalSupervisorAttention*`, `data/globalSupervisorEventSignals*` and `data/globalSupervisorRuntime*` own persistence and validated adapters. They do not import feature UI or routes.
 - The neutral process-lifetime V1 microphone lease owner is lower than both dictation and Global Voice Mode. It grants a generation-fenced lease for purpose `dictation` or `globalSupervisor`; a busy acquire rejects without stopping the incumbent, and stale release cannot stop a later capture.
 - The Android WebRTC adapter owns the peer connection, microphone/output media tracks, Android microphone foreground-service token, SDP application and media teardown behind the matching lease. It owns no App Server RPC, binding or transcript. Companion carries only the SDP/control plane; audio never becomes JSON or enters the authenticated sync socket.
 - Companion owns only the closed realtime-method classifier, authenticated live-channel correlation and bounds, the closed pending-request classifier, and durable server-response correlation. It owns no supervisor tool names or UI policy.
@@ -198,7 +198,7 @@ Pending requests use one closed classification. The existing five approval/input
 
 ### Schema-owned correctness limits
 
-`apps/companion/contract/v1.json` is the sole machine-readable owner of `globalSupervisorLimitsV1`, whose discriminator is `version: 1`. Generated/shared Rust, Kotlin and TypeScript surfaces consume exactly these values. Product modules may tighten private operating targets but must not restate or relax these maxima. A stricter pinned protocol cap wins; relaxing any value requires `GlobalSupervisorLimitsV2`.
+`crates/companion-core/contract/v1.json` is the sole machine-readable owner of `globalSupervisorLimitsV1`, whose discriminator is `version: 1`. Generated/shared Rust, Kotlin and TypeScript surfaces consume exactly these values. Product modules may tighten private operating targets but must not restate or relax these maxima. A stricter pinned protocol cap wins; relaxing any value requires `GlobalSupervisorLimitsV2`.
 
 | Field                                |        V1 value | Boundary behavior                                                                                  |
 | ------------------------------------ | --------------: | -------------------------------------------------------------------------------------------------- |
@@ -224,7 +224,7 @@ All limits are enforced before the next copy, queue insertion, persistence, mate
 
 ### Composition and validation contract
 
-Global Voice has no application route or dedicated screen. `V1WorkspaceRouteComposition` obtains the already-created `GlobalSupervisorFeatureContract` from `createWorkspaceFeatures`, derives only the boolean active projection and passes `{ active, onToggle }` into both persistent thread-list headers. The inactive live-assistant signal starts or recovers the supervisor; the active stop icon ends it. Navigation, Back, route unmount and app backgrounding never call cleanup. The control performs no RPC, SQLite, filesystem or native reads. Escaping callbacks use `useEvent`; no `useCallback` or `useMemo` is added.
+Global Voice has no application route or dedicated screen. `WorkspaceRouteComposition` obtains the already-created `GlobalSupervisorFeatureContract` from `createWorkspaceFeatures`, derives only the boolean active projection and passes `{ active, onToggle }` into both persistent thread-list headers. The inactive live-assistant signal starts or recovers the supervisor; the active stop icon ends it. Navigation, Back, route unmount and app backgrounding never call cleanup. The control performs no RPC, SQLite, filesystem or native reads. Escaping callbacks use `useEvent`; no `useCallback` or `useMemo` is added.
 
 Validation is a release gate, not an implementation suggestion:
 
@@ -272,9 +272,9 @@ Direct Expo/native operations already present in the screen move with their actu
 
 ```mermaid
 flowchart TB
-  Route[app/v1/_layout.tsx] --> Root[V1WorkspaceRouteComposition]
+  Route[app/(workspace)/_layout.tsx] --> Root[WorkspaceRouteComposition]
   Import[V1 route composition module evaluation] --> Runtime[Retained JS workspace singleton startup and handles]
-  Effect[app/v1/_layout.tsx activation effect] --> Slot[Boot slot: native resource handle]
+  Effect[app/(workspace)/_layout.tsx activation effect] --> Slot[Boot slot: native resource handle]
   Slot --> Native[Native transport and platform contracts]
   Root --> Runtime
   Root --> WS[Workspace composition]
@@ -333,4 +333,4 @@ The JS module singleton starts during module evaluation. The legacy route/boot h
 - [TypeScript environments](android-typescript-environments.md): native/web/compatibility contracts.
 - [History pagination](history-pagination.md), [scroll performance](scroll-performance.md), [native markup](native-message-markup.md) and [native row rendering](native-row-rendering.md): detailed mechanisms retained rather than duplicated here.
 
-`app/v1/V1WorkspaceRouteComposition.tsx` is the current route composition entry. Feature-local CONTEXT files appear with real implementation modules. Closure requires deleting moved private declarations/styles, migrating all consumers and the broad facade, preserving platform families, and passing the ownership and parity gates. Documentation approval is not application migration, commit, push or release authorization.
+`src/routeComposition/WorkspaceRouteComposition.tsx` is the current route composition entry. Feature-local CONTEXT files appear with real implementation modules. Closure requires deleting moved private declarations/styles, migrating all consumers and the broad facade, preserving platform families, and passing the ownership and parity gates. Documentation approval is not application migration, commit, push or release authorization.

@@ -1,0 +1,92 @@
+name: Release Plan
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Base Git ref"
+        required: false
+        default: "origin/main"
+        type: string
+      head:
+        description: "Head Git ref"
+        required: false
+        default: "HEAD"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    env:
+      NX_CACHE_DIRECTORY: .nx/cache
+      NX_TUI: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Restore Nx task cache
+        uses: actions/cache@v5
+        with:
+          path: .nx/cache
+          key: nx-plan-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nx-plan-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve affected range
+        uses: nrwl/nx-set-shas@v5
+
+      - name: Resolve comparison
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          NX_AFFECTED_BASE: ${{ env.NX_BASE }}
+          NX_AFFECTED_HEAD: ${{ env.NX_HEAD }}
+          INPUT_BASE: ${{ inputs.base }}
+          INPUT_HEAD: ${{ inputs.head }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            echo "RELEASE_BASE=$NX_AFFECTED_BASE" >> "$GITHUB_ENV"
+            echo "RELEASE_HEAD=$NX_AFFECTED_HEAD" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_BASE=${INPUT_BASE:-origin/main}" >> "$GITHUB_ENV"
+            echo "RELEASE_HEAD=${INPUT_HEAD:-HEAD}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Calculate release plan
+        run: |
+          node scripts/release-plan.ts --base "$RELEASE_BASE" --head "$RELEASE_HEAD"
+          node scripts/release-plan.ts --base "$RELEASE_BASE" --head "$RELEASE_HEAD" --json > release-plan.json
+          {
+            echo '## Release plan'
+            echo '```text'
+            node scripts/release-plan.ts --base "$RELEASE_BASE" --head "$RELEASE_HEAD"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-plan
+          path: release-plan.json
+          if-no-files-found: error

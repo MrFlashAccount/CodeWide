@@ -1,0 +1,80 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+version=
+base=
+dry_run=false
+force=false
+
+usage() {
+  printf 'Usage: %s <version> [--base <git-ref>] [--dry-run] [--force]\n' "$0" >&2
+  exit 2
+}
+
+[ "$#" -ge 1 ] || usage
+version=${1#v}
+shift
+printf '%s\n' "$version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$' || usage
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --base)
+      [ "$#" -ge 2 ] || usage
+      base=$2
+      shift 2
+      ;;
+    --dry-run) dry_run=true; shift ;;
+    --force) force=true; shift ;;
+    *) usage ;;
+  esac
+done
+
+cd "$repo_root"
+[ -z "$(git status --porcelain)" ] || {
+  printf '%s\n' 'release-relay-linux: the worktree must be clean' >&2
+  exit 1
+}
+branch=$(git branch --show-current)
+[ -n "$branch" ] || { printf '%s\n' 'release-relay-linux: detached HEAD is not releasable' >&2; exit 1; }
+local_revision=$(git rev-parse HEAD)
+remote_revision=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
+[ "$local_revision" = "$remote_revision" ] || {
+  printf '%s\n' 'release-relay-linux: the current commit must be pushed to the current branch' >&2
+  exit 1
+}
+
+request_id="local-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+set -- workflow run relay-release.yml --ref "$branch" \
+  -f "version=$version" \
+  -f "dry_run=$dry_run" \
+  -f "force=$force" \
+  -f "request_id=$request_id"
+if [ -n "$base" ]; then
+  set -- "$@" -f "base=$base"
+fi
+gh "$@"
+
+run_id=
+attempt=0
+while [ -z "$run_id" ] && [ "$attempt" -lt 24 ]; do
+  run_id=$(gh run list \
+    --workflow relay-release.yml \
+    --branch "$branch" \
+    --event workflow_dispatch \
+    --limit 30 \
+    --json databaseId,displayTitle \
+    --jq ".[] | select(.displayTitle | contains(\"$request_id\")) | .databaseId" | head -n 1)
+  [ -n "$run_id" ] || sleep 5
+  attempt=$((attempt + 1))
+done
+[ -n "$run_id" ] || { printf '%s\n' 'release-relay-linux: dispatched run was not found' >&2; exit 1; }
+
+gh run watch "$run_id" --exit-status
+run_url=$(gh run view "$run_id" --json url --jq .url)
+if [ "$dry_run" = true ]; then
+  printf '%s\n' "{\"release\":\"relay\",\"status\":\"validated\",\"dryRun\":true,\"version\":\"$version\",\"sourceRevision\":\"$local_revision\",\"runUrl\":\"$run_url\"}"
+else
+  release_url=$(gh release view "relay-v$version" --json url --jq .url)
+  printf '%s\n' "{\"release\":\"relay\",\"status\":\"published\",\"version\":\"$version\",\"sourceRevision\":\"$local_revision\",\"runUrl\":\"$run_url\",\"releaseUrl\":\"$release_url\"}"
+fi

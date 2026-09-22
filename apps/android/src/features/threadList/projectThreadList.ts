@@ -5,6 +5,11 @@ import type { ThreadListFilter } from "./threadListFilters";
 import { effectiveThreadListFilter } from "./threadListFilters";
 import type { ThreadListMode } from "./threadListModel";
 import { THREAD_LIST_PAGE_SIZE } from "./threadListModel";
+/** Identifies one server-qualified project page independently of its presentation. */
+export function projectThreadListKey(project: SidebarProject, mode: ThreadListMode): string {
+  return `project:${project.key}:${mode}`;
+}
+
 /** Project pages keep independent limits and filters while changing the visible scope. */
 export function useProjectThreadList(
   serverScopeKey: string,
@@ -35,16 +40,20 @@ export function useProjectThreadList(
     (sidebarProject === null ? setThreadListFilter : setProjectListFilter)(filter);
   });
 
-  const sidebarScopeKey = `${serverScopeKey}:${sidebarMode}${sidebarProject === null ? "" : `:${sidebarProject.key}`}`;
+  const sidebarScopeKey =
+    sidebarProject === null
+      ? `${serverScopeKey}:${sidebarMode}`
+      : projectThreadListKey(sidebarProject, sidebarMode);
 
-  const projectLimitKey = `${sidebarProject?.key ?? ""}:${projectListMode}`;
+  const projectLimitKey =
+    sidebarProject === null ? "" : projectThreadListKey(sidebarProject, projectListMode);
 
   const projectLimit = projectListLimits[projectLimitKey] ?? THREAD_LIST_PAGE_SIZE;
 
-  const loadMoreProjectThreads = useEvent(() => {
+  const loadMoreProjectThreads = useEvent((limit: number) => {
     setProjectListLimits((limits) => ({
       ...limits,
-      [projectLimitKey]: (limits[projectLimitKey] ?? THREAD_LIST_PAGE_SIZE) + THREAD_LIST_PAGE_SIZE,
+      [projectLimitKey]: Math.max(limits[projectLimitKey] ?? THREAD_LIST_PAGE_SIZE, limit),
     }));
   });
   return {

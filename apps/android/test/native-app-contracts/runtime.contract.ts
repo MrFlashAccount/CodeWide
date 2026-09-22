@@ -69,12 +69,7 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain(
     'requireStore(storeRef.current).setConnectionState(connectionId, "connecting")',
   );
-  expect(ownerWorkspaceRuntime).toContain("createThreadSummaryDatabase({");
-  expect(ownerWorkspaceRuntime).toContain("globalSupervisorStorage: globalSupervisor.storage");
-  expect(ownerWorkspaceRuntime).toContain("visibility: globalSupervisor.visibility");
-  expect(
-    ownerWorkspaceRuntime.indexOf("await createGlobalSupervisorWorkspaceBinding"),
-  ).toBeLessThan(ownerWorkspaceRuntime.indexOf("createThreadSummaryDatabase({"));
+  expect(ownerWorkspaceRuntime).toContain("createThreadSummaryDatabase()");
   expect(voiceWorkspace).not.toContain("reconcileBeforeSummary");
   expect(uiCachePersistence).toContain("registerUiCacheCollectionFlusher");
   expect(uiCachePersistence).not.toContain("createReactNativeSQLitePersistence");

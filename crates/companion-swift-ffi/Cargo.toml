@@ -1,0 +1,23 @@
+[package]
+name = "companion-swift-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Narrow UniFFI adapter between the Swift host and Companion core"
+
+[lib]
+crate-type = ["lib", "staticlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+companion-core = { path = "../companion-core" }
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["rt-multi-thread"] }
+uniffi = { version = "0.32.1", features = ["cli"] }
+
+[lints]
+workspace = true

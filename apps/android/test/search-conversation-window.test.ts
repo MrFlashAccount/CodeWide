@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { SearchConversationPage } from "../src/data/message-search";
 import { SearchConversationWindow, mergeSearchWindows } from "../src/features/search/search-conversation-window";
 import { SearchSession } from "../src/features/search/search-session";
@@ -10,7 +10,7 @@ function page(start: number, count: number): SearchConversationPage {
     timestamp: "2026-09-06T10:00:00Z", kind: "agent_message" as const, text: "Repeated answer",
   }));
   const turns: Turn[] = messages.map(message => ({
-    id: message.turnId, items: [{ type: "agentMessage", id: `search-message:${message.messageId}`, text: message.text, phase: null, memoryCitation: null }],
+    id: message.turnId, items: [{ delivery: null, questions: null, type: "agentMessage", id: `search-message:${message.messageId}`, text: message.text, phase: null, memoryCitation: null }],
     itemsView: "summary", status: "completed", error: null, startedAt: 1, completedAt: 2, durationMs: 1000,
   }));
   return { messages, turns, older: start > 1 ? start : null, newer: start + count };

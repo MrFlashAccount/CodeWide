@@ -1,3 +1,4 @@
+import { RpcQuestionCard } from "./QuestionFeature";
 import { RequestFields } from "./RequestFields";
 import { RequestResponseActions } from "./RequestResponseActions";
 /** V1 RequestFeature owner, extracted without changing interaction or resource lifetime. */
@@ -12,7 +13,7 @@ import { mcpElicitationFields, parseElicitationValue } from "./elicitationForm";
 import { isSafeHttpUrl } from "../../rendering/http-link";
 import { styles } from "./RequestFeature.styles";
 
-export function ApprovalPrompt({
+function ApprovalForm({
   embedded = false,
   onRespond,
   request,
@@ -158,4 +159,13 @@ function approvalTitle(method: string): string {
     return "Additional permissions";
   }
   return "External tool request";
+}
+
+/** Chooses the question form independently of security approval presentation. */
+export function ApprovalPrompt(props: Parameters<typeof ApprovalForm>[0]): React.JSX.Element {
+  return props.request.method === "item/tool/requestUserInput" ? (
+    <RpcQuestionCard onRespond={props.onRespond} request={props.request} />
+  ) : (
+    <ApprovalForm {...props} />
+  );
 }

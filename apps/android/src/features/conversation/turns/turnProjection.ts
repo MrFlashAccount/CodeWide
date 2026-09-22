@@ -1,8 +1,8 @@
 /** V1 turnProjection owner, extracted without changing interaction or resource lifetime. */
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { connectionId, normalizeThreadItem } from "@codewide/domain";
 import { toRenderBlock, type RenderBlock } from "@codewide/renderers";
-import { projectedTurnMetadata } from "@codewide/sync-client";
+import { projectedQuestionHistory, projectedTurnMetadata } from "@codewide/sync-client";
 import { selectTurnRenderWindow } from "../../../rendering/thread-render-window";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
 import { isToolActivityKind } from "../protocol/protocolKind";
@@ -364,8 +364,19 @@ export function projectTurnPresentation(
         };
   const canReviewResponse = rawTurn.status !== "inProgress" && agentReviewTarget !== null;
   const showMessageActions = copyText !== "" || canForkThrough || canReviewResponse;
+  const hasQuestions =
+    projectedQuestionHistory(rawTurn).length > 0 ||
+    rawTurn.items.some(
+      (item) =>
+        item.type === "agentMessage" &&
+        item.delivery === "async" &&
+        (item.questions?.length ?? 0) > 0,
+    );
   const showEmptyResponsePlaceholder =
-    rawTurn.status !== "inProgress" && !hasGeneratedAgentResponse && artifacts.length === 0;
+    !hasQuestions &&
+    rawTurn.status !== "inProgress" &&
+    !hasGeneratedAgentResponse &&
+    artifacts.length === 0;
   const completedActivityCount =
     rawTurn.status === "inProgress" ? 0 : completedActivityItemCount(rawTurn);
   const hasDisclosedBubbleActivity =
@@ -377,11 +388,13 @@ export function projectTurnPresentation(
         (part.kind === "activity" && activitySegmentUsesDisclosure(part)),
     );
   const agentBubbleFill =
+    hasQuestions ||
     artifacts.length > 0 ||
     hasDisclosedBubbleActivity ||
     (latestAgentTextReference?.byteLength ?? 0) > 0 ||
     (hasGeneratedAgentResponse && richMarkdownLayout(latestAgentBlock?.body ?? "") === "fill");
   const hasAgentContent =
+    hasQuestions ||
     (rawTurn.status !== "inProgress"
       ? rawTurn.itemsView !== "full" ||
         completedActivityCount > 0 ||

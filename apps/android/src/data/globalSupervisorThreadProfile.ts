@@ -1,4 +1,4 @@
-import type { DynamicToolSpec, ThreadStartParams } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { DynamicToolSpec, ThreadStartParams } from "@codewide/codex-protocol/v0.155.1/v2";
 import {
   DEFAULT_VOICE_ASSISTANT_PERSONALITY,
   hasCustomVoiceAssistantPersonality,

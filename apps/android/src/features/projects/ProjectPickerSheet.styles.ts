@@ -147,6 +147,9 @@ export const styles = StyleSheet.create({
     ...typeScale.body,
     color: colors.text,
   },
+  serverDefault: {
+    paddingTop: spacing.md,
+  },
   stateText: {
     ...typeScale.body,
     color: colors.textMuted,

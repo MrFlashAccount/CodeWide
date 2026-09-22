@@ -1,18 +1,16 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useThreadSummaryView } from "../../data/use-thread-summary-view";
 import { useConstant } from "../../react/useConstant";
-import { useEvent } from "../../react/useEvent";
+import { useThreadListPageRequest } from "./threadListPageRequest";
 import { serverScopeConnectionId, type ServerScope } from "../../services/servers/serverScope";
-import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { ThreadListProjection } from "./summaryProjection";
-import { THREAD_LIST_PAGE_SIZE, type ThreadListMode } from "./threadListModel";
+import type { ThreadListMode } from "./threadListModel";
 import {
   deduplicateThreadSummaries,
   ThreadListItemProjection,
   ThreadListScopeProjection,
 } from "./threadListProjection";
 import type { ThreadListSources } from "./threadListSources";
-import type { ThreadListItem } from "./threadListTypes";
 /** Stable projections and page admission use the existing catalog resource. */
 export function useThreadListWorkspace(
   remote: ThreadListSources,
@@ -29,7 +27,7 @@ export function useThreadListWorkspace(
 
   const threadConnectionId = serverScopeConnectionId(serverScope);
 
-  const threadSummaryView = useThreadSummaryView(remote.threadSummaryDatabase, {
+  const request = {
     archivedLimit: threadListMode === "archived" ? threadListLimit : 0,
     connectionId: threadConnectionId,
     recentLimit: threadListMode === "active" ? threadListLimit : 0,
@@ -37,7 +35,13 @@ export function useThreadListWorkspace(
     selectedThreadId: null,
     subagentConnectionId: null,
     subagentLimit: 0,
-  });
+  };
+  const loadMoreThreads = useThreadListPageRequest(
+    remote.threadSummaryDatabase,
+    request,
+    setThreadListLimit,
+  );
+  const threadSummaryView = useThreadSummaryView(remote.threadSummaryDatabase, request);
 
   const pinnedThreadSummaryRows = threadSummaryView?.pinned ?? [];
 
@@ -66,16 +70,6 @@ export function useThreadListWorkspace(
 
   const archivedThreads = threadScope.archived;
 
-  const loadMoreThreads = useEvent(() => {
-    const loadedCount =
-      threadListMode === "archived"
-        ? archivedThreadSummaryRows.length
-        : recentThreadSummaryRows.length + pinnedThreadSummaryRows.length;
-    if (loadedCount < threadListLimit) {
-      return;
-    }
-    setThreadListLimit((current) => current + THREAD_LIST_PAGE_SIZE);
-  });
   return {
     archivedThreads,
     loadedThreadSummaries,
@@ -84,14 +78,4 @@ export function useThreadListWorkspace(
     serverThreads,
     threadSummaryView,
   };
-}
-
-/** Selects the initial desktop row until the user chooses a server or thread explicitly. */
-export function defaultDesktopThreadSelection(
-  desktop: boolean,
-  enabled: boolean,
-  threads: readonly ThreadListItem[],
-): string | null {
-  const first = threads[0];
-  return desktop && enabled && first !== undefined ? threadSelectionKey(first) : null;
 }

@@ -20,6 +20,7 @@ interface NativeShimmerTextProps {
   textAlign?: "auto" | "center" | "justify" | "left" | "right";
 }
 
+/** Android shimmer renderer; other platforms retain ordinary readable text. */
 export const NativeShimmerText =
   Platform.OS === "android"
     ? requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")

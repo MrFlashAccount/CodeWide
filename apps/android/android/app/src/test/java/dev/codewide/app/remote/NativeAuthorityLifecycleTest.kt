@@ -67,12 +67,10 @@ class NativeAuthorityLifecycleTest {
     val failure = runCatching {
       revokeNativeAuthority(
         NativeAuthorityRevocation(
-          authenticatedTransports = {
-            retired += "authenticated-transports"
-            error("lease close failed")
+          legacySession = {
+            retired += "legacy-session"
+            error("session close failed")
           },
-          notificationProjection = { retired += "notification-projection" },
-          legacySession = { retired += "legacy-session" },
           portForwards = { retired += "port-forwards" },
           terminalSessions = { retired += "terminal-sessions" },
           httpProxy = { retired += "http-proxy" },
@@ -83,8 +81,6 @@ class NativeAuthorityLifecycleTest {
     assertTrue(failure.isFailure)
     assertEquals(
       listOf(
-        "authenticated-transports",
-        "notification-projection",
         "legacy-session",
         "port-forwards",
         "terminal-sessions",

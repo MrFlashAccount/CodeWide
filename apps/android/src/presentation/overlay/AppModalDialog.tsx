@@ -3,6 +3,8 @@ import { Modal, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } fr
 
 import { colors, radii, spacing } from "../../theme";
 
+const DIALOG_MAX_WIDTH = 420;
+
 interface AppModalDialogProps {
   readonly children: ReactNode;
   readonly contentStyle?: StyleProp<ViewStyle>;
@@ -48,7 +50,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.large,
     borderWidth: 1,
     maxHeight: "100%",
-    maxWidth: 420,
+    maxWidth: DIALOG_MAX_WIDTH,
     padding: spacing.md,
     width: "100%",
   },

@@ -10,6 +10,7 @@ import {
 
 import { formatNumber } from "./number-format";
 import { AppText as Text, productFontStyle } from "./Typography";
+import { APP_MAX_FONT_SIZE_MULTIPLIER } from "./typography-policy";
 
 export { compactNumberFormat, integerNumberFormat, usdNumberFormat } from "./number-format";
 
@@ -22,6 +23,7 @@ type NativeAnimatedNumberProps = {
   fontWeight?: string;
   formatStyle: "decimal" | "compact" | "currency";
   lineHeight: number;
+  maxFontSizeMultiplier: number;
   maximumFractionDigits: number;
   minimumFractionDigits: number;
   numberAccessibilityLabel?: string;
@@ -103,6 +105,7 @@ export function AnimatedNumber({
         {...(color === undefined ? {} : { color })}
         fontSize={fontSize}
         lineHeight={lineHeight}
+        maxFontSizeMultiplier={APP_MAX_FONT_SIZE_MULTIPLIER}
         {...(typeof resolvedTextStyle.fontFamily === "string"
           ? { fontFamily: resolvedTextStyle.fontFamily }
           : {})}
@@ -127,5 +130,8 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     justifyContent: "center",
   },
-  measure: { opacity: 0 },
+  measure: {
+    fontVariant: ["tabular-nums"],
+    opacity: 0,
+  },
 });
