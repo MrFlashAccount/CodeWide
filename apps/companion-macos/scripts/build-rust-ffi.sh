@@ -9,6 +9,8 @@ output_root="$mac_root/.build/rust/$version_key"
 arm_target=aarch64-apple-darwin
 intel_target=x86_64-apple-darwin
 
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
+
 rustup target add "$arm_target" "$intel_target"
 cargo build --manifest-path "$repo_root/Cargo.toml" \
   --release -p companion-swift-ffi --target "$arm_target"

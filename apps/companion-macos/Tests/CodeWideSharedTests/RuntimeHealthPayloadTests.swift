@@ -23,9 +23,11 @@ import Testing
         withRootObject: original,
         requiringSecureCoding: true
     )
-    let decoded = try #require(
-        NSKeyedUnarchiver.unarchivedObject(ofClass: RuntimeHealthPayload.self, from: data)
+    let unarchived = try NSKeyedUnarchiver.unarchivedObject(
+        ofClass: RuntimeHealthPayload.self,
+        from: data
     )
+    let decoded = try #require(unarchived)
     #expect(decoded.updateStatus == "applied")
     #expect(decoded.updateFromVersion == "1.0.0")
     #expect(decoded.launchCount == 3)
@@ -45,9 +47,11 @@ import Testing
         withRootObject: original,
         requiringSecureCoding: true
     )
-    let decoded = try #require(
-        NSKeyedUnarchiver.unarchivedObject(ofClass: DeviceListPayload.self, from: data)
+    let unarchived = try NSKeyedUnarchiver.unarchivedObject(
+        ofClass: DeviceListPayload.self,
+        from: data
     )
+    let decoded = try #require(unarchived)
     #expect(decoded.devices.count == 1)
     #expect(decoded.devices[0].name == "Phone")
     #expect(decoded.devices[0].activeConnections == 2)
