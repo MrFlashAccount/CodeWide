@@ -45,7 +45,8 @@ dump_diagnostics() {
   for state_file in \
     "$state_dir/runtime-state.json" \
     "$state_dir/runtime-state.v0.backup.json" \
-    "$state_dir/devices.json"; do
+    "$state_dir/devices.json" \
+    "$report_marker"; do
     if [ -f "$state_file" ]; then
       stat -f '%Sp %Su:%Sg %N' "$state_file" >&2 || true
       cat "$state_file" >&2 || true
@@ -57,7 +58,7 @@ dump_diagnostics() {
   launchctl print "gui/$(id -u)/dev.codewide.runtime" >&2 || true
   echo "--- Relevant unified log ---" >&2
   log show --style compact --last 10m \
-    --predicate 'process == "CodeWideRuntime" OR eventMessage CONTAINS[c] "dev.codewide.runtime"' \
+    --predicate 'process == "CodeWide" OR process == "CodeWideRuntime" OR eventMessage CONTAINS[c] "dev.codewide.runtime"' \
     >&2 || true
   echo "--- Direct runtime probe ---" >&2
   launchctl bootout "gui/$(id -u)/dev.codewide.runtime" >/dev/null 2>&1 || true

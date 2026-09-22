@@ -151,6 +151,10 @@ final class RuntimeConnection: ObservableObject {
     private func requestHealth() async throws -> RuntimeHealthPayload {
         try await withCheckedThrowingContinuation { continuation in
             let gate = XPCReplyGate(continuation: continuation)
+            gate.timeout(
+                after: .seconds(5),
+                with: RuntimeConnectionError.requestTimedOut
+            )
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -337,6 +341,7 @@ final class RuntimeConnection: ObservableObject {
 enum RuntimeConnectionError: LocalizedError {
     case emptyReply
     case invalidProxy
+    case requestTimedOut
     case untrustedRuntime
     case updateCheckpointRejected
     case deviceNotFound
@@ -347,6 +352,8 @@ enum RuntimeConnectionError: LocalizedError {
             "The runtime returned an empty XPC reply."
         case .invalidProxy:
             "The runtime XPC proxy is unavailable."
+        case .requestTimedOut:
+            "The runtime XPC health request timed out."
         case .untrustedRuntime:
             "The XPC peer is not the ad-hoc signed runtime inside this app bundle."
         case .updateCheckpointRejected:

@@ -8,11 +8,30 @@ final class XPCReplyGate<Value: Sendable>: @unchecked Sendable {
         self.continuation = continuation
     }
 
-    func resume(with result: sending Result<Value, Error>) {
+    @discardableResult
+    func resume(with result: sending Result<Value, Error>) -> Bool {
         lock.lock()
         let pending = continuation
         continuation = nil
         lock.unlock()
-        pending?.resume(with: result)
+        guard let pending else {
+            return false
+        }
+        pending.resume(with: result)
+        return true
+    }
+
+    func timeout(
+        after duration: Duration,
+        with error: any Error & Sendable
+    ) {
+        Task { [weak self] in
+            do {
+                try await Task.sleep(for: duration)
+            } catch {
+                return
+            }
+            self?.resume(with: .failure(error))
+        }
     }
 }
