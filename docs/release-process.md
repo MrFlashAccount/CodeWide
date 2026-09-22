@@ -61,7 +61,8 @@ Homebrew updates, or appcast publication. OTA is deliberately absent from this
 workflow.
 
 When no product tag exists yet, release metadata uses these checked-in
-baselines: Relay, Linux Companion, and macOS `0.1.0`; Android `0.2.176`.
+baselines: Relay and Linux Companion `0.1.0`, macOS `0.2.0`, and Android
+`0.2.176`.
 Afterward, the product tag is authoritative. The Android workflow derives a
 monotonic `versionCode` from the semantic version and leaves the checked-in
 source version unchanged; the signed APK contains the requested release
