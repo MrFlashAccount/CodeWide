@@ -58,6 +58,25 @@ dump_diagnostics() {
   log show --style compact --last 10m \
     --predicate 'process == "CodeWideRuntime" OR eventMessage CONTAINS[c] "dev.codewide.runtime"' \
     >&2 || true
+  echo "--- Direct runtime probe ---" >&2
+  launchctl bootout "gui/$(id -u)/dev.codewide.runtime" >/dev/null 2>&1 || true
+  runtime_probe_log="$root/runtime-probe.log"
+  "$test_app/Contents/MacOS/CodeWideRuntime" >"$runtime_probe_log" 2>&1 &
+  runtime_probe_pid=$!
+  sleep 2
+  if kill -0 "$runtime_probe_pid" >/dev/null 2>&1; then
+    echo "Runtime remained alive for the two-second direct probe." >&2
+    kill "$runtime_probe_pid" >/dev/null 2>&1 || true
+    wait "$runtime_probe_pid" >/dev/null 2>&1 || true
+  else
+    if wait "$runtime_probe_pid"; then
+      runtime_probe_status=0
+    else
+      runtime_probe_status=$?
+    fi
+    echo "Runtime direct probe exited with status $runtime_probe_status." >&2
+  fi
+  cat "$runtime_probe_log" >&2 || true
 }
 
 cleanup() {

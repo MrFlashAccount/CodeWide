@@ -4,7 +4,7 @@ import Darwin
 import Foundation
 
 do {
-    let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+    let executableURL = try AppBundleMetadata.currentExecutableURL()
     let metadata = try AppBundleMetadata.load(runtimeExecutableURL: executableURL)
     let core = try CoreHost(
         stateDirectory: RuntimeConstants.stateDirectory.path,
