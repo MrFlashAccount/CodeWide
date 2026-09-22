@@ -91,6 +91,7 @@ jobs:
     runs-on: macos-26
     env:
       NX_CACHE_DIRECTORY: .nx/cache
+      RUSTUP_AUTO_INSTALL: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -128,6 +129,11 @@ jobs:
           key: cargo-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             cargo-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
