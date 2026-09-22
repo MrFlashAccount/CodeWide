@@ -1,5 +1,5 @@
 import { unknownRecord } from "./unknownRecord";
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient, SyncSnapshotThread } from "@codewide/sync-client";
 
 type IndexedSubagent = {
@@ -60,17 +60,23 @@ function indexedSubagentThread(metadata: IndexedSubagent, rootThreadId: string):
     cliVersion: metadata.cliVersion,
     createdAt: metadata.createdAt,
     cwd: metadata.cwd,
+    daybreakEnabled: null,
+    environments: null,
     ephemeral: false,
     extra: null,
     forkedFromId: null,
     gitInfo: null,
     historyMode: "paginated",
     id: metadata.id,
+    model: null,
     modelProvider: metadata.modelProvider,
     name: null,
+    originator: null,
     parentThreadId: metadata.parentThreadId,
     path: null,
     preview: "",
+    projectId: null,
+    reasoningEffort: null,
     recencyAt: metadata.updatedAt,
     section: null,
     sectionEnteredAt: null,

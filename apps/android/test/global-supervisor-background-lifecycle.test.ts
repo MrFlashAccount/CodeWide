@@ -126,13 +126,9 @@ describe("Global Voice background lifecycle", () => {
     expect(overlaySource.indexOf("view.startLaunchHandoff(origin.diameter)")).toBeLessThan(
       overlaySource.indexOf("windowManager.addView(view, params)"),
     );
-    expect(overlaySource).toContain("VoiceOverlayIconButton");
-    expect(overlaySource).toContain('"Stop Voice Assistant"');
-    expect(overlaySource).toContain('"Mic off"');
-    expect(overlaySource).toContain('"Mic on"');
-    expect(overlaySource).not.toContain("VoiceOverlayIcon.MORE");
-    expect(overlaySource).toContain("FLAG_WATCH_OUTSIDE_TOUCH");
-    expect(overlaySource).not.toContain("TextView");
+    // Native menu gesture, labels, window bounds and disposal contracts run in Robolectric.
+    // This cross-owner check only verifies that the service composes the menu owner.
+    expect(overlaySource).toContain("VoiceOverlayControls(");
     expect(orbSlotSource).toContain("VoiceAssistantOrbRendererFactory.create(context, style)");
     expect(orbSlotSource).toContain("setLayerType(View.LAYER_TYPE_HARDWARE, MUTED_LAYER_PAINT)");
     expect(orbSlotSource.indexOf("removeView(previous)")).toBeLessThan(
@@ -157,10 +153,9 @@ describe("Global Voice background lifecycle", () => {
     expect(overlaySource).toContain("motion.view.setMotionPosition(");
     expect(overlaySource).not.toContain("onFrame = { point -> moveExactly(params, point) }");
     expect(overlaySource).toContain("view.setWindowPosition(");
-    expect(overlaySource).toContain("safeBoundsTracker?.update(bounds) == true");
+    // Settling/remapping behavior is covered by the native layout-owner tests.
+    expect(overlaySource).toContain("layoutSettler.observe(layout)");
+    expect(overlaySource).toContain("layoutSettler.commit(layout)");
     expect(overlaySource).not.toContain("layoutParams as WindowManager.LayoutParams");
-    expect(overlaySource).toContain("WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH");
-    expect(overlaySource).toContain("VoiceOverlayIconButton");
-    expect(overlaySource).not.toContain("TextView");
   });
 });

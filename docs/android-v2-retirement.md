@@ -1,11 +1,14 @@
-# Android V2 frontend retirement
+# CodeWide V2 retirement
 
 Date: 2026-09-21. Source baseline: `0e39482ae39136ed8305b5787795af0066f4773a`.
 
+The subsequent unversioned-route cleanup and remaining-name inventory are recorded in
+[the version-reference audit](version-reference-audit.md).
+
 ## Contract and scope
 
-Android has one application router, under `app/v1`. Root, legacy, pairing, and notification aliases
-enter V1; its existing process deep-link listener still receives the original URL. Startup no longer
+Android has one application router, under the URL-invisible `app/(workspace)` group. Its index
+owns `/`; legacy, pairing, and notification aliases enter that workspace; its existing process deep-link listener still receives the original URL. Startup no longer
 reads a generation preference, imports V2 diagnostics, or creates a V2 runtime. Native V1 resource
 activation/cleanup remains serialized and separate from process-lifetime JavaScript state.
 
@@ -13,9 +16,37 @@ Removed: V2 Expo route groups, `src/v2`, generation preference/switch/diagnostic
 those deleted implementations, and their frontend-only gate configuration. Mixed V1/V2 tests retain
 the V1 cases. Existing native protocol isolation/security tests remain applicable.
 
-Companion, `packages/sync-client/src/v2`, native authenticated transport support, their durable data,
-and their protocol/security contracts are **not** removed by frontend retirement. No release,
-credential change, persisted-data deletion, or server mutation is part of this change.
+The follow-up decision also retires the CodeWide Companion V2 protocol, sync-client
+subpath, and native implementation. The only Companion API remains `/v1`; Android
+workspace routes have no version prefix. The external Codex App Server generated
+`v0.155.1/v2` contract is unrelated and remains required.
+
+Removed backend/native scope: `sync_v2`, its generated contract and generator,
+`sync-client/src/v2`, V2 native sync/storage/notifications/voice/transport leases,
+V2-only fault hooks, protocol tests, generation-parity Appium harness and its
+unused dependencies. The surviving release checks continue to run; the old parity
+validator was already outside Android release checks. Device smoke/lifecycle/layout/
+upgrade checks remain available through `pnpm test:android-device`. No replacement
+live-conversation E2E coverage or physical-device validation is claimed.
+
+Two existing V1 dependencies were extracted before deletion:
+
+- `file_uploads` owns authenticated resumable uploads, bounded streaming, durable
+  device ownership, cancellation, quotas and revocation cleanup. Historical database
+  filename/table/owner-key prefixes stay unchanged so existing uploads retain their
+  ownership. These strings do not expose or enable a V2 API.
+- `server/port_forwarding` preserves service identity checks and session-bound
+  binary forwarding. Android now uses `/v1/port-forwards/:port`; explicit discovered
+  identities must match the current service. Legacy clients without identity headers
+  retain compatibility. Device-session streams close on expiry or revocation.
+
+Pairing proof domain `codewide-pairing-v2`, native credential bridge method
+`saveConnectionCredentialsV2`, and persisted cache/policy schema names are retained
+compatibility identifiers used by the surviving client. Removing or renaming them
+would break pairing, native bridge compatibility, or existing data.
+
+No deployed service, installed app, credentials, or persisted data are modified by
+this source retirement.
 
 ## Alternatives and falsification
 
@@ -23,7 +54,7 @@ credential change, persisted-data deletion, or server mutation is part of this c
 | --- | --- | --- | --- |
 | Incremental | Force the generation preference to V1 | FAIL | Already implemented: the loader read storage and then always published legacy. Root imports and Router still retained V2. |
 | Structural | Remove V2 routes, runtime imports and their orphaned frontend; keep live V1 presentation | PASS | Matches the requested boundary. Knip explicitly rooted all V2/presentation files, so deleting route files alone could not retire their graph. |
-| Radical | Remove Companion V2, sync-client V2 and native transport contracts as well | CONDITIONAL | Potential gain: fewer protocols/native paths. Risk: expands into server compatibility, security and durable operations without consumer evidence. Reversible in source, not necessarily in deployed data/contracts. Cheapest experiment: a separate consumer inventory and native/backend contract run before deleting any protocol owner. |
+| Radical | Remove the whole CodeWide V2 protocol/runtime | PASS after explicit follow-up authorization | Consumer audit identified uploads and forwarding as live V1 dependencies; both were extracted with their security behavior and compatibility identifiers. Source deletion is reversible in Git; deployment is separate. |
 
 ## UI reuse audit
 
@@ -81,21 +112,18 @@ candidates above were read for behavior and ownership; the inventory alone is no
 
 Use `pnpm validate:android:v1` for the surviving frontend and
 `pnpm --filter @codewide/android compile:android` for the Android Metro bundle.
-`pnpm validate:sync:v2` remains independent for the retained protocol/backend.
+Use `pnpm test:companion`, `cargo clippy --workspace --all-targets -- -D warnings`
+and `cargo fmt --all -- --check` for the surviving backend.
 The dependency boundary rejects V2 imports from every application route and source owner.
 Knip no longer treats whole boot/presentation/V2 directories as live roots. The surviving boot and
 presentation modules now run under the full V1 formatter/hygiene profile, without raising its debt
 baseline. Shared UI render suites retain their original test environment and run as part of the V1
 gate; tests owned by the V1 platform suite are not duplicated in the shared suite.
 
-The historical `scripts/android-e2e.ts` generation-parity runner still contains V2-only scenarios
-and generation-preference fault injection. It is not evidence for this V1-only frontend; adapting that
-live-device harness is separate work and it was not run against a device during retirement.
-
 Device cold start, warm deep links, notification selection and Back behavior still require physical
 device evidence; source checks and a bundle cannot establish that evidence.
 
-### Recorded local results
+### Historical frontend-only validation results
 
 - `pnpm validate:android:v1`: passed, including native/web/compatibility type checks,
   43 V1 suites (178 tests), 39 shared UI suites (135 tests), strict Knip, hygiene without
@@ -105,3 +133,20 @@ device evidence; source checks and a bundle cannot establish that evidence.
 - `compile:android`: Metro built the application; source-map inspection found the V1
   workspace entry and no Android V2 or V2 sync-client modules.
 - `git diff --check`: passed. No device installation, publication or commit was performed.
+
+### Full protocol retirement validation
+
+- Workspace TypeScript checks passed, including native, web, and compatibility projects.
+- Both Android render suites passed: 44 suites / 183 tests and 39 suites / 135 tests.
+- Strict Knip and dependency-cruiser passed (2,148 modules / 7,734 dependencies).
+- Android bundle compiled; source-map verification found the workspace and no V2 modules.
+- Native E2E Kotlin compilation and focused forwarding, authority lifecycle, proxy and
+  device-key tests passed. Full native tests had one unrelated failure in
+  `VoiceOverlayMenuGeometryTest` (242 passed / 1 failed).
+- `pnpm test`: 272 suites passed, one failed in the parallel `ImagePreviewHost`
+  fullscreen-contract changes (1,822 tests passed / 1 failed).
+- `pnpm validate:android:v1` reached hygiene and failed on two new rule groups in that
+  same parallel `ImagePreviewHost` file. No baseline or suppression was changed.
+- Cargo workspace tests passed (438 tests, 2 ignored), as did strict Clippy. Transport tests cover retired API
+  paths returning 404 and stale discovered forwarding identities returning 409.
+- No device installation or publication was performed for the protocol retirement.

@@ -6,8 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./pairing": "./src/pairing.ts",
-    "./v0.147.0": "./src/generated/0.147.0/index.ts",
-    "./v0.147.0/v2": "./src/generated/0.147.0/v2/index.ts"
+    "./v0.155.1": "./src/generated/0.155.1/index.ts",
+    "./v0.155.1/v2": "./src/generated/0.155.1/v2/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

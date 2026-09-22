@@ -1,21 +1,19 @@
 package dev.codewide.app.remote
 
+import android.content.Intent
+import android.graphics.Rect
+import android.net.Uri
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
-import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.WindowMetrics
 import android.widget.FrameLayout
-import android.widget.LinearLayout
 import androidx.dynamicanimation.animation.FloatValueHolder
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
@@ -54,22 +52,35 @@ internal class GlobalVoiceOverlayController(
   initialState: VoiceAssistantOrbState,
   initialReducedMotion: Boolean,
   initialLaunchOrigin: VoiceOverlayLaunchOrigin?,
+  private val currentDisplayMetrics: () -> WindowMetrics = {
+    context.getSystemService(WindowManager::class.java).currentWindowMetrics
+  },
 ) {
   private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
   private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
   private var overlay: DraggableVoiceOverlay? = null
   private var overlayParams: WindowManager.LayoutParams? = null
   private var controls: VoiceOverlayControls? = null
+  private var menuReturnPosition: OverlayPoint? = null
   private var springAnimation: OverlaySpringAnimation? = null
   private var activeWindowMotion: ActiveOverlayWindowMotion? = null
   private var pendingHideCompletion: (() -> Unit)? = null
-  private var safeBoundsTracker: OverlaySafeBoundsTracker? = null
+  private val layoutSettler = VoiceOverlayLayoutSettler()
+  private var reflowScheduled = false
+  private var forceRemap = false
   private var visibilityGeneration = 0L
   private var orbStyle = initialStyle
   private var orbState = initialState
   private var reducedMotion = initialReducedMotion
   private var launchOrigin = initialLaunchOrigin
   private var microphoneMuted = initialMicrophoneMuted
+  private var chatTarget: VoiceOverlayChatTarget? = null
+
+  fun updateChatTarget(target: VoiceOverlayChatTarget?) {
+    if (chatTarget == target) return
+    chatTarget = target
+    controls?.setChatAvailable(target != null)
+  }
 
   fun show() {
     if (!Settings.canDrawOverlays(context)) return
@@ -87,8 +98,8 @@ internal class GlobalVoiceOverlayController(
     val size = dp(OVERLAY_SIZE_DP)
     val initialBounds = safeBounds(size)
     val params = overlayParams(size, initialBounds)
-    safeBoundsTracker = OverlaySafeBoundsTracker(initialBounds)
     val target = OverlayPoint(params.x.toFloat(), params.y.toFloat())
+    if (!preferences.getFloat(POSITION_Y_FRACTION, Float.NaN).isFinite()) persistFree(target, initialBounds)
     val origin = launchOrigin.also { launchOrigin = null }
     if (origin != null && !reducedMotion) {
       params.x = (origin.centerX - size / 2f).toInt()
@@ -102,7 +113,9 @@ internal class GlobalVoiceOverlayController(
       initialReducedMotion = reducedMotion,
       windowSize = size,
       onDragStart = {
-        hideControls()
+        // A deliberate drag replaces the temporary menu placement with new user intent.
+        menuReturnPosition = null
+        controls?.collapse(reducedMotion, fast = true)
         cancelSnapAnimation()
       },
       onMove = { x, y -> moveDuringDrag(params, OverlayPoint(x.toFloat(), y.toFloat())) },
@@ -116,8 +129,8 @@ internal class GlobalVoiceOverlayController(
       onTap = { toggleControls(params) },
     )
     view.setOnApplyWindowInsetsListener { _, insets ->
-      val bounds = safeBounds(size)
-      if (safeBoundsTracker?.update(bounds) == true) reflow(bounds)
+      // Window-local insets are not display insets. Treat the callback only as a signal.
+      scheduleReflow()
       insets
     }
     if (origin != null && !reducedMotion) {
@@ -140,7 +153,6 @@ internal class GlobalVoiceOverlayController(
         )
       }
     } catch (_: SecurityException) {
-      safeBoundsTracker = null
       // Permission can be revoked between the explicit check and WindowManager admission.
     }
   }
@@ -195,7 +207,7 @@ internal class GlobalVoiceOverlayController(
   }
 
   fun hideImmediately() {
-    hideControls()
+    removeControls(restoreOrb = false)
     visibilityGeneration += 1
     cancelSnapAnimation(restoreWindow = false)
     overlay?.let(::removeOverlay)
@@ -204,7 +216,15 @@ internal class GlobalVoiceOverlayController(
 
   fun onConfigurationChanged() {
     if (overlayParams === null) return
-    reflow(safeBounds(dp(OVERLAY_SIZE_DP)))
+    cancelSnapAnimation(restoreWindow = false)
+    if (pendingHideCompletion != null) {
+      overlay?.let(::removeOverlay)
+      completePendingHide()
+      return
+    }
+    forceRemap = true
+    layoutSettler.resetCandidate()
+    scheduleReflow()
   }
 
   fun updateAudioLevels(levels: GlobalVoiceAudioLevels) {
@@ -234,6 +254,7 @@ internal class GlobalVoiceOverlayController(
   fun updateReducedMotion(reduced: Boolean) {
     reducedMotion = reduced
     overlay?.setReducedMotion(reduced)
+    controls?.setReducedMotion(reduced)
   }
 
   fun updateLaunchOrigin(origin: VoiceOverlayLaunchOrigin) {
@@ -250,10 +271,13 @@ internal class GlobalVoiceOverlayController(
       size,
       size,
       WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
       PixelFormat.TRANSLUCENT,
     ).apply {
-      gravity = Gravity.TOP or Gravity.START
+      gravity = Gravity.TOP or Gravity.LEFT
+      setFitInsetsTypes(0)
+      softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
       x = restored.x.toInt()
       y = restored.y.toInt()
     }
@@ -266,12 +290,9 @@ internal class GlobalVoiceOverlayController(
       runCatching { windowManager.updateViewLayout(view, params) }
         .onSuccess {
           view.setWindowPosition(OverlayPoint(params.x.toFloat(), params.y.toFloat()))
+          controls?.moveOrb(OverlayPoint(params.x + params.width / 2f, params.y + params.height / 2f))
         }
     }
-  }
-
-  private fun moveWithinBounds(params: WindowManager.LayoutParams, point: OverlayPoint) {
-    moveExactly(params, safeBounds(dp(OVERLAY_SIZE_DP)).clamp(point))
   }
 
   private fun moveDuringDrag(params: WindowManager.LayoutParams, point: OverlayPoint) {
@@ -427,10 +448,12 @@ internal class GlobalVoiceOverlayController(
 
   private fun removeOverlay(view: DraggableVoiceOverlay) {
     if (overlay !== view) return
+    removeControls(restoreOrb = false)
     view.cancelVisualAnimations()
     overlay = null
     overlayParams = null
-    safeBoundsTracker = null
+    view.removeCallbacks(stabilizeLayout)
+    reflowScheduled = false
     activeWindowMotion = null
     springAnimation = null
     runCatching { windowManager.removeView(view) }
@@ -442,34 +465,68 @@ internal class GlobalVoiceOverlayController(
     completion()
   }
 
-  private fun reflow(bounds: OverlaySafeBounds) {
-    val params = overlayParams ?: return
-    safeBoundsTracker?.update(bounds)
-    cancelSnapAnimation()
-    moveWithinBounds(params, restorePosition(bounds))
-    if (controls !== null) {
-      hideControls()
-      showControls(params)
+  private val stabilizeLayout = object : Runnable {
+    override fun run() {
+      val view = overlay ?: run { reflowScheduled = false; return }
+      val layout = displayLayout()
+      if (!layoutSettler.observe(layout)) {
+        view.postOnAnimation(this)
+        return
+      }
+      reflowScheduled = false
+      if (layoutSettler.commit(layout) || forceRemap) {
+        forceRemap = false
+        reflow(layout)
+      }
     }
   }
 
-  private fun safeBounds(elementWidth: Int, elementHeight: Int = elementWidth): OverlaySafeBounds {
-    val metrics = windowManager.currentWindowMetrics
-    val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
-      WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
-    )
-    val margin = dp(SAFE_MARGIN_DP).toFloat()
-    val width = metrics.bounds.width().toFloat()
-    val height = metrics.bounds.height().toFloat()
-    val minX = insets.left + margin
-    val minY = insets.top + margin
-    return OverlaySafeBounds(
-      minX = minX,
-      minY = minY,
-      maxX = (width - insets.right - elementWidth - margin).coerceAtLeast(minX),
-      maxY = (height - insets.bottom - elementHeight - margin).coerceAtLeast(minY),
-    )
+  private fun scheduleReflow() {
+    val view = overlay ?: return
+    if (reflowScheduled) return
+    reflowScheduled = true
+    view.postOnAnimation(stabilizeLayout)
   }
+
+  private fun reflow(layout: VoiceOverlayDisplayLayout) {
+    val params = overlayParams ?: return
+    val bounds = layout.bounds(dp(OVERLAY_SIZE_DP))
+    cancelSnapAnimation(restoreWindow = false)
+    val size = dp(OVERLAY_SIZE_DP)
+    params.width = size
+    params.height = size
+    params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+    overlay?.endWindowMotion()
+    // Remap the saved user intent. Do not persist this configuration-induced position.
+    val restored = restorePosition(bounds)
+    if (controls == null) {
+      moveExactly(params, restored)
+      return
+    }
+    val geometry = voiceOverlayMenuGeometry(
+      OverlayPoint(restored.x + size / 2f, restored.y + size / 2f), layout.area,
+      context.resources.displayMetrics.density,
+    )
+    if (geometry == null) {
+      removeControls(restoreOrb = false)
+      moveExactly(params, restored)
+    } else {
+      menuReturnPosition = restored
+      controls?.updateGeometry(geometry)
+      moveExactly(params, OverlayPoint(geometry.orbCenter.x - size / 2f, geometry.orbCenter.y - size / 2f))
+    }
+  }
+
+  private fun displayLayout(): VoiceOverlayDisplayLayout {
+    val metrics = currentDisplayMetrics()
+    val width = metrics.bounds.width()
+    val height = metrics.bounds.height()
+    return VoiceOverlayDisplayLayout(width, height, voiceOverlaySafeBounds(
+      width, height, metrics.windowInsets, 0, 0, dp(SAFE_MARGIN_DP).toFloat(),
+    ))
+  }
+
+  private fun safeBounds(elementWidth: Int): OverlaySafeBounds = displayLayout().bounds(elementWidth)
 
   private fun restorePosition(bounds: OverlaySafeBounds): OverlayPoint {
     val normalizedY = preferences.getFloat(POSITION_Y_FRACTION, Float.NaN)
@@ -508,8 +565,6 @@ internal class GlobalVoiceOverlayController(
   private fun persist(point: OverlayPoint, bounds: OverlaySafeBounds, mode: String) {
     val normalized = GlobalVoiceOverlayPlacement.normalize(point, bounds)
     preferences.edit()
-      .putInt(POSITION_X, point.x.toInt())
-      .putInt(POSITION_Y, point.y.toInt())
       .putFloat(POSITION_X_FRACTION, normalized.x)
       .putFloat(POSITION_Y_FRACTION, normalized.y)
       .putString(POSITION_MODE, mode)
@@ -517,73 +572,86 @@ internal class GlobalVoiceOverlayController(
   }
 
   private fun toggleControls(params: WindowManager.LayoutParams) {
-    if (controls === null) showControls(params) else hideControls()
+    val panel = controls
+    if (panel == null) showControls(params) else panel.toggle(reducedMotion)
   }
 
   private fun showControls(orbParams: WindowManager.LayoutParams) {
     if (controls !== null || !Settings.canDrawOverlays(context)) return
+    val orbView = overlay ?: return
+    cancelSnapAnimation()
+    val geometry = voiceOverlayMenuGeometry(
+      OverlayPoint(orbParams.x + orbParams.width / 2f, orbParams.y + orbParams.height / 2f),
+      safeBounds(0),
+      context.resources.displayMetrics.density,
+    ) ?: return
+    menuReturnPosition = OverlayPoint(orbParams.x.toFloat(), orbParams.y.toFloat())
+    // Translate the complete menu, never clamp individual action centers or persist this offset.
+    moveExactly(orbParams, OverlayPoint(
+      geometry.orbCenter.x - orbParams.width / 2f, geometry.orbCenter.y - orbParams.height / 2f,
+    ))
     val panel = VoiceOverlayControls(
       context,
+      geometry,
       microphoneMuted = microphoneMuted,
-      onMicrophoneToggle = {
+      onMicrophoneToggle = { onMicrophoneToggle() },
+      onOpenApp = {
         hideControls()
-        onMicrophoneToggle()
+        context.startActivity(Intent(context, dev.codewide.app.MainActivity::class.java)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
       },
       onStop = {
         hideControls()
         onStop()
       },
-      onOutsideTouch = { rawX, rawY ->
-        if (!orbParams.contains(rawX, rawY)) {
+      onSettings = {
+        hideControls()
+        context.startActivity(voiceAssistantSettingsIntent(context))
+      },
+      onOpenChat = {
+        chatTarget?.let { target ->
           hideControls()
+          context.startActivity(target.intent(context))
         }
       },
+      chatAvailable = chatTarget != null,
+      orbContains = orbView::containsScreenPoint,
+      onOrbTouch = orbView::onTouchEvent,
+      onExpansionChanged = orbView::setActionsExpanded,
+      onCollapsed = { removeControls() },
     )
-    val width = dp(CONTROLS_WIDTH_DP)
-    val height = dp(CONTROLS_HEIGHT_DP)
-    val safe = safeBounds(width, height)
-    val placeLeft = orbParams.x > windowManager.currentWindowMetrics.bounds.width() / 2
-    val x = if (placeLeft) orbParams.x - width - dp(CONTROLS_GAP_DP) else {
-      orbParams.x + orbParams.width + dp(CONTROLS_GAP_DP)
-    }
-    val safePoint = safe.clamp(OverlayPoint(x.toFloat(), orbParams.y.toFloat()))
-    val params = WindowManager.LayoutParams(
-      width,
-      height,
-      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-        WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-      PixelFormat.TRANSLUCENT,
-    ).apply {
-      gravity = Gravity.TOP or Gravity.START
-      this.x = safePoint.x.toInt()
-      this.y = safePoint.y.toInt()
-    }
     try {
-      windowManager.addView(panel, params)
       controls = panel
-      panel.reveal(placeLeft)
+      panel.show(reducedMotion)
     } catch (_: SecurityException) {
+      removeControls()
       // Revocation closes the interaction without affecting media cleanup.
+    } catch (_: WindowManager.BadTokenException) {
+      removeControls()
+      // The service/display may disappear before all five action windows attach.
     }
   }
 
   private fun hideControls() {
-    val view = controls ?: return
+    controls?.collapse(reducedMotion)
+  }
+
+  private fun removeControls(restoreOrb: Boolean = true) {
+    val returnPosition = menuReturnPosition
+    menuReturnPosition = null
+    val view = controls
     controls = null
-    runCatching { windowManager.removeView(view) }
+    overlay?.setActionsExpanded(false)
+    view?.dispose()
+    val params = overlayParams
+    if (restoreOrb && pendingHideCompletion == null && returnPosition != null && params != null) {
+      moveExactly(params, returnPosition)
+    }
   }
 
   private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
-  private fun WindowManager.LayoutParams.contains(rawX: Float, rawY: Float): Boolean =
-    rawX >= x && rawX <= x + width && rawY >= y && rawY <= y + height
-
   private companion object {
-    private const val CONTROLS_GAP_DP = 6
-    private const val CONTROLS_HEIGHT_DP = 48
-    private const val CONTROLS_WIDTH_DP = 104
     private const val DRAG_OVERSCROLL_DP = 20
     private const val OVERLAY_SIZE_DP = 76
     private const val PREFERENCES = "global_voice_overlay"
@@ -613,25 +681,38 @@ private class DraggableVoiceOverlay(
   private val onTap: () -> Unit,
 ) : FrameLayout(context) {
   private val gesture = OverlayGestureThreshold(ViewConfiguration.get(context).scaledTouchSlop.toFloat())
+  private var audioLevels = GlobalVoiceAudioLevels(0.0, 0.0, 0.0)
   private var orbStyle = initialStyle
   private var orbState = initialState
   private var reducedMotion = initialReducedMotion
   private var microphoneMuted = initialMicrophoneMuted
   private val orb = VoiceAssistantOrbSlotView(context).also { slot ->
+    slot.setBackdropEnabled(true)
     slot.setOrbStyle(initialStyle)
     slot.setOrbState(initialState)
     slot.setMicrophoneMuted(initialMicrophoneMuted)
     slot.setReducedMotion(initialReducedMotion)
   }
   private val orbHost = FrameLayout(context).also { host ->
+    host.clipChildren = false
     host.addView(orb, orbLayoutParams())
   }
+  private val orbBounds = Rect()
+
+  fun containsScreenPoint(x: Float, y: Float): Boolean {
+    val position = IntArray(2)
+    orbHost.getLocationOnScreen(position)
+    orbBounds.set(position[0], position[1], position[0] + orbHost.width, position[1] + orbHost.height)
+    return orbBounds.contains(x.toInt(), y.toInt())
+  }
+
   private val dragCoordinates = OverlayDragCoordinates()
   private var dragStarted = false
   private var velocityTracker: VelocityTracker? = null
 
   init {
     updateContentDescription()
+    setActionsExpanded(false)
     isClickable = true
     addView(
       orbHost,
@@ -642,7 +723,9 @@ private class DraggableVoiceOverlay(
   }
 
   fun setAudioLevels(levels: GlobalVoiceAudioLevels) {
-    orb.setAudioLevels(levels.input, levels.playback)
+    audioLevels = levels
+    val input = if (orbStyle == VoiceAssistantOrbStyle.PARTICLES) levels.particlesInput else levels.input
+    orb.setAudioLevels(input, levels.playback)
   }
 
   fun setWindowPosition(point: OverlayPoint) {
@@ -653,6 +736,7 @@ private class DraggableVoiceOverlay(
     if (orbStyle == style) return
     orbStyle = style
     orb.setOrbStyle(style)
+    setAudioLevels(audioLevels)
     updateContentDescription()
   }
 
@@ -666,6 +750,10 @@ private class DraggableVoiceOverlay(
     microphoneMuted = muted
     orb.setMicrophoneMuted(muted)
     updateContentDescription()
+  }
+
+  fun setActionsExpanded(expanded: Boolean) {
+    stateDescription = if (expanded) "Actions expanded" else "Actions collapsed"
   }
 
   fun setReducedMotion(reduced: Boolean) {
@@ -817,181 +905,6 @@ private class DraggableVoiceOverlay(
   }
 }
 
-private class VoiceOverlayControls(
-  context: Context,
-  microphoneMuted: Boolean,
-  onMicrophoneToggle: () -> Unit,
-  onStop: () -> Unit,
-  private val onOutsideTouch: (rawX: Float, rawY: Float) -> Unit,
-) : LinearLayout(context) {
-  private val microphoneButton = VoiceOverlayIconButton(
-    context,
-    microphoneIcon(microphoneMuted),
-    microphoneLabel(microphoneMuted),
-    onMicrophoneToggle,
-  )
-
-  init {
-    orientation = HORIZONTAL
-    gravity = Gravity.CENTER
-    isClickable = true
-    addView(
-      microphoneButton,
-      LayoutParams(dp(BUTTON_SIZE_DP), dp(BUTTON_SIZE_DP)),
-    )
-    addView(
-      VoiceOverlayIconButton(context, VoiceOverlayIcon.STOP, "Stop Voice Assistant", onStop),
-      LayoutParams(dp(BUTTON_SIZE_DP), dp(BUTTON_SIZE_DP)).apply {
-        marginStart = dp(BUTTON_GAP_DP)
-      },
-    )
-  }
-
-  fun setMicrophoneMuted(muted: Boolean) {
-    microphoneButton.setIcon(microphoneIcon(muted), microphoneLabel(muted))
-  }
-
-  fun reveal(anchoredOnRight: Boolean) {
-    alpha = 0f
-    scaleX = REVEAL_START_SCALE
-    scaleY = REVEAL_START_SCALE
-    post {
-      pivotX = if (anchoredOnRight) width.toFloat() else 0f
-      pivotY = height / 2f
-      animate()
-        .alpha(1f)
-        .scaleX(1f)
-        .scaleY(1f)
-        .setDuration(REVEAL_DURATION_MS)
-        .start()
-    }
-  }
-
-  override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-    if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
-      onOutsideTouch(event.rawX, event.rawY)
-      return true
-    }
-    return super.dispatchTouchEvent(event)
-  }
-
-  private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-  private fun microphoneIcon(muted: Boolean): VoiceOverlayIcon =
-    if (muted) VoiceOverlayIcon.MIC_ON else VoiceOverlayIcon.MIC_OFF
-
-  private fun microphoneLabel(muted: Boolean): String = if (muted) "Mic on" else "Mic off"
-
-  private companion object {
-    private const val BUTTON_GAP_DP = 8
-    private const val BUTTON_SIZE_DP = 48
-    private const val REVEAL_DURATION_MS = 160L
-    private const val REVEAL_START_SCALE = 0.78f
-  }
-}
-
-private enum class VoiceOverlayIcon { MIC_OFF, MIC_ON, STOP }
-
-private class VoiceOverlayIconButton(
-  context: Context,
-  private var icon: VoiceOverlayIcon,
-  accessibilityLabel: String,
-  onClick: () -> Unit,
-) : View(context) {
-  private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-
-  init {
-    contentDescription = accessibilityLabel
-    isClickable = true
-    isFocusable = true
-    elevation = dp(4).toFloat()
-    background = GradientDrawable().apply {
-      shape = GradientDrawable.OVAL
-      setColor(Color.rgb(34, 34, 39))
-      setStroke(dp(1), Color.rgb(84, 84, 94))
-    }
-    setOnClickListener { onClick() }
-  }
-
-  override fun drawableStateChanged() {
-    super.drawableStateChanged()
-    alpha = if (isPressed) PRESSED_ALPHA else 1f
-  }
-
-  fun setIcon(nextIcon: VoiceOverlayIcon, accessibilityLabel: String) {
-    icon = nextIcon
-    contentDescription = accessibilityLabel
-    invalidate()
-  }
-
-  override fun onDraw(canvas: Canvas) {
-    super.onDraw(canvas)
-    val centerX = width / 2f
-    val centerY = height / 2f
-    when (icon) {
-      VoiceOverlayIcon.STOP -> {
-        val halfSize = dp(6).toFloat()
-        canvas.drawRoundRect(
-          centerX - halfSize,
-          centerY - halfSize,
-          centerX + halfSize,
-          centerY + halfSize,
-          dp(2).toFloat(),
-          dp(2).toFloat(),
-          iconPaint,
-        )
-      }
-      VoiceOverlayIcon.MIC_OFF,
-      VoiceOverlayIcon.MIC_ON,
-      -> {
-        val microphoneHalfWidth = dp(4).toFloat()
-        val microphoneTop = centerY - dp(9)
-        val microphoneBottom = centerY + dp(3)
-        iconPaint.style = Paint.Style.STROKE
-        iconPaint.strokeWidth = dp(2).toFloat()
-        iconPaint.strokeCap = Paint.Cap.ROUND
-        canvas.drawRoundRect(
-          centerX - microphoneHalfWidth,
-          microphoneTop,
-          centerX + microphoneHalfWidth,
-          microphoneBottom,
-          microphoneHalfWidth,
-          microphoneHalfWidth,
-          iconPaint,
-        )
-        canvas.drawArc(
-          centerX - dp(8),
-          centerY - dp(2),
-          centerX + dp(8),
-          centerY + dp(10),
-          0f,
-          180f,
-          false,
-          iconPaint,
-        )
-        canvas.drawLine(centerX, centerY + dp(10), centerX, centerY + dp(14), iconPaint)
-        canvas.drawLine(centerX - dp(5), centerY + dp(14), centerX + dp(5), centerY + dp(14), iconPaint)
-        if (icon == VoiceOverlayIcon.MIC_OFF) {
-          canvas.drawLine(
-            centerX - dp(10),
-            centerY - dp(11),
-            centerX + dp(10),
-            centerY + dp(12),
-            iconPaint,
-          )
-        }
-        iconPaint.style = Paint.Style.FILL
-      }
-    }
-  }
-
-  private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-  private companion object {
-    private const val PRESSED_ALPHA = 0.68f
-  }
-}
-
 private class OverlaySpringAnimation(
   start: OverlayPoint,
   private val target: OverlayPoint,
@@ -1058,3 +971,9 @@ private class OverlaySpringAnimation(
       }
     }
 }
+
+/** Uses the existing app scheme and route; opening settings does not end the voice session. */
+internal fun voiceAssistantSettingsIntent(context: Context): Intent =
+  Intent(Intent.ACTION_VIEW, Uri.parse("codewide:///settings?section=voice-assistant&request=${java.util.UUID.randomUUID()}"))
+    .setPackage(context.packageName)
+    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)

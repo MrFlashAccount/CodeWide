@@ -1,7 +1,7 @@
 import type {
   FsReadDirectoryResponse,
   ThreadStartResponse,
-} from "@codewide/codex-protocol/v0.147.0/v2";
+} from "@codewide/codex-protocol/v0.155.1/v2";
 import { seedThreadExecutionSettings } from "@codewide/sync-client";
 import {
   parseAddedRemoteProject,

@@ -1,4 +1,5 @@
 const COMPANION_UNIT: &str = include_str!("../deploy/codewide-companion.service");
+const MEMORY_WATCH_UNIT: &str = include_str!("../deploy/codewide-companion-memory-watch.service");
 const INSTALL_SCRIPT: &str = include_str!("../deploy/install.sh");
 const VERIFY_SCRIPT: &str = include_str!("../deploy/verify.sh");
 const RELEASE_SCRIPT: &str = include_str!("../../../scripts/release-companion");
@@ -10,6 +11,26 @@ fn companion_service_keeps_host_ptys_available() {
         "the terminal transport requires the host devpts namespace"
     );
     assert!(!COMPANION_UNIT.contains("PrivateDevices=true"));
+}
+
+#[test]
+fn companion_services_share_host_temporary_directories() {
+    for unit in [COMPANION_UNIT, MEMORY_WATCH_UNIT] {
+        let mut settings = unit
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("PrivateTmp="));
+        assert_eq!(
+            settings.next(),
+            Some("PrivateTmp=false"),
+            "host paths must remain visible"
+        );
+        assert_eq!(
+            settings.next(),
+            None,
+            "no conflicting temporary namespace setting"
+        );
+    }
 }
 
 #[test]

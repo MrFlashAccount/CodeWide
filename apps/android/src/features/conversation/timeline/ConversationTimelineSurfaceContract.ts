@@ -1,7 +1,7 @@
 import type { LiveTurnPlan } from "../../../rendering/live-turn-plan";
 import type { ReactElement, ReactNode } from "react";
 import type { TimelineItem } from "./timelineTypes";
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RefObject } from "react";
 import type { View } from "react-native";
 import type { ThreadHistoryModel } from "../../../data/thread-history-model";

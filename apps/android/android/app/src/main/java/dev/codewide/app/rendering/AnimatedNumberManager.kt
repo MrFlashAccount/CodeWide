@@ -37,6 +37,9 @@ class AnimatedNumberManager : SimpleViewManager<AnimatedNumberView>() {
   @ReactProp(name = "fontSize", defaultFloat = 14f)
   fun setFontSize(view: AnimatedNumberView, value: Float) = view.setPendingFontSize(value)
 
+  @ReactProp(name = "maxFontSizeMultiplier", defaultFloat = 0f)
+  fun setMaxFontSizeMultiplier(view: AnimatedNumberView, value: Float) = view.setPendingMaxFontSizeMultiplier(value)
+
   @ReactProp(name = "lineHeight", defaultFloat = 18f)
   fun setLineHeight(view: AnimatedNumberView, value: Float) = view.setPendingLineHeight(value)
 

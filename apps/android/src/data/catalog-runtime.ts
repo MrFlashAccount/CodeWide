@@ -182,6 +182,7 @@ export function createCatalogRuntime({
               ...request,
               ...(projectCwd === undefined ? {} : { projectCwd }),
             });
+            await summaries.removeCatalogEntries(connectionId, page.excludedThreadIds);
             countRead = { count: page.archivedCount ?? null, revision };
             return page;
           } catch (error) {
@@ -248,9 +249,9 @@ export function createCatalogRuntime({
       pruneInactiveCatalogWindows(summaries);
       const connectionIds =
         request.connectionId === null ? enabledConnectionIds() : [request.connectionId];
-      await Promise.all(
+      const continuations = await Promise.all(
         connectionIds.map(async (connectionId) => {
-          const windows: Promise<void>[] = [];
+          const windows: Promise<boolean>[] = [];
           if (request.recentLimit > 0) {
             windows.push(
               catalogWindow(connectionId, false, request.projectCwd).ensure(request.recentLimit),
@@ -261,9 +262,10 @@ export function createCatalogRuntime({
               catalogWindow(connectionId, true, request.projectCwd).ensure(request.archivedLimit),
             );
           }
-          await Promise.all(windows);
+          return (await Promise.all(windows)).some(Boolean);
         }),
       );
+      return continuations.some(Boolean);
     });
   }
 

@@ -14,7 +14,10 @@ use serde_json::{Value, json};
 
 use crate::{
     catalog::{CatalogError, SessionCatalog},
-    history::{HistoryError, SummaryProjectionState, summary_projection_state_from_file},
+    history::{
+        HistoryError, SUMMARY_PROJECTION_VERSION, SummaryProjectionState,
+        summary_projection_state_from_file,
+    },
     rollout::{
         IndexError, RolloutWitness, backfill_rollout_prefix, current_indexed_anchor_from_file,
         current_indexed_coverage_from_file, current_indexed_turns_from_file, index_rollout,
@@ -34,6 +37,42 @@ const MAX_SUMMARY_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_SUMMARY_CACHE_ENTRY_BYTES: usize = 1024 * 1024;
 const MAX_THREAD_PREVIEW_CHARS: usize = 512;
 const MAX_THREAD_PREVIEW_CACHE_ENTRIES: usize = 4_096;
+
+// Client caches seal completed projections. A rollout can be unchanged while
+// a corrected projector changes those rows, so both qualify history cursors.
+// Flattening retains decoding of existing opaque witnesses (version zero).
+#[derive(Clone, Debug, Serialize)]
+struct HistorySourceWitness {
+    #[serde(flatten)]
+    rollout: RolloutWitness,
+    projection_version: u8,
+}
+
+impl<'de> Deserialize<'de> for HistorySourceWitness {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Serde's flattened intermediate representation cannot deserialize the
+        // rollout's u128 timestamp. Decode through JSON, as the rollout owner does.
+        let value = Value::deserialize(deserializer)?;
+        let projection_version = match value.get("projection_version") {
+            Some(version) => u8::deserialize(version).map_err(serde::de::Error::custom)?,
+            None => 0,
+        };
+        let rollout = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            rollout,
+            projection_version,
+        })
+    }
+}
+
+impl HistorySourceWitness {
+    const fn current(rollout: RolloutWitness) -> Self {
+        Self {
+            rollout,
+            projection_version: SUMMARY_PROJECTION_VERSION,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct HistoryService {
@@ -152,7 +191,7 @@ struct Cursor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_offset: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    source: Option<RolloutWitness>,
+    source: Option<HistorySourceWitness>,
 }
 
 impl HistoryService {
@@ -167,6 +206,27 @@ impl HistoryService {
             invalidation_previews: Arc::new(Mutex::new(HashMap::new())),
             index_jobs: Arc::new(Mutex::new(IndexJobs::default())),
         }
+    }
+
+    pub(crate) fn catalog_event(&self, payload: Value) -> Result<Value, rusqlite::Error> {
+        self.catalog.visibility.event(payload)
+    }
+
+    pub(crate) async fn filter_catalog_page(
+        &self,
+        mut result: Value,
+        supervisor_source: Option<String>,
+    ) -> Result<Value, HistoryServiceError> {
+        let catalog = self.catalog.clone();
+        tokio::task::spawn_blocking(move || {
+            catalog
+                .visibility
+                .filter_page(&mut result, supervisor_source.as_deref())
+                .map_err(CatalogError::from)?;
+            Ok(result)
+        })
+        .await
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
     }
 
     /// Attaches the independent full-text index without changing history reads.
@@ -568,6 +628,50 @@ impl HistoryService {
         .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
     }
 
+    /// Adds only recorded question evidence to an App Server-owned active checkpoint.
+    /// Missing rollout data leaves the checkpoint unchanged; lifecycle and items remain authoritative.
+    ///
+    /// # Errors
+    /// Returns errors from the bounded rollout history read.
+    pub(crate) async fn enrich_active_questions(
+        &self,
+        thread_id: &str,
+        active_turn: &mut Value,
+    ) -> Result<(), HistoryServiceError> {
+        let Some(turn_id) = active_turn.get("id").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let params = json!({"threadId": thread_id, "limit": 1, "itemsView": "summary", "sortDirection": "desc"});
+        let Some(result) = self.try_turns_page("thread/turns/list", &params).await else {
+            return Ok(());
+        };
+        let page = match result {
+            Ok(page) => page,
+            Err(HistoryServiceError::Catalog(CatalogError::NotFound(_))) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let questions = page
+            .get("data")
+            .and_then(Value::as_array)
+            .and_then(|turns| {
+                turns
+                    .iter()
+                    .find(|turn| turn.get("id").and_then(Value::as_str) == Some(turn_id))
+            })
+            .and_then(|turn| turn.pointer("/codewide/questions"))
+            .cloned();
+        if let Some(questions) = questions
+            && let Some(turn) = active_turn.as_object_mut()
+            && let Some(metadata) = turn
+                .entry("codewide")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+        {
+            metadata.insert("questions".into(), questions);
+        }
+        Ok(())
+    }
+
     /// Reads one ascending immutable history page after a stable turn id.
     ///
     /// Unlike thread synchronization this does not resume the thread, attach
@@ -652,7 +756,7 @@ struct SemanticHistoryRequest {
     thread_id: String,
     anchor_turn_id: String,
     limit: usize,
-    source: Option<RolloutWitness>,
+    source: Option<HistorySourceWitness>,
 }
 
 fn parse_semantic_request(
@@ -894,8 +998,10 @@ impl<'a> HistoryReader<'a> {
         })
     }
 
-    fn validate_source(&self, source: &RolloutWitness) -> Result<(), HistoryServiceError> {
-        if rollout_witness_matches(&self.file, self.source.durable_bytes, source)? {
+    fn validate_source(&self, source: &HistorySourceWitness) -> Result<(), HistoryServiceError> {
+        if source.projection_version == SUMMARY_PROJECTION_VERSION
+            && rollout_witness_matches(&self.file, self.source.durable_bytes, &source.rollout)?
+        {
             Ok(())
         } else {
             Err(HistoryServiceError::HistorySourceChanged)
@@ -1149,7 +1255,7 @@ fn turns_page(
                 direction: "desc".into(),
                 offset: logical_offset.saturating_add(selected.len()),
                 source_offset: Some(turn.start_offset),
-                source: Some(reader.source.clone()),
+                source: Some(HistorySourceWitness::current(reader.source.clone())),
             })
         })
     } else {
@@ -1193,7 +1299,7 @@ struct HistorySyncRequest<'a> {
     after_turn_id: Option<&'a str>,
     limit: usize,
     active_turn_id: Option<&'a str>,
-    source: Option<&'a RolloutWitness>,
+    source: Option<&'a HistorySourceWitness>,
 }
 
 fn sync_history_with_source(
@@ -1305,7 +1411,7 @@ fn latest_reset(
                 direction: "desc".into(),
                 offset: turns.len(),
                 source_offset: Some(turn.start_offset),
-                source: Some(source.clone()),
+                source: Some(HistorySourceWitness::current(source.clone())),
             })
         })
     } else {
@@ -1524,14 +1630,15 @@ fn encode_cursor(cursor: &Cursor) -> String {
 }
 
 fn encode_source_witness(source: &RolloutWitness) -> Result<String, HistoryServiceError> {
-    let raw = serde_json::to_vec(source).map_err(crate::store::StoreError::from)?;
+    let raw = serde_json::to_vec(&HistorySourceWitness::current(source.clone()))
+        .map_err(crate::store::StoreError::from)?;
     Ok(format!(
         "{SOURCE_WITNESS_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(raw)
     ))
 }
 
-fn decode_source_witness_text(value: &str) -> Result<RolloutWitness, HistoryServiceError> {
+fn decode_source_witness_text(value: &str) -> Result<HistorySourceWitness, HistoryServiceError> {
     let raw = value
         .strip_prefix(SOURCE_WITNESS_PREFIX)
         .filter(|value| value.len() <= 4_096)
@@ -1544,7 +1651,7 @@ fn decode_source_witness_text(value: &str) -> Result<RolloutWitness, HistoryServ
 
 fn decode_source_witness(
     value: Option<&Value>,
-) -> Result<Option<RolloutWitness>, HistoryServiceError> {
+) -> Result<Option<HistorySourceWitness>, HistoryServiceError> {
     value
         .filter(|value| !value.is_null())
         .map(|value| {
@@ -1608,11 +1715,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn active_question_evidence_comes_from_rollout_without_replacing_app_server_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(&path)?;
+        for record in [
+            json!({"type":"event_msg", "payload":{"type":"task_started", "turn_id":"active"}}),
+            json!({"type":"response_item", "payload":{"type":"function_call", "name":"request_user_input", "call_id":"call", "arguments":json!({"questions":[{"id":"q", "question":"Where?"}]}).to_string()}}),
+            json!({"type":"response_item", "payload":{"type":"function_call_output", "call_id":"call", "output":r#"{"answers":{"q":{"answers":["Here"]}}}"#}}),
+        ] {
+            writeln!(rollout, "{record}")?;
+        }
+        rollout.sync_all()?;
+        let service = history_service(directory.path())?;
+        let authoritative = json!({"id":"active", "status":"inProgress", "items":[{"id":"live", "type":"agentMessage", "text":"Continuing"}], "codewide":{"diff":"existing"}});
+        let mut active = authoritative.clone();
+        service
+            .enrich_active_questions(THREAD_ID, &mut active)
+            .await?;
+        assert_eq!(active["items"], authoritative["items"]);
+        assert_eq!(active["status"], "inProgress");
+        assert_eq!(active["codewide"]["diff"], "existing");
+        assert_eq!(
+            active["codewide"]["questions"][0]["outcome"]["status"],
+            "answered"
+        );
+        let mut other = json!({"id":"newer-active", "items":[]});
+        service
+            .enrich_active_questions(THREAD_ID, &mut other)
+            .await?;
+        assert!(other.get("codewide").is_none());
+        // No question archive is needed: an empty derived index rebuilds from the rollout.
+        let reopened = HistoryService::new(
+            Arc::new(SessionCatalog::scan(directory.path())),
+            Arc::new(IndexStore::open(
+                directory.path().join("rebuilt-index.redb"),
+            )?),
+        );
+        let mut restored = authoritative;
+        reopened
+            .enrich_active_questions(THREAD_ID, &mut restored)
+            .await?;
+        assert_eq!(restored, active);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn list_page_reports_archive_total_without_loading_archived_rows()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let db = rusqlite::Connection::open(directory.path().join("state_5.sqlite"))?;
-        db.execute_batch("CREATE TABLE threads (source TEXT NOT NULL, archived INTEGER NOT NULL); INSERT INTO threads VALUES ('cli', 1), ('vscode', 1), ('cli', 0)")?;
+        db.execute_batch("CREATE TABLE threads (id TEXT, source TEXT NOT NULL, archived INTEGER NOT NULL, thread_source TEXT); INSERT INTO threads VALUES ('a', 'cli', 1, NULL), ('b', 'vscode', 1, NULL), ('c', 'cli', 0, NULL)")?;
         let service = history_service(directory.path())?;
         let page = service
             .enrich_thread_list(json!({"data": [], "nextCursor": null}))
@@ -2301,6 +2457,196 @@ mod tests {
             .await?;
         assert_eq!(page_ids(&end), ["turn-147", "turn-148", "turn-149"]);
         assert_eq!(end["hasMore"], false);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rebuilds_persisted_single_user_summaries_from_canonical_items()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 0)?;
+        append_events(
+            &path,
+            &[
+                json!({"type": "task_started", "turn_id": "turn"}),
+                json!({"type": "item_completed", "item": {
+                    "type": "UserMessage", "id": "prompt", "client_id": "prompt-client",
+                    "content": [{"type": "text", "text": "Original question"}]
+                }}),
+                json!({"type": "item_completed", "item": {
+                    "type": "UserMessage", "id": "reply", "client_id": "reply-client",
+                    "content": [{"type": "text", "text": "Reply with logs"}]
+                }}),
+                json!({"type": "turn_aborted", "turn_id": "turn"}),
+            ],
+        )?;
+        let service = history_service(directory.path())?;
+        service
+            .sync_thread_history(THREAD_ID, None, 3, None)
+            .await?;
+        let file_id = rollout_file_id(&path);
+        let turn = service
+            .store
+            .turns_desc(&file_id, None, 1)?
+            .pop()
+            .ok_or("indexed turn")?;
+        let mut old = service
+            .store
+            .turn_summary_state::<serde_json::Value>(&file_id, turn.start_offset)?
+            .ok_or("persisted projection")?;
+        // Simulate the released v3 derived cache, not an old canonical format.
+        old["projection_version"] = json!(3);
+        old.as_object_mut()
+            .ok_or("projection object")?
+            .remove("authored_users");
+        old["user"] = json!({"type": "userMessage", "id": "wrong", "content": []});
+        service
+            .store
+            .put_turn_summary_state(&file_id, turn.start_offset, &old)?;
+        let reopened = HistoryService::new(service.catalog.clone(), service.store.clone());
+        let reset = reopened
+            .sync_thread_history(THREAD_ID, None, 3, None)
+            .await?;
+        let items = reset["turns"][0]["items"]
+            .as_array()
+            .ok_or("projected items")?;
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["id"], "prompt");
+        assert_eq!(items[0]["clientId"], "prompt-client");
+        assert_eq!(items[0]["content"][0]["text"], "Original question");
+        assert_eq!(items[1]["id"], "reply");
+        assert_eq!(items[1]["clientId"], "reply-client");
+        assert_eq!(items[1]["content"][0]["text"], "Reply with logs");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rebuilds_v6_authored_images_as_displayable_attachments()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::content::{ContentProjector, PrivateContentService};
+
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        let image_path = directory.path().join("image:123");
+        std::fs::write(&image_path, b"\x89PNG\r\n\x1a\n")?;
+        write_completed_turns(&path, 0)?;
+        let authored = json!({
+            "type": "UserMessage", "id": "prompt", "client_id": "client",
+            "content": [{"type": "local_image", "path": image_path}]
+        });
+        append_events(
+            &path,
+            &[
+                json!({"type": "task_started", "turn_id": "turn"}),
+                json!({"type": "item_started", "item": authored}),
+                json!({"type": "item_completed", "item": authored}),
+                json!({"type": "turn_aborted", "turn_id": "turn"}),
+            ],
+        )?;
+        let service = history_service(directory.path())?;
+        service
+            .sync_thread_history(THREAD_ID, None, 3, None)
+            .await?;
+        let file_id = rollout_file_id(&path);
+        let turn = service
+            .store
+            .turns_desc(&file_id, None, 1)?
+            .pop()
+            .ok_or("indexed turn")?;
+        let mut old = service
+            .store
+            .turn_summary_state::<serde_json::Value>(&file_id, turn.start_offset)?
+            .ok_or("persisted projection")?;
+        // v6 cached authored core inputs verbatim. Only the derived cache is
+        // obsolete; replay must recover the image from unchanged canonical data.
+        old["projection_version"] = json!(6);
+        old["authored_users"][0]["content"] = authored["content"].clone();
+        service
+            .store
+            .put_turn_summary_state(&file_id, turn.start_offset, &old)?;
+
+        let reopened = HistoryService::new(service.catalog.clone(), service.store.clone());
+        let mut reset = reopened
+            .sync_thread_history(THREAD_ID, None, 3, None)
+            .await?;
+        assert_eq!(reset["turns"][0]["items"].as_array().map(Vec::len), Some(1));
+        let projector =
+            ContentProjector::new(PrivateContentService::open(directory.path().join("cas")));
+        let projected = projector.project_item(reset["turns"][0]["items"][0].take());
+        assert_eq!(projected["id"], "prompt");
+        assert_eq!(projected["clientId"], "client");
+        assert_eq!(projected["content"][0]["type"], "localImage");
+        assert_eq!(projected["content"][0]["path"], json!(image_path));
+        let attachments = projected["codewideAttachments"]["items"]
+            .as_array()
+            .ok_or("image attachments")?;
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0]["kind"], "image");
+        assert_eq!(attachments[0]["source"]["type"], "path");
+        assert_eq!(attachments[0]["source"]["path"], json!(image_path));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn older_projection_witness_resets_sealed_client_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use base64::Engine as _;
+
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 2)?;
+        let service = history_service(directory.path())?;
+        let first = service
+            .sync_thread_history(THREAD_ID, None, 3, None)
+            .await?;
+        let witness = first["sourceWitness"].as_str().ok_or("source witness")?;
+        let current = service
+            .sync_thread_history_with_source(THREAD_ID, Some("turn-1"), 3, None, Some(witness))
+            .await?;
+        assert_eq!(current["kind"], "current");
+
+        let decoded = super::decode_source_witness_text(witness)?;
+        for version in [None, Some(super::SUMMARY_PROJECTION_VERSION - 1)] {
+            let mut old = serde_json::to_value(&decoded)?;
+            let object = old.as_object_mut().ok_or("witness object")?;
+            match version {
+                Some(version) => {
+                    object.insert("projection_version".into(), json!(version));
+                }
+                None => {
+                    object.remove("projection_version");
+                }
+            }
+            // Compatibility with previously issued opaque tokens: the rollout
+            // bytes are unchanged, but a sealed client projection needs repair.
+            let old_witness = format!(
+                "{}{}",
+                super::SOURCE_WITNESS_PREFIX,
+                super::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&old)?)
+            );
+            let reset = service
+                .sync_thread_history_with_source(
+                    THREAD_ID,
+                    Some("turn-1"),
+                    3,
+                    None,
+                    Some(&old_witness),
+                )
+                .await?;
+            assert_eq!(reset["kind"], "reset");
+            assert_eq!(reset["turns"].as_array().map(Vec::len), Some(2));
+            assert_eq!(reset["headTurnId"], "turn-1");
+            assert!(matches!(
+                service
+                    .turns_before(&json!({
+                        "threadId": THREAD_ID, "beforeTurnId": "turn-1", "limit": 3,
+                        "sourceWitness": old_witness
+                    }))
+                    .await,
+                Err(HistoryServiceError::HistorySourceChanged)
+            ));
+        }
         Ok(())
     }
 

@@ -10,6 +10,13 @@ import android.widget.FrameLayout
 
 /** Owns one interchangeable Voice Assistant renderer and replays its live inputs on replacement. */
 class VoiceAssistantOrbSlotView(context: Context) : FrameLayout(context) {
+  private var backdropEnabled = false
+
+  fun setBackdropEnabled(enabled: Boolean) {
+    backdropEnabled = enabled
+    renderer.setBackdropEnabled(enabled)
+  }
+
   private var orbStyle = VoiceAssistantOrbStyle.NEBULA
   private var orbState = VoiceAssistantOrbState.IDLE
   private var reducedMotion = false
@@ -19,6 +26,9 @@ class VoiceAssistantOrbSlotView(context: Context) : FrameLayout(context) {
   private var renderer: VoiceAssistantOrbView = createRenderer(orbStyle)
 
   init {
+    // Visual padding may extend beyond the 66dp renderer without resizing its hit geometry.
+    clipChildren = false
+    clipToPadding = false
     addView(renderer, rendererLayoutParams())
   }
 
@@ -67,6 +77,7 @@ class VoiceAssistantOrbSlotView(context: Context) : FrameLayout(context) {
 
   private fun createRenderer(style: VoiceAssistantOrbStyle): VoiceAssistantOrbView =
     VoiceAssistantOrbRendererFactory.create(context, style).also { nextRenderer ->
+      nextRenderer.setBackdropEnabled(backdropEnabled)
       nextRenderer.setOrbState(orbState)
       nextRenderer.setAudioLevels(inputLevel, playbackLevel)
       nextRenderer.setReducedMotion(reducedMotion)

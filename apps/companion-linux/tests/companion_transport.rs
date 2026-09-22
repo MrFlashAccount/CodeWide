@@ -73,6 +73,8 @@ async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
         let _ = axum::serve(listener, app).await;
     });
 
+    verify_retired_routes_and_forwarding_identity(address, echo_port).await?;
+
     let mut raw_request = format!("ws://{address}/v1/app-server").into_client_request()?;
     raw_request.headers_mut().insert(
         "authorization",
@@ -272,6 +274,51 @@ async fn verify_thread_owned_terminal(
     }
 
     terminal.send(Message::Binary(vec![2_u8].into())).await?;
+    Ok(())
+}
+
+async fn verify_retired_routes_and_forwarding_identity(
+    address: std::net::SocketAddr,
+    echo_port: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Retired API paths must not become aliases for the surviving API.
+    let client = reqwest::Client::new();
+    for route in [
+        "sync",
+        "files/download",
+        "ports",
+        "terminals",
+        "attachments",
+        "tunnels",
+    ] {
+        let response = client
+            .get(format!("http://{address}/v2/{route}"))
+            .bearer_auth(TOKEN)
+            .send()
+            .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{route}");
+    }
+    let mut stale_forward =
+        format!("ws://{address}/v1/port-forwards/{echo_port}").into_client_request()?;
+    stale_forward.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {TOKEN}"))?,
+    );
+    stale_forward.headers_mut().insert(
+        "x-codewide-forwarding-mode",
+        HeaderValue::from_static("discovered"),
+    );
+    stale_forward.headers_mut().insert(
+        "x-codewide-forwarding-key",
+        HeaderValue::from_static(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+    );
+    let rejected = connect_async(stale_forward).await;
+    assert!(
+        matches!(rejected, Err(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status() == http::StatusCode::CONFLICT)
+    );
+
     Ok(())
 }
 

@@ -69,9 +69,9 @@ it("preserves threadList integration contracts", () => {
     'alignSelf: "stretch"',
   );
   expect(
-    sourceHasJsxElement(threadRow, "GesturePressable", [
+    sourceHasJsxElement(threadRow, "ThreadRowLinkTrigger", [
       '{...(selected ? { testID: "selected-thread-row" } : {})}',
-      'accessibilityRole="button"',
+      'accessibilityRole="link"',
       "cancelable",
       "delayLongPress={350}",
     ]),

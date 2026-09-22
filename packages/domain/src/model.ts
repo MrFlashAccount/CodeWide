@@ -1,4 +1,4 @@
-import type { ThreadItem, ThreadStatus, TurnStatus } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadItem, ThreadStatus, TurnStatus } from "@codewide/codex-protocol/v0.155.1/v2";
 
 export type ConnectionId = string & { readonly __connectionId: unique symbol };
 

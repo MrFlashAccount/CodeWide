@@ -2,20 +2,23 @@
 set -eu
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=
+BUMP=
 BASE=
 DRY_RUN=false
 FORCE=false
 
 usage() {
-  printf 'Usage: %s <version> [--base <git-ref>] [--dry-run] [--force]\n' "$0" >&2
+  printf 'Usage: %s <patch|minor|major> [--base <git-ref>] [--dry-run] [--force]\n' "$0" >&2
   exit 2
 }
 
 [ "$#" -ge 1 ] || usage
-VERSION=${1#v}
+BUMP=$1
 shift
-printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$' || usage
+case "$BUMP" in
+  patch|minor|major) ;;
+  *) usage ;;
+esac
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -52,7 +55,7 @@ REMOTE_REVISION=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
 
 REQUEST_ID="local-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 set -- workflow run macos-release.yml --ref "$BRANCH" \
-  -f "version=$VERSION" \
+  -f "bump=$BUMP" \
   -f "dry_run=$DRY_RUN" \
   -f "force=$FORCE" \
   -f "request_id=$REQUEST_ID"
@@ -79,8 +82,15 @@ done
 gh run watch "$RUN_ID" --exit-status
 RUN_URL=$(gh run view "$RUN_ID" --json url --jq .url)
 if [ "$DRY_RUN" = true ]; then
-  printf '%s\n' "{\"release\":\"macos\",\"status\":\"validated\",\"dryRun\":true,\"version\":\"$VERSION\",\"sourceRevision\":\"$LOCAL_REVISION\",\"runUrl\":\"$RUN_URL\"}"
+  EXPECTED_VERSION=$(./scripts/next-macos-version "$BUMP")
+  printf '%s\n' "{\"release\":\"macos\",\"status\":\"validated\",\"dryRun\":true,\"bump\":\"$BUMP\",\"version\":\"$EXPECTED_VERSION\",\"sourceRevision\":\"$LOCAL_REVISION\",\"runUrl\":\"$RUN_URL\"}"
 else
-  RELEASE_URL=$(gh release view "v$VERSION" --json url --jq .url)
-  printf '%s\n' "{\"release\":\"macos\",\"status\":\"published\",\"version\":\"$VERSION\",\"sourceRevision\":\"$LOCAL_REVISION\",\"runUrl\":\"$RUN_URL\",\"releaseUrl\":\"$RELEASE_URL\"}"
+  git fetch --tags origin
+  RELEASE_TAG=$(git tag --points-at "$LOCAL_REVISION" --list 'v*' --sort=-version:refname \
+    | grep -E '^v[0-9]+[.][0-9]+[.][0-9]+$' \
+    | head -n 1 || true)
+  [ -n "$RELEASE_TAG" ] || { printf '%s\n' 'release-macos: published release was not found' >&2; exit 1; }
+  RELEASE_VERSION=${RELEASE_TAG#v}
+  RELEASE_URL=$(gh release view "$RELEASE_TAG" --json url --jq .url)
+  printf '%s\n' "{\"release\":\"macos\",\"status\":\"published\",\"bump\":\"$BUMP\",\"version\":\"$RELEASE_VERSION\",\"sourceRevision\":\"$LOCAL_REVISION\",\"runUrl\":\"$RUN_URL\",\"releaseUrl\":\"$RELEASE_URL\"}"
 fi

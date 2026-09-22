@@ -18,7 +18,7 @@ import {
   parseGlobalSupervisorTurnHistoryPage,
 } from "./globalSupervisorToolPagination";
 import type { GlobalSupervisorToolCapabilities } from "./globalSupervisorToolRouter";
-import type { GlobalSupervisorVisibilityPolicy } from "./globalSupervisorVisibility";
+import type { GlobalSupervisorToolTargetPolicy } from "./globalSupervisorToolTarget";
 import type { WorkspaceSyncSession } from "./workspace-session";
 import { unknownRecord } from "./unknownRecord";
 
@@ -41,7 +41,7 @@ type GlobalSupervisorToolsAuthority = {
     readonly text: string;
     readonly threadId: string;
   }) => Promise<string>;
-  readonly visibility: GlobalSupervisorVisibilityPolicy;
+  readonly targetPolicy: GlobalSupervisorToolTargetPolicy;
 };
 
 function requireLiveConnection(
@@ -66,7 +66,7 @@ function requireLiveTarget(
   authority: GlobalSupervisorToolsAuthority,
   target: GlobalSupervisorQualifiedChatRef,
 ): WorkspaceSyncSession {
-  if (!authority.visibility.allowsOrdinaryRef(target.connectionId, target.threadId)) {
+  if (!authority.targetPolicy.allowsTarget(target.connectionId, target.threadId)) {
     throw new Error("The supervisor thread is not a valid tool target");
   }
   return requireLiveConnection(authority, target.connectionId);
@@ -135,20 +135,11 @@ export function createGlobalSupervisorToolCapabilities(
         boundedLimit,
         position.remoteCursor,
       );
-      const items = page.data.flatMap((thread) =>
-        !authority.visibility.allowsOrdinaryThread(connection.id, {
-          id: thread.id,
-          source: thread.threadSource,
-        })
-          ? []
-          : [
-              {
-                ...globalSupervisorQualifiedChatRef(connection.id, thread.id),
-                preview: thread.preview,
-                title: thread.name ?? thread.preview.split("\n", 1)[0] ?? "Untitled chat",
-              },
-            ],
-      );
+      const items = page.data.map((thread) => ({
+        ...globalSupervisorQualifiedChatRef(connection.id, thread.id),
+        preview: thread.preview,
+        title: thread.name ?? thread.preview.split("\n", 1)[0] ?? "Untitled chat",
+      }));
       const nextConnectionIndex =
         page.nextCursor === null ? position.connectionIndex + 1 : position.connectionIndex;
       const nextConnection = connections[nextConnectionIndex];
@@ -160,10 +151,7 @@ export function createGlobalSupervisorToolCapabilities(
     },
     async readChat(request) {
       if (
-        !authority.visibility.allowsOrdinaryRef(
-          request.target.connectionId,
-          request.target.threadId,
-        )
+        !authority.targetPolicy.allowsTarget(request.target.connectionId, request.target.threadId)
       ) {
         throw new Error("The supervisor thread is not a valid tool target");
       }

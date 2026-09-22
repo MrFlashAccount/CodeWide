@@ -4,6 +4,9 @@ import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markd
 import { ComposerMarkdownInput } from "../src/features/composer/input/ComposerMarkdownInput.native";
 import { colors, touchTarget, typeScale } from "../src/theme";
 import type { ReactNode } from "react";
+import { Pressable, Text, View } from "react-native";
+import { useComposerSession } from "../src/features/composer/composerSession";
+import { TEST_COMPOSER_PREFERENCES } from "./composer-session-fixture";
 
 const mockEditor = {
   focus: jest.fn(),
@@ -276,4 +279,59 @@ it("keeps the resident composer editor mounted while a new chat restores its dra
   view.rerender(wrapper(nextProps));
   expect(view.getByTestId("native-editor")).toBe(residentEditor);
   expect(mockEditor.setValue).toHaveBeenLastCalledWith("Restored second draft");
+});
+
+function PasteSendHarness({
+  scope,
+  onSend,
+}: {
+  readonly scope: string;
+  readonly onSend: (text: string) => void;
+}) {
+  const session = useComposerSession(scope, {
+    attachments: [],
+    plainText: "",
+    preferences: TEST_COMPOSER_PREFERENCES,
+  });
+  return (
+    <View>
+      <ComposerMarkdownInput
+        accessibilityLabel="Message"
+        mentionIndicators={["/"]}
+        onChangeValue={session.updateText}
+        placeholder="Message"
+        search={async () => []}
+        value={session.snapshot.plainText}
+      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Send"
+        disabled={session.snapshot.plainText.trim() === ""}
+        onPress={() => {
+          onSend(session.read().markdown);
+          session.updateText({ markdown: "", plainText: "" });
+        }}
+      >
+        <Text>Send</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+it("allows the same short link and text after Send and in another chat without editing a character", () => {
+  const onSend = jest.fn();
+  const message = "https://example.test/post?s=20 Объясни, что хотел сказать";
+  const view = render(<PasteSendHarness onSend={onSend} scope="server:first" />);
+  const editor = view.getByTestId("native-editor");
+
+  for (const scope of ["server:first", "server:first", "server:second"]) {
+    view.rerender(<PasteSendHarness onSend={onSend} scope={scope} />);
+    expect(view.getByTestId("native-editor")).toBe(editor);
+    fireEvent(editor, "changeText", message);
+    fireEvent(editor, "changeMarkdown", message);
+    expect(view.getByLabelText("Send")).toBeEnabled();
+    fireEvent.press(view.getByLabelText("Send"));
+    expect(view.getByLabelText("Send")).toBeDisabled();
+  }
+  expect(onSend.mock.calls.map(([text]) => text)).toEqual([message, message, message]);
 });

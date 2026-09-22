@@ -2,6 +2,7 @@ import { BasicAlertDialog, Host, RNHostView } from "@expo/ui/jetpack-compose";
 import { background, fillMaxSize } from "@expo/ui/jetpack-compose/modifiers";
 import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import {
+  BackHandler,
   findNodeHandle,
   StyleSheet,
   useWindowDimensions,
@@ -41,6 +42,18 @@ export function AppFullscreenModal(props: FullscreenModalProps) {
 
 function VisibleFullscreenModal(props: FullscreenModalProps) {
   const { width } = useWindowDimensions();
+  const close = useEvent(props.onClose);
+  useEffect(() => {
+    // Compose owns dialog Back. Activity-delivered Back must also stop at this window,
+    // whose app-level host is outside the focused Router screen.
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      close();
+      return true;
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [close]);
   const [windowReady, setWindowReady] = useState(false);
   const readyRef = useRef(false);
   const frameRef = useRef<number | null>(null);

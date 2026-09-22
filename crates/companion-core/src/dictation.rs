@@ -24,7 +24,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 mod metrics;
-pub(crate) mod v2;
 
 use metrics::{
     MeasuredResponse, MetricsConnectorLayer, MetricsDnsResolver, RequestNetworkProbe,
@@ -56,7 +55,6 @@ const SESSION_MANIFEST_VERSION: u8 = 1;
 #[derive(Clone)]
 pub struct DictationService {
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
-    v2_start_lock: Arc<Mutex<()>>,
     auth_file: PathBuf,
     endpoint: Arc<str>,
     client: reqwest::Client,
@@ -350,7 +348,6 @@ impl DictationService {
         ));
         Ok(Self {
             sessions,
-            v2_start_lock: Arc::new(Mutex::new(())),
             auth_file,
             endpoint: Arc::from(endpoint),
             client,
@@ -392,21 +389,6 @@ impl DictationService {
             "companion/dictation/cancel" => self.cancel(client_id, params).await,
             _ => Err(DictationError::InvalidParams("unknown method")),
         }
-    }
-
-    #[cfg(feature = "e2e-command-fault")]
-    /// Validates that a V1 finish request owns a live dictation session before an E2E result is
-    /// injected at the transport boundary.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same ownership/parameter error as a normal finish request.
-    pub(crate) async fn validate_e2e_finish_session(
-        &self,
-        client_id: &str,
-        params: &Value,
-    ) -> Result<(), DictationError> {
-        self.owned_session(client_id, params).await.map(|_| ())
     }
 
     async fn start(&self, client_id: &str, params: &Value) -> Result<Value, DictationError> {

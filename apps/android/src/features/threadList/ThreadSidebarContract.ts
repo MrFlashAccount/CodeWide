@@ -1,3 +1,4 @@
+import type { ThreadListNavigation } from "../../services/threads/threadNavigationService";
 import type { ReactNode } from "react";
 import type { ServerScope } from "../../services/servers/serverScope";
 import type { ThreadListServer } from "../connections/connectionPresentation";
@@ -11,11 +12,12 @@ export type ThreadSidebarProps = {
   archivedThreads: ThreadListItem[];
   filter: ThreadListFilter;
   globalVoice: GlobalVoiceControl;
+  headerVisible?: boolean;
   initialOffset: number;
   mode: ThreadListMode;
   onArchive: (thread: ThreadListItem) => Promise<void>;
   onFilterChange: (filter: ThreadListFilter) => void;
-  onLoadMore: () => void;
+  onLoadMore: () => Promise<boolean>;
   onManageTerminals: () => void;
   onMarkRead: (thread: ThreadListItem) => Promise<void>;
   onModeChange: (mode: ThreadListMode) => void;
@@ -23,7 +25,6 @@ export type ThreadSidebarProps = {
   onOffsetChange: (offset: number) => void;
   onOpenSearch: () => void;
   onRefreshAccountRateLimits?: () => Promise<unknown>;
-  onSelect: (id: string) => void;
   onSelectServer: (scope: ServerScope) => void;
   onSettings: () => void;
   onTogglePin: (thread: ThreadListItem) => Promise<void>;
@@ -32,6 +33,7 @@ export type ThreadSidebarProps = {
   selectedThreadKey: string | null;
   servers: ThreadListServer[];
   serverScope: ServerScope;
+  threadNavigation: ThreadListNavigation;
   threads: ThreadListItem[];
   width: number;
 } & SidebarProjectsNavigation;

@@ -1,4 +1,4 @@
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import { Pressable } from "react-native";
 
 import { ActionMenu, type ActionMenuItem } from "./ActionMenu";

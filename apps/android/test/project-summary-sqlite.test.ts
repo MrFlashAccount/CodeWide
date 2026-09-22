@@ -1,14 +1,10 @@
+import { questionAnswerDelivery } from "./fixtures/questionAnswer";
+import { storedThreadToListItem } from "../src/features/threadList/threadListProjection";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
+import { createV1TestThread } from "./fixtures/v1Thread";
 import { summary } from "./fixtures/thread-summary";
 import type { ThreadSummaryViewRequest } from "../src/data/thread-summary-model";
-import {
-  parseGlobalSupervisorBinding,
-  type GlobalSupervisorBinding,
-} from "../src/data/globalSupervisorBinding";
-import { createGlobalSupervisorSummaryStoragePolicy } from "../src/data/globalSupervisorSummaryStoragePolicy";
-import { createGlobalSupervisorVisibilityPolicy } from "../src/data/globalSupervisorVisibility";
-
 const sqlite = await vi.hoisted(async () => {
   const { DatabaseSync } = await import("node:sqlite");
   const native = new DatabaseSync(":memory:");
@@ -132,100 +128,133 @@ describe("persisted project catalog", () => {
     await database.close();
   });
 
-  it("removes the exact supervisor binding before any summary view can expose it", async () => {
+  it("applies server evictions to pinned unread rows and preserves other cached rows", async () => {
     const writer = createThreadSummarySqlite();
     await writer.prepare();
     writer.begin();
-    writer.write({ type: "insert", value: summary("supervisor", { unread: 1 }) });
+    writer.write({ type: "insert", value: summary("supervisor", { unread: 1, pinned: true }) });
     writer.write({ type: "insert", value: summary("ordinary", { unread: 1 }) });
     await writer.commit({ durable: true });
     await writer.close();
-
-    const binding = parseGlobalSupervisorBinding({
-      home: { connectionId: "server", threadId: "supervisor" },
-      schemaVersion: 1,
-      status: "ready",
-    });
-    if (binding === null) {
-      throw new Error("Invalid supervisor binding fixture");
-    }
-    const database = createThreadSummaryDatabase({
-      globalSupervisorStorage: createGlobalSupervisorSummaryStoragePolicy(() => binding),
-      visibility: createGlobalSupervisorVisibilityPolicy(() => binding),
-    });
+    const database = createThreadSummaryDatabase();
     await database.prepare();
-
+    expect(await database.get("server", "supervisor")).not.toBeNull();
+    await database.removeCatalogEntries("server", ["supervisor"]);
     expect(await database.get("server", "supervisor")).toBeNull();
-    expect(await database.get("server", "ordinary")).not.toBeNull();
-    expect(database.projectUnread.projects$.peek()).toEqual(["server\u0000/repo"]);
-    await database.close();
-  });
-
-  it("withholds uncertain supervisor state without deleting unrelated summary or unread data", async () => {
-    const writer = createThreadSummarySqlite();
-    await writer.prepare();
-    writer.begin();
-    writer.write({ type: "insert", value: summary("ordinary", { unread: 1 }) });
-    await writer.commit({ durable: true });
-    await writer.close();
-    let binding: GlobalSupervisorBinding | null = parseGlobalSupervisorBinding({
-      priorHome: null,
-      reason: "ambiguousCreation",
-      schemaVersion: 1,
-      status: "invalid",
-    });
-    if (binding === null) {
-      throw new Error("Invalid ambiguous supervisor fixture");
-    }
-    const database = createThreadSummaryDatabase({
-      globalSupervisorStorage: createGlobalSupervisorSummaryStoragePolicy(() => binding),
-      visibility: createGlobalSupervisorVisibilityPolicy(() => binding),
-    });
-    await database.prepare();
-    expect(await database.get("server", "ordinary")).toBeNull();
-    expect(database.projectUnread.projects$.peek()).toEqual([]);
-
-    const read = database.beginCatalogRead("server");
-    await database.applyCatalogPage("server", [], false, new Set(), read, true, "/repo");
-    read.release();
-    binding = null;
-
     expect((await database.get("server", "ordinary"))?.unread).toBe(1);
-    const persisted = createThreadSummarySqlite();
-    expect((await persisted.loadRow("server", "ordinary"))?.unread).toBe(1);
-    await persisted.close();
-    await database.close();
+    database.close();
+    const reopened = createThreadSummarySqlite();
+    expect(await reopened.loadRow("server", "supervisor")).toBeNull();
+    expect((await reopened.loadRow("server", "ordinary"))?.unread).toBe(1);
+    await reopened.close();
   });
+});
 
-  it("preserves unrelated cached rows while supervisor creation is unresolved offline", async () => {
-    const writer = createThreadSummarySqlite();
-    await writer.prepare();
-    writer.begin();
-    writer.write({ type: "insert", value: summary("ordinary", { unread: 1 }) });
-    await writer.commit({ durable: true });
-    await writer.close();
-    let binding: GlobalSupervisorBinding | null = parseGlobalSupervisorBinding({
-      creationToken: "creation-token",
-      homeConnectionId: "server",
-      schemaVersion: 1,
-      status: "creating",
-    });
-    if (binding === null) {
-      throw new Error("Invalid creating supervisor fixture");
-    }
-    const database = createThreadSummaryDatabase({
-      globalSupervisorStorage: createGlobalSupervisorSummaryStoragePolicy(() => binding),
-      visibility: createGlobalSupervisorVisibilityPolicy(() => binding),
-    });
-    await database.prepare();
-    expect(await database.get("server", "ordinary")).toBeNull();
+it("obeys server membership on live/replayed events and private metadata, without inspecting thread source", async () => {
+  const ordinary = {
+    ...createV1TestThread("ordinary", null, 1, []),
+    name: "ordinary",
+    threadSource: "codewide-global-supervisor:server-admitted",
+    codewideCatalogExcluded: false,
+  };
+  const home = { ...createV1TestThread("home", null, 1, []), codewideCatalogExcluded: true };
+  const database = createThreadSummaryDatabase();
+  await database.prepare();
+  await database.mergeSnapshots("server", [
+    { archived: false, thread: ordinary },
+    { archived: false, thread: home },
+  ]);
+  expect((await database.get("server", "ordinary"))?.name).toBe("ordinary");
+  expect(await database.get("server", "home")).toBeNull();
+  await database.applyEvents("server", [
+    {
+      cursor: 1,
+      payload: {
+        method: "thread/started",
+        params: { thread: home },
+        codewideCatalogExcluded: true,
+        codewideThreadPatch: {
+          version: 1,
+          threadId: "home",
+          operation: { kind: "threadStarted", thread: home },
+        },
+      },
+    },
+  ]);
+  expect(await database.get("server", "home")).toBeNull();
+  await database.applyEvents("server", [
+    {
+      cursor: 2,
+      payload: {
+        method: "companion/thread/progress",
+        params: { threadId: "ordinary" },
+        codewideCatalogExcluded: true,
+        codewideThreadPatch: {
+          version: 1,
+          threadId: "ordinary",
+          operation: { kind: "threadProgress" },
+        },
+      },
+    },
+  ]);
+  expect(await database.get("server", "ordinary")).toBeNull();
+  database.close();
+});
 
-    const read = database.beginCatalogRead("server");
-    await database.applyCatalogPage("server", [], false, new Set(), read, true, "/repo");
-    read.release();
-    binding = null;
+it("persists a skipped async question through catalog replay and database reopen", async () => {
+  const database = createThreadSummaryDatabase();
+  await database.prepare();
+  const thread = createV1TestThread("question-thread", null, 1, []);
+  await database.mergeSnapshots("server", [{ thread, archived: false }]);
+  await database.skipQuestion({ connectionId: "server", threadId: thread.id, turnId: "turn", itemId: "question" });
+  await database.mergeSnapshots("server", [{ thread, archived: false }]);
+  database.close();
+  const restored = createThreadSummaryDatabase();
+  await restored.prepare();
+  expect((await restored.get("server", thread.id))?.skippedQuestions).toEqual({ turnId: "turn", itemIds: ["question"] });
+  restored.close();
+});
 
-    expect((await database.get("server", "ordinary"))?.unread).toBe(1);
-    await database.close();
-  });
+it("updates only the answered catalog row from native events without refetch and deduplicates progress", async () => {
+  const writer = createThreadSummarySqlite();
+  await writer.prepare();
+  writer.begin();
+  writer.write({ type: "insert", value: summary("question-thread", { pendingQuestion: { turnId: "turn", itemIds: ["question"] }, unread: 1 }) });
+  writer.write({ type: "insert", value: summary("unrelated") });
+  await writer.commit({ durable: true });
+  await writer.close();
+  const database = createThreadSummaryDatabase();
+  await database.prepare();
+  await database.loadView(request);
+  const remote = vi.fn(async () => false);
+  database.setCatalogLoader(remote);
+  const view = database.model.view$(request);
+  const unrelated = view.peek().recent.find(row => row.remoteThreadId === "unrelated");
+  const before = view.peek().recent.find(row => row.remoteThreadId === "question-thread");
+  expect(before && storedThreadToListItem(before).needsAttention).toBe(true);
+  const publish = vi.spyOn(database.model, "publish");
+  await database.applyCommandDelivery(questionAnswerDelivery());
+  const answered = view.peek().recent.find(row => row.remoteThreadId === "question-thread");
+  expect(answered && storedThreadToListItem(answered)).toMatchObject({ needsAttention: false, unread: 1 });
+  expect(view.peek().recent.find(row => row.remoteThreadId === "unrelated")).toBe(unrelated);
+  expect(publish).toHaveBeenCalledTimes(1);
+  const published = view.peek();
+  for (const state of ["sending", "accepted", "uncertain", "delivered"] as const) {
+    await database.applyCommandDelivery(questionAnswerDelivery(state));
+  }
+  expect(view.peek()).toBe(published);
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect(remote).not.toHaveBeenCalled();
+  database.close();
+  const reopened = createThreadSummaryDatabase();
+  await reopened.prepare();
+  const persisted = await reopened.get("server", "question-thread");
+  expect(persisted && storedThreadToListItem(persisted).needsAttention).toBe(false);
+  await reopened.reconcileCommands([questionAnswerDelivery("failed")]);
+  const failed = await reopened.get("server", "question-thread");
+  expect(failed && storedThreadToListItem(failed).needsAttention).toBe(true);
+  await reopened.applyCommandDelivery(questionAnswerDelivery("queued"));
+  const retry = await reopened.get("server", "question-thread");
+  expect(retry && storedThreadToListItem(retry).needsAttention).toBe(false);
+  reopened.close();
 });

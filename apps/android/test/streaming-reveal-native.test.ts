@@ -87,7 +87,7 @@ it("invalidates native text display lists, not only the enclosing View", () => {
 
 it("marks completed text as static rather than replaying its streaming animation", () => {
   const screen = compactSource(
-    readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+    readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
   );
   const surface = readFileSync(
     new URL("../src/rendering/StreamingRevealSurface.tsx", import.meta.url),
@@ -103,7 +103,7 @@ it("marks completed text as static rather than replaying its streaming animation
 
 it("settles recovered live text before enabling animation for new deltas", () => {
   const screen = compactSource(
-    readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+    readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
   );
   const markdown = readFileSync(
     new URL("../src/rendering/RichMarkdown.tsx", import.meta.url),

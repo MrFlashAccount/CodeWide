@@ -1,4 +1,4 @@
-import type { ThreadForkResponse } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadForkResponse } from "@codewide/codex-protocol/v0.155.1/v2";
 import { randomUUID } from "expo-crypto";
 import type { ThreadDetailDatabase } from "../../data/thread-detail-database";
 import { buildThreadForkParams, type ThreadForkOptions } from "../../data/thread-fork";

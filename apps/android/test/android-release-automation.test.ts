@@ -78,6 +78,34 @@ describe("Android release automation", () => {
     expect(readAndroidReleaseVersion(updated)).toEqual(updated.next);
   });
 
+  it("accepts a CI-owned monotonic version code without weakening version checks", () => {
+    const current = readAndroidReleaseVersion({ appConfig, gradle, manifest });
+    const requestedVersionCode = current.versionCode + 100_000;
+    const updated = updateAndroidReleaseVersion(
+      { appConfig, gradle, manifest },
+      {
+        requestedVersion: nextPatchVersion(current.versionName),
+        requestedVersionCode,
+        published: undefined,
+      },
+    );
+
+    expect(updated.next.versionCode).toBe(requestedVersionCode);
+    expect(updated.next.runtimeVersion).toBe(
+      `${updated.next.versionName}-native-${requestedVersionCode}`,
+    );
+    expect(() =>
+      updateAndroidReleaseVersion(
+        { appConfig, gradle, manifest },
+        {
+          requestedVersion: nextPatchVersion(current.versionName),
+          requestedVersionCode: current.versionCode,
+          published: undefined,
+        },
+      ),
+    ).toThrow(/version code must increase/u);
+  });
+
   it("exposes one-shot OTA and APK commands", () => {
     expect(JSON.parse(packageJson).scripts).toMatchObject({
       "ota:publish": "tsx scripts/release-android.ts ota",
@@ -104,8 +132,8 @@ describe("Android release automation", () => {
     expect(releaseAndroid).not.toContain(
       'await run("pnpm", ["validate:android:device-evidence"]);',
     );
-    expect(JSON.parse(packageJson).scripts["validate:android:device-evidence"]).toBe(
-      "tsx scripts/validate-android-e2e-evidence.ts",
+    expect(JSON.parse(packageJson).scripts["test:android-device"]).toBe(
+      "tsx scripts/android-device-gate.ts",
     );
     for (const functionName of ["releaseOta", "releaseApk"]) {
       const bodyStart = releaseAndroid.indexOf(`async function ${functionName}`);

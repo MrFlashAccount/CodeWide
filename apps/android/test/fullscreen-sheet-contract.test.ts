@@ -7,7 +7,7 @@ import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
 const sourceRoot = fileURLToPath(new URL("../src", import.meta.url));
 const screen = compactSource(
-  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 const threadListFeature = compactSource(
   readFileSync(
@@ -88,7 +88,7 @@ const ownerAgentsFeature = compactSource(
 );
 const agentsRoute = compactSource(
   readFileSync(
-    new URL("../app/v1/threads/[connectionId]/[threadId]/agents/index.tsx", import.meta.url),
+    new URL("../app/(workspace)/threads/[connectionId]/[threadId]/agents/index.tsx", import.meta.url),
     "utf8",
   ),
 );
@@ -251,9 +251,7 @@ describe("fullscreen workspace presentation", () => {
       new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url),
       "utf8",
     );
-    expect(ownerTimelineViewport).toContain(
-      'keyboardLiftBehavior={props.newChat ? "never" : "always"}',
-    );
+    // Keyboard lift and question-editing anchor behavior are exercised by v1-jump-to-latest.render.
     expect(screen).not.toContain("keyboardScrollFrozen");
     expect(timelineList).not.toContain("freeze:");
     expect(timelineList).not.toContain("freeze=");

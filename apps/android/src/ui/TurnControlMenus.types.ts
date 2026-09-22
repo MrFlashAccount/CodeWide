@@ -1,4 +1,4 @@
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 

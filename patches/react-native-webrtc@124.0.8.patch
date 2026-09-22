@@ -1,0 +1,114 @@
+diff --git a/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java b/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
+index d5a9fb493bced8f2447bbed1e9d2725ed82cbad4..568e92dae858c01e11bea36238afd404ec6c8b9d 100644
+--- a/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
++++ b/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
+@@ -132,7 +132,42 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
+         return (pco == null) ? null : pco.getPeerConnection();
+     }
+ 
++    /** Native consumers observe a peer without replacing its existing JS observer. */
++    public interface NativePeerListener {
++        void onEvent(String eventName, ReadableMap params);
++    }
++
++    private final java.util.concurrent.ConcurrentHashMap<Integer, NativePeerListener> nativePeerListeners =
++            new java.util.concurrent.ConcurrentHashMap<>();
++
++    public void addNativePeerListener(int id, NativePeerListener listener) {
++        if (nativePeerListeners.putIfAbsent(id, listener) != null) {
++            throw new IllegalStateException("Native peer listener already registered");
++        }
++    }
++
++    public void removeNativePeerListener(int id, NativePeerListener listener) {
++        nativePeerListeners.remove(id, listener);
++    }
++
++    /** Uses the same executor and peer as JS getStats; no second media session. */
++    public void getNativePeerStats(int id, org.webrtc.RTCStatsCollectorCallback callback) {
++        ThreadUtils.runOnExecutor(() -> {
++            PeerConnection peer = getPeerConnection(id);
++            if (peer == null) {
++                callback.onStatsDelivered(new org.webrtc.RTCStatsReport(0, java.util.Collections.emptyMap()));
++            } else {
++                peer.getStats(callback);
++            }
++        });
++    }
++
+     void sendEvent(String eventName, @Nullable ReadableMap params) {
++        if (params != null && (params.hasKey("peerConnectionId") || params.hasKey("pcId"))) {
++            int id = params.getInt(params.hasKey("peerConnectionId") ? "peerConnectionId" : "pcId");
++            NativePeerListener listener = nativePeerListeners.get(id);
++            if (listener != null) listener.onEvent(eventName, params);
++        }
+         getReactApplicationContext()
+                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                 .emit(eventName, params);
+@@ -680,7 +715,14 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
+                 }
+ 
+                 MediaStreamTrack track = getLocalTrack(trackId);
+-                sender.setTrack(track, false);
++                if (trackId != null && track == null) {
++                    promise.reject(new Exception("Replacement track is unavailable"));
++                    return;
++                }
++                if (!sender.setTrack(track, false)) {
++                    promise.reject(new Exception("Native sender rejected replacement track"));
++                    return;
++                }
+                 promise.resolve(true);
+             } catch (Exception e) {
+                 Log.d(TAG, "senderReplaceTrack(): " + e.getMessage());
+diff --git a/lib/commonjs/RTCRtpSender.js b/lib/commonjs/RTCRtpSender.js
+index d95b1fc2fe85329d45424068119a772f9945e7b3..9d3a75751264696289499bd660fb1e4ba7d0776a 100644
+--- a/lib/commonjs/RTCRtpSender.js
++++ b/lib/commonjs/RTCRtpSender.js
+@@ -25,11 +25,7 @@ class RTCRtpSender {
+     }
+   }
+   async replaceTrack(track) {
+-    try {
+-      await WebRTCModule.senderReplaceTrack(this._peerConnectionId, this._id, track ? track.id : null);
+-    } catch (e) {
+-      return;
+-    }
++    await WebRTCModule.senderReplaceTrack(this._peerConnectionId, this._id, track ? track.id : null);
+     this._track = track;
+   }
+   static getCapabilities(kind) {
+diff --git a/lib/module/RTCRtpSender.js b/lib/module/RTCRtpSender.js
+index fdf62af52c0e42e6dfa301b4e44fab805413882d..79561c3980074f3c253dbe240a6f49aa5617013e 100644
+--- a/lib/module/RTCRtpSender.js
++++ b/lib/module/RTCRtpSender.js
+@@ -18,11 +18,7 @@ export default class RTCRtpSender {
+     }
+   }
+   async replaceTrack(track) {
+-    try {
+-      await WebRTCModule.senderReplaceTrack(this._peerConnectionId, this._id, track ? track.id : null);
+-    } catch (e) {
+-      return;
+-    }
++    await WebRTCModule.senderReplaceTrack(this._peerConnectionId, this._id, track ? track.id : null);
+     this._track = track;
+   }
+   static getCapabilities(kind) {
+diff --git a/src/RTCRtpSender.ts b/src/RTCRtpSender.ts
+index 4366b32fdd6d46f975d78033c07264a383de8035..bb61b8c5e2a343c861db7b6945a3ac9d3100fb54 100644
+--- a/src/RTCRtpSender.ts
++++ b/src/RTCRtpSender.ts
+@@ -29,11 +29,7 @@ export default class RTCRtpSender {
+     }
+ 
+     async replaceTrack(track: MediaStreamTrack | null): Promise<void> {
+-        try {
+-            await WebRTCModule.senderReplaceTrack(this._peerConnectionId, this._id, track ? track.id : null);
+-        } catch (e) {
+-            return;
+-        }
++        await WebRTCModule.senderReplaceTrack(this._peerConnectionId, this._id, track ? track.id : null);
+ 
+         this._track = track;
+     }

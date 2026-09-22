@@ -1,5 +1,5 @@
 /** V1 ReviewTargetSheet owner, extracted without changing interaction or resource lifetime. */
-import type { ReviewDelivery, ReviewTarget } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ReviewDelivery, ReviewTarget } from "@codewide/codex-protocol/v0.155.1/v2";
 import SegmentedControl from "@expo/ui/community/segmented-control";
 import { useState } from "react";
 import { Pressable, View } from "react-native";

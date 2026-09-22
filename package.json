@@ -19,35 +19,36 @@
     "brand:generate": "node scripts/generate-codewide-assets.mjs",
     "soak:sync": "tsx scripts/soak-sync.ts",
     "test:android-device": "tsx scripts/android-device-gate.ts",
-    "test:android:e2e": "./scripts/test-android-e2e",
     "android:gradle": "sh scripts/android-gradle.sh",
-    "validate:sync:v2": "sh ./scripts/validate-sync-v2.sh",
-    "validate:sync:v2:managed-live": "sh scripts/cargo-target-budget.sh && CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CODEWIDE_LIVE_E2E=1 CARGO_INCREMENTAL=0 cargo test -p codewide-companion --test live_v2_backend_contract -- --ignored --test-threads=1",
-    "validate:android:device-evidence": "tsx scripts/validate-android-e2e-evidence.ts",
     "dev:android": "sh scripts/android-fast-refresh.sh",
     "ota:publish": "tsx scripts/release-android.ts ota",
     "ota:publish:raw": "tsx scripts/publish-android-ota.ts",
     "release:ota": "tsx scripts/release-android.ts ota",
     "release:apk": "tsx scripts/release-android.ts apk",
     "release:plan": "node scripts/release-plan.ts",
+    "release:set-plan": "node scripts/release-set-plan.ts",
+    "release:compatibility": "node scripts/validate-release-compatibility.ts",
+    "release:relay": "./scripts/release-relay-linux",
+    "nx:graph": "nx graph",
+    "nx:affected": "nx affected",
     "test:ota": "python3 scripts/test-ota-server.py",
     "security:scan-artifacts": "tsx scripts/scan-release-artifacts.ts",
     "security:scan-secrets": "tsx scripts/scan-secrets.ts",
-    "release:gate": "sh scripts/cargo-target-budget.sh && export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 && pnpm validate:sync:v2 && pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
+    "release:gate": "sh scripts/cargo-target-budget.sh && export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 && pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
     "test:watch": "vitest",
-    "protocol:generate": "codex app-server generate-ts --experimental --out packages/codex-protocol/src/generated/0.147.0 && codex app-server generate-json-schema --experimental --out packages/codex-protocol/schema/0.147.0",
+    "protocol:generate": "node scripts/generate-codex-protocol.ts",
     "validate:android:v1": "pnpm --filter @codewide/android validate:v1"
   },
   "devDependencies": {
+    "@nx/expo": "23.2.1",
     "@playwright/test": "1.62.1",
     "@types/node": "^24.0.0",
     "@types/ws": "8.18.1",
-    "appium": "3.7.0",
     "expo-pretext": "1.2.0",
+    "nx": "23.2.1",
     "tsx": "^4.20.0",
     "typescript": "7.0.2",
     "vitest": "4.1.10",
-    "webdriverio": "9.31.4",
     "ws": "8.21.3"
   },
   "engines": {
@@ -56,6 +57,11 @@
   "packageManager": "pnpm@10.14.0",
   "pnpm": {
     "packageExtensions": {
+      "nx@23.2.1": {
+        "dependencies": {
+          "typescript": "6.0.3"
+        }
+      },
       "dependency-cruiser@18.2.0": {
         "dependencies": {
           "typescript": "6.0.3"
@@ -73,7 +79,9 @@
       "@quickdrawjs/react-native@0.2.0": "patches/@quickdrawjs__react-native@0.2.0.patch",
       "react-native-enriched-markdown@1.0.2": "patches/react-native-enriched-markdown@1.0.2.patch",
       "expo-video@57.0.3": "patches/expo-video@57.0.3.patch",
-      "expo-status-bar@57.0.1": "patches/expo-status-bar@57.0.1.patch"
+      "expo-status-bar@57.0.1": "patches/expo-status-bar@57.0.1.patch",
+      "react-native-webrtc@124.0.8": "patches/react-native-webrtc@124.0.8.patch",
+      "react-native-keyboard-controller@1.21.9": "patches/react-native-keyboard-controller@1.21.9.patch"
     }
   }
 }

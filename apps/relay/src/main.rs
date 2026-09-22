@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use codewide_relay::{
     Result,
-    pairing::InvitationBundle,
+    pairing::{INVITATION_VERSION, InvitationBundle},
     registry::Registry,
     server::{Relay, run},
     transport_tls::RelayTlsIdentity,
@@ -10,7 +10,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
-#[command(name = "codewide-relay", version)]
+#[command(name = "codewide-relay", version = env!("CODEWIDE_RELAY_VERSION"))]
 struct Cli {
     #[arg(long, default_value_t = 8780)]
     port: u16,
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string(&InvitationBundle {
-                    version: 4,
+                    version: INVITATION_VERSION,
                     relay_tls_pin_sha256: identity.pin(),
                     route_id: invitation.route_id,
                     invitation: invitation.token,

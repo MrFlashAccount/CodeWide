@@ -54,8 +54,6 @@ const MAX_RECENT_TURN_STARTS: usize = 4_096;
 const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const OUTBOX_RETRY_BASE_MS: u64 = 1_000;
 const OUTBOX_RETRY_MAX_MS: u64 = 30_000;
-#[cfg(feature = "e2e-command-fault")]
-const E2E_OUTBOX_UNCERTAIN_OBSERVATION_MS: u64 = 30_000;
 const OUTBOX_ACCOUNT_SWITCH_WAIT_MS: u64 = 1_000;
 const OUTBOX_RECONCILE_PAGE_SIZE: u64 = 100;
 const ROLLOUT_UPSTREAM_SUPPRESSION: Duration = Duration::from_secs(2);
@@ -87,8 +85,6 @@ pub struct SyncHub {
     account_pool: Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
     projects: Arc<std::sync::RwLock<Option<Arc<ProjectService>>>>,
     workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
-    #[cfg(feature = "e2e-command-fault")]
-    e2e_surface_fault: Arc<crate::sync_v2::E2ESurfaceFaultControl>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -134,8 +130,6 @@ enum AuthorizationChangeOutcome {
 enum OutboxDeliveryError {
     Deferred(String),
     Uncertain(String),
-    #[cfg(feature = "e2e-command-fault")]
-    E2EUncertain(String),
 }
 
 enum ThreadMutationDispatchError {
@@ -348,6 +342,7 @@ impl RecentTurnStarts {
 }
 
 fn spawn_live_replay_task(
+    history: HistoryService,
     socket: SessionSocket,
     store: Arc<IndexStore>,
     mut events: tokio::sync::broadcast::Receiver<DurableSignal>,
@@ -362,7 +357,8 @@ fn spawn_live_replay_task(
                         continue;
                     }
                     let result =
-                        send_live_replay_after(&socket, store.clone(), delivered_cursor).await;
+                        send_live_replay_after(&socket, store.clone(), delivered_cursor, &history)
+                            .await;
                     if matches!(result, Err(LiveReplayError::SnapshotRequired)) {
                         warn!(
                             delivered_cursor,
@@ -374,7 +370,7 @@ fn spawn_live_replay_task(
                 Ok(DurableSignal::Failed) => Err(LiveReplayError::Journal),
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     debug!(skipped, "sync client coalesced live wake-up signals");
-                    send_live_replay_after(&socket, store.clone(), delivered_cursor).await
+                    send_live_replay_after(&socket, store.clone(), delivered_cursor, &history).await
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
@@ -443,8 +439,6 @@ impl SyncHub {
         let account_pool = Arc::new(std::sync::RwLock::new(None));
         let projects = Arc::new(std::sync::RwLock::new(None));
         let workspaces = Arc::new(std::sync::RwLock::new(None));
-        #[cfg(feature = "e2e-command-fault")]
-        let e2e_surface_fault = Arc::new(crate::sync_v2::E2ESurfaceFaultControl::default());
         let usage_projector = Arc::new(std::sync::Mutex::new(
             crate::usage::LiveUsageProjector::new(store.clone()),
         ));
@@ -498,8 +492,6 @@ impl SyncHub {
                 files.clone(),
                 account_pool.clone(),
                 workspaces.clone(),
-                #[cfg(feature = "e2e-command-fault")]
-                e2e_surface_fault.clone(),
             ));
         }
         Self {
@@ -522,15 +514,7 @@ impl SyncHub {
             account_pool,
             projects,
             workspaces,
-            #[cfg(feature = "e2e-command-fault")]
-            e2e_surface_fault,
         }
-    }
-
-    #[cfg(feature = "e2e-command-fault")]
-    #[must_use]
-    pub fn e2e_surface_fault_control(&self) -> Arc<crate::sync_v2::E2ESurfaceFaultControl> {
-        self.e2e_surface_fault.clone()
     }
 
     #[must_use]
@@ -633,12 +617,6 @@ impl SyncHub {
             Ok(slot) => slot.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         }
-    }
-
-    /// Returns the internal transcription service for the closed V2 Voice adapter.
-    #[must_use]
-    pub(crate) fn v2_dictation(&self) -> Option<Arc<DictationService>> {
-        self.dictation()
     }
 
     fn files(&self) -> Option<Arc<FileService>> {
@@ -769,7 +747,10 @@ impl SyncHub {
         let mut ready = false;
         if !snapshot_required {
             for (cursor, payload) in replay.entries {
-                let Ok(payload) = serde_json::from_slice::<Value>(&payload) else {
+                let Ok(payload) = serde_json::from_slice::<Value>(&payload)
+                    .map_err(|_| ())
+                    .and_then(|payload| self.history.catalog_event(payload).map_err(|_| ()))
+                else {
                     close_with(socket, 1011, "replay_journal_failed").await;
                     return None;
                 };
@@ -843,6 +824,7 @@ impl SyncHub {
                 return;
             };
             replay_task = Some(spawn_live_replay_task(
+                self.history.clone(),
                 socket.clone(),
                 self.store.clone(),
                 events,
@@ -927,7 +909,9 @@ impl SyncHub {
                                         continue;
                                     }
                                     for (cursor, payload) in replay.entries {
-                                        let Ok(payload) = serde_json::from_slice::<Value>(&payload) else {
+                                        let Ok(payload) = serde_json::from_slice::<Value>(&payload)
+                    .map_err(|_| ())
+                    .and_then(|payload| self.history.catalog_event(payload).map_err(|_| ())) else {
                                             close_with(&socket, 1011, "replay_journal_failed").await;
                                             break 'session;
                                         };
@@ -949,6 +933,7 @@ impl SyncHub {
                                         && let Some(events) = replay_events.take()
                                     {
                                         replay_task = Some(spawn_live_replay_task(
+                            self.history.clone(),
                                             socket.clone(),
                                             self.store.clone(),
                                             events,
@@ -1246,29 +1231,6 @@ impl SyncHub {
         {
             return Ok(());
         }
-        #[cfg(feature = "e2e-command-fault")]
-        if method == "thread/list"
-            && params.get("cursor").is_some_and(|cursor| !cursor.is_null())
-            && let Some(effect) = self
-                .e2e_surface_fault
-                .intercept(crate::sync_v2::E2ESurfaceFaultTarget::CatalogPage)
-                .await
-        {
-            match effect {
-                crate::sync_v2::E2ESurfaceFaultEffect::Continue => {}
-                crate::sync_v2::E2ESurfaceFaultEffect::Fail(_)
-                | crate::sync_v2::E2ESurfaceFaultEffect::NotFound
-                | crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-                | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
-                | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
-                | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
-                | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-                | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => {
-                    return send_rpc_error(socket, id, -32020, "E2E catalog page action mismatch")
-                        .await;
-                }
-            }
-        }
         if method == "turn/start" && self.recent_turn_starts.lock().await.seen_or_insert(&params) {
             match reconcile_direct_turn_start(&self.upstream, &params).await {
                 Ok(Some(turn)) => {
@@ -1304,35 +1266,6 @@ impl SyncHub {
             }
         }
         if method == "turn/start" {
-            #[cfg(feature = "e2e-command-fault")]
-            if let Some(effect) = self
-                .e2e_surface_fault
-                .intercept(crate::sync_v2::E2ESurfaceFaultTarget::TurnSubmit)
-                .await
-            {
-                match effect {
-                    crate::sync_v2::E2ESurfaceFaultEffect::Continue => {}
-                    crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => {
-                        return send_rpc_error(socket, id, -32040, &format!("E2E fault: {marker}"))
-                            .await;
-                    }
-                    crate::sync_v2::E2ESurfaceFaultEffect::NotFound
-                    | crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-                    | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
-                    | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
-                    | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
-                    | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-                    | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => {
-                        return send_rpc_error(
-                            socket,
-                            id,
-                            -32040,
-                            "E2E turn submit action mismatch",
-                        )
-                        .await;
-                    }
-                }
-            }
             let account_pool = self.account_pool();
             return match dispatch_turn_start_with_resume(
                 &self.upstream,
@@ -1442,15 +1375,6 @@ impl SyncHub {
                 return Ok(true);
             };
             let client_id = authorization.device_id().unwrap_or("admin");
-            #[cfg(feature = "e2e-command-fault")]
-            if self
-                .handle_e2e_dictation_finish_fault(
-                    socket, id, method, params, client_id, &dictation,
-                )
-                .await?
-            {
-                return Ok(true);
-            }
             match dictation.handle(client_id, method, params).await {
                 Ok(result) => send_local_rpc_result(socket, id, result).await?,
                 Err(error) => {
@@ -1517,13 +1441,6 @@ impl SyncHub {
             .await?;
             return Ok(true);
         };
-        #[cfg(feature = "e2e-command-fault")]
-        if self
-            .handle_e2e_v1_resource_fault(socket, id, method)
-            .await?
-        {
-            return Ok(true);
-        }
         match resources.handle(method, params).await {
             Ok(result) => send_local_rpc_result(socket, id, result).await?,
             Err(error) => {
@@ -1545,76 +1462,6 @@ impl SyncHub {
         }
     }
 
-    #[cfg(feature = "e2e-command-fault")]
-    async fn handle_e2e_dictation_finish_fault(
-        &self,
-        socket: &SessionSocket,
-        id: &Value,
-        method: &str,
-        params: &Value,
-        client_id: &str,
-        dictation: &DictationService,
-    ) -> Result<bool, ()> {
-        if method != "companion/dictation/finish" {
-            return Ok(false);
-        }
-        if let Err(error) = dictation
-            .validate_e2e_finish_session(client_id, params)
-            .await
-        {
-            send_rpc_error(socket, id.clone(), -32030, &error.to_string()).await?;
-            return Ok(true);
-        }
-        let Some(effect) = self
-            .e2e_surface_fault
-            .intercept(crate::sync_v2::E2ESurfaceFaultTarget::VoiceFinish)
-            .await
-        else {
-            return Ok(false);
-        };
-        match effect {
-            crate::sync_v2::E2ESurfaceFaultEffect::Continue => Ok(false),
-            crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(retry_after_ms) => {
-                let retry_seconds = retry_after_ms.div_ceil(1_000);
-                send_local_rpc_result(
-                    socket,
-                    id,
-                    json!({
-                        "retryable": true,
-                        "retryAfterMs": retry_after_ms,
-                        "message": format!(
-                            "Voice is busy. Try again in {retry_seconds} seconds."
-                        )
-                    }),
-                )
-                .await?;
-                Ok(true)
-            }
-            crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(text) => {
-                send_local_rpc_result(socket, id, json!({"text": text})).await?;
-                Ok(true)
-            }
-            crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => {
-                send_rpc_error(socket, id.clone(), -32030, &format!("E2E fault: {marker}")).await?;
-                Ok(true)
-            }
-            crate::sync_v2::E2ESurfaceFaultEffect::NotFound
-            | crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-            | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
-            | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-            | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => {
-                send_rpc_error(
-                    socket,
-                    id.clone(),
-                    -32030,
-                    "E2E Voice finish action mismatch",
-                )
-                .await?;
-                Ok(true)
-            }
-        }
-    }
-
     async fn handle_workspace_rpc(
         &self,
         socket: &SessionSocket,
@@ -1632,19 +1479,6 @@ impl SyncHub {
             .await?;
             return Ok(true);
         };
-        #[cfg(feature = "e2e-command-fault")]
-        if method == "companion/workspace/read"
-            && self
-                .handle_e2e_v1_rpc_surface_fault(
-                    socket,
-                    id,
-                    crate::sync_v2::E2ESurfaceFaultTarget::ResourceRead,
-                    "E2E resource read action mismatch",
-                )
-                .await?
-        {
-            return Ok(true);
-        }
         match workspaces.handle(method, params).await {
             Ok(result) => send_local_rpc_result(socket, id, result).await?,
             Err(error) => {
@@ -1655,71 +1489,6 @@ impl SyncHub {
         Ok(true)
     }
 
-    #[cfg(feature = "e2e-command-fault")]
-    async fn handle_e2e_v1_resource_fault(
-        &self,
-        socket: &SessionSocket,
-        id: &Value,
-        method: &str,
-    ) -> Result<bool, ()> {
-        if method == "companion/threadChange/read" {
-            return self
-                .handle_e2e_v1_rpc_surface_fault(
-                    socket,
-                    id,
-                    crate::sync_v2::E2ESurfaceFaultTarget::ChangeRead,
-                    "E2E change read action mismatch",
-                )
-                .await;
-        }
-        if self
-            .handle_e2e_v1_rpc_surface_fault(
-                socket,
-                id,
-                crate::sync_v2::E2ESurfaceFaultTarget::ResourceList,
-                "E2E resource list action mismatch",
-            )
-            .await?
-        {
-            return Ok(true);
-        }
-        self.handle_e2e_v1_rpc_surface_fault(
-            socket,
-            id,
-            crate::sync_v2::E2ESurfaceFaultTarget::ResourceRefresh,
-            "E2E resource refresh action mismatch",
-        )
-        .await
-    }
-
-    #[cfg(feature = "e2e-command-fault")]
-    async fn handle_e2e_v1_rpc_surface_fault(
-        &self,
-        socket: &SessionSocket,
-        id: &Value,
-        target: crate::sync_v2::E2ESurfaceFaultTarget,
-        mismatch: &'static str,
-    ) -> Result<bool, ()> {
-        let Some(effect) = self.e2e_surface_fault.intercept(target).await else {
-            return Ok(false);
-        };
-        let message = match effect {
-            crate::sync_v2::E2ESurfaceFaultEffect::Continue => return Ok(false),
-            crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => {
-                format!("App Server error: {marker}")
-            }
-            crate::sync_v2::E2ESurfaceFaultEffect::NotFound
-            | crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-            | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
-            | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
-            | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
-            | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-            | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => mismatch.into(),
-        };
-        send_rpc_error(socket, id.clone(), -32020, &message).await?;
-        Ok(true)
-    }
-
     async fn try_handle_thread_read_rpc(
         &self,
         socket: &SessionSocket,
@@ -1727,13 +1496,6 @@ impl SyncHub {
         method: &str,
         params: &Value,
     ) -> Result<bool, ()> {
-        #[cfg(feature = "e2e-command-fault")]
-        if self
-            .handle_e2e_thread_read_fault(socket, id, method, params)
-            .await?
-        {
-            return Ok(true);
-        }
         if matches!(
             method,
             "companion/search/context" | "companion/search/window"
@@ -1820,60 +1582,27 @@ impl SyncHub {
         Ok(true)
     }
 
-    #[cfg(feature = "e2e-command-fault")]
-    async fn handle_e2e_thread_read_fault(
-        &self,
-        socket: &SessionSocket,
-        id: &Value,
-        method: &str,
-        params: &Value,
-    ) -> Result<bool, ()> {
-        let target = match method {
-            "companion/thread/sync" => Some(crate::sync_v2::E2ESurfaceFaultTarget::ThreadOpen),
-            "companion/thread/history/after"
-            | "companion/thread/history/before"
-            | "thread/turns/list"
-            | "thread/items/list" => Some(crate::sync_v2::E2ESurfaceFaultTarget::HistoryPage),
-            _ => None,
-        };
-        let Some(target) = target else {
-            return Ok(false);
-        };
-        let Some(effect) = self.e2e_surface_fault.intercept(target).await else {
-            return Ok(false);
-        };
-        let (code, message) = match effect {
-            crate::sync_v2::E2ESurfaceFaultEffect::Continue => return Ok(false),
-            crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => {
-                (-32020, format!("App Server error: {marker}"))
-            }
-            crate::sync_v2::E2ESurfaceFaultEffect::NotFound => {
-                let thread_id = params
-                    .get("threadId")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                (-32600, format!("thread not found: {thread_id}"))
-            }
-            crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-            | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
-            | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
-            | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
-            | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-            | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => {
-                (-32020, "E2E read action mismatch".into())
-            }
-        };
-        send_rpc_error(socket, id.clone(), code, &message).await?;
-        Ok(true)
-    }
-
     async fn send_projected_rpc_result(
         &self,
         socket: &SessionSocket,
         id: &Value,
         method: &str,
-        result: Value,
+        mut result: Value,
     ) -> Result<(), ()> {
+        if let Some(thread) = result.get_mut("thread") {
+            if method == "companion/thread/sync"
+                && crate::catalog_visibility::excludes_thread(thread)
+            {
+                return send_rpc_error(
+                    socket,
+                    id.clone(),
+                    -32602,
+                    "Thread is not in the ordinary catalog",
+                )
+                .await;
+            }
+            crate::catalog_visibility::annotate_thread(thread);
+        }
         if let Some(resources) = self.resources() {
             resources.observe_rpc_result(method, &result).await;
         }
@@ -2116,6 +1845,7 @@ async fn send_live_replay_after(
     socket: &SessionSocket,
     store: Arc<IndexStore>,
     cursor: u64,
+    history: &HistoryService,
 ) -> Result<u64, LiveReplayError> {
     let replay = tokio::task::spawn_blocking(move || store.replay_after(Some(cursor)))
         .await
@@ -2127,6 +1857,9 @@ async fn send_live_replay_after(
     for (event_cursor, payload) in replay.entries {
         let payload =
             serde_json::from_slice::<Value>(&payload).map_err(|_| LiveReplayError::Journal)?;
+        let payload = history
+            .catalog_event(payload)
+            .map_err(|_| LiveReplayError::Journal)?;
         send_json(
             socket,
             &json!({ "type": "event", "cursor": event_cursor, "payload": payload }),
@@ -2754,16 +2487,62 @@ struct RpcResultObservers {
 async fn forward_rpc(
     upstream: &UpstreamHandle,
     socket: &SessionSocket,
-    request: Value,
+    mut request: Value,
     id: Value,
     method: &str,
     projector: Option<Arc<ContentProjector>>,
     history: &HistoryService,
     observers: RpcResultObservers,
 ) -> Result<(), ()> {
+    let supervisor_source = if method == "companion/supervisor/threadList" {
+        let Some(source) = request
+            .pointer("/params/threadSource")
+            .and_then(Value::as_str)
+            .filter(|source| {
+                source.starts_with(crate::catalog_visibility::SUPERVISOR_SOURCE_PREFIX)
+                    && source.len() > crate::catalog_visibility::SUPERVISOR_SOURCE_PREFIX.len()
+            })
+            .map(ToOwned::to_owned)
+        else {
+            return send_rpc_error(
+                socket,
+                id,
+                -32602,
+                "A supervisor creation source is required",
+            )
+            .await;
+        };
+        request["method"] = json!("thread/list");
+        if let Some(params) = request.get_mut("params").and_then(Value::as_object_mut) {
+            params.remove("threadSource");
+        }
+        Some(source)
+    } else {
+        None
+    };
     let result = upstream.request(request).await;
     match result {
-        Ok(response) => {
+        Ok(mut response) => {
+            if matches!(method, "thread/list" | "companion/supervisor/threadList")
+                && let Some(result) = response.get_mut("result")
+            {
+                match history
+                    .filter_catalog_page(result.take(), supervisor_source)
+                    .await
+                {
+                    Ok(filtered) => *result = filtered,
+                    Err(error) => {
+                        warn!(err = ?error, "catalog visibility resolution failed");
+                        return send_rpc_error(
+                            socket,
+                            id,
+                            -32020,
+                            "Catalog visibility unavailable",
+                        )
+                        .await;
+                    }
+                }
+            }
             forward_rpc_response(socket, response, id, method, projector, history, observers).await
         }
         Err(error) => {
@@ -2800,6 +2579,9 @@ async fn forward_rpc_response(
             rpc_error = message,
             "App Server mutation rejected"
         );
+    }
+    if let Some(thread) = response.pointer_mut("/result/thread") {
+        crate::catalog_visibility::annotate_thread(thread);
     }
     if method == "thread/list"
         && let Some(result) = response.get_mut("result")
@@ -3015,9 +2797,6 @@ async fn run_outbox_pump(
     files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     account_pool: Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
     workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
-    #[cfg(feature = "e2e-command-fault")] e2e_surface_fault: Arc<
-        crate::sync_v2::E2ESurfaceFaultControl,
-    >,
 ) {
     let mut status = upstream.subscribe_status();
     let prune_store = store.clone();
@@ -3066,8 +2845,6 @@ async fn run_outbox_pump(
                             &files,
                             &account_pool,
                             &workspaces,
-                            #[cfg(feature = "e2e-command-fault")]
-                            &e2e_surface_fault,
                             command,
                         )
                         .await;
@@ -3099,8 +2876,6 @@ async fn reconcile_outbox_command(
     files: &Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     account_pool: &Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
     workspaces: &Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
-    #[cfg(feature = "e2e-command-fault")]
-    e2e_surface_fault: &crate::sync_v2::E2ESurfaceFaultControl,
     command: OutboxCommand,
 ) {
     if let Some(request_id) = command.workspace_request_id.as_deref() {
@@ -3299,66 +3074,15 @@ async fn reconcile_outbox_command(
             }
         }
     }
-    #[cfg(feature = "e2e-command-fault")]
-    if apply_e2e_queue_dispatch_fault(e2e_surface_fault, store, local_events, &command).await {
-        return;
-    }
     deliver_outbox_start(
         upstream,
         store,
         local_events,
         files,
         account_pool_service,
-        #[cfg(feature = "e2e-command-fault")]
-        e2e_surface_fault,
         command,
     )
     .await;
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn apply_e2e_queue_dispatch_fault(
-    control: &crate::sync_v2::E2ESurfaceFaultControl,
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    command: &OutboxCommand,
-) -> bool {
-    if !matches!(
-        control
-            .armed_action(crate::sync_v2::E2ESurfaceFaultTarget::QueueDispatch)
-            .await,
-        Some(crate::sync_v2::E2ESurfaceFaultAction::Fail { .. })
-    ) {
-        return false;
-    }
-    let Some(effect) = control
-        .intercept(crate::sync_v2::E2ESurfaceFaultTarget::QueueDispatch)
-        .await
-    else {
-        return false;
-    };
-    let error = match effect {
-        crate::sync_v2::E2ESurfaceFaultEffect::Continue => return false,
-        crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => marker,
-        crate::sync_v2::E2ESurfaceFaultEffect::NotFound
-        | crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-        | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
-        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
-        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
-        | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-        | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => {
-            "E2E queue dispatch action mismatch".to_owned()
-        }
-    };
-    fail_queued_outbox(
-        store,
-        local_events,
-        &command.remote_thread_id,
-        &command.command_id,
-        &error,
-    )
-    .await;
-    true
 }
 
 async fn history_contains_client_message(
@@ -3424,8 +3148,6 @@ async fn deliver_outbox_start(
     local_events: &tokio::sync::mpsc::Sender<Value>,
     files: &Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     account_pool: Option<Arc<AccountPoolService>>,
-    #[cfg(feature = "e2e-command-fault")]
-    e2e_surface_fault: &crate::sync_v2::E2ESurfaceFaultControl,
     command: OutboxCommand,
 ) {
     let file_service = match files.read() {
@@ -3495,8 +3217,6 @@ async fn deliver_outbox_start(
     let delivered = dispatch_turn_start_with_resume(upstream, account_pool.as_ref(), start)
         .await
         .map_err(ThreadMutationDispatchError::into_outbox);
-    #[cfg(feature = "e2e-command-fault")]
-    let delivered = apply_e2e_queue_uncertain_after_acceptance(e2e_surface_fault, delivered).await;
     match delivered {
         Ok(response) if response.get("error").is_some() => {
             resolve_outbox_claim(
@@ -3547,48 +3267,6 @@ async fn deliver_outbox_start(
             )
             .await;
         }
-        #[cfg(feature = "e2e-command-fault")]
-        Err(OutboxDeliveryError::E2EUncertain(error)) => {
-            warn!(command_id = %claimed.command_id, %error, "E2E turn/start delivery is uncertain");
-            resolve_outbox_claim(
-                store,
-                local_events,
-                &claimed.remote_thread_id,
-                &claimed.command_id,
-                claim_token,
-                OwnedClaimResolution::Indeterminate {
-                    error,
-                    retry_after_ms: E2E_OUTBOX_UNCERTAIN_OBSERVATION_MS,
-                },
-            )
-            .await;
-        }
-    }
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn apply_e2e_queue_uncertain_after_acceptance(
-    control: &crate::sync_v2::E2ESurfaceFaultControl,
-    delivered: Result<Value, OutboxDeliveryError>,
-) -> Result<Value, OutboxDeliveryError> {
-    if !matches!(&delivered, Ok(response) if response.get("error").is_none())
-        || !matches!(
-            control
-                .armed_action(crate::sync_v2::E2ESurfaceFaultTarget::QueueDispatch)
-                .await,
-            Some(crate::sync_v2::E2ESurfaceFaultAction::Uncertain { .. })
-        )
-    {
-        return delivered;
-    }
-    match control
-        .intercept(crate::sync_v2::E2ESurfaceFaultTarget::QueueDispatch)
-        .await
-    {
-        Some(crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(marker)) => {
-            Err(OutboxDeliveryError::E2EUncertain(marker))
-        }
-        _ => delivered,
     }
 }
 
@@ -4039,6 +3717,7 @@ fn rpc_is_known_read(method: &str) -> bool {
             | "thread/goal/get"
             | "thread/items/list"
             | "thread/list"
+            | "companion/supervisor/threadList"
             | "thread/loaded/list"
             | "thread/read"
             | "thread/search"
@@ -4223,7 +3902,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             model_provider: "openai_no_ws".into(),
-            cli_version: "0.147.0".into(),
+            cli_version: "0.155.1".into(),
             source: Value::String("cli".into()),
             agent_nickname: None,
             agent_role: None,
@@ -4330,108 +4009,6 @@ mod tests {
             rpc_error_message(&json!({"error": {"message": long}})),
             "x".repeat(500)
         );
-    }
-
-    #[cfg(feature = "e2e-command-fault")]
-    #[tokio::test]
-    async fn e2e_queue_dispatch_fault_preserves_prompt_and_error_for_v1_and_v2()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
-        let marker = "queue-dispatch-42";
-        let prompt = "queue prompt exact marker";
-        store.outbox_put_turn_start_for_owner(
-            "queue-operation",
-            "thread",
-            json!({
-                "threadId": "thread",
-                "clientUserMessageId": "queue-operation",
-                "input": [{"type": "text", "text": prompt}],
-            }),
-            Some(1),
-            OutboxPresentation::Queue,
-            "owner-a",
-        )?;
-        let command = store
-            .outbox_get("queue-operation")?
-            .ok_or("queued command missing")?;
-        let control = crate::sync_v2::E2ESurfaceFaultControl::default();
-        control
-            .arm(
-                "queue-fault".into(),
-                crate::sync_v2::E2ESurfaceFaultRequest {
-                    target: crate::sync_v2::E2ESurfaceFaultTarget::QueueDispatch,
-                    action: crate::sync_v2::E2ESurfaceFaultAction::Fail {
-                        marker: marker.into(),
-                    },
-                },
-            )
-            .await?;
-        let (events, _receiver) = tokio::sync::mpsc::channel(4);
-        assert!(apply_e2e_queue_dispatch_fault(&control, &store, &events, &command).await);
-
-        let legacy = queue_rpc(
-            &store,
-            "companion/queue/list",
-            &json!({"threadId": "thread"}),
-        )?;
-        assert_eq!(legacy["data"][0]["params"]["input"][0]["text"], prompt);
-        assert_eq!(legacy["data"][0]["lastError"], marker);
-
-        let owned = store.outbox_list_for_owner("owner-a", Some("thread"))?;
-        assert_eq!(owned.len(), 1);
-        assert_eq!(owned[0].params["input"][0]["text"], prompt);
-        assert_eq!(owned[0].last_error.as_deref(), Some(marker));
-        assert_eq!(owned[0].state, OutboxState::Failed);
-        Ok(())
-    }
-
-    #[cfg(feature = "e2e-command-fault")]
-    #[tokio::test]
-    async fn e2e_queue_uncertain_is_consumed_only_after_upstream_acceptance()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let control = crate::sync_v2::E2ESurfaceFaultControl::default();
-        let marker = "queue-uncertain-42";
-        control
-            .arm(
-                "queue-uncertain-fault".into(),
-                crate::sync_v2::E2ESurfaceFaultRequest {
-                    target: crate::sync_v2::E2ESurfaceFaultTarget::QueueDispatch,
-                    action: crate::sync_v2::E2ESurfaceFaultAction::Uncertain {
-                        marker: marker.into(),
-                    },
-                },
-            )
-            .await?;
-
-        let rejected = Ok(json!({"error": {"message": "rejected before acceptance"}}));
-        let rejected = apply_e2e_queue_uncertain_after_acceptance(&control, rejected).await;
-        assert!(matches!(rejected, Ok(response) if response.get("error").is_some()));
-        assert_eq!(
-            control
-                .status("queue-uncertain-fault")
-                .await
-                .map(|status| status.state),
-            Some(crate::sync_v2::E2ESurfaceFaultState::Armed)
-        );
-
-        let accepted = apply_e2e_queue_uncertain_after_acceptance(
-            &control,
-            Ok(json!({"result": {"turn": {"id": "turn-a"}}})),
-        )
-        .await;
-        assert!(matches!(
-            accepted,
-            Err(OutboxDeliveryError::E2EUncertain(error)) if error == marker
-        ));
-        assert_eq!(
-            control
-                .status("queue-uncertain-fault")
-                .await
-                .map(|status| status.state),
-            Some(crate::sync_v2::E2ESurfaceFaultState::Triggered)
-        );
-        Ok(())
     }
 
     #[test]

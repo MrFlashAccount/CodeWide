@@ -5,6 +5,7 @@ import {
   RNHostView,
   type ModalBottomSheetRef,
 } from "@expo/ui/jetpack-compose";
+import { width as composeWidth } from "@expo/ui/jetpack-compose/modifiers";
 import { useEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import {
   ScrollView,
@@ -21,6 +22,11 @@ import type { SheetPerformanceSurface } from "../presentation/diagnostics/sheetP
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 import { SheetBackProvider, useSheetDismissController } from "./sheetNavigation";
+
+// Material's standard sheet width. Both layout trees must receive the same
+// constraint: RNHostView(matchContents) otherwise forces window-wide Yoga
+// content into the narrower Material surface on tablets and unfolded devices.
+const SHEET_MAX_WIDTH = 640;
 
 type AppSheetContentProps = Omit<
   BottomSheetProps,
@@ -55,12 +61,14 @@ export function AppSheet({
   onDismissRequest,
   onOpenChange,
 }: AppSheetProps) {
-  const { width } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  const width = Math.min(windowWidth, SHEET_MAX_WIDTH);
   const sheetRef = useRef<ModalBottomSheetRef>(null);
   const [nativeSheetReady, setNativeSheetReady] = useState(false);
-  const dismiss = useSheetDismissController(() => {
+  const closeSheet = useEvent(() => {
     onOpenChange(false);
-  }, onDismissRequest);
+  });
+  const dismiss = useSheetDismissController(closeSheet, onDismissRequest);
   const expanded = contentProps.enableDynamicSizing === false;
   const fitToContents =
     contentProps.enableDynamicSizing !== false &&
@@ -110,7 +118,9 @@ export function AppSheet({
     <Host colorScheme="dark" pointerEvents="none" style={{ position: "absolute", width }}>
       <ModalBottomSheet
         initialFullyExpanded={initialFullyExpanded}
-        onDismissRequest={dismiss.requestDismiss}
+        modifiers={[composeWidth(width)]}
+        {...(isOpen && dismiss.canGoBack ? { onBackPress: dismiss.requestDismiss } : {})}
+        onDismissRequest={closeSheet}
         properties={{
           shouldDismissOnBackPress: contentProps.enablePanDownToClose ?? true,
           shouldDismissOnClickOutside: contentProps.enablePanDownToClose ?? true,

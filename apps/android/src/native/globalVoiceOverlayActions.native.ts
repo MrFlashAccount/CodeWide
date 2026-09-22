@@ -1,6 +1,7 @@
 import { AccessibilityInfo, NativeEventEmitter, NativeModules } from "react-native";
 
 import type { GlobalVoiceOrbStyle } from "../data/globalVoiceOrbStyle";
+import { acceptsGlobalVoiceOverlayAction } from "./globalVoiceOverlayActionLease";
 
 /** Native renderer states shared by the feature binding and Android bridge. */
 export type GlobalVoiceOrbState =
@@ -19,6 +20,7 @@ type GlobalVoiceOverlayBridge = {
   readonly setOrbReducedMotion: (reducedMotion: boolean) => void;
   readonly setOrbState: (state: GlobalVoiceOrbState) => void;
   readonly setOrbStyle: (style: GlobalVoiceOrbStyle) => void;
+  readonly setOverlayChatTarget?: (connectionId: string | null, threadId: string | null) => void;
 };
 
 const MIC_TOGGLE_EVENT_NAME = "CodeWideGlobalVoiceOverlayMicrophoneToggle";
@@ -54,6 +56,14 @@ export function applyGlobalVoiceMicrophoneMuted(muted: boolean): void {
   bridgeOrNull()?.setMicrophoneMuted(muted);
 }
 
+/** Publishes the exact supervisor destination without changing catalog visibility. */
+export function applyGlobalVoiceOverlayChatTarget(
+  target: { readonly connectionId: string; readonly threadId: string } | null,
+): void {
+  // Older binaries have no chat button; publishing state must remain harmless there.
+  bridgeOrNull()?.setOverlayChatTarget?.(target?.connectionId ?? null, target?.threadId ?? null);
+}
+
 /** Binds the native microphone action to the current feature owner. */
 export function bindGlobalVoiceOverlayMicrophoneToggle(action: () => Promise<void>): void {
   microphoneToggleAction = action;
@@ -63,7 +73,10 @@ export function bindGlobalVoiceOverlayMicrophoneToggle(action: () => Promise<voi
   }
   microphoneToggleSubscribed = true;
   const emitter = new NativeEventEmitter(bridge);
-  emitter.addListener(MIC_TOGGLE_EVENT_NAME, () => {
+  emitter.addListener(MIC_TOGGLE_EVENT_NAME, (value: unknown) => {
+    if (!acceptsGlobalVoiceOverlayAction(value)) {
+      return;
+    }
     void microphoneToggleAction?.().catch(() => {
       // The confirmed feature state remains authoritative when the media mutation fails.
     });
@@ -80,7 +93,10 @@ export function bindGlobalVoiceOverlayStop(action: () => Promise<void>): void {
   if (!stopSubscribed) {
     stopSubscribed = true;
     const emitter = new NativeEventEmitter(bridge);
-    emitter.addListener(STOP_EVENT_NAME, () => {
+    emitter.addListener(STOP_EVENT_NAME, (value: unknown) => {
+      if (!acceptsGlobalVoiceOverlayAction(value)) {
+        return;
+      }
       const activeAction = stopAction;
       if (activeAction === null) {
         return;

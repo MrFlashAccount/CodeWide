@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { Text, View } from "react-native";
 
 // WHY: Interpolation is pure math; dialog render tests use the real implementation without the native runtime.
@@ -52,6 +52,11 @@ export const FadeIn = new Keyframe({});
 export const FadeInDown = new Keyframe({});
 export const FadeInUp = new Keyframe({});
 export const FadeOut = new Keyframe({});
+
+// WHY: Node renders content only; native layout-animation lifecycle runs on the device.
+export function LayoutAnimationConfig({ children }: { readonly children: ReactNode }): ReactNode {
+  return children;
+}
 
 export function useReducedMotion(): boolean {
   return true;

@@ -6,7 +6,7 @@ import { compactSource, sourceHasJsxElement, sourceObjectDeclaration } from "./s
 
 const readSource = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const screen = compactSource(readSource("../app/v1/_layout.tsx"));
+const screen = compactSource(readSource("../app/(workspace)/_layout.tsx"));
 const overlay = readSource("../src/features/queue/InlineQueueOverlay.tsx");
 const layout = readSource("../src/features/queue/inlineQueueLayout.ts");
 const motionPolicy = readSource("../src/features/queue/queueMotionPolicy.ts");

@@ -44,6 +44,7 @@ pub enum SearchError {
 /// Owns query access and background indexing; cloning does not copy indexed data.
 #[derive(Clone)]
 pub struct MessageSearch {
+    catalog: Arc<SessionCatalog>,
     path: Arc<PathBuf>,
     indexing: Arc<AtomicBool>,
     failed: Arc<AtomicUsize>,
@@ -57,7 +58,11 @@ impl MessageSearch {
     /// Rejects stale source identities and unavailable indexed positions.
     pub async fn window(&self, query: ContextQuery) -> Result<serde_json::Value, SearchError> {
         let path = Arc::clone(&self.path);
+        let catalog = Arc::clone(&self.catalog);
         tokio::task::spawn_blocking(move || {
+            if catalog.visibility.excluded(&query.thread_id)? {
+                return Err(SearchError::InvalidQuery);
+            }
             let mut db =
                 Connection::open_with_flags(path.as_path(), OpenFlags::SQLITE_OPEN_READ_ONLY)?;
             db.busy_timeout(std::time::Duration::from_millis(100))?;
@@ -73,7 +78,11 @@ impl MessageSearch {
     /// Returns an error for expired hits, unavailable storage or invalid input.
     pub async fn context(&self, query: ContextQuery) -> Result<ContextPage, SearchError> {
         let path = Arc::clone(&self.path);
+        let catalog = Arc::clone(&self.catalog);
         tokio::task::spawn_blocking(move || {
+            if catalog.visibility.excluded(&query.thread_id)? {
+                return Err(SearchError::InvalidQuery);
+            }
             let mut db =
                 Connection::open_with_flags(path.as_path(), OpenFlags::SQLITE_OPEN_READ_ONLY)?;
             db.busy_timeout(std::time::Duration::from_millis(100))?;
@@ -91,6 +100,7 @@ impl MessageSearch {
         let db = Connection::open(path)?;
         db.execute_batch(include_str!("schema.sql"))?;
         let service = Self {
+            catalog: Arc::clone(&catalog),
             path: Arc::new(path.to_path_buf()),
             indexing: Arc::new(AtomicBool::new(true)),
             failed: Arc::new(AtomicUsize::new(0)),
@@ -117,6 +127,13 @@ impl MessageSearch {
             )?;
             db.busy_timeout(std::time::Duration::from_millis(100))?;
             let mut page = query::read(&db, &query)?;
+            let mut visible = Vec::with_capacity(page.data.len());
+            for hit in page.data {
+                if !service.catalog.visibility.excluded(&hit.thread_id)? {
+                    visible.push(hit);
+                }
+            }
+            page.data = visible;
             page.indexing = service.indexing.load(Ordering::Acquire);
             page.failed_sources = service.failed.load(Ordering::Acquire);
             Ok(page)

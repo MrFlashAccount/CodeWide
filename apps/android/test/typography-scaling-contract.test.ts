@@ -11,7 +11,7 @@ const productText = readFileSync(
   "utf8",
 );
 const screen = compactSource(
-  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 const timelineList = readFileSync(
   new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url),

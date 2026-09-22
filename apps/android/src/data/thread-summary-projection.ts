@@ -1,13 +1,23 @@
+import {
+  closesAsyncQuestions,
+  isFinalQuestionTurnMessage,
+  currentAsyncQuestions,
+  hasAsyncQuestions,
+} from "./questionLifecycle";
 import { unknownRecord } from "./unknownRecord";
 import { isThread } from "./thread-cursor-sync";
 import { threadSummaryDescendants } from "./thread-summary-descendants";
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import {
   threadProjectionPatchFromEvent,
   type ThreadProjectionPatchV1,
 } from "@codewide/sync-client";
 
-import { normalizeThreadStatus, type StoredThreadSummary } from "./thread-summary-types";
+import {
+  normalizeThreadStatus,
+  type QuestionOpportunity,
+  type StoredThreadSummary,
+} from "./thread-summary-types";
 import { subagentOwnTurns } from "./subagent-projection";
 import { latestThreadMessagePreview, plainThreadPreview } from "./thread-cache";
 
@@ -60,10 +70,19 @@ export function projectThreadSummarySnapshot(
     // conversation message into `preview`. A detailed snapshot with turns is
     // still more authoritative than the list projection.
     archived,
+    closedQuestionTurnId: questionTurnClosed(thread.turns.at(-1))
+      ? (thread.turns.at(-1)?.id ?? previous?.closedQuestionTurnId ?? null)
+      : (previous?.closedQuestionTurnId ?? null),
     cwd: thread.cwd,
     gitOriginUrl: thread.gitInfo?.originUrl ?? previous?.gitOriginUrl ?? null,
     lastSeenCursor: previous?.lastSeenCursor ?? 0,
     latestActivityCursor: previous?.latestActivityCursor ?? 0,
+    pendingQuestion:
+      thread.turns.length > 0
+        ? questionOpportunity(previewThread.turns)
+        : thread.status.type === "active" && thread.updatedAt === previous?.updatedAt
+          ? (previous.pendingQuestion ?? null)
+          : null,
     pendingRequestCount: previous?.pendingRequestCount ?? 0,
     pinned: previous?.pinned ?? false,
     preview: selectPreview(
@@ -72,7 +91,9 @@ export function projectThreadSummarySnapshot(
       isSubagent && (previous?.latestActivityCursor ?? 0) <= 0 ? undefined : previous?.preview,
     ),
     recencyAt: thread.recencyAt,
+    skippedQuestions: previous?.skippedQuestions ?? null,
     status: normalizeThreadStatus(thread.status),
+    submittedQuestions: previous?.submittedQuestions ?? null,
     unread: previous?.unread ?? 0,
     updatedAt: thread.updatedAt,
     // A list snapshot means the thread is now materialized by the companion.
@@ -136,7 +157,7 @@ function projectThreadSummaryPatch(
   const operation = patch.operation;
   if (operation.kind === "threadStarted") {
     const thread = operation.thread;
-    if (!isThread(thread) || thread.ephemeral) {
+    if (!isThread(thread)) {
       return null;
     }
     const previous = previousFor(thread.id);
@@ -157,6 +178,45 @@ function projectThreadSummaryPatch(
     return null;
   }
   const next: StoredThreadSummary = { ...previous };
+  if (
+    operation.kind === "turnStarted" ||
+    (operation.kind === "itemUpsert" && closesAsyncQuestions(operation.item)) ||
+    (operation.kind === "turnCompleted" &&
+      object(operation.turn)?.id === previous.pendingQuestion?.turnId)
+  ) {
+    next.pendingQuestion = null;
+  } else if (
+    operation.kind === "itemUpsert" &&
+    hasAsyncQuestions(operation.item) &&
+    typeof operation.turnId === "string" &&
+    operation.turnId !== next.closedQuestionTurnId
+  ) {
+    const itemId = object(operation.item)?.id;
+    if (typeof itemId === "string") {
+      const currentIds =
+        next.pendingQuestion?.turnId === operation.turnId ? next.pendingQuestion.itemIds : [];
+      next.pendingQuestion = {
+        itemIds: currentIds.includes(itemId) ? currentIds : [...currentIds, itemId],
+        turnId: operation.turnId,
+      };
+    }
+  }
+  if (operation.kind === "turnCompleted") {
+    const completedId = object(operation.turn)?.id;
+    if (typeof completedId === "string") {
+      next.closedQuestionTurnId = completedId;
+    }
+  }
+  if (
+    operation.kind === "itemUpsert" &&
+    isFinalQuestionTurnMessage(operation.item) &&
+    typeof operation.turnId === "string"
+  ) {
+    next.closedQuestionTurnId = operation.turnId;
+  }
+  const attentionChanged =
+    next.pendingQuestion !== previous.pendingQuestion ||
+    next.closedQuestionTurnId !== previous.closedQuestionTurnId;
   if (operation.kind === "threadName") {
     next.name = typeof operation.threadName === "string" ? operation.threadName : null;
   } else if (operation.kind === "threadStatus" && object(operation.status) !== null) {
@@ -172,7 +232,7 @@ function projectThreadSummaryPatch(
     }
     const summary = object(operation.summary);
     if (summary === null || summary.activity !== true) {
-      return lifecycleChanged ? { key, value: next } : null;
+      return lifecycleChanged || attentionChanged ? { key, value: next } : null;
     }
     if (typeof summary.previewText === "string") {
       const preview = plainThreadPreview(summary.previewText);
@@ -199,4 +259,22 @@ function projectThreadSummaryPatch(
 
 function object(value: unknown): Record<string, unknown> | null {
   return unknownRecord(value);
+}
+
+function questionOpportunity(turns: Thread["turns"]): QuestionOpportunity | null {
+  const questions = currentAsyncQuestions(turns);
+  const latest = questions.at(-1);
+  return latest === undefined
+    ? null
+    : {
+        itemIds: questions.map(({ item }) => item.id),
+        turnId: latest.turnId,
+      };
+}
+
+function questionTurnClosed(turn: Thread["turns"][number] | undefined): boolean {
+  return (
+    turn !== undefined &&
+    (turn.status !== "inProgress" || turn.items.some(isFinalQuestionTurnMessage))
+  );
 }

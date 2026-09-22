@@ -1,13 +1,14 @@
-import type { ReactNode } from "react";
-import { StyleSheet, type StyleProp, type ViewStyle } from "react-native";
+import { useInsertionEffect, type ReactNode } from "react";
+import { I18nManager, Platform, StyleSheet, type StyleProp, type ViewStyle } from "react-native";
 import Reanimated, {
   Easing,
   type EntryAnimationsValues,
   type ExitAnimationsValues,
   Keyframe,
-  useDerivedValue,
+  useSharedValue,
   withTiming,
 } from "react-native-reanimated";
+import { runOnUISync } from "react-native-worklets";
 
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import { v1MobileRouteMotion } from "./v1MobileRouteMotion";
@@ -21,27 +22,33 @@ const TIMING = {
 
 type NavigationDirection = "back" | "forward";
 
-const enterForward = new Keyframe({
-  0: {
-    opacity: 0,
-    transform: [{ translateX: v1MobileRouteMotion.foregroundTravel.positivePercent }],
-  },
-  [TRANSITION_END_PERCENT]: {
-    easing: FAST_OUT_SLOW_IN,
-    opacity: 1,
-    transform: [{ translateX: "0%" }],
-  },
-}).duration(v1MobileRouteMotion.durationMs);
-const exitBack = new Keyframe({
-  0: { opacity: 1, transform: [{ translateX: "0%" }] },
-  [TRANSITION_END_PERCENT]: {
-    easing: FAST_OUT_SLOW_IN,
-    opacity: 0,
-    transform: [{ translateX: v1MobileRouteMotion.foregroundTravel.positivePercent }],
-  },
-}).duration(v1MobileRouteMotion.durationMs);
+function detailMotion(isRTL: boolean) {
+  const edge =
+    `${isRTL ? "-" : ""}${v1MobileRouteMotion.foregroundTravel.positivePercent}` as const;
+  const enterForward = new Keyframe({
+    0: {
+      opacity: 0,
+      transform: [{ translateX: edge }],
+    },
+    [TRANSITION_END_PERCENT]: {
+      easing: FAST_OUT_SLOW_IN,
+      opacity: 1,
+      transform: [{ translateX: "0%" }],
+    },
+  }).duration(v1MobileRouteMotion.durationMs);
+  const exitBack = new Keyframe({
+    0: { opacity: 1, transform: [{ translateX: "0%" }] },
+    [TRANSITION_END_PERCENT]: {
+      easing: FAST_OUT_SLOW_IN,
+      opacity: 0,
+      transform: [{ translateX: edge }],
+    },
+  }).duration(v1MobileRouteMotion.durationMs);
 
-/** Mirrors the V1 mobile native-stack push/pop transition inside one retained sheet shell. */
+  return { enterForward, exitBack };
+}
+
+/** Uses opposing push/pop directions inside a retained sheet, with V1 route timing and distances. */
 export function SheetPageTransition({
   children,
   direction,
@@ -52,13 +59,35 @@ export function SheetPageTransition({
   readonly routeKey: string;
 }): React.JSX.Element {
   const reducedMotion = useReducedMotionPreference();
-  const animatedDirection = useDerivedValue<NavigationDirection>(() => direction ?? "forward");
+  const side = I18nManager.isRTL ? -1 : 1;
+  const outgoingRatio =
+    side *
+    (direction === "back"
+      ? v1MobileRouteMotion.foregroundTravel.ratio
+      : -v1MobileRouteMotion.backgroundTravel.ratio);
+  const exitRatio = useSharedValue(outgoingRatio);
+  useInsertionEffect(() => {
+    const publish = () => {
+      "worklet";
+      exitRatio.set(outgoingRatio);
+    };
+    // WHY: Fabric commits the host container after descendant insertion effects.
+    // Publish synchronously before that commit can start the removed page's saved
+    // exit worklet. A passive mapper (or queued UI write) can leave it one route late.
+    if (Platform.OS === "web") {
+      publish();
+    } else {
+      runOnUISync(publish);
+    }
+  }, [exitRatio, outgoingRatio]);
   const enterPage = ({ windowWidth }: EntryAnimationsValues) => {
     "worklet";
     const initialOffset =
-      animatedDirection.get() === "forward"
-        ? windowWidth * v1MobileRouteMotion.foregroundTravel.ratio
-        : -windowWidth * v1MobileRouteMotion.backgroundTravel.ratio;
+      side *
+      windowWidth *
+      (direction === "forward"
+        ? v1MobileRouteMotion.foregroundTravel.ratio
+        : -v1MobileRouteMotion.backgroundTravel.ratio);
     return {
       animations: {
         opacity: withTiming(1, TIMING),
@@ -69,10 +98,7 @@ export function SheetPageTransition({
   };
   const exitPage = ({ windowWidth }: ExitAnimationsValues) => {
     "worklet";
-    const targetOffset =
-      animatedDirection.get() === "forward"
-        ? -windowWidth * v1MobileRouteMotion.backgroundTravel.ratio
-        : windowWidth * v1MobileRouteMotion.foregroundTravel.ratio;
+    const targetOffset = windowWidth * exitRatio.get();
     return {
       animations: {
         opacity: withTiming(0, TIMING),
@@ -125,6 +151,7 @@ export function SheetDetailTransition({
 }): React.JSX.Element {
   const reducedMotion = useReducedMotionPreference();
   if (!reducedMotion) {
+    const { enterForward, exitBack } = detailMotion(I18nManager.isRTL);
     return (
       <Reanimated.View
         entering={enterForward}

@@ -1,0 +1,70 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "defaultBase": "main",
+  "plugins": [
+    {
+      "plugin": "@nx/expo/plugin",
+      "options": {
+        "startTargetName": "expo:start",
+        "serveTargetName": "expo:serve",
+        "runIosTargetName": "expo:run-ios",
+        "runAndroidTargetName": "expo:run-android",
+        "exportTargetName": "expo:export",
+        "prebuildTargetName": "expo:prebuild",
+        "installTargetName": "expo:install",
+        "buildTargetName": "expo:build",
+        "submitTargetName": "expo:submit"
+      }
+    }
+  ],
+  "pluginsConfig": {
+    "@nx/js": {
+      "projectsAffectedByDependencyUpdates": "auto"
+    }
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*"],
+    "production": [
+      "default",
+      "!{projectRoot}/**/*.md",
+      "!{projectRoot}/**/*.test.*",
+      "!{projectRoot}/**/*.spec.*",
+      "!{projectRoot}/**/tests.rs",
+      "!{projectRoot}/test/**/*",
+      "!{projectRoot}/tests/**/*"
+    ],
+    "sharedGlobals": [
+      "{workspaceRoot}/package.json",
+      "{workspaceRoot}/pnpm-lock.yaml",
+      "{workspaceRoot}/pnpm-workspace.yaml"
+    ],
+    "rustWorkspace": [
+      "{workspaceRoot}/Cargo.toml",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/clippy.toml"
+    ]
+  },
+  "targetDefaults": {
+    "check": {
+      "cache": true,
+      "inputs": ["default", "^default"]
+    },
+    "test": {
+      "cache": true,
+      "inputs": ["default", "^default"]
+    },
+    "build": {
+      "cache": true,
+      "inputs": ["production", "^production"]
+    },
+    "package": {
+      "cache": true,
+      "inputs": ["production", "^production"]
+    },
+    "release": {
+      "cache": false,
+      "inputs": ["production", "^production"]
+    }
+  }
+}

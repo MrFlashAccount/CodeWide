@@ -289,29 +289,6 @@ impl LocalhostTunnelService {
         }
     }
 
-    #[cfg(feature = "e2e-command-fault")]
-    /// Advances an owned tunnel to its normal expiry boundary for an authenticated E2E run.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NotFound` for an unknown tunnel and `Unauthorized` when the expected owner differs.
-    pub(crate) async fn expire_for_e2e(
-        &self,
-        id: &str,
-        owner_device_id: &str,
-    ) -> Result<(), TunnelError> {
-        {
-            let mut tunnels = self.tunnels.lock().await;
-            let tunnel = tunnels.get_mut(id).ok_or(TunnelError::NotFound)?;
-            if tunnel.owner_device_id.as_deref() != Some(owner_device_id) {
-                return Err(TunnelError::Unauthorized);
-            }
-            tunnel.expires_at = unix_time_ms();
-        }
-        self.purge_expired().await;
-        Ok(())
-    }
-
     pub async fn revoke_device_tunnels(&self, device_id: &str) {
         let mut tunnels = self.tunnels.lock().await;
         let ids = tunnels
@@ -931,10 +908,13 @@ mod tests {
         let headers = HeaderMap::new();
 
         let v1_path = format!("/v1/tunnels/{}/", created.id);
-        let v2_path = format!("/v2/tunnels/{}/", created.id);
+        let alternate_path = format!("/alternate/tunnels/{}/", created.id);
 
         assert!(browser_cookie(&headers, &tunnel, &v1_path).contains(&format!("Path={v1_path};")));
-        assert!(browser_cookie(&headers, &tunnel, &v2_path).contains(&format!("Path={v2_path};")));
+        assert!(
+            browser_cookie(&headers, &tunnel, &alternate_path)
+                .contains(&format!("Path={alternate_path};"))
+        );
     }
 
     #[tokio::test]
@@ -1077,27 +1057,6 @@ mod tests {
             }
         }
         assert_eq!(admitted, 1);
-    }
-
-    #[cfg(feature = "e2e-command-fault")]
-    #[tokio::test]
-    async fn e2e_expiry_requires_the_exact_tunnel_owner() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let service = LocalhostTunnelService::new()?;
-        let created = service
-            .create_for_device(80, Some(300), Some("device-a".to_owned()))
-            .await?;
-        assert!(matches!(
-            service.expire_for_e2e(&created.id, "device-b").await,
-            Err(TunnelError::Unauthorized)
-        ));
-        assert!(service.tunnel(&created.id).await.is_ok());
-        service.expire_for_e2e(&created.id, "device-a").await?;
-        assert!(matches!(
-            service.tunnel(&created.id).await,
-            Err(TunnelError::NotFound)
-        ));
-        Ok(())
     }
 
     #[tokio::test]

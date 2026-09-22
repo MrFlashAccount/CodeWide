@@ -41,7 +41,6 @@ async fn authenticate(
         } => {
             complete_pairing_claim(
                 registry,
-                state.services.sync_v2.as_ref(),
                 state.services.media.as_deref(),
                 state.services.image_previews.as_deref(),
                 PairingClaim {
@@ -98,7 +97,6 @@ async fn authenticate_bootstrap(
     };
     complete_pairing_claim(
         registry,
-        state.services.sync_v2.as_ref(),
         state.services.media.as_deref(),
         state.services.image_previews.as_deref(),
         PairingClaim {
@@ -147,7 +145,6 @@ async fn pairing_claim(
     }
     complete_pairing_claim(
         registry,
-        state.services.sync_v2.as_ref(),
         state.services.media.as_deref(),
         state.services.image_previews.as_deref(),
         claim,
@@ -157,15 +154,10 @@ async fn pairing_claim(
 
 async fn complete_pairing_claim(
     registry: &DeviceRegistry,
-    sync_v2: Option<&SyncV2Runtime>,
     media: Option<&MediaProxyService>,
     image_previews: Option<&ImagePreviewService>,
     claim: PairingClaim,
 ) -> Response {
-    #[cfg(feature = "e2e-command-fault")]
-    if let Some(response) = e2e_pairing_exchange_fault(sync_v2).await {
-        return response;
-    }
     let result = match registry.claim(claim).await {
         Ok(result) => result,
         Err(error) => return auth_error(&error),
@@ -176,14 +168,6 @@ async fn complete_pairing_claim(
         }
         if let Some(image_previews) = image_previews {
             image_previews.purge_media_owner(&result.device_id);
-        }
-        if let Some(runtime) = sync_v2
-            && !runtime.purge_device_context(&result.device_id).await
-        {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "sync_v2_context_purge_failed",
-            );
         }
     }
     (
@@ -199,30 +183,6 @@ async fn complete_pairing_claim(
         .into_response()
 }
 
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_pairing_exchange_fault(sync_v2: Option<&SyncV2Runtime>) -> Option<Response> {
-    let runtime = sync_v2?;
-    match runtime
-        .intercept_e2e_surface_fault(crate::sync_v2::E2ESurfaceFaultTarget::PairingExchange)
-        .await?
-    {
-        crate::sync_v2::E2ESurfaceFaultEffect::Continue => None,
-        crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => Some(json_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            &format!("e2e_pairing_exchange_{marker}"),
-        )),
-        crate::sync_v2::E2ESurfaceFaultEffect::NotFound
-        | crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-        | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
-        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
-        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
-        | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-        | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => Some(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "e2e_pairing_exchange_action_mismatch",
-        )),
-    }
-}
 
 async fn session_challenge(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let Some(registry) = registry(&state.authorization) else {
@@ -282,15 +242,6 @@ async fn device_revoke(
             }
             if revoked && let Some(image_previews) = &state.services.image_previews {
                 image_previews.purge_media_owner(&device_id);
-            }
-            if revoked
-                && let Some(runtime) = &state.services.sync_v2
-                && !runtime.purge_device_context(&device_id).await
-            {
-                return json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "sync_v2_context_purge_failed",
-                );
             }
             let status = if revoked {
                 StatusCode::OK

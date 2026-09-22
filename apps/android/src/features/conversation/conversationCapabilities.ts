@@ -1,4 +1,4 @@
-import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { TurnUsageProjection } from "@codewide/sync-client";
 import type { ReactNode } from "react";
 import type { ThreadChatModel } from "../../data/thread-chat-model";

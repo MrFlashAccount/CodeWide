@@ -146,9 +146,24 @@ exit 0
     expect(ota.stdout).toContain('"artifact": "built-signed-scanned"');
     expect(releaseFiles(fixture, "builds/ota")).toEqual([]);
 
-    const apk = runCommand(tsx, ["scripts/release-android.ts", "apk", "--dry-run"], fixture, environment);
+    const apk = runCommand(
+      tsx,
+      [
+        "scripts/release-android.ts",
+        "apk",
+        "--dry-run",
+        "--version",
+        "9.8.7",
+        "--version-code",
+        "9008007",
+      ],
+      fixture,
+      environment,
+    );
     expect(apk.stdout).toContain('"artifact": "built-signed-scanned"');
     expect(apk.stdout).toContain('"dryRun": true');
+    expect(apk.stdout).toContain('"versionName": "9.8.7"');
+    expect(apk.stdout).toContain('"versionCode": 9008007');
     expect(readAndroidSources(fixture)).toEqual(originalSources);
     expect(releaseFiles(fixture, "builds/android")).toEqual([]);
 

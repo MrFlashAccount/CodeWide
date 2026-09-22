@@ -29,7 +29,8 @@ it("keeps one row snapshot through drag and momentum, then publishes the latest 
   const reorderedRows: readonly Row[] = [{ id: "second" }, { id: "first" }];
   const onOffsetChange = jest.fn();
   const hook = renderHook(
-    ({ rows }) => useThreadListScrollController(rows, "active", onOffsetChange),
+    ({ rows }) =>
+      useThreadListScrollController(rows, "active", { keyFor: (row) => row.id, onOffsetChange }),
     { initialProps: { rows: initialRows } },
   );
 
@@ -52,7 +53,11 @@ it("releases the snapshot when a drag finishes without momentum", () => {
   const initialRows: readonly Row[] = [{ id: "first" }];
   const nextRows: readonly Row[] = [{ id: "second" }];
   const hook = renderHook(
-    ({ rows }) => useThreadListScrollController(rows, "active", () => undefined),
+    ({ rows }) =>
+      useThreadListScrollController(rows, "active", {
+        keyFor: (row) => row.id,
+        onOffsetChange: () => undefined,
+      }),
     { initialProps: { rows: initialRows } },
   );
 
@@ -70,7 +75,11 @@ it("never carries a frozen snapshot into another list scope", () => {
   const initialRows: readonly Row[] = [{ id: "first" }];
   const otherScopeRows: readonly Row[] = [{ id: "other" }];
   const hook = renderHook(
-    ({ rows, scopeKey }) => useThreadListScrollController(rows, scopeKey, () => undefined),
+    ({ rows, scopeKey }) =>
+      useThreadListScrollController(rows, scopeKey, {
+        keyFor: (row) => row.id,
+        onOffsetChange: () => undefined,
+      }),
     { initialProps: { rows: initialRows, scopeKey: "active" } },
   );
 
@@ -79,4 +88,22 @@ it("never carries a frozen snapshot into another list scope", () => {
 
   expect(hook.result.current.rows).toBe(otherScopeRows);
   expect(THREAD_LIST_VISIBLE_CONTENT_POSITION).toEqual({ data: true, size: false });
+});
+
+it("admits older pages during momentum while keeping existing rows in their gesture order", () => {
+  const initialRows: readonly Row[] = [{ id: "first" }, { id: "second" }];
+  const nextRows: readonly Row[] = [{ id: "second" }, { id: "first" }, { id: "older" }];
+  const hook = renderHook(
+    ({ rows }) =>
+      useThreadListScrollController(rows, "active", {
+        keyFor: (row) => row.id,
+        onOffsetChange: () => undefined,
+      }),
+    { initialProps: { rows: initialRows } },
+  );
+  act(() => hook.result.current.onMomentumScrollBegin());
+  hook.rerender({ rows: nextRows });
+  expect(hook.result.current.rows.map((row) => row.id)).toEqual(["first", "second", "older"]);
+  act(() => hook.result.current.onMomentumScrollEnd(scrollEvent(120)));
+  expect(hook.result.current.rows).toBe(nextRows);
 });

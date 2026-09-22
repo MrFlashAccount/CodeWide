@@ -45,6 +45,8 @@ docker run --rm \
   --volume "$target_volume:/build-target" \
   --workdir /workspace \
   --env CARGO_TARGET_DIR=/build-target \
+  --env CODEWIDE_COMPANION_VERSION \
+  --env CODEWIDE_CORE_VERSION \
   "$build_image" \
   sh -eu -c '
     apk add --no-cache build-base cmake perl pkgconfig

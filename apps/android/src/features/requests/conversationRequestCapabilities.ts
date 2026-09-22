@@ -1,3 +1,4 @@
+import type { RequestsWorkspaceCapabilities } from "./workspaceCapabilities";
 import type { PendingServerRequest } from "../../data/pending-request-types";
 /** Qualified capabilities consumed by the requests owner in conversation composition. */
 export type ConversationRequestCapabilities = {
@@ -6,4 +7,6 @@ export type ConversationRequestCapabilities = {
     | undefined;
   pendingRequest: PendingServerRequest | null;
   pendingRequestCount: number;
+  questionSummaries?: ReturnType<RequestsWorkspaceCapabilities["getQuestionSummaries"]>;
+  sendQuestionAnswer?: RequestsWorkspaceCapabilities["sendQuestionAnswer"];
 };

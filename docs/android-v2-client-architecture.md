@@ -1,5 +1,9 @@
 # Android V2: independent Expo Router runtime over Sync API V2
 
+> Historical document: the CodeWide V2 implementation and parity harness were removed
+> on 2026-09-21. See [current retirement scope](android-v2-retirement.md).
+
+
 > Historical Android V2 design. The Android frontend was retired on 2026-09-21; see [scope and UI reuse audit](android-v2-retirement.md). Companion and sync-client V2 remain separate.
 
 Port inventory arrives through the shared sync websocket and a coalescing native

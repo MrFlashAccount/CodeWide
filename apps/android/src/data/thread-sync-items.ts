@@ -1,4 +1,4 @@
-import type { ThreadItemsListResponse, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadItemsListResponse, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { RpcResponseError, type RpcClient } from "@codewide/sync-client";
 import { recordTiming } from "./operational-metrics";
 import type { ThreadSyncAuthority } from "./thread-sync-types";

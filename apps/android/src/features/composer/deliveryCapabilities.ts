@@ -7,6 +7,7 @@ export type ComposerDeliveryCapabilities = {
   attachments: StoredDraftAttachment[];
   cancelQueuedComposerEdit: () => void;
   clearComposerText: () => void;
+  composerScope: string;
   currentTurnId: string | null;
   discardVoice: () => Promise<void>;
   draft: string;

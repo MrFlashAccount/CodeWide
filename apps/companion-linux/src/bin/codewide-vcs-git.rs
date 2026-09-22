@@ -111,7 +111,7 @@ fn initialize(params: &Value) -> Result<Value, ProviderError> {
         "protocolVersion": PROTOCOL_VERSION,
         "provider": "git",
         "displayName": "Git",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": env!("CODEWIDE_COMPANION_VERSION"),
         "capabilities": [
             CHANGES_CAPABILITY,
             DIFF_CAPABILITY,

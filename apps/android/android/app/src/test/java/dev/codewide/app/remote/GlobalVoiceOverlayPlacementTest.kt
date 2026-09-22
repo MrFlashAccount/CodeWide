@@ -95,15 +95,6 @@ class GlobalVoiceOverlayPlacementTest {
   }
 
   @Test
-  fun repeatedInsetsDoNotReportAFakeSafeBoundsChange() {
-    val tracker = OverlaySafeBoundsTracker(bounds)
-
-    assertFalse(tracker.update(bounds))
-    assertTrue(tracker.update(bounds.copy(maxY = 500f)))
-    assertFalse(tracker.update(bounds.copy(maxY = 500f)))
-  }
-
-  @Test
   fun releaseInSnapZoneCarriesGestureVelocityIntoAnimation() {
     val placement = GlobalVoiceOverlayPlacement.release(
       point = OverlayPoint(272f, 240f),

@@ -20,12 +20,12 @@ The device-wide Voice Assistant personality is a settings/data contract, not fea
 
 ## Internal owners
 
-| Owner                                 | Responsibility                                                                                                    | Excluded responsibility                                      |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| feature model                         | binding/capability/activation discriminated state, stable render resource, action settlement and recovery mapping | persistence, RPC, native calls, connection discovery         |
-| `V1WorkspaceRouteComposition` adapter | select the active toggle projection and bind the stable app-level action                                          | model construction, transport subscription, route navigation |
-| `GlobalVoiceEntryAction`              | render the selected orb start/stop control and durable attention count in the persistent thread-list header       | activation policy, transport, recovery                       |
-| feature capability adapters           | convert between feature contracts and injected lower ports                                                        | owning lower session/database/delivery/media state machines  |
+| Owner                               | Responsibility                                                                                                    | Excluded responsibility                                      |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| feature model                       | binding/capability/activation discriminated state, stable render resource, action settlement and recovery mapping | persistence, RPC, native calls, connection discovery         |
+| `WorkspaceRouteComposition` adapter | select the active toggle projection and bind the stable app-level action                                          | model construction, transport subscription, route navigation |
+| `GlobalVoiceEntryAction`            | render the selected orb start/stop control and durable attention count in the persistent thread-list header       | activation policy, transport, recovery                       |
+| feature capability adapters         | convert between feature contracts and injected lower ports                                                        | owning lower session/database/delivery/media state machines  |
 
 There is no Global Voice route or dedicated screen. The persistent thread-list header contains the foreground start/stop interaction. On Android, an explicit start first requests the app-specific system-overlay grant. A granted activation exposes the selected Nebula or Particles renderer in a draggable `TYPE_APPLICATION_OVERLAY` window, so the companion remains reachable while CodeWide is backgrounded. A tap opens circular native Stop and More icon controls. Drag follows the pointer through bounded overscroll inside current inset-safe bounds; release inside a narrow edge zone continues the gesture velocity into a spring snap, release outside safe bounds springs back, and release elsewhere persists a normalized free position. Rotation and inset changes restore that normalized placement into the new safe bounds. Revoking or withholding the separate overlay grant never changes microphone foreground-service ownership or the media cleanup contract. The underlying model distinguishes unbound, activating, creating, ready, starting, listening, reconnecting, thinking, speaking, tool activity, stopping and failed states. Recovery actions remain mutually exclusive and typed; the toggle applies the current recovery before retrying activation. Expected capability, home and media failures use fixed copy in the application notice surface and never replace the workspace with the global crash-recovery UI.
 
@@ -40,6 +40,29 @@ Entering is explicit, and ordinary navigation or app backgrounding does not end 
 Interactive Android WebRTC does not acquire global communication-audio mode or force a communication device. The system-selected media output remains authoritative before, during and after Global Voice, including wired, USB, Bluetooth and BLE routes. The native ADM explicitly uses voice-communication capture, media speech playback attributes and its hardware AEC/NS policy; this scopes processing to ADM without taking over the device-wide route. Raw V1 PCM capture separately owns Android session effects, including supported AEC on its exact `audioSessionId`; no software echo canceller is layered on either path. V2 `VOICE_RECOGNITION` capture has a separate non-full-duplex lifecycle and remains unchanged.
 
 The foreground service owns the orb's two independent audio envelopes for the exact lifetime of an interactive Global Voice overlay. The ADM samples callback reduces microphone PCM synchronously to a bounded input level and discards the frame, so listening remains responsive while the Activity is backgrounded without another capture or wake lock. The same callback advances a content-free native capture-health timestamp. When the explicit personal-voice experiment is enabled, the callback also feeds a bounded rolling window to a background spectral matcher. The WebRTC microphone track opens optimistically as soon as the local VAD sees a new voice segment, then the matcher either admits that segment or closes it after a bounded confirmation window. A rejected continuous source stays closed until silence resets the segment, while a later profile match over the 120-160 ms rolling window may reopen it. This removes the previous 800-1000 ms admission delay. A clean new segment can still lose the local VAD and bridge scheduling prefix, and speech beginning over a continuous rejected source can lose the short match window; the tradeoff is that a rejected speaker can send a brief prefix before confirmation. Disabling the track does not stop local AudioRecord capture. Only the embedding is persisted, raw enrollment and rolling PCM are discarded, and the filter is scoped to Global Voice rather than the shared ADM contract. While an unmuted listening/thinking/speaking phase expects capture, a bounded sample gap changes the native overlay to connecting and terminates only the current WebRTC transport; the existing reconnect owner retains the activation, supervisor thread, foreground token and logical microphone lease. Android screen on/off, ADM start/stop/error, sample age, peer connection state and outbound RTP byte/packet counters are logged without PCM or transcript text. A transient WebRTC `disconnected` state receives a grace period; sustained disconnection enters the same reconnect path. The existing peer stats poll reads only inbound remote-audio level and forwards it as playback level. `listening` selects input, explicit `thinking` ignores both levels and runs its autonomous motion, and `speaking` selects playback; real playback onset publishes the semantic speaking phase.
+
+The Android overlay has a separate native presentation projection for the same live WebRTC peer.
+`VoiceCaptureForegroundService` owns `GlobalVoiceWebRtcObserver`; a narrow RN WebRTC patch
+observes the existing peer's events and stats without replacing its JS observer. Native VAD,
+response/output-buffer edges and inbound audio stats continue with a stopped Activity and without
+JS timer execution. The JS stats callback remains the feature speech/delivery projection; its
+legacy playback bridge cannot overwrite the native envelope while a peer is observed.
+
+The native arbiter gates ordinary presentation behind connection health and explicit Stop/error.
+Within a connected session, confirmed user VAD selects listening and the ADM input envelope,
+then actual output playback selects speaking, then a pending response or home activity selects
+thinking. Barge-in clears the previous playback hold; samples during user speech do not rearm
+that hold. A newly observed output-buffer start or subsequent audio can establish playback again.
+Response completion alone does not mean output audio has drained. Native connection recovery
+opens a connecting gate; error/Stop requires a new peer owner. Muting clears user VAD without
+suppressing assistant playback. Removing the peer observer fences queued events and in-flight
+stats before the async media cleanup; the last foreground lease also closes observation.
+
+Backdrop geometry belongs to each renderer: Nebula uses its shader disc radius; Particles uses
+the outermost projected dot including its radius. The backdrop adds 3dp and follows with a
+180ms time constant (static/reduced-motion snapshots snap). Its drawing may extend beyond the
+66dp child, while the 76dp overlay window and gesture geometry remain unchanged. The independent
+handoff transform scales both visuals together.
 
 Existing dictation and Global Voice Mode share one neutral, generation-fenced V1 microphone arbiter below both consumers. Its explicit states are idle, assistant-owned, handoff-to-dictation, dictation-owned and handoff-back. Dictation may suspend the active assistant transport, but it does not release the logical activation, supervisor thread, foreground overlay or context. The arbiter grants the dictation token only after the assistant transport has stopped; finishing, cancelling or failing dictation starts the reverse handoff and recreates transport on the same activation/thread. A second input remains busy, repeated acquisition of the same pending input is deduplicated, and exact-token release prevents a stale completion from stopping a newer capture. Explicit assistant Stop removes the suspended resume right, so later dictation cleanup cannot resurrect it. The feature and dictation controller meet only through this narrow injected contract; neither imports the other.
 
@@ -72,9 +95,9 @@ The realtime control adapter is live-only and channel/thread/sequence fenced. SD
 
 ## App-level composition
 
-Global Voice has no Expo Router destination. `V1WorkspaceRouteComposition` obtains the already-created contract from `createWorkspaceFeatures`, derives the toggle presentation state and passes one stable control into both responsive thread-list headers. Navigation, Back, route unmount and ordinary app backgrounding do not stop an activation. Biometric lock may pause and resume its transport without ending it. Only the same active toggle, a terminal failure or runtime teardown may stop it.
+Global Voice has no Expo Router destination. `WorkspaceRouteComposition` obtains the already-created contract from `createWorkspaceFeatures`, derives the toggle presentation state and passes one stable control into both responsive thread-list headers. Navigation, Back, route unmount and ordinary app backgrounding do not stop an activation. Biometric lock may pause and resume its transport without ending it. Only the same active toggle, a terminal failure or runtime teardown may stop it.
 
-The bound thread is never exposed as an ordinary CodeWide conversation route. Exact lower visibility and route-admission policy excludes it from active, archived, search, project, aggregate-count, default-selection and direct-route surfaces. Other App Server clients may still display it.
+The bound thread remains excluded from ordinary catalog/search/project/count/default-selection surfaces by Companion. The explicitly requested fifth overlay action publishes the current qualified home to Android and opens its ordinary conversation route for inspection. It does not change catalog membership or create a separate transcript authority. An incomplete home or stopping activation clears the shortcut; home replacement updates it. Other App Server clients may still display the thread.
 
 ## Required verification
 

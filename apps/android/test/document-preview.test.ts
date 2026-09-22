@@ -18,7 +18,7 @@ const changes = readFileSync(
   new URL("../src/features/changes/RouteCodeDocumentReview.tsx", import.meta.url),
   "utf8",
 );
-const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
 const workspace = readFileSync(
   new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
   "utf8",

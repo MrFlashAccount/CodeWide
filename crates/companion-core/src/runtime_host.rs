@@ -78,7 +78,15 @@ pub struct RuntimeHost {
     versions: RuntimeVersions,
     phase: RuntimePhase,
     started_at_unix_ms: u64,
-    _lock: File,
+    lock: File,
+}
+
+impl Drop for RuntimeHost {
+    fn drop(&mut self) {
+        // Release ownership explicitly: a child between fork and exec can still
+        // hold this file description, so closing our descriptor alone is insufficient.
+        let _ = fs2::FileExt::unlock(&self.lock);
+    }
 }
 
 impl RuntimeHost {
@@ -136,7 +144,7 @@ impl RuntimeHost {
             },
             phase: RuntimePhase::Running,
             started_at_unix_ms: unix_time_ms()?,
-            _lock: lock,
+            lock,
         })
     }
 
@@ -387,6 +395,26 @@ mod tests {
         let runtime = RuntimeHost::open(directory.path(), "1.0.0", "1.0.0")?;
         assert_eq!(runtime.health().launch_count, 5);
         assert!(state_path.with_extension("v0.backup.json").is_file());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn dropped_owner_releases_lock_with_an_inherited_descriptor() -> Result<(), RuntimeHostError> {
+        let directory = tempfile::tempdir()?;
+        let first = RuntimeHost::open(directory.path(), "1.0.0", "1.0.0")?;
+        // A concurrent process spawn can retain the same open file description
+        // between fork and exec. A duplicate models that lifetime without timing.
+        let inherited = first.lock.try_clone()?;
+        drop(first);
+
+        let second = RuntimeHost::open(directory.path(), "1.0.0", "1.0.0")?;
+        assert_eq!(second.health().launch_count, 2);
+        assert!(matches!(
+            RuntimeHost::open(directory.path(), "1.0.0", "1.0.0"),
+            Err(RuntimeHostError::AlreadyRunning(_))
+        ));
+        drop(inherited);
         Ok(())
     }
 

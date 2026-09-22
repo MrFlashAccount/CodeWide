@@ -50,7 +50,6 @@ function createWorkspaceFeatures() {
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
-    getVisibility: () => workspaceRuntime.globalSupervisorVisibility,
     rpcAfterAttach: rpcAfterAttach,
   });
   const projects = createProjectsWorkspaceAdapter({
@@ -111,7 +110,9 @@ function createWorkspaceFeatures() {
     scopedHttpAuthorization: scopedHttpAuthorization,
   });
   const requests = createRequestsWorkspaceAdapter({
+    delivery: commandDelivery,
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
+    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
   });
   const agents = { refreshSubagents: workspaceCatalog.refreshSubagents };
   const attachments = { transferAccess: transferAccess };

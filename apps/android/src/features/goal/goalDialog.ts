@@ -1,6 +1,6 @@
 import { useEvent } from "../../react/useEvent";
 /** V1 GoalFeature owner, extracted without changing interaction or resource lifetime. */
-import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import { useId, useState } from "react";
 import { useAppVoiceInputRuntime, useVoiceInputResource } from "../../ui/VoiceInputRuntime";
 import { validateGoalEditorDraft } from "./goalEditor";

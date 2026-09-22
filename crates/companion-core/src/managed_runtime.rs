@@ -513,7 +513,7 @@ mod tests {
             .pair_relay(
                 relay_address.to_string(),
                 serde_json::to_string(&InvitationBundle {
-                    version: 4,
+                    version: codewide_relay::pairing::INVITATION_VERSION,
                     relay_tls_pin_sha256: identity.pin(),
                     route_id: invitation.route_id,
                     invitation: invitation.token,

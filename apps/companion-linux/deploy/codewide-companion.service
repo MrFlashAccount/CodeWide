@@ -25,7 +25,8 @@ NoNewPrivileges=true
 CapabilityBoundingSet=
 AmbientCapabilities=
 KeyringMode=private
-PrivateTmp=true
+# Host-file previews must resolve the same /tmp and /var/tmp as agent processes.
+PrivateTmp=false
 # The terminal transport allocates pseudo-terminals through /dev/ptmx. A
 # private device namespace has no usable devpts instance on the supported user
 # service hosts, so enabling PrivateDevices makes every terminal upgrade fail.

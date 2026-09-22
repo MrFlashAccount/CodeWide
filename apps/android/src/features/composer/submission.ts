@@ -1,9 +1,9 @@
 import { composerUploads } from "../../data/composer-uploads";
-import { useState } from "react";
 import { remoteAttachment } from "../../data/quickdraw-attachment";
 import type { SendMode } from "../../data/thread-delivery-state";
 import { useEvent } from "../../react/useEvent";
 import { useAppDialog } from "../../ui/AppDialog";
+import { useConversationState } from "../../ui/use-conversation-scope";
 import { resolveComposerSendMode, type ComposerSendPreference } from "./deliveryMode";
 import { EMPTY_TURN_CONTROLS } from "./settings";
 import { containsSkillInvocation } from "./skills/composer-skill-suggestions";
@@ -247,6 +247,7 @@ export function useComposerDeliveryActions({
   attachments,
   cancelQueuedComposerEdit,
   clearComposerText,
+  composerScope,
   currentTurnId,
   discardVoice,
   draft,
@@ -266,7 +267,7 @@ export function useComposerDeliveryActions({
   voiceRetryAvailable,
 }: ComposerDeliveryCapabilities) {
   const dialog = useAppDialog();
-  const [actionPending, setActionPending] = useState(false);
+  const [actionPending, setActionPending] = useConversationState(composerScope, () => false);
   const runAction = useEvent((operation: () => Promise<void>, fallback: string): void => {
     if (actionPending) {
       return;

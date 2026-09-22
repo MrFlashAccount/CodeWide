@@ -1,8 +1,23 @@
 import { fireEvent, render } from "@testing-library/react-native";
-import type { ReactNode } from "react";
-import { Text } from "react-native";
+import { useState, type ReactNode } from "react";
+import { I18nManager, Pressable, Text } from "react-native";
 
 import { SettingsSheet } from "../src/features/settings/SettingsSheet";
+import { useSheetBackHandler } from "../src/ui/sheetNavigation";
+
+// Preserve the value shared with an outgoing page after its React key changes.
+jest.mock("react-native-reanimated", () => {
+  const React = jest.requireActual<typeof import("react")>("react");
+  const mock = jest.requireActual("./mocks/Reanimated");
+  return {
+    __esModule: true,
+    ...mock,
+    useSharedValue: (initial: unknown) => React.useState(() => mock.useSharedValue(initial))[0],
+  };
+});
+jest.mock("../src/rendering/reduced-motion-store", () => ({
+  useReducedMotionPreference: () => false,
+}));
 
 // WHY: Node cannot host the external Compose window. Exercise the real settings navigation,
 // AppSheet and list rows while replacing only the unavailable platform surface.
@@ -24,15 +39,35 @@ jest.mock("@expo/ui/jetpack-compose", () => {
   const ModalBottomSheet = React.forwardRef(function MockModalBottomSheet(
     {
       children,
+      onBackPress,
       onDismissRequest,
-    }: { readonly children?: ReactNode; readonly onDismissRequest: () => void },
+    }: {
+      readonly children?: ReactNode;
+      readonly onBackPress?: () => void;
+      readonly onDismissRequest: () => void;
+    },
     ref,
   ) {
-    React.useImperativeHandle(ref, () => ({ hide: async () => undefined }), []);
+    const [visible, setVisible] = React.useState(true);
+    const dismiss = () => {
+      setVisible(false);
+      onDismissRequest();
+    };
+    React.useImperativeHandle(
+      ref,
+      () => ({
+        hide: async () => {
+          setVisible(false);
+        },
+      }),
+      [],
+    );
+    if (!visible) return null;
     return (
       <View testID="native-sheet">
         {children}
-        <NativePressable accessibilityLabel="Dismiss native settings" onPress={onDismissRequest} />
+        <NativePressable accessibilityLabel="Dismiss native settings" onPress={dismiss} />
+        <NativePressable accessibilityLabel="Android Back" onPress={onBackPress ?? dismiss} />
       </View>
     );
   });
@@ -75,6 +110,39 @@ function setup() {
     },
   };
 }
+
+function NestedAdvancedPage() {
+  const [detail, setDetail] = useState(false);
+  useSheetBackHandler(detail, () => {
+    setDetail(false);
+  });
+  return detail ? (
+    <Text>Nested settings page</Text>
+  ) : (
+    <Pressable
+      accessibilityLabel="Open nested settings"
+      onPress={() => {
+        setDetail(true);
+      }}
+    />
+  );
+}
+
+it("returns through the deepest registered page before the settings overview", () => {
+  const props = setup();
+  const view = render(<SettingsSheet {...props} advanced={<NestedAdvancedPage />} />);
+  fireEvent.press(view.getByLabelText("Advanced"));
+  fireEvent.press(view.getByLabelText("Open nested settings"));
+  expect(view.getByText("Nested settings page")).toBeTruthy();
+  fireEvent.press(view.getByLabelText("Android Back"));
+  expect(view.getByLabelText("Open nested settings")).toBeTruthy();
+  expect(view.getByTestId("native-sheet")).toBeTruthy();
+  fireEvent.press(view.getByLabelText("Android Back"));
+  expect(view.getByLabelText("Advanced")).toBeTruthy();
+  expect(props.onClose).not.toHaveBeenCalled();
+  fireEvent.press(view.getByLabelText("Android Back"));
+  expect(props.onClose).toHaveBeenCalledTimes(1);
+});
 
 it("opens only the chosen server's accounts inside the existing settings sheet", () => {
   const props = setup();
@@ -165,18 +233,84 @@ it("delegates adding a server and dismissing the sheet to their existing owners"
   expect(props.onClose).toHaveBeenCalledTimes(1);
 });
 
-it("gives native Back to the visible settings page before closing the sheet", () => {
+it.each(["Advanced", "Security", "Voice Assistant", "Settings for Buddy"])(
+  "handles Android Back from %s before the native sheet hides",
+  (label) => {
+    const props = setup();
+    const view = render(<SettingsSheet {...props} />);
+
+    fireEvent.press(view.getByLabelText(label));
+    expect(view.getByLabelText("Back to settings")).toBeTruthy();
+
+    fireEvent.press(view.getByLabelText("Android Back"));
+    expect(view.getByLabelText("Advanced")).toBeTruthy();
+    expect(view.queryByText("Advanced controls")).toBeNull();
+    expect(props.onClose).not.toHaveBeenCalled();
+    expect(view.getByTestId("native-sheet")).toBeTruthy();
+
+    fireEvent.press(view.getByLabelText("Android Back"));
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+    expect(view.queryByTestId("native-sheet")).toBeNull();
+  },
+);
+
+it("closes the whole sheet after an actual native swipe or scrim dismissal", () => {
   const props = setup();
   const view = render(<SettingsSheet {...props} />);
-
   fireEvent.press(view.getByLabelText("Advanced"));
-  expect(view.getByText("Advanced controls")).toBeTruthy();
-
-  fireEvent.press(view.getByLabelText("Dismiss native settings"));
-  expect(view.getByLabelText("Advanced")).toBeTruthy();
-  expect(view.queryByText("Advanced controls")).toBeNull();
-  expect(props.onClose).not.toHaveBeenCalled();
-
   fireEvent.press(view.getByLabelText("Dismiss native settings"));
   expect(props.onClose).toHaveBeenCalledTimes(1);
+  expect(view.queryByTestId("native-sheet")).toBeNull();
 });
+
+it("opens Voice Assistant directly and consumes a later deep-link request after Back", () => {
+  const props = setup();
+  const view = render(<SettingsSheet {...props} entryPage="voiceAssistant" entryRequest="first" />);
+  expect(view.getByText("Voice Assistant choices")).toBeTruthy();
+  expect(view.queryByText("Servers")).toBeNull();
+  fireEvent.press(view.getByRole("button", { name: "Back to settings" }));
+  expect(view.getByText("Servers")).toBeTruthy();
+  view.rerender(<SettingsSheet {...props} entryPage="voiceAssistant" entryRequest="second" />);
+  expect(view.getByText("Voice Assistant choices")).toBeTruthy();
+  expect(view.queryByText("Servers")).toBeNull();
+  expect(props.onClose).not.toHaveBeenCalled();
+});
+
+const originalRTL = I18nManager.isRTL;
+afterEach(() => {
+  I18nManager.isRTL = originalRTL;
+});
+
+it.each([
+  { rtl: false, back: "Back to settings", childEdge: 40, parentEdge: -20 },
+  { rtl: false, back: "Android Back", childEdge: 40, parentEdge: -20 },
+  { rtl: true, back: "Back to settings", childEdge: -40, parentEdge: 20 },
+  { rtl: true, back: "Android Back", childEdge: -40, parentEdge: 20 },
+])(
+  "uses pop for $back (RTL=$rtl) while keeping the native sheet open",
+  ({ rtl, back, childEdge, parentEdge }) => {
+    I18nManager.isRTL = rtl;
+    const props = setup();
+    const view = render(<SettingsSheet {...props} />);
+    for (let visit = 0; visit < 3; visit += 1) {
+      const parentExit = view.getByTestId("sheet-page:overview").props.exiting;
+      fireEvent.press(view.getByLabelText("Advanced"));
+      const childExit = view.getByTestId("sheet-page:advanced").props.exiting;
+      const departingParent = parentExit({ windowWidth: 1000 });
+      expect(departingParent.initialValues.transform).toEqual([{ translateX: 0 }]);
+      expect(departingParent.animations.transform).toEqual([{ translateX: parentEdge }]);
+      const push = view.getByTestId("sheet-page:advanced").props.entering({ windowWidth: 1000 });
+      expect(push.initialValues.transform).toEqual([{ translateX: childEdge }]);
+      expect(push.animations.transform).toEqual([{ translateX: 0 }]);
+      fireEvent.press(view.getByLabelText(back));
+      const departingChild = childExit({ windowWidth: 1000 });
+      expect(departingChild.initialValues.transform).toEqual([{ translateX: 0 }]);
+      expect(departingChild.animations.transform).toEqual([{ translateX: childEdge }]);
+      const pop = view.getByTestId("sheet-page:overview").props.entering({ windowWidth: 1000 });
+      expect(pop.initialValues.transform).toEqual([{ translateX: parentEdge }]);
+      expect(pop.animations.transform).toEqual([{ translateX: 0 }]);
+      expect(view.getByTestId("native-sheet")).toBeTruthy();
+      expect(props.onClose).not.toHaveBeenCalled();
+    }
+  },
+);

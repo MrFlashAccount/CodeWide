@@ -5,13 +5,19 @@ import { loadSubagentDescendants, subagentActivityRootThreadId } from "../src/da
 
 function indexedThread(id: string, parentThreadId: string, archived = false) {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id,
     parentThreadId,
     cwd: "/repo",
     createdAt: 1,
     updatedAt: 1,
     modelProvider: "openai",
-    cliVersion: "0.147.0",
+    cliVersion: "0.155.1",
     source: { subagent: { thread_spawn: { parent_thread_id: parentThreadId } } },
     agentNickname: id,
     agentRole: "worker",

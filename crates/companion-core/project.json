@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "companion-core",
+  "projectType": "library",
+  "sourceRoot": "crates/companion-core/src",
+  "tags": ["language:rust", "type:library"],
+  "implicitDependencies": ["relay", "companion-sync-contract"],
+  "metadata": {
+    "description": "Shared Companion runtime and domain owners"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p companion-core --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p companion-core --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p companion-core --release",
+        "cwd": "."
+      }
+    }
+  }
+}

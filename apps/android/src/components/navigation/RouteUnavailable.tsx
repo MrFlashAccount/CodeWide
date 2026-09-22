@@ -4,10 +4,12 @@ import { AppText as Text } from "../../ui/Typography";
 
 /** Bounded recovery surface for invalid, expired, or removed V1 route resources. */
 export function RouteUnavailable({
+  actionLabel = "Back",
   message,
   onBack,
   title,
 }: {
+  readonly actionLabel?: string;
   readonly message: string;
   readonly onBack: () => void;
   readonly title: string;
@@ -19,7 +21,7 @@ export function RouteUnavailable({
       </Text>
       <Text style={styles.message}>{message}</Text>
       <Pressable accessibilityRole="button" onPress={onBack} style={styles.action}>
-        <Text style={styles.actionText}>Back</Text>
+        <Text style={styles.actionText}>{actionLabel}</Text>
       </Pressable>
     </View>
   );

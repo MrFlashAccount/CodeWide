@@ -730,7 +730,7 @@ impl FileService {
             .await
     }
 
-    /// Streams one V2 upload and revalidates its authorization immediately before publish.
+    /// Streams one upload and revalidates its authorization immediately before publish.
     ///
     /// # Errors
     ///

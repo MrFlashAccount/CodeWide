@@ -1,3 +1,5 @@
+import { userQuestionReplyText } from "./userQuestionReply";
+
 type MentionedUserFile = {
   name: string;
   path: string;
@@ -24,6 +26,10 @@ const FILE_ENTRY = /^##\s+(.+?):\s*(?:`([^`\n]+)`|([^\n]+))\s*$/gm;
  * which merely resembles metadata must remain visible.
  */
 export function normalizeUserMessage(source: string): NormalizedUserMessage {
+  const reply = userQuestionReplyText(source);
+  if (reply !== null) {
+    return { files: [], text: reply };
+  }
   const request = DESKTOP_BROWSER_REQUEST.exec(source) ?? REQUEST_HEADING.exec(source);
   const filesHeading = FILES_HEADING.exec(source);
   const metadataEnd = request?.index ?? source.length;

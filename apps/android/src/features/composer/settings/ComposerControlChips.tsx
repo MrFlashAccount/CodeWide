@@ -1,6 +1,6 @@
 /** V1 ComposerControlChips owner, extracted without changing interaction or resource lifetime. */
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { View } from "react-native";
 import type { TurnControlsValue } from "../../../data/turn-controls-types";

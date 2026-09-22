@@ -16,7 +16,7 @@ const imagePreviewHost = readFileSync(
   new URL("../src/rendering/ImagePreviewHost.tsx", import.meta.url),
   "utf8",
 );
-const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
 const fullscreenModal = readFileSync(
   new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url),
   "utf8",

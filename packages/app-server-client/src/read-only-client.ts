@@ -1,10 +1,10 @@
-import type { InitializeResponse } from "@codewide/codex-protocol/v0.147.0";
+import type { InitializeResponse } from "@codewide/codex-protocol/v0.155.1";
 import type {
   Thread,
   ThreadListParams,
   ThreadListResponse,
   ThreadReadResponse,
-} from "@codewide/codex-protocol/v0.147.0/v2";
+} from "@codewide/codex-protocol/v0.155.1/v2";
 
 import { StdioAppServerClient, type StdioAppServerOptions } from "./stdio-client.js";
 

@@ -1,6 +1,9 @@
 package dev.codewide.app.rendering
 
 import android.content.Context
+import android.os.SystemClock
+import android.util.Log
+import android.graphics.Canvas
 import android.view.Choreographer
 import android.view.View
 
@@ -40,6 +43,44 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
     private set
   protected var reducedMotion = false
     private set
+  private var lastDiagnosticMs = Long.MIN_VALUE
+  private var renderedFrames = 0L
+  private var animationFrames = 0L
+  private var diagnosticInput = 0.0
+  private var diagnosticPlayback = 0.0
+
+  protected fun recordAudioInput(input: Double, playback: Double) {
+    diagnosticInput = if (input.isFinite()) input.coerceIn(0.0, 1.0) else 0.0
+    diagnosticPlayback = if (playback.isFinite()) playback.coerceIn(0.0, 1.0) else 0.0
+  }
+
+  protected open fun rendererDiagnostic(): String = "style=unknown"
+
+  protected fun recordRendererFrame() {
+    renderedFrames += 1
+    if (backdrop == null) return
+    val now = SystemClock.elapsedRealtime()
+    if (lastDiagnosticMs != Long.MIN_VALUE && now - lastDiagnosticMs < 1_000L) return
+    lastDiagnosticMs = now
+    Log.i("CodeWideVoiceRender", "renderer=${System.identityHashCode(this)} state=${orbState.wireValue} " +
+      "reducedMotion=$reducedMotion frames=$renderedFrames animationFrames=$animationFrames rawInput=$diagnosticInput " +
+      "rawPlayback=$diagnosticPlayback ${rendererDiagnostic()}")
+  }
+
+  private var backdrop: OrbBackdrop? = null
+  private var backdropDeltaSeconds = 0f
+
+  fun setBackdropEnabled(enabled: Boolean) {
+    backdrop = if (enabled) backdrop ?: OrbBackdrop() else null
+    invalidate()
+  }
+
+  protected fun drawBackdrop(canvas: Canvas, visualRadius: Float) {
+    backdrop?.draw(canvas, width / 2f, height / 2f, visualRadius,
+      3f * resources.displayMetrics.density, backdropDeltaSeconds, reducedMotion)
+    backdropDeltaSeconds = 0f
+  }
+
   private var attached = false
   private var framePosted = false
   private var lastFrameNanos = 0L
@@ -47,6 +88,7 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
   fun setOrbState(state: VoiceAssistantOrbState) {
     if (orbState == state) return
     orbState = state
+    lastDiagnosticMs = Long.MIN_VALUE
     onOrbStateChanged()
     invalidate()
   }
@@ -56,6 +98,7 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
   fun setReducedMotion(reduced: Boolean) {
     if (reducedMotion == reduced) return
     reducedMotion = reduced
+    lastDiagnosticMs = Long.MIN_VALUE
     lastFrameNanos = 0L
     if (reduced) {
       cancelFrame()
@@ -94,6 +137,8 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
       ((frameTimeNanos - lastFrameNanos).coerceAtMost(MAX_FRAME_DELTA_NANOS) / 1_000_000_000.0).toFloat()
     }
     lastFrameNanos = frameTimeNanos
+    animationFrames += 1
+    backdropDeltaSeconds += deltaSeconds
     advanceAnimation(deltaSeconds)
     invalidate()
     postFrame()

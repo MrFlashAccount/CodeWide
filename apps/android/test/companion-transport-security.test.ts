@@ -78,7 +78,7 @@ describe("companion transport trust boundary", () => {
     expect(pairing).not.toContain("End-to-end encryption preview");
   });
 
-  it("persists the authoritative paired device id and fails V2 closed when it is absent", () => {
+  it("persists the authoritative paired device id for the native credential bridge", () => {
     const credentials = read("../android/app/src/main/java/dev/codewide/app/remote/NativeSessionCredentialsStore.kt");
     expect(credentials).toContain("val deviceId: String? = null");
     expect(credentials).toContain('put("deviceId", requireNotNull(session.deviceId)');

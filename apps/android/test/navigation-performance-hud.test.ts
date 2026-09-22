@@ -7,7 +7,7 @@ const hud = readFileSync(
 );
 const nativeRoot = readFileSync(new URL("../src/ui/AppRootProviders.tsx", import.meta.url), "utf8");
 const applicationRoot = readFileSync(new URL("../app/_layout.tsx", import.meta.url), "utf8");
-const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
 const performanceModule = readFileSync(
   new URL(
     "../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt",

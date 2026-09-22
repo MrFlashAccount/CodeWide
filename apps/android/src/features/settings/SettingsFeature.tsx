@@ -44,6 +44,8 @@ export function SubscribedConnectionSettings({
 export function ConnectionSettings({
   accountRateLimits,
   connections,
+  entryPage = "overview",
+  entryRequest,
   onActivateAccountProfile,
   onAddServer,
   onCancelAccountLogin,
@@ -62,6 +64,8 @@ export function ConnectionSettings({
 }: {
   accountRateLimits: AccountRateLimitsRow[];
   connections: StoredConnection[];
+  entryPage?: "overview" | "voiceAssistant";
+  entryRequest?: string;
   onActivateAccountProfile?: (
     connectionId: string,
     profileId: string,
@@ -116,6 +120,8 @@ export function ConnectionSettings({
   });
   return (
     <SettingsSheet
+      entryPage={entryPage}
+      {...(entryRequest === undefined ? {} : { entryRequest })}
       advanced={
         <SettingsSection title="Diagnostics">
           <PerformanceDiagnostics />

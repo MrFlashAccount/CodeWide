@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  NX_TUI: "false"
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    env:
+      NX_CACHE_DIRECTORY: .nx/cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Restore Nx task cache
+        uses: actions/cache@v5
+        with:
+          path: .nx/cache
+          key: nx-linux-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nx-linux-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-linux-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-linux-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve affected range
+        uses: nrwl/nx-set-shas@v5
+
+      - name: Validate release compatibility
+        run: pnpm release:compatibility
+
+      - name: Check, test, and build affected Linux and Android projects
+        run: pnpm nx affected -t check test build --exclude=macos --parallel=3
+
+  macos:
+    runs-on: macos-26
+    env:
+      NX_CACHE_DIRECTORY: .nx/cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Restore Nx task cache
+        uses: actions/cache@v5
+        with:
+          path: .nx/cache
+          key: nx-macos-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nx-macos-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve affected range
+        uses: nrwl/nx-set-shas@v5
+
+      - name: Check and test the affected macOS application
+        run: pnpm nx affected -t check test --exclude='*,!macos'

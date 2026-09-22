@@ -25,6 +25,7 @@ import dev.codewide.app.R
 import dev.codewide.app.rendering.VoiceAssistantOrbState
 import dev.codewide.app.rendering.VoiceAssistantOrbStyle
 import java.util.concurrent.ConcurrentHashMap
+import com.oney.WebRTCModule.WebRTCModule
 
 internal enum class GlobalVoiceAudioRecordFailureKind(val diagnosticValue: String) {
   INIT("init"),
@@ -35,6 +36,40 @@ internal enum class GlobalVoiceAudioRecordFailureKind(val diagnosticValue: Strin
 /** Keeps Android's microphone foreground grant alive while any voice owner holds a token. */
 class VoiceCaptureForegroundService : Service() {
   private val lifetime = VoiceForegroundLifetime()
+  private var webRtcObserver: GlobalVoiceWebRtcObserver? = null
+  private var presentation: GlobalVoicePresentationOwner? = null
+  @Volatile private var ingressDiagnostics: GlobalVoiceIngressDiagnostics? = null
+  private var lastDiagnosticMs = Long.MIN_VALUE
+
+  private fun logVoiceDiagnostic(force: Boolean = false) {
+    val owner = presentation
+    val now = SystemClock.elapsedRealtime()
+    if (!force && lastDiagnosticMs != Long.MIN_VALUE && now - lastDiagnosticMs < 5_000L) return
+    lastDiagnosticMs = now
+    val health = captureHealth.snapshot()
+    Log.i("CodeWideVoiceState", "peer=${webRtcObserver?.peerId} ${owner?.diagnostic() ?: "owner=absent state=${orbState.wireValue}"} " +
+      "${ingressDiagnostics?.snapshot()} pcmAgeMs=${health.sampleAgeMs} ${audioLevels.diagnostic()} " +
+      "screenInteractive=${health.screenInteractive} style=${orbStyle.wireValue} reducedMotion=$orbReducedMotion")
+  }
+
+  private fun stopWebRtcObservation() {
+    webRtcObserver?.let { Log.i("CodeWideVoiceState", "observer=closing peer=${it.peerId}") }
+    logVoiceDiagnostic(force = true)
+    webRtcObserver?.close()
+    webRtcObserver = null
+    presentation?.stop()
+    presentation = null
+    ingressDiagnostics = null
+    audioLevels.acceptPlaybackLevel(0.0)
+  }
+
+  private fun publishPresentation() {
+    val state = presentation?.state() ?: orbState
+    globalVoiceOverlay.updateOrbState(state)
+    captureHealth.setExpectedCapture(state.expectsMicrophoneCapture())
+    logVoiceDiagnostic()
+  }
+
   private lateinit var audioLevels: GlobalVoiceAudioLevelOwner
   private lateinit var captureHealth: GlobalVoiceCaptureHealthOwner
   private lateinit var globalVoiceOverlay: GlobalVoiceOverlayController
@@ -45,6 +80,7 @@ class VoiceCaptureForegroundService : Service() {
     override fun run() {
       healthCheckScheduled = false
       captureHealth.check()
+      logVoiceDiagnostic()
       scheduleHealthCheckIfNeeded()
     }
   }
@@ -75,6 +111,7 @@ class VoiceCaptureForegroundService : Service() {
       orbReducedMotion,
       orbLaunchOrigin,
     )
+    globalVoiceOverlay.updateChatTarget(overlayChatTarget)
     audioLevels = GlobalVoiceAudioLevelOwner(
       executeOnMain = { action -> mainExecutor.execute(action) },
       publish = globalVoiceOverlay::updateAudioLevels,
@@ -140,6 +177,7 @@ class VoiceCaptureForegroundService : Service() {
     if (instance === this) instance = null
     healthHandler.removeCallbacks(healthCheck)
     healthCheckScheduled = false
+    stopWebRtcObservation()
     captureHealth.setActive(false)
     audioLevels.setActive(false)
     globalVoiceOverlay.hideImmediately()
@@ -171,6 +209,7 @@ class VoiceCaptureForegroundService : Service() {
       if (finalRelease) stopIfIdle()
       return
     }
+    stopWebRtcObservation()
     healthHandler.removeCallbacks(healthCheck)
     healthCheckScheduled = false
     globalVoiceOverlay.hide(GlobalVoiceForegroundModule.visibleOrbReturnTarget()) {
@@ -197,11 +236,12 @@ class VoiceCaptureForegroundService : Service() {
         "audioRecordRunning=${event.audioRecordRunning} sampleAgeMs=${event.sampleAgeMs}",
     )
     if (event.kind == GlobalVoiceCaptureHealthEventKind.INTERRUPTED) {
+      presentation?.acceptPhase(VoiceAssistantOrbState.CONNECTING)
       globalVoiceOverlay.updateOrbState(VoiceAssistantOrbState.CONNECTING)
       GlobalVoiceForegroundModule.requestCaptureRecovery()
       return
     }
-    globalVoiceOverlay.updateOrbState(orbState)
+    publishPresentation()
   }
 
   private fun scheduleHealthCheckIfNeeded() {
@@ -249,15 +289,71 @@ class VoiceCaptureForegroundService : Service() {
     @Volatile private var orbReducedMotion = false
     @Volatile private var orbLaunchOrigin: VoiceOverlayLaunchOrigin? = null
     @Volatile private var microphoneMuted = false
-    fun updatePlaybackLevel(level: Double) {
+    @Volatile private var overlayChatTarget: VoiceOverlayChatTarget? = null
+
+    internal fun updateOverlayChatTarget(target: VoiceOverlayChatTarget?) {
+      overlayChatTarget = target
       val active = instance ?: return
-      active.audioLevels.acceptPlaybackLevel(level)
+      active.mainExecutor.execute { active.globalVoiceOverlay.updateChatTarget(target) }
+    }
+    internal fun observeWebRtc(peerId: Int, module: WebRTCModule, completion: (Boolean) -> Unit) {
+      val active = instance
+      if (active == null) { completion(false); return }
+      active.mainExecutor.execute {
+        if (!active.lifetime.hasOverlay()) { completion(false); return@execute }
+        active.stopWebRtcObservation()
+        val owner = GlobalVoicePresentationOwner(SystemClock::elapsedRealtime)
+        owner.setMuted(microphoneMuted)
+        active.presentation = owner
+        val diagnostics = GlobalVoiceIngressDiagnostics()
+        active.ingressDiagnostics = diagnostics
+        active.webRtcObserver = GlobalVoiceWebRtcObserver(
+          peerId, GlobalVoiceWebRtcSource(peerId, module, diagnostics), active.healthHandler,
+          onConnection = { state ->
+            if (state == VoiceAssistantOrbState.LISTENING) owner.connected() else owner.acceptPhase(state)
+            active.publishPresentation()
+            active.logVoiceDiagnostic(force = true)
+          },
+          onEvent = { type ->
+            owner.acceptEvent(type)
+            active.publishPresentation()
+            active.logVoiceDiagnostic(force = true)
+          },
+          onPlayback = { level ->
+            owner.acceptPlayback(level)
+            active.audioLevels.acceptPlaybackLevel(level)
+            active.publishPresentation()
+          },
+        )
+        Log.i("CodeWideVoiceState", "observer=attached peer=$peerId")
+        active.publishPresentation()
+        active.logVoiceDiagnostic(force = true)
+        completion(true)
+      }
     }
 
-    fun acceptWebRtcInputSamples(audioFormat: Int, channelCount: Int, data: ByteArray) {
+    internal fun stopObservingWebRtc(peerId: Int) {
       val active = instance ?: return
+      active.mainExecutor.execute {
+        if (active.webRtcObserver?.peerId != peerId) return@execute
+        active.presentation?.stop()
+        active.publishPresentation()
+        active.stopWebRtcObservation()
+      }
+    }
+
+    fun updatePlaybackLevel(level: Double) {
+      val active = instance ?: return
+      active.mainExecutor.execute {
+        if (active.webRtcObserver == null) active.audioLevels.acceptPlaybackLevel(level)
+      }
+    }
+
+    fun acceptWebRtcInputSamples(audioFormat: Int, channelCount: Int, sampleRate: Int, data: ByteArray) {
+      val active = instance ?: return
+      active.ingressDiagnostics?.pcmReceived()
       active.captureHealth.acceptSamples()
-      active.audioLevels.acceptInputPcm(audioFormat, channelCount, data)
+      active.audioLevels.acceptInputPcm(audioFormat, channelCount, sampleRate, data)
     }
 
     fun updateWebRtcAudioRecordRunning(running: Boolean) {
@@ -276,6 +372,8 @@ class VoiceCaptureForegroundService : Service() {
       microphoneMuted = muted
       val active = instance ?: return
       active.mainExecutor.execute {
+        active.presentation?.setMuted(muted)
+        active.publishPresentation()
         active.captureHealth.setMicrophoneMuted(muted)
         active.audioLevels.setMicrophoneMuted(muted)
         active.globalVoiceOverlay.updateMicrophoneMuted(muted)
@@ -327,8 +425,8 @@ class VoiceCaptureForegroundService : Service() {
       orbState = state
       val active = instance ?: return
       active.mainExecutor.execute {
-        active.captureHealth.setExpectedCapture(state.expectsMicrophoneCapture())
-        active.globalVoiceOverlay.updateOrbState(state)
+        active.presentation?.acceptPhase(state)
+        active.publishPresentation()
       }
     }
 

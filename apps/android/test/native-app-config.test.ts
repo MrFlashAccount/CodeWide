@@ -1,4 +1,3 @@
-// The V2 gate also runs this entrypoint; every owner contract stays in that gate.
 import "./native-app-contracts/conversation-header.contract";
 import "./native-app-contracts/configuration.contract";
 import "./native-app-contracts/configuration-1.contract";

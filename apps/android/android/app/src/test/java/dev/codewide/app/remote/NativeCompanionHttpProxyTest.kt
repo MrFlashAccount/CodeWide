@@ -81,10 +81,10 @@ class NativeCompanionHttpProxyTest {
   @Test
   fun `rejects ambiguous and oversized local request bodies`() {
     val ambiguous =
-      "POST /$capability/v2/attachments HTTP/1.1\r\n" +
+      "POST /$capability/forbidden-upload HTTP/1.1\r\n" +
         "Host: 127.0.0.1\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n"
     val oversized =
-      "PUT /$capability/v2/attachments HTTP/1.1\r\n" +
+      "PUT /$capability/forbidden-upload HTTP/1.1\r\n" +
         "Host: 127.0.0.1\r\nContent-Length: 536870913\r\n\r\n"
 
     org.junit.Assert.assertThrows(IllegalStateException::class.java) {

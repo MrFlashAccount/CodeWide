@@ -174,10 +174,10 @@ it("keeps signed self-hosted updates enabled and applies them without a process 
   expect(manifest).toContain('android:name="expo.modules.updates.CODE_SIGNING_CERTIFICATE"');
   expect(otaPrefetch).toContain("Updates.checkForUpdateAsync()");
   expect(otaPrefetch).toContain("Updates.fetchUpdateAsync()");
-  expect(otaPrefetch).toContain("Updates.reloadAsync()");
+  expect(otaPrefetch).not.toContain("Updates.reloadAsync()");
   expect(otaPrefetch).toMatch(/const CHECK_INTERVAL_MS = 30 \* 60 \* 1_?000/u);
   expect(otaPrefetch).toMatch(/const RETRY_INTERVAL_MS = 30 \* 1_?000/u);
-  expect(otaPrefetch).toContain("if (!updateReady && !force && Date.now() < nextCheckAt)");
+  expect(otaPrefetch).toContain("if (!force && Date.now() < nextCheckAt)");
   expect(otaPrefetch).toContain('if (state === "active")');
   expect(otaPrefetch).toContain("startPrefetch(true);");
   expect(otaPrefetch).toContain("let nextCheckAt = Date.now() + RETRY_INTERVAL_MS");
@@ -192,13 +192,9 @@ it("dispatches foreground attach off the UI thread without restoring every serve
     connectionService.indexOf("override fun onDestroy"),
   );
   expect(dispatch).toContain('recoverInBackground(id, "attach")');
-  expect(dispatch).not.toContain("activateLegacySync()");
-  expect(dispatch).toContain("selectLegacySync()");
-  const selection = connectionService.slice(
-    connectionService.indexOf("private fun selectLegacySync()"),
-    connectionService.indexOf("private fun restoreSelectedSyncGeneration()"),
-  );
-  expect(selection).not.toContain("restoreLegacySync()");
+  const attach = dispatch.slice(dispatch.indexOf("ACTION_ATTACH"), dispatch.indexOf("ACTION_CLOSE"));
+  expect(attach).toContain("terminalSessionManager.activateGeneration()");
+  expect(attach).not.toContain("restoreLegacySync()");
   const wake = connectionService.slice(
     connectionService.indexOf("fun wake(connectionId:"),
     connectionService.indexOf("private fun wakeRecovered("),

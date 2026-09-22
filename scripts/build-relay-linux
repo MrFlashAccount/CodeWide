@@ -46,6 +46,7 @@ docker run --rm \
   --volume codewide-relay-musl-target:/build-target \
   --workdir /workspace \
   --env CARGO_TARGET_DIR=/build-target \
+  --env CODEWIDE_RELAY_VERSION \
   "$BUILD_IMAGE" \
   sh -eu -c 'cargo build --locked --release -p codewide-relay --target x86_64-unknown-linux-musl && install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-relay /output/codewide-relay'
 

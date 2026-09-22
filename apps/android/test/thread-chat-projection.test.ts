@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -57,7 +57,7 @@ describe("thread chat timeline projection", () => {
       startedAt: null, completedAt: null, durationMs: null,
       items: [
         { type: "reasoning", id: "reasoning", summary: [], content: [" "] },
-        { type: "agentMessage", id: "agent", text: "", phase: null, memoryCitation: null },
+        { delivery: null, questions: null, type: "agentMessage", id: "agent", text: "", phase: null, memoryCitation: null },
       ],
     };
     const range = { includesEarliest: true, includesLatest: true };
@@ -130,7 +130,7 @@ describe("thread chat timeline projection", () => {
     const responding: Turn = {
       ...turn("responding", 13),
       status: "inProgress",
-      items: [{ type: "agentMessage", id: "answer", text: "Streaming answer", phase: "commentary", memoryCitation: null }],
+      items: [{ delivery: null, questions: null, type: "agentMessage", id: "answer", text: "Streaming answer", phase: "commentary", memoryCitation: null }],
     };
     const streaming = projectResidentThreadTimeline([...history, responding], [pending], range);
     expect(streaming).toContainEqual(expect.objectContaining({ kind: "delivery", delivery: pending }));
@@ -219,7 +219,7 @@ describe("thread chat timeline projection", () => {
             text_elements: [],
           }],
         },
-        { type: "agentMessage", id: "answer", text: "Done", phase: "final_answer", memoryCitation: null },
+        { delivery: null, questions: null, type: "agentMessage", id: "answer", text: "Done", phase: "final_answer", memoryCitation: null },
       ],
     } as unknown as Turn;
 

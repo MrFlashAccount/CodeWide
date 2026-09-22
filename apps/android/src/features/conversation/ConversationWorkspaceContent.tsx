@@ -2,6 +2,14 @@ import { ConversationComposition } from "./ConversationComposition";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
 /** Joins one resolved detail snapshot with the independently scoped feature surfaces. */
 export function renderConversationWorkspaceContent(props: RenderConversationWorkspaceContentProps) {
+  const listedThread = props.visibleConversationThread;
+  const remoteThread = props.snapshot.remoteThread;
+  // Directly opened chats can be excluded from the catalog. Their detail snapshot
+  // supplies the title without inserting a synthetic row into the ordinary list.
+  const visibleThread =
+    props.activeThread === null && listedThread !== null && remoteThread !== null
+      ? { ...listedThread, title: remoteThread.name ?? "Chat" }
+      : listedThread;
   return (
     <ConversationComposition
       accounts={{
@@ -127,6 +135,8 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         onRespondToRequest: props.conversationActions.onRespondToRequest,
         pendingRequest: props.activePendingRequests[0] ?? null,
         pendingRequestCount: props.activePendingRequests.length,
+        questionSummaries: props.features.requests.getQuestionSummaries(),
+        sendQuestionAnswer: props.features.requests.sendQuestionAnswer,
       }}
       review={{ onStartReview: props.conversationActions.onStartReview }}
       surface={{
@@ -137,7 +147,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         onViewedLatest: props.markActiveThreadRead,
         readOnly: false,
         server: props.servers.find((server) => server.id === props.activeConnectionId),
-        thread: props.visibleConversationThread,
+        thread: visibleThread,
         unread: props.activeThread?.unread ?? 0,
       }}
       terminal={{

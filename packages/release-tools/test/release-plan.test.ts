@@ -1,91 +1,116 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  createReleasePlan,
-  parseGitNameStatus,
-  parseReleaseGraph,
-} from "../../../scripts/release-plan";
+import { parseGitNameStatus } from "../../../scripts/release-plan";
 
-const graph = parseReleaseGraph(
-  readFileSync(new URL("../../../release/graph.json", import.meta.url), "utf8"),
-);
+const repoRoot = new URL("../../..", import.meta.url);
+const planner = new URL("../../../scripts/release-plan.ts", import.meta.url);
 
-function targets(files: readonly string[]): readonly string[] {
-  return createReleasePlan(graph, files).targets.map(({ id }) => id);
+type Plan = {
+  readonly affectedProjects: readonly string[];
+  readonly targets: readonly { readonly id: string }[];
+};
+
+function plan(files: readonly string[]): Plan {
+  const output = execFileSync(
+    process.execPath,
+    [planner.pathname, "--files", files.join(","), "--json"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  const value: unknown = JSON.parse(output);
+  if (!isRecord(value) || !Array.isArray(value.affectedProjects) || !Array.isArray(value.targets)) {
+    throw new Error("release plan output is invalid");
+  }
+  if (value.affectedProjects.some((project) => typeof project !== "string")) {
+    throw new Error("release plan affectedProjects is invalid");
+  }
+  const targets = value.targets.map((target) => {
+    if (!isRecord(target) || typeof target.id !== "string") {
+      throw new Error("release plan target is invalid");
+    }
+    return { id: target.id };
+  });
+  return { affectedProjects: value.affectedProjects, targets };
 }
 
-describe("release graph", () => {
+function targetIds(files: readonly string[]): readonly string[] {
+  return plan(files).targets.map(({ id }) => id);
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+describe("Nx release graph", () => {
   it("releases both platform hosts when shared Companion core changes", () => {
-    expect(targets(["crates/companion-core/src/runtime_host.rs"])).toEqual([
-      "macos",
+    expect(targetIds(["crates/companion-core/src/runtime_host.rs"])).toEqual([
       "companion-linux",
+      "macos",
     ]);
   });
 
   it("releases only macOS for a native menu app change", () => {
-    expect(targets(["apps/companion-macos/Sources/CodeWide/CodeWideApp.swift"])).toEqual(["macos"]);
+    expect(targetIds(["apps/companion-macos/Sources/CodeWide/CodeWideApp.swift"])).toEqual(["macos"]);
   });
 
-  it("selects OTA for JavaScript-only Android changes", () => {
-    expect(targets(["apps/android/src/ui/Button.tsx"])).toEqual(["android-ota"]);
+  it("keeps the current Relay coupling conservative until its adapter is split", () => {
+    expect(targetIds(["apps/relay/src/lib.rs"])).toEqual([
+      "relay",
+      "companion-linux",
+      "macos",
+    ]);
   });
 
-  it("lets an APK supersede OTA when native and JavaScript code both change", () => {
+  it("releases an APK for JavaScript-only Android changes", () => {
+    expect(targetIds(["apps/android/src/ui/Button.tsx"])).toEqual(["android-apk"]);
+  });
+
+  it("releases an APK for native Android changes", () => {
     expect(
-      targets([
-        "apps/android/src/ui/Button.tsx",
-        "apps/android/android/app/src/main/java/dev/codewide/app/MainApplication.kt",
-      ]),
+      targetIds(["apps/android/android/app/src/main/java/dev/codewide/app/MainApplication.kt"]),
     ).toEqual(["android-apk"]);
   });
 
-  it("propagates package dependency changes to Android OTA", () => {
-    expect(targets(["packages/domain/src/index.ts"])).toEqual(["android-ota"]);
+  it("propagates TypeScript package changes to the Android APK", () => {
+    expect(targetIds(["packages/domain/src/index.ts"])).toEqual(["android-apk"]);
   });
 
-  it("treats lockfile changes conservatively as native Android releases", () => {
-    expect(targets(["pnpm-lock.yaml"])).toEqual(["android-apk"]);
+  it("propagates the shared sync contract to both Companion hosts and Android", () => {
+    expect(targetIds(["crates/companion-core/contract/v2.json"])).toEqual([
+      "companion-linux",
+      "macos",
+      "android-apk",
+    ]);
+  });
+
+  it("releases every linked product when the compatibility contract changes", () => {
+    expect(targetIds(["release/compatibility.json"])).toEqual([
+      "relay",
+      "companion-linux",
+      "macos",
+      "android-apk",
+    ]);
   });
 
   it("does not release artifacts for documentation-only changes", () => {
-    const plan = createReleasePlan(graph, [
-      "docs/macos-companion.md",
-      "crates/companion-core/README.md",
-      "crates/companion-swift-ffi/README.md",
-      "apps/companion-linux/README.md",
-      "apps/companion-macos/README.md",
-      "apps/relay/README.md",
-    ]);
-    expect(plan.targets).toEqual([]);
-    expect(plan.unmatchedFiles).toEqual([]);
+    expect(
+      targetIds(["docs/macos-companion.md", "apps/companion-macos/README.md"]),
+    ).toEqual([]);
   });
 
-  it("reports uncovered source paths instead of silently declaring no release", () => {
-    const plan = createReleasePlan(graph, ["tools/new-runtime/main.go"]);
-    expect(plan.targets).toEqual([]);
-    expect(plan.unmatchedFiles).toEqual(["tools/new-runtime/main.go"]);
+  it("does not release artifacts for test-only changes", () => {
+    expect(
+      targetIds([
+        "apps/android/test/navigation.test.ts",
+        "crates/companion-core/src/sync_v2/protocol/tests.rs",
+      ]),
+    ).toEqual([]);
   });
 
   it("keeps both sides of a rename in the affected calculation", () => {
     expect(
       parseGitNameStatus("R100\0crates/companion-core/src/old.rs\0docs/old.rs\0"),
     ).toEqual(["crates/companion-core/src/old.rs", "docs/old.rs"]);
-  });
-
-  it("rejects dependency cycles", () => {
-    expect(() =>
-      parseReleaseGraph(
-        JSON.stringify({
-          version: 1,
-          components: [
-            { id: "a", paths: ["a/"], dependsOn: ["b"] },
-            { id: "b", paths: ["b/"], dependsOn: ["a"] },
-          ],
-          targets: [],
-        }),
-      ),
-    ).toThrow(/cycle/u);
   });
 });

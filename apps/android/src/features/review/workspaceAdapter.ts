@@ -2,7 +2,7 @@ import type {
   ReviewDelivery,
   ReviewStartResponse,
   ReviewTarget,
-} from "@codewide/codex-protocol/v0.147.0/v2";
+} from "@codewide/codex-protocol/v0.155.1/v2";
 import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/workspace-session";
 
 import type { ReviewWorkspaceCapabilities } from "./workspaceCapabilities";

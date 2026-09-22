@@ -1,4 +1,4 @@
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { TurnControlsValue } from "../../../data/turn-controls-types";
 import type { ComposerMenuPage } from "../composerTypes";
 

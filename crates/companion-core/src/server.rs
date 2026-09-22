@@ -4,10 +4,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{DefaultBodyLimit, FromRequestParts, Path, Query, Request, State, WebSocketUpgrade},
-    http::{
-        Extensions, HeaderMap, HeaderValue, Method, StatusCode, Version,
-        header::{self, CONTENT_TYPE},
-    },
+    http::{Extensions, HeaderMap, Method, StatusCode, Version, header},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::{any, delete, get, post},
@@ -21,6 +18,7 @@ use crate::{
     catalog::{CatalogError, SessionCatalog},
     content::{ContentQuery, PrivateContentService},
     device_tls::DeviceTlsConnectInfo,
+    file_uploads::WorkspaceUploadStore,
     files::{FileQuery, FileService, FileTextQuery},
     identity::TransportIdentity,
     image_previews::{ImagePreviewError, ImagePreviewQuery, ImagePreviewService, ImageVariant},
@@ -29,7 +27,6 @@ use crate::{
     rollout::read_rollout_metadata,
     store::IndexStore,
     sync::SyncHub,
-    sync_v2::{AttachmentStageStore, SyncV2Mode, SyncV2Runtime, WorkspaceUploadStore},
     telemetry::{
         TelemetryBatch, TelemetryError, TelemetryQuery, TelemetrySettings, TelemetryStore,
     },
@@ -37,6 +34,8 @@ use crate::{
     tunnels::{LocalhostTunnelService, TunnelError},
     upstream,
 };
+mod port_forwarding;
+
 use tower_http::compression::{
     CompressionLayer, CompressionLevel,
     predicate::{And, Predicate, SizeAbove},
@@ -79,10 +78,7 @@ pub struct CompanionServices {
     pub inner_tls_target: Option<SocketAddr>,
     pub inner_tls_limit: Option<Arc<tokio::sync::Semaphore>>,
     pub relay: Option<crate::relay::RelayRuntime>,
-    pub sync_v2: Option<SyncV2Runtime>,
-    pub attachment_staging: Option<AttachmentStageStore>,
     pub workspace_upload_staging: Option<WorkspaceUploadStore>,
-    pub sync_v2_mode: SyncV2Mode,
 }
 
 #[derive(Clone)]
@@ -155,11 +151,7 @@ pub fn split_routers_with_registry_and_services(
     services: CompanionServices,
 ) -> CompanionRouters {
     let inventory = crate::port_inventory::PortInventory::new(services.excluded_ports.clone());
-    let sync = sync.with_port_inventory(inventory.clone());
-    let mut services = services;
-    services.sync_v2 = services
-        .sync_v2
-        .map(|runtime| runtime.with_port_inventory(inventory));
+    let sync = sync.with_port_inventory(inventory);
     let state = AppState {
         store,
         authorization: Authorization::Registry(registry),
@@ -183,11 +175,7 @@ fn build_router(
     services: CompanionServices,
 ) -> Router {
     let inventory = crate::port_inventory::PortInventory::new(services.excluded_ports.clone());
-    let sync = sync.with_port_inventory(inventory.clone());
-    let mut services = services;
-    services.sync_v2 = services
-        .sync_v2
-        .map(|runtime| runtime.with_port_inventory(inventory));
+    let sync = sync.with_port_inventory(inventory);
     let state = AppState {
         store,
         authorization,
@@ -201,12 +189,6 @@ fn build_router(
         .route("/readyz", get(readiness))
         .route("/v1/app-server", get(app_server_upgrade))
         .route("/v1/sync", get(sync_upgrade))
-        .route(
-            "/v2/sync",
-            get(sync_v2_upgrade).layer(axum::middleware::map_response(
-                crate::sync_v2::http::close_extractor_rejection,
-            )),
-        )
         .route("/v1/port-forwards/discovery", get(port_discovery))
         .route("/v1/port-forwards/{port}", get(port_forward_upgrade))
         .route("/v1/terminals", get(terminal_upgrade))
@@ -221,8 +203,7 @@ fn build_router(
         .route("/v1/devices", get(devices_list))
         .route("/v1/devices/{device_id}", delete(device_revoke))
         .layer(DefaultBodyLimit::max(8 * 1024))
-        .layer(v1_compression())
-        .merge(crate::sync_v2::all_routes());
+        .layer(v1_compression());
     let files = Router::new()
         .route("/v1/files/download", get(file_download).head(file_download))
         .route("/v1/files/preview", get(file_preview).head(file_preview))
@@ -369,12 +350,6 @@ fn build_secure_router(state: AppState) -> Router {
     let transport = Router::new()
         .route("/v1/auth", post(authenticate))
         .route("/v1/sync", get(sync_upgrade))
-        .route(
-            "/v2/sync",
-            get(sync_v2_upgrade).layer(axum::middleware::map_response(
-                crate::sync_v2::http::close_extractor_rejection,
-            )),
-        )
         .route("/v1/port-forwards/discovery", get(port_discovery))
         .route("/v1/port-forwards/{port}", get(port_forward_upgrade))
         .route("/v1/terminals", get(terminal_upgrade))
@@ -383,8 +358,7 @@ fn build_secure_router(state: AppState) -> Router {
         .route("/v1/tunnels/{id}/", any(tunnel_proxy_root))
         .route("/v1/tunnels/{id}/{*path}", any(tunnel_proxy))
         .layer(DefaultBodyLimit::max(8 * 1024))
-        .layer(v1_compression())
-        .merge(crate::sync_v2::data_routes());
+        .layer(v1_compression());
     let files = Router::new()
         .route("/v1/files/download", get(file_download).head(file_download))
         .route("/v1/files/preview", get(file_preview).head(file_preview))
@@ -467,238 +441,9 @@ fn build_control_router(state: AppState) -> Router {
         )
         .route("/v1/relay", get(relay_status).patch(relay_enabled))
         .route("/v1/relay/pair", post(relay_pair));
-    #[cfg(feature = "e2e-command-fault")]
-    let router = router
-        .route(
-            "/internal/e2e/v2-command-fault",
-            post(e2e_command_fault_arm),
-        )
-        .route(
-            "/internal/e2e/v2-command-fault/{fault_id}",
-            get(e2e_command_fault_status),
-        )
-        .route(
-            "/internal/e2e/v2-command-fault/{fault_id}/release",
-            post(e2e_command_fault_release),
-        )
-        .route(
-            "/internal/e2e/v2-surface-fault",
-            post(e2e_surface_fault_arm),
-        )
-        .route(
-            "/internal/e2e/v2-surface-fault/{fault_id}",
-            get(e2e_surface_fault_status),
-        )
-        .route(
-            "/internal/e2e/v2-surface-fault/{fault_id}/release",
-            post(e2e_surface_fault_release),
-        );
     router
         .layer(DefaultBodyLimit::max(8 * 1024))
         .with_state(state)
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_command_fault_arm(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if !e2e_fault_authorized(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
-    }
-    let Some(runtime) = state.services.sync_v2.as_ref() else {
-        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
-    };
-    let fault_id = format!("fault:{}", random_token(16));
-    match runtime.arm_e2e_command_fault(fault_id).await {
-        Ok(status) => Json(status).into_response(),
-        Err(code) => json_error(StatusCode::CONFLICT, code),
-    }
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_command_fault_status(
-    State(state): State<AppState>,
-    Path(fault_id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    if !e2e_fault_authorized(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
-    }
-    let Some(runtime) = state.services.sync_v2.as_ref() else {
-        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
-    };
-    runtime
-        .e2e_command_fault_status(&fault_id)
-        .await
-        .map_or_else(
-            || json_error(StatusCode::NOT_FOUND, "e2e_command_fault_not_found"),
-            |status| Json(status).into_response(),
-        )
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_command_fault_release(
-    State(state): State<AppState>,
-    Path(fault_id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    if !e2e_fault_authorized(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
-    }
-    let Some(runtime) = state.services.sync_v2.as_ref() else {
-        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
-    };
-    runtime
-        .release_e2e_command_fault(&fault_id)
-        .await
-        .map_or_else(
-            || json_error(StatusCode::NOT_FOUND, "e2e_command_fault_not_found"),
-            |status| Json(status).into_response(),
-        )
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_surface_fault_arm(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    request: Request,
-) -> Response {
-    if !e2e_fault_authorized(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
-    }
-    let Ok(body) = axum::body::to_bytes(request.into_body(), 8 * 1024).await else {
-        return json_error(StatusCode::BAD_REQUEST, "e2e_surface_fault_request_invalid");
-    };
-    let Ok(request) = serde_json::from_slice::<crate::sync_v2::E2ESurfaceFaultRequest>(&body)
-    else {
-        return json_error(StatusCode::BAD_REQUEST, "e2e_surface_fault_request_invalid");
-    };
-    let Some(runtime) = state.services.sync_v2.as_ref() else {
-        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
-    };
-    let immediate_port_expiry = request.target == crate::sync_v2::E2ESurfaceFaultTarget::PortExpire;
-    let fault_id = format!("surface-fault:{}", random_token(16));
-    match runtime.arm_e2e_surface_fault(fault_id, request).await {
-        Ok(status) => {
-            if immediate_port_expiry {
-                if let Err(response) = apply_e2e_port_expire(&state, runtime).await {
-                    return response;
-                }
-                return runtime
-                    .e2e_surface_fault_status(&status.fault_id)
-                    .await
-                    .map_or_else(
-                        || {
-                            json_error(
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                "e2e_surface_fault_not_found",
-                            )
-                        },
-                        |triggered| Json(triggered).into_response(),
-                    );
-            }
-            Json(status).into_response()
-        }
-        Err(
-            code @ ("e2e_surface_fault_marker_invalid"
-            | "e2e_surface_fault_identifier_invalid"
-            | "e2e_surface_fault_action_not_supported"),
-        ) => json_error(StatusCode::BAD_REQUEST, code),
-        Err(code) => json_error(StatusCode::CONFLICT, code),
-    }
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn apply_e2e_port_expire(
-    state: &AppState,
-    runtime: &crate::sync_v2::SyncV2Runtime,
-) -> Result<(), Response> {
-    let Some(crate::sync_v2::E2ESurfaceFaultEffect::PortExpire {
-        tunnel_id,
-        owner_device_id,
-    }) = runtime
-        .intercept_e2e_surface_fault(crate::sync_v2::E2ESurfaceFaultTarget::PortExpire)
-        .await
-    else {
-        return Err(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "e2e_port_expire_action_mismatch",
-        ));
-    };
-    let Some(tunnels) = state.services.tunnels.as_ref() else {
-        return Err(json_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "tunnel_service_unavailable",
-        ));
-    };
-    match tunnels.expire_for_e2e(&tunnel_id, &owner_device_id).await {
-        Ok(()) => Ok(()),
-        Err(crate::tunnels::TunnelError::NotFound) => Err(json_error(
-            StatusCode::NOT_FOUND,
-            "e2e_port_expire_tunnel_not_found",
-        )),
-        Err(crate::tunnels::TunnelError::Unauthorized) => Err(json_error(
-            StatusCode::UNAUTHORIZED,
-            "e2e_port_expire_owner_mismatch",
-        )),
-        Err(_) => Err(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "e2e_port_expire_failed",
-        )),
-    }
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_surface_fault_status(
-    State(state): State<AppState>,
-    Path(fault_id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    if !e2e_fault_authorized(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
-    }
-    let Some(runtime) = state.services.sync_v2.as_ref() else {
-        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
-    };
-    runtime
-        .e2e_surface_fault_status(&fault_id)
-        .await
-        .map_or_else(
-            || json_error(StatusCode::NOT_FOUND, "e2e_surface_fault_not_found"),
-            |status| Json(status).into_response(),
-        )
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_surface_fault_release(
-    State(state): State<AppState>,
-    Path(fault_id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    if !e2e_fault_authorized(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
-    }
-    let Some(runtime) = state.services.sync_v2.as_ref() else {
-        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
-    };
-    runtime
-        .release_e2e_surface_fault(&fault_id)
-        .await
-        .map_or_else(
-            || json_error(StatusCode::NOT_FOUND, "e2e_surface_fault_not_found"),
-            |status| Json(status).into_response(),
-        )
-}
-
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_fault_authorized(authorization: &Authorization, headers: &HeaderMap) -> bool {
-    headers.get("origin").is_none() && authorize_admin(authorization, headers).await
-}
-
-#[cfg(feature = "e2e-command-fault")]
-fn random_token(byte_count: usize) -> String {
-    use rand::RngCore;
-    let mut bytes = vec![0_u8; byte_count];
-    rand::rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
 }
 
 include!("server/services.rs");
@@ -739,43 +484,10 @@ async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<Health>) 
 mod tests {
     use super::constant_time_eq;
 
-    #[cfg(feature = "e2e-command-fault")]
-    use super::{Authorization, e2e_fault_authorized};
-    #[cfg(feature = "e2e-command-fault")]
-    use axum::http::{HeaderMap, HeaderValue};
-    #[cfg(feature = "e2e-command-fault")]
-    use std::sync::Arc;
-
     #[test]
     fn token_comparison_requires_exact_bytes() {
         assert!(constant_time_eq(b"same", b"same"));
         assert!(!constant_time_eq(b"same", b"diff"));
         assert!(!constant_time_eq(b"short", b"longer"));
-    }
-
-    #[cfg(feature = "e2e-command-fault")]
-    #[tokio::test]
-    async fn e2e_fault_control_requires_exact_admin_authorization() {
-        let authorization = Authorization::AdminOnly(Arc::from("admin-secret"));
-        assert!(!e2e_fault_authorized(&authorization, &HeaderMap::new()).await);
-
-        let mut invalid = HeaderMap::new();
-        invalid.insert(
-            "authorization",
-            HeaderValue::from_static("Bearer wrong-secret"),
-        );
-        assert!(!e2e_fault_authorized(&authorization, &invalid).await);
-
-        let mut valid = HeaderMap::new();
-        valid.insert(
-            "authorization",
-            HeaderValue::from_static("Bearer admin-secret"),
-        );
-        assert!(e2e_fault_authorized(&authorization, &valid).await);
-        valid.insert(
-            "origin",
-            HeaderValue::from_static("https://example.invalid"),
-        );
-        assert!(!e2e_fault_authorized(&authorization, &valid).await);
     }
 }

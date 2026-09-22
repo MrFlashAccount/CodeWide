@@ -1,0 +1,60 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "companion-linux",
+  "projectType": "application",
+  "sourceRoot": "apps/companion-linux/src",
+  "tags": ["language:rust", "type:application", "platform:linux"],
+  "implicitDependencies": ["companion-core", "relay", "release-contracts"],
+  "metadata": {
+    "description": "Headless Linux host for Companion core",
+    "codewideRelease": {
+      "id": "companion-linux",
+      "runner": "linux",
+      "tagPrefix": "companion-linux-v",
+      "baselineVersion": "0.1.0",
+      "order": 20
+    }
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p codewide-companion --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p codewide-companion --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./scripts/build-companion.sh --locked",
+        "cwd": "."
+      }
+    },
+    "package": {
+      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/dist/companion-linux"],
+      "options": {
+        "command": "./scripts/build-companion-linux",
+        "cwd": "."
+      }
+    },
+    "release": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./scripts/release-companion-linux",
+        "cwd": ".",
+        "forwardAllArgs": true
+      }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "macos",
+  "projectType": "application",
+  "sourceRoot": "apps/companion-macos/Sources",
+  "tags": ["language:swift", "type:application", "platform:macos"],
+  "implicitDependencies": ["companion-swift-ffi", "release-contracts"],
+  "metadata": {
+    "description": "Native CodeWide menu-bar application and LaunchAgent",
+    "codewideRelease": {
+      "id": "macos",
+      "runner": "macos-26",
+      "tagPrefix": "v",
+      "baselineVersion": "0.1.0",
+      "order": 30
+    }
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./scripts/validate-boundaries.sh",
+        "cwd": "apps/companion-macos"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "swift test",
+        "cwd": "apps/companion-macos"
+      }
+    },
+    "package": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": ["{projectRoot}/dist", "{projectRoot}/.build/app"],
+      "options": {
+        "command": "./scripts/build-app.sh",
+        "cwd": "apps/companion-macos"
+      }
+    },
+    "release": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "./scripts/release-macos",
+        "cwd": ".",
+        "forwardAllArgs": true
+      }
+    }
+  }
+}

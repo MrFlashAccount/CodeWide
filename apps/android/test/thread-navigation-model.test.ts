@@ -18,7 +18,7 @@ describe("V1 thread route identity", () => {
     });
     if (parsed === null) throw new Error("Expected a qualified thread");
     expect(v1ThreadDestination(parsed)).toEqual({
-      pathname: "/v1/threads/[connectionId]/[threadId]",
+      pathname: "/threads/[connectionId]/[threadId]",
       params: { connectionId: "server/path\u0000one", threadId: "thread/path\u0000two" },
     });
   });

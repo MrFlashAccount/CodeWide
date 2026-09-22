@@ -341,3 +341,11 @@ it("loads the authoritative latest range once before publishing a jump request",
     unreadItemKey: null,
   });
 });
+
+it("keeps timeline keyboard behavior independent of the docked question editor", () => {
+  const props = timelineViewportProps(() => undefined);
+  const view = render(<TimelineViewport {...props} newChat={false} />);
+  expect(view.getByTestId("conversation-timeline").props.maintainScrollAtEnd).toBe(true);
+  expect(view.getByTestId("conversation-timeline").props.keyboardLiftBehavior).toBe("always");
+  expect(view.getByTestId("conversation-timeline").props.maintainVisibleContentPosition).toBe(true);
+});

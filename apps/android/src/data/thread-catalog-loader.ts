@@ -1,3 +1,4 @@
+import { catalogExcludedThreadIds } from "./threadCatalogMembership";
 import type { RpcClient, SyncSnapshotThread } from "@codewide/sync-client";
 import { parseArchivedCatalogCount } from "./catalog-summary-model";
 import { isThread } from "./thread-cursor-sync";
@@ -13,6 +14,7 @@ export interface ThreadCatalogPageRequest {
 
 export interface ThreadCatalogPage {
   archivedCount?: number | null;
+  excludedThreadIds: readonly string[];
   nextCursor: string | null;
   threads: SyncSnapshotThread[];
 }
@@ -59,10 +61,13 @@ export async function loadThreadCatalogPage(
       throw new Error("thread/list returned invalid thread metadata");
     }
     const thread = candidate;
-    if (!thread.ephemeral && thread.parentThreadId === null) {
-      threads.push({ archived: request.archived, thread });
-    }
+    threads.push({ archived: request.archived, thread });
   }
   const archivedCount = parseArchivedCatalogCount(response.codewideCatalogSummary ?? null);
-  return { archivedCount, nextCursor: response.nextCursor, threads };
+  return {
+    archivedCount,
+    excludedThreadIds: catalogExcludedThreadIds(response.codewideCatalogSummary),
+    nextCursor: response.nextCursor,
+    threads,
+  };
 }

@@ -1,4 +1,8 @@
 import { NativeModules } from "react-native";
+import {
+  activateGlobalVoiceOverlayActions,
+  releaseGlobalVoiceOverlayActions,
+} from "./globalVoiceOverlayActionLease";
 
 type GlobalVoiceForegroundBridge = {
   readonly acquire: () => Promise<unknown>;
@@ -38,8 +42,10 @@ export async function acquireGlobalVoiceForegroundLease(): Promise<GlobalVoiceFo
     throw new Error("Global Voice foreground service returned an invalid token");
   }
   let releasePromise: Promise<void> | null = null;
+  activateGlobalVoiceOverlayActions(token);
   return {
     async release(): Promise<void> {
+      releaseGlobalVoiceOverlayActions(token);
       releasePromise ??= bridge.release(token);
       await releasePromise;
     },

@@ -2,7 +2,7 @@
 use codewide_relay::{
     adapter::{Adapter, AdapterConnectionState},
     auth,
-    pairing::{InvitationBundle, PairRequest, PairResponse},
+    pairing::{INVITATION_VERSION, InvitationBundle, PairRequest, PairResponse},
     registry::validate_route_id,
     transport_tls::pinned_client_config,
 };
@@ -25,7 +25,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const CONFIG_VERSION: u8 = 3;
-const INVITATION_VERSION: u8 = 4;
 const MAX_PAIR_RESPONSE_BYTES: usize = 4096;
 
 #[derive(Debug, thiserror::Error)]

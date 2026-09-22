@@ -74,6 +74,32 @@ describe("GlobalSupervisorFeature", () => {
     expect(owner.value.start).toHaveBeenCalledOnce();
   });
 
+  it("delivers rapid mute intents immediately and publishes only the latest acknowledgement", async () => {
+    const owner = runtime();
+    const feature = createGlobalSupervisorFeature(owner.value);
+    await feature.enter();
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const third = Promise.withResolvers<void>();
+    owner.setMicrophoneMuted.mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise).mockImplementationOnce(() => third.promise);
+    const a = feature.toggleMicrophone();
+    const b = feature.toggleMicrophone();
+    const c = feature.toggleMicrophone();
+    expect(owner.setMicrophoneMuted.mock.calls).toEqual([[true], [false], [true]]);
+    third.resolve();
+    await c;
+    expect(feature.microphoneMuted$.peek()).toBe(true);
+    second.resolve(); first.resolve();
+    await Promise.all([a, b]);
+    expect(feature.microphoneMuted$.peek()).toBe(true);
+    await feature.pause(); await feature.resume();
+    expect(feature.microphoneMuted$.peek()).toBe(true);
+    await Promise.all([feature.stop(), feature.stop()]);
+    await feature.stop();
+    expect(owner.stop).toHaveBeenCalledOnce();
+  });
+
   it("shows startup progress until binding recovery and activation settle", async () => {
     let finishRecovery: (() => void) | null = null;
     const owner = runtime();
@@ -152,6 +178,18 @@ describe("GlobalSupervisorFeature", () => {
       transcript: [],
     });
     expect(owner.value.recover).not.toHaveBeenCalled();
+  });
+
+  it("preserves an authoritative speaking event received while resuming", async () => {
+    const owner = runtime();
+    const feature = createGlobalSupervisorFeature(owner.value);
+    await feature.enter();
+    await feature.pause();
+    owner.resume.mockImplementationOnce(async () => {
+      owner.publish({ activationId: "activation-1", event: "speaking" });
+    });
+    await feature.resume();
+    expect(feature.render$.peek().phase).toBe("speaking");
   });
 
   it("pauses the live transport for app lock and resumes the same activation after unlock", async () => {

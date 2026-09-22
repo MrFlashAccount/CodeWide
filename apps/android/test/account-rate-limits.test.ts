@@ -1,4 +1,4 @@
-import type { GetAccountRateLimitsResponse, RateLimitSnapshot, Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { GetAccountRateLimitsResponse, RateLimitSnapshot, Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -15,6 +15,7 @@ import {
 } from "../src/data/account-rate-limits";
 
 const rateLimit = (overrides: Partial<RateLimitSnapshot> = {}): RateLimitSnapshot => ({
+  normalModelSlug: null,
   limitId: "codex",
   limitName: "Codex",
   primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 2_000 },
@@ -28,12 +29,38 @@ const rateLimit = (overrides: Partial<RateLimitSnapshot> = {}): RateLimitSnapsho
 });
 
 const response = (snapshot = rateLimit()): GetAccountRateLimitsResponse => ({
+  ordinaryUsageAllowed: null,
+  accountId: null,
+  rateLimitUpsell: null,
   rateLimits: snapshot,
   rateLimitsByLimitId: { codex: snapshot },
   rateLimitResetCredits: null,
 });
 
 describe("account rate limits", () => {
+  it("retains account permission and model metadata across sparse updates", () => {
+    const previous: GetAccountRateLimitsResponse = {
+      ...response(rateLimit({ normalModelSlug: "gpt-6-astra" })),
+      accountId: "account-test",
+      ordinaryUsageAllowed: false,
+      rateLimitUpsell: { banner: "usage" },
+    };
+    for (const rateLimitsByLimitId of [previous.rateLimitsByLimitId, null]) {
+      const merged = mergeAccountRateLimits({ ...previous, rateLimitsByLimitId }, {
+        rateLimits: rateLimit({ primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 5_000 } }),
+      });
+      expect(merged).toMatchObject({
+        accountId: "account-test",
+        ordinaryUsageAllowed: false,
+        rateLimitUpsell: { banner: "usage" },
+        rateLimits: { normalModelSlug: "gpt-6-astra", primary: { usedPercent: 0 } },
+      });
+    }
+    expect(mergeAccountRateLimits(null, { rateLimits: rateLimit() })).toMatchObject({
+      accountId: null, ordinaryUsageAllowed: null, rateLimitUpsell: null,
+    });
+  });
+
   it("selects the weekly window instead of assuming the primary window is weekly", () => {
     const weekly = selectWeeklyRateLimit(response());
     expect(weekly?.window.windowDurationMins).toBe(10_080);
@@ -74,6 +101,9 @@ describe("account rate limits", () => {
       secondary: null,
     });
     const weekly = selectWeeklyRateLimit({
+      ordinaryUsageAllowed: null,
+      accountId: null,
+      rateLimitUpsell: null,
       rateLimits: codex,
       rateLimitsByLimitId: { base_model_inference: baseModelInference, codex },
       rateLimitResetCredits: null,

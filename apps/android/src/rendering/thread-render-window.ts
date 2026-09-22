@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 
 type Turn = Thread["turns"][number];
 
@@ -14,7 +14,7 @@ export type TurnRenderWindow = {
 };
 
 function isTurnActivityItem(item: Turn["items"][number]): boolean {
-  return item.type !== "userMessage";
+  return item.type !== "userMessage" && !isQuestionMessage(item);
 }
 
 /**
@@ -30,7 +30,10 @@ export function isAgentMessageStillStreaming(turn: Turn, itemId: string): boolea
   const itemIndex = turn.items.findIndex(
     (item) => item.id === itemId && item.type === "agentMessage",
   );
-  if (itemIndex < 0) {
+  if (
+    itemIndex < 0 ||
+    (turn.items[itemIndex]?.type === "agentMessage" && turn.items[itemIndex].delivery === "async")
+  ) {
     return false;
   }
   return !turn.items.slice(itemIndex + 1).some((item) => item.type !== "userMessage");
@@ -59,7 +62,11 @@ export function selectTurnRenderWindow(
     const item = turn.items[index];
     if (item?.type === "userMessage") {
       userItemIndexes.push(index);
-    } else if (item !== undefined && !hiddenPlaceholderIndexes.has(index)) {
+    } else if (
+      item !== undefined &&
+      !isQuestionMessage(item) &&
+      !hiddenPlaceholderIndexes.has(index)
+    ) {
       latestNonUserIndex = index;
       if (item.type === "agentMessage" && item.text.trim() !== "") {
         latestAgentIndex = index;
@@ -175,6 +182,7 @@ function matchingAgentPlaceholderIndexes(turn: Turn): Set<number> {
     (item, index) =>
       index !== placeholderIndex &&
       item.type === "agentMessage" &&
+      item.delivery !== "async" &&
       item.id !== placeholderId &&
       (item.text === placeholder.text ||
         (item.phase === "final_answer" && placeholder.phase === "final_answer")),
@@ -183,4 +191,10 @@ function matchingAgentPlaceholderIndexes(turn: Turn): Set<number> {
     hidden.add(placeholderIndex);
   }
   return hidden;
+}
+
+function isQuestionMessage(item: Turn["items"][number]): boolean {
+  return (
+    item.type === "agentMessage" && item.delivery === "async" && (item.questions?.length ?? 0) > 0
+  );
 }

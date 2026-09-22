@@ -7,7 +7,7 @@ describe("V1 React Doctor scope", () => {
     const typeScriptOverride = config.overrides.find(
       (override) =>
         override.files.length === 2 &&
-        override.files.includes("app/v1/**/*.ts") &&
+        override.files.includes("app/(workspace)/**/*.ts") &&
         override.files.includes("src/**/*.ts"),
     );
     const hookOverride = config.overrides.find((override) =>

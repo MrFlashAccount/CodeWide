@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import { colors, radii, spacing, typeScale } from "../../theme";
+import { colors, iconSize, radii, spacing, typeScale } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
 import { THREAD_LIST_ROW_CONTENT_HEIGHT, THREAD_LIST_ROW_VERTICAL_MARGIN } from "./threadListModel";
 
@@ -29,12 +29,12 @@ export const styles = StyleSheet.create({
     minWidth: 0,
     overflow: "hidden",
   },
-  threadContextMenu: {
-    alignSelf: "stretch",
-    flexShrink: 1,
-    maxWidth: "100%",
-    minWidth: 0,
-    width: "100%",
+  threadAttentionIcon: {
+    alignItems: "center",
+    flexShrink: 0,
+    height: iconSize.indicator,
+    justifyContent: "center",
+    width: iconSize.indicator,
   },
   threadMeta: {
     alignItems: "center",

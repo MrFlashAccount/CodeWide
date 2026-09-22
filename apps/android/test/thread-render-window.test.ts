@@ -272,3 +272,15 @@ describe("thread render window", () => {
     expect(completed.collapsedActivityIndexes).toEqual([1]);
   });
 });
+
+it("keeps async question messages out of final-response selection and streaming placeholders", () => {
+  const question = { type: "agentMessage" as const, id: "question", text: "Choose", phase: "final_answer" as const, delivery: "async" as const, questions: [{ title: "Choose", options: ["A", "B"] }], memoryCitation: null };
+  const rawTurn: import("@codewide/codex-protocol/v0.155.1/v2").Turn = {
+    id: "turn", itemsView: "full", status: "inProgress", error: null, startedAt: null, completedAt: null, durationMs: null,
+    items: [{ type: "userMessage", id: "user", clientId: null, content: [] }, { ...question, id: "turn:agent", delivery: null, questions: null, text: "Actual answer" }, question],
+  };
+  expect(selectTurnRenderWindow(rawTurn).latestAgentIndex).toBe(1);
+  expect(selectTurnRenderWindow(rawTurn).liveActivityIndexes).toEqual([1]);
+  expect(isAgentMessageStillStreaming(rawTurn, question.id)).toBe(false);
+  expect(selectTurnRenderWindow({ ...rawTurn, status: "completed" }).latestAgentIndex).toBe(1);
+});

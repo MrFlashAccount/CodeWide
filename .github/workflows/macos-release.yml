@@ -1,13 +1,18 @@
 name: macOS Release
-run-name: macOS ${{ inputs.version }} (${{ inputs.request_id || github.run_id }})
+run-name: macOS ${{ inputs.bump || inputs.version }} (${{ inputs.request_id || github.run_id }})
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Semantic version, for example 0.1.0 or v0.1.0"
+      bump:
+        description: "Version increment"
         required: true
-        type: string
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       base:
         description: "Git ref to compare against; defaults to the latest version tag"
         required: false
@@ -18,7 +23,7 @@ on:
         default: false
         type: boolean
       force:
-        description: "Allow a release even when the release graph does not select macOS"
+        description: "Allow a release even when Nx does not select macOS"
         required: false
         default: false
         type: boolean
@@ -56,16 +61,60 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: macos-release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: macos-26
     environment: release
+    env:
+      NX_CACHE_DIRECTORY: .nx/cache
+      NX_TUI: "false"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Restore Nx task cache
+        uses: actions/cache@v5
+        with:
+          path: .nx/cache
+          key: nx-macos-release-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nx-macos-release-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
+
+      - name: Restore Cargo and SwiftPM caches
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            ~/Library/Caches/org.swift.swiftpm
+            ~/.cache/org.swift.swiftpm
+          key: native-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/companion-macos/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            native-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/companion-macos/Package.resolved') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Verify macOS is affected
         if: ${{ inputs.force != true }}
@@ -81,12 +130,18 @@ jobs:
       - name: Resolve version
         env:
           RAW_VERSION: ${{ inputs.version }}
+          VERSION_BUMP: ${{ inputs.bump }}
         run: |
-          version="${RAW_VERSION#v}"
-          if [[ ! "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid version: $RAW_VERSION"
-            exit 1
+          if [[ -n "$RAW_VERSION" ]]; then
+            version="${RAW_VERSION#v}"
+            if [[ ! "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid version: $RAW_VERSION"
+              exit 1
+            fi
+          else
+            version=$(./scripts/next-macos-version "$VERSION_BUMP")
           fi
+          echo "Releasing $version."
           echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
           echo "DMG_PATH=apps/companion-macos/dist/CodeWide-$version.dmg" >> "$GITHUB_ENV"

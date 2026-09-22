@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import { transcriptionLanguageHint } from "../src/data/transcription-language";
@@ -19,6 +19,12 @@ describe("transcription language hint", () => {
 
 function thread(text: string): Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id: "thread",
     preview: "",
     modelProvider: "openai",

@@ -1,11 +1,10 @@
 import { expect, it } from "vitest";
 import { sourceHasJsxElement } from "../source-contract";
 import { migratedThreadResourceContextChips, migratedChangesFeature } from "./changes-sources";
-import { threadRow } from "./threadList-sources";
 
 it("preserves changes integration contracts", () => {
-  for (const owner of [migratedThreadResourceContextChips, threadRow])
-    expect(owner.match(/trigger="long-press"/g)).toHaveLength(1);
+  // Thread-row long press is exercised through the actual button in v1-thread-row-menu.render.
+  expect(migratedThreadResourceContextChips.match(/trigger="long-press"/g)).toHaveLength(1);
   expect(migratedThreadResourceContextChips).toContain(
     "const changesInitialLoading = changesPending && !changesReady;",
   );

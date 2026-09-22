@@ -2,7 +2,7 @@ import type {
   ConfigReadResponse,
   ModelListResponse,
   PermissionProfileListResponse,
-} from "@codewide/codex-protocol/v0.147.0/v2";
+} from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import { loadSkillCatalog } from "./load-skill-catalog";
 import type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";

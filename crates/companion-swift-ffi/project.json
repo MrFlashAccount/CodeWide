@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "companion-swift-ffi",
+  "projectType": "library",
+  "sourceRoot": "crates/companion-swift-ffi/src",
+  "tags": ["language:rust", "type:ffi", "platform:macos"],
+  "implicitDependencies": ["companion-core"],
+  "metadata": {
+    "description": "Narrow UniFFI and static-library adapter for Swift"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p companion-swift-ffi --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p companion-swift-ffi --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p companion-swift-ffi --release",
+        "cwd": "."
+      }
+    }
+  }
+}

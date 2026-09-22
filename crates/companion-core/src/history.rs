@@ -370,7 +370,7 @@ pub(crate) fn summary_projection_state_from_file(
     Ok(builder)
 }
 
-const SUMMARY_PROJECTION_VERSION: u8 = 3;
+pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 8;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct SummaryProjectionState {
@@ -379,8 +379,14 @@ pub(crate) struct SummaryProjectionState {
     id: String,
     digest: DigestBuilder,
     user: Option<Value>,
+    #[serde(default)]
+    authored_users: Vec<Value>,
     client_id: Option<String>,
     agent: Option<Value>,
+    #[serde(default)]
+    questions: Vec<Value>,
+    #[serde(default)]
+    rpc_questions: Vec<crate::history_questions::QuestionHistory>,
     #[serde(default)]
     artifacts: Vec<Value>,
     fallback_user: Option<String>,
@@ -405,8 +411,11 @@ impl SummaryProjectionState {
                 ..DigestBuilder::default()
             },
             user: None,
+            authored_users: Vec::new(),
             client_id: None,
             agent: None,
+            questions: Vec::new(),
+            rpc_questions: Vec::new(),
             artifacts: Vec::new(),
             fallback_user: None,
             fallback_agent: None,
@@ -446,6 +455,9 @@ impl SummaryProjectionState {
                 }
             }
             Some("agent_message") => {
+                if payload.get("delivery").and_then(Value::as_str) == Some("async") {
+                    return;
+                }
                 if let Some(message) = payload.get("message").and_then(Value::as_str)
                     && !message.is_empty()
                 {
@@ -488,10 +500,16 @@ impl SummaryProjectionState {
                 // Android optimistic row, so dropping it here leaves both the
                 // canonical turn and the optimistic row visible forever.
                 let item = payload.get("item");
+                if let Some(item) = item {
+                    self.handle_question(item);
+                }
                 let user_message = item
                     .and_then(|item| item.get("type"))
                     .and_then(Value::as_str)
                     .is_some_and(|kind| matches!(kind, "UserMessage" | "userMessage"));
+                if user_message && let Some(item) = item {
+                    self.handle_authored_user(item);
+                }
                 if user_message && self.client_id.is_none() {
                     self.client_id = item
                         .and_then(|item| item.get("client_id").or_else(|| item.get("clientId")))
@@ -507,6 +525,77 @@ impl SummaryProjectionState {
 
     pub(crate) const fn is_current(&self) -> bool {
         self.projection_version == SUMMARY_PROJECTION_VERSION
+    }
+
+    fn handle_question(&mut self, item: &Value) {
+        if !matches!(
+            item.get("type").and_then(Value::as_str),
+            Some("AgentMessage" | "agentMessage")
+        ) || item.get("delivery").and_then(Value::as_str) != Some("async")
+        {
+            return;
+        }
+        let (Some(id), Some(questions)) = (
+            item.get("id").and_then(Value::as_str),
+            item.get("questions").and_then(Value::as_array),
+        ) else {
+            return;
+        };
+        if id.is_empty() || questions.is_empty() {
+            return;
+        }
+        let text = item.get("text").and_then(Value::as_str).map_or_else(
+            || {
+                item.get("content")
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(|part| part.get("text").and_then(Value::as_str))
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default()
+            },
+            ToOwned::to_owned,
+        );
+        let question = json!({
+            "type": "agentMessage", "id": id, "text": text,
+            "phase": "final_answer", "memoryCitation": Value::Null,
+            "delivery": "async", "questions": questions
+        });
+        if let Some(previous) = self.questions.iter_mut().find(|value| value["id"] == id) {
+            *previous = question;
+        } else {
+            self.questions.push(question);
+        }
+    }
+
+    fn handle_authored_user(&mut self, item: &Value) {
+        let Some(id) = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        else {
+            return;
+        };
+        let Some(content) = item.get("content").and_then(Value::as_array) else {
+            return;
+        };
+        let user = json!({
+            "type": "userMessage",
+            "id": id,
+            "clientId": item.get("client_id").or_else(|| item.get("clientId")),
+            "content": content.iter().map(project_authored_user_input).collect::<Vec<_>>()
+        });
+        // Materialized items distinguish authored prompts and steers from
+        // injected response context, and own their stable UI/client identities.
+        // Started/completed events for the same item must not duplicate it.
+        if let Some(previous) = self.authored_users.iter_mut().find(|user| user["id"] == id) {
+            *previous = user;
+        } else {
+            self.authored_users.push(user);
+        }
+        self.user = None;
     }
 
     fn collect_artifact(&mut self, payload: &Value) {
@@ -550,7 +639,9 @@ impl SummaryProjectionState {
         let Some(role) = payload.get("role").and_then(Value::as_str) else {
             return;
         };
-        if role == "user" && is_environment_context_response_message(payload) {
+        if role == "user"
+            && (!self.authored_users.is_empty() || is_environment_context_response_message(payload))
+        {
             return;
         }
         let id = payload
@@ -615,7 +706,8 @@ impl SummaryProjectionState {
             b"\"type\":\"response_item\",\"payload\":{\"type\":\"message\"",
         )
         .is_some();
-        if !relevant_event && !response_message && !turn_context {
+        let question_record = crate::history_questions::relevant(prefix, &self.rpc_questions);
+        if !relevant_event && !response_message && !turn_context && !question_record {
             return Ok(());
         }
         let envelope = serde_json::from_slice::<Value>(line)
@@ -623,7 +715,9 @@ impl SummaryProjectionState {
         let Some(payload) = envelope.get("payload") else {
             return Ok(());
         };
-        if turn_context {
+        if question_record {
+            crate::history_questions::ingest(&mut self.rpc_questions, payload);
+        } else if turn_context {
             self.handle_turn_context(payload);
         } else if relevant_event {
             self.handle_event(payload);
@@ -697,10 +791,13 @@ impl SummaryProjectionState {
                 }));
             }
         }
-        let mut items = Vec::with_capacity(2);
-        if let Some(user) = self.user {
+        let mut items = self.authored_users;
+        if items.is_empty()
+            && let Some(user) = self.user
+        {
             items.push(user);
         }
+        items.extend(self.questions);
         if let Some(agent) = self.agent {
             items.push(agent);
         }
@@ -715,8 +812,18 @@ impl SummaryProjectionState {
             "completedAt": digest.completed_at,
             "durationMs": digest.duration_ms
         });
-        if digest.activity_count > 0 || usage.is_some() || !self.artifacts.is_empty() {
+        if digest.activity_count > 0
+            || usage.is_some()
+            || !self.artifacts.is_empty()
+            || !self.rpc_questions.is_empty()
+        {
             let mut metadata = serde_json::Map::new();
+            if !self.rpc_questions.is_empty() {
+                metadata.insert(
+                    "questions".into(),
+                    serde_json::to_value(self.rpc_questions).unwrap_or(Value::Null),
+                );
+            }
             if !self.artifacts.is_empty() {
                 metadata.insert("artifacts".into(), Value::Array(self.artifacts));
             }
@@ -753,6 +860,48 @@ impl SummaryProjectionState {
             final_status,
         ))
     }
+}
+
+// Authored rollout items use the core protocol's snake_case inputs, while
+// thread history exposes App Server UserInput. Response items below use a
+// third representation (input_text/input_image) and have a separate adapter.
+fn project_authored_user_input(item: &Value) -> Value {
+    let mut projected = item.clone();
+    let Some(object) = projected.as_object_mut() else {
+        return projected;
+    };
+    match object.get("type").and_then(Value::as_str) {
+        Some("text") => {
+            if let Some(elements) = object
+                .get_mut("text_elements")
+                .and_then(Value::as_array_mut)
+            {
+                for element in elements.iter_mut().filter_map(Value::as_object_mut) {
+                    if let Some(range) = element.remove("byte_range") {
+                        element.insert("byteRange".into(), range);
+                    }
+                }
+            }
+        }
+        Some("local_image") => {
+            object.insert("type".into(), json!("localImage"));
+        }
+        Some("local_audio") => {
+            object.insert("type".into(), json!("localAudio"));
+        }
+        Some("image") => {
+            if let Some(url) = object.remove("image_url") {
+                object.insert("url".into(), url);
+            }
+        }
+        Some("audio") => {
+            if let Some(url) = object.remove("audio_url") {
+                object.insert("url".into(), url);
+            }
+        }
+        _ => {}
+    }
+    projected
 }
 
 fn project_user_input(item: &Value) -> Option<Value> {
@@ -825,6 +974,7 @@ fn integer(value: &Value, key: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use std::io::Write;
 
     use super::{SummaryProjectionState, digest_turn, project_summary_turn};
@@ -937,6 +1087,33 @@ mod tests {
     }
 
     #[test]
+    fn async_questions_survive_summary_checkpoint_and_final_answer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = SummaryProjectionState::new("turn".into());
+        let question = json!({"type": "AgentMessage", "id": "question-call", "delivery": "async", "phase": "final_answer", "content": [{"type": "Text", "text": "Which option?"}], "questions": [{"title": "Which option?", "options": ["A", "B"]}]});
+        state.handle_event(&json!({"type": "item_started", "item": question}));
+        let mut restored: SummaryProjectionState =
+            serde_json::from_value(serde_json::to_value(state)?)?;
+        restored.handle_event(&json!({"type": "item_completed", "item": question}));
+        restored.handle_event(
+            &json!({"type": "agent_message", "delivery": "async", "message": "Which option?"}),
+        );
+        restored
+            .handle_event(&json!({"type": "task_complete", "last_agent_message": "Work finished"}));
+        let result = restored.finish();
+        let items = result["items"].as_array().ok_or("items")?;
+        let questions: Vec<_> = items
+            .iter()
+            .filter(|item| item["delivery"] == "async")
+            .collect();
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0]["id"], "question-call");
+        assert_eq!(questions[0]["questions"][0]["options"], json!(["A", "B"]));
+        assert!(items.iter().any(|item| item["text"] == "Work finished"));
+        Ok(())
+    }
+
+    #[test]
     fn persisted_v2_summary_requests_artifact_refresh_but_remains_readable()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut state = SummaryProjectionState::new("turn".into());
@@ -999,6 +1176,110 @@ mod tests {
         assert_eq!(projected["items"][1]["text"], "final");
         assert_eq!(projected["items"][1]["phase"], "final_answer");
         assert_eq!(projected["codewide"]["activity"]["kinds"][0], "reasoning");
+        Ok(())
+    }
+
+    #[test]
+    fn summary_preserves_authored_items_across_question_replies_and_replay()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = SummaryProjectionState::new("turn".into());
+        state.handle_response_message(&json!({
+            "role": "user", "content": [{"type": "input_text", "text": "injected context"}]
+        }));
+        let prompt = json!({
+            "type": "UserMessage", "id": "prompt", "client_id": "prompt-client",
+            "content": [{"type": "text", "text": "Why did it fail?", "text_elements": []},
+                        {"type": "localImage", "path": "/tmp/fixture.png"}]
+        });
+        state.handle_event(&json!({"type": "item_started", "item": prompt}));
+        state.handle_event(&json!({"type": "item_completed", "item": prompt}));
+        let mut state: SummaryProjectionState =
+            serde_json::from_value(serde_json::to_value(state)?)?;
+        let reply_text = "<send_user_message_question_reply>\n[{\"questionItemId\":\"question\",\"question\":\"Which logs?\",\"answer\":\"https://example.invalid/logs\"}]\n</send_user_message_question_reply>";
+        state.handle_response_message(&json!({
+            "role": "user", "content": [{"type": "input_text", "text": reply_text}]
+        }));
+        let reply = json!({
+            "type": "userMessage", "id": "reply", "clientId": "reply-client",
+            "content": [{"type": "text", "text": reply_text, "text_elements": []}]
+        });
+        state.handle_event(&json!({"type": "item_completed", "item": reply}));
+        state.handle_event(&json!({"type": "item_completed", "item": reply}));
+        state.handle_response_message(&json!({
+            "role": "assistant", "id": "answer", "phase": "final_answer",
+            "content": [{"type": "output_text", "text": "The cause"}]
+        }));
+        state.handle_event(&json!({"type": "turn_aborted"}));
+
+        let projected = state.project();
+        let mut expected_prompt = prompt;
+        expected_prompt["type"] = json!("userMessage");
+        expected_prompt
+            .as_object_mut()
+            .ok_or("prompt object")?
+            .remove("client_id");
+        expected_prompt["clientId"] = json!("prompt-client");
+        assert_eq!(projected["items"][0], expected_prompt);
+        assert_eq!(projected["items"][1], reply);
+        assert_eq!(projected["items"][2]["text"], "The cause");
+        assert_eq!(projected["items"].as_array().map(Vec::len), Some(3));
+        assert_eq!(projected["status"], "interrupted");
+        assert!(!projected.to_string().contains("injected context"));
+        Ok(())
+    }
+
+    #[test]
+    fn authored_inputs_expose_app_server_media_after_replay()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = json!([
+            {"type": "text", "text": "[Image #1]", "text_elements": [
+                {"byte_range": {"start": 0, "end": 10}, "placeholder": "[Image #1]"}
+            ]},
+            {"type": "local_image", "path": "/tmp/image:123", "detail": "original"},
+            {"type": "image", "image_url": "data:image/png;base64,aGVsbG8=", "detail": "high"},
+            {"type": "local_audio", "path": "/tmp/audio.wav"},
+            {"type": "audio", "audio_url": "data:audio/wav;base64,aGVsbG8="},
+            {"type": "skill", "name": "Example", "path": "/tmp/SKILL.md"},
+            {"type": "mention", "name": "Example", "path": "app://example"},
+            {"type": "localImage", "path": "/tmp/already-normalized.png"}
+        ]);
+        let prompt = json!({
+            "type": "UserMessage", "id": "prompt", "client_id": "client", "content": content
+        });
+        let mut state = SummaryProjectionState::new("turn".into());
+        state.handle_event(&json!({"type": "item_started", "item": prompt}));
+        let mut state: SummaryProjectionState =
+            serde_json::from_value(serde_json::to_value(state)?)?;
+        state.handle_event(&json!({"type": "item_completed", "item": prompt}));
+        let projected = state.project();
+        assert_eq!(projected["items"].as_array().map(Vec::len), Some(1));
+        assert_eq!(projected["items"][0]["id"], "prompt");
+        assert_eq!(projected["items"][0]["clientId"], "client");
+        assert_eq!(
+            projected["items"][0]["content"],
+            json!([
+                {"type": "text", "text": "[Image #1]", "text_elements": [
+                    {"byteRange": {"start": 0, "end": 10}, "placeholder": "[Image #1]"}
+                ]},
+                {"type": "localImage", "path": "/tmp/image:123", "detail": "original"},
+                {"type": "image", "url": "data:image/png;base64,aGVsbG8=", "detail": "high"},
+                {"type": "localAudio", "path": "/tmp/audio.wav"},
+                {"type": "audio", "url": "data:audio/wav;base64,aGVsbG8="},
+                {"type": "skill", "name": "Example", "path": "/tmp/SKILL.md"},
+                {"type": "mention", "name": "Example", "path": "app://example"},
+                {"type": "localImage", "path": "/tmp/already-normalized.png"}
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_single_user_summary_requires_reprojection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut serialized = serde_json::to_value(SummaryProjectionState::new("turn".into()))?;
+        serialized["projection_version"] = json!(3);
+        let restored: SummaryProjectionState = serde_json::from_value(serialized)?;
+        assert!(!restored.is_current());
         Ok(())
     }
 

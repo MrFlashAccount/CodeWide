@@ -21,16 +21,17 @@ it("refreshes the archive only while an archive view requests it", async () => {
   // the validated thread/list wire shape consumed by the real catalog adapter.
   const session = { rpc } as unknown as RpcClient;
   let requests: readonly ThreadSummaryViewRequest[] = [archivedRequest];
-  let loadCatalog: ((request: ThreadSummaryViewRequest) => Promise<void>) | undefined;
+  let loadCatalog: ((request: ThreadSummaryViewRequest) => Promise<boolean>) | undefined;
   const release = jest.fn();
   // WHY: The catalog runtime consumes this established database port, while
   // this behavior test intentionally supplies only the catalog-facing methods.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const summaries = {
+    removeCatalogEntries: jest.fn(async () => undefined),
     applyCatalogPage: jest.fn(async () => undefined),
     beginCatalogRead: () => ({ changed: new Set<string>(), release }),
     model: { activeRequests: () => requests },
-    setCatalogLoader(loader: (request: ThreadSummaryViewRequest) => Promise<void>) {
+    setCatalogLoader(loader: (request: ThreadSummaryViewRequest) => Promise<boolean>) {
       loadCatalog = loader;
     },
   } as ThreadSummaryDatabase;

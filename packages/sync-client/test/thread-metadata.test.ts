@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import { restoreSubagentParent } from "../src/thread-metadata.js";
@@ -47,6 +47,12 @@ describe("restoreSubagentParent", () => {
 
 function thread(overrides: Partial<Thread>): Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id: "subagent-thread",
     extra: null,
     sessionId: "subagent-thread",
@@ -64,7 +70,7 @@ function thread(overrides: Partial<Thread>): Thread {
     status: { type: "notLoaded" },
     path: null,
     cwd: "/workspace",
-    cliVersion: "0.147.0",
+    cliVersion: "0.155.1",
     source: "appServer",
     canAcceptDirectInput: null,
     threadSource: null,

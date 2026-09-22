@@ -176,8 +176,8 @@ it("preserves native integration contracts — 2", () => {
   expect(nativeTransport).toContain("const info = isPcmCaptureInfo(capture) ? capture : null");
   expect(nativeTransport).toContain('info.source === "mic"');
   expect(nativeTransport).toContain('event: "microphone.legacy_capture_started"');
-  expect(pairRoute).toContain('<Redirect href="/v1" />');
-  expect(threadRoute).toContain('<Redirect href="/v1" />');
+  expect(pairRoute).toContain('<Redirect href="/" />');
+  expect(threadRoute).toContain('<Redirect href="/" />');
   expect(pairRoute).not.toContain("<CodeWideScreen />");
   expect(threadRoute).not.toContain("<CodeWideScreen />");
   expect(manifest).toContain(

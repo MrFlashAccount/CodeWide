@@ -1,3 +1,4 @@
+import { QuestionDock } from "../requests/QuestionFeature";
 import { View } from "react-native";
 import { ThreadErrorBanner } from "../../ui/ThreadErrorBanner";
 import type { ConversationBottomChromeProps } from "./ConversationBottomChromeContract";
@@ -34,6 +35,7 @@ export function ConversationBottomChrome({
           message={failureNotice.message}
         />
       )}
+      {!readOnly && <QuestionDock />}
       {composerContent}
     </View>
   );

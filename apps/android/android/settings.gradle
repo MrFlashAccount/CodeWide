@@ -26,7 +26,13 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
   if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') == '1') {
     ex.autolinkLibrariesFromCommand()
   } else {
-    ex.autolinkLibrariesFromCommand(expoAutolinking.rnConfigCommand)
+    // pnpm patches change native package paths without changing apps/android/package.json.
+    // Include the workspace lockfile so cached autolinking cannot retain the old native library.
+    ex.autolinkLibrariesFromCommand(
+      expoAutolinking.rnConfigCommand,
+      file(".."),
+      files("../package.json", "../react-native.config.js", "../../../pnpm-lock.yaml", "../../../package.json")
+    )
   }
 }
 expoAutolinking.useExpoModules()

@@ -33,7 +33,6 @@ export function WorkspaceThreadList({
   refreshThreadListAccountRateLimits,
   selectedThreadKey,
   selectServer,
-  selectThread,
   servers,
   serverScope,
   serverThreads,
@@ -45,6 +44,7 @@ export function WorkspaceThreadList({
   sidebarScopeKey,
   sidebarSearch,
   threadListSources,
+  threadNavigation,
   toggleListThreadPin,
   unarchiveListThread,
   viewportWidth,
@@ -76,7 +76,6 @@ export function WorkspaceThreadList({
   refreshThreadListAccountRateLimits: NonNullable<ThreadSidebarProps["onRefreshAccountRateLimits"]>;
   selectedThreadKey: ThreadSidebarProps["selectedThreadKey"];
   selectServer: ThreadSidebarProps["onSelectServer"];
-  selectThread: ThreadSidebarProps["onSelect"];
   servers: ThreadSidebarProps["servers"];
   serverScope: ThreadSidebarProps["serverScope"];
   serverThreads: ThreadSidebarProps["threads"];
@@ -88,6 +87,7 @@ export function WorkspaceThreadList({
   sidebarScopeKey: string;
   sidebarSearch: ThreadSidebarProps["searchContent"];
   threadListSources: ThreadSidebarProps["remote"];
+  threadNavigation: ThreadSidebarProps["threadNavigation"];
   toggleListThreadPin: ThreadSidebarProps["onTogglePin"];
   unarchiveListThread: ThreadSidebarProps["onUnarchive"];
   viewportWidth: number;
@@ -112,6 +112,7 @@ export function WorkspaceThreadList({
                       ),
                 filter: sidebarFilter,
                 globalVoice,
+                headerVisible: false,
                 initialOffset: mobileThreadOffset.read(sidebarScopeKey),
                 mode: sidebarMode,
                 onArchive: archiveListThread,
@@ -130,7 +131,6 @@ export function WorkspaceThreadList({
                 onOpenProject: openSidebarProject,
                 onOpenSearch: openGlobalSearch,
                 onRefreshAccountRateLimits: refreshThreadListAccountRateLimits,
-                onSelect: selectThread,
                 onSelectServer: selectServer,
                 onSettings: openSettings,
                 onTogglePin: toggleListThreadPin,
@@ -143,6 +143,7 @@ export function WorkspaceThreadList({
                 selectedThreadKey,
                 servers: servers,
                 serverScope,
+                threadNavigation,
                 threads: serverThreads,
                 width: desktopThreadSidebarWidth(viewportWidth),
               },
@@ -154,6 +155,7 @@ export function WorkspaceThreadList({
                 catalogState: sidebarCatalogState,
                 filter: sidebarFilter,
                 globalVoice,
+                headerVisible: false,
                 initialOffset: mobileThreadOffset.read(sidebarScopeKey),
                 mode: sidebarMode,
                 onArchive: archiveListThread,
@@ -174,7 +176,6 @@ export function WorkspaceThreadList({
                 onQueryChange: setMobileThreadQuery,
                 onRefreshAccountRateLimits: refreshThreadListAccountRateLimits,
                 onSelectServer: selectServer,
-                onSelectThread: selectThread,
                 onSettings: openSettings,
                 onTogglePin: toggleListThreadPin,
                 onUnarchive: unarchiveListThread,
@@ -186,6 +187,7 @@ export function WorkspaceThreadList({
                 searchContent: sidebarSearch,
                 servers: servers,
                 serverScope,
+                threadNavigation,
                 threads: mobileVisibleThreads,
               },
             }

@@ -49,9 +49,7 @@ it("preserves conversation timeline integration contracts", () => {
   expect(ownerOverlayScrollOwnership).toContain(
     "KeyboardController.dismiss({ animated: true, keepFocus: false })",
   );
-  expect(ownerTimelineViewport).toContain(
-    'keyboardLiftBehavior={props.newChat ? "never" : "always"}',
-  );
+  // Keyboard lift and question-editing anchor behavior are exercised by v1-jump-to-latest.render.
   expect(ownerTimelineViewport).toContain("onScrollBeginDrag={gestures.onScrollBeginDrag}");
   expect(ownerTimelineViewport).toContain("keyboardOffset={props.conversationInsets.bottom}");
   expect(ownerUnreadReceipt).toContain("claimUnreadReceipt(");

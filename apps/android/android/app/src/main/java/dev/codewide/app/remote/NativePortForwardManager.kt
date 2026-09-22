@@ -159,9 +159,6 @@ internal class NativePortForwardManager(
 
   private fun applyInventory(pending: PendingPortInventory) {
     runCatching {
-      require(SyncV2ContractGenerated.validateDefinitionJson("portsResponse", pending.payload)) {
-        "Port inventory is invalid"
-      }
       val envelope = JSONObject(pending.payload)
       val inventory = parsePortForwardInventory(envelope.getJSONArray("ports"))
       val discoveredByPort = inventory.associate { it.port to it.serviceKey }
@@ -628,10 +625,9 @@ internal class NativePortForwardManager(
 
     internal fun portForwardEndpoint(syncEndpoint: String, remotePort: Int): String {
       require(remotePort in 1..65_535) { "Remote port is invalid" }
-      val suffix = "/v2/ports/$remotePort"
+      val suffix = "/v1/port-forwards/$remotePort"
       return when {
         syncEndpoint.endsWith("/v1/sync") -> syncEndpoint.removeSuffix("/v1/sync") + suffix
-        syncEndpoint.endsWith("/v2/sync") -> syncEndpoint.removeSuffix("/v2/sync") + suffix
         else -> error("Server endpoint is invalid")
       }
     }

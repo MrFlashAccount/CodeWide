@@ -6,10 +6,10 @@ const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const RETRY_INTERVAL_MS = 30 * 1000;
 
 /**
- * Keeps the release APK on the latest signed JS bundle while it is open.
+ * Prefetches signed JS bundles while the release APK is open.
  * Development builds use Metro Fast Refresh instead; release builds poll the
- * private update service and reload only the JS runtime as soon as a bundle is
- * ready. Losing transient UI state is intentional for this development app.
+ * private update service and cache bundles for the next application launch.
+ * Never reload the live runtime: it may own a draft or an unacknowledged send.
  */
 let started = false;
 
@@ -20,7 +20,6 @@ export function startOtaPrefetchRuntime(): void {
   started = true;
 
   let checking = false;
-  let updateReady = false;
   // Native launch never waits for the update service. Check asynchronously
   // after startup, then on foreground/retry; cached bundles remain launchable offline.
   let nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
@@ -29,38 +28,22 @@ export function startOtaPrefetchRuntime(): void {
     if (checking || AppState.currentState !== "active") {
       return;
     }
-    // A downloaded update waiting for activation must bypass network
-    // throttling. Otherwise one failed/inactive reload can strand the app on
-    // the old bundle until the next 30-minute check.
-    if (!updateReady && !force && Date.now() < nextCheckAt) {
+    if (!force && Date.now() < nextCheckAt) {
       return;
     }
     checking = true;
 
     try {
-      if (!updateReady) {
-        const result = await Updates.checkForUpdateAsync();
-        if (result.isAvailable) {
-          const fetched = await Updates.fetchUpdateAsync();
-          updateReady = fetched.isNew || fetched.isRollBackToEmbedded;
-        }
-        nextCheckAt = Date.now() + CHECK_INTERVAL_MS;
+      const result = await Updates.checkForUpdateAsync();
+      if (result.isAvailable) {
+        await Updates.fetchUpdateAsync();
       }
-
-      // WHY: AppState may change while the awaited native update checks run; TypeScript retains the earlier foreground narrowing across those awaits.
-      // oxlint-disable-next-line typescript/no-unnecessary-condition
-      if (updateReady && AppState.currentState === "active") {
-        // reloadAsync selects the freshly downloaded bundle and recreates
-        // the JS runtime; it does not require killing the Android process.
-        await Updates.reloadAsync();
-      }
+      nextCheckAt = Date.now() + CHECK_INTERVAL_MS;
     } catch {
-      // Keep the pending activation flag and retry quickly after a transient
-      // native/network failure. Successful no-update checks remain limited
-      // to once per 30 minutes.
+      // Retry transient download failures without interrupting the live runtime.
       nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
       // A broken update edge must never make the installed app unusable.
-      appLogger.warn({ event: "ota.live_reload.failed" });
+      appLogger.warn({ event: "ota.prefetch.failed" });
     }
     checking = false;
   };

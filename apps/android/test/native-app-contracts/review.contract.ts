@@ -254,12 +254,7 @@ it("keeps async data ownership in resources and event-driven preview controllers
     'AppState.addEventListener("change", repairForegroundRuntime)',
   );
   expect(screen).not.toContain("refreshIfSelected");
-  expect(navigationActions).toContain("open({");
-  expect(navigationActions).toContain(
-    'mode: isCurrentThread(router.currentThread, params) ? "replace" : router.selectionMode',
-  );
-  expect(navigationActions).toContain("navigationId,");
-  expect(navigationActions).toContain("params,");
+  // Qualified Link dispatch and retained screen identity have executable render/router regressions.
   expect(navigationActions).not.toContain("setActiveConnection(");
   expect(screen).not.toContain("setActiveServerId(parsed.connectionId);\n      setActiveThreadId(");
   expect(newChat).toContain("newThreadService.open(connectionId, cwd)");

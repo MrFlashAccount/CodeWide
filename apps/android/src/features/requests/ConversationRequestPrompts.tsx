@@ -13,12 +13,16 @@ export function useConversationRequestPrompts(
   requests: ConversationRequestCapabilities,
 ): ConversationRequestPrompts {
   const response = useRequestResponse(requests.onRespondToRequest);
+  const pendingRequest =
+    requests.pendingRequest?.method === "item/tool/requestUserInput"
+      ? null
+      : requests.pendingRequest;
   const embeddedRequestPrompt =
-    requests.pendingRequest === null ? null : (
+    pendingRequest === null ? null : (
       <ApprovalPrompt
         embedded
-        key={requests.pendingRequest.requestKey}
-        request={requests.pendingRequest}
+        key={pendingRequest.requestKey}
+        request={pendingRequest}
         requestCount={requests.pendingRequestCount}
         {...(requests.onRespondToRequest === undefined
           ? {}
@@ -26,10 +30,10 @@ export function useConversationRequestPrompts(
       />
     );
   const bottomRequestPrompt =
-    requests.pendingRequest === null ? null : (
+    pendingRequest === null ? null : (
       <ApprovalPrompt
-        key={requests.pendingRequest.requestKey}
-        request={requests.pendingRequest}
+        key={pendingRequest.requestKey}
+        request={pendingRequest}
         requestCount={requests.pendingRequestCount}
         {...(requests.onRespondToRequest === undefined
           ? {}

@@ -1,5 +1,5 @@
 /** V1 AttachmentsFeature owner, extracted without changing interaction or resource lifetime. */
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { ThreadChangeDiffValue } from "../../data/thread-resource-types";
 import type { ThreadResourcesModel } from "../../data/thread-resources-model";

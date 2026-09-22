@@ -6,11 +6,13 @@ import kotlin.math.sqrt
 internal data class GlobalVoiceAudioLevels(
   val input: Double,
   val playback: Double,
+  val particlesInput: Double,
 )
 
 /**
  * Owns background-safe Global Voice audio envelopes next to the microphone foreground lifetime.
- * Input PCM is reduced synchronously and never retained; UI delivery is coalesced onto the main thread.
+ * PCM is reduced synchronously; the Particles adapter retains only its transient FFT window.
+ * UI delivery is coalesced onto the main thread; mute/Stop clear both input representations.
  */
 internal class GlobalVoiceAudioLevelOwner(
   private val executeOnMain: (() -> Unit) -> Unit,
@@ -18,6 +20,7 @@ internal class GlobalVoiceAudioLevelOwner(
   private val publish: (GlobalVoiceAudioLevels) -> Unit,
 ) {
   private val schedulingLock = Any()
+  private val particlesInput = ParticlesVoiceInputLevel()
   private var dispatchQueued = false
   private var generation = 0L
   private var lastScheduledNanos = -MIN_PUBLISH_INTERVAL_NANOS
@@ -33,22 +36,31 @@ internal class GlobalVoiceAudioLevelOwner(
       generation += 1
       dispatchQueued = false
       lastScheduledNanos = -MIN_PUBLISH_INTERVAL_NANOS
+      if (!nextActive) {
+        inputLevel = 0.0
+        playbackLevel = 0.0
+        particlesInput.reset()
+      }
     }
-    if (nextActive) return
-    inputLevel = 0.0
-    playbackLevel = 0.0
   }
 
-  fun acceptInputPcm(audioFormat: Int, channelCount: Int, data: ByteArray) {
-    if (!active || microphoneMuted) return
-    val level = pcm16RootMeanSquare(audioFormat, channelCount, data) ?: return
-    inputLevel = level
+  fun acceptInputPcm(audioFormat: Int, channelCount: Int, sampleRate: Int, data: ByteArray) {
+    synchronized(schedulingLock) {
+      if (!active || microphoneMuted || sampleRate <= 0 ||
+        channelCount <= 0 || channelCount > data.size / Short.SIZE_BYTES ||
+        data.size % (channelCount * Short.SIZE_BYTES) != 0
+      ) return
+      inputLevel = pcm16RootMeanSquare(audioFormat, channelCount, data) ?: return
+      particlesInput.accept(channelCount, sampleRate, data)
+    }
     schedulePublish()
   }
 
   fun acceptPlaybackLevel(level: Double) {
-    if (!active) return
-    playbackLevel = boundedLevel(level)
+    synchronized(schedulingLock) {
+      if (!active) return
+      playbackLevel = boundedLevel(level)
+    }
     schedulePublish()
   }
 
@@ -59,10 +71,17 @@ internal class GlobalVoiceAudioLevelOwner(
       generation += 1
       dispatchQueued = false
       lastScheduledNanos = -MIN_PUBLISH_INTERVAL_NANOS
+      if (muted) {
+        inputLevel = 0.0
+        particlesInput.reset()
+      }
     }
     if (!muted) return
-    inputLevel = 0.0
     if (active) schedulePublish()
+  }
+
+  fun diagnostic(): String = synchronized(schedulingLock) {
+    "inputRms=$inputLevel particlesInput=${particlesInput.value} playback=$playbackLevel"
   }
 
   private fun schedulePublish() {
@@ -75,12 +94,12 @@ internal class GlobalVoiceAudioLevelOwner(
       generation
     }
     executeOnMain {
-      val shouldPublish = synchronized(schedulingLock) {
-        if (generation != scheduledGeneration) return@synchronized false
+      val levels = synchronized(schedulingLock) {
+        if (generation != scheduledGeneration) return@synchronized null
         dispatchQueued = false
-        active
+        if (active) GlobalVoiceAudioLevels(inputLevel, playbackLevel, particlesInput.value) else null
       }
-      if (shouldPublish) publish(GlobalVoiceAudioLevels(inputLevel, playbackLevel))
+      if (levels != null) publish(levels)
     }
   }
 

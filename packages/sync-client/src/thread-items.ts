@@ -1,4 +1,4 @@
-import type { ThreadItem } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadItem } from "@codewide/codex-protocol/v0.155.1/v2";
 
 /**
  * Reconciles two projections of the same protocol turn.
@@ -72,6 +72,9 @@ function sameLogicalBoundary(left: ThreadItem, right: ThreadItem): boolean {
     return userMessageFingerprint(left) === userMessageFingerprint(right);
   }
   if (left.type !== "agentMessage" || right.type !== "agentMessage") return false;
+  // Async questions share final_answer with the eventual result, but each
+  // message owns a separate interaction. Only its item id may reconcile it.
+  if (left.delivery === "async" || right.delivery === "async") return false;
   return left.text === right.text
     || (left.phase === "final_answer" && right.phase === "final_answer");
 }

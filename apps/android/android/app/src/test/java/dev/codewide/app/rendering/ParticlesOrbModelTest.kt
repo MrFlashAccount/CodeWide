@@ -241,6 +241,24 @@ class ParticlesOrbModelTest {
     assertEquals(VoiceAssistantOrbState.IDLE, VoiceAssistantOrbState.fromWireValue("corrupt"))
   }
 
+  @Test
+  fun audioEnvelopesDoNotLeakAcrossListeningThinkingAndSpeaking() {
+    val simulation = ParticlesOrbSimulation(VoiceAssistantOrbState.LISTENING)
+    var input = simulation.advance(VoiceAssistantOrbState.LISTENING, 1f, 0f, 1f / 60f)
+    assertTrue(input.level > 0f && input.level < 1f)
+    repeat(120) { input = simulation.advance(VoiceAssistantOrbState.LISTENING, 1f, 0f, 1f / 60f) }
+    val release = simulation.advance(VoiceAssistantOrbState.LISTENING, 0f, 0f, 1f / 60f)
+    assertTrue(release.level > 0f && release.level < input.level)
+    simulation.advance(VoiceAssistantOrbState.THINKING, 1f, 0f, 1f / 60f)
+    val speaking = simulation.advance(VoiceAssistantOrbState.SPEAKING, 1f, 0f, 1f / 60f)
+    assertEquals(0f, speaking.level, 0f)
+    val attack = simulation.advance(VoiceAssistantOrbState.SPEAKING, 0f, 0.8f, 1f / 60f)
+    assertTrue(attack.level > 0f && attack.level < 0.8f)
+    repeat(240) { simulation.advance(VoiceAssistantOrbState.SPEAKING, 0f, 1f, 1f / 60f) }
+    val listening = simulation.advance(VoiceAssistantOrbState.LISTENING, 0f, 1f, 1f / 60f)
+    assertTrue(listening.level < 0.001f)
+  }
+
   private fun settledFrame(
     state: VoiceAssistantOrbState,
     inputLevel: Float? = null,

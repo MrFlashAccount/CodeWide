@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { unknownRecord } from "./unknownRecord";
 
 type ActiveThreadStatus = Extract<Thread["status"], { type: "active" }>;
@@ -7,6 +7,8 @@ export type StoredThreadSummary = {
   agentNickname?: string | null;
   agentRole?: string | null;
   archived: boolean;
+  /** A terminal turn cannot reopen question attention through late item replay. */
+  closedQuestionTurnId?: string | null;
   connectionId: string;
   cwd: string;
   /** Native outbox command hiding this row until delivery or rollback. */
@@ -17,6 +19,8 @@ export type StoredThreadSummary = {
   latestActivityCursor: number;
   name: string | null;
   parentThreadId: string | null;
+  /** Latest observed async question opportunity; newer user input retires it. */
+  pendingQuestion?: QuestionOpportunity | null;
   pendingRequestCount: number;
   pinned: boolean;
   preview: string;
@@ -28,7 +32,11 @@ export type StoredThreadSummary = {
   provisionalThread?: Thread | null;
   recencyAt: number | null;
   remoteThreadId: string;
+  /** Locally skipped question identities in one turn; contains no answer text. */
+  skippedQuestions?: QuestionOpportunity | null;
   status: Thread["status"];
+  /** Questions with a natively admitted answer; failures restore attention. */
+  submittedQuestions?: QuestionOpportunity | null;
   unread: number;
   updatedAt: number;
 };
@@ -67,3 +75,9 @@ export function normalizeThreadStatus(value: unknown): Thread["status"] {
 function isActiveThreadStatus(value: unknown): value is ActiveThreadStatus["activeFlags"][number] {
   return value === "waitingOnApproval" || value === "waitingOnUserInput";
 }
+
+/** Question identity shared by catalog attention and local dismissal. */
+export type QuestionOpportunity = {
+  readonly itemIds: readonly string[];
+  readonly turnId: string;
+};

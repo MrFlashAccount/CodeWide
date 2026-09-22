@@ -3137,3 +3137,68 @@ async fn send_value(
     socket.send(Message::Text(value.to_string().into())).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn catalog_visibility_and_reconciliation_are_server_owned_over_rpc()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let fake = tokio::spawn(run_catalog_visibility_app_server(socket_path.clone()));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::empty(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    for archived in [false, true] {
+        send_json(&mut client, &json!({"type":"rpc","request":{"id":"head","method":"thread/list","params":{"archived":archived,"cursor":null,"limit":36,"cwd":"/project"}}})).await?;
+        let head = receive_type(&mut client, "rpc").await?;
+        assert_eq!(head["response"]["result"]["data"], json!([]));
+        let cursor = &head["response"]["result"]["nextCursor"];
+        assert_eq!(cursor, "older");
+        send_json(&mut client, &json!({"type":"rpc","request":{"id":"tail","method":"thread/list","params":{"archived":archived,"cursor":cursor,"limit":36,"cwd":"/project"}}})).await?;
+        let tail = receive_type(&mut client, "rpc").await?;
+        assert_eq!(tail["response"]["result"]["data"][0]["id"], "ordinary");
+        assert!(tail["response"]["result"]["nextCursor"].is_null());
+    }
+    send_json(&mut client, &json!({"type":"rpc","request":{"id":"reconcile","method":"companion/supervisor/threadList","params":{"threadSource":"codewide-global-supervisor:mine","cursor":null}}})).await?;
+    let supervisor = receive_type(&mut client, "rpc").await?;
+    assert_eq!(
+        supervisor["response"]["result"]["data"],
+        json!([{"id":"home","threadSource":"codewide-global-supervisor:mine"}])
+    );
+    send_json(&mut client, &json!({"type":"rpc","request":{"id":"invalid","method":"companion/supervisor/threadList","params":{"threadSource":"ordinary"}}})).await?;
+    assert_eq!(
+        receive_type(&mut client, "rpc").await?["response"]["error"]["code"],
+        -32602
+    );
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+async fn run_catalog_visibility_app_server(
+    path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    loop {
+        let request = receive_value(&mut socket).await?;
+        if request.get("id").is_none() {
+            continue;
+        }
+        assert_eq!(request["method"], "thread/list");
+        assert!(request["params"].get("threadSource").is_none());
+        let result = if request["params"]["cursor"] == "older" {
+            json!({"data":[{"id":"ordinary","threadSource":null,"name":"Global Voice"}],"nextCursor":null})
+        } else {
+            json!({"data":[{"id":"home","threadSource":"codewide-global-supervisor:mine"},{"id":"other-home","threadSource":"codewide-global-supervisor:other"}],"nextCursor":"older"})
+        };
+        send_value(&mut socket, &json!({"id":request["id"],"result":result})).await?;
+    }
+}

@@ -10,8 +10,6 @@ export type ServerScope =
 export const ALL_SERVER_SCOPE: ServerScope = { kind: "all" };
 
 export type ServerScopeBinding = {
-  readonly consumeDesktopDefaultThread: () => void;
-  readonly desktopDefaultThreadEnabled: boolean;
   readonly scope: ServerScope;
   readonly select: (next: ServerScope) => void;
 };
@@ -43,20 +41,12 @@ export function serverScopeIncludes(scope: ServerScope, connectionId: string): b
 export function useServerScope(
   connections: readonly StoredConnection[],
   resetThreadList: () => void,
-  desktopDefaultThreadInitiallyEnabled = true,
 ): ServerScopeBinding {
   const [requested, setRequested] = useState<ServerScope>(ALL_SERVER_SCOPE);
-  const [desktopDefaultThreadEnabled, setDesktopDefaultThreadEnabled] = useState(
-    desktopDefaultThreadInitiallyEnabled,
-  );
   const scope = normalizeServerScope(requested, connections);
-  const consumeDesktopDefaultThread = useEvent((): void => {
-    setDesktopDefaultThreadEnabled(false);
-  });
   const select = useEvent((next: ServerScope): void => {
     resetThreadList();
-    consumeDesktopDefaultThread();
     setRequested(next);
   });
-  return { consumeDesktopDefaultThread, desktopDefaultThreadEnabled, scope, select };
+  return { scope, select };
 }

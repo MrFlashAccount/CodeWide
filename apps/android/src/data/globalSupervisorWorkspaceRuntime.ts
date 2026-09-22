@@ -8,18 +8,14 @@ import {
 } from "./globalSupervisorBinding";
 import { createGlobalSupervisorBindingDatabase } from "./globalSupervisorBindingDatabase";
 import { globalSupervisorRequestCommandId } from "./globalSupervisorRequestIdentity";
-import {
-  createGlobalSupervisorSummaryStoragePolicy,
-  type GlobalSupervisorSummaryStoragePolicy,
-} from "./globalSupervisorSummaryStoragePolicy";
 import { createGlobalSupervisorSystemRequestDispatcher } from "./globalSupervisorSystemRequests";
 import { createGlobalSupervisorThreadRemote } from "./globalSupervisorThreadRemote";
 import { createGlobalSupervisorToolCapabilities } from "./globalSupervisorTools";
 import { createGlobalSupervisorToolRouter } from "./globalSupervisorToolRouter";
 import {
-  createGlobalSupervisorVisibilityPolicy,
-  type GlobalSupervisorVisibilityPolicy,
-} from "./globalSupervisorVisibility";
+  createGlobalSupervisorToolTargetPolicy,
+  type GlobalSupervisorToolTargetPolicy,
+} from "./globalSupervisorToolTarget";
 import type { VoiceAssistantPersonality } from "./voiceAssistantPersonality";
 import type { WorkspaceSyncSession } from "./workspace-session";
 
@@ -31,15 +27,14 @@ type GlobalSupervisorRpc = <Result>(
 
 type GlobalSupervisorWorkspaceBinding = {
   readonly binding: GlobalSupervisorBindingOwner;
-  readonly storage: GlobalSupervisorSummaryStoragePolicy;
-  readonly visibility: GlobalSupervisorVisibilityPolicy;
+  readonly targetPolicy: GlobalSupervisorToolTargetPolicy;
 };
 
 type GlobalSupervisorWorkspaceSystemRequests = {
   readonly replace: (connectionId: string, requests: readonly SyncServerRequest[]) => Promise<void>;
 };
 
-/** Creates the binding and its separate presentation/storage policies before summary hydration. */
+/** Creates the supervisor binding and tool-target guard independently of catalog hydration. */
 export async function createGlobalSupervisorWorkspaceBinding(options: {
   readonly getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   readonly personality: () => Promise<VoiceAssistantPersonality>;
@@ -71,8 +66,7 @@ export async function createGlobalSupervisorWorkspaceBinding(options: {
   });
   return {
     binding,
-    storage: createGlobalSupervisorSummaryStoragePolicy(() => current),
-    visibility: createGlobalSupervisorVisibilityPolicy(() => current),
+    targetPolicy: createGlobalSupervisorToolTargetPolicy(() => current),
   };
 }
 
@@ -96,9 +90,9 @@ export function createGlobalSupervisorWorkspaceSystemRequests(options: {
     readonly text: string;
     readonly threadId: string;
   }) => Promise<string>;
-  readonly visibility: Awaited<
+  readonly targetPolicy: Awaited<
     ReturnType<typeof createGlobalSupervisorWorkspaceBinding>
-  >["visibility"];
+  >["targetPolicy"];
 }): GlobalSupervisorWorkspaceSystemRequests {
   return createGlobalSupervisorSystemRequestDispatcher({
     binding: options.binding,
@@ -115,7 +109,7 @@ export function createGlobalSupervisorWorkspaceSystemRequests(options: {
         respond: options.respond,
         rpcAfterAttach: options.rpcAfterAttach,
         sendSystemText: options.sendSystemText,
-        visibility: options.visibility,
+        targetPolicy: options.targetPolicy,
       }),
     ),
     isActive: options.isSupervisorActive,

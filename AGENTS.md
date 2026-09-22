@@ -22,15 +22,15 @@
 - The selected V1 ownership contract and implemented source tree are in [docs/android-v1-feature-architecture.md](docs/android-v1-feature-architecture.md); exact owner moves, lifetimes and migration gates are in [docs/android-v1-feature-migration.md](docs/android-v1-feature-migration.md). Read [apps/android/src/CONTEXT.md](apps/android/src/CONTEXT.md) and the nearest local ownership contract before a V1 source move. M0–M8 source migration is implemented; the migration ledger records completed automated checks and unverified device scenarios.
 - Run `pnpm validate:android:v1` before handing off any change under `app/legacy.tsx` or the V1-owned `apps/android/src/**` surface. It applies the shared hygiene preset to the complete V1 graph, rejects hygiene regressions above the checked-in debt baseline, checks formatting, public API JSDoc, import and `StyleSheet` layout, dead exports, unresolved platform seams, cycles, and V1 dependency boundaries. Do not update the hygiene baseline to admit a new violation; reduce it as touched code becomes compliant.
 - V1 main-chat selection preserves immediate destination publication, cached content/local skeleton and progressive transcript hydration; header/composer must not wait for complete history, and composer restoration precedes editing. V1 subagent selection retains its existing Transition. This specific V1 contract qualifies the generic atomic-navigation guidance above; do not change navigation behavior during ownership extraction.
-- Preserve existing V1 JS module-evaluation startup separately from the boot-controlled native resource handle. Feature extraction must not add JS disposal to native stop or feature unmount. Existing source/schema/platform authorities and V1/V2 import isolation remain unchanged.
+- Preserve existing V1 JS module-evaluation startup separately from the boot-controlled native resource handle. Feature extraction must not add JS disposal to native stop or feature unmount. Existing source/schema/platform authorities remain unchanged.
 
 ## Android router and retired V2 frontend
 
-- Android exposes only V1. `app/_layout.tsx` owns framework/security providers and the V1 diagnostics HUD. `app/index.tsx`, `app/legacy.tsx`, `app/pair.tsx`, and `app/thread.tsx` enter `/v1`; the V1 process deep-link owner handles the original pairing and notification URLs.
-- `app/v1/_layout.tsx` owns the serialized native runtime handle in `src/boot/runtimeSlot.ts`. There is no generation preference, generation switch, V2 runtime, or V2 route group.
+- Android exposes only V1. `app/_layout.tsx` owns framework/security providers, a `Slot`, and the V1 diagnostics HUD; it must not wrap the workspace in another native stack. `app/+not-found.tsx` displays recovery while replacing unknown URLs with `/`. `app/(workspace)/index.tsx` owns `/`; `/legacy`, `/pair`, and `/thread` redirect there; the V1 process deep-link owner handles the original pairing and notification URLs.
+- `app/(workspace)/_layout.tsx` owns the serialized native runtime handle in `src/boot/runtimeSlot.ts`. The workspace route group does not contribute a URL segment. `src/routeComposition/**` owns navigation helpers outside Expo route discovery; `app/**` contains only screens and layouts. There is no generation preference, generation switch, V2 runtime, or V2 route group.
 - `src/presentation/**` retains components with live V1 consumers. Do not restore a second UI tree or add all presentation files as Knip entrypoints to suppress dead code.
-- `@codewide/sync-client/v2`, the Companion V2 protocol, and native protocol support are independent of the removed Android frontend. Preserve their compatibility and security contracts; V1 must not import the V2 sync-client entrypoint.
-- Run `pnpm validate:android:v1` for Android changes and `pnpm --filter @codewide/android compile:android` when validating the application bundle. `pnpm validate:sync:v2` remains the protocol/backend gate.
+- CodeWide has one Companion API at `/v1`, one sync-client entrypoint, and one Android runtime. The former V2 protocol, client, native modules, and parity harness are removed. Keep the unrelated external Codex App Server generated V2 protocol and persisted compatibility identifiers.
+- Run `pnpm validate:android:v1` for Android changes and `pnpm --filter @codewide/android compile:android` when validating the application bundle. Run `pnpm test:companion`, Cargo Clippy, and Cargo format checks for backend changes.
 - The retirement scope and UI reuse audit are recorded in [docs/android-v2-retirement.md](docs/android-v2-retirement.md). Earlier V2 client architecture and parity documents are historical.
 
 ## Releases
@@ -40,8 +40,12 @@ Use only the repository-owned one-shot release commands:
 - Publish an OTA update: `./scripts/release-ota`
 - Build and publish a new APK: `./scripts/release-apk`
 - Build, validate, and publish Companion: `./scripts/release-companion`
-- Build, validate, and publish the macOS app: `./scripts/release-macos <version>`
+- Build, validate, and publish the Linux Companion bundle: `./scripts/release-companion-linux <version>`
+- Build, validate, and publish Relay: `./scripts/release-relay-linux <version>`
+- Build, validate, and publish the macOS app: `./scripts/release-macos <patch|minor|major>`
 - Calculate affected release targets: `pnpm release:plan -- --base <ref> --head <ref>`
+- Calculate independent product versions: `pnpm release:set-plan -- --bump <patch|minor|major>`
+- Release every affected product from CI: dispatch `Release Affected Products`
 - Validate a release path without publishing: append `--dry-run`
 
 Rules:

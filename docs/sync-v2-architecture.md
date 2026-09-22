@@ -1,5 +1,9 @@
 # Sync API V2 architecture
 
+> Historical document: the CodeWide V2 implementation and parity harness were removed
+> on 2026-09-21. See [current retirement scope](android-v2-retirement.md).
+
+
 Port inventory is a separate opt-in latest-value stream on the sync websocket.
 See [Companion-owned port inventory](port-inventory-sync.md) for watcher,
 backpressure, epoch, and native reconciliation ownership.

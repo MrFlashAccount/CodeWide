@@ -19,6 +19,7 @@ import {
 import type { GlobalSupervisorAttentionOwner } from "./globalSupervisorAttention";
 import { createGlobalSupervisorEventSignalSession } from "./globalSupervisorEventSignals";
 import { globalSupervisorLimitsV1 } from "./globalSupervisorLimitsV1";
+import { createGlobalSupervisorSpeechState } from "./globalSupervisorSpeechState";
 import { createGlobalSupervisorMediaOwner } from "./globalSupervisorMediaOwner";
 import {
   createGlobalSupervisorReconnectOwner,
@@ -172,7 +173,7 @@ type LiveSessionState = {
   realtimeSdpReceived: boolean;
   realtimeStarted: boolean;
   realtimeStartRequested: boolean;
-  speechPhase: "listening" | "speaking" | "thinking" | null;
+  readonly speech: ReturnType<typeof createGlobalSupervisorSpeechState>;
   stopping: boolean;
   transcriptSequence: number;
   readonly webRtc: GlobalSupervisorWebRtcSession;
@@ -181,7 +182,6 @@ type LiveSessionState = {
 const MAX_VOICE_NAME_CHARACTERS = 32;
 const MAX_SUPPORTED_VOICES = 64;
 const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE = -32_061;
-const GLOBAL_SUPERVISOR_SPEAKING_LEVEL_THRESHOLD = 0.01;
 
 function liveSessionOrNull(
   authority: GlobalSupervisorRuntimeAuthority,
@@ -279,6 +279,7 @@ function failLiveState(state: LiveSessionState, failure: GlobalSupervisorRuntime
     return;
   }
   state.failurePublished = true;
+  state.speech.stop();
   state.onFailure(failure);
 }
 
@@ -291,17 +292,6 @@ function closeRealtime(state: LiveSessionState): void {
   if (!state.stopping) {
     failLiveState(state, "realtimeFailed");
   }
-}
-
-function publishSpeechPhase(
-  state: LiveSessionState,
-  phase: "listening" | "speaking" | "thinking",
-): void {
-  if (state.speechPhase === phase) {
-    return;
-  }
-  state.speechPhase = phase;
-  state.publish({ activationId: state.activationId, event: phase });
 }
 
 function acceptStarted(
@@ -347,7 +337,7 @@ function acceptTranscript(
     },
   });
   state.attentionDelivery?.setSpeechBusy(role !== "assistant");
-  publishSpeechPhase(state, "listening");
+  state.speech.acceptTranscript(role, true);
 }
 
 function acceptActivePayload(
@@ -360,14 +350,17 @@ function acceptActivePayload(
       // GPT Live WebRTC carries generated speech on the negotiated media track.
       failLiveState(state, "sessionAmbiguous");
       return;
+    case "thread/realtime/transcript/delta":
+      if (params.role === "user" || params.role === "assistant") {
+        state.speech.acceptTranscript(params.role, false);
+      }
+      return;
     case "thread/realtime/transcript/done":
       acceptTranscript(state, params);
       return;
     case "thread/realtime/itemAdded":
       state.attentionDelivery?.setSpeechBusy(true);
-      if (state.speechPhase !== "speaking") {
-        publishSpeechPhase(state, "thinking");
-      }
+      state.speech.acceptItem(params.item);
       return;
     case "thread/realtime/error":
     case "thread/realtime/closed":
@@ -415,7 +408,7 @@ function acceptSdp(
         return;
       }
       context.recordStartupStage("peerConnected");
-      publishSpeechPhase(state, "listening");
+      state.speech.start();
       control.resolve();
     },
     (error: unknown) => {
@@ -673,14 +666,11 @@ export function createGlobalSupervisorRuntime(
             initiallyMuted: microphoneMuted,
             mode: "interactive",
             onPlaybackLevel(level) {
-              foregroundLease.setPlaybackLevel(level);
-              if (
-                state !== null &&
-                state.speechPhase === "thinking" &&
-                level > GLOBAL_SUPERVISOR_SPEAKING_LEVEL_THRESHOLD
-              ) {
-                publishSpeechPhase(state, "speaking");
+              if (state === null || state.stopping || state.failurePublished) {
+                return;
               }
+              foregroundLease.setPlaybackLevel(level);
+              state.speech.setPlaybackLevel(level);
             },
             onTerminal() {
               if (state === null) {
@@ -688,6 +678,9 @@ export function createGlobalSupervisorRuntime(
               } else {
                 failLiveState(state, "realtimeFailed");
               }
+            },
+            onUserSpeaking(speaking) {
+              state?.speech.setUserSpeaking(speaking);
             },
           });
           recordStartupStage("offerReady");
@@ -721,7 +714,13 @@ export function createGlobalSupervisorRuntime(
             realtimeSdpReceived: false,
             realtimeStarted: false,
             realtimeStartRequested: false,
-            speechPhase: null,
+            speech: createGlobalSupervisorSpeechState({
+              home,
+              now: authority.now,
+              publish: (phase) => {
+                publish({ activationId, event: phase });
+              },
+            }),
             stopping: false,
             transcriptSequence: 0,
             webRtc,
@@ -751,6 +750,9 @@ export function createGlobalSupervisorRuntime(
           const liveSubscription = authority.ingress.subscribeLive(
             createLiveReceiver({ control, home, recordStartupStage, state }),
           );
+          const activitySubscription = authority.ingress.subscribeThreadEvents(
+            state.speech.acceptThreadEvents,
+          );
           try {
             await supervisor.subscribeLive(home.connectionId, channelId, home.threadId);
             recordStartupStage("subscriptionReady");
@@ -768,6 +770,8 @@ export function createGlobalSupervisorRuntime(
             recordStartupStage("startAccepted");
             await withTimeout(startup.promise, globalSupervisorLimitsV1.realtimeStartupTimeoutMs);
           } catch (error) {
+            state.speech.stop();
+            activitySubscription.unsubscribe();
             await webRtc.stop().catch(() => undefined);
             liveSubscription.unsubscribe();
             if (subscribed) {
@@ -820,6 +824,9 @@ export function createGlobalSupervisorRuntime(
               }
               stopped = true;
               state.stopping = true;
+              state.speech.stop();
+              activitySubscription.unsubscribe();
+              foregroundLease.setPlaybackLevel(0);
               const failures: unknown[] = [];
               const recordFailure = (error: unknown): void => {
                 failures.push(error);

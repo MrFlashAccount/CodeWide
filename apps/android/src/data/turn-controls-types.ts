@@ -28,7 +28,7 @@ export type TurnControlsRow = {
   value: TurnControlsValue | null;
 };
 
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 export type ThreadSettings = {
   effort?: string | null;
   model?: string | null;

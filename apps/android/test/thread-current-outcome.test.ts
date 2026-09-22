@@ -1,4 +1,4 @@
-import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import { advanceThreadOutcome, latestThreadOutcome } from "../src/data/thread-current-outcome";

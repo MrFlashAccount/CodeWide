@@ -12,8 +12,8 @@ def releaseKeyAlias = System.getenv("CODEWIDE_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("CODEWIDE_RELEASE_KEY_PASSWORD")
 def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL") ?: "https://updates.example.invalid/api/updates"
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isBlank() }
-def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "189").toInteger()
-def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.176"
+def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "196").toInteger()
+def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.183"
 def nativeCodeAssetsDir = file("$buildDir/generated/nativeCodeAssets")
 def iconFontAssetsDir = file("$buildDir/generated/iconFontAssets")
 def iconFontSourceDir = file("$projectRoot/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts")
@@ -136,6 +136,10 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'dev.codewide.app'
+    testOptions {
+        // Native text regressions must use the shipped theme, including Android 15 wrapping.
+        unitTests.includeAndroidResources = true
+    }
     compileOptions {
         coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
@@ -229,6 +233,7 @@ tasks.register("prepareIconFontAssets", Sync) {
         into "fonts"
         rename { name -> name == "Ionicons.ttf" ? "ionicons.ttf" : "material.ttf" }
     }
+    from(new File(iconFontSourceDir.parentFile, "glyphmaps/Ionicons.json")) { into "fonts" }
     doFirst {
         ["Ionicons.ttf", "MaterialIcons.ttf"].each { name ->
             if (!new File(iconFontSourceDir, name).isFile()) {

@@ -23,7 +23,6 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc, watch};
 use crate::auth::AuthorizationChange;
 
 mod legacy;
-pub(crate) mod v2;
 
 pub use legacy::{bridge, bridge_resumable};
 
@@ -68,7 +67,6 @@ pub enum TerminalError {
     AuthorizationUnavailable,
     SessionLimitReached,
     ReplayUnavailable,
-    GenerationChanged,
     SpawnFailed { stage: &'static str, reason: String },
 }
 
@@ -85,7 +83,7 @@ impl TerminalError {
             }
             Self::SessionLimitReached => StatusCode::TOO_MANY_REQUESTS,
             Self::SessionThreadMismatch => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::ReplayUnavailable | Self::GenerationChanged => StatusCode::CONFLICT,
+            Self::ReplayUnavailable => StatusCode::CONFLICT,
             Self::ThreadResolutionFailed { .. } | Self::SpawnFailed { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -107,7 +105,6 @@ impl TerminalError {
             Self::AuthorizationUnavailable => "terminal_authorization_unavailable",
             Self::SessionLimitReached => "terminal_limit_reached",
             Self::ReplayUnavailable => "terminal_replay_unavailable",
-            Self::GenerationChanged => "terminal_generation_changed",
             Self::SpawnFailed { .. } => "terminal_spawn_failed",
         }
     }
@@ -149,9 +146,6 @@ impl fmt::Display for TerminalError {
             }
             Self::SessionLimitReached => formatter.write_str("terminal session limit reached"),
             Self::ReplayUnavailable => formatter.write_str("terminal replay cursor is unavailable"),
-            Self::GenerationChanged => {
-                formatter.write_str("terminal session belongs to another V2 generation")
-            }
             Self::SpawnFailed { stage, reason } => {
                 write!(formatter, "terminal {stage} failed: {reason}")
             }
@@ -253,8 +247,6 @@ struct TerminalRegistryInner {
 
 pub struct LiveTerminal {
     id: String,
-    protocol: TerminalProtocol,
-    generation: Option<u64>,
     owner: String,
     thread_id: Option<String>,
     commands: std_mpsc::SyncSender<WriterCommand>,
@@ -271,22 +263,13 @@ pub struct LiveTerminal {
 
 struct LiveTerminalStart {
     id: String,
-    protocol: TerminalProtocol,
-    generation: Option<u64>,
     owner: String,
     thread_id: Option<String>,
     replay_quota: Arc<ReplayQuota>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum TerminalProtocol {
-    Legacy,
-    V2,
-}
-
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct TerminalRegistryKey {
-    protocol: TerminalProtocol,
     session_id: String,
 }
 
@@ -408,74 +391,9 @@ impl TerminalRegistry {
     /// Finds or creates a companion-owned terminal process.
     ///
     /// # Errors
-    ///
-    /// Rejects invalid identifiers, owner mismatches, missing sessions and
-    /// process allocation failures.
+    /// Rejects invalid identifiers, owner/thread mismatches, missing sessions and allocation failures.
     pub fn attach_or_create(
         &self,
-        owner: &str,
-        query: &TerminalQuery,
-        authorization: Option<TerminalAuthorization>,
-        spawn: impl FnOnce() -> Result<TerminalSession, TerminalError>,
-    ) -> Result<Arc<LiveTerminal>, TerminalError> {
-        self.attach_or_create_inner(
-            TerminalProtocol::Legacy,
-            None,
-            owner,
-            query,
-            authorization,
-            spawn,
-        )
-    }
-
-    /// Finds or creates a V2 terminal qualified by protocol, audience, and generation.
-    pub(crate) fn attach_or_create_v2(
-        &self,
-        owner: &str,
-        generation: u64,
-        query: &TerminalQuery,
-        spawn: impl FnOnce() -> Result<TerminalSession, TerminalError>,
-    ) -> Result<Arc<LiveTerminal>, TerminalError> {
-        self.attach_or_create_inner(
-            TerminalProtocol::V2,
-            Some(generation),
-            owner,
-            query,
-            None,
-            spawn,
-        )
-    }
-
-    /// Revokes the least recently used detached V2 shell for one authenticated device.
-    ///
-    /// This is the bounded recovery path for a client that lost its durable
-    /// terminal registry during process/storage recovery. Attached terminals
-    /// and terminals owned by another device are never candidates.
-    pub(crate) fn reclaim_oldest_detached_v2(&self, owner: &str) -> bool {
-        let candidate = {
-            let sessions = lock(&self.inner.sessions);
-            sessions
-                .values()
-                .filter(|terminal| {
-                    terminal.protocol == TerminalProtocol::V2
-                        && terminal.owner == owner
-                        && terminal.attached.load(Ordering::Acquire) == 0
-                        && !terminal.exited.load(Ordering::Acquire)
-                })
-                .min_by_key(|terminal| *lock(&terminal.last_activity))
-                .cloned()
-        };
-        let Some(candidate) = candidate else {
-            return false;
-        };
-        candidate.revoke();
-        true
-    }
-
-    fn attach_or_create_inner(
-        &self,
-        protocol: TerminalProtocol,
-        generation: Option<u64>,
         owner: &str,
         query: &TerminalQuery,
         authorization: Option<TerminalAuthorization>,
@@ -487,35 +405,22 @@ impl TerminalRegistry {
             .filter(|value| valid_session_id(value))
             .ok_or(TerminalError::InvalidSession)?;
         let key = TerminalRegistryKey {
-            protocol,
             session_id: session_id.to_owned(),
         };
 
         {
-            let mut sessions = lock(&self.inner.sessions);
+            let sessions = lock(&self.inner.sessions);
             if let Some(existing) = sessions.get(&key).cloned() {
                 if existing.owner != owner {
                     return Err(TerminalError::SessionOwnedByAnotherDevice);
                 }
-                if existing.generation == generation {
-                    if existing.thread_id != query.thread_id {
-                        return Err(TerminalError::SessionThreadMismatch);
-                    }
-                    if !existing.exited.load(Ordering::Acquire) {
-                        existing.resize(validate_size(query.cols, query.rows)?)?;
-                    }
-                    return Ok(existing);
+                if existing.thread_id != query.thread_id {
+                    return Err(TerminalError::SessionThreadMismatch);
                 }
-                existing.close();
-                if sessions
-                    .get(&key)
-                    .is_some_and(|candidate| Arc::ptr_eq(candidate, &existing))
-                {
-                    sessions.remove(&key);
+                if !existing.exited.load(Ordering::Acquire) {
+                    existing.resize(validate_size(query.cols, query.rows)?)?;
                 }
-                if query.create == Some(false) {
-                    return Err(TerminalError::GenerationChanged);
-                }
+                return Ok(existing);
             }
         }
         if query.create == Some(false) {
@@ -527,8 +432,6 @@ impl TerminalRegistry {
         let live = LiveTerminal::start(
             LiveTerminalStart {
                 id: session_id.to_owned(),
-                protocol,
-                generation,
                 owner: owner.to_owned(),
                 thread_id: query.thread_id.clone(),
                 replay_quota: Arc::clone(&self.inner.replay_quota),
@@ -545,9 +448,6 @@ impl TerminalRegistry {
                 }
                 if existing.thread_id != query.thread_id {
                     return Err(TerminalError::SessionThreadMismatch);
-                }
-                if existing.generation != generation {
-                    return Err(TerminalError::GenerationChanged);
                 }
                 return Ok(Arc::clone(existing));
             }
@@ -587,7 +487,6 @@ impl TerminalRegistry {
                 };
                 let mut sessions = lock(&registry.sessions);
                 let key = TerminalRegistryKey {
-                    protocol: terminal.protocol,
                     session_id: terminal.id.clone(),
                 };
                 if sessions
@@ -615,8 +514,6 @@ impl LiveTerminal {
             ReplayBuffer::new(input.owner.clone(), input.replay_quota, REPLAY_MEMORY_BYTES);
         let terminal = Arc::new(Self {
             id: input.id,
-            protocol: input.protocol,
-            generation: input.generation,
             owner: input.owner,
             thread_id: input.thread_id,
             commands,
@@ -745,20 +642,6 @@ impl LiveTerminal {
     pub(crate) fn revoke(&self) {
         self.authority_revoked.store(true, Ordering::Release);
         self.close();
-    }
-
-    pub(crate) async fn revoke_and_wait(&self) {
-        let mut state = self.state.subscribe();
-        self.revoke();
-        loop {
-            let current = state.borrow_and_update().clone();
-            if matches!(current, TerminalState::Exited(_) | TerminalState::Failed(_)) {
-                break;
-            }
-            if state.changed().await.is_err() {
-                break;
-            }
-        }
     }
 
     fn mark_exited(&self, status: Option<ExitStatus>) {
@@ -942,10 +825,6 @@ impl ReplayBuffer {
             start: offset,
             bytes: Arc::from(bytes),
         }))
-    }
-
-    fn contains_offset(&self, offset: u64) -> bool {
-        offset <= self.end
     }
 
     fn clear(&mut self) {

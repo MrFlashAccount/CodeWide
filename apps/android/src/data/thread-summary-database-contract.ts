@@ -32,10 +32,12 @@ export type ThreadSummaryDatabase = {
   beginCatalogRead: (connectionId: string) => ThreadCatalogRead;
   beginDelete: (connectionId: string, threadId: string, commandId: string) => Promise<void>;
   close: () => void;
+  /** Satisfies catalog demand and reports whether remote cursors or the persisted range can continue. */
+  ensureCatalog: (request: ThreadSummaryViewRequest) => Promise<boolean>;
   get: (connectionId: string, threadId: string) => Promise<StoredThreadSummary | null>;
   insertStartedThread: (
     connectionId: string,
-    thread: import("@codewide/codex-protocol/v0.147.0/v2").Thread,
+    thread: import("@codewide/codex-protocol/v0.155.1/v2").Thread,
   ) => Promise<void>;
   loadView: (request: ThreadSummaryViewRequest) => Promise<void>;
   markRead: (connectionId: string, threadId: string) => Promise<void>;
@@ -43,7 +45,9 @@ export type ThreadSummaryDatabase = {
   readonly model: ThreadSummaryModel;
   prepare: () => Promise<void>;
   readonly projectUnread: ProjectUnreadModel;
-  reconcileDeleteCommands: (deliveries: readonly NativeCommandDelivery[]) => Promise<void>;
+  reconcileCommands: (deliveries: readonly NativeCommandDelivery[]) => Promise<void>;
+  /** Applies server-issued catalog removals independently of local pin/unread state. */
+  removeCatalogEntries: (connectionId: string, threadIds: readonly string[]) => Promise<void>;
   replaceCatalog: (connectionId: string, threads: SyncSnapshotThread[]) => Promise<void>;
   replaceSubagentCatalog: (
     connectionId: string,
@@ -52,8 +56,15 @@ export type ThreadSummaryDatabase = {
   ) => Promise<void>;
   rollbackDelete: (connectionId: string, threadId: string, commandId: string) => Promise<void>;
   search: (query: string, connectionId?: string | null) => Promise<StoredThreadSummary[]>;
-  setCatalogLoader: (loader: (request: ThreadSummaryViewRequest) => Promise<void>) => void;
+  setCatalogLoader: (loader: (request: ThreadSummaryViewRequest) => Promise<boolean>) => void;
   setRenameHandler: (handler: ThreadRenameHandler) => void;
+  /** Hides a local async question without submitting a user message. */
+  skipQuestion: (request: {
+    readonly connectionId: string;
+    readonly itemId: string;
+    readonly threadId: string;
+    readonly turnId: string;
+  }) => Promise<void>;
   updateArchived: (connectionId: string, threadId: string, archived: boolean) => Promise<void>;
   updateName: (connectionId: string, threadId: string, name: string) => Promise<void>;
   updatePinned: (connectionId: string, threadId: string, pinned: boolean) => Promise<void>;

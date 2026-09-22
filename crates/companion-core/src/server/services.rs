@@ -131,16 +131,6 @@ async fn tunnel_create(
     let Some(authorization) = authorization else {
         return TunnelError::Unauthorized.into_response();
     };
-    #[cfg(feature = "e2e-command-fault")]
-    if let Some(response) = e2e_v1_surface_fault(
-        &state,
-        crate::sync_v2::E2ESurfaceFaultTarget::PortCreate,
-        "e2e_port_fault_action_mismatch",
-    )
-    .await
-    {
-        return response;
-    }
     tunnels
         .create_for_device(
             request.port,
@@ -173,16 +163,6 @@ async fn tunnel_exact(
     let Some(authorization) = authorization else {
         return TunnelError::Unauthorized.into_response();
     };
-    #[cfg(feature = "e2e-command-fault")]
-    if let Some(response) = e2e_v1_surface_fault(
-        &state,
-        crate::sync_v2::E2ESurfaceFaultTarget::PortDelete,
-        "e2e_port_fault_action_mismatch",
-    )
-    .await
-    {
-        return response;
-    }
     let tunnel = match tunnels.tunnel(&id).await {
         Ok(tunnel) => tunnel,
         Err(error) => return error.into_response(),
@@ -199,57 +179,7 @@ async fn tunnel_exact(
     (status, Json(json!({"revoked": revoked}))).into_response()
 }
 
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_v1_surface_fault(
-    state: &AppState,
-    target: crate::sync_v2::E2ESurfaceFaultTarget,
-    mismatch_error: &'static str,
-) -> Option<Response> {
-    let runtime = state.services.sync_v2.as_ref()?;
-    match runtime.intercept_e2e_surface_fault(target).await? {
-        crate::sync_v2::E2ESurfaceFaultEffect::Continue => None,
-        crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => {
-            Some(json_error(StatusCode::SERVICE_UNAVAILABLE, &marker))
-        }
-        crate::sync_v2::E2ESurfaceFaultEffect::NotFound
-        | crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-        | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
-        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
-        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
-        | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-        | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => Some(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            mismatch_error,
-        )),
-    }
-}
 
-#[cfg(feature = "e2e-command-fault")]
-async fn e2e_v1_terminal_replay_fault(state: &AppState) -> Option<Response> {
-    let runtime = state.services.sync_v2.as_ref()?;
-    match runtime
-        .intercept_e2e_surface_fault(crate::sync_v2::E2ESurfaceFaultTarget::TerminalReplay)
-        .await?
-    {
-        crate::sync_v2::E2ESurfaceFaultEffect::Continue => None,
-        crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => {
-            Some(json_error(StatusCode::SERVICE_UNAVAILABLE, &marker))
-        }
-        crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
-        | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor => Some(json_error(
-            StatusCode::CONFLICT,
-            "terminal_replay_unavailable",
-        )),
-        crate::sync_v2::E2ESurfaceFaultEffect::NotFound
-        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
-        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
-        | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
-        | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => Some(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "e2e_terminal_replay_action_mismatch",
-        )),
-    }
-}
 
 async fn tunnel_proxy_root(
     state: State<AppState>,
@@ -443,6 +373,10 @@ async fn port_forward_upgrade(
     upgrade: WebSocketUpgrade,
     headers: HeaderMap,
 ) -> Response {
+    let changes = match &state.authorization {
+        Authorization::Registry(registry) => Some(registry.subscribe_authorization_changes()),
+        Authorization::AdminOnly(_) => None,
+    };
     let authorization = if headers.get("origin").is_some() {
         None
     } else {
@@ -451,6 +385,9 @@ async fn port_forward_upgrade(
     let Some(authorization) = authorization else {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     };
+    if let Err(response) = port_forwarding::validate_identity(&headers, port).await {
+        return response;
+    }
     let target = match tokio::time::timeout(
         Duration::from_secs(10),
         tokio::net::TcpStream::connect(("127.0.0.1", port)),
@@ -461,18 +398,16 @@ async fn port_forward_upgrade(
         Ok(Err(_)) => return json_error(StatusCode::BAD_GATEWAY, "localhost_unavailable"),
         Err(_) => return json_error(StatusCode::GATEWAY_TIMEOUT, "localhost_timeout"),
     };
-    let authorization_changes = match (&state.authorization, authorization.device_id()) {
-        (Authorization::Registry(registry), Some(device_id)) => Some((
-            device_id.to_owned(),
-            registry.subscribe_authorization_changes(),
-        )),
-        _ => None,
-    };
+    let mut authority = crate::session_authority::SessionAuthority::new(&authorization, changes);
+    if authority.as_mut().is_some_and(|authority| !authority.is_valid()) {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
     upgrade
         .max_message_size(1024 * 1024)
+        .max_frame_size(1024 * 1024)
         .on_upgrade(move |socket| async move {
-            if let Some((device_id, changes)) = authorization_changes {
-                ports::bridge_tcp_authorized(socket, target, device_id, changes).await;
+            if let Some(mut authority) = authority {
+                port_forwarding::bridge_port(socket, target, &mut authority).await;
             } else {
                 ports::bridge_tcp(socket, target).await;
             }
@@ -496,23 +431,6 @@ async fn terminal_upgrade(
             "authenticated_device_session_required",
         );
     };
-    #[cfg(feature = "e2e-command-fault")]
-    if let Some(response) = e2e_v1_surface_fault(
-        &state,
-        crate::sync_v2::E2ESurfaceFaultTarget::TerminalOpen,
-        "e2e_terminal_fault_action_mismatch",
-    )
-    .await
-    {
-        return response;
-    }
-    #[cfg(feature = "e2e-command-fault")]
-    if query.session_id.is_some()
-        && query.offset.unwrap_or_default() > 0
-        && let Some(response) = e2e_v1_terminal_replay_fault(&state).await
-    {
-        return response;
-    }
     let owner = authorization.device_id().unwrap_or("admin").to_owned();
     let authorization_changes = match (&state.authorization, authorization.device_id()) {
         (Authorization::Registry(registry), Some(device_id)) => {
@@ -707,16 +625,6 @@ async fn file_text_read(
     {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
-    #[cfg(feature = "e2e-command-fault")]
-    if let Some(response) = e2e_v1_surface_fault(
-        &state,
-        crate::sync_v2::E2ESurfaceFaultTarget::ResourceRead,
-        "e2e_resource_read_action_mismatch",
-    )
-    .await
-    {
-        return response;
-    }
     files
         .read_text(query, &headers, head_only, preview)
         .await
@@ -875,16 +783,6 @@ async fn file_read(
     {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
-    #[cfg(feature = "e2e-command-fault")]
-    if let Some(response) = e2e_v1_surface_fault(
-        &state,
-        crate::sync_v2::E2ESurfaceFaultTarget::ResourceRead,
-        "e2e_resource_read_action_mismatch",
-    )
-    .await
-    {
-        return response;
-    }
     match files.download(query, &headers, head_only, preview).await {
         Ok(response) => response,
         Err(error) => error.into_response(),
@@ -900,7 +798,7 @@ async fn file_upload_status(
         return StatusCode::NOT_FOUND.into_response();
     };
     if matches!(&state.authorization, Authorization::Registry(_)) {
-        return crate::sync_v2::files::protected_file_upload_status(state, query, headers).await;
+        return crate::file_uploads::http::protected_file_upload_status(state, query, headers).await;
     }
     if !file_upload_authorized(&state, &headers).await {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
@@ -920,7 +818,7 @@ async fn file_upload_cancel(
         return StatusCode::NOT_FOUND.into_response();
     };
     if matches!(&state.authorization, Authorization::Registry(_)) {
-        return crate::sync_v2::files::protected_file_upload_cancel(state, query, headers).await;
+        return crate::file_uploads::http::protected_file_upload_cancel(state, query, headers).await;
     }
     if !file_upload_authorized(&state, &headers).await {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
@@ -941,7 +839,7 @@ async fn file_upload(
         return StatusCode::NOT_FOUND.into_response();
     };
     if matches!(&state.authorization, Authorization::Registry(_)) {
-        return crate::sync_v2::files::protected_file_upload(state, query, headers, body).await;
+        return crate::file_uploads::http::protected_file_upload(state, query, headers, body).await;
     }
     if !file_upload_authorized(&state, &headers).await {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");

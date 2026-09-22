@@ -16,6 +16,7 @@ export type GlobalSupervisorWebRtcSessionFactory = (
         readonly mode: Extract<GlobalSupervisorWebRtcMode, "interactive">;
         readonly onPlaybackLevel: (level: number) => void;
         readonly onTerminal: () => void;
+        readonly onUserSpeaking?: (speaking: boolean) => void;
         readonly personalVoiceFilterEnabled?: boolean;
       }
     | {

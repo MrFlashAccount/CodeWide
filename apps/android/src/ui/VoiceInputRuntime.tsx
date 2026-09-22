@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 
 import type { WorkspaceResourceDatabase, VoiceInputRow } from "../data/workspace-resource-database";

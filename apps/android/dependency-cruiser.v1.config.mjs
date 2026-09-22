@@ -133,6 +133,7 @@ const featurePublicModules = {
     "conversationAttachmentCapabilities",
   ],
   requests: [
+    "QuestionFeature",
     "pendingRequests",
     "RequestFeature",
     "requestResponse",
@@ -175,7 +176,7 @@ const featurePublicModules = {
   ],
 };
 
-/** V1 keeps its own architecture rules while sharing the Metro resolver with V2. */
+/** Android architecture rules and Metro platform resolution for the single application. */
 export default {
   forbidden: [
     {
@@ -190,9 +191,9 @@ export default {
       name: "v1-source-does-not-import-routes",
       severity: "error",
       comment:
-        "V1 route organisms compose source owners; source owners cannot depend back on app routes.",
+        "Routes and route composition consume source owners; source owners cannot depend back on navigation composition.",
       from: { path: "^src/(?:features|components|services|data|native)/" },
-      to: { path: "^app/v1/" },
+      to: { path: "^(?:app/|src/routeComposition/)" },
     },
     {
       name: "v1-conversation-read-owners-do-not-import-feature-composition",

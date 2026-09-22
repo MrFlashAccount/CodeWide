@@ -96,6 +96,7 @@ describe("GlobalSupervisorRuntime", () => {
   });
 
   it("negotiates WebRTC through app-server and performs ordered terminal cleanup", async () => {
+    let now = 0;
     const ingress = createGlobalSupervisorRuntimeIngress();
     const session = sessionFixture();
     const acceptAnswer = vi.fn(async () => undefined);
@@ -207,7 +208,7 @@ describe("GlobalSupervisorRuntime", () => {
       ingress,
       isRpcAvailable: () => true,
       microphoneLeases,
-      now: () => 0,
+      now: () => now,
       personality: async () => ({
         character: "Calm and candid",
         communicationStyle: "Use short spoken answers",
@@ -256,7 +257,7 @@ describe("GlobalSupervisorRuntime", () => {
       event: "payload",
       payload: {
         method: "thread/realtime/itemAdded",
-        params: { threadId: "supervisor" },
+        params: { item: { role: "assistant", type: "message" }, threadId: "supervisor" },
       },
       sequence: 3,
       threadId: "supervisor",
@@ -272,12 +273,31 @@ describe("GlobalSupervisorRuntime", () => {
       sequence: 4,
       threadId: "supervisor",
     });
+    expect(published.at(-1)?.event).toBe("transcript");
     expect(setPlaybackLevel).toHaveBeenLastCalledWith(0.73);
+    now += 500;
+    publishPlaybackLevel(0);
     expect(
       published
         .map((event) => event.event)
         .filter((event) => ["listening", "thinking", "speaking"].includes(event)),
     ).toEqual(["listening", "thinking", "speaking", "listening"]);
+
+    ingress.publishThreadEvents("home", [{
+      cursor: "1",
+      payload: { method: "turn/started", params: { threadId: "supervisor", turn: { id: "hidden-turn" } } },
+    }]);
+    expect(published.at(-1)?.event).toBe("thinking");
+    publishPlaybackLevel(0.1);
+    expect(published.at(-1)?.event).toBe("speaking");
+    ingress.publishThreadEvents("home", [{
+      cursor: "2",
+      payload: { method: "turn/completed", params: { threadId: "supervisor", turn: { id: "hidden-turn" } } },
+    }]);
+    expect(published.at(-1)?.event).toBe("speaking");
+    now += 500;
+    publishPlaybackLevel(0);
+    expect(published.at(-1)?.event).toBe("listening");
 
     await activation.setMicrophoneMuted(true);
     await activation.setMicrophoneMuted(false);
@@ -294,6 +314,7 @@ describe("GlobalSupervisorRuntime", () => {
     finishAttentionStop.resolve();
     finishRemoteStop.resolve();
     await stopping;
+    await activation.stop();
     expect(attention.disableDelivery).toHaveBeenCalledWith(HOME);
 
     expect(acceptAnswer).toHaveBeenCalledWith("v=0\r\no=answer");

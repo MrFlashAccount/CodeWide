@@ -1,0 +1,19 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "release-contracts",
+  "projectType": "library",
+  "sourceRoot": "release",
+  "tags": ["type:contract"],
+  "metadata": {
+    "description": "Cross-product release compatibility contract"
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm release:compatibility",
+        "cwd": "."
+      }
+    }
+  }
+}

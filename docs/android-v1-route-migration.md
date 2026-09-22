@@ -17,8 +17,8 @@ retain their established owners. V1 stays isolated from V2 route and runtime con
 
 | Former owner | Implemented owner | Result |
 | --- | --- | --- |
-| `src/CodeWideScreen.tsx` | `app/v1/_layout.tsx` and route composition files | deleted after all V1 entry consumers moved |
-| `src/features/workspace/WorkspaceScreen*.tsx` | `app/v1/V1Workspace*.tsx` plus route files | deleted; persistent shell, routing, list adapter and resource composition have distinct owners |
+| `src/CodeWideScreen.tsx` | `app/(workspace)/_layout.tsx` and route composition files | deleted after all V1 entry consumers moved |
+| `src/features/workspace/WorkspaceScreen*.tsx` | `src/routeComposition/Workspace*.tsx` plus route files | deleted; persistent shell, routing, list adapter and resource composition have distinct owners |
 | `src/features/workspace/WorkspaceOverlays.tsx` | settings, projects, search, browser, drawing and route files | deleted; application visibility booleans removed |
 | `src/features/navigation/**` | Router plus `src/services/threads`, `servers`, and route callbacks | directory deleted; no duplicate navigation model remains |
 | `src/features/projects/newChat.ts` | `src/services/threads/newThreadService.ts` | draft identity is route-independent and first send replaces it with a qualified thread route |
@@ -58,14 +58,11 @@ paths, content, authorization values, prompts and callbacks are not serialized i
 ### R0 — gates and boundaries: closed
 
 The V1 formatter, ESLint, Knip, dependency graph, public API, unresolved-platform, cycle and hygiene
-checks include `app/v1/**`, `src/services/**` and `src/components/**`. Expo Router imports are
-restricted to route ownership. V2 TypeScript, formatter, lint, Knip, dependency and render gates
-exclude the complete V1 route tree while retaining their V2 route groups and shared boot/presentation
-owners. No rule is disabled inside either generation.
+checks include `app/(workspace)/**`, `src/routeComposition/**`, `src/services/**` and `src/components/**`. Expo Router imports are restricted to routes and route composition. Android V2 frontend gates were retired with that frontend; sync-client and Companion protocol validation remain separate.
 
 ### R1 — All and thread: closed
 
-`/v1` owns All, qualified thread paths own conversations, and the workspace stays mounted around an
+`/` owns All, qualified thread paths own conversations, and the workspace stays mounted around an
 inner `Stack`. Peer thread selection collapses to All before opening the replacement conversation,
 so an older conversation cannot remain mounted below it. Transparent sheet routes retain
 the owning conversation below them. Main conversation publication remains
@@ -74,7 +71,7 @@ commit and mobile Back returns to All.
 
 ### R2 — new thread and search: closed
 
-`/v1/new` owns the local draft until first-send admission succeeds. Search query/filter state and
+`/new` owns the local draft until first-send admission succeeds. Search query/filter state and
 message windows remain in bounded search sessions. Global search renders in the persistent list
 pane: desktop result selection collapses the previous peer conversation while preserving the search
 session, while mobile result selection pushes so Back returns to search. The query and project data

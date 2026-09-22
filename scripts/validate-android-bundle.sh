@@ -39,8 +39,8 @@ const retired = sources.filter((source) => /(?:^|\/)src\/v2\//u.test(source));
 if (retired.length !== 0) {
   throw new Error(`Android bundle retains ${retired.length} retired V2 modules`);
 }
-if (!sources.some((source) => /(?:^|\/)app\/v1\/_layout\.tsx$/u.test(source))) {
-  throw new Error("Android bundle does not contain the V1 workspace entry");
+if (!sources.some((source) => /(?:^|\/)app\/\(workspace\)\/_layout\.tsx$/u.test(source))) {
+  throw new Error("Android bundle does not contain the workspace entry");
 }
-console.log("Android bundle verified: V1 workspace present, no V2 frontend or sync-client modules.");
+console.log("Android bundle verified: workspace present, no V2 frontend or sync-client modules.");
 NODE

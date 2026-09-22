@@ -20,6 +20,7 @@ export const styles = StyleSheet.create({
   threadListSuspended: { flex: 1 },
   threadSidebar: {
     backgroundColor: colors.threadListSurface,
+    flex: 1,
     flexShrink: 0,
     maxWidth: 480,
     minWidth: 280,

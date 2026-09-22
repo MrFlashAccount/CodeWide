@@ -11,9 +11,6 @@ use redb::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[path = "store/read_receipts.rs"]
-pub(crate) mod read_receipts;
-
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const FILES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_files");
 const RECORDS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_records");
@@ -38,7 +35,6 @@ const FILE_STATE_BYTES: usize = 73;
 const MAX_OUTBOX_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_OUTBOX_OWNER_BYTES: usize = 256 * 1024 * 1024;
 const MAX_RETAINED_DELIVERED_COMMANDS: usize = 128;
-const OUTBOX_CHANGE_CHANNEL_CAPACITY: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,7 +59,7 @@ pub enum OutboxPresentation {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-pub enum OutboxQueueInputBlock {
+enum OutboxQueueInputBlock {
     Text { text: String },
     Attachment { attachment_id: String, name: String },
     Skill { name: String, path: String },
@@ -82,9 +78,10 @@ pub struct OutboxCommand {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_request_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner_context: Option<String>,
+    // Preserve historical ownership and presentation metadata when rewriting persisted rows.
+    owner_context: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub queue_input: Option<Vec<OutboxQueueInputBlock>>,
+    queue_input: Option<Vec<OutboxQueueInputBlock>>,
     pub order: u64,
     pub created_at: u64,
     pub updated_at: u64,
@@ -108,36 +105,11 @@ impl OutboxCommand {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OutboxChange {
-    pub command_id: String,
-    pub remote_thread_id: String,
-    pub owner_context: Option<String>,
-}
-
-pub struct OutboxExpectation<'a> {
-    pub owner_context: &'a str,
-    pub remote_thread_id: Option<&'a str>,
-    pub revision: &'a str,
-}
-
-impl From<&OutboxCommand> for OutboxChange {
-    fn from(command: &OutboxCommand) -> Self {
-        Self {
-            command_id: command.command_id.clone(),
-            remote_thread_id: command.remote_thread_id.clone(),
-            owner_context: command.owner_context.clone(),
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 struct OutboxPutMetadata<'a> {
     created_at: Option<u64>,
     presentation: OutboxPresentation,
     workspace_request_id: Option<&'a str>,
-    owner_context: Option<&'a str>,
-    queue_input: Option<&'a [OutboxQueueInputBlock]>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -425,14 +397,11 @@ pub enum StoreError {
     CorruptedIndex(String),
     #[error("durable queue storage quota exceeded ({limit_bytes} bytes per owner)")]
     OutboxOwnerQuotaExceeded { limit_bytes: usize },
-    #[error("durable outbox changed since it was read")]
-    OutboxRevisionConflict,
 }
 
 pub struct IndexStore {
     database: Arc<Database>,
     rollout_index_locks: Mutex<HashMap<[u8; 32], Arc<Mutex<()>>>>,
-    outbox_changes: tokio::sync::broadcast::Sender<OutboxChange>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -515,28 +484,12 @@ impl IndexStore {
             write.open_table(THREAD_USAGE)?;
             write.open_table(THREAD_METADATA)?;
             write.open_table(THREADS_BY_PARENT)?;
-            read_receipts::open_tables(&write)?;
         }
         write.commit()?;
-        let (outbox_changes, _) = tokio::sync::broadcast::channel(OUTBOX_CHANGE_CHANNEL_CAPACITY);
         Ok(Self {
             database,
             rollout_index_locks: Mutex::new(HashMap::new()),
-            outbox_changes,
         })
-    }
-
-    /// Subscribes to committed durable outbox mutations.
-    ///
-    /// The notification is only an invalidation edge. Callers must read the
-    /// durable outbox for the authoritative queue contents.
-    #[must_use]
-    pub fn subscribe_outbox_changes(&self) -> tokio::sync::broadcast::Receiver<OutboxChange> {
-        self.outbox_changes.subscribe()
-    }
-
-    fn publish_outbox_change(&self, command: &OutboxCommand) {
-        let _ = self.outbox_changes.send(OutboxChange::from(command));
     }
 
     pub(crate) fn rollout_index_lock(&self, file_id: [u8; 32]) -> Arc<Mutex<()>> {
@@ -1232,67 +1185,6 @@ impl IndexStore {
                 created_at,
                 presentation,
                 workspace_request_id: None,
-                owner_context: None,
-                queue_input: None,
-            },
-        )
-    }
-
-    /// Inserts a durable V2 queue item bound to one authenticated device.
-    ///
-    /// The owner is server-local authorization metadata and never becomes part
-    /// of the App Server command payload.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error under the same conditions as
-    /// [`Self::outbox_put_turn_start_with_presentation`].
-    pub fn outbox_put_turn_start_for_owner(
-        &self,
-        command_id: &str,
-        remote_thread_id: &str,
-        params: Value,
-        created_at: Option<u64>,
-        presentation: OutboxPresentation,
-        owner_context: &str,
-    ) -> Result<OutboxCommand, StoreError> {
-        self.outbox_put_turn_start_inner(
-            command_id,
-            remote_thread_id,
-            params,
-            OutboxPutMetadata {
-                created_at,
-                presentation,
-                workspace_request_id: None,
-                owner_context: Some(owner_context),
-                queue_input: None,
-            },
-        )
-    }
-
-    /// Inserts a device-owned V2 queue item with a durable presentation input.
-    ///
-    /// # Errors
-    /// Returns an error under the same conditions as
-    /// [`Self::outbox_put_turn_start_for_owner`].
-    pub fn outbox_put_turn_start_for_owner_with_queue_input(
-        &self,
-        command_id: &str,
-        remote_thread_id: &str,
-        params: Value,
-        owner_context: &str,
-        queue_input: &[OutboxQueueInputBlock],
-    ) -> Result<OutboxCommand, StoreError> {
-        self.outbox_put_turn_start_inner(
-            command_id,
-            remote_thread_id,
-            params,
-            OutboxPutMetadata {
-                created_at: None,
-                presentation: OutboxPresentation::Queue,
-                workspace_request_id: None,
-                owner_context: Some(owner_context),
-                queue_input: Some(queue_input),
             },
         )
     }
@@ -1320,8 +1212,6 @@ impl IndexStore {
                 created_at,
                 presentation,
                 workspace_request_id,
-                owner_context: None,
-                queue_input: None,
             },
         )
     }
@@ -1337,16 +1227,11 @@ impl IndexStore {
             created_at,
             presentation,
             workspace_request_id,
-            owner_context,
-            queue_input,
         } = metadata;
         validate_outbox_id(command_id, "command id")?;
         validate_outbox_id(remote_thread_id, "remote thread id")?;
         if let Some(request_id) = workspace_request_id {
             validate_outbox_id(request_id, "workspace request id")?;
-        }
-        if let Some(owner) = owner_context {
-            validate_outbox_id(owner, "outbox owner")?;
         }
         validate_turn_start_params(command_id, remote_thread_id, &params)?;
         let params_bytes = serde_json::to_vec(&params)?.len();
@@ -1356,7 +1241,7 @@ impl IndexStore {
             ));
         }
         let write = self.database.begin_write()?;
-        let (command, pruned_changes) = {
+        let command = {
             let mut table = write.open_table(OUTBOX)?;
             if let Some(encoded) = table.get(command_id)?.map(|value| value.value().to_vec()) {
                 let existing: OutboxCommand = serde_json::from_slice(&encoded)?;
@@ -1365,8 +1250,8 @@ impl IndexStore {
                     || existing.params != params
                     || existing.presentation != presentation
                     || existing.workspace_request_id.as_deref() != workspace_request_id
-                    || existing.owner_context.as_deref() != owner_context
-                    || existing.queue_input.as_deref() != queue_input
+                    || existing.owner_context.is_some()
+                    || existing.queue_input.is_some()
                 {
                     return Err(StoreError::CorruptedIndex(
                         "outbox command id already has a different payload".into(),
@@ -1374,7 +1259,7 @@ impl IndexStore {
                 }
                 return Ok(existing);
             }
-            let (pruned_changes, max_order) = prune_delivered_outbox_receipts(&mut table)?;
+            let (_, max_order) = prune_delivered_outbox_receipts(&mut table)?;
             let now = unix_time_ms();
             let command = OutboxCommand {
                 command_id: command_id.to_owned(),
@@ -1384,8 +1269,8 @@ impl IndexStore {
                 state: OutboxState::Queued,
                 presentation,
                 workspace_request_id: workspace_request_id.map(str::to_owned),
-                owner_context: owner_context.map(str::to_owned),
-                queue_input: queue_input.map(<[OutboxQueueInputBlock]>::to_vec),
+                owner_context: None,
+                queue_input: None,
                 order: max_order.saturating_add(1),
                 created_at: created_at.unwrap_or(now),
                 updated_at: now,
@@ -1395,15 +1280,11 @@ impl IndexStore {
                 claim: None,
             };
             let encoded = serde_json::to_vec(&command)?;
-            ensure_outbox_owner_quota(outbox_owner_bytes(&table, owner_context)?, encoded.len())?;
+            ensure_outbox_owner_quota(outbox_owner_bytes(&table, None)?, encoded.len())?;
             table.insert(command_id, encoded.as_slice())?;
-            (command, pruned_changes)
+            command
         };
         write.commit()?;
-        for change in pruned_changes {
-            let _ = self.outbox_changes.send(change);
-        }
-        self.publish_outbox_change(&command);
         Ok(command)
     }
 
@@ -1420,11 +1301,7 @@ impl IndexStore {
             prune_delivered_outbox_receipts(&mut table)?.0
         };
         write.commit()?;
-        let removed_count = removed.len();
-        for change in removed {
-            let _ = self.outbox_changes.send(change);
-        }
-        Ok(removed_count)
+        Ok(removed)
     }
 
     /// Lists durable outbox commands in dispatch order.
@@ -1450,21 +1327,6 @@ impl IndexStore {
         Ok(commands)
     }
 
-    /// Lists queue items owned by one authenticated V2 device.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the durable outbox is unavailable or corrupt.
-    pub fn outbox_list_for_owner(
-        &self,
-        owner_context: &str,
-        remote_thread_id: Option<&str>,
-    ) -> Result<Vec<OutboxCommand>, StoreError> {
-        let mut commands = self.outbox_list(remote_thread_id)?;
-        commands.retain(|command| command.owner_context.as_deref() == Some(owner_context));
-        Ok(commands)
-    }
-
     /// Reads one durable outbox row by stable command identity.
     ///
     /// # Errors
@@ -1478,21 +1340,6 @@ impl IndexStore {
             .get(command_id)?
             .map(|encoded| serde_json::from_slice(encoded.value()).map_err(StoreError::from))
             .transpose()
-    }
-
-    /// Lists one device's durable queue together with its compare-and-swap revision.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the durable outbox is unavailable or corrupt.
-    pub fn outbox_list_for_owner_with_revision(
-        &self,
-        owner_context: &str,
-        remote_thread_id: Option<&str>,
-    ) -> Result<(Vec<OutboxCommand>, String), StoreError> {
-        let commands = self.outbox_list_for_owner(owner_context, remote_thread_id)?;
-        let revision = outbox_revision(&commands)?;
-        Ok((commands, revision))
     }
 
     /// Returns the first dispatchable command for every thread.
@@ -1529,7 +1376,7 @@ impl IndexStore {
         &self,
         command_id: &str,
     ) -> Result<OutboxClaimOutcome, StoreError> {
-        self.outbox_claim(command_id, OutboxClaimKind::Dispatch, None, None)
+        self.outbox_claim(command_id, OutboxClaimKind::Dispatch, None)
     }
 
     /// Atomically removes one queued command from dispatcher ownership and
@@ -1547,27 +1394,7 @@ impl IndexStore {
         operation_id: &str,
     ) -> Result<OutboxClaimOutcome, StoreError> {
         validate_outbox_id(operation_id, "steer operation id")?;
-        self.outbox_claim(command_id, OutboxClaimKind::Steer, Some(operation_id), None)
-    }
-
-    /// Atomically claims a queued steer only if the client queue revision is current.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the revision is stale or the claim cannot be persisted.
-    pub fn outbox_claim_steer_checked(
-        &self,
-        command_id: &str,
-        operation_id: &str,
-        expectation: &OutboxExpectation<'_>,
-    ) -> Result<OutboxClaimOutcome, StoreError> {
-        validate_outbox_id(operation_id, "steer operation id")?;
-        self.outbox_claim(
-            command_id,
-            OutboxClaimKind::Steer,
-            Some(operation_id),
-            Some(expectation),
-        )
+        self.outbox_claim(command_id, OutboxClaimKind::Steer, Some(operation_id))
     }
 
     /// Resolves a previously acquired dispatch or steer claim.
@@ -1637,9 +1464,6 @@ impl IndexStore {
             OutboxClaimResolutionOutcome::Applied(command)
         };
         write.commit()?;
-        if let OutboxClaimResolutionOutcome::Applied(command) = &outcome {
-            self.publish_outbox_change(command);
-        }
         Ok(outcome)
     }
 
@@ -1674,9 +1498,6 @@ impl IndexStore {
             Some(command)
         };
         write.commit()?;
-        if let Some(command) = &failed {
-            self.publish_outbox_change(command);
-        }
         Ok(failed)
     }
 
@@ -1685,18 +1506,15 @@ impl IndexStore {
         command_id: &str,
         kind: OutboxClaimKind,
         operation_id: Option<&str>,
-        expectation: Option<&OutboxExpectation<'_>>,
     ) -> Result<OutboxClaimOutcome, StoreError> {
         validate_outbox_id(command_id, "command id")?;
         let write = self.database.begin_write()?;
         let outcome = {
             let mut table = write.open_table(OUTBOX)?;
-            ensure_outbox_expectation(&table, expectation)?;
             let Some(encoded) = table.get(command_id)?.map(|value| value.value().to_vec()) else {
                 return Ok(OutboxClaimOutcome::Unavailable(None));
             };
             let mut command: OutboxCommand = serde_json::from_slice(&encoded)?;
-            ensure_outbox_command_matches_expectation(&command, expectation)?;
             let repeated_steer = kind == OutboxClaimKind::Steer
                 && command.claim.as_ref().is_some_and(|claim| {
                     claim.kind == OutboxClaimKind::Steer
@@ -1730,9 +1548,6 @@ impl IndexStore {
             }
         };
         write.commit()?;
-        if let OutboxClaimOutcome::Acquired { command, .. } = &outcome {
-            self.publish_outbox_change(command);
-        }
         Ok(outcome)
     }
 
@@ -1773,7 +1588,6 @@ impl IndexStore {
             command
         };
         write.commit()?;
-        self.publish_outbox_change(&command);
         Ok(command)
     }
 
@@ -1819,7 +1633,6 @@ impl IndexStore {
             command
         };
         write.commit()?;
-        self.publish_outbox_change(&command);
         Ok(command)
     }
 
@@ -1865,9 +1678,6 @@ impl IndexStore {
             (command, changed)
         };
         write.commit()?;
-        if changed {
-            self.publish_outbox_change(&command);
-        }
         Ok((command, changed))
     }
 
@@ -1879,11 +1689,10 @@ impl IndexStore {
     /// Returns an error if the outbox cannot be read or updated.
     pub fn outbox_recover_legacy_account_pool_failures(&self) -> Result<Vec<String>, StoreError> {
         let write = self.database.begin_write()?;
-        let (threads, changed_commands) = {
+        let threads = {
             let mut table = write.open_table(OUTBOX)?;
             let mut recovered = HashSet::new();
             let mut updates = Vec::new();
-            let mut changed_commands = Vec::new();
             for entry in table.iter()? {
                 let (key, value) = entry?;
                 let mut command: OutboxCommand = serde_json::from_slice(value.value())?;
@@ -1901,17 +1710,13 @@ impl IndexStore {
                 command.last_error = None;
                 recovered.insert(command.remote_thread_id.clone());
                 updates.push((key.value().to_owned(), serde_json::to_vec(&command)?));
-                changed_commands.push(command);
             }
             for (command_id, encoded) in updates {
                 table.insert(command_id.as_str(), encoded.as_slice())?;
             }
-            (recovered.into_iter().collect::<Vec<_>>(), changed_commands)
+            recovered.into_iter().collect::<Vec<_>>()
         };
         write.commit()?;
-        for command in &changed_commands {
-            self.publish_outbox_change(command);
-        }
         Ok(threads)
     }
 
@@ -1922,37 +1727,18 @@ impl IndexStore {
     ///
     /// Returns an error if the command is missing, is not failed, or persistence fails.
     pub fn outbox_retry_failed(&self, command_id: &str) -> Result<OutboxCommand, StoreError> {
-        self.outbox_retry_failed_inner(command_id, None)
+        self.outbox_retry_failed_inner(command_id)
     }
 
-    /// Retries a failed item only if the client queue revision is current.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the revision is stale or persistence fails.
-    pub fn outbox_retry_failed_checked(
-        &self,
-        command_id: &str,
-        expectation: &OutboxExpectation<'_>,
-    ) -> Result<OutboxCommand, StoreError> {
-        self.outbox_retry_failed_inner(command_id, Some(expectation))
-    }
-
-    fn outbox_retry_failed_inner(
-        &self,
-        command_id: &str,
-        expectation: Option<&OutboxExpectation<'_>>,
-    ) -> Result<OutboxCommand, StoreError> {
+    fn outbox_retry_failed_inner(&self, command_id: &str) -> Result<OutboxCommand, StoreError> {
         let write = self.database.begin_write()?;
         let command = {
             let mut table = write.open_table(OUTBOX)?;
-            ensure_outbox_expectation(&table, expectation)?;
             let encoded = table
                 .get(command_id)?
                 .map(|value| value.value().to_vec())
                 .ok_or_else(|| StoreError::CorruptedIndex("outbox command not found".into()))?;
             let mut command: OutboxCommand = serde_json::from_slice(&encoded)?;
-            ensure_outbox_command_matches_expectation(&command, expectation)?;
             if command.state != OutboxState::Failed {
                 return Err(StoreError::CorruptedIndex(
                     "only a failed outbox command can be retried".into(),
@@ -1969,7 +1755,6 @@ impl IndexStore {
             command
         };
         write.commit()?;
-        self.publish_outbox_change(&command);
         Ok(command)
     }
 
@@ -1986,48 +1771,13 @@ impl IndexStore {
         command_id: &str,
         replacement_input: &Value,
     ) -> Result<OutboxCommand, StoreError> {
-        self.outbox_edit_prompt_inner(command_id, replacement_input, None, None)
-    }
-
-    /// Edits an item only if the client queue revision is current.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the revision is stale, input is invalid, or persistence fails.
-    pub fn outbox_edit_prompt_checked(
-        &self,
-        command_id: &str,
-        replacement_input: &Value,
-        expectation: &OutboxExpectation<'_>,
-    ) -> Result<OutboxCommand, StoreError> {
-        self.outbox_edit_prompt_inner(command_id, replacement_input, Some(expectation), None)
-    }
-
-    /// Edits a V2 queue item and atomically replaces its presentation input.
-    ///
-    /// # Errors
-    /// Returns an error if the revision, wire input, or presentation input is invalid.
-    pub fn outbox_edit_prompt_checked_with_queue_input(
-        &self,
-        command_id: &str,
-        replacement_input: &Value,
-        expectation: &OutboxExpectation<'_>,
-        queue_input: &[OutboxQueueInputBlock],
-    ) -> Result<OutboxCommand, StoreError> {
-        self.outbox_edit_prompt_inner(
-            command_id,
-            replacement_input,
-            Some(expectation),
-            Some(queue_input),
-        )
+        self.outbox_edit_prompt_inner(command_id, replacement_input)
     }
 
     fn outbox_edit_prompt_inner(
         &self,
         command_id: &str,
         replacement_input: &Value,
-        expectation: Option<&OutboxExpectation<'_>>,
-        queue_input: Option<&[OutboxQueueInputBlock]>,
     ) -> Result<OutboxCommand, StoreError> {
         let replacement = replacement_input
             .as_array()
@@ -2057,14 +1807,12 @@ impl IndexStore {
         let write = self.database.begin_write()?;
         let command = {
             let mut table = write.open_table(OUTBOX)?;
-            ensure_outbox_expectation(&table, expectation)?;
             let current_encoded = table
                 .get(command_id)?
                 .map(|value| value.value().to_vec())
                 .ok_or_else(|| StoreError::CorruptedIndex("outbox command not found".into()))?;
             let current_encoded_len = current_encoded.len();
             let mut command: OutboxCommand = serde_json::from_slice(&current_encoded)?;
-            ensure_outbox_command_matches_expectation(&command, expectation)?;
             ensure_outbox_editable(&command)?;
             let input = command
                 .params
@@ -2094,18 +1842,7 @@ impl IndexStore {
                 ));
             }
             command.updated_at = unix_time_ms();
-            if let Some(queue_input) = queue_input {
-                let mut updated_queue_input = queue_input.to_vec();
-                if let Some(current_queue_input) = &command.queue_input {
-                    updated_queue_input.extend(
-                        current_queue_input
-                            .iter()
-                            .filter(|block| matches!(block, OutboxQueueInputBlock::Skill { .. }))
-                            .cloned(),
-                    );
-                }
-                command.queue_input = Some(updated_queue_input);
-            }
+
             let encoded = serde_json::to_vec(&command)?;
             let owner_bytes = outbox_owner_bytes(&table, command.owner_context.as_deref())?;
             ensure_outbox_owner_replacement_quota(owner_bytes, current_encoded_len, encoded.len())?;
@@ -2113,7 +1850,6 @@ impl IndexStore {
             command
         };
         write.commit()?;
-        self.publish_outbox_change(&command);
         Ok(command)
     }
 
@@ -2129,35 +1865,18 @@ impl IndexStore {
         command_id: &str,
         before_command_id: Option<&str>,
     ) -> Result<bool, StoreError> {
-        self.outbox_place_inner(command_id, before_command_id, None)
+        self.outbox_place_inner(command_id, before_command_id)
             .map(|(changed, _command)| changed)
-    }
-
-    /// Reorders an item only if the client queue revision is current.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the revision is stale or persistence fails.
-    pub fn outbox_place_checked(
-        &self,
-        command_id: &str,
-        before_command_id: Option<&str>,
-        expectation: &OutboxExpectation<'_>,
-    ) -> Result<OutboxCommand, StoreError> {
-        self.outbox_place_inner(command_id, before_command_id, Some(expectation))
-            .map(|(_changed, command)| command)
     }
 
     fn outbox_place_inner(
         &self,
         command_id: &str,
         before_command_id: Option<&str>,
-        expectation: Option<&OutboxExpectation<'_>>,
     ) -> Result<(bool, OutboxCommand), StoreError> {
         let write = self.database.begin_write()?;
         let (changed_commands, selected) = {
             let mut table = write.open_table(OUTBOX)?;
-            ensure_outbox_expectation(&table, expectation)?;
             let mut same_thread = Vec::new();
             let mut selected = None;
             for entry in table.iter()? {
@@ -2173,7 +1892,6 @@ impl IndexStore {
             }
             let selected = selected
                 .ok_or_else(|| StoreError::CorruptedIndex("outbox command not found".into()))?;
-            ensure_outbox_command_matches_expectation(&selected, expectation)?;
             same_thread.retain(|candidate| {
                 candidate.remote_thread_id == selected.remote_thread_id
                     && candidate.owner_context == selected.owner_context
@@ -2215,9 +1933,6 @@ impl IndexStore {
             (changed_commands, selected)
         };
         write.commit()?;
-        for command in &changed_commands {
-            self.publish_outbox_change(command);
-        }
         Ok((!changed_commands.is_empty(), selected))
     }
 
@@ -2228,36 +1943,17 @@ impl IndexStore {
     ///
     /// Returns an error if persistence fails or the row is corrupt.
     pub fn outbox_cancel(&self, command_id: &str) -> Result<bool, StoreError> {
-        self.outbox_cancel_inner(command_id, None)
+        self.outbox_cancel_inner(command_id)
     }
 
-    /// Cancels an item only if the client queue revision is current.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the revision is stale or persistence fails.
-    pub fn outbox_cancel_checked(
-        &self,
-        command_id: &str,
-        expectation: &OutboxExpectation<'_>,
-    ) -> Result<bool, StoreError> {
-        self.outbox_cancel_inner(command_id, Some(expectation))
-    }
-
-    fn outbox_cancel_inner(
-        &self,
-        command_id: &str,
-        expectation: Option<&OutboxExpectation<'_>>,
-    ) -> Result<bool, StoreError> {
+    fn outbox_cancel_inner(&self, command_id: &str) -> Result<bool, StoreError> {
         let write = self.database.begin_write()?;
         let cancelled = {
             let mut table = write.open_table(OUTBOX)?;
-            ensure_outbox_expectation(&table, expectation)?;
             let Some(encoded) = table.get(command_id)?.map(|value| value.value().to_vec()) else {
                 return Ok(false);
             };
             let command: OutboxCommand = serde_json::from_slice(&encoded)?;
-            ensure_outbox_command_matches_expectation(&command, expectation)?;
             if !matches!(command.state, OutboxState::Queued | OutboxState::Failed) {
                 return Ok(false);
             }
@@ -2265,9 +1961,6 @@ impl IndexStore {
             Some(command)
         };
         write.commit()?;
-        if let Some(command) = &cancelled {
-            self.publish_outbox_change(command);
-        }
         Ok(cancelled.is_some())
     }
 }
@@ -2335,57 +2028,9 @@ fn ensure_outbox_owner_replacement_quota(
     )
 }
 
-fn outbox_revision(commands: &[OutboxCommand]) -> Result<String, StoreError> {
-    let encoded = serde_json::to_vec(commands)?;
-    Ok(blake3::hash(&encoded).to_hex().to_string())
-}
-
-fn ensure_outbox_expectation(
-    table: &Table<'_, &str, &[u8]>,
-    expectation: Option<&OutboxExpectation<'_>>,
-) -> Result<(), StoreError> {
-    let Some(expectation) = expectation else {
-        return Ok(());
-    };
-    let mut commands = Vec::new();
-    for entry in table.iter()? {
-        let (_key, value) = entry?;
-        let command: OutboxCommand = serde_json::from_slice(value.value())?;
-        if command.owner_context.as_deref() == Some(expectation.owner_context)
-            && expectation
-                .remote_thread_id
-                .is_none_or(|thread_id| command.remote_thread_id == thread_id)
-        {
-            commands.push(command);
-        }
-    }
-    commands.sort_by_key(|command| (command.order, command.created_at));
-    if outbox_revision(&commands)? != expectation.revision {
-        return Err(StoreError::OutboxRevisionConflict);
-    }
-    Ok(())
-}
-
-fn ensure_outbox_command_matches_expectation(
-    command: &OutboxCommand,
-    expectation: Option<&OutboxExpectation<'_>>,
-) -> Result<(), StoreError> {
-    let Some(expectation) = expectation else {
-        return Ok(());
-    };
-    if command.owner_context.as_deref() != Some(expectation.owner_context)
-        || expectation
-            .remote_thread_id
-            .is_some_and(|thread_id| command.remote_thread_id != thread_id)
-    {
-        return Err(StoreError::OutboxRevisionConflict);
-    }
-    Ok(())
-}
-
 fn prune_delivered_outbox_receipts(
     table: &mut Table<'_, &str, &[u8]>,
-) -> Result<(Vec<OutboxChange>, u64), StoreError> {
+) -> Result<(usize, u64), StoreError> {
     let mut max_order = 0_u64;
     let mut delivered = Vec::new();
     for entry in table.iter()? {
@@ -2410,7 +2055,7 @@ fn prune_delivered_outbox_receipts(
     for (_, _, _, owner_context) in &delivered {
         *delivered_counts.entry(owner_context.clone()).or_default() += 1;
     }
-    let mut removed = Vec::new();
+    let mut removed = 0;
     for (command_id, _, _, owner_context) in delivered {
         let Some(delivered_count) = delivered_counts.get_mut(&owner_context) else {
             continue;
@@ -2418,15 +2063,10 @@ fn prune_delivered_outbox_receipts(
         if *delivered_count <= MAX_RETAINED_DELIVERED_COMMANDS {
             continue;
         }
-        let Some(encoded) = table
-            .remove(command_id.as_str())?
-            .map(|value| value.value().to_vec())
-        else {
-            continue;
-        };
-        let command: OutboxCommand = serde_json::from_slice(&encoded)?;
-        *delivered_count -= 1;
-        removed.push(OutboxChange::from(&command));
+        if table.remove(command_id.as_str())?.is_some() {
+            *delivered_count -= 1;
+            removed += 1;
+        }
     }
     Ok((removed, max_order))
 }

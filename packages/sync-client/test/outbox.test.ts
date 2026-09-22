@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import { DurableOutbox, MAX_OUTBOX_COMMANDS_PER_CONNECTION, MAX_TURN_ATTACHMENTS, MAX_TURN_SKILLS, MAX_TURN_TEXT_CHARS, RpcResponseError, type OutboxCommand, type OutboxStore, type RpcClient } from "../src/index.js";
@@ -228,10 +228,16 @@ class FakeStore implements OutboxStore {
 
 function thread(): Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id: "thread", extra: null, sessionId: "thread", forkedFromId: null, parentThreadId: null,
     preview: "", ephemeral: false, section: null, sectionEnteredAt: null, historyMode: "paginated", modelProvider: "openai",
     createdAt: 1, updatedAt: 1, recencyAt: 1, status: { type: "idle" }, path: null, cwd: "/workspace",
-    cliVersion: "0.147.0", source: "appServer", canAcceptDirectInput: true, threadSource: null, agentNickname: null,
+    cliVersion: "0.155.1", source: "appServer", canAcceptDirectInput: true, threadSource: null, agentNickname: null,
     agentRole: null, gitInfo: null, name: "Thread",
     turns: [{ id: "turn", items: [], itemsView: "full", status: "completed", error: null, startedAt: 1, completedAt: 2, durationMs: 1_000 }],
   };

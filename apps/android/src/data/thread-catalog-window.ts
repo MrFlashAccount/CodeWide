@@ -22,7 +22,7 @@ export class ThreadCatalogWindow {
   #loaded = false;
   #ids = new Set<string>();
   #requested = 0;
-  #inFlight: Promise<void> | null = null;
+  #inFlight: Promise<boolean> | null = null;
   #refreshRequested = false;
   #closed = false;
 
@@ -31,7 +31,7 @@ export class ThreadCatalogWindow {
     this.#archived = archived;
   }
 
-  async ensure(count: number): Promise<void> {
+  async ensure(count: number): Promise<boolean> {
     this.#requested = Math.max(this.#requested, count);
     return this.#run();
   }
@@ -41,7 +41,13 @@ export class ThreadCatalogWindow {
       return;
     }
     this.#refreshRequested = true;
-    return this.#run();
+    // A refresh waits for pagination, not the other way around. In particular,
+    // the resource awaiting ensure() must settle even if live events continue
+    // requesting subsequent catalog reads.
+    if (this.#inFlight !== null) {
+      await this.#inFlight;
+    }
+    await this.#run();
   }
 
   close(): void {
@@ -49,7 +55,7 @@ export class ThreadCatalogWindow {
     this.#port.close();
   }
 
-  async #run(): Promise<void> {
+  async #run(): Promise<boolean> {
     if (this.#inFlight !== null) {
       return this.#inFlight;
     }
@@ -62,33 +68,30 @@ export class ThreadCatalogWindow {
     return operation;
   }
 
-  async #drain(): Promise<void> {
+  async #drain(): Promise<boolean> {
     const seenCursors = new Set<string>();
+    if (this.#refreshRequested) {
+      this.#refreshRequested = false;
+      this.#loaded = false;
+      this.#cursor = null;
+      this.#ids = new Set();
+    }
     while (!this.#closed) {
-      if (this.#refreshRequested) {
-        this.#refreshRequested = false;
-        this.#loaded = false;
-        this.#cursor = null;
-        this.#ids = new Set();
-        seenCursors.clear();
-      }
+      // Finish the requested prefix before restarting it. Catalog read leases
+      // protect live row changes during publication; discarding in-flight pages
+      // instead lets continuous activity starve the user's continuation.
       if (
         this.#requested === 0 ||
         (this.#loaded && (this.#cursor === null || this.#ids.size >= this.#requested))
       ) {
-        return;
+        return this.#cursor !== null;
       }
       const replaceHead = this.#cursor === null;
       const page = await this.#port.load({ archived: this.#archived, cursor: this.#cursor });
       // WHY: close() may run while the awaited catalog page is loading; TypeScript retains the loop-entry state.
       // oxlint-disable-next-line typescript/no-unnecessary-condition
       if (this.#closed) {
-        return;
-      }
-      // WHY: refresh() may run while the awaited catalog page is loading; TypeScript retains the flag reset from before the await.
-      // oxlint-disable-next-line typescript/no-unnecessary-condition
-      if (this.#refreshRequested) {
-        continue;
+        return false;
       }
       if (page.nextCursor !== null && seenCursors.has(page.nextCursor)) {
         throw new Error("thread/list returned a repeated catalog cursor");
@@ -107,5 +110,6 @@ export class ThreadCatalogWindow {
       this.#loaded = true;
       this.#cursor = page.nextCursor;
     }
+    return false;
   }
 }

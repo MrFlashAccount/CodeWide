@@ -1,3 +1,4 @@
+import { hasUnansweredAsyncQuestion } from "../../data/questionAnswerProjection";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { serverScopeIncludes, type ServerScope } from "../../services/servers/serverScope";
 import type { ThreadListItem } from "./threadListTypes";
@@ -85,6 +86,7 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
   return {
     archived: thread.archived,
     id: thread.remoteThreadId,
+    needsAttention: threadNeedsAttention(thread),
     pinned: thread.pinned,
     preview: thread.preview,
     serverId: thread.connectionId,
@@ -93,4 +95,12 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
     unread: thread.unread,
     ...(state === null ? {} : { state }),
   };
+}
+
+function threadNeedsAttention(thread: StoredThreadSummary): boolean {
+  return (
+    thread.pendingRequestCount > 0 ||
+    hasUnansweredAsyncQuestion(thread) ||
+    (thread.status.type === "active" && thread.status.activeFlags.length > 0)
+  );
 }

@@ -1,0 +1,182 @@
+name: Release Affected Products
+run-name: Release affected products (${{ inputs.bump }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version increment applied independently to each affected product"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      base:
+        description: "Optional common Git base; by default each product uses its latest release tag"
+        required: false
+        type: string
+      dry_run:
+        description: "Build and validate every selected product without publishing"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: codewide-release-set
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      relay: ${{ steps.outputs.outputs.relay }}
+      relay_version: ${{ steps.outputs.outputs.relay_version }}
+      relay_base: ${{ steps.outputs.outputs.relay_base }}
+      companion_linux: ${{ steps.outputs.outputs.companion_linux }}
+      companion_linux_version: ${{ steps.outputs.outputs.companion_linux_version }}
+      companion_linux_base: ${{ steps.outputs.outputs.companion_linux_base }}
+      macos: ${{ steps.outputs.outputs.macos }}
+      macos_version: ${{ steps.outputs.outputs.macos_version }}
+      macos_base: ${{ steps.outputs.outputs.macos_base }}
+      android_apk: ${{ steps.outputs.outputs.android_apk }}
+      android_apk_version: ${{ steps.outputs.outputs.android_apk_version }}
+      android_apk_base: ${{ steps.outputs.outputs.android_apk_base }}
+    env:
+      NX_CACHE_DIRECTORY: .nx/cache
+      NX_TUI: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Restore Nx task cache
+        uses: actions/cache@v5
+        with:
+          path: .nx/cache
+          key: nx-release-set-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nx-release-set-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Calculate release set
+        env:
+          REQUESTED_BASE: ${{ inputs.base }}
+          VERSION_BUMP: ${{ inputs.bump }}
+        run: |
+          args=(--bump "$VERSION_BUMP" --head "$GITHUB_SHA" --json)
+          if [[ -n "$REQUESTED_BASE" ]]; then
+            args+=(--base "$REQUESTED_BASE")
+          fi
+          node scripts/release-set-plan.ts "${args[@]}" > release-set-plan.json
+          jq -r 'if (.targets | length) == 0 then "Release set: none" else "Release set: " + ([.targets[] | .id + "@" + .version] | join(", ")) end' release-set-plan.json
+
+      - name: Export release-set outputs
+        id: outputs
+        run: |
+          for target in relay companion-linux macos android-apk; do
+            output_name="${target//-/_}"
+            selected=$(jq --arg target "$target" 'any(.targets[]; .id == $target)' release-set-plan.json)
+            version=$(jq -r --arg target "$target" 'first(.targets[] | select(.id == $target) | .version) // ""' release-set-plan.json)
+            base=$(jq -r --arg target "$target" 'first(.targets[] | select(.id == $target) | .base) // ""' release-set-plan.json)
+            echo "$output_name=$selected" >> "$GITHUB_OUTPUT"
+            echo "${output_name}_version=$version" >> "$GITHUB_OUTPUT"
+            echo "${output_name}_base=$base" >> "$GITHUB_OUTPUT"
+          done
+          {
+            echo '## Release set'
+            echo '```json'
+            cat release-set-plan.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-set-plan
+          path: release-set-plan.json
+          if-no-files-found: error
+
+  relay:
+    needs: plan
+    if: ${{ needs.plan.outputs.relay == 'true' }}
+    uses: ./.github/workflows/relay-release.yml
+    with:
+      version: ${{ needs.plan.outputs.relay_version }}
+      base: ${{ needs.plan.outputs.relay_base }}
+      dry_run: ${{ inputs.dry_run }}
+      request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
+
+  companion-linux:
+    needs:
+      - plan
+      - relay
+    if: >-
+      ${{ always() && needs.plan.result == 'success' &&
+          (needs.relay.result == 'success' || needs.relay.result == 'skipped') &&
+          needs.plan.outputs.companion_linux == 'true' }}
+    uses: ./.github/workflows/companion-linux-release.yml
+    with:
+      version: ${{ needs.plan.outputs.companion_linux_version }}
+      base: ${{ needs.plan.outputs.companion_linux_base }}
+      dry_run: ${{ inputs.dry_run }}
+      request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
+    secrets: inherit
+
+  macos:
+    needs:
+      - plan
+      - relay
+      - companion-linux
+    if: >-
+      ${{ always() && needs.plan.result == 'success' &&
+          (needs.relay.result == 'success' || needs.relay.result == 'skipped') &&
+          (needs['companion-linux'].result == 'success' || needs['companion-linux'].result == 'skipped') &&
+          needs.plan.outputs.macos == 'true' }}
+    uses: ./.github/workflows/macos-release.yml
+    with:
+      version: ${{ needs.plan.outputs.macos_version }}
+      base: ${{ needs.plan.outputs.macos_base }}
+      dry_run: ${{ inputs.dry_run }}
+      request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
+    secrets: inherit
+
+  android-apk:
+    needs:
+      - plan
+      - relay
+      - companion-linux
+      - macos
+    if: >-
+      ${{ always() && needs.plan.result == 'success' &&
+          (needs.relay.result == 'success' || needs.relay.result == 'skipped') &&
+          (needs['companion-linux'].result == 'success' || needs['companion-linux'].result == 'skipped') &&
+          (needs.macos.result == 'success' || needs.macos.result == 'skipped') &&
+          needs.plan.outputs.android_apk == 'true' }}
+    uses: ./.github/workflows/android-release.yml
+    with:
+      version: ${{ needs.plan.outputs.android_apk_version }}
+      base: ${{ needs.plan.outputs.android_apk_base }}
+      dry_run: ${{ inputs.dry_run }}
+      request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
+    secrets: inherit

@@ -14,19 +14,18 @@ class NativePortForwardManagerTest {
   @Test
   fun derivesSecurePortForwardEndpointFromSyncEndpoint() {
     assertEquals(
-      "wss://codex.example.test/v2/ports/3000",
+      "wss://codex.example.test/v1/port-forwards/3000",
       NativePortForwardManager.portForwardEndpoint("wss://codex.example.test/v1/sync", 3000),
     )
-    assertEquals(
-      "wss://codex.example.test/v2/ports/3000",
-      NativePortForwardManager.portForwardEndpoint("wss://codex.example.test/v2/sync", 3000),
-    )
+    assertThrows(IllegalStateException::class.java) {
+      NativePortForwardManager.portForwardEndpoint("wss://codex.example.test/v2/sync", 3000)
+    }
   }
 
   @Test
   fun preservesLocalDevelopmentEndpointAuthority() {
     assertEquals(
-      "ws://10.0.2.2:8765/v2/ports/8080",
+      "ws://10.0.2.2:8765/v1/port-forwards/8080",
       NativePortForwardManager.portForwardEndpoint("ws://10.0.2.2:8765/v1/sync", 8080),
     )
   }

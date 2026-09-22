@@ -111,7 +111,7 @@ impl ThreadViewService {
             .as_object_mut()
             .ok_or(ThreadViewError::InvalidStatus)?
             .insert("turns".into(), Value::Array(Vec::new()));
-        let (active_turn, fence) = if active {
+        let (mut active_turn, fence) = if active {
             let (active_turn, active_fence) = self.read_active_turn(thread_id).await?;
             (active_turn, active_fence)
         } else {
@@ -152,6 +152,9 @@ impl ThreadViewService {
             }
             Err(error) => return Err(error.into()),
         };
+        self.history
+            .enrich_active_questions(thread_id, &mut active_turn)
+            .await?;
         let through_cursor = fence.wait().await?;
         Ok(json!({
             "readModelVersion": READ_MODEL_VERSION,

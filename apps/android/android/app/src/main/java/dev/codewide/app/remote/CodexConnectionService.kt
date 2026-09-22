@@ -33,7 +33,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 class CodexConnectionService : Service() {
-  private data class HeadlessV2Subscription(val handle: String, val channelId: String)
 
   private lateinit var frameStore: NativeFrameStore
   private lateinit var commandStore: NativeCommandStore
@@ -41,9 +40,6 @@ class CodexConnectionService : Service() {
   private lateinit var portForwardManager: NativePortForwardManager
   private lateinit var terminalSessionManager: NativeTerminalSessionManager
   private lateinit var companionHttpProxy: NativeCompanionHttpProxy
-  private lateinit var authenticatedTransportLeases: AuthenticatedTransportLeaseRegistry
-  private lateinit var syncGenerationStore: NativeSyncGenerationStore
-  private lateinit var v2NotificationProjectionStore: V2NotificationProjectionStore
   private lateinit var processExitTelemetry: NativeProcessExitTelemetry
   private lateinit var connectivityManager: ConnectivityManager
   private val handler = Handler(Looper.getMainLooper())
@@ -51,28 +47,6 @@ class CodexConnectionService : Service() {
   private val journalThread = HandlerThread("CodeWideJournal")
   private lateinit var journalHandler: Handler
   private val sessions = ConcurrentHashMap<String, Session>()
-  private val authenticatedLeaseServers = ConcurrentHashMap<String, String>()
-  private val foregroundV2SyncChannels = V2ForegroundSyncChannels()
-  private val v2NotificationProjections = ConcurrentHashMap<String, V2NotificationProjection>()
-  private val headlessV2Subscriptions = ConcurrentHashMap<String, HeadlessV2Subscription>()
-  private val headlessV2ReconnectPolicy = V2HeadlessReconnectPolicy()
-  private val headlessV2FairScheduler = V2HeadlessFairScheduler(MAX_HEADLESS_V2_SUBSCRIPTIONS)
-  private val v2AuthenticatedLeaseAdmission by lazy(LazyThreadSafetyMode.NONE) {
-    V2AuthenticatedLeaseAdmission(
-      headlessV2FairScheduler,
-      acquire = authenticatedTransportLeases::acquire,
-      stopHeadless = ::stopHeadlessV2,
-      scheduleFairness = ::scheduleHeadlessV2Fairness,
-    )
-  }
-  private var headlessV2FairnessScheduled = false
-  private val headlessV2FairnessRunnable = Runnable {
-    synchronized(this) {
-      headlessV2FairnessScheduled = false
-      runHeadlessV2FairnessCycle()
-    }
-  }
-  @Volatile private var syncGeneration = NativeSyncGeneration.LEGACY
   @Volatile private var destroyed = false
   @Volatile private var activeDefaultNetwork: Network? = null
   private var processExitTelemetryCollectionStarted = false
@@ -81,10 +55,6 @@ class CodexConnectionService : Service() {
       synchronized(this@CodexConnectionService) {
         activeDefaultNetwork = network
         sessions.values.forEach { it.reconnectNow() }
-        if (syncGeneration == NativeSyncGeneration.V2) {
-          headlessV2ReconnectPolicy.resetAll()
-          restoreHeadlessV2()
-        }
       }
     }
 
@@ -95,10 +65,6 @@ class CodexConnectionService : Service() {
         if (activeDefaultNetwork != network) return
         activeDefaultNetwork = null
         sessions.values.forEach { it.networkLost() }
-        if (syncGeneration == NativeSyncGeneration.V2) {
-          stopAllHeadlessV2()
-          updateNotification()
-        }
       }
     }
   }
@@ -128,16 +94,6 @@ class CodexConnectionService : Service() {
     portForwardManager = NativePortForwardManager(this, credentialsStore, httpClient)
     terminalSessionManager = NativeTerminalSessionManager(credentialsStore, credentialHttpClient, httpClient, cacheDir)
     companionHttpProxy = NativeCompanionHttpProxy(credentialsStore)
-    authenticatedTransportLeases = AuthenticatedTransportLeaseRegistry(
-      credentialsStore,
-      credentialHttpClient,
-      httpClient,
-      CodeWideModule::emitAuthenticatedTransportEvent,
-    )
-    syncGenerationStore = NativeSyncGenerationStore(this)
-    syncGeneration = syncGenerationStore.read()
-    if (syncGeneration == NativeSyncGeneration.V2) terminalSessionManager.deactivateGeneration()
-    v2NotificationProjectionStore = V2NotificationProjectionStore(this)
     connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     activeDefaultNetwork = connectivityManager.activeNetwork
     createNotificationChannel()
@@ -157,7 +113,7 @@ class CodexConnectionService : Service() {
       ACTION_ATTACH -> {
         intent.getStringExtra(EXTRA_CONNECTION_ID)?.let { id ->
           recoverInBackground(id, "attach") {
-            selectLegacySync()
+            terminalSessionManager.activateGeneration()
             attach(id)
           }
         }
@@ -166,11 +122,10 @@ class CodexConnectionService : Service() {
       ACTION_WAKE -> {
         intent.getStringExtra(EXTRA_CONNECTION_ID)?.let(::wake)
       }
-      ACTION_ACTIVATE_V2 -> activateV2Sync(headless = false)
       ACTION_STOP_ALL -> stopSelf()
       null -> recoveryWorker.submit {
         synchronized(this) {
-          if (!destroyed) restoreSelectedSyncGeneration()
+          if (!destroyed) activateLegacySync()
         }
       }
     }
@@ -187,8 +142,6 @@ class CodexConnectionService : Service() {
         sessions.clear()
         portForwardManager.close()
         terminalSessionManager.destroy()
-        authenticatedTransportLeases.shutdown()
-        headlessV2Subscriptions.clear()
         companionHttpProxy.close()
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
         activeDefaultNetwork = null
@@ -228,103 +181,6 @@ class CodexConnectionService : Service() {
   @Synchronized
   internal fun publishStartupTiming(timing: NativeStartupTiming) {
     sessions.values.forEach { it.publishStartupTiming(timing) }
-  }
-
-  @Synchronized
-  internal fun acquireAuthenticatedTransportLease(savedServerId: String): String {
-    val handle = if (syncGeneration == NativeSyncGeneration.V2) {
-      v2AuthenticatedLeaseAdmission.acquire(savedServerId)
-    } else {
-      authenticatedTransportLeases.acquire(savedServerId)
-    }
-    authenticatedLeaseServers[handle] = savedServerId
-    return handle
-  }
-
-  @Synchronized
-  internal fun openAuthenticatedDuplex(handle: String, channelId: String, purpose: String) {
-    if (purpose != "sync-v2") {
-      authenticatedTransportLeases.openDuplex(handle, channelId, purpose)
-      return
-    }
-    val savedServerId = authenticatedLeaseServers[handle]
-      ?: error("Authenticated lease server is unavailable")
-    stopHeadlessV2(savedServerId)
-    admitNextWaitingHeadlessV2()
-    val channel = V2ForegroundSyncChannel(handle, channelId)
-    foregroundV2SyncChannels.replace(savedServerId, channel)?.let { previous ->
-      authenticatedTransportLeases.closeChannel(
-        previous.handle,
-        previous.channelId,
-        1000,
-        "sync_v2_runtime_handoff",
-      )
-    }
-    try {
-      authenticatedTransportLeases.openDuplex(handle, channelId, purpose) { event ->
-        when (event.type) {
-          "message" -> event.data?.let { observeV2NotificationState(savedServerId, it) }
-          "close", "error" -> {
-            val retiredServer = foregroundV2SyncChannels.remove(channel)
-            updateNotification()
-            if (retiredServer != null) ensureHeadlessV2(retiredServer)
-          }
-        }
-      }
-    } catch (error: Throwable) {
-      val retiredServer = foregroundV2SyncChannels.remove(channel)
-      if (retiredServer != null) ensureHeadlessV2(retiredServer)
-      throw error
-    }
-    updateNotification()
-  }
-
-  @Synchronized
-  internal fun openAuthenticatedDuplex(
-    handle: String,
-    channelId: String,
-    purpose: String,
-    observer: (AuthenticatedDuplexEvent) -> Unit,
-  ) = authenticatedTransportLeases.openDuplex(handle, channelId, purpose, observer)
-
-  internal fun sendAuthenticatedDuplex(handle: String, channelId: String, data: String) =
-    authenticatedTransportLeases.send(handle, channelId, data)
-
-  @Synchronized
-  internal fun closeAuthenticatedDuplex(handle: String, channelId: String, code: Int, reason: String) {
-    val savedServerId = foregroundV2SyncChannels.remove(V2ForegroundSyncChannel(handle, channelId))
-    authenticatedTransportLeases.closeChannel(handle, channelId, code, reason)
-    updateNotification()
-    if (savedServerId != null) ensureHeadlessV2(savedServerId)
-  }
-
-  @Synchronized
-  internal fun authenticatedRequest(handle: String, purpose: String, input: String, completion: (Result<String>) -> Unit) =
-    authenticatedTransportLeases.request(handle, purpose, input, completion)
-
-  @Synchronized
-  internal fun releaseAuthenticatedTransportLease(handle: String) {
-    val savedServerId = authenticatedLeaseServers.remove(handle)
-    val foregroundServers = foregroundV2SyncChannels.removeHandle(handle)
-    authenticatedTransportLeases.release(handle)
-    updateNotification()
-    if (savedServerId != null) ensureHeadlessV2(savedServerId)
-    foregroundServers.filterNot { it == savedServerId }.forEach(::ensureHeadlessV2)
-    if (headlessV2FairScheduler.hasWaiting()) runHeadlessV2FairnessCycle()
-  }
-
-  @Synchronized
-  internal fun activateV2Sync(headless: Boolean) {
-    if (syncGeneration != NativeSyncGeneration.V2) {
-      terminalSessionManager.deactivateGeneration()
-      clearAllV2NotificationState()
-      syncGeneration = NativeSyncGeneration.V2
-      if (!syncGenerationStore.write(syncGeneration)) Log.w(LOG_TAG, "Could not persist V2 sync generation")
-    }
-    sessions.values.forEach { it.close("v2_generation_selected") }
-    sessions.clear()
-    if (headless) restoreHeadlessV2()
-    updateNotification()
   }
 
   fun acknowledgeThrough(connectionId: String, projectionCursor: Long) {
@@ -490,7 +346,7 @@ class CodexConnectionService : Service() {
 
   fun wake(connectionId: String) {
     recoverInBackground(connectionId, "wake") {
-      selectLegacySync()
+      terminalSessionManager.activateGeneration()
       wakeRecovered(connectionId)
     }
   }
@@ -562,8 +418,6 @@ class CodexConnectionService : Service() {
 
   @Synchronized
   fun close(connectionId: String) {
-    closeAuthenticatedServer(connectionId)
-    clearV2NotificationState(connectionId)
     sessions.remove(connectionId)?.close("connection_disabled")
     credentialsStore.remove(connectionId)
     DeviceKeyStore.delete(connectionId)
@@ -577,7 +431,6 @@ class CodexConnectionService : Service() {
 
   @Synchronized
   fun suspend(connectionId: String) {
-    closeAuthenticatedServer(connectionId)
     sessions.remove(connectionId)?.close("connection_disabled")
     portForwardManager.suspendConnection(connectionId)
     terminalSessionManager.closeConnection(connectionId)
@@ -601,8 +454,6 @@ class CodexConnectionService : Service() {
   private fun revokeSavedServerAuthority(savedServerId: String) {
     revokeNativeAuthority(
       NativeAuthorityRevocation(
-        authenticatedTransports = { closeAuthenticatedServer(savedServerId) },
-        notificationProjection = { clearV2NotificationState(savedServerId) },
         legacySession = { sessions.remove(savedServerId)?.close("authority_replaced") },
         portForwards = { portForwardManager.suspendConnection(savedServerId) },
         terminalSessions = { terminalSessionManager.closeConnection(savedServerId) },
@@ -614,46 +465,14 @@ class CodexConnectionService : Service() {
 
   private fun resumeSavedServerAuthority(replacement: StoredNativeSession) {
     if (!replacement.enabled || destroyed) return
-    if (syncGeneration == NativeSyncGeneration.V2) {
-      portForwardManager.resumeConnection(replacement.id)
-      ensureHeadlessV2(replacement.id)
-    } else attach(replacement.id)
-  }
-
-  private fun closeAuthenticatedServer(savedServerId: String) {
-    stopHeadlessV2(savedServerId)
-    foregroundV2SyncChannels.removeServer(savedServerId)
-    val handles = authenticatedLeaseServers.entries
-      .filter { it.value == savedServerId }
-      .map { it.key }
-    for (handle in handles) authenticatedLeaseServers.remove(handle)
-    authenticatedTransportLeases.closeSavedServer(savedServerId)
-    admitNextWaitingHeadlessV2()
+    attach(replacement.id)
   }
 
   @Synchronized
   internal fun activateLegacySync() {
-    selectLegacySync()
+    terminalSessionManager.activateGeneration()
     restoreLegacySync()
     updateNotification()
-  }
-
-  private fun selectLegacySync() {
-    if (syncGeneration != NativeSyncGeneration.LEGACY) {
-      syncGeneration = NativeSyncGeneration.LEGACY
-      if (!syncGenerationStore.write(syncGeneration)) Log.w(LOG_TAG, "Could not persist legacy sync generation")
-      stopAllHeadlessV2()
-      authenticatedTransportLeases.closeAll()
-      authenticatedLeaseServers.clear()
-      foregroundV2SyncChannels.clear()
-      clearAllV2NotificationState()
-    }
-    terminalSessionManager.activateGeneration()
-  }
-
-  private fun restoreSelectedSyncGeneration() {
-    if (syncGeneration == NativeSyncGeneration.V2) activateV2Sync(headless = true)
-    else activateLegacySync()
   }
 
   private fun restoreLegacySync() {
@@ -661,185 +480,6 @@ class CodexConnectionService : Service() {
       open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256)
     }
   }
-
-  private fun restoreHeadlessV2() {
-    credentialsStore.list().filter { it.enabled }.forEach { ensureHeadlessV2(it.id) }
-  }
-
-  @Synchronized
-  private fun ensureHeadlessV2(savedServerId: String) {
-    if (destroyed) return
-    if (syncGeneration != NativeSyncGeneration.V2) return
-    if (activeDefaultNetwork == null) return
-    if (headlessV2Subscriptions.containsKey(savedServerId)) {
-      headlessV2FairScheduler.admitted(savedServerId)
-      return
-    }
-    if (foregroundV2SyncChannels.hasServer(savedServerId)) {
-      headlessV2FairScheduler.remove(savedServerId)
-      return
-    }
-    val saved = credentialsStore.get(savedServerId)
-    if (saved?.enabled != true) {
-      headlessV2FairScheduler.remove(savedServerId)
-      return
-    }
-    headlessV2FairScheduler.enqueue(savedServerId)
-    if (!headlessV2FairScheduler.canAdmit()) {
-      scheduleHeadlessV2Fairness()
-      return
-    }
-    val handle = runCatching { authenticatedTransportLeases.acquire(savedServerId) }.getOrNull()
-    if (handle == null) {
-      headlessV2FairScheduler.markCapacityBlocked()
-      scheduleHeadlessV2Fairness()
-      return
-    }
-    val channelId = UUID.randomUUID().toString()
-    val subscription = HeadlessV2Subscription(handle, channelId)
-    if (headlessV2Subscriptions.putIfAbsent(savedServerId, subscription) != null) {
-      authenticatedTransportLeases.release(handle)
-      headlessV2FairScheduler.admitted(savedServerId)
-      admitNextWaitingHeadlessV2()
-      return
-    }
-    headlessV2FairScheduler.admitted(savedServerId)
-    runCatching {
-      authenticatedTransportLeases.openDuplex(handle, channelId, "sync-v2") { event ->
-        observeHeadlessV2(savedServerId, subscription, event)
-      }
-    }.onFailure {
-      retireHeadlessV2(savedServerId, subscription, reconnect = true)
-    }
-    updateNotification()
-  }
-
-  private fun observeHeadlessV2(
-    savedServerId: String,
-    subscription: HeadlessV2Subscription,
-    event: AuthenticatedDuplexEvent,
-  ) {
-    if (headlessV2Subscriptions[savedServerId] !== subscription) return
-    when (event.type) {
-      "open" -> {
-        if (!sendHeadlessV2(subscription, headlessV2OpenFrame())) {
-          retireHeadlessV2(savedServerId, subscription, reconnect = true)
-        }
-      }
-      "message" -> event.data?.let { observeHeadlessV2Frame(savedServerId, subscription, it) }
-      "close", "error" -> retireHeadlessV2(savedServerId, subscription, reconnect = true)
-    }
-  }
-
-  private fun observeHeadlessV2Frame(
-    savedServerId: String,
-    subscription: HeadlessV2Subscription,
-    text: String,
-  ) {
-    val frame = runCatching { SyncV2ContractGenerated.parseServerFrame(text) }.getOrElse {
-      retireHeadlessV2(savedServerId, subscription, reconnect = true)
-      return
-    }
-    observeV2Frame(savedServerId, frame)
-    when (frame.getString("type")) {
-      "snapshot" -> {
-        headlessV2ReconnectPolicy.reset(savedServerId)
-        if (!sendHeadlessV2(
-          subscription,
-          JSONObject()
-            .put("type", "snapshotCommitted")
-            .put("epochId", frame.getString("epochId"))
-            .put("revision", frame.getString("revision"))
-            .put("watermark", frame.getString("watermark"))
-            .toString(),
-        )) {
-          retireHeadlessV2(savedServerId, subscription, reconnect = true)
-        }
-      }
-      "reinitialize" -> retireHeadlessV2(savedServerId, subscription, reconnect = true)
-    }
-  }
-
-  private fun sendHeadlessV2(subscription: HeadlessV2Subscription, text: String): Boolean =
-    runCatching {
-      authenticatedTransportLeases.send(subscription.handle, subscription.channelId, text)
-    }.isSuccess
-
-  @Synchronized
-  private fun retireHeadlessV2(
-    savedServerId: String,
-    subscription: HeadlessV2Subscription,
-    reconnect: Boolean,
-  ) {
-    if (!headlessV2Subscriptions.remove(savedServerId, subscription)) return
-    authenticatedTransportLeases.release(subscription.handle)
-    headlessV2FairScheduler.remove(savedServerId)
-    admitNextWaitingHeadlessV2()
-    updateNotification()
-    if (!reconnect || destroyed || syncGeneration != NativeSyncGeneration.V2) return
-    val delay = headlessV2ReconnectPolicy.nextDelay(savedServerId, activeDefaultNetwork != null) ?: return
-    handler.postDelayed({ ensureHeadlessV2(savedServerId) }, delay)
-  }
-
-  @Synchronized
-  private fun stopHeadlessV2(savedServerId: String) {
-    headlessV2FairScheduler.remove(savedServerId)
-    val subscription = headlessV2Subscriptions.remove(savedServerId)
-    if (subscription != null) authenticatedTransportLeases.release(subscription.handle)
-  }
-
-  private fun stopAllHeadlessV2() {
-    handler.removeCallbacks(headlessV2FairnessRunnable)
-    headlessV2FairnessScheduled = false
-    headlessV2Subscriptions.keys.toList().forEach(::stopHeadlessV2)
-    headlessV2FairScheduler.clear()
-  }
-
-  @Synchronized
-  private fun admitNextWaitingHeadlessV2() {
-    val candidate = headlessV2FairScheduler.nextWaiting() ?: return
-    ensureHeadlessV2(candidate)
-  }
-
-  @Synchronized
-  private fun scheduleHeadlessV2Fairness() {
-    if (headlessV2FairnessScheduled || destroyed || syncGeneration != NativeSyncGeneration.V2) return
-    if (activeDefaultNetwork == null || !headlessV2FairScheduler.hasWaiting()) return
-    headlessV2FairnessScheduled = true
-    handler.postDelayed(headlessV2FairnessRunnable, HEADLESS_V2_FAIRNESS_INTERVAL_MS)
-  }
-
-  @Synchronized
-  private fun runHeadlessV2FairnessCycle() {
-    if (destroyed || syncGeneration != NativeSyncGeneration.V2 || activeDefaultNetwork == null) return
-    val rotation = headlessV2FairScheduler.nextRotation()
-    if (rotation != null) {
-      stopHeadlessV2(rotation.retiringServerId)
-      headlessV2FairScheduler.enqueue(rotation.retiringServerId)
-      ensureHeadlessV2(rotation.waitingServerId)
-    } else {
-      admitNextWaitingHeadlessV2()
-    }
-    if (headlessV2FairScheduler.hasWaiting()) scheduleHeadlessV2Fairness()
-  }
-
-  private fun headlessV2OpenFrame(): String = JSONObject()
-    .put("type", "open")
-    .put("version", 2)
-    .put(
-      "intent",
-      JSONObject()
-        .put("portInventory", true)
-        .put(
-          "catalog",
-          JSONObject()
-            .put("activeLimit", 40)
-            .put("archivedLimit", 40),
-        )
-        .put("currentThread", JSONObject.NULL)
-        .put("pendingRequests", "allAccessible"),
-    )
-    .toString()
 
   private fun createNotificationChannel() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -865,14 +505,9 @@ class CodexConnectionService : Service() {
   }
 
   private fun notification(): Notification {
-    val v2Servers = foregroundV2SyncChannels.servers() + headlessV2Subscriptions.keys
-    val connectedServers = if (syncGeneration == NativeSyncGeneration.V2) v2Servers.size else sessions.size
-    val activeTurns = sessions.values.sumOf {
-      if (v2Servers.contains(it.id)) 0 else it.activeThreadCount()
-    } + v2Servers.sumOf { v2NotificationProjections[it]?.activeThreadCount() ?: 0 }
-    val approvals = sessions.values.sumOf {
-      if (v2Servers.contains(it.id)) 0 else it.pendingApprovalCount()
-    } + v2Servers.sumOf { v2NotificationProjections[it]?.pendingRequestCount() ?: 0 }
+    val connectedServers = sessions.size
+    val activeTurns = sessions.values.sumOf { it.activeThreadCount() }
+    val approvals = sessions.values.sumOf { it.pendingApprovalCount() }
     val summary = if (connectedServers == 0) {
       "Ready for remote connections"
     } else {
@@ -981,58 +616,6 @@ class CodexConnectionService : Service() {
   private fun cancelApprovalNotification(connectionId: String, requestId: String) {
     getSystemService(NotificationManager::class.java)
       .cancel(("approval:$connectionId\u0000$requestId").hashCode())
-  }
-
-  private fun clearV2NotificationState(savedServerId: String) {
-    val projection = v2NotificationProjections.remove(savedServerId)
-      ?: v2NotificationProjectionStore.read(savedServerId)?.let(::V2NotificationProjection)
-    projection?.closePendingRequests()?.forEach { effect ->
-      cancelApprovalNotification(savedServerId, effect.requestKey)
-    }
-    if (!v2NotificationProjectionStore.remove(savedServerId)) {
-      Log.w(LOG_TAG, "Could not remove V2 notification state")
-    }
-  }
-
-  private fun clearAllV2NotificationState() {
-    val savedServerIds = v2NotificationProjections.keys + v2NotificationProjectionStore.savedServerIds()
-    savedServerIds.forEach(::clearV2NotificationState)
-    v2NotificationProjections.clear()
-    if (!v2NotificationProjectionStore.clear()) Log.w(LOG_TAG, "Could not clear V2 notification state")
-  }
-
-  private fun observeV2NotificationState(savedServerId: String, text: String) {
-    val frame = runCatching { SyncV2ContractGenerated.parseServerFrame(text) }.getOrNull() ?: return
-    observeV2Frame(savedServerId, frame)
-  }
-
-  private fun observeV2Frame(savedServerId: String, frame: JSONObject) {
-    if (frame.getString("type") == "portInventory") {
-      portForwardManager.receiveInventory(savedServerId, frame.getJSONObject("inventory").toString())
-      return
-    }
-    val effects = runCatching {
-      v2NotificationProjections
-        .computeIfAbsent(savedServerId) {
-          V2NotificationProjection(v2NotificationProjectionStore.read(savedServerId))
-        }
-        .observeValidatedFrame(frame) { state ->
-          if (!v2NotificationProjectionStore.write(savedServerId, state)) {
-            Log.w(LOG_TAG, "Could not persist V2 notification state")
-          }
-        }
-    }.getOrElse { return }
-    for (effect in effects) {
-      when (effect) {
-        is V2NotificationEffect.TurnFinished ->
-          notifyTurnFinished(savedServerId, effect.threadId, effect.failed)
-        is V2NotificationEffect.ApprovalOpened ->
-          notifyApproval(savedServerId, effect.threadId, effect.requestKey)
-        is V2NotificationEffect.ApprovalClosed ->
-          cancelApprovalNotification(savedServerId, effect.requestKey)
-      }
-    }
-    updateNotification()
   }
 
   private inner class Session(
@@ -1650,7 +1233,6 @@ class CodexConnectionService : Service() {
     }
 
     private fun observeNotificationState(text: String) {
-      if (syncGeneration == NativeSyncGeneration.V2) return
       runCatching {
         val envelope = JSONObject(text)
         if (envelope.optString("type") == "hello") {
@@ -1810,7 +1392,6 @@ class CodexConnectionService : Service() {
     const val ACTION_ATTACH = "dev.codexremote.app.ATTACH"
     const val ACTION_CLOSE = "dev.codexremote.app.CLOSE"
     const val ACTION_WAKE = "dev.codexremote.app.WAKE"
-    const val ACTION_ACTIVATE_V2 = "dev.codewide.app.ACTIVATE_V2"
     const val ACTION_STOP_ALL = "dev.codexremote.app.STOP_ALL"
     const val EXTRA_CONNECTION_ID = "connection_id"
     private const val CHANNEL_ID = "codewide_connections"
@@ -1823,8 +1404,6 @@ class CodexConnectionService : Service() {
     private const val OUTBOX_RECONCILE_DELAY_MS = 2_000L
     // Avoid monopolizing process capacity in the common case. If other native
     // resources consume the reserve, explicit work preempts the oldest headless owner.
-    private const val MAX_HEADLESS_V2_SUBSCRIPTIONS = 63
-    private const val HEADLESS_V2_FAIRNESS_INTERVAL_MS = 30_000L
     private val USER_APPROVAL_METHODS = setOf(
       "item/commandExecution/requestApproval",
       "item/fileChange/requestApproval",

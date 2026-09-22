@@ -39,6 +39,7 @@ import {
   type AppFullscreenOverlayController,
 } from "../ui/AppFullscreenOverlay";
 import { AppText as Text } from "../ui/Typography";
+import { useOverlaySurface } from "../ui/OverlaySurfaceContext";
 import { percentageDimension } from "../ui/percentageDimension";
 import {
   ContentReviewComments,
@@ -54,6 +55,7 @@ import type {
   ImagePreviewRequest,
 } from "./imagePreviewTypes";
 import { ProgressiveImageLayer } from "./ProgressiveImageLayer";
+import { materializePrivateAsset } from "./private-asset";
 
 export type { ImagePreviewItem, ImagePreviewRequest } from "./imagePreviewTypes";
 
@@ -141,6 +143,22 @@ export function ImagePreviewHost({ children }: { children: ReactNode }) {
   );
 }
 
+async function annotatePreviewImage(
+  item: ImagePreviewItem,
+  handler: ImageAnnotationHandler,
+  onClose: () => void,
+): Promise<void> {
+  let annotationItem = item;
+  if (item.detail !== null && item.detail !== undefined) {
+    const source = await materializePrivateAsset(item.detail.source, {
+      getAccess: item.detail.getAccess,
+      variant: "detail",
+    });
+    annotationItem = { ...item, source };
+  }
+  await handler(annotationItem, onClose);
+}
+
 function ImagePreviewSession({
   getAnnotationHandler,
   initialSession,
@@ -159,19 +177,24 @@ function ImagePreviewSession({
     };
   }, [initialSession]);
   const [preparingAnnotation, setPreparingAnnotation] = useState(false);
-  const annotate = async () => {
+  const requestAnnotation = useEvent(() => {
     const annotationHandler = getAnnotationHandler();
     const item = session.items[session.index];
     if (annotationHandler === null || item === undefined || preparingAnnotation) return;
     setPreparingAnnotation(true);
-    await annotationHandler(item, onClose).catch((error: unknown) => {
-      dialog.alert(
-        "Could not annotate image",
-        error instanceof Error ? error.message : "Image could not be opened in QuickDraw",
-      );
-    });
-    setPreparingAnnotation(false);
-  };
+    annotatePreviewImage(item, annotationHandler, onClose).then(
+      () => {
+        setPreparingAnnotation(false);
+      },
+      (error: unknown) => {
+        setPreparingAnnotation(false);
+        dialog.alert(
+          "Could not annotate image",
+          error instanceof Error ? error.message : "Image could not be opened in QuickDraw",
+        );
+      },
+    );
+  });
   return (
     <GestureHandlerRootView style={styles.overlay}>
       <ImageViewer
@@ -181,7 +204,7 @@ function ImagePreviewSession({
         }}
         onClose={onClose}
         session={session}
-        {...(getAnnotationHandler() === null ? {} : { onAnnotate: () => void annotate() })}
+        {...(getAnnotationHandler() === null ? {} : { onAnnotate: requestAnnotation })}
       />
     </GestureHandlerRootView>
   );
@@ -262,6 +285,10 @@ function ImageViewer({
 }) {
   const dialog = useAppDialog();
   const insets = useSafeAreaInsets();
+  const { surface } = useOverlaySurface();
+  // The fullscreen host has already inset its entire content, including the toolbar.
+  const topInset = surface === "fullscreen-modal" ? 0 : insets.top;
+  const bottomInset = surface === "fullscreen-modal" ? 0 : insets.bottom;
   const [pinMode, setPinMode] = useState(false);
   const item = session.items[session.index];
   if (item === undefined) return null;
@@ -274,7 +301,10 @@ function ImageViewer({
       : [{ icon: "open-outline" as const, id: "open", label: "Open link" }]),
   ];
   return (
-    <View style={[styles.root, { paddingBottom: insets.bottom, paddingTop: insets.top }]}>
+    <View
+      style={[styles.root, { paddingBottom: bottomInset, paddingTop: topInset }]}
+      testID="image-preview-surface"
+    >
       <ZoomableImage
         canGoNext={session.index < session.items.length - 1}
         canGoPrevious={session.index > 0}
@@ -289,7 +319,11 @@ function ImageViewer({
         }}
         pinMode={pinMode}
       />
-      <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top + spacing.xs }]}>
+      <View
+        pointerEvents="box-none"
+        style={[styles.topBar, { top: topInset + spacing.xs }]}
+        testID="image-preview-controls"
+      >
         <Pressable
           accessibilityLabel="Close image"
           accessibilityRole="button"
@@ -396,8 +430,8 @@ function ZoomableImage({
       y,
     });
   });
-  const [viewport, setViewport] = useState({ height: 1, width: 1 });
-  const [intrinsic, setIntrinsic] = useState({ height: 1, width: 1 });
+  const [viewport, setViewport] = useState({ height: 0, width: 0 });
+  const [intrinsic, setIntrinsic] = useState({ height: 0, width: 0 });
   const [decodeState, setDecodeState] = useState<"loading" | "ready" | "error">("loading");
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -590,8 +624,8 @@ function ZoomableImage({
     <Animated.View
       onLayout={({ nativeEvent }) => {
         setViewport({
-          height: Math.max(1, nativeEvent.layout.height),
-          width: Math.max(1, nativeEvent.layout.width),
+          height: Math.max(0, nativeEvent.layout.height),
+          width: Math.max(0, nativeEvent.layout.width),
         });
       }}
       style={[styles.viewer, backdropStyle]}
@@ -612,14 +646,17 @@ function ZoomableImage({
           )}
           <Animated.View
             style={[styles.imageLayer, { height: fit.height, width: fit.width }, imageStyle]}
+            testID="image-preview-frame"
           >
-            <ProgressiveImageLayer
-              detail={item.detail}
-              label={item.label}
-              onDecodeStateChange={setDecodeState}
-              onDimensions={setIntrinsic}
-              preview={item.source}
-            />
+            {viewport.width > 0 && viewport.height > 0 && (
+              <ProgressiveImageLayer
+                detail={item.detail}
+                label={item.label}
+                onDecodeStateChange={setDecodeState}
+                onDimensions={setIntrinsic}
+                preview={item.source}
+              />
+            )}
             {points.map((point, index) => (
               <View
                 key={point.id}
@@ -651,6 +688,10 @@ function containSize(
   viewportWidth: number,
   viewportHeight: number,
 ): { height: number; width: number } {
+  // Before decode reports the aspect ratio, use the measured viewport as the decode budget.
+  if (imageWidth <= 0 || imageHeight <= 0) {
+    return { height: viewportHeight, width: viewportWidth };
+  }
   const ratio = Math.min(
     viewportWidth / Math.max(1, imageWidth),
     viewportHeight / Math.max(1, imageHeight),

@@ -1,4 +1,4 @@
-import type { Thread, ThreadItem } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread, ThreadItem } from "@codewide/codex-protocol/v0.155.1/v2";
 
 import { itemKey, threadKey, turnKey } from "./identity";
 import type { ConnectionId, NormalizedItem, NormalizedThread } from "./model";

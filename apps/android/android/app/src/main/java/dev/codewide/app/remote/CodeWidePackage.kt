@@ -15,18 +15,20 @@ import dev.codewide.app.rendering.NativeRevealManager
 import dev.codewide.app.rendering.NativeStreamingRevealManager
 import dev.codewide.app.rendering.NativeFluidLayoutManager
 import dev.codewide.app.performance.CodexPerformanceModule
+import dev.codewide.app.diagnostics.WindowDiagnosticsModule
 
 class CodeWidePackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
     listOf(
       CodeWideModule(reactContext),
       CodexPerformanceModule(reactContext),
+      WindowDiagnosticsModule(reactContext),
       ContentReviewSelectionModule(reactContext),
       DiagramPreviewModule(reactContext),
       GlobalVoiceForegroundModule(reactContext),
+      GlobalVoiceAudioRouteModule(reactContext),
       LargePasteModule(reactContext),
       PersonalVoiceFilterModule(reactContext),
-      V2VoiceCaptureModule(reactContext),
     )
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =

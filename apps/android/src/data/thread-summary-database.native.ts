@@ -1,3 +1,7 @@
+import {
+  isQuestionAnswerDelivery,
+  projectQuestionAnswerDelivery,
+} from "./questionAnswerProjection";
 import { appLogger } from "../observability/logger";
 import type {
   ThreadRenameHandler,
@@ -17,30 +21,16 @@ import {
   threadSummaryKey,
 } from "./thread-summary-projection";
 import { SerialTaskQueue } from "./serial-task-queue";
-import {
-  createThreadSummaryModel,
-  type LoadedThreadSummaryView,
-  type ThreadSummaryViewRequest,
-} from "./thread-summary-model";
+import { createThreadSummaryModel, type ThreadSummaryViewRequest } from "./thread-summary-model";
 import { createThreadSummarySqlite } from "./thread-summary-sqlite.native";
 import { ThreadCatalogReads } from "./thread-catalog-read";
 import { THREAD_CATALOG_PAGE_SIZE } from "./thread-catalog-loader";
 import { ProjectUnreadModel } from "./project-unread-model";
-import type { GlobalSupervisorVisibilityPolicy } from "./globalSupervisorVisibility";
-import type {
-  GlobalSupervisorSummaryStorageDecision,
-  GlobalSupervisorSummaryStoragePolicy,
-} from "./globalSupervisorSummaryStoragePolicy";
-import { unknownRecord } from "./unknownRecord";
+import { isCatalogExcluded } from "./threadCatalogMembership";
 
-export function createThreadSummaryDatabase(
-  options: {
-    readonly globalSupervisorStorage?: GlobalSupervisorSummaryStoragePolicy;
-    readonly visibility?: GlobalSupervisorVisibilityPolicy;
-  } = {},
-): ThreadSummaryDatabase {
+export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   const catalogReads = new ThreadCatalogReads();
-  let catalogLoader: ((request: ThreadSummaryViewRequest) => Promise<void>) | null = null;
+  let catalogLoader: ((request: ThreadSummaryViewRequest) => Promise<boolean>) | null = null;
   let renameHandler: ThreadRenameHandler | null = null;
   let disposed = false;
   const writes = new SerialTaskQueue();
@@ -49,47 +39,18 @@ export function createThreadSummaryDatabase(
   const projectUnread = new ProjectUnreadModel();
   let refreshScheduled = false;
 
-  const storageDecisionForRef = (
-    connectionId: string,
-    threadId: string,
-  ): GlobalSupervisorSummaryStorageDecision =>
-    options.globalSupervisorStorage?.classifyRef(connectionId, threadId) ?? "write";
-  const storageDecisionForThread = (
-    connectionId: string,
-    thread: { readonly id: string; readonly source?: string | null },
-  ): GlobalSupervisorSummaryStorageDecision =>
-    options.globalSupervisorStorage?.classifyThread(connectionId, thread) ?? "write";
-
-  const isHidden = (row: StoredThreadSummary): boolean =>
-    options.visibility?.allowsOrdinaryRef(row.connectionId, row.remoteThreadId) === false;
-  const visibleRows = (rows: StoredThreadSummary[]): StoredThreadSummary[] =>
-    rows.filter((row) => !isHidden(row));
-  const loadConnectionRows = async (connectionId: string): Promise<StoredThreadSummary[]> =>
-    visibleRows(await storage.loadConnectionRows(connectionId));
-  const loadRows = async (
-    connectionId: string,
-    threadIds: readonly string[],
-  ): Promise<StoredThreadSummary[]> => visibleRows(await storage.loadRows(connectionId, threadIds));
+  const loadConnectionRows = storage.loadConnectionRows;
+  const loadRows = storage.loadRows;
   const loadRow = async (
     connectionId: string,
     threadId: string,
   ): Promise<StoredThreadSummary | undefined> =>
-    options.visibility?.allowsOrdinaryRef(connectionId, threadId) === false
-      ? undefined
-      : ((await storage.loadRow(connectionId, threadId)) ?? undefined);
-
-  const filterView = (view: LoadedThreadSummaryView): LoadedThreadSummaryView => ({
-    archived: view.archived.filter((row) => !isHidden(row)),
-    pinned: view.pinned.filter((row) => !isHidden(row)),
-    recent: view.recent.filter((row) => !isHidden(row)),
-    selected: view.selected.filter((row) => !isHidden(row)),
-    subagents: view.subagents.filter((row) => !isHidden(row)),
-  });
+    (await storage.loadRow(connectionId, threadId)) ?? undefined;
 
   const loadView = async (request: ThreadSummaryViewRequest): Promise<void> => {
     const generation = model.startView(request);
     try {
-      model.commitView(request, generation, filterView(await storage.loadView(request)));
+      model.commitView(request, generation, await storage.loadView(request));
     } catch (error) {
       model.failView(request, generation, error);
       throw error;
@@ -137,25 +98,6 @@ export function createThreadSummaryDatabase(
         return;
       }
       const normalized = normalizeStoredThreadSummary(row);
-      const storageDecision = storageDecisionForRef(
-        normalized.connectionId,
-        normalized.remoteThreadId,
-      );
-      if (storageDecision === "preserve") {
-        return;
-      }
-      if (storageDecision === "delete") {
-        const key = threadSummaryKey(normalized.connectionId, normalized.remoteThreadId);
-        const previous = await storage.loadRow(normalized.connectionId, normalized.remoteThreadId);
-        if (previous !== null) {
-          storage.begin();
-          storage.write({ key, type: "delete" });
-          const checkpoint = storage.commit({ durable: true });
-          publishModelChanges([{ key, type: "delete" }], true);
-          await checkpoint;
-        }
-        return;
-      }
       const previous = await loadRow(normalized.connectionId, normalized.remoteThreadId);
       storage.begin();
       storage.write({ type: previous === undefined ? "insert" : "update", value: normalized });
@@ -197,6 +139,31 @@ export function createThreadSummaryDatabase(
     }
   };
 
+  const applyQuestionDelivery = async (delivery: NativeCommandDelivery): Promise<void> => {
+    if (!isQuestionAnswerDelivery(delivery) || delivery.threadId === null) {
+      return;
+    }
+    const threadId = delivery.threadId;
+    await writes.run(async () => {
+      if (disposed) {
+        return;
+      }
+      const row = await loadRow(delivery.connectionId, threadId);
+      if (row === undefined) {
+        return;
+      }
+      const next = projectQuestionAnswerDelivery(row, delivery);
+      if (next === row) {
+        return;
+      }
+      storage.begin();
+      storage.write({ type: "update", value: next });
+      const checkpoint = storage.commit({ durable: true });
+      publishModelChanges([{ type: "update", value: next }]);
+      await checkpoint;
+    });
+  };
+
   const replaceSnapshotRows = async (
     connectionId: string,
     snapshots: SyncSnapshotThread[],
@@ -211,25 +178,11 @@ export function createThreadSummaryDatabase(
         currentRows.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
       );
       const next = new Map<string, StoredThreadSummary>();
-      const exactHiddenKeys = new Set<string>();
+      const excludedKeys = new Set<string>();
       for (const snapshot of snapshots) {
-        if (snapshot.thread.ephemeral) {
-          continue;
-        }
         const key = threadSummaryKey(connectionId, snapshot.thread.id);
-        const storageDecision = storageDecisionForThread(connectionId, {
-          id: snapshot.thread.id,
-          source: snapshot.thread.threadSource,
-        });
-        if (storageDecision === "delete") {
-          exactHiddenKeys.add(key);
-          continue;
-        }
-        if (storageDecision === "preserve") {
-          const previous = current.get(key);
-          if (previous !== undefined) {
-            next.set(key, previous);
-          }
+        if (isCatalogExcluded(snapshot.thread)) {
+          excludedKeys.add(key);
           continue;
         }
         next.set(
@@ -242,10 +195,7 @@ export function createThreadSummaryDatabase(
           ),
         );
       }
-      const removableKeys =
-        options.globalSupervisorStorage?.mayPruneMissing(connectionId) === false
-          ? exactHiddenKeys
-          : new Set([...missingScope(currentRows), ...exactHiddenKeys]);
+      const removableKeys = new Set([...missingScope(currentRows), ...excludedKeys]);
       const removed = [...current].filter(([key]) => !next.has(key) && removableKeys.has(key));
       const changed = [...next].filter(([key, row]) => {
         const previous = current.get(key);
@@ -311,7 +261,7 @@ export function createThreadSummaryDatabase(
             snapshots.map(({ thread }) => thread.id),
           ),
         ]);
-        const visibleWindow = filterView(window);
+        const visibleWindow = window;
         const current = new Map(existing.map((row) => [row.remoteThreadId, row]));
         const changes: import("./thread-summary-sqlite.native").ThreadSummaryChange[] = [];
         for (const row of replaceHead
@@ -321,7 +271,6 @@ export function createThreadSummaryDatabase(
           : []) {
           // Paging a catalog must not erase device-owned unread state outside its head.
           if (
-            options.globalSupervisorStorage?.mayPruneMissing(connectionId) !== false &&
             !prefixIds.has(row.remoteThreadId) &&
             !row.pinned &&
             row.unread === 0 &&
@@ -340,18 +289,11 @@ export function createThreadSummaryDatabase(
           if (read.changed.has(snapshot.thread.id)) {
             continue;
           }
-          const storageDecision = storageDecisionForThread(connectionId, {
-            id: snapshot.thread.id,
-            source: snapshot.thread.threadSource,
-          });
-          if (storageDecision === "delete") {
+          if (isCatalogExcluded(snapshot.thread)) {
             changes.push({
               key: threadSummaryKey(connectionId, snapshot.thread.id),
               type: "delete",
             });
-            continue;
-          }
-          if (storageDecision === "preserve") {
             continue;
           }
           const previous = current.get(snapshot.thread.id);
@@ -379,6 +321,7 @@ export function createThreadSummaryDatabase(
     },
     async applyCommandDelivery(delivery) {
       await applyDeleteDelivery(delivery);
+      await applyQuestionDelivery(delivery);
     },
     async applyEvents(connectionId, events) {
       await writes.run(async () => {
@@ -399,21 +342,10 @@ export function createThreadSummaryDatabase(
         );
         const changed = new Map<string, StoredThreadSummary | null>();
         for (const event of events) {
-          const eventParams = unknownRecord(event.payload.params);
-          const eventThread = unknownRecord(eventParams?.thread);
-          if (typeof eventThread?.id === "string") {
-            const storageDecision = storageDecisionForThread(connectionId, {
-              id: eventThread.id,
-              source:
-                typeof eventThread.threadSource === "string" ? eventThread.threadSource : null,
-            });
-            if (storageDecision === "delete") {
-              changed.set(threadSummaryKey(connectionId, eventThread.id), null);
-              continue;
-            }
-            if (storageDecision === "preserve") {
-              continue;
-            }
+          const threadId = threadIdFromEvent(event.payload);
+          if (isCatalogExcluded(event.payload) && threadId !== null) {
+            changed.set(threadSummaryKey(connectionId, threadId), null);
+            continue;
           }
           const mutation = projectThreadSummaryEvent(
             connectionId,
@@ -430,14 +362,7 @@ export function createThreadSummaryDatabase(
               changed.set(mutation.key, null);
               continue;
             }
-            const storageDecision = storageDecisionForRef(
-              mutation.value.connectionId,
-              mutation.value.remoteThreadId,
-            );
-            if (storageDecision === "preserve") {
-              continue;
-            }
-            changed.set(mutation.key, storageDecision === "delete" ? null : mutation.value);
+            changed.set(mutation.key, mutation.value);
           }
         }
         if (changed.size === 0) {
@@ -498,19 +423,16 @@ export function createThreadSummaryDatabase(
         appLogger.warnCaught({ error: error, event: "thread_summary.close.failed" });
       });
     },
+    async ensureCatalog(request) {
+      const remoteContinuation = catalogLoader === null ? false : await catalogLoader(request);
+      return remoteContinuation || storage.hasMoreViewRows(request);
+    },
     async get(connectionId, threadId) {
       return (await loadRow(connectionId, threadId)) ?? null;
     },
     async insertStartedThread(connectionId, thread) {
-      const storageDecision = storageDecisionForThread(connectionId, {
-        id: thread.id,
-        source: thread.threadSource,
-      });
-      if (storageDecision === "delete") {
+      if (isCatalogExcluded(thread)) {
         await remove(threadSummaryKey(connectionId, thread.id));
-        return;
-      }
-      if (storageDecision === "preserve") {
         return;
       }
       const previous = await loadRow(connectionId, thread.id);
@@ -553,19 +475,9 @@ export function createThreadSummaryDatabase(
         const changed = new Map<string, StoredThreadSummary>();
         const removed = new Set<string>();
         for (const snapshot of snapshots) {
-          if (snapshot.thread.ephemeral) {
-            continue;
-          }
           const key = threadSummaryKey(connectionId, snapshot.thread.id);
-          const storageDecision = storageDecisionForThread(connectionId, {
-            id: snapshot.thread.id,
-            source: snapshot.thread.threadSource,
-          });
-          if (storageDecision === "delete") {
+          if (isCatalogExcluded(snapshot.thread)) {
             removed.add(key);
-            continue;
-          }
-          if (storageDecision === "preserve") {
             continue;
           }
           const previous = current.get(key);
@@ -611,27 +523,10 @@ export function createThreadSummaryDatabase(
     model,
     async prepare() {
       await storage.prepare();
-      const hidden = (await storage.loadAll()).filter(
-        (row) =>
-          options.globalSupervisorStorage?.shouldDeletePersistedRef(
-            row.connectionId,
-            row.remoteThreadId,
-          ) === true,
-      );
-      if (hidden.length > 0) {
-        storage.begin();
-        for (const row of hidden) {
-          storage.write({
-            key: threadSummaryKey(row.connectionId, row.remoteThreadId),
-            type: "delete",
-          });
-        }
-        await storage.commit({ durable: true });
-      }
-      await projectUnread.resource(async () => visibleRows(await storage.loadUnread()));
+      await projectUnread.resource(async () => storage.loadUnread());
     },
     projectUnread,
-    async reconcileDeleteCommands(deliveries) {
+    async reconcileCommands(deliveries) {
       const byId = new Map(
         deliveries.map((delivery) => [
           `${delivery.connectionId}\u0000${delivery.commandId}`,
@@ -649,6 +544,34 @@ export function createThreadSummaryDatabase(
           await applyDeleteDelivery(delivery);
         }
       }
+      for (const delivery of deliveries) {
+        await applyQuestionDelivery(delivery);
+      }
+    },
+    async removeCatalogEntries(connectionId, threadIds) {
+      if (threadIds.length === 0) {
+        return;
+      }
+      await writes.run(async () => {
+        if (disposed) {
+          return;
+        }
+        const rows = await storage.loadRows(connectionId, threadIds);
+        if (rows.length === 0) {
+          return;
+        }
+        const changes = rows.map((row) => ({
+          key: threadSummaryKey(connectionId, row.remoteThreadId),
+          type: "delete" as const,
+        }));
+        storage.begin();
+        for (const change of changes) {
+          storage.write(change);
+        }
+        const checkpoint = storage.commit({ durable: true });
+        publishModelChanges(changes, true);
+        await checkpoint;
+      });
     },
     async replaceCatalog(connectionId, snapshots) {
       await replaceSnapshotRows(
@@ -681,9 +604,7 @@ export function createThreadSummaryDatabase(
         return [];
       }
       const rows =
-        connectionId === null
-          ? visibleRows(await storage.loadAll())
-          : await loadConnectionRows(connectionId);
+        connectionId === null ? await storage.loadAll() : await loadConnectionRows(connectionId);
       return rows
         .filter(
           (row) =>
@@ -700,6 +621,27 @@ export function createThreadSummaryDatabase(
     },
     setRenameHandler(handler) {
       renameHandler = handler;
+    },
+    async skipQuestion(request) {
+      await writes.run(async () => {
+        const row = await loadRow(request.connectionId, request.threadId);
+        if (disposed || row === undefined) {
+          throw new Error("Question thread is unavailable");
+        }
+        const previousIds =
+          row.skippedQuestions?.turnId === request.turnId ? row.skippedQuestions.itemIds : [];
+        if (previousIds.includes(request.itemId)) {
+          return;
+        }
+        const next: StoredThreadSummary = {
+          ...row,
+          skippedQuestions: { itemIds: [...previousIds, request.itemId], turnId: request.turnId },
+        };
+        storage.begin();
+        storage.write({ type: "update", value: next });
+        await storage.commit({ durable: true });
+        publishModelChanges([{ type: "update", value: next }]);
+      });
     },
     async updateArchived(connectionId, threadId, archived) {
       const row = await loadRow(connectionId, threadId);
@@ -760,6 +702,17 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
     left.pinned === right.pinned &&
     left.archived === right.archived &&
     left.pendingRequestCount === right.pendingRequestCount &&
+    left.closedQuestionTurnId === right.closedQuestionTurnId &&
+    sameQuestionOpportunity(left.pendingQuestion, right.pendingQuestion) &&
+    sameQuestionOpportunity(left.skippedQuestions, right.skippedQuestions) &&
+    sameQuestionOpportunity(left.submittedQuestions, right.submittedQuestions) &&
+    (left.status.type !== "active" ||
+      right.status.type !== "active" ||
+      (left.status.activeFlags.length === right.status.activeFlags.length &&
+        left.status.activeFlags.every(
+          (flag, index) =>
+            right.status.type === "active" && flag === right.status.activeFlags[index],
+        ))) &&
     left.latestActivityCursor === right.latestActivityCursor &&
     left.lastSeenCursor === right.lastSeenCursor &&
     left.unread === right.unread &&
@@ -789,5 +742,22 @@ function summaryViewMembershipChanged(
     left.pinned !== right.pinned ||
     left.archived !== right.archived ||
     left.deleteCommandId !== right.deleteCommandId
+  );
+}
+
+function sameQuestionOpportunity(
+  left: StoredThreadSummary["pendingQuestion"],
+  right: StoredThreadSummary["pendingQuestion"],
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (left === null || left === undefined || right === null || right === undefined) {
+    return false;
+  }
+  return (
+    left.turnId === right.turnId &&
+    left.itemIds.length === right.itemIds.length &&
+    left.itemIds.every((id, index) => id === right.itemIds[index])
   );
 }

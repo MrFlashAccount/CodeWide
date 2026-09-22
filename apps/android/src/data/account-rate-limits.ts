@@ -4,7 +4,7 @@ import type {
   RateLimitSnapshot,
   RateLimitWindow,
   Thread,
-} from "@codewide/codex-protocol/v0.147.0/v2";
+} from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedTurnMetadata, type TurnUsageProjection } from "@codewide/sync-client";
 import { cloneProtocolValue } from "./clone-protocol-value";
 import type { AccountPoolProfile, AccountPoolSnapshot } from "./account-pool";
@@ -54,17 +54,23 @@ export function mergeAccountRateLimits(
     const mergedBucket = mergeRateLimitSnapshot(bucket, update.rateLimits);
     if (nextBuckets === null) {
       return {
+        accountId: previous?.accountId ?? null,
+        ordinaryUsageAllowed: previous?.ordinaryUsageAllowed ?? null,
         rateLimitResetCredits: previous?.rateLimitResetCredits ?? null,
         rateLimits: merged,
         rateLimitsByLimitId: { [limitId]: mergedBucket },
+        rateLimitUpsell: previous?.rateLimitUpsell ?? null,
       };
     }
     nextBuckets[limitId] = mergedBucket;
   }
   return {
+    accountId: previous?.accountId ?? null,
+    ordinaryUsageAllowed: previous?.ordinaryUsageAllowed ?? null,
     rateLimitResetCredits: previous?.rateLimitResetCredits ?? null,
     rateLimits: merged,
     rateLimitsByLimitId: nextBuckets,
+    rateLimitUpsell: previous?.rateLimitUpsell ?? null,
   };
 }
 
@@ -332,6 +338,7 @@ function mergeRateLimitSnapshot(
     individualLimit: update.individualLimit ?? previous.individualLimit,
     limitId: update.limitId ?? previous.limitId,
     limitName: update.limitName ?? previous.limitName,
+    normalModelSlug: update.normalModelSlug ?? previous.normalModelSlug ?? null,
     planType: update.planType ?? previous.planType,
     primary: mergeRateLimitWindow(previous.primary, update.primary),
     rateLimitReachedType: update.rateLimitReachedType ?? previous.rateLimitReachedType,

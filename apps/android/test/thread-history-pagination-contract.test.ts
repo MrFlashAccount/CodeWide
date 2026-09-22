@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { compactSource } from "./source-contract";
 
 const screen = compactSource(
-  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 const timelineListSource = readFileSync(
   new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url),

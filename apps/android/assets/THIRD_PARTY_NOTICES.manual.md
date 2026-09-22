@@ -140,6 +140,8 @@ is a native Canvas adaptation of the Particles Orb from
 [VoiceOrbs](https://github.com/amunozdev/voiceorbs), commit
 `339ab42d98f6c4ffa03709ffa71f9f6965a2171a`. Its state mixing and particle
 geometry are preserved while the Canvas output is scaled to CodeWide's 66 dp overlay.
+`android/app/src/main/java/dev/codewide/app/remote/ParticlesVoiceInputLevel.kt` also
+adapts its `src/registry/lib/use-audio-level.ts` microphone spectrum normalization.
 
 MIT License
 

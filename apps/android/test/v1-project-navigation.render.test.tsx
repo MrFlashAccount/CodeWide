@@ -176,9 +176,10 @@ it("publishes the qualified route before observer hydration settles and keeps st
     },
     prefetch: jest.fn(),
     push,
-    reset: jest.fn(),
+    navigate: push,
+    dismissTo: jest.fn(),
+    link: (href: V1ThreadDestination) => ({ dismissTo: false, href }),
     searchSelectionMode: "push" as const,
-    selectionMode: "push" as const,
     replace: jest.fn(),
     dismissToAll: jest.fn(),
   };
@@ -194,13 +195,10 @@ it("publishes the qualified route before observer hydration settles and keeps st
   );
   const select = result.current.selectThread;
   act(() => select(threadSelectionKey({ serverId: "server", id: "chat" })));
-  expect(push).toHaveBeenCalledWith(
-    {
-      pathname: "/v1/threads/[connectionId]/[threadId]",
-      params: { connectionId: "server", threadId: "chat" },
-    },
-    undefined,
-  );
+  expect(push).toHaveBeenCalledWith({
+    pathname: "/threads/[connectionId]/[threadId]",
+    params: { connectionId: "server", threadId: "chat" },
+  });
   expect(observeThread).toHaveBeenCalledWith("server", "chat");
   expect(dismiss).toHaveBeenCalledWith({ animated: false, keepFocus: false });
   rerender({});

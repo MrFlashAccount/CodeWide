@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { createLargeFixtureThread } from "@codewide/fixtures";
 import { describe, expect, it } from "vitest";
 
@@ -8,6 +8,12 @@ import { connectionId, DomainStore, normalizeThread } from "../src/index.js";
 
 const minimalThread = (id: string, updatedAt: number): Thread =>
   ({
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id,
     extra: null,
     sessionId: `session-${id}`,
@@ -25,7 +31,7 @@ const minimalThread = (id: string, updatedAt: number): Thread =>
     status: { type: "idle" },
     path: null,
     cwd: "/workspace",
-    cliVersion: "0.147.0",
+    cliVersion: "0.155.1",
     source: "cli",
     canAcceptDirectInput: null,
     threadSource: null,
@@ -34,7 +40,7 @@ const minimalThread = (id: string, updatedAt: number): Thread =>
     gitInfo: null,
     name: null,
     turns: [],
-  }) as Thread;
+  });
 
 describe("DomainStore", () => {
   it("isolates identical remote thread ids across connections", () => {

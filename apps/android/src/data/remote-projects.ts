@@ -1,5 +1,5 @@
 import { unknownRecord } from "./unknownRecord";
-import type { FsReadDirectoryEntry } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { FsReadDirectoryEntry } from "@codewide/codex-protocol/v0.155.1/v2";
 
 export type RemoteProject = {
   addedAt: number;

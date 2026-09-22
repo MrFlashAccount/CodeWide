@@ -47,6 +47,7 @@ module.exports = {
       "<rootDir>/test/mocks/ReanimatedSwipeable.tsx",
     // WHY: Reanimated's native worklet runtime cannot initialize in the Node render-test process.
     "^react-native-reanimated$": "<rootDir>/test/mocks/Reanimated.ts",
+    "^react-native-worklets$": "<rootDir>/test/mocks/Worklets.ts",
     "^react-native-keyboard-controller$": "<rootDir>/test/mocks/KeyboardController.tsx",
     "^.*/rendering/RichMarkdown$": "<rootDir>/test/mocks/RichMarkdown.tsx",
     "^.*/surfaces/PresentationSheetView$": "<rootDir>/test/mocks/PresentationSheetView.tsx",
@@ -61,7 +62,15 @@ module.exports = {
     "^.+\\.xml$": "@react-native/jest-preset/jest/assetFileTransformer.js",
     "^.+\\.(js|ts|tsx)$": [
       "babel-jest",
-      { babelrc: false, configFile: false, presets: ["module:@react-native/babel-preset"] },
+      {
+        babelrc: false,
+        configFile: false,
+        presets: ["module:@react-native/babel-preset"],
+        plugins: [[
+          require.resolve("babel-plugin-react-compiler", { paths: [require.resolve("babel-preset-expo")] }),
+          require("./react-compiler.config.cjs"),
+        ]],
+      },
     ],
   },
   // WHY: Private icons use ESM-only hashes; real TanStack collections depend on ESM-only fractional-indexing.

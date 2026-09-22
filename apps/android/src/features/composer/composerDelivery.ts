@@ -153,6 +153,7 @@ export function useComposerDelivery({
     attachments,
     cancelQueuedComposerEdit,
     clearComposerText,
+    composerScope: composerUploadScope,
     currentTurnId,
     discardVoice,
     draft,

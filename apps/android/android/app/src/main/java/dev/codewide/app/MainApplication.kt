@@ -20,6 +20,7 @@ import com.facebook.react.modules.fresco.FrescoModule
 import com.oney.WebRTCModule.WebRTCModuleOptions
 
 import dev.codewide.app.remote.CodeWidePackage
+import dev.codewide.app.remote.GlobalVoiceAudioRouteRuntime
 import dev.codewide.app.remote.GlobalVoiceAudioRecordFailureKind
 import dev.codewide.app.remote.NativeStartupTrace
 import dev.codewide.app.remote.PersonalVoiceFilterRuntime
@@ -62,7 +63,7 @@ class MainApplication : Application(), ReactApplication {
       .setUsage(AudioAttributes.USAGE_MEDIA)
       .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
       .build()
-    WebRTCModuleOptions.getInstance().audioDeviceModule = JavaAudioDeviceModule.builder(this)
+    val audioDeviceModule = JavaAudioDeviceModule.builder(this)
       .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
       .setUseHardwareAcousticEchoCanceler(AcousticEchoCanceler.isAvailable())
       .setUseHardwareNoiseSuppressor(NoiseSuppressor.isAvailable())
@@ -92,10 +93,12 @@ class MainApplication : Application(), ReactApplication {
       })
       .setAudioRecordStateCallback(object : JavaAudioDeviceModule.AudioRecordStateCallback {
         override fun onWebRtcAudioRecordStart() {
+          GlobalVoiceAudioRouteRuntime.recordingChanged(true)
           VoiceCaptureForegroundService.updateWebRtcAudioRecordRunning(true)
         }
 
         override fun onWebRtcAudioRecordStop() {
+          GlobalVoiceAudioRouteRuntime.recordingChanged(false)
           VoiceCaptureForegroundService.updateWebRtcAudioRecordRunning(false)
         }
       })
@@ -103,6 +106,7 @@ class MainApplication : Application(), ReactApplication {
         VoiceCaptureForegroundService.acceptWebRtcInputSamples(
           samples.audioFormat,
           samples.channelCount,
+          samples.sampleRate,
           samples.data,
         )
         PersonalVoiceFilterRuntime.requireInstalled().acceptSamples(
@@ -113,6 +117,8 @@ class MainApplication : Application(), ReactApplication {
         )
       }
       .createAudioDeviceModule()
+    WebRTCModuleOptions.getInstance().audioDeviceModule = audioDeviceModule
+    GlobalVoiceAudioRouteRuntime.install(this, audioDeviceModule)
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {

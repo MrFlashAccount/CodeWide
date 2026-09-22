@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { fireEvent, render, screen, within } from "@testing-library/react-native";
 
-import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import { ThreadGoalChip as LegacyThreadGoalChip } from "../src/features/goal/ThreadGoalChip";
 
 describe("thread goal chip", () => {

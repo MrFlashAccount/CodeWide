@@ -1,5 +1,5 @@
 import { Pressable, View } from "react-native";
-import type { RateLimitResetCredit } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { RateLimitResetCredit } from "@codewide/codex-protocol/v0.155.1/v2";
 
 import type { AccountPoolProfile } from "../../data/account-pool";
 import { accountRateLimitResetWindows, relativeResetTime } from "../../data/account-rate-limits";

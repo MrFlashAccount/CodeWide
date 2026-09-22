@@ -8,7 +8,8 @@ async fn sync_upgrade(
         Authorization::Registry(registry) => Some(registry.subscribe_authorization_changes()),
         Authorization::AdminOnly(_) => None,
     };
-    let authorization = authorize_sync_transport(&state, &headers, tls.as_ref().map(|value| &value.0)).await;
+    let authorization =
+        authorize_sync_transport(&state, &headers, tls.as_ref().map(|value| &value.0)).await;
     if headers.get("origin").is_some() || authorization.is_none() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -30,67 +31,6 @@ async fn sync_upgrade(
         .on_upgrade(move |socket| async move {
             state
                 .sync
-                .serve(socket, authorization, authorization_changes)
-                .await;
-            if let Some((lease, registry, device_id)) = presence {
-                drop(lease);
-                if let Err(error) = registry.mark_device_disconnected(&device_id).await {
-                    tracing::warn!(err = ?error, "device last-seen checkpoint failed");
-                }
-            }
-        })
-}
-
-async fn sync_v2_upgrade(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    upgrade: WebSocketUpgrade,
-) -> Response {
-    if state.services.sync_v2_mode == SyncV2Mode::Disabled {
-        let mut response = (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "type": "https://codewide.dev/problems/sync-v2-disabled",
-                "title": "Sync V2 disabled",
-                "status": 503,
-                "code": "sync_v2_disabled"
-            })),
-        )
-            .into_response();
-        response.headers_mut().insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/problem+json"),
-        );
-        return response;
-    }
-    let Some(runtime) = state.services.sync_v2.clone() else {
-        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
-    };
-    let authorization_changes = match &state.authorization {
-        Authorization::Registry(registry) => Some(registry.subscribe_authorization_changes()),
-        Authorization::AdminOnly(_) => None,
-    };
-    let Some(authorization @ AuthorizationContext::Session { .. }) =
-        authorize_sync(&state, &headers).await
-    else {
-        return StatusCode::UNAUTHORIZED.into_response();
-    };
-    if headers.get("origin").is_some() {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    let presence = match (&state.authorization, authorization.device_id()) {
-        (Authorization::Registry(registry), Some(device_id)) => Some((
-            registry.connection_lease(device_id.to_owned()),
-            registry.clone(),
-            device_id.to_owned(),
-        )),
-        _ => None,
-    };
-    upgrade
-        .max_message_size(16 * 1024 * 1024)
-        .max_frame_size(16 * 1024 * 1024)
-        .on_upgrade(move |socket| async move {
-            runtime
                 .serve(socket, authorization, authorization_changes)
                 .await;
             if let Some((lease, registry, device_id)) = presence {

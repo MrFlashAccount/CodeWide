@@ -1,10 +1,10 @@
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type {
   ReviewDelivery,
   ReviewTarget,
   Thread,
   ThreadGoal,
-} from "@codewide/codex-protocol/v0.147.0/v2";
+} from "@codewide/codex-protocol/v0.155.1/v2";
 
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { QueuedPrompt } from "../../data/thread-delivery-state";

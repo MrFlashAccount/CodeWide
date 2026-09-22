@@ -55,7 +55,7 @@ export const EMPTY_TURN_CONTROLS: TurnControlsValue = {
   skills: [],
 };
 
-import type { Personality } from "@codewide/codex-protocol/v0.147.0";
+import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { StoredComposerPreferences } from "../../data/thread-ui-state-types";
 import type { TurnControlsRow } from "../../data/workspace-resource-database";
 import { useEvent } from "../../react/useEvent";

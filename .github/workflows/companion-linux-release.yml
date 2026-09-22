@@ -18,7 +18,7 @@ on:
         default: false
         type: boolean
       force:
-        description: "Allow a release even when the release graph does not select Companion Linux"
+        description: "Allow a release even when Nx does not select Companion Linux"
         required: false
         default: false
         type: boolean
@@ -26,6 +26,28 @@ on:
         description: "Correlation id used by the one-shot release command"
         required: false
         type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      base:
+        required: false
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+      force:
+        required: false
+        default: false
+        type: boolean
+      request_id:
+        required: false
+        type: string
+    secrets:
+      HOMEBREW_TAP_DEPLOY_KEY:
+        required: true
 
 permissions:
   contents: write
@@ -34,12 +56,38 @@ jobs:
   release:
     runs-on: ubuntu-latest
     environment: release
+    env:
+      NX_CACHE_DIRECTORY: .nx/cache
+      NX_TUI: "false"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Restore Nx task cache
+        uses: actions/cache@v5
+        with:
+          path: .nx/cache
+          key: nx-companion-linux-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nx-companion-linux-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Verify Companion Linux is affected
         if: ${{ inputs.force != true }}
@@ -62,6 +110,8 @@ jobs:
             exit 1
           fi
           echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "CODEWIDE_COMPANION_VERSION=$version" >> "$GITHUB_ENV"
+          echo "CODEWIDE_CORE_VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=companion-linux-v$version" >> "$GITHUB_ENV"
           echo "ASSET=dist/companion-linux/codewide-companion-$version-x86_64-unknown-linux-musl.tar.gz" >> "$GITHUB_ENV"
 

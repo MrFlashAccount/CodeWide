@@ -1,5 +1,82 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index afdfadeb347dfce47194ca9b7cbfec41f4ec0775..be2a65fb4423e8535bd00b5440a16f7b57b9edb5 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -36,6 +36,7 @@ android {
+ 
+ dependencies {
+   implementation 'com.facebook.react:react-android'
++  implementation 'androidx.activity:activity-compose:1.10.1'
+ 
+   implementation 'androidx.compose.foundation:foundation-android:1.10.6'
+   implementation 'androidx.compose.ui:ui-android:1.10.6'
+diff --git a/android/src/main/java/expo/modules/ui/ExpoUIModule.kt b/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
+index 435cb67dc6c8a2a0db1602e0374f3ed07bec9dea..1863c093d42da76512ce79b9e2a4806228df6d1b 100644
+--- a/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
++++ b/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
+@@ -185,9 +185,12 @@ class ExpoUIModule : Module() {
+       val expand by AsyncFunction()
+       val partialExpand by AsyncFunction()
+       val onDismissRequest by Event<Unit>()
++      val onBackPress by Event<Unit>()
+ 
+       Content { props ->
+-        ModalBottomSheetContent(props, hide, expand, partialExpand) { onDismissRequest(Unit) }
++        ModalBottomSheetContent(props, hide, expand, partialExpand,
++          onDismissRequest = { onDismissRequest(Unit) },
++          onBackPress = { onBackPress(Unit) })
+       }
+     }
+ 
+diff --git a/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt b/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
+index e800ec2adafaa7120724b30b65ef37bfbe8a72c2..cc22565bb158a5704d94c65fd515ebfbd54d1460 100644
+--- a/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
++++ b/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
+@@ -3,6 +3,7 @@
+ package expo.modules.ui
+ 
+ import android.graphics.Color
++import androidx.activity.compose.BackHandler
+ import androidx.compose.material3.BottomSheetDefaults
+ import androidx.compose.material3.ExperimentalMaterial3Api
+ import androidx.compose.material3.ModalBottomSheet
+@@ -32,6 +33,7 @@ data class ModalBottomSheetPropertiesRecord(
+ data class ModalBottomSheetViewProps(
+   val skipPartiallyExpanded: Boolean = false,
+   val initialFullyExpanded: Boolean = false,
++  val interceptBackPress: Boolean = false,
+   val containerColor: Color? = null,
+   val contentColor: Color? = null,
+   val scrimColor: Color? = null,
+@@ -47,7 +49,8 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
+   hide: AsyncFunctionHandle<Unit>,
+   expand: AsyncFunctionHandle<Unit>,
+   partialExpand: AsyncFunctionHandle<Unit>,
+-  onDismissRequest: () -> Unit
++  onDismissRequest: () -> Unit,
++  onBackPress: () -> Unit
+ ) {
+   val sheetState = rememberModalBottomSheetState(props.skipPartiallyExpanded)
+   val scope = rememberCoroutineScope()
+@@ -107,11 +110,15 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
+       else -> null
+     },
+     properties = ModalBottomSheetProperties(
+-      shouldDismissOnBackPress = props.properties.shouldDismissOnBackPress,
++      isAppearanceLightStatusBars = false,
++      isAppearanceLightNavigationBars = false,
++      shouldDismissOnBackPress = props.properties.shouldDismissOnBackPress && !props.interceptBackPress,
+       shouldDismissOnClickOutside = props.properties.shouldDismissOnClickOutside
+     ),
+     modifier = ModifierRegistry.applyModifiers(props.modifiers, appContext, composableScope, globalEventDispatcher)
+   ) {
++    // Register in the sheet dialog's dispatcher, before Material hides or partially collapses it.
++    BackHandler(enabled = props.interceptBackPress && sheetState.isVisible) { onBackPress() }
+     Children(UIComposableScope(), filter = { !isSlotView(it) })
+   }
+ 
 diff --git a/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt b/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt
-index 202c2e55693f15b165127c4b56ee0c485e81013e..7cae284e1de2e54a3f2b4c504348ec3f44d4c857 100644
+index 202c2e55693f15b165127c4b56ee0c485e81013e..3398982592408fbd0c1c6effc08d433ac892c165 100644
 --- a/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt
 +++ b/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt
 @@ -7,6 +7,8 @@ import android.net.Uri
@@ -118,7 +195,7 @@ index 02620bb716b853d79fc29be2c4157d97e1b25c5e..6fee32134d1b08504eb04a30fe301d53
    val modifiers: ModifierList = emptyList()
  ) : ComposeProps
 diff --git a/build/jetpack-compose/DropdownMenu/index.d.ts b/build/jetpack-compose/DropdownMenu/index.d.ts
-index 05d6909108a74317ac3117327ad19b0c9661b082..b8a195b9879a99fce7dbfee542f858cac5f6bff7 100644
+index 05d6909108a74317ac3117327ad19b0c9661b082..7304cf6b2e24219f9eb880025873edc80039285d 100644
 --- a/build/jetpack-compose/DropdownMenu/index.d.ts
 +++ b/build/jetpack-compose/DropdownMenu/index.d.ts
 @@ -23,6 +23,11 @@ export interface DropdownMenuProps {
@@ -133,6 +210,19 @@ index 05d6909108a74317ac3117327ad19b0c9661b082..b8a195b9879a99fce7dbfee542f858ca
      /**
       * Optional styles to apply to the `DropdownMenu`.
       */
+diff --git a/build/jetpack-compose/ModalBottomSheet/index.d.ts b/build/jetpack-compose/ModalBottomSheet/index.d.ts
+index ddf89aa5ac11610459f6db8abd96a3673f01054f..0dc8a0350697c43d9a9cda5ee76d158e7d7fee57 100644
+--- a/build/jetpack-compose/ModalBottomSheet/index.d.ts
++++ b/build/jetpack-compose/ModalBottomSheet/index.d.ts
+@@ -44,6 +44,8 @@ export interface ModalBottomSheetProps {
+      * (via swipe, back press, or tapping outside the scrim).
+      */
+     onDismissRequest: () => void;
++    /** Handles Android Back before the native sheet hides or collapses. */
++    onBackPress?: () => void;
+     /**
+      * Immediately opens the bottom sheet in full screen.
+      * @default false
 diff --git a/src/jetpack-compose/DropdownMenu/index.tsx b/src/jetpack-compose/DropdownMenu/index.tsx
 index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..2205a126a88dcb2883e4929c82250d52498d348a 100644
 --- a/src/jetpack-compose/DropdownMenu/index.tsx
@@ -158,15 +248,36 @@ index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..2205a126a88dcb2883e4929c82250d52
    style?: StyleProp<ViewStyle>;
    modifiers?: ModifierConfig[];
    children?: ReactNode;
-diff --git a/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt b/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
-index 46b7003c61d356f6474456511841f6b1e6c1ef54..3a856b5ddf6dd1ad1d3880984c081c66c0281b7b 100644
---- a/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
-+++ b/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
-@@ -108,5 +108,7 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
-     },
-     properties = ModalBottomSheetProperties(
-+      isAppearanceLightStatusBars = false,
-+      isAppearanceLightNavigationBars = false,
-       shouldDismissOnBackPress = props.properties.shouldDismissOnBackPress,
-       shouldDismissOnClickOutside = props.properties.shouldDismissOnClickOutside
-     ),
+diff --git a/src/jetpack-compose/ModalBottomSheet/index.tsx b/src/jetpack-compose/ModalBottomSheet/index.tsx
+index ea749156c15b4929ac692dc0a513d7b00430552c..0a3e903e421cc17cbd9abbeaa015f16193b3533f 100644
+--- a/src/jetpack-compose/ModalBottomSheet/index.tsx
++++ b/src/jetpack-compose/ModalBottomSheet/index.tsx
+@@ -57,6 +57,12 @@ export interface ModalBottomSheetProps {
+    * (via swipe, back press, or tapping outside the scrim).
+    */
+   onDismissRequest: () => void;
++  /**
++   * Handles Android Back before the native sheet hides or collapses. When omitted,
++   * Material retains its default Back behavior. Scrim and swipe dismissal are unchanged.
++   * @platform android
++   */
++  onBackPress?: () => void;
+   /**
+    * Immediately opens the bottom sheet in full screen.
+    * @default false
+@@ -102,6 +108,7 @@ export interface ModalBottomSheetProps {
+ }
+ 
+ type NativeModalBottomSheetProps = Omit<ModalBottomSheetProps, 'onDismissRequest'> & {
++  interceptBackPress: boolean;
+   onDismissRequest: () => void;
+ };
+ 
+@@ -116,6 +123,7 @@ function transformProps(props: ModalBottomSheetProps): NativeModalBottomSheetPro
+     modifiers,
+     ...(modifiers ? createViewModifierEventListener(modifiers) : undefined),
+     ...restProps,
++    interceptBackPress: props.onBackPress !== undefined,
+     skipPartiallyExpanded: props.skipPartiallyExpanded ?? false,
+     initialFullyExpanded: props.initialFullyExpanded ?? false,
+     onDismissRequest: () => {

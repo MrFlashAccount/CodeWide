@@ -12,6 +12,13 @@ curl --fail --silent --show-error --max-time 3 --unix-socket "$control_endpoint"
   -H "Authorization: Bearer $token" \
   http://localhost/v1/devices >/dev/null
 systemctl --user is-active --quiet codewide-companion.service
+for unit in codewide-companion.service codewide-companion-memory-watch.service; do
+  private_tmp=$(systemctl --user show "$unit" -p PrivateTmp --value)
+  if [ "$private_tmp" != "no" ]; then
+    printf 'companion requires host temporary directories: %s PrivateTmp=%s\n' "$unit" "$private_tmp" >&2
+    exit 1
+  fi
+done
 public_status=$(curl --silent --show-error \
   --output /dev/null --write-out '%{http_code}' --max-time 3 \
   -H 'content-type: application/json' --data '{"action":"challenge"}' \

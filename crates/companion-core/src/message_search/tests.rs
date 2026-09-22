@@ -400,3 +400,48 @@ fn malformed_durable_record_is_skipped_and_later_turns_remain_searchable()
     assert_eq!(usize::try_from(indexed_offset)?, records.len());
     Ok(())
 }
+
+#[tokio::test]
+async fn server_filters_stale_supervisor_search_hits_and_rejects_private_windows()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize},
+    };
+    let root = tempfile::tempdir()?;
+    let canonical = Connection::open(root.path().join("state_5.sqlite"))?;
+    canonical.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, thread_source TEXT); INSERT INTO threads VALUES ('hidden','codewide-global-supervisor:token'), ('ordinary',NULL)")?;
+    let path = root.path().join("search.sqlite");
+    let db = Connection::open(&path)?;
+    db.execute_batch(include_str!("schema.sql"))?;
+    // Derived data from the old server must not escape while the background
+    // indexer has yet to prune it. The canonical server source wins immediately.
+    for id in ["hidden", "ordinary"] {
+        let rollout = root.path().join(format!("{id}.jsonl"));
+        std::fs::write(&rollout, history("needle"))?;
+        let mut writer = Connection::open(&path)?;
+        index::advance(&mut writer, &rollout, id)?;
+    }
+    let service = super::MessageSearch {
+        catalog: Arc::new(crate::catalog::SessionCatalog::empty(root.path())),
+        path: Arc::new(path),
+        indexing: Arc::new(AtomicBool::new(false)),
+        failed: Arc::new(AtomicUsize::new(0)),
+    };
+    let page = service
+        .search(SearchQuery {
+            query: "needle".into(),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(page.data.len(), 1);
+    assert_eq!(page.data[0].thread_id, "ordinary");
+    assert!(page.next_offset.is_none());
+    let query =
+        serde_json::from_value(json!({"threadId":"hidden", "messageId":1, "direction":"around"}))?;
+    assert!(matches!(
+        service.window(query).await,
+        Err(super::SearchError::InvalidQuery)
+    ));
+    Ok(())
+}

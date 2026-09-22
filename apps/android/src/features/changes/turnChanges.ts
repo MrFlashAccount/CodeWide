@@ -1,4 +1,4 @@
-import type { ThreadItem } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadItem } from "@codewide/codex-protocol/v0.155.1/v2";
 import { useEvent } from "../../react/useEvent";
 import { turnItemChanges } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";

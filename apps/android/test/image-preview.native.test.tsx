@@ -145,6 +145,10 @@ it("offers both drawing and pins, saves the image comment and restores its point
     </AppDialogProvider>,
   );
   fireEvent.press(view.getByText("Open photo"));
+  expect(view.queryByLabelText("Photo full screen")).toBeNull();
+  fireEvent(view.getByTestId("image-preview-viewport"), "layout", {
+    nativeEvent: { layout: { width: 300, height: 300 } },
+  });
   expect(view.getByLabelText("Photo full screen").props.resizeMethod).toBe("resize");
   fireEvent.press(view.getByLabelText("Annotate image in QuickDraw"));
   await waitFor(() => expect(annotate).toHaveBeenCalledWith(image, expect.any(Function)));

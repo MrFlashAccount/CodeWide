@@ -83,8 +83,16 @@ Gatekeeper or Developer ID notarization.
 The repository-owned release entrypoint is:
 
 ```sh
-./scripts/release-macos <version> --dry-run
+./scripts/release-macos minor --dry-run
+./scripts/release-macos minor
 ```
+
+The command accepts `patch`, `minor`, or `major`. The same choice is available
+in GitHub Actions under **macOS Release → Run workflow**. Merging into `main`
+does not publish automatically; a release is always an explicit action. The
+version is derived from the latest stable `vMAJOR.MINOR.PATCH` tag. Before the
+first tag, both the standalone workflow and the combined release-set workflow
+use the baseline from `apps/companion-macos/project.json`.
 
 Published DMGs update the `codewide` cask in
 `MrFlashAccount/homebrew-codewide`. The cask does not change the ad-hoc signing

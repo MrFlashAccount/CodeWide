@@ -18,6 +18,7 @@ import { styles } from "./SettingsFeature.styles";
 import { OrbStyleSettings } from "./OrbStyleSettings";
 import { SettingsSection } from "./SettingsSheet";
 import { VoiceSettings } from "./VoiceSettings";
+import { ConnectedVoiceInputSettings } from "./VoiceInputSettings";
 
 type SaveState =
   | { readonly status: "idle" | "saved" }
@@ -424,6 +425,9 @@ export function VoiceAssistantSettings({
       </SettingsSection>
       <SettingsSection title="Personality">
         <PersonalitySettings onSave={onSavePersonality} personality={personality} />
+      </SettingsSection>
+      <SettingsSection title="Audio input">
+        <ConnectedVoiceInputSettings />
       </SettingsSection>
       <SettingsSection title="Microphone filtering">
         <PersonalVoiceFilterSettings

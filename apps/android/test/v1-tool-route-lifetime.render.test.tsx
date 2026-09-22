@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react-native";
 
-import { useThreadToolRouteSession } from "../app/v1/threads/[connectionId]/[threadId]/threadToolRouteSession";
+import { useThreadToolRouteSession } from "../src/routeComposition/threadToolRouteSession";
 import { composerToolRouteSessions } from "../src/services/composer/composerToolRouteSession";
 import { disposeAllRouteSessions } from "../src/services/routeSessionPolicy";
 import {
@@ -30,11 +30,11 @@ it("keeps the ports route session available until Router removes its screen", ()
   });
   resetMockRouter({
     params: { connectionId: "server", threadId: "thread" },
-    pathname: "/v1/threads/[connectionId]/[threadId]",
+    pathname: "/threads/[connectionId]/[threadId]",
   });
   router.push({
     params: { connectionId: "server", sessionId: session.id, threadId: "thread" },
-    pathname: "/v1/threads/[connectionId]/[threadId]/ports",
+    pathname: "/threads/[connectionId]/[threadId]/ports",
   });
   const back = jest.spyOn(router, "back").mockImplementation(() => undefined);
   const route = renderHook(useThreadToolRouteSession);

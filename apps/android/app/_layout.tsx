@@ -2,7 +2,7 @@ import "react-native-gesture-handler";
 
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useFonts } from "expo-font";
-import { Stack, type ErrorBoundaryProps } from "expo-router";
+import { Slot, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -26,11 +26,6 @@ try {
 }
 
 const APPLICATION_BACKGROUND = "#101011";
-const ROOT_SCREEN_OPTIONS = {
-  animation: "none",
-  contentStyle: { backgroundColor: APPLICATION_BACKGROUND },
-  headerShown: false,
-} as const;
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   return (
     <RootFailure componentStack="Expo Router root layout boundary" error={error} onRetry={retry} />
@@ -88,9 +83,7 @@ function RootApplication() {
             <PerformanceExperimentProvider>
               <AppLockGate>
                 <StatusBar style="light" />
-                <Stack screenOptions={ROOT_SCREEN_OPTIONS}>
-                  <Stack.Screen name="v1" />
-                </Stack>
+                <Slot />
                 <NavigationPerformanceHud />
               </AppLockGate>
             </PerformanceExperimentProvider>

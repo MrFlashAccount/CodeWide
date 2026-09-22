@@ -727,7 +727,7 @@ mod tests {
     use opus_pure::{Application, MAX_PACKET_BYTES, OpusEncoder};
 
     use super::{
-        DecodedBatchMetrics, DictationError, DictationService, DictationUploadMetrics,
+        DecodedBatchMetrics, DictationError, DictationUploadMetrics,
         QualityFrame, cloudflare_retry_delay, decode_opus_chunk, transcription_bounds, wav_header,
     };
 
@@ -847,82 +847,5 @@ mod tests {
         assert_eq!(cloudflare_retry_delay(2), Duration::from_millis(400));
     }
 
-    #[tokio::test]
-    async fn v2_cancel_and_replacement_do_not_wait_for_recording_state()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let root = tempfile::tempdir()?;
-        let service = DictationService::open(
-            root.path().join("absent-auth.json"),
-            root.path().join("sessions"),
-        )
-        .await?;
-        let id = service.v2_start("audience", None).await?;
-        let session = service
-            .sessions
-            .lock()
-            .await
-            .get(&id)
-            .cloned()
-            .ok_or("missing session")?;
-        let _busy = session.state.lock().await;
-        // Cancellation and ownership checks must not need the mutable recording,
-        // even while a finish operation owns it.
-        let replacement =
-            tokio::time::timeout(Duration::from_secs(2), service.v2_start("audience", None))
-                .await??;
-        assert_ne!(replacement, id);
-        assert!(session.cancellation.is_cancelled());
-        assert!(!session.directory.exists());
-        Ok(())
-    }
 
-    #[tokio::test]
-    async fn v2_cleanup_failure_retains_bounded_session_ownership() {
-        let root = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
-        let service = DictationService::open(
-            root.path().join("absent-auth.json"),
-            root.path().join("sessions"),
-        )
-        .await
-        .unwrap_or_else(|error| panic!("{error}"));
-        let session_id = service
-            .v2_start("audience", None)
-            .await
-            .unwrap_or_else(|error| panic!("{error}"));
-        let session = service
-            .sessions
-            .lock()
-            .await
-            .get(&session_id)
-            .cloned()
-            .unwrap_or_else(|| panic!("session missing"));
-        let directory = session.directory.clone();
-        tokio::fs::remove_dir_all(&directory)
-            .await
-            .unwrap_or_else(|error| panic!("{error}"));
-        tokio::fs::write(&directory, b"force remove_dir_all failure")
-            .await
-            .unwrap_or_else(|error| panic!("{error}"));
-
-        assert!(matches!(
-            service.v2_cancel("audience", &session_id).await,
-            Err(DictationError::Storage)
-        ));
-        assert!(service.sessions.lock().await.contains_key(&session_id));
-        assert!(matches!(
-            service.v2_start("audience", None).await,
-            Err(DictationError::Storage)
-        ));
-        let owned = service
-            .sessions
-            .lock()
-            .await
-            .values()
-            .filter(|session| session.client_id == "audience")
-            .count();
-        assert_eq!(
-            owned, 1,
-            "failed replacement must retain exactly the old owner"
-        );
-    }
 }

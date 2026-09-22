@@ -1,4 +1,4 @@
-import type { Thread, ThreadItem, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread, ThreadItem, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 
 export function fixtureUserMessage(id: string, text: string): ThreadItem {
   return {
@@ -11,6 +11,8 @@ export function fixtureUserMessage(id: string, text: string): ThreadItem {
 
 export function fixtureAgentMessage(id: string, text: string): ThreadItem {
   return {
+    delivery: null,
+    questions: null,
     type: "agentMessage",
     id,
     text,
@@ -43,6 +45,12 @@ export function createFixtureThread(turns: Turn[] = [
   ),
 ]): Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id: "fixture-thread",
     extra: null,
     sessionId: "fixture-session",
@@ -60,7 +68,7 @@ export function createFixtureThread(turns: Turn[] = [
     status: { type: "idle" },
     path: null,
     cwd: "/workspace/project",
-    cliVersion: "0.147.0",
+    cliVersion: "0.155.1",
     source: "appServer",
     canAcceptDirectInput: true,
     threadSource: "fixture",

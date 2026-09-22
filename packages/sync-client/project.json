@@ -1,0 +1,7 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "@codewide/sync-client",
+  "projectType": "library",
+  "sourceRoot": "packages/sync-client/src",
+  "implicitDependencies": ["companion-sync-contract"]
+}

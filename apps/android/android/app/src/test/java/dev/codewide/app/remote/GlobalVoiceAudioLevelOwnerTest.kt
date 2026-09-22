@@ -14,7 +14,7 @@ class GlobalVoiceAudioLevelOwnerTest {
     val owner = GlobalVoiceAudioLevelOwner(queued::add, { nowNanos }, published::add)
     owner.setActive(true)
 
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(16_384))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(16_384))
     owner.acceptPlaybackLevel(0.75)
     assertEquals(1, queued.size)
     queued.removeAt(0).invoke()
@@ -24,10 +24,10 @@ class GlobalVoiceAudioLevelOwnerTest {
 
     // Activity visibility does not participate in this foreground-service-owned lifecycle.
     nowNanos += 100_000_000L
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(8_192))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(8_192))
     queued.removeAt(0).invoke()
     nowNanos += 100_000_000L
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(24_576))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(24_576))
     queued.removeAt(0).invoke()
 
     assertEquals(3, published.size)
@@ -43,11 +43,11 @@ class GlobalVoiceAudioLevelOwnerTest {
     val owner = GlobalVoiceAudioLevelOwner(queued::add, { 0L }, published::add)
     owner.setActive(true)
 
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_FLOAT, 1, pcm16(16_384))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_FLOAT, 1, 48_000, pcm16(16_384))
     assertTrue(queued.isEmpty())
 
     owner.setActive(false)
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(16_384))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(16_384))
     owner.acceptPlaybackLevel(1.0)
 
     assertTrue(queued.isEmpty())
@@ -61,13 +61,13 @@ class GlobalVoiceAudioLevelOwnerTest {
     var nowNanos = 0L
     val owner = GlobalVoiceAudioLevelOwner(queued::add, { nowNanos }, published::add)
     owner.setActive(true)
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(16_384))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(16_384))
     val staleDelivery = queued.removeAt(0)
 
     owner.setActive(false)
     owner.setActive(true)
     nowNanos += 100_000_000L
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(8_192))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(8_192))
     val currentDelivery = queued.removeAt(0)
     staleDelivery()
     currentDelivery()
@@ -83,12 +83,12 @@ class GlobalVoiceAudioLevelOwnerTest {
     var nowNanos = 0L
     val owner = GlobalVoiceAudioLevelOwner(queued::add, { nowNanos }, published::add)
     owner.setActive(true)
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(16_384))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(16_384))
     queued.removeAt(0).invoke()
 
     nowNanos += 100_000_000L
     owner.setMicrophoneMuted(true)
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(24_576))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(24_576))
     owner.acceptPlaybackLevel(0.6)
     queued.removeAt(0).invoke()
 
@@ -97,7 +97,7 @@ class GlobalVoiceAudioLevelOwnerTest {
 
     nowNanos += 100_000_000L
     owner.setMicrophoneMuted(false)
-    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, pcm16(8_192))
+    owner.acceptInputPcm(AudioFormat.ENCODING_PCM_16BIT, 1, 48_000, pcm16(8_192))
     queued.removeAt(0).invoke()
     assertEquals(0.25, published.last().input, 0.0001)
   }

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { compactSource, sourceHasJsxElement } from "./source-contract";
 
 const screen = compactSource(
-  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 const bubble = readFileSync(new URL("../src/rendering/Bubble.tsx", import.meta.url), "utf8");
 const nativeMenu = readFileSync(

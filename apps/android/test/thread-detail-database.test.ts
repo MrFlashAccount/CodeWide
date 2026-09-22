@@ -1,4 +1,4 @@
-import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 import { projectAgentArtifacts } from "../src/rendering/agent-artifacts";
 
@@ -58,7 +58,7 @@ describe("thread detail projection", () => {
     const full: Turn = {
       ...turn(), itemsView: "full", items: [
         { type: "imageGeneration", id: "image", status: "completed", revisedPrompt: null, result: "opaque image bytes", savedPath: "/tmp/output.png" },
-        { type: "agentMessage", id: "answer", text: "Done", phase: "final_answer", memoryCitation: null },
+        { delivery: null, questions: null, type: "agentMessage", id: "answer", text: "Done", phase: "final_answer", memoryCitation: null },
       ],
     };
     const compact = compactCompletedTurnForStorage(full);

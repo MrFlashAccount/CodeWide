@@ -14,6 +14,8 @@ V1 uses one shared Android renderer slot in the thread-list control and in a dra
 
 The structural option is reversible: removing the overlay permission, controller and manager returns to the header-only control without changing the Global Supervisor protocol, thread ownership or settings model.
 
+The subsequent [lifecycle, contrast and radial-menu correction](global-voice-orb-wiring-fix.md) records the verified wiring defects, the updated event priority, the overlay backplate and the selected three-action fan.
+
 ## Contracts
 
 - Reacticx remains the Nebula source and VoiceOrbs remains the Particles motion source; CodeWide owns Android window lifetime, renderer selection and audio reaction.
@@ -27,7 +29,9 @@ The structural option is reversible: removing the overlay permission, controller
 - The native renderer applies attack/release smoothing at display cadence. `listening` selects only input, `speaking` selects only playback, and explicit `thinking` selects neither. The React tree does not re-render for audio energy.
 - Dragging follows the pointer through bounded overscroll around system-bar and cutout-safe bounds. Release inside a narrow edge zone continues the measured gesture velocity into a critically damped snap, release outside safe bounds springs back, and release elsewhere remains free.
 - Free positions persist as normalized coordinates. Edge attachment persists as side plus normalized vertical position, so rotation, display-size and inset changes restore an accessible placement instead of replaying stale pixels.
-- Tap is separated from drag by Android touch slop and opens circular native icon controls without mounting another React surface. Stop routes to the single Global Voice feature action; More exposes the app-open action.
+- Tap is separated from drag by Android touch slop and toggles a reversible, safe-bounds-aware three-action fan without mounting another React surface. The orb stays the central toggle; Mic uses the existing feature action, Open application launches the app, and Stop routes to the single Global Voice lifecycle owner.
+
+The action-menu geometry, animation, input-window and accessibility contracts are recorded separately in [Global Voice overlay actions](global-voice-overlay-actions.md).
 
 ## Validation record
 

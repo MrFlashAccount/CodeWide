@@ -11,12 +11,12 @@ use base64::{Engine as _, engine::general_purpose};
 use codewide_companion::{
     auth::{DeviceRegistry, PairingClaim, SessionProof, pairing_claim_message},
     catalog::SessionCatalog,
+    file_uploads::WorkspaceUploadStore,
     files::{FileQuery, FileService},
     history_service::HistoryService,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
-    sync_v2::WorkspaceUploadStore,
     upstream::UpstreamHandle,
 };
 use p256::{
@@ -68,7 +68,7 @@ async fn private_preview_streams_regular_files_larger_than_the_transfer_ceiling(
 }
 
 #[tokio::test]
-async fn file_reads_are_host_wide_in_v1_and_v2_while_uploads_remain_resumable()
+async fn file_reads_are_host_wide_while_uploads_remain_resumable()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let directory = tempfile::tempdir()?;
     let root = directory.path().join("workspace");
@@ -306,8 +306,6 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
     });
     let expected_hash = sha256(b"hello");
     let client = reqwest::Client::new();
-    let host_wide_upload = directory.path().join("outside-upload.txt");
-    assert_v2_host_wide_upload(&client, address, &device.session, &host_wide_upload).await?;
     let request = client
         .put(format!(
             "http://{address}/v1/files/upload?rootId=workspace&path=revoked.txt"
@@ -336,52 +334,6 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
     assert!(tokio::fs::symlink_metadata(&temporary).await.is_err());
     drop(sender);
     server_task.abort();
-    Ok(())
-}
-
-async fn assert_v2_host_wide_upload(
-    client: &reqwest::Client,
-    address: std::net::SocketAddr,
-    session: &str,
-    host_wide_upload: &Path,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let host_wide_bytes = b"host-wide";
-    let host_wide_hash = sha256(host_wide_bytes);
-    let host_wide_url = reqwest::Url::parse(&format!("http://{address}/v2/files/upload"))?;
-    let resume = client
-        .head(host_wide_url.clone())
-        .query(&[
-            ("rootId", "workspace"),
-            ("path", &host_wide_upload.to_string_lossy()),
-        ])
-        .bearer_auth(session)
-        .header("x-upload-id", format!("sha256-{host_wide_hash}"))
-        .header("x-content-sha256", &host_wide_hash)
-        .send()
-        .await?;
-    assert_eq!(resume.status(), reqwest::StatusCode::NOT_FOUND);
-    let host_wide = client
-        .put(host_wide_url)
-        .query(&[
-            ("rootId", "workspace"),
-            ("path", &host_wide_upload.to_string_lossy()),
-        ])
-        .bearer_auth(session)
-        .header("x-upload-id", format!("sha256-{host_wide_hash}"))
-        .header("x-content-sha256", &host_wide_hash)
-        .header(
-            "content-range",
-            format!(
-                "bytes 0-{}/{}",
-                host_wide_bytes.len() - 1,
-                host_wide_bytes.len()
-            ),
-        )
-        .body(host_wide_bytes.to_vec())
-        .send()
-        .await?;
-    assert_eq!(host_wide.status(), reqwest::StatusCode::CREATED);
-    assert_eq!(tokio::fs::read(host_wide_upload).await?, host_wide_bytes);
     Ok(())
 }
 
@@ -493,7 +445,7 @@ async fn assert_downloads(
     assert_eq!(mapped_sibling.status(), reqwest::StatusCode::OK);
     assert_eq!(mapped_sibling.text().await?, "private");
 
-    assert_host_wide_reads(client, base, reported_preview_root, outside).await?;
+    assert_host_wide_reads(client, base, outside).await?;
 
     let unauthorized = client
         .get(format!(
@@ -520,7 +472,6 @@ async fn assert_downloads(
 async fn assert_host_wide_reads(
     client: &reqwest::Client,
     base: &str,
-    reported_preview_root: &Path,
     outside: &Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let escaped = client
@@ -543,36 +494,6 @@ async fn assert_host_wide_reads(
         .await?;
     assert_eq!(absolute_v1.status(), reqwest::StatusCode::OK);
     assert_eq!(absolute_v1.text().await?, "private");
-    let v2_preview = client
-        .get(format!(
-            "{base}/v2/files/preview?path={}",
-            reported_preview_root.join("private.png").display()
-        ))
-        .bearer_auth(TOKEN)
-        .send()
-        .await?;
-    assert_eq!(v2_preview.status(), reqwest::StatusCode::OK);
-    assert_eq!(v2_preview.text().await?, "private");
-    let v2_escaped = client
-        .get(format!(
-            "{base}/v2/files/download?rootId=workspace&path=escape.txt"
-        ))
-        .bearer_auth(TOKEN)
-        .send()
-        .await?;
-    assert_eq!(v2_escaped.status(), reqwest::StatusCode::OK);
-    assert_eq!(v2_escaped.text().await?, "private");
-    let absolute_v2 = client
-        .get(format!("{base}/v2/files/download"))
-        .query(&[
-            ("rootId", "workspace"),
-            ("path", &outside.to_string_lossy()),
-        ])
-        .bearer_auth(TOKEN)
-        .send()
-        .await?;
-    assert_eq!(absolute_v2.status(), reqwest::StatusCode::OK);
-    assert_eq!(absolute_v2.text().await?, "private");
     Ok(())
 }
 

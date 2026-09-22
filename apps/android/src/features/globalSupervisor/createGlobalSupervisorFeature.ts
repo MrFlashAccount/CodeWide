@@ -118,10 +118,6 @@ export function createGlobalSupervisorFeature(
     return enter();
   };
 
-  const toggleMicrophone = async (): Promise<void> => {
-    await activation.setMicrophoneMuted(!activation.microphoneMuted$.peek());
-  };
-
   return {
     enter,
     microphoneMuted$: activation.microphoneMuted$,
@@ -132,6 +128,6 @@ export function createGlobalSupervisorFeature(
     start,
     stop,
     toggle,
-    toggleMicrophone,
+    toggleMicrophone: activation.toggleMicrophone,
   };
 }

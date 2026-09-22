@@ -22,6 +22,7 @@ pub struct SessionCatalog {
     roots: Vec<PathBuf>,
     paths: RwLock<HashMap<String, PathBuf>>,
     state_db: PathBuf,
+    pub(crate) visibility: crate::catalog_visibility::CatalogVisibility,
 }
 
 pub(crate) struct SearchCatalogEntry {
@@ -53,7 +54,7 @@ impl SessionCatalog {
         }
         let db = Connection::open_with_flags(&self.state_db, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         db.busy_timeout(std::time::Duration::ZERO)?;
-        let mut query = db.prepare("SELECT id, rollout_path, title, cwd, strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, 'unixepoch') FROM threads WHERE source IN ('cli', 'vscode')")?;
+        let mut query = db.prepare(&format!("SELECT id, rollout_path, title, cwd, strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, 'unixepoch') FROM threads WHERE source IN ('cli', 'vscode') AND {}", crate::catalog_visibility::ORDINARY_SOURCE_SQL))?;
         Ok(query
             .query_map([], |row| {
                 Ok(SearchCatalogEntry {
@@ -79,6 +80,9 @@ impl SessionCatalog {
             ],
             paths: RwLock::new(HashMap::new()),
             state_db: codex_home.join("state_5.sqlite"),
+            visibility: crate::catalog_visibility::CatalogVisibility::new(
+                codex_home.join("state_5.sqlite"),
+            ),
         }
     }
 

@@ -1,4 +1,4 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { TurnUsageProjection } from "@codewide/sync-client";
 import type { Dispatch, SetStateAction } from "react";
 import type { AccountRateLimitsDatabase } from "../../../data/account-rate-limits-database";

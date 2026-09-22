@@ -2,6 +2,7 @@ import {
   applyGlobalVoiceMicrophoneMuted,
   applyGlobalVoiceOrbState,
   applyGlobalVoiceOrbStyle,
+  applyGlobalVoiceOverlayChatTarget,
   bindGlobalVoiceOrbReducedMotion,
   bindGlobalVoiceOverlayMicrophoneToggle,
   bindGlobalVoiceOverlayStop,
@@ -34,6 +35,15 @@ export function bindGlobalVoiceOverlayActions(
   disposeStateSubscription = feature.render$.onChange(
     ({ value }) => {
       applyGlobalVoiceOrbState(globalVoiceOrbStateForPhase(value.phase));
+      const home = value.home;
+      applyGlobalVoiceOverlayChatTarget(
+        home !== null &&
+          home.threadId !== null &&
+          value.phase !== "failed" &&
+          value.phase !== "stopping"
+          ? { connectionId: home.connectionId, threadId: home.threadId }
+          : null,
+      );
     },
     { initial: true },
   );

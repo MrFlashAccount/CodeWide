@@ -1,4 +1,4 @@
-import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 import { projectedThreadExecutionSettings, projectedTurnMetadata } from "@codewide/sync-client";
 
@@ -25,9 +25,9 @@ describe("thread cursor sync", () => {
 
   it("does not preserve text from an invalidated source during reset", () => {
     const prior = turn("live", "inProgress");
-    prior.items = [{ type: "agentMessage", id: "answer", text: "new obsolete suffix", phase: null, memoryCitation: null }];
+    prior.items = [{ delivery: null, questions: null, type: "agentMessage", id: "answer", text: "new obsolete suffix", phase: null, memoryCitation: null }];
     const next = turn("live", "inProgress");
-    next.items = [{ type: "agentMessage", id: "answer", text: "new", phase: null, memoryCitation: null }];
+    next.items = [{ delivery: null, questions: null, type: "agentMessage", id: "answer", text: "new", phase: null, memoryCitation: null }];
     next.itemsView = "summary";
     const result = materializeThreadSync(thread([prior]), {
       readModelVersion: 3, throughCursor: 2, thread: thread([]), activeTurn: next,
@@ -345,6 +345,8 @@ describe("thread cursor sync", () => {
       activeTurn: {
         ...turn("active", "inProgress"),
         items: [{
+          delivery: null,
+          questions: null,
           id: "active-agent",
           type: "agentMessage",
           text: "bounded preview",
@@ -398,7 +400,7 @@ describe("thread cursor sync", () => {
       items: [
         { id: "user", type: "userMessage", clientId: "client", content: [{ type: "text", text: "Run", text_elements: [] }] },
         { id: "command", type: "commandExecution", pluginId: null, scriptPath: null, command: "pnpm test", cwd: "/workspace", processId: null, source: "agent", status: "completed", commandActions: [], aggregatedOutput: "passed", exitCode: 0, durationMs: 10 },
-        { id: "agent", type: "agentMessage", text: "Still working", phase: null, memoryCitation: null },
+        { delivery: null, questions: null, id: "agent", type: "agentMessage", text: "Still working", phase: null, memoryCitation: null },
       ],
     };
     const cachedWithMetadata = Object.assign(cachedActive, {
@@ -415,7 +417,7 @@ describe("thread cursor sync", () => {
       itemsView: "summary",
       items: [
         { id: "user", type: "userMessage", clientId: "client", content: [{ type: "text", text: "Run", text_elements: [] }] },
-        { id: "agent", type: "agentMessage", text: "Still working on the final answer", phase: null, memoryCitation: null },
+        { delivery: null, questions: null, id: "agent", type: "agentMessage", text: "Still working on the final answer", phase: null, memoryCitation: null },
       ],
     };
 
@@ -452,17 +454,17 @@ describe("thread cursor sync", () => {
       durationMs: null,
       items: [
         { id: "user", type: "userMessage", clientId: "client", content: [{ type: "text", text: "Run", text_elements: [] }] },
-        { id: "progress-before-compaction", type: "agentMessage", text: "First update", phase: "commentary", memoryCitation: null },
+        { delivery: null, questions: null, id: "progress-before-compaction", type: "agentMessage", text: "First update", phase: "commentary", memoryCitation: null },
         { id: "command", type: "commandExecution", pluginId: null, scriptPath: null, command: "pnpm test", cwd: "/workspace", processId: null, source: "agent", status: "completed", commandActions: [], aggregatedOutput: "passed", exitCode: 0, durationMs: 10 },
         { id: "compaction", type: "contextCompaction", codewideLifecyclePhase: "completed" },
-        { id: "latest", type: "agentMessage", text: "Latest update", phase: "commentary", memoryCitation: null },
+        { delivery: null, questions: null, id: "latest", type: "agentMessage", text: "Latest update", phase: "commentary", memoryCitation: null },
       ],
     };
     const foregroundCheckpoint: Turn = {
       ...cachedActive,
       items: [
         { id: "compaction", type: "contextCompaction" },
-        { id: "latest", type: "agentMessage", text: "Latest update", phase: "commentary", memoryCitation: null },
+        { delivery: null, questions: null, id: "latest", type: "agentMessage", text: "Latest update", phase: "commentary", memoryCitation: null },
       ],
     };
 
@@ -600,6 +602,8 @@ function turn(id: string, status: Turn["status"] = "completed", withAgent = true
     completedAt: status === "inProgress" ? null : 2,
     durationMs: status === "inProgress" ? null : 1,
     items: withAgent ? [{
+      delivery: null,
+      questions: null,
       id: `${id}-agent`,
       type: "agentMessage",
       text: "done",
@@ -609,8 +613,14 @@ function turn(id: string, status: Turn["status"] = "completed", withAgent = true
   };
 }
 
-function thread(turns: Turn[]): import("@codewide/codex-protocol/v0.147.0/v2").Thread {
+function thread(turns: Turn[]): import("@codewide/codex-protocol/v0.155.1/v2").Thread {
   return {
+    environments: null,
+    projectId: null,
+    model: null,
+    reasoningEffort: null,
+    originator: null,
+    daybreakEnabled: null,
     id: "thread",
     preview: "",
     modelProvider: "openai",

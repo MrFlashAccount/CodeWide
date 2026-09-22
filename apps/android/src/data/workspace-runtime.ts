@@ -46,7 +46,6 @@ import type { GlobalSupervisorBindingOwner } from "./globalSupervisorBinding";
 import { createGlobalSupervisorAttentionOwner } from "./globalSupervisorAttention";
 import { createGlobalSupervisorAttentionProjection } from "./globalSupervisorAttentionProjection";
 import { createGlobalSupervisorAttentionStorage } from "./globalSupervisorAttentionStorage";
-import type { GlobalSupervisorVisibilityPolicy } from "./globalSupervisorVisibility";
 import { createGlobalSupervisorRuntime } from "./globalSupervisorRuntime";
 import { createGlobalSupervisorRuntimeIngress } from "./globalSupervisorRuntimeIngress";
 import { createGlobalVoicePreviewRuntime } from "./globalVoicePreviewRuntime";
@@ -116,7 +115,6 @@ class WorkspaceRuntime {
   readonly listeners = new Set<() => void>();
   supervisor: WorkspaceSyncSupervisor | null = null;
   globalSupervisorBinding: GlobalSupervisorBindingOwner | null = null;
-  globalSupervisorVisibility: GlobalSupervisorVisibilityPolicy | null = null;
   voiceController: VoiceInputController | null = null;
   fileTransferController: FileTransferController | null = null;
   startPromise: Promise<void> | null = null;
@@ -186,11 +184,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       rpcAfterAttach,
     });
     workspaceRuntime.globalSupervisorBinding = globalSupervisor.binding;
-    workspaceRuntime.globalSupervisorVisibility = globalSupervisor.visibility;
-    const summaries = createThreadSummaryDatabase({
-      globalSupervisorStorage: globalSupervisor.storage,
-      visibility: globalSupervisor.visibility,
-    });
+    const summaries = createThreadSummaryDatabase();
     const details = createThreadDetailDatabase();
     details.setRemoteLoader(createThreadSyncRemoteLoader(details, workspaceThreadSync));
     createdThreadDetails = details;
@@ -249,7 +243,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       respond: async (request) => deliverServerRequestResponse(request),
       rpcAfterAttach,
       sendSystemText: async (request) => commandDelivery.sendSystemTextWithCommandId(request),
-      visibility: globalSupervisor.visibility,
+      targetPolicy: globalSupervisor.targetPolicy,
     });
     const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
@@ -319,7 +313,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     // read model, so startup reads the native snapshot only for state that is
     // already active (thread deletion) and never persists a second outbox copy.
     try {
-      await summaries.reconcileDeleteCommands(await listNativeCommands());
+      await summaries.reconcileCommands(await listNativeCommands());
     } catch (error) {
       appLogger.warnCaught({ error, event: "workspace.native_command.reconcile.failed" });
     }

@@ -4,6 +4,8 @@ node_modules/
 .expo/
 .turbo/
 .cache/
+.nx/cache/
+.nx/workspace-data/
 *.tsbuildinfo
 
 # Rust, Python, Android and Gradle outputs.

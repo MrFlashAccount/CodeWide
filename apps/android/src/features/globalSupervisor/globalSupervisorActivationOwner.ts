@@ -16,6 +16,7 @@ type ActivationAttempt = {
   readonly bufferedEvents: GlobalSupervisorRuntimeEvent[];
   cleanupPromise: Promise<boolean> | null;
   microphoneMutation: Promise<void> | null;
+  requestedMicrophoneMuted: boolean;
   terminal: boolean;
   terminalProjection: {
     readonly failure: GlobalSupervisorFailureKind;
@@ -29,9 +30,9 @@ export type GlobalSupervisorActivationOwner = {
   readonly microphoneMuted$: ObservablePrimitive<boolean>;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
-  readonly setMicrophoneMuted: (muted: boolean) => Promise<void>;
   readonly start: (home: GlobalSupervisorHome) => Promise<void>;
   readonly stop: () => Promise<void>;
+  readonly toggleMicrophone: () => Promise<void>;
 };
 
 const reconnectRecovery = {
@@ -45,8 +46,8 @@ async function releaseActivation(attempt: ActivationAttempt): Promise<boolean> {
     return true;
   }
   try {
-    await attempt.microphoneMutation?.catch(() => undefined);
     await activation.stop();
+    await attempt.microphoneMutation?.catch(() => undefined);
     return true;
   } catch {
     return false;
@@ -227,36 +228,11 @@ export function createGlobalSupervisorActivationOwner(
         beginTerminalCleanup(settled.attempt, "realtimeFailed", reconnectRecovery);
         return;
       }
-      if (attemptIsLive(settled.attempt)) {
+      if (attemptIsLive(settled.attempt) && render.render$.peek().phase === "reconnecting") {
         render.publishRuntimeEvent({
           activationId: settled.activation.activationId,
           event: "listening",
         });
-      }
-    },
-    async setMicrophoneMuted(muted) {
-      const settled = settledAttempt(currentAttempt);
-      if (settled === null || settled.attempt.terminal) {
-        return;
-      }
-      const { activation, attempt } = settled;
-      const preceding = attempt.microphoneMutation?.catch(() => undefined) ?? Promise.resolve();
-      const mutation = preceding.then(async () => {
-        if (!attemptIsLive(attempt)) {
-          return;
-        }
-        await activation.setMicrophoneMuted(muted);
-        if (attemptIsLive(attempt)) {
-          microphoneMuted$.set(muted);
-        }
-      });
-      attempt.microphoneMutation = mutation;
-      try {
-        await mutation;
-      } finally {
-        if (attempt.microphoneMutation === mutation) {
-          attempt.microphoneMutation = null;
-        }
       }
     },
     async start(home) {
@@ -268,6 +244,7 @@ export function createGlobalSupervisorActivationOwner(
         bufferedEvents: [],
         cleanupPromise: null,
         microphoneMutation: null,
+        requestedMicrophoneMuted: false,
         terminal: false,
         terminalProjection: null,
       };
@@ -313,6 +290,35 @@ export function createGlobalSupervisorActivationOwner(
         render.fail(attempt.terminalProjection.failure, attempt.terminalProjection.recovery);
       } else {
         render.publishReady(activation.home);
+      }
+    },
+    async toggleMicrophone() {
+      const settled = settledAttempt(currentAttempt);
+      if (settled === null || settled.attempt.terminal) {
+        return;
+      }
+      const { activation, attempt } = settled;
+      const muted = !attempt.requestedMicrophoneMuted;
+      attempt.requestedMicrophoneMuted = muted;
+      // The media owner serializes mutations. Deliver mute immediately so it can fence
+      // an in-flight capture acquisition; a feature queue would delay that safety gate.
+      const mutation = activation.setMicrophoneMuted(muted).then(() => {
+        if (attemptIsLive(attempt) && attempt.microphoneMutation === mutation) {
+          microphoneMuted$.set(muted);
+        }
+      });
+      attempt.microphoneMutation = mutation;
+      try {
+        await mutation;
+      } catch (error) {
+        if (attemptIsLive(attempt) && attempt.microphoneMutation === mutation) {
+          beginTerminalCleanup(attempt, "realtimeFailed", reconnectRecovery);
+        }
+        throw error;
+      } finally {
+        if (attempt.microphoneMutation === mutation) {
+          attempt.microphoneMutation = null;
+        }
       }
     },
   };

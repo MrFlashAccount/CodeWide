@@ -64,17 +64,20 @@ impl Adapter {
             return Err(crate::denied());
         }
         let mut backoff = 1_u64;
+        let mut first_attempt = true;
         loop {
-            let _ = status.send(if backoff == 1 {
+            let _ = status.send(if first_attempt {
                 AdapterConnectionState::Connecting
             } else {
                 AdapterConnectionState::Reconnecting
             });
+            first_attempt = false;
             let started = tokio::time::Instant::now();
             tokio::select! {
                 () = stop.cancelled() => return Ok(()),
                 _ = self.session(&status) => {},
             }
+            let _ = status.send(AdapterConnectionState::Reconnecting);
             if started.elapsed() > Duration::from_mins(1) {
                 backoff = 1;
             }

@@ -6,6 +6,7 @@ import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./PerformanceDiagnostics.styles";
 import { usePerformanceDiagnosticsState } from "./performanceDiagnosticsState";
 import { renderPerformanceSampleDetails } from "./PerformanceSampleDetails";
+import { WindowDiagnostics } from "./WindowDiagnostics";
 
 export function PerformanceDiagnostics() {
   const state = usePerformanceDiagnosticsState();
@@ -28,6 +29,7 @@ export function PerformanceDiagnostics() {
       </View>
 
       {!state.metrics.available && <Text style={styles.notice}>Available in the Android app.</Text>}
+      <WindowDiagnostics />
       {state.metrics.available && (
         <View style={styles.diagnosticsButtonRow}>
           <Pressable

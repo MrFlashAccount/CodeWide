@@ -3,33 +3,72 @@ package dev.codewide.app
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
-import com.facebook.react.uimanager.DisplayMetricsHolder
+import com.facebook.react.ReactRootView
 
 import expo.modules.ReactActivityDelegateWrapper
 import expo.modules.splashscreen.SplashScreenManager
 import dev.codewide.app.remote.NativeStartupTrace
+import dev.codewide.app.diagnostics.WindowDiagnostics
+import dev.codewide.app.rendering.SurfaceDisplayMetrics
 
 class MainActivity : ReactActivity() {
+  private val surfaceDisplayMetrics = SurfaceDisplayMetrics()
+
   override fun onCreate(savedInstanceState: Bundle?) {
     NativeStartupTrace.markActivityStarted()
     NativeStartupTrace.registerContentMarker()
     SplashScreenManager.registerOnActivity(this)
     SplashExitAnimation.install(this)
     super.onCreate(null)
-    DisplayMetricsHolder.initDisplayMetrics(this)
+    surfaceDisplayMetrics.synchronize()
+  }
+
+  override fun onContentChanged() {
+    super.onContentChanged()
+    // Expo can install the React surface directly or wrap it in a native container.
+    surfaceDisplayMetrics.bind(findReactSurface(window.decorView))
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {
+    WindowDiagnostics.capture("configuration_before")
     super.onConfigurationChanged(newConfig)
-    // RN's global text/icon conversions must use the same display as this Fabric surface.
-    // Application-context metrics can retain the phone density in Samsung freeform/DeX.
-    // https://github.com/react/react-native/issues/57183
-    DisplayMetricsHolder.initDisplayMetrics(this)
+    WindowDiagnostics.capture("configuration_react")
+    surfaceDisplayMetrics.synchronize()
+    WindowDiagnostics.capture("configuration_activity")
+  }
+
+  override fun onResume() {
+    super.onResume()
+    surfaceDisplayMetrics.synchronize()
+    WindowDiagnostics.attach(this)
+  }
+
+  override fun onPause() {
+    WindowDiagnostics.detach(this)
+    super.onPause()
+  }
+
+  override fun onDestroy() {
+    surfaceDisplayMetrics.dispose()
+    super.onDestroy()
+  }
+
+  private fun findReactSurface(view: View): ReactRootView? {
+    if (view is ReactRootView) return view
+    if (view is ViewGroup) {
+      for (index in 0 until view.childCount) {
+        val surface = findReactSurface(view.getChildAt(index))
+        if (surface != null) return surface
+      }
+    }
+    return null
   }
 
   /**
