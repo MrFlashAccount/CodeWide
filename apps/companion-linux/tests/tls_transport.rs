@@ -121,13 +121,28 @@ async fn tls_13_remains_end_to_end_inside_a_blind_websocket_tunnel()
         if let Message::Binary(bytes) = message {
             tls.read_tls(&mut Cursor::new(bytes))?;
             tls.process_new_packets()?;
-            tls.reader().read_to_end(&mut plaintext)?;
+            read_available_plaintext(&mut tls, &mut plaintext)?;
         }
     }
     assert!(plaintext.starts_with(b"HTTP/1.1 200"));
     inner_handle.shutdown();
     outer.abort();
     Ok(())
+}
+
+fn read_available_plaintext(
+    tls: &mut ClientConnection,
+    plaintext: &mut Vec<u8>,
+) -> std::io::Result<()> {
+    let mut buffer = [0_u8; 4_096];
+    loop {
+        match tls.reader().read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(bytes) => plaintext.extend_from_slice(&buffer[..bytes]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 async fn test_tunnel(State(target): State<SocketAddr>, upgrade: WebSocketUpgrade) -> Response {

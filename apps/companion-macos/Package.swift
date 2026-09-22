@@ -56,6 +56,11 @@ let package = Package(
             dependencies: ["CodeWideShared"],
             path: "Tests/CodeWideSharedTests"
         ),
+        .testTarget(
+            name: "CompanionSwiftFFITests",
+            dependencies: ["CompanionSwiftFFI"],
+            path: "Tests/CompanionSwiftFFITests"
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

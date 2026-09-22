@@ -569,6 +569,11 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol CoreHostProtocol: AnyObject, Sendable {
 
+    /**
+     * Creates a time-bounded device pairing link.
+     * # Errors
+     * Returns an adapter error when Relay is unavailable or state cannot persist.
+     */
     func createPairing() throws  -> FfiPairing
 
     func devices()  -> [FfiDeviceStatus]
@@ -582,6 +587,11 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      */
     func health() throws  -> FfiRuntimeHealth
 
+    /**
+     * Consumes a Relay invitation and starts its outbound adapter.
+     * # Errors
+     * Returns an adapter error for invalid input, trust, or network failure.
+     */
     func pairRelay(relayAddress: String, invitationJson: String) throws  -> FfiRelayStatus
 
     /**
@@ -594,10 +604,25 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      */
     func prepareForUpdate(targetVersion: String) throws  -> FfiRuntimeHealth
 
+    /**
+     * Returns durable Relay configuration and live reachability.
+     * # Errors
+     * Returns an adapter error when Relay state is invalid or unsafe.
+     */
     func relayStatus() throws  -> FfiRelayStatus
 
+    /**
+     * Revokes one paired device.
+     * # Errors
+     * Returns an adapter error when the durable registry cannot be updated.
+     */
     func revokeDevice(deviceId: String) throws  -> Bool
 
+    /**
+     * Enables or disables the configured Relay adapter.
+     * # Errors
+     * Returns an adapter error when Relay state cannot be changed durably.
+     */
     func setRelayEnabled(enabled: Bool) throws  -> FfiRelayStatus
 
 }
@@ -674,6 +699,11 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
 
 
 
+    /**
+     * Creates a time-bounded device pairing link.
+     * # Errors
+     * Returns an adapter error when Relay is unavailable or state cannot persist.
+     */
 open func createPairing()throws  -> FfiPairing  {
     return try  FfiConverterTypeFfiPairing_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -708,6 +738,11 @@ open func health()throws  -> FfiRuntimeHealth  {
 })
 }
 
+    /**
+     * Consumes a Relay invitation and starts its outbound adapter.
+     * # Errors
+     * Returns an adapter error for invalid input, trust, or network failure.
+     */
 open func pairRelay(relayAddress: String, invitationJson: String)throws  -> FfiRelayStatus  {
     return try  FfiConverterTypeFfiRelayStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -737,6 +772,11 @@ open func prepareForUpdate(targetVersion: String)throws  -> FfiRuntimeHealth  {
 })
 }
 
+    /**
+     * Returns durable Relay configuration and live reachability.
+     * # Errors
+     * Returns an adapter error when Relay state is invalid or unsafe.
+     */
 open func relayStatus()throws  -> FfiRelayStatus  {
     return try  FfiConverterTypeFfiRelayStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -746,6 +786,11 @@ open func relayStatus()throws  -> FfiRelayStatus  {
 })
 }
 
+    /**
+     * Revokes one paired device.
+     * # Errors
+     * Returns an adapter error when the durable registry cannot be updated.
+     */
 open func revokeDevice(deviceId: String)throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -756,6 +801,11 @@ open func revokeDevice(deviceId: String)throws  -> Bool  {
 })
 }
 
+    /**
+     * Enables or disables the configured Relay adapter.
+     * # Errors
+     * Returns an adapter error when Relay state cannot be changed durably.
+     */
 open func setRelayEnabled(enabled: Bool)throws  -> FfiRelayStatus  {
     return try  FfiConverterTypeFfiRelayStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -1238,7 +1288,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_create_pairing() != 24063) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_create_pairing() != 24799) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_devices() != 59987) {
@@ -1247,19 +1297,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_health() != 9536) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_pair_relay() != 26655) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_pair_relay() != 64584) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_prepare_for_update() != 40305) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_relay_status() != 25248) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_relay_status() != 54663) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_revoke_device() != 41963) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_revoke_device() != 29457) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_set_relay_enabled() != 49856) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_set_relay_enabled() != 8464) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 64369) {
