@@ -70,10 +70,18 @@ public enum AdHocPeerValidator {
             return false
         }
 
+        var staticGuestCode: SecStaticCode?
+        guard
+            SecCodeCopyStaticCode(guestCode, [], &staticGuestCode) == errSecSuccess,
+            let staticGuestCode
+        else {
+            return false
+        }
+
         var rawInformation: CFDictionary?
         guard
             SecCodeCopySigningInformation(
-                guestCode,
+                staticGuestCode,
                 SecCSFlags(rawValue: kSecCSSigningInformation),
                 &rawInformation
             ) == errSecSuccess,

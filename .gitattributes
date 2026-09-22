@@ -4,3 +4,15 @@
 apps/android/android/app/src/main/assets/code-review-editor.js -diff linguist-generated=true
 apps/android/android/app/src/main/assets/mermaid.min.js -diff linguist-generated=true
 apps/android/android/app/src/main/assets/panzoom.min.js -diff linguist-generated=true
+
+# Keep reproducible protocol and native bridge outputs versioned for clean
+# builds, but collapse their mechanical changes in GitHub reviews by default.
+packages/codex-protocol/schema/** linguist-generated=true
+packages/codex-protocol/src/generated/** linguist-generated=true
+apps/companion-macos/Sources/CompanionSwiftFFI/companion_swift_ffi.swift linguist-generated=true
+apps/companion-macos/Sources/CompanionSwiftFFIFFI/include/companion_swift_ffiFFI.h linguist-generated=true
+
+# These notices are generated from dependency metadata plus the authored
+# manual supplement in apps/android/assets/THIRD_PARTY_NOTICES.manual.md.
+apps/android/THIRD_PARTY_NOTICES.md linguist-generated=true
+apps/android/android/app/src/main/assets/THIRD_PARTY_NOTICES.md linguist-generated=true
