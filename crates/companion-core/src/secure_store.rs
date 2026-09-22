@@ -20,6 +20,12 @@ enum Backend {
     PrivateFile,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SecretStoragePolicy {
+    PlatformPreferred,
+    PrivateFileOnly,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SecretLocation {
@@ -41,6 +47,7 @@ struct StoreManifest {
 pub struct SecureStore {
     root: PathBuf,
     manifest: StoreManifest,
+    policy: SecretStoragePolicy,
 }
 
 impl SecureStore {
@@ -50,6 +57,18 @@ impl SecureStore {
     ///
     /// Returns an error for insecure permissions, malformed state or I/O.
     pub fn open(root: &Path) -> Result<Self, SecureStoreError> {
+        Self::open_with_policy(root, SecretStoragePolicy::PlatformPreferred)
+    }
+
+    /// Opens the store with an explicit platform-host storage policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for insecure permissions, malformed state or I/O.
+    pub fn open_with_policy(
+        root: &Path,
+        policy: SecretStoragePolicy,
+    ) -> Result<Self, SecureStoreError> {
         fs::create_dir_all(root)?;
         fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
         require_private_permissions(root, 0o077)?;
@@ -70,6 +89,7 @@ impl SecureStore {
         Ok(Self {
             root: root.to_owned(),
             manifest,
+            policy,
         })
     }
 
@@ -108,11 +128,14 @@ impl SecureStore {
             return Err(SecureStoreError::EmptySecret);
         }
         let key_id = format!("{}-{}", name, hex::encode(rand::random::<[u8; 16]>()));
-        let backend = if platform_set(&key_id, secret).is_ok() {
-            Backend::Platform
-        } else {
-            self.write_fallback(&key_id, secret)?;
-            Backend::PrivateFile
+        let backend = match self.policy {
+            SecretStoragePolicy::PlatformPreferred if platform_set(&key_id, secret).is_ok() => {
+                Backend::Platform
+            }
+            SecretStoragePolicy::PlatformPreferred | SecretStoragePolicy::PrivateFileOnly => {
+                self.write_fallback(&key_id, secret)?;
+                Backend::PrivateFile
+            }
         };
         self.manifest
             .entries
@@ -129,6 +152,9 @@ impl SecureStore {
     /// Returns an error when the current secret cannot be read or persisted.
     pub fn migrate_to_stronger_backend(&mut self, name: &str) -> Result<bool, SecureStoreError> {
         validate_name(name)?;
+        if self.policy == SecretStoragePolicy::PrivateFileOnly {
+            return Ok(false);
+        }
         let Some(location) = self.manifest.entries.get(name).cloned() else {
             return Ok(false);
         };
@@ -314,6 +340,21 @@ mod tests {
             SecureStore::open(root.path())?.get("example")?,
             Some(b"secret".to_vec())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn private_file_policy_never_selects_platform_storage() -> Result<(), SecureStoreError> {
+        let root = tempfile::tempdir().map_err(SecureStoreError::Io)?;
+        let mut store =
+            SecureStore::open_with_policy(root.path(), SecretStoragePolicy::PrivateFileOnly)?;
+        store.set_new("example", b"secret")?;
+        assert_eq!(
+            store.manifest.entries["example"].backend,
+            Backend::PrivateFile
+        );
+        assert_eq!(store.get("example")?, Some(b"secret".to_vec()));
+        assert!(!store.migrate_to_stronger_backend("example")?);
         Ok(())
     }
 }

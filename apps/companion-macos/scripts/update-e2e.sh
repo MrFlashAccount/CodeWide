@@ -46,6 +46,7 @@ dump_diagnostics() {
     "$state_dir/runtime-state.json" \
     "$state_dir/runtime-state.v0.backup.json" \
     "$state_dir/devices.json" \
+    "$state_dir/identity/secure-store.json" \
     "$report_marker"; do
     if [ -f "$state_file" ]; then
       stat -f '%Sp %Su:%Sg %N' "$state_file" >&2 || true
@@ -154,6 +155,8 @@ if [ "$baseline_ready" != true ]; then
 fi
 baseline_app_pid=$(jq -er '.appProcessId' "$report")
 baseline_runtime_pid=$(jq -er '.processId' "$report")
+jq -e '.entries["tls-private-key"].backend == "private-file"' \
+  "$state_dir/identity/secure-store.json" >/dev/null
 
 updated=false
 attempt=0
@@ -188,6 +191,8 @@ fi
 test -f "$state_dir/runtime-state.v0.backup.json"
 test "$(cat "$state_dir/update-state-sentinel")" = preserve-across-update
 test "$(jq -r '.version' "$state_dir/devices.json")" = 5
+jq -e '.entries["tls-private-key"].backend == "private-file"' \
+  "$state_dir/identity/secure-store.json" >/dev/null
 old_pid=$(jq -r '.processId' "$report")
 old_launch_count=$(jq -r '.launchCount' "$report")
 kill -9 "$old_pid"

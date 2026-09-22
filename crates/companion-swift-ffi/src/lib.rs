@@ -8,6 +8,7 @@ use companion_core::{
         ManagedRuntime, ManagedRuntimeConfig, PairingPresentation, relay_connection_label,
     },
     relay::RelayStatus,
+    secure_store::SecretStoragePolicy,
 };
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -102,7 +103,8 @@ impl CoreHost {
             .thread_name("codewide-core")
             .build()
             .map_err(CompanionFfiError::runtime)?;
-        let config = ManagedRuntimeConfig::desktop(state_directory.into(), codex_home.into());
+        let config = ManagedRuntimeConfig::desktop(state_directory.into(), codex_home.into())
+            .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly);
         let companion = executor
             .block_on(ManagedRuntime::start(config))
             .map_err(CompanionFfiError::runtime)?;

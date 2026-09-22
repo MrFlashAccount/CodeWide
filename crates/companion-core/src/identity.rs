@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
 
-use crate::secure_store::{SecureStore, SecureStoreError};
+use crate::secure_store::{SecretStoragePolicy, SecureStore, SecureStoreError};
 
 const IDENTITY_VERSION: u8 = 1;
 const CERTIFICATE_LIFETIME_DAYS: i64 = 5 * 365;
@@ -58,11 +58,24 @@ impl CompanionIdentity {
     /// Returns an error for invalid permissions, partial or corrupt state,
     /// expired identity material, certificate generation, or filesystem I/O.
     pub fn load_or_create(directory: &Path) -> Result<Self, IdentityError> {
+        Self::load_or_create_with_policy(directory, SecretStoragePolicy::PlatformPreferred)
+    }
+
+    /// Loads or creates the installation identity using the platform host's
+    /// explicit secret-storage policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation and persistence errors as [`Self::load_or_create`].
+    pub fn load_or_create_with_policy(
+        directory: &Path,
+        policy: SecretStoragePolicy,
+    ) -> Result<Self, IdentityError> {
         if directory.exists() {
-            return Self::load(directory);
+            return Self::load_with_policy(directory, policy);
         }
-        create_identity(directory)?;
-        Self::load(directory)
+        create_identity(directory, policy)?;
+        Self::load_with_policy(directory, policy)
     }
 
     /// Loads and verifies an existing installation identity.
@@ -72,6 +85,19 @@ impl CompanionIdentity {
     /// Returns an error when files are missing, insecure, corrupt, expired, or
     /// when the private key no longer matches the persisted public pin.
     pub fn load(directory: &Path) -> Result<Self, IdentityError> {
+        Self::load_with_policy(directory, SecretStoragePolicy::PlatformPreferred)
+    }
+
+    /// Loads an existing installation identity using the platform host's
+    /// explicit secret-storage policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation errors as [`Self::load`].
+    pub fn load_with_policy(
+        directory: &Path,
+        policy: SecretStoragePolicy,
+    ) -> Result<Self, IdentityError> {
         let manifest_path = directory.join(MANIFEST_FILE);
         let certificate_path = directory.join(CERTIFICATE_FILE);
         let private_key_path = directory.join(PRIVATE_KEY_FILE);
@@ -85,7 +111,7 @@ impl CompanionIdentity {
         if manifest.version != IDENTITY_VERSION || !valid_pin(&manifest.tls_pin_sha256) {
             return Err(IdentityError::InvalidManifest);
         }
-        let mut secure_store = SecureStore::open(directory)?;
+        let mut secure_store = SecureStore::open_with_policy(directory, policy)?;
         let private_key_der = match secure_store.get(PRIVATE_KEY_SECRET)? {
             Some(secret) => secret,
             None if private_key_path.is_file() => {
@@ -152,7 +178,7 @@ pub fn rotate(directory: &Path) -> Result<CompanionIdentity, IdentityError> {
     let suffix = unix_time_ms();
     let next = parent.join(format!(".{stem}.next-{suffix}"));
     let retired = parent.join(format!("{stem}.revoked-{suffix}"));
-    create_identity(&next)?;
+    create_identity(&next, SecretStoragePolicy::PlatformPreferred)?;
     let replacement = CompanionIdentity::load(&next)?;
     if replacement.public.tls_pin_sha256 == current.public.tls_pin_sha256 {
         return Err(IdentityError::RotationDidNotChangeKey);
@@ -170,7 +196,7 @@ pub fn rotate(directory: &Path) -> Result<CompanionIdentity, IdentityError> {
     CompanionIdentity::load(directory)
 }
 
-fn create_identity(directory: &Path) -> Result<(), IdentityError> {
+fn create_identity(directory: &Path, policy: SecretStoragePolicy) -> Result<(), IdentityError> {
     let parent = directory.parent().ok_or(IdentityError::InvalidPath)?;
     fs::create_dir_all(parent)?;
     fs::create_dir(directory)?;
@@ -203,7 +229,8 @@ fn create_identity(directory: &Path) -> Result<(), IdentityError> {
         expires_at,
     };
 
-    SecureStore::open(directory)?.set_new(PRIVATE_KEY_SECRET, &key_pair.serialize_der())?;
+    SecureStore::open_with_policy(directory, policy)?
+        .set_new(PRIVATE_KEY_SECRET, &key_pair.serialize_der())?;
     write_new_private(
         &directory.join(CERTIFICATE_FILE),
         certificate.der().as_ref(),

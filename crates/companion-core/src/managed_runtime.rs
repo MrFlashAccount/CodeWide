@@ -29,6 +29,7 @@ use crate::{
     relay::{RelayConnectionStatus, RelayPairCommand, RelayRuntime, RelayStatus},
     resources::ResourceService,
     rollout::read_rollout_metadata,
+    secure_store::SecretStoragePolicy,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
@@ -47,6 +48,7 @@ pub struct ManagedRuntimeConfig {
     pub codex_home: PathBuf,
     pub app_server_socket: PathBuf,
     pub enable_mutations: bool,
+    pub secret_storage_policy: SecretStoragePolicy,
 }
 
 impl ManagedRuntimeConfig {
@@ -57,7 +59,14 @@ impl ManagedRuntimeConfig {
             app_server_socket: codex_home.join("app-server-control/app-server-control.sock"),
             codex_home,
             enable_mutations: true,
+            secret_storage_policy: SecretStoragePolicy::PlatformPreferred,
         }
+    }
+
+    #[must_use]
+    pub fn with_secret_storage_policy(mut self, policy: SecretStoragePolicy) -> Self {
+        self.secret_storage_policy = policy;
+        self
     }
 }
 
@@ -194,7 +203,10 @@ impl ManagedRuntime {
             sync = sync.with_account_pool(account_pool);
         }
 
-        let identity = CompanionIdentity::load_or_create(&config.state_directory.join("identity"))?;
+        let identity = CompanionIdentity::load_or_create_with_policy(
+            &config.state_directory.join("identity"),
+            config.secret_storage_policy,
+        )?;
         let registry = Arc::new(
             DeviceRegistry::open(
                 Arc::from(ephemeral_admin_token()?),
