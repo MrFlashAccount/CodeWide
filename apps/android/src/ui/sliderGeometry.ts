@@ -11,7 +11,10 @@ export function sliderStopAt(x: number, width: number, count: number): number {
   if (count < MIN_STOPS || width <= SLIDER_TRACK_INSET * CENTER_DIVISOR) {
     return 0;
   }
-  return Math.round(sliderProgressAt(x, width) * (count - 1));
+  // Keep this gesture worklet self-contained: calling another module worklet
+  // resolved to `undefined` in the release UI runtime and crashed on touch.
+  const fraction = (x - SLIDER_TRACK_INSET) / (width - SLIDER_TRACK_INSET * CENTER_DIVISOR);
+  return Math.round(Math.max(0, Math.min(1, fraction)) * (count - 1));
 }
 
 /** Follow the finger between stops without starting a new spring on each update. */
