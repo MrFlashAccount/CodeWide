@@ -5,13 +5,17 @@ import type {
 } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import { loadSkillCatalog } from "./load-skill-catalog";
-import type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
+import type {
+  TurnControlsLoadOptions,
+  TurnControlsRow,
+  TurnControlsSection,
+  TurnControlsValue,
+} from "./turn-controls-types";
 import { unknownRecord } from "./unknownRecord";
 import type { WorkspaceResourceDatabase } from "./workspace-resource-database";
 import { turnControlsResourceKey } from "./workspace-resource-keys";
 import type { createWorkspaceSession } from "./workspace-session";
 
-export type TurnControlsSection = keyof TurnControlsValue;
 export type TurnControlsLoaders = {
   [Section in TurnControlsSection]: () => Promise<TurnControlsValue[Section]>;
 };
@@ -22,24 +26,27 @@ export type TurnControlsLoadResult = {
   value: TurnControlsValue;
 };
 
-export function isTurnControlsCacheFresh(
-  cached: Pick<TurnControlsRow, "status" | "value" | "error" | "updatedAt"> | undefined,
-  now: number,
-  maxAgeMs: number,
+export function turnControlsCacheNeedsRepair(
+  cached: Pick<TurnControlsRow, "status" | "value" | "error"> | undefined,
 ): boolean {
   return (
-    cached?.status === "ready" &&
-    cached.error === null &&
-    cached.value !== null &&
-    persistedDefaultsPresent(cached.value) &&
-    cached.value.models.every((model) => typeof model.isDefault === "boolean") &&
-    cached.value.skills.every((skill) => skill.catalog !== undefined) &&
-    now - cached.updatedAt < maxAgeMs
+    cached?.status !== "ready" ||
+    cached.error !== null ||
+    cached.value === null ||
+    !persistedDefaultsPresent(cached.value) ||
+    !cached.value.models.every(
+      (model) =>
+        typeof model.isDefault === "boolean" &&
+        Array.isArray(model.serviceTiers) &&
+        parseModelServiceTiers(model.serviceTiers).length === model.serviceTiers.length,
+    ) ||
+    !cached.value.skills.every((skill) => skill.catalog !== undefined)
   );
 }
 
 function persistedDefaultsPresent(value: TurnControlsValue): boolean {
-  return unknownRecord(value)?.defaults !== undefined;
+  const defaults = unknownRecord(unknownRecord(value)?.defaults);
+  return defaults !== null && "serviceTier" in defaults;
 }
 
 /**
@@ -51,6 +58,7 @@ export async function loadTurnControlsIncrementally(
   loaders: TurnControlsLoaders,
   onPartial: (value: TurnControlsValue, section: TurnControlsSection) => void,
   timeoutMs = 12_000,
+  sections: readonly TurnControlsSection[] = TURN_CONTROLS_SECTIONS,
 ): Promise<TurnControlsLoadResult> {
   const current = cloneTurnControls(initial);
   const loadSection = async <Section extends TurnControlsSection>(
@@ -65,14 +73,9 @@ export async function loadTurnControlsIncrementally(
       return error instanceof Error ? error : new Error(`Could not load ${section}`);
     }
   };
-  const results = await Promise.all([
-    loadSection("models"),
-    loadSection("skills"),
-    loadSection("permissions"),
-    loadSection("defaults"),
-  ]);
+  const results = await Promise.all(sections.map(async (section) => loadSection(section)));
   const errors = results.filter((error): error is Error => error !== null);
-  return { errors, loadedSections: 4 - errors.length, value: current };
+  return { errors, loadedSections: sections.length - errors.length, value: current };
 }
 
 export function cloneTurnControls(value: TurnControlsValue): TurnControlsValue {
@@ -81,12 +84,13 @@ export function cloneTurnControls(value: TurnControlsValue): TurnControlsValue {
       // WHY: Persisted rows from an older schema may omit defaults even though current writes always include it.
       // oxlint-disable-next-line typescript/no-unnecessary-condition
       value.defaults === undefined
-        ? { effort: null, model: null, permissions: null }
+        ? { effort: null, model: null, permissions: null, serviceTier: null }
         : { ...value.defaults },
     models: value.models.map((model) => ({
       ...model,
       efforts: [...model.efforts],
       isDefault: model.isDefault,
+      serviceTiers: parseModelServiceTiers(model.serviceTiers),
     })),
     permissions: value.permissions.map((permission) => ({ ...permission })),
     skills: value.skills.map((skill) => ({ ...skill })),
@@ -117,9 +121,14 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   });
 }
 
-const TURN_CONTROLS_FRESH_MS = 6 * 60 * 60 * 1000;
+const TURN_CONTROLS_SECTIONS: readonly TurnControlsSection[] = [
+  "models",
+  "skills",
+  "permissions",
+  "defaults",
+];
 const EMPTY_TURN_CONTROLS: TurnControlsValue = {
-  defaults: { effort: null, model: null, permissions: null },
+  defaults: { effort: null, model: null, permissions: null, serviceTier: null },
   models: [],
   permissions: [],
   skills: [],
@@ -139,9 +148,11 @@ export function createTurnControlsLoader({
   rpcAfterAttach,
 }: TurnControlsAuthority) {
   const turnControlsInFlight = new Map<string, Promise<TurnControlsValue>>();
+  const refreshedThisRuntime = new Set<string>();
   const loadTurnControls = async (
     connectionId: string,
     cwd: string,
+    options: TurnControlsLoadOptions = { mode: "runtime" },
   ): Promise<TurnControlsValue> => {
     const cacheKey = turnControlsResourceKey(connectionId, cwd);
     const resources = getResources();
@@ -155,8 +166,14 @@ export function createTurnControlsLoader({
       cached?.value === null || cached?.value === undefined
         ? null
         : cloneTurnControls(cached.value);
-    const cacheFresh = isTurnControlsCacheFresh(cached, Date.now(), TURN_CONTROLS_FRESH_MS);
-    if (cacheFresh && cachedValue !== null) {
+    const forceRefresh = options.mode === "refresh";
+    const sections = options.mode === "refresh" ? options.sections : TURN_CONTROLS_SECTIONS;
+    if (
+      !forceRefresh &&
+      refreshedThisRuntime.has(cacheKey) &&
+      !turnControlsCacheNeedsRepair(cached) &&
+      cachedValue !== null
+    ) {
       return cachedValue;
     }
     if (session === undefined) {
@@ -197,6 +214,10 @@ export function createTurnControlsLoader({
                 effort: response.config.model_reasoning_effort,
                 model: response.config.model,
                 permissions: configuredPermissions,
+                serviceTier:
+                  typeof response.config.service_tier === "string"
+                    ? response.config.service_tier
+                    : null,
               };
             },
             models: async () => {
@@ -207,10 +228,13 @@ export function createTurnControlsLoader({
               });
               return response.data.map((model) => ({
                 defaultEffort: model.defaultReasoningEffort,
+                defaultServiceTier:
+                  typeof model.defaultServiceTier === "string" ? model.defaultServiceTier : null,
                 efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
                 id: model.model,
                 isDefault: model.isDefault,
                 label: model.displayName,
+                serviceTiers: parseModelServiceTiers(model.serviceTiers),
                 supportsPersonality: model.supportsPersonality,
               }));
             },
@@ -235,7 +259,7 @@ export function createTurnControlsLoader({
                 skills: async () =>
                   rpcAfterAttach<unknown>(session, "skills/list", {
                     cwds: [cwd],
-                    forceReload: false,
+                    forceReload: forceRefresh,
                   }),
               }),
           },
@@ -248,6 +272,8 @@ export function createTurnControlsLoader({
               status: "refreshing",
               value,
             }),
+          12_000,
+          sections,
         );
         if (result.loadedSections === 0 && cachedValue === null) {
           throw (
@@ -267,6 +293,9 @@ export function createTurnControlsLoader({
           status: "ready",
           value: result.value,
         });
+        if (!forceRefresh && result.errors.length === 0) {
+          refreshedThisRuntime.add(cacheKey);
+        }
         return result.value;
       } catch (error) {
         resources?.putTurnControls({
@@ -297,4 +326,24 @@ export function createTurnControlsLoader({
   };
 
   return loadTurnControls;
+}
+
+function parseModelServiceTiers(
+  value: unknown,
+): Array<{ description: string; id: string; name: string }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry: unknown) => {
+    const tier = unknownRecord(entry);
+    if (
+      tier === null ||
+      typeof tier.id !== "string" ||
+      typeof tier.name !== "string" ||
+      typeof tier.description !== "string"
+    ) {
+      return [];
+    }
+    return [{ description: tier.description, id: tier.id, name: tier.name }];
+  });
 }

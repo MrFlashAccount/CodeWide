@@ -1,4 +1,4 @@
-import type { TurnControlsValue } from "../../data/turn-controls-types";
+import type { LoadTurnControls } from "../../data/turn-controls-types";
 import type { VoiceInputController } from "../../data/voice-input-controller";
 import type { useComposerDraftCommands, useComposerDraftState } from "./draft";
 import type { useComposerSettings } from "./settings";
@@ -13,7 +13,7 @@ export type ComposerSuggestionsCapabilities = Pick<
   > & {
     composerScope: string;
     cwd: string;
-    onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
+    onLoadControls: LoadTurnControls | undefined;
     updateDraft: ReturnType<typeof useComposerDraftCommands>["updateDraft"];
     updateText: ReturnType<typeof useComposerDraftCommands>["updateText"];
     voiceController: VoiceInputController | null;

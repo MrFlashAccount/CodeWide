@@ -100,6 +100,7 @@ enum ChangeScope {
     LastTurn,
     Staged,
     Unstaged,
+    Uncommitted,
     Branch,
 }
 
@@ -109,6 +110,7 @@ impl ChangeScope {
             Self::Session | Self::LastTurn => None,
             Self::Staged => Some(VcsScope::Staged),
             Self::Unstaged => Some(VcsScope::Unstaged),
+            Self::Uncommitted => Some(VcsScope::Uncommitted),
             Self::Branch => Some(VcsScope::Branch),
         }
     }
@@ -584,8 +586,8 @@ impl ResourceService {
                 Err(VcsError::UnsupportedScope { .. })
                     if !explicit_scope && vcs_scope == VcsScope::Branch =>
                 {
-                    effective_scope = ChangeScope::Unstaged;
-                    match vcs.changes(cwd, VcsScope::Unstaged).await {
+                    effective_scope = ChangeScope::Uncommitted;
+                    match vcs.changes(cwd, VcsScope::Uncommitted).await {
                         Ok(snapshot) => Some(snapshot),
                         Err(VcsError::UnsupportedWorkspace(_)) => None,
                         Err(error) => return Err(error.into()),
@@ -1009,12 +1011,7 @@ async fn thread_resources_from_vcs(
         "threadId": thread_id,
         "revision": format!("vcs.{}.{}", snapshot.snapshot_id, attachment_revision),
         "changeScope": snapshot.scope,
-        "changeScopes": (
-            [ChangeScope::Session, ChangeScope::LastTurn]
-                .into_iter()
-                .chain(snapshot.available_scopes.into_iter().map(ChangeScope::from))
-                .collect::<Vec<_>>()
-        ),
+        "changeScopes": changes_menu_scopes(&snapshot.available_scopes),
         "changes": changes,
         "attachments": rollout_data.attachments
     }))
@@ -1025,6 +1022,7 @@ impl From<VcsScope> for ChangeScope {
         match scope {
             VcsScope::Staged => Self::Staged,
             VcsScope::Unstaged => Self::Unstaged,
+            VcsScope::Uncommitted => Self::Uncommitted,
             VcsScope::Branch => Self::Branch,
         }
     }
@@ -1034,14 +1032,14 @@ async fn available_change_scopes(
     vcs: Option<&VcsService>,
     cwd: Option<&Path>,
 ) -> Result<Vec<ChangeScope>, ResourceError> {
-    let mut scopes = vec![ChangeScope::Session, ChangeScope::LastTurn];
+    let mut scopes = vec![ChangeScope::Session];
     let (Some(vcs), Some(cwd)) = (vcs, cwd) else {
         return Ok(scopes);
     };
     let snapshot = match vcs.changes(cwd, VcsScope::Branch).await {
         Ok(snapshot) => Some(snapshot),
         Err(VcsError::UnsupportedScope { .. }) => {
-            match vcs.changes(cwd, VcsScope::Unstaged).await {
+            match vcs.changes(cwd, VcsScope::Uncommitted).await {
                 Ok(snapshot) => Some(snapshot),
                 Err(VcsError::UnsupportedWorkspace(_)) => None,
                 Err(error) => return Err(error.into()),
@@ -1051,10 +1049,20 @@ async fn available_change_scopes(
         Err(error) => return Err(error.into()),
     };
     if let Some(snapshot) = snapshot {
-        scopes.extend(snapshot.available_scopes.into_iter().map(ChangeScope::from));
+        scopes = changes_menu_scopes(&snapshot.available_scopes);
     }
-    scopes.dedup();
     Ok(scopes)
+}
+
+fn changes_menu_scopes(available: &[VcsScope]) -> Vec<ChangeScope> {
+    let mut scopes = vec![ChangeScope::Session];
+    if available.contains(&VcsScope::Uncommitted) {
+        scopes.push(ChangeScope::Uncommitted);
+    }
+    if available.contains(&VcsScope::Branch) {
+        scopes.push(ChangeScope::Branch);
+    }
+    scopes
 }
 
 fn last_turn_id<'a>(
@@ -2368,12 +2376,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_and_last_turn_scopes_remain_available_without_vcs() {
+    async fn only_session_scope_is_selectable_without_vcs() {
         assert_eq!(
             available_change_scopes(None, None)
                 .await
                 .expect("change scopes"),
-            vec![ChangeScope::Session, ChangeScope::LastTurn]
+            vec![ChangeScope::Session]
+        );
+    }
+
+    #[test]
+    fn changes_menu_keeps_only_supported_user_scopes() {
+        assert_eq!(
+            changes_menu_scopes(&[
+                VcsScope::Staged,
+                VcsScope::Unstaged,
+                VcsScope::Uncommitted,
+                VcsScope::Branch,
+            ]),
+            vec![
+                ChangeScope::Session,
+                ChangeScope::Uncommitted,
+                ChangeScope::Branch,
+            ]
+        );
+        assert_eq!(
+            changes_menu_scopes(&[VcsScope::Staged, VcsScope::Unstaged, VcsScope::Branch]),
+            vec![ChangeScope::Session, ChangeScope::Branch]
         );
     }
 
@@ -2542,10 +2571,7 @@ mod tests {
         assert_eq!(value["changes"][0]["binary"], false);
         assert_eq!(value["changes"][0]["itemId"], "vcs:snapshot:file");
         assert_eq!(value["attachments"][0]["key"], "attachment");
-        assert_eq!(
-            value["changeScopes"],
-            json!(["session", "lastTurn", "staged", "unstaged", "branch"])
-        );
+        assert_eq!(value["changeScopes"], json!(["session", "branch"]));
         assert!(
             value["revision"]
                 .as_str()

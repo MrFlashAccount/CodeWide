@@ -2,6 +2,7 @@ import { useEvent } from "../../react/useEvent";
 /** V1 ThreadActions owner, extracted without changing interaction or resource lifetime. */
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
+import { useAppNotice } from "../../ui/useAppNotice";
 import { copySessionId } from "./turnActions";
 
 import type { ThreadHeaderProps } from "./threadHeaderContract";
@@ -19,6 +20,7 @@ export function useThreadHeaderActions({
   threadId,
 }: ThreadHeaderProps) {
   const dialog = useAppDialog();
+  const showNotice = useAppNotice().show;
   const actions: ActionMenuItem[] = [
     { icon: "copy-outline", id: "copy-session-id", label: "Copy session ID" },
     { icon: "pencil-outline", id: "rename", label: "Rename" },
@@ -68,7 +70,7 @@ export function useThreadHeaderActions({
   });
   const handleAction = useEvent((id: string) => {
     if (id === "copy-session-id") {
-      void copySessionId(threadId).catch((error: unknown) => {
+      void copySessionId(threadId, showNotice).catch((error: unknown) => {
         dialog.alert(
           "Copy failed",
           error instanceof Error ? error.message : "Could not copy session ID",

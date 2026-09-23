@@ -50,6 +50,11 @@ describe("bubble attachment projections", () => {
     expect(projectAgentArtifacts({ items: [{ type: "agentMessage", text: "[Report][result]\n\n[result]: sandbox:/mnt/data/report.pdf" }] })[0]?.source)
       .toEqual({ type: "path", path: "/mnt/data/report.pdf" });
   });
+  it("projects an SVG artifact into the image gallery", () => {
+    expect(projectAgentArtifacts({ items: [{ type: "agentMessage", text: "[Diagram](sandbox:/mnt/data/flow.SVG)" }] })).toEqual([
+      { kind: "image", name: "flow.SVG", source: { path: "/mnt/data/flow.SVG", type: "path" } },
+    ]);
+  });
   it("recognizes image attachments in the persisted user file envelope", () => {
     expect(projectUserMessageAttachments([{ type: "text", text: "# Files mentioned by the user:\n\n## drawing.png: /tmp/drawing.png\n\n## My request for Codex:\n\nLook." }])[0]?.kind).toBe("image");
   });

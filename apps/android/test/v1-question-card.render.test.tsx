@@ -4,6 +4,12 @@ import { QuestionCard } from "../src/features/requests/questions/QuestionCard";
 import { answerText, questionReply, rpcQuestions, type QuestionInteraction } from "../src/features/requests/questions/questionContract";
 import { loadQuestionSession } from "../src/features/requests/questions/questionSession";
 import { readQuestionDraft, writeQuestionDraft } from "../src/data/questionDraftStorage";
+import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
+import { View } from "react-native";
+import { ConversationBottomChrome } from "../src/features/conversation/ConversationBottomChrome";
+import { projectTimelineTurns } from "../src/features/conversation/timeline/timelineProjection";
+import { selectTurnRenderWindow } from "../src/rendering/thread-render-window";
+import { createV1TestThread } from "./fixtures/v1Thread";
 
 jest.mock("../src/data/questionDraftStorage", () => ({
   readQuestionDraft: jest.fn(async () => null), writeQuestionDraft: jest.fn(async () => undefined),
@@ -105,6 +111,62 @@ it("routes Astra answers as a steer and hides the dock after the conversation mo
   expect(screen.queryByText(/Ответ записан/)).toBeNull();
   expect(screen.queryByText(/Вопрос в истории/)).toBeNull();
   expect(screen.queryByText("Продолжай")).toBeNull();
+});
+
+it("keeps an active-turn question visible when older activity is collapsed", async () => {
+  const turn: Turn = {
+    id: "busy-turn", status: "inProgress", itemsView: "full", error: null,
+    startedAt: null, completedAt: null, durationMs: null,
+    items: [
+      { type: "userMessage", id: "prompt", clientId: null, content: [] },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        type: "plan" as const, id: `activity-${index}`, text: `Step ${index}`,
+      })),
+      { type: "agentMessage", id: "question", text: "Choose", phase: "final_answer",
+        delivery: "async", memoryCitation: null,
+        questions: [{ title: "Куда продолжить?", options: ["Здесь", "Там"] }] },
+    ],
+  };
+  const window = selectTurnRenderWindow(turn);
+  expect(window.collapsedActivityIndexes).toHaveLength(4);
+  expect(window.collapsedActivityIndexes).not.toContain(turn.items.length - 1);
+  const thread = createV1TestThread("busy-thread", null, 1, [turn]);
+  const timeline = projectTimelineTurns([turn], "scope", "server", thread.id);
+  const chrome = (
+    <ConversationBottomChrome
+      composerContent={<View />}
+      currentOutcome={null}
+      failureNotice={null}
+      readOnly={false}
+      remoteThread={thread}
+      requestPrompt={null}
+      setBottomChromeHeight={jest.fn()}
+      timeline={timeline}
+    />
+  );
+  const value = {
+    latestHistoryPresent: true, connectionId: "server", threadId: thread.id,
+    activeTurnId: turn.id, entries: [{ kind: "turn" as const, turn }],
+    pendingRequest: null, onRespond: undefined,
+    sendAnswer: jest.fn(async () => undefined),
+  };
+  const screen = render(<QuestionConversationProvider value={value}>{chrome}</QuestionConversationProvider>);
+  expect(await screen.findByText("Куда продолжить?")).toBeOnTheScreen();
+  expect(screen.getByTestId("question-dock")).toBeOnTheScreen();
+
+  const request = {
+    connectionId: "server", requestId: "rpc", requestKey: "rpc", state: "pending" as const,
+    createdAt: 1, method: "item/tool/requestUserInput",
+    params: { threadId: thread.id, turnId: turn.id, itemId: "activity-0",
+      questions: [{ id: "q", question: "Как действовать?", options: null }] },
+  };
+  screen.rerender(
+    <QuestionConversationProvider value={{ ...value, pendingRequest: request }}>
+      {chrome}
+    </QuestionConversationProvider>,
+  );
+  expect(await screen.findByText("Как действовать?")).toBeOnTheScreen();
+  expect(screen.getAllByTestId("question-card")).toHaveLength(1);
 });
 
 it("returns legacy answers to the original RPC request with question ids", async () => {

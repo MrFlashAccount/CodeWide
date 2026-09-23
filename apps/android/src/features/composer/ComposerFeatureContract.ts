@@ -4,7 +4,7 @@ import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import type { View } from "react-native";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { StoredDraftAttachment } from "../../data/thread-ui-state-types";
-import type { TurnControlsValue } from "../../data/turn-controls-types";
+import type { LoadTurnControls } from "../../data/turn-controls-types";
 import type { DraftSelection } from "../../data/voice-draft";
 import type { VoiceInputController } from "../../data/voice-input-controller";
 import type {
@@ -61,7 +61,7 @@ export type ComposerFeatureProps = {
   microphoneAccess: { allowCapture: () => boolean; granted: boolean };
   microphoneButtonRef: RefObject<View | null>;
   newChat: boolean;
-  onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
+  onLoadControls: LoadTurnControls | undefined;
   onSetGoal: GoalDialogProps["onSet"] | undefined;
   openAccessoryAction: (action: ComposerAccessoryAction) => void;
   openControls: (initialPage: ComposerMenuPage) => void;
@@ -84,9 +84,11 @@ export type ComposerFeatureProps = {
   selectedModel: string | null;
   selectedPermissions: string | null;
   selectedPersonality: Personality | null;
+  selectedServiceTier: string | null | undefined;
   selectEffort: (effort: string) => void;
   selectModel: (model: string, effort: string) => void;
   selectPermissions: (permissions: string | null) => void;
+  selectServiceTier: (serviceTier: string) => void;
   sendDisabled: boolean;
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
   setSelectedPersonality: (value: Personality | null) => void;

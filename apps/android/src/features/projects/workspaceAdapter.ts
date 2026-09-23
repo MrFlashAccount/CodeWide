@@ -152,6 +152,7 @@ export function createProjectsWorkspaceAdapter({
       model: response.model,
       permissions: response.activePermissionProfile?.id ?? null,
       sandboxPolicy: response.sandbox.type,
+      serviceTier: response.serviceTier,
     });
     await getDetails()?.importThreadSnapshot(connectionId, started, "initial");
     await getSummaries()?.insertStartedThread(connectionId, started);

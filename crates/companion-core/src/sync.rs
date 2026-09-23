@@ -749,7 +749,11 @@ impl SyncHub {
             for (cursor, payload) in replay.entries {
                 let Ok(payload) = serde_json::from_slice::<Value>(&payload)
                     .map_err(|_| ())
-                    .and_then(|payload| self.history.catalog_event(payload).map_err(|_| ()))
+                    .and_then(|payload| {
+                        self.history
+                            .catalog_event(crate::usage::price_replay_payload(payload))
+                            .map_err(|_| ())
+                    })
                 else {
                     close_with(socket, 1011, "replay_journal_failed").await;
                     return None;
@@ -911,7 +915,7 @@ impl SyncHub {
                                     for (cursor, payload) in replay.entries {
                                         let Ok(payload) = serde_json::from_slice::<Value>(&payload)
                     .map_err(|_| ())
-                    .and_then(|payload| self.history.catalog_event(payload).map_err(|_| ())) else {
+                    .and_then(|payload| self.history.catalog_event(crate::usage::price_replay_payload(payload)).map_err(|_| ())) else {
                                             close_with(&socket, 1011, "replay_journal_failed").await;
                                             break 'session;
                                         };
@@ -1590,17 +1594,8 @@ impl SyncHub {
         mut result: Value,
     ) -> Result<(), ()> {
         if let Some(thread) = result.get_mut("thread") {
-            if method == "companion/thread/sync"
-                && crate::catalog_visibility::excludes_thread(thread)
-            {
-                return send_rpc_error(
-                    socket,
-                    id.clone(),
-                    -32602,
-                    "Thread is not in the ordinary catalog",
-                )
-                .await;
-            }
+            // Catalog exclusion controls discovery only. A direct thread route
+            // reads the same bounded history as any other thread.
             crate::catalog_visibility::annotate_thread(thread);
         }
         if let Some(resources) = self.resources() {
@@ -1858,7 +1853,7 @@ async fn send_live_replay_after(
         let payload =
             serde_json::from_slice::<Value>(&payload).map_err(|_| LiveReplayError::Journal)?;
         let payload = history
-            .catalog_event(payload)
+            .catalog_event(crate::usage::price_replay_payload(payload))
             .map_err(|_| LiveReplayError::Journal)?;
         send_json(
             socket,
@@ -2174,29 +2169,42 @@ async fn ingest_payload_batch(
     // deltas can otherwise discard a repeated content reference.
     stream_diagnostics.observe_input_batch(&payloads);
     payloads = coalesce_stream_text_deltas(payloads);
-    if let Some(projector) = projector {
-        payloads = payloads
-            .into_iter()
-            .map(|payload| projector.project_notification(payload))
-            .collect();
-    }
-    stream_diagnostics.observe_emitted_batch(&payloads);
     let mut projected_payloads = Vec::with_capacity(payloads.len());
     for payload in payloads {
-        let usage = match context.usage_projector.lock() {
-            Ok(mut projector) => projector.observe(&payload),
-            Err(poisoned) => poisoned.into_inner().observe(&payload),
+        let (usage, replay_pricing) = {
+            let mut projector = match context.usage_projector.lock() {
+                Ok(projector) => projector,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let usage = projector.observe(&payload);
+            let replay_pricing = projector.replay_pricing(&payload);
+            (usage, replay_pricing)
         };
         let Ok(usage) = usage else {
             warn!("usage projection persistence failed");
             let _ = context.events.send(DurableSignal::Failed);
             return Err(());
         };
-        projected_payloads.push(crate::thread_patch::attach_thread_patch_with_usage(
-            payload, usage,
+        let metrics =
+            crate::activity_metrics_live::observe(&context.store, &payload, usage.as_ref())
+                .map_err(|_| {
+                    let _ = context.events.send(DurableSignal::Failed);
+                })?;
+        let payload = match &projector {
+            Some(projector) => projector.project_notification(payload),
+            None => payload,
+        };
+        let projected = crate::activity_metrics_live::attach(
+            crate::thread_patch::attach_thread_patch_with_usage(payload, usage),
+            metrics,
+        );
+        projected_payloads.push(crate::usage::prepare_replay_payload(
+            projected,
+            replay_pricing,
         ));
     }
     payloads = projected_payloads;
+    stream_diagnostics.observe_emitted_batch(&payloads);
     let Ok(encoded) = payloads
         .iter()
         .map(serde_json::to_vec)
@@ -2520,9 +2528,11 @@ async fn forward_rpc(
     } else {
         None
     };
+    let activity_read = activity_read_scope(method, &request);
     let result = upstream.request(request).await;
     match result {
         Ok(mut response) => {
+            enrich_activity_response(history, activity_read, &mut response).await;
             if matches!(method, "thread/list" | "companion/supervisor/threadList")
                 && let Some(result) = response.get_mut("result")
             {
@@ -2552,6 +2562,80 @@ async fn forward_rpc(
                 UpstreamError::Protocol(_) => -32020,
             };
             send_rpc_error(socket, id, code, &error.to_string()).await
+        }
+    }
+}
+
+struct ActivityReadScope {
+    thread_id: String,
+    turn_id: Option<String>,
+}
+
+fn activity_read_scope(method: &str, request: &Value) -> Option<ActivityReadScope> {
+    if method != "thread/items/list"
+        && !(method == "thread/turns/list"
+            && request.pointer("/params/itemsView").and_then(Value::as_str) == Some("full"))
+    {
+        return None;
+    }
+    Some(ActivityReadScope {
+        thread_id: request.pointer("/params/threadId")?.as_str()?.to_owned(),
+        turn_id: request
+            .pointer("/params/turnId")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
+}
+
+async fn enrich_activity_response(
+    history: &HistoryService,
+    scope: Option<ActivityReadScope>,
+    response: &mut Value,
+) {
+    let Some(scope) = scope else {
+        return;
+    };
+    let Some(entries) = response
+        .pointer_mut("/result/data")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    let ids = match &scope.turn_id {
+        Some(id) => vec![id.clone()],
+        None => entries
+            .iter()
+            .filter_map(|t| t.get("id").and_then(Value::as_str).map(str::to_owned))
+            .collect(),
+    };
+    let Ok(metadata) = history.activity_metadata(scope.thread_id, ids).await else {
+        warn!("Canonical activity pricing unavailable");
+        return;
+    };
+    if let Some(id) = scope.turn_id {
+        if let Some(metrics) = metadata.get(&id).and_then(|m| m.get("activityMetrics")) {
+            for entry in entries {
+                if let Some(item) = entry.get_mut("item") {
+                    crate::activity_metrics::attach_item_metrics(item, metrics);
+                }
+            }
+        }
+    } else {
+        for turn in entries {
+            let usage = turn
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| metadata.get(id))
+                .and_then(|m| m.get("usage"));
+            if let Some(usage) = usage.cloned()
+                && let Some(object) = turn.as_object_mut()
+                && let Some(metadata) = object
+                    .entry("codewide")
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+            {
+                metadata.insert("usage".into(), usage);
+            }
         }
     }
 }

@@ -15,9 +15,8 @@ import {
   SearchMessage,
   SearchMessageFocus,
 } from "../src/rendering/SearchMessageFocus";
-import { colors, controlHitSlop, controlSize, spacing, touchTarget } from "../src/theme";
+import { colors, controlHitSlop, controlSize, touchTarget } from "../src/theme";
 import { searchFieldLayout } from "../src/presentation/input/searchLayout";
-import { threadListLayout } from "../src/ui/thread-list-layout";
 import { filterIconButtonLayout } from "../src/presentation/input/filterIconButtonLayout";
 import type { AppVoiceInputController, AppVoiceInputRuntime } from "../src/ui/VoiceInputRuntime";
 import { getAppDialogRequest, invokeAppDialogAction, resetAppDialog } from "./mocks/AppDialog";
@@ -175,7 +174,12 @@ function voiceFixture(outcome: SearchVoiceOutcome): {
   };
 }
 
-function setup(voiceRuntime: AppVoiceInputRuntime | null = null) {
+function setup(
+  voiceRuntime: AppVoiceInputRuntime | null = null,
+  servers: readonly { readonly id: string; readonly name: string }[] = [
+    { id: "one", name: "Buddy" },
+  ],
+) {
   const session = new SearchSession(`render-test:${++sequence}`);
   const searchMessages = jest
     .fn<Promise<MessageSearchPage>, [string, unknown]>()
@@ -203,7 +207,7 @@ function setup(voiceRuntime: AppVoiceInputRuntime | null = null) {
     <GlobalSearchScreen
       remote={{ searchMessages }}
       session={session}
-      servers={[{ id: "one", name: "Buddy" }]}
+      servers={servers}
       threads={[{ id: "chat-one", serverId: "one", title: "First chat" }]}
       projects={[]}
       onClose={onClose}
@@ -221,14 +225,15 @@ function setup(voiceRuntime: AppVoiceInputRuntime | null = null) {
   };
 }
 
-it("keeps expanded search on the compact sidebar field geometry", () => {
+it("places the search filter beside the expanded field", () => {
   const test = setup();
   const header = test.view.getByTestId("global-search-header-row");
-  expect(within(header).getByText("Search")).toBeTruthy();
+  expect(test.view.getByTestId("search-overlay-panel")).toBeTruthy();
+  expect(within(header).getByLabelText("Search all messages")).toBeTruthy();
   expect(within(header).getByLabelText("Search filters")).toBeTruthy();
   expect(
-    within(test.view.getByTestId("search-top-input")).queryByLabelText("Search filters"),
-  ).toBeNull();
+    within(test.view.getByTestId("search-top-input")).getByLabelText("Search filters"),
+  ).toBeTruthy();
   expect(test.view.getByTestId("expanded-thread-search-field")).toHaveStyle({
     ...searchFieldLayout,
     height: controlSize.regular,
@@ -243,12 +248,13 @@ it("keeps expanded search on the compact sidebar field geometry", () => {
   expect(
     StyleSheet.flatten(test.view.getByLabelText("Search filters").props.style).backgroundColor,
   ).toBeUndefined();
-  expect(test.view.getByTestId("search-top-input")).toHaveStyle({
-    paddingLeft: spacing.md,
-    paddingRight: threadListLayout.edgeInset,
-    paddingBottom: spacing.xs,
-    gap: spacing.optical,
-  });
+  expect(test.view.getByTestId("search-top-input")).toHaveStyle({ flex: 1, minWidth: 0 });
+});
+
+it("dismisses the search overlay through its backdrop", () => {
+  const test = setup();
+  fireEvent.press(test.view.getByLabelText("Close search overlay"));
+  expect(test.onClose).toHaveBeenCalledTimes(1);
 });
 
 it("keeps navigation, clear, filter and microphone targets distinct and accessible", () => {
@@ -308,6 +314,105 @@ it("opens an actual chat result directly and keeps Back separate from navigation
   fireEvent.press(test.view.getByLabelText("Back to threads"));
   expect(test.onClose).toHaveBeenCalledTimes(1);
   expect(test.onOpenThread).toHaveBeenCalledTimes(1);
+});
+
+it("appends search results on list reach without replacing earlier matches", async () => {
+  const test = setup();
+  const firstHit: MessageSearchPage["data"][number] = {
+    excerpt: "A hello message",
+    kind: "agent_message",
+    messageId: 24,
+    project: "/project",
+    sourceOffset: 200,
+    threadId: "chat-one",
+    timestamp: "2026-09-06T10:00:00Z",
+    title: "Matching chat",
+    turnId: "turn-old",
+  };
+  test.searchMessages
+    .mockReset()
+    .mockResolvedValueOnce({ data: [firstHit], failedSources: 0, indexing: false, nextOffset: 30 })
+    .mockResolvedValueOnce({
+      data: [{ ...firstHit, excerpt: "Another hello excerpt", messageId: 25 }],
+      failedSources: 0,
+      indexing: false,
+      nextOffset: null,
+    });
+  fireEvent.changeText(test.view.getByLabelText("Search all messages"), "hello");
+  fireEvent(test.view.getByLabelText("Search all messages"), "submitEditing");
+  await waitFor(() => expect(test.view.getByText("Matching chat")).toBeTruthy());
+  expect(test.view.queryByText("Threads & messages")).toBeNull();
+  expect(test.view.queryByText("Next")).toBeNull();
+  expect(test.view.queryByText("Previous")).toBeNull();
+  expect(test.view.getByText("hello")).toHaveStyle({ backgroundColor: colors.warningContainer });
+  expect(
+    test.view.getByText(
+      new Date(firstHit.timestamp).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+      }),
+    ),
+  ).toBeTruthy();
+  const list = test.view.getByTestId("global-search-results");
+  test.session.rememberScroll(420);
+  fireEvent(list, "onEndReached");
+  await waitFor(() => expect(test.view.getByText("Another hello excerpt")).toBeTruthy());
+  expect(test.view.getByText("A hello message")).toBeTruthy();
+  expect(test.session.scrollOffset).toBe(420);
+  expect(test.view.getByTestId("global-search-results")).toBe(list);
+  expect(test.searchMessages).toHaveBeenNthCalledWith(
+    2,
+    "one",
+    expect.objectContaining({ offset: 30 }),
+  );
+  fireEvent(list, "onEndReached");
+  expect(test.searchMessages).toHaveBeenCalledTimes(2);
+});
+
+it("continues only servers with another search page", async () => {
+  const test = setup(null, [
+    { id: "one", name: "First server" },
+    { id: "two", name: "Second server" },
+  ]);
+  const hit: MessageSearchPage["data"][number] = {
+    excerpt: "Found hello",
+    kind: "user_message",
+    messageId: 1,
+    project: "/project",
+    sourceOffset: 10,
+    threadId: "chat-one",
+    timestamp: "2026-09-06T10:00:00Z",
+    title: "First chat",
+    turnId: "turn-one",
+  };
+  test.searchMessages
+    .mockReset()
+    .mockResolvedValueOnce({ data: [hit], failedSources: 0, indexing: false, nextOffset: 30 })
+    .mockResolvedValueOnce({
+      data: [{ ...hit, messageId: 2, title: "Second chat" }],
+      failedSources: 0,
+      indexing: false,
+      nextOffset: null,
+    })
+    .mockResolvedValueOnce({
+      data: [{ ...hit, messageId: 3, title: "Later match" }],
+      failedSources: 0,
+      indexing: false,
+      nextOffset: null,
+    });
+  fireEvent.changeText(test.view.getByLabelText("Search all messages"), "hello");
+  fireEvent(test.view.getByLabelText("Search all messages"), "submitEditing");
+  await waitFor(() => expect(test.view.getByText("Second chat")).toBeTruthy());
+  fireEvent(test.view.getByTestId("global-search-results"), "onEndReached");
+  await waitFor(() => expect(test.view.getByText("Later match")).toBeTruthy());
+  expect(test.searchMessages).toHaveBeenCalledTimes(3);
+  expect(test.searchMessages).toHaveBeenNthCalledWith(
+    3,
+    "one",
+    expect.objectContaining({ offset: 30 }),
+  );
+  expect(test.view.getByText("First chat")).toBeTruthy();
+  expect(test.view.getByText("Second chat")).toBeTruthy();
 });
 
 it("uses the ordinary transparent filter button states", () => {

@@ -23,6 +23,7 @@ import {
   layoutSize,
 } from "../theme";
 import { AppText as Text } from "./Typography";
+import { appNoticeStore } from "./appNoticeStore";
 
 type AppLockContextValue = {
   enabled: boolean;
@@ -115,6 +116,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     if (state === "active") {
       authenticate();
     } else {
+      appNoticeStore.clear();
       void appLockVoiceLifecycle.pauseForAppLock().catch(() => undefined);
       setLockState((current) => ({ ...current, unlocked: false }));
     }

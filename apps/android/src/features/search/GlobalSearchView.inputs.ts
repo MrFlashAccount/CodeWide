@@ -18,14 +18,14 @@ export type renderGlobalSearchViewInput = {
   filterError: string | null;
   filters: boolean;
   filterValue: SearchFilterValue;
-  nextPage: () => void;
+  loadMore: () => void;
+  notices: readonly ServerSearchResult[];
   pickDate: (field: SearchDateField) => void;
-  previousPage: () => void;
   props: SearchScreenProps;
   request: SearchRequest | null;
   resetFilters: () => void;
   resource: AsyncResourceSnapshot<readonly ServerSearchResult[]>;
-  results: SearchResultTarget[];
+  results: readonly SearchResultTarget[];
   saveOffset: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   search: () => void;
   selectCalendarDay: (day: string) => void;

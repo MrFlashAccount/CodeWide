@@ -181,18 +181,11 @@ export function completedActivityItemCount(turn: Thread["turns"][number]): numbe
   );
 }
 
-export function turnMetadataKinds(turn: Thread["turns"][number]): string[] {
-  const metadata = projectedTurnMetadata(turn);
-  if (metadata === null) {
-    return [];
-  }
-  return [
-    ...(metadata.plan === undefined ? [] : ["turnPlan"]),
-    ...(metadata.diff === undefined ? [] : ["turnDiff"]),
-  ];
-}
-
-export function turnActivityLabel(kinds: string[], compact = false): string {
+export function turnActivityLabel(
+  kinds: readonly string[],
+  compact = false,
+  count?: number,
+): string {
   const labels: string[] = [];
   if (kinds.some((kind) => kind === "fileChange" || kind === "turnDiff" || kind === "diff")) {
     labels.push("Edited files");
@@ -215,12 +208,14 @@ export function turnActivityLabel(kinds: string[], compact = false): string {
     const shortLabels = labels
       .slice(0, 2)
       .map((label) => (label === "coordinated agents" ? "agents" : label));
-    return `${shortLabels.length === 0 ? "Activity" : shortLabels.join(", ")} · ${String(kinds.length)}`;
+    return `${shortLabels.length === 0 ? "Activity" : shortLabels.join(", ")}${count === undefined ? "" : ` · ${String(count)}`}`;
   }
   if (labels.length === 0) {
-    return `${String(kinds.length)} ${kinds.length === 1 ? "activity" : "activities"}`;
+    return count === undefined
+      ? "Activity"
+      : `${String(count)} ${count === 1 ? "activity" : "activities"}`;
   }
-  return labels.join(", ");
+  return `${labels.join(", ")}${count === undefined ? "" : ` · ${String(count)}`}`;
 }
 
 export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number]): RenderBlock[] {
@@ -243,7 +238,11 @@ export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number])
       durationMs: null,
       key: `${scope}/${turn.id}/live-plan`,
       kind: "turnPlan",
-      raw: { explanation: metadata.plan.explanation, plan: metadata.plan.steps },
+      raw: {
+        explanation: metadata.plan.explanation,
+        id: "codewide:turnPlan",
+        plan: metadata.plan.steps,
+      },
       status: `${String(completed)}/${String(metadata.plan.steps.length)}`,
       title: "Plan",
       tone: "info",
@@ -257,7 +256,7 @@ export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number])
       durationMs: null,
       key: `${scope}/${turn.id}/live-diff`,
       kind: "turnDiff",
-      raw: { diff: metadata.diff },
+      raw: { diff: metadata.diff, id: "codewide:turnDiff" },
       status: null,
       title: "Turn diff",
       tone: "neutral",
@@ -285,13 +284,59 @@ const visibleAgentPartCache = new WeakMap<
   Extract<TurnSequencePart, { kind: "agent" }>,
   { body: string; value: Extract<TurnSequencePart, { kind: "agent" }> }
 >();
-/** Builds a turn's visible presentation from the retained projection and current search intent. */
+type TurnRow = Extract<TimelineItem, { kind: "turn" }>;
+
+// Timeline rows are retained immutable snapshots. A new turn revision gets a new row;
+// Keep only the same bounded working set as the other turn projections, even when
+// the history owner retains thousands of rows.
+const turnPreparationCache = new Map<TurnRow, ReturnType<typeof prepareTurnPresentation>>();
+
+/** Shares content preparation across slices while applying current action/search intent. */
 export function projectTurnPresentation(
-  turn: Extract<TimelineItem, { kind: "turn" }>,
+  turn: TurnRow,
   searchFocus: { itemId: string } | null,
   forkAvailable: boolean,
   hasPendingRequest: boolean,
 ) {
+  const prepared = turnPreparationCache.get(turn) ?? prepareTurnPresentation(turn);
+  turnPreparationCache.delete(turn);
+  turnPreparationCache.set(turn, prepared);
+  while (turnPreparationCache.size > TURN_PROJECTION_CACHE_MAX_ENTRIES) {
+    const oldest = turnPreparationCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    turnPreparationCache.delete(oldest);
+  }
+  const canForkThrough = turn.turn.status !== "inProgress" && forkAvailable;
+  return {
+    ...prepared,
+    canForkThrough,
+    hasAgentContent: prepared.hasAgentContent || hasPendingRequest,
+    searchedAgentBlock: searchAgentBlock(turn, searchFocus, prepared.latestAgentBlock),
+    showMessageActions: prepared.copyText !== "" || canForkThrough || prepared.canReviewResponse,
+  };
+}
+
+function searchAgentBlock(
+  turn: TurnRow,
+  searchFocus: { itemId: string } | null,
+  latestAgentBlock: RenderBlock | null,
+): RenderBlock | null {
+  if (searchFocus === null) {
+    return null;
+  }
+  const index = turn.turn.items.findIndex(
+    (item) => item.id === searchFocus.itemId && item.type === "agentMessage",
+  );
+  const item = turn.turn.items[index];
+  if (item === undefined || item.id === latestAgentBlock?.raw.id) {
+    return null;
+  }
+  return projectThreadItem(turn, item, index);
+}
+
+function prepareTurnPresentation(turn: TurnRow) {
   const rawTurn = turn.turn;
   const artifacts = retainAgentArtifacts(turn.key, projectAgentArtifacts(rawTurn));
   const {
@@ -302,20 +347,6 @@ export function projectTurnPresentation(
     renderWindow,
     userBlocks,
   } = projectTurnProjection(turn);
-  const searchMessageIndex =
-    searchFocus === null
-      ? -1
-      : rawTurn.items.findIndex(
-          (item) => item.id === searchFocus.itemId && item.type === "agentMessage",
-        );
-  const searchedAgentItem =
-    searchMessageIndex < 0 || searchMessageIndex === renderWindow.latestAgentIndex
-      ? undefined
-      : rawTurn.items[searchMessageIndex];
-  const searchedAgentBlock =
-    searchedAgentItem === undefined
-      ? null
-      : projectThreadItem(turn, searchedAgentItem, searchMessageIndex);
   const liveActivityEntries = renderWindow.liveActivityIndexes.flatMap(
     (itemIndex, projectionIndex) => {
       const block = liveActivityBlocks[projectionIndex];
@@ -353,7 +384,6 @@ export function projectTurnPresentation(
     (latestAgentBlock?.body ?? "").trim().length > 0 ||
     (latestAgentTextReference?.byteLength ?? 0) > 0;
   const copyText = latestAgentBlock?.body ?? "";
-  const canForkThrough = rawTurn.status !== "inProgress" && forkAvailable;
   const agentReviewTarget: ContentReviewTarget | null =
     latestAgentBlock === null || !hasGeneratedAgentResponse
       ? null
@@ -363,7 +393,6 @@ export function projectTurnPresentation(
           reference: latestAgentBlock.key,
         };
   const canReviewResponse = rawTurn.status !== "inProgress" && agentReviewTarget !== null;
-  const showMessageActions = copyText !== "" || canForkThrough || canReviewResponse;
   const hasQuestions =
     projectedQuestionHistory(rawTurn).length > 0 ||
     rawTurn.items.some(
@@ -403,14 +432,12 @@ export function projectTurnPresentation(
       : visibleLiveActivitySequence.length > 0 ||
         preTurnBlocks.length > 0 ||
         latestAgentBlock !== null) ||
-    hasPendingRequest ||
     showEmptyResponsePlaceholder ||
     artifacts.length > 0;
   return {
     agentBubbleFill,
     agentReviewTarget,
     artifacts,
-    canForkThrough,
     canReviewResponse,
     compactionBlocks,
     copyText,
@@ -420,9 +447,7 @@ export function projectTurnPresentation(
     liveMarkdownProjections,
     preTurnBlocks,
     rawTurn,
-    searchedAgentBlock,
     showEmptyResponsePlaceholder,
-    showMessageActions,
     userBlocks,
     visibleLiveActivitySequence,
   };

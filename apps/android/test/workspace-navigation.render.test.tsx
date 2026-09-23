@@ -181,6 +181,7 @@ it("presents an asynchronous Global Voice failure through the application notice
       expect(testNotice.show).toHaveBeenCalledWith({
         duration: 3000,
         label: "The live voice session ended unexpectedly.",
+        variant: "error",
       }),
     );
   } finally {
@@ -433,31 +434,39 @@ it("replaces the mobile thread list with global search instead of the conversati
 it.each([
   ["mobile", 400],
   ["desktop", 1_400],
-] as const)("keeps %s Threads and Search actions in one stable header row", (_mode, width) => {
+] as const)("keeps %s search below the fixed Threads header", (_mode, width) => {
   holdInitialDeepLink();
   resetMockRouter("/");
   setWindowSize(width, 800);
   const view = render(<V1RouteTree />);
   const threadsHeader = view.getByTestId("thread-list-header-row");
   const threadsHeaderStyle = StyleSheet.flatten(threadsHeader.props.style);
+  const orbSlot = view.getByTestId("global-voice-slot");
 
   expect(within(threadsHeader).getByText("Threads")).toBeTruthy();
-  expect(within(threadsHeader).getByLabelText("Search threads and messages")).toBeTruthy();
+  expect(within(threadsHeader).queryByLabelText("Search threads and messages")).toBeNull();
   expect(within(threadsHeader).getByLabelText(/Thread filters/u)).toBeTruthy();
-  expect(view.queryByText("Search")).toBeNull();
+  const searchRow = view.getByTestId("thread-search-row");
+  expect(within(searchRow).getByLabelText("Search threads and messages")).toBeTruthy();
 
-  fireEvent.press(within(threadsHeader).getByLabelText("Search threads and messages"));
+  fireEvent.press(within(searchRow).getByLabelText("Search threads and messages"));
 
   const searchHeader = view.getByTestId("global-search-header-row");
+  expect(view.getByTestId("thread-search-row", { includeHiddenElements: true })).toBe(searchRow);
+  expect(view.queryByTestId("global-voice-slot")).toBeNull();
+  expect(
+    within(searchHeader).queryByTestId("global-voice-orb", { includeHiddenElements: true }),
+  ).toBeNull();
   expect(StyleSheet.flatten(searchHeader.props.style)).toEqual(threadsHeaderStyle);
-  expect(within(searchHeader).getByText("Search")).toBeTruthy();
+  expect(view.getByTestId("search-overlay-panel")).toBeTruthy();
   expect(within(searchHeader).getByLabelText("Back to threads")).toBeTruthy();
   expect(within(searchHeader).getByLabelText("Search filters")).toBeTruthy();
   expect(
-    within(view.getByTestId("search-top-input")).queryByLabelText("Search filters"),
-  ).toBeNull();
+    within(view.getByTestId("search-top-input")).getByLabelText("Search filters"),
+  ).toBeTruthy();
 
   fireEvent.press(within(searchHeader).getByLabelText("Back to threads"));
+  expect(view.getByTestId("global-voice-slot")).toBe(orbSlot);
   expect(within(view.getByTestId("thread-list-header-row")).getByText("Threads")).toBeTruthy();
   setWindowSize(400, 800);
   view.unmount();
@@ -789,13 +798,15 @@ function ThreadLinkProbe({
   };
   const prepare = useEvent(() => navigation.prepareThreadLink(threadSelectionKey(thread)));
   return (
-    <ThreadRow
-      link={navigation.getThreadLink(thread)}
-      onNavigate={prepare}
-      selected={false}
-      server={undefined}
-      thread={thread}
-    />
+    <AppNoticeContext.Provider value={testNotice}>
+      <ThreadRow
+        link={navigation.getThreadLink(thread)}
+        onNavigate={prepare}
+        selected={false}
+        server={undefined}
+        thread={thread}
+      />
+    </AppNoticeContext.Provider>
   );
 }
 

@@ -64,7 +64,7 @@ export function SearchResultRow(props: ResultProps) {
     <Pressable accessibilityRole="button" onPress={select} style={styles.result}>
       <View style={styles.resultHeading}>
         <Text numberOfLines={1} style={styles.resultTitle}>
-          {props.target.hit.title === "" ? props.target.hit.threadId : props.target.hit.title}
+          {props.target.hit.title.trim() === "" ? "Untitled chat" : props.target.hit.title}
         </Text>
         <Text style={styles.caption}>{formatSearchTimestamp(props.target.hit.timestamp)}</Text>
       </View>

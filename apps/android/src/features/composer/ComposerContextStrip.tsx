@@ -13,6 +13,7 @@ type Props = Pick<
   | "readOnly"
   | "selectedModel"
   | "selectedEffort"
+  | "selectedServiceTier"
   | "selectedPersonality"
   | "selectedPermissions"
   | "controlError"
@@ -22,6 +23,7 @@ type Props = Pick<
   | "openControls"
   | "selectModel"
   | "selectEffort"
+  | "selectServiceTier"
   | "setSelectedPersonality"
   | "selectPermissions"
   | "toolContextChips"
@@ -41,9 +43,11 @@ export function ComposerContextStrip({
   selectedModel,
   selectedPermissions,
   selectedPersonality,
+  selectedServiceTier,
   selectEffort,
   selectModel,
   selectPermissions,
+  selectServiceTier,
   setSelectedPersonality,
   toolContextChips,
   workspaceResources,
@@ -68,6 +72,7 @@ export function ComposerContextStrip({
         selectedModel={selectedModel}
         selectedPermissions={selectedPermissions}
         selectedPersonality={selectedPersonality}
+        selectedServiceTier={selectedServiceTier}
         {...(onLoadControls === undefined ? {} : { load: onLoadControls })}
         onClose={closeQuickControlMenu}
         onFallback={openControls}
@@ -76,6 +81,7 @@ export function ComposerContextStrip({
         onSelectModel={selectModel}
         onSelectPermissions={selectPermissions}
         onSelectPersonality={setSelectedPersonality}
+        onSelectServiceTier={selectServiceTier}
       />
       {toolContextChips}
     </ScrollView>

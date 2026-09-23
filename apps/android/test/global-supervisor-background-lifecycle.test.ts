@@ -46,6 +46,13 @@ describe("Global Voice background lifecycle", () => {
       ),
       "utf8",
     );
+    const wakeLockOwnerSource = readFileSync(
+      new URL(
+        "../android/app/src/main/java/dev/codewide/app/remote/GlobalVoiceWakeLockOwner.kt",
+        import.meta.url,
+      ),
+      "utf8",
+    );
     const webRtcSessionSource = readFileSync(
       new URL("../src/native/globalSupervisorWebRtcSession.native.ts", import.meta.url),
       "utf8",
@@ -110,7 +117,19 @@ describe("Global Voice background lifecycle", () => {
     expect(captureHealthSource).toContain("GlobalVoiceCaptureHealthEventKind.INTERRUPTED");
     expect(serviceSource).toContain("Intent.ACTION_SCREEN_OFF");
     expect(serviceSource).toContain("GlobalVoiceForegroundModule.requestCaptureRecovery()\n");
-    expect(serviceSource).not.toContain("WakeLock");
+    expect(manifest).toContain("android.permission.WAKE_LOCK");
+    expect(serviceSource).toContain("wakeLockOwner.setActivationActive(hasOverlay)");
+    expect(serviceSource).toContain("wakeLockOwner.release()\n");
+    expect(wakeLockOwnerSource).toContain("PowerManager.PARTIAL_WAKE_LOCK");
+    expect(wakeLockOwnerSource).toContain('"CodeWide:GlobalVoice"');
+    expect(wakeLockOwnerSource).toContain("MAX_HOLD_MS");
+    expect(serviceSource).toContain("wakeLockHeld=");
+    const microphoneUpdate = serviceSource.slice(
+      serviceSource.indexOf("fun updateMicrophoneMuted"),
+      serviceSource.indexOf("fun acquire(", serviceSource.indexOf("fun updateMicrophoneMuted")),
+    );
+    expect(microphoneUpdate).not.toContain("wakeLockOwner");
+    expect(serviceSource).not.toContain("ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS");
     expect(webRtcSessionSource).toContain("setInterval(");
     expect(webRtcSessionSource).toContain("peer.getStats()");
     expect(webRtcSessionSource).toContain("options.options.onPlaybackLevel(");

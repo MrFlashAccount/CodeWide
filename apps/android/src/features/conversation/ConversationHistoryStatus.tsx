@@ -1,11 +1,12 @@
 /** V1 ConversationHistoryStatus owner, extracted without changing interaction or resource lifetime. */
+import { Ionicons } from "@expo/vector-icons";
 import { useSelector } from "@legendapp/state/react";
 import { ActivityIndicator, View } from "react-native";
 import type { ThreadChatModel } from "../../data/thread-chat-model";
 import type { ThreadHistoryModel } from "../../data/thread-history-model";
 import { threadContextLabel } from "../../data/thread-projects";
 import { useThreadHistoryActivity } from "../../data/use-thread-history";
-import { colors } from "../../theme";
+import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import {
   connectionActivityColor,
@@ -57,24 +58,40 @@ export function ConversationBackendRefreshIndicator({
   model: ThreadChatModel | null;
   threadId: string | null;
 }) {
-  const refreshing = useSelector(() => {
+  const activity = useSelector(() => {
     if (model === null || connectionId === null || threadId === null) {
-      return false;
+      return { refreshing: false, retrying: false };
     }
-    return model.window$(connectionId, threadId).backendRefreshing.get();
+    const window = model.window$(connectionId, threadId);
+    return {
+      refreshing: window.backendRefreshing.get(),
+      retrying: window.status.get() === "background-retrying",
+    };
   });
-  if (!refreshing) {
-    return null;
+  if (activity.refreshing) {
+    return (
+      <ActivityIndicator
+        accessibilityLabel="Updating conversation from server"
+        color={colors.amber}
+        size="small"
+        style={styles.conversationBackendRefreshIndicator}
+        testID="conversation-backend-refresh-indicator"
+      />
+    );
   }
-  return (
-    <ActivityIndicator
-      accessibilityLabel="Updating conversation from server"
-      color={colors.amber}
-      size="small"
-      style={styles.conversationBackendRefreshIndicator}
-      testID="conversation-backend-refresh-indicator"
-    />
-  );
+  if (activity.retrying) {
+    return (
+      <Ionicons
+        accessibilityLabel="Showing cached conversation; update delayed"
+        accessibilityRole="image"
+        color={colors.amber}
+        name="cloud-offline-outline"
+        size={iconSize.action}
+        testID="conversation-backend-refresh-delayed"
+      />
+    );
+  }
+  return null;
 }
 
 export function ThreadHistoryLoadingIndicator({

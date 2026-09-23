@@ -65,7 +65,7 @@ describe("conversation-owned message actions", () => {
     expect(nativeMenu).not.toContain("requestAnimationFrame");
     expect(nativeMenu).not.toContain("Menu.Portal");
     expect(codeWideMenu).toContain('<Host colorScheme="dark" matchContents');
-    expect(codeWideMenu).toContain("<RNHostView matchContents>{children}</RNHostView>");
+    expect(codeWideMenu).toContain("<RNHostView matchContents>{trigger}</RNHostView>");
     // The trigger bounds must come from the RN host, not a synthetic Compose anchor.
     const trigger = codeWideMenu.match(
       /<DropdownMenu.Trigger>[\s\S]*?<\/DropdownMenu.Trigger>/u,

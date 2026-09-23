@@ -4,6 +4,7 @@ import { View } from "react-native";
 
 import { ThreadRow } from "../src/features/threadList/ThreadRow";
 import type { ThreadListItem } from "../src/features/threadList/threadListTypes";
+import { AppNoticeContext } from "../src/ui/appNoticeContext";
 
 // WHY: Node cannot compose Android popups. Keep the real row and CodeWideMenu;
 // expose only the native host, popup dismissal and menu-item selection boundary.
@@ -88,20 +89,22 @@ const press = jest.fn();
 const pin = jest.fn(async () => undefined);
 function row(item = thread, onPin = pin) {
   return (
-    <ThreadRow
-      link={{
-        dismissTo: false,
-        href: {
-          pathname: "/threads/[connectionId]/[threadId]",
-          params: { connectionId: "server", threadId: "first" },
-        },
-      }}
-      onNavigate={press}
-      onTogglePin={onPin}
-      selected={false}
-      server={undefined}
-      thread={item}
-    />
+    <AppNoticeContext.Provider value={{ show: jest.fn() }}>
+      <ThreadRow
+        link={{
+          dismissTo: false,
+          href: {
+            pathname: "/threads/[connectionId]/[threadId]",
+            params: { connectionId: "server", threadId: "first" },
+          },
+        }}
+        onNavigate={press}
+        onTogglePin={onPin}
+        selected={false}
+        server={undefined}
+        thread={item}
+      />
+    </AppNoticeContext.Provider>
   );
 }
 
@@ -114,24 +117,26 @@ beforeEach(() => {
 
 it("mounts no Compose hosts or popup items for idle rows, including overscan", () => {
   const view = render(
-    <View>
-      {Array.from({ length: 24 }, (_, index) => (
-        <ThreadRow
-          key={index}
-          link={{
-            dismissTo: false,
-            href: {
-              pathname: "/threads/[connectionId]/[threadId]",
-              params: { connectionId: "server", threadId: "first" },
-            },
-          }}
-          onNavigate={press}
-          selected={false}
-          server={undefined}
-          thread={{ ...thread, id: String(index) }}
-        />
-      ))}
-    </View>,
+    <AppNoticeContext.Provider value={{ show: jest.fn() }}>
+      <View>
+        {Array.from({ length: 24 }, (_, index) => (
+          <ThreadRow
+            key={index}
+            link={{
+              dismissTo: false,
+              href: {
+                pathname: "/threads/[connectionId]/[threadId]",
+                params: { connectionId: "server", threadId: "first" },
+              },
+            }}
+            onNavigate={press}
+            selected={false}
+            server={undefined}
+            thread={{ ...thread, id: String(index) }}
+          />
+        ))}
+      </View>
+    </AppNoticeContext.Provider>,
   );
   // The idle-row native-host budget is zero regardless of the virtualizer's pool size.
   expect(view.queryAllByTestId("compose-host")).toHaveLength(0);
@@ -147,7 +152,7 @@ it("opens from the real row, preserves its instance, selects and removes the pop
   fireEvent(trigger, "longPress");
   expect(view.getAllByTestId("compose-host")).toHaveLength(1);
   expect(view.getByRole("link", { name: "Thread actions" })).toBe(trigger);
-  fireEvent(within(view.getByTestId("native-popup")).getByText("Pin"), "touchEnd");
+  fireEvent.press(within(view.getByTestId("native-popup")).getByRole("menuitem", { name: "Pin" }));
   expect(pin).toHaveBeenCalledTimes(1);
   expect(view.queryByTestId("compose-host")).toBeNull();
   expect(view.getByRole("link", { name: "Thread actions" })).toBe(trigger);
@@ -156,7 +161,7 @@ it("opens from the real row, preserves its instance, selects and removes the pop
 it("honors disabled actions and native dismissal without dispatching", () => {
   const view = render(row());
   fireEvent(view.getByRole("link", { name: "Thread actions" }), "longPress");
-  fireEvent(view.getByText("Mark as read"), "touchEnd");
+  fireEvent.press(view.getByRole("menuitem", { name: "Mark as read" }));
   expect(view.getByTestId("native-popup")).toBeTruthy();
   fireEvent(view.getByTestId("native-popup"), "touchCancel");
   expect(view.queryByTestId("compose-host")).toBeNull();
@@ -167,7 +172,7 @@ it("discards an open menu when the virtualizer reuses a row for another thread",
   const secondPin = jest.fn(async () => undefined);
   const view = render(row());
   fireEvent(view.getByRole("link", { name: "Thread actions" }), "longPress");
-  const staleItem = view.getByRole("menuitem", { name: /Pin/ }).props.onTouchEnd;
+  const staleItem = view.getByRole("menuitem", { name: "Pin" });
   view.rerender(row({ ...thread, id: "second", title: "Second chat" }, secondPin));
   expect(view.queryByTestId("compose-host")).toBeNull();
   view.rerender(row());
@@ -175,7 +180,7 @@ it("discards an open menu when the virtualizer reuses a row for another thread",
   expect(secondPin).not.toHaveBeenCalled();
   // A retired native popup must not dispatch after the row has been rebound.
   act(() => {
-    staleItem();
+    fireEvent.press(staleItem);
   });
   expect(pin).not.toHaveBeenCalled();
 });

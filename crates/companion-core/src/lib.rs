@@ -1,4 +1,6 @@
 pub mod account_pool;
+mod activity_metrics;
+mod activity_metrics_live;
 pub mod auth;
 pub mod build_shelf;
 pub mod catalog;

@@ -232,7 +232,7 @@ describe("conversation transition parity", () => {
     expect(pane).not.toContain("useThreadResources(");
     expect(toolsOwner).toContain("<ThreadResourceContextChips");
     expect(ownerThreadResourceContextChips).toContain(
-      "const requestedScope = preferences.scope ?? undefined;",
+      "preferences.scope !== null && isSelectableChangeScope(preferences.scope)",
     );
     expect(ownerThreadResourceContextChips).toContain("async () => load(requestedScope)");
     expect(ownerThreadResourceContextChips).toContain(

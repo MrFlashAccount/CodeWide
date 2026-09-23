@@ -1,9 +1,11 @@
+import { parseActivityFootprint, parseActivityMetrics, type ActivityMetrics } from "./activity-metrics";
 import type { Thread, ThreadItem, Turn, TurnPlanStep } from "@codewide/codex-protocol/v0.155.1/v2";
 
 import { reconcileActiveTurnItems, reconcileTurnItems } from "./thread-items";
 import { appendCommandOutputReference } from "./command-output";
 
 export type ProjectedTurnMetadata = {
+  activityMetrics?: ActivityMetrics;
   questions?: readonly import("./question-history").QuestionHistory[];
   usage?: TurnUsageProjection;
   diff?: string;
@@ -23,37 +25,6 @@ export type OutputFootprintProjection = {
   bytes: number;
   estimatedTokens: number;
 };
-
-export function projectedOutputFootprint(value: unknown): OutputFootprintProjection | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const candidate = value as Record<string, unknown>;
-  const bytes = candidate.bytes;
-  const estimatedTokens = candidate.estimatedTokens;
-  if (candidate.version !== 1
-    || candidate.basis !== "approxBytesPerToken"
-    || typeof bytes !== "number"
-    || !Number.isSafeInteger(bytes)
-    || bytes < 0
-    || typeof estimatedTokens !== "number"
-    || !Number.isSafeInteger(estimatedTokens)
-    || estimatedTokens < 0) return null;
-  return { version: 1, basis: "approxBytesPerToken", bytes, estimatedTokens };
-}
-
-export function sumOutputFootprints(values: readonly unknown[]): OutputFootprintProjection | null {
-  const total = values.reduce<{ bytes: number; estimatedTokens: number }>((sum, value) => {
-    const footprint = projectedOutputFootprint(value);
-    return footprint === null
-      ? sum
-      : {
-          bytes: Math.min(Number.MAX_SAFE_INTEGER, sum.bytes + footprint.bytes),
-          estimatedTokens: Math.min(Number.MAX_SAFE_INTEGER, sum.estimatedTokens + footprint.estimatedTokens),
-        };
-  }, { bytes: 0, estimatedTokens: 0 });
-  return total.bytes === 0 && total.estimatedTokens === 0
-    ? null
-    : { version: 1, basis: "approxBytesPerToken", ...total };
-}
 
 export type UsageTokenCounts = {
   totalTokens: number;
@@ -101,6 +72,7 @@ type ProjectedThreadMetadata = {
   executionSettings?: {
     model: string;
     effort: string | null;
+    serviceTier: string | null | undefined;
     permissions: string | null;
     approvalPolicy: string | null;
     sandboxPolicy: string | null;
@@ -272,6 +244,20 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
     appendReasoning(thread, params.turnId, params.itemId, params.summaryIndex ?? params.contentIndex, params.delta, params.field);
   }
   else changed = false;
+  const footprint = parseActivityFootprint(params.codewideOutputFootprint);
+  if (footprint !== null && typeof params.turnId === "string" && typeof params.itemId === "string") {
+    const item = itemInTurn(thread, params.turnId, params.itemId);
+    if (item !== null && item !== undefined) Object.assign(item, { codewideOutputFootprint: footprint });
+  }
+  const metrics = parseActivityMetrics(params.activityMetrics);
+  const metricsTurnId = params.turnId ?? asObject(params.turn)?.id;
+  if (metrics !== null && typeof metricsTurnId === "string") {
+    metadataForTurn(thread, metricsTurnId).activityMetrics = metrics;
+    changed = true;
+  } else if (params.activityMetrics === null && typeof metricsTurnId === "string") {
+    delete metadataForTurn(thread, metricsTurnId).activityMetrics;
+    changed = true;
+  }
   if (changed) thread.updatedAt = Math.max(thread.updatedAt, Math.floor(Date.now() / 1000));
   return changed;
 }
@@ -363,10 +349,18 @@ export function projectedThreadExecutionSettings(thread: Thread): ProjectedThrea
   const direct = "model" in thread;
   const model = direct ? thread.model : settings?.model;
   const effort = direct ? ("reasoningEffort" in thread ? thread.reasoningEffort : null) : settings?.effort;
+  const directServiceTier = asObject(thread)?.serviceTier;
+  const hasDirectServiceTier = "serviceTier" in thread;
   if (typeof model !== "string" || model.length === 0) return null;
   return {
     model,
     effort: typeof effort === "string" ? effort : null,
+    serviceTier:
+      hasDirectServiceTier
+        ? (typeof directServiceTier === "string" ? directServiceTier : null)
+        : settings !== null && "serviceTier" in settings
+          ? (typeof settings.serviceTier === "string" ? settings.serviceTier : null)
+          : undefined,
     permissions: typeof settings?.permissions === "string" ? settings.permissions : null,
     approvalPolicy: typeof settings?.approvalPolicy === "string" ? settings.approvalPolicy : null,
     sandboxPolicy: typeof settings?.sandboxPolicy === "string" ? settings.sandboxPolicy : null,
@@ -379,17 +373,23 @@ export function seedThreadExecutionSettings(
   settings: {
     model: string;
     effort: string | null;
+    serviceTier?: string | null;
     permissions: string | null;
     approvalPolicy?: string | null;
     sandboxPolicy?: string | null;
   },
 ): Thread {
-  Object.assign(thread, { model: settings.model, reasoningEffort: settings.effort });
+  Object.assign(thread, {
+    model: settings.model,
+    reasoningEffort: settings.effort,
+    ...(settings.serviceTier === undefined ? {} : { serviceTier: settings.serviceTier }),
+  });
   const projected = thread as ProjectedThread;
   projected.codewide ??= {};
   const previous = projected.codewide.executionSettings;
   projected.codewide.executionSettings = structuredClone({
     ...settings,
+    serviceTier: settings.serviceTier,
     approvalPolicy: settings.approvalPolicy ?? previous?.approvalPolicy ?? null,
     sandboxPolicy: settings.sandboxPolicy ?? previous?.sandboxPolicy ?? null,
   });
@@ -435,6 +435,7 @@ function updateThreadSettings(thread: Thread, value: unknown): void {
   seedThreadExecutionSettings(thread, {
     model: settings.model,
     effort: typeof settings.effort === "string" ? settings.effort : null,
+    serviceTier: typeof settings.serviceTier === "string" ? settings.serviceTier : null,
     permissions: typeof activePermissionProfile?.id === "string" ? activePermissionProfile.id : null,
     approvalPolicy: approvalPolicyName(settings.approvalPolicy),
     sandboxPolicy: sandboxPolicyName(settings.sandboxPolicy),

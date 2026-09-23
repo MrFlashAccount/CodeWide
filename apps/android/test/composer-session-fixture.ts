@@ -14,6 +14,7 @@ export const TEST_COMPOSER_PREFERENCES: StoredComposerPreferences = {
   permissions: null,
   personality: null,
   sendMode: "start",
+  serviceTier: undefined,
   skillPaths: [],
 };
 

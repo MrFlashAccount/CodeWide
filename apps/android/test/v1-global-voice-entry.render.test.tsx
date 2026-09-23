@@ -1,7 +1,7 @@
-import { act, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { StyleSheet } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import { GlobalVoiceEntryAction } from "../src/features/threadList/GlobalVoiceEntryAction";
 import { writeGlobalVoiceOrbStylePreference } from "../src/data/globalVoiceOrbStylePreference";
@@ -31,11 +31,11 @@ it("hands the idle header orb off and removes the duplicate while the session is
     "disabled",
   );
   expect(visibleSlotWidth).toBeGreaterThan(0);
-  expect(view.getByTestId("global-voice-orb-motion").props.entering).toBeDefined();
+  expect(view.getByTestId("global-voice-slot").props.layout).toBeUndefined();
   view.rerender(
     <GlobalVoiceEntryAction state="starting" orbState="connecting" onToggle={onToggle} />,
   );
-  expect(StyleSheet.flatten(view.getByTestId("global-voice-slot").props.style).width).toBe(0);
+  expect(StyleSheet.flatten(view.getByTestId("global-voice-slot").props.style).width).toBe(visibleSlotWidth);
   expect(view.queryByTestId("global-voice-orb", { includeHiddenElements: true })).toBeNull();
   expect(view.getByTestId("global-voice-orb-anchor", { includeHiddenElements: true })).toBeTruthy();
   expect(view.queryByRole("button")).toBeNull();
@@ -59,6 +59,32 @@ it.each(["starting", "active", "reconnecting", "stopping"] as const)(
     expect(view.queryByRole("button")).toBeNull();
   },
 );
+
+it("does not animate mounting, ordinary layout changes or remounting after navigation", () => {
+  const onToggle = jest.fn();
+  let view = render(<GlobalVoiceEntryAction state="idle" orbState="idle" onToggle={onToggle} />);
+  const orb = view.getByTestId("global-voice-orb", { includeHiddenElements: true });
+  for (const y of [100, 0, 160]) {
+    fireEvent(view.getByTestId("global-voice-slot"), "layout", {
+      nativeEvent: { layout: { x: 200, y, width: 48, height: 48 } },
+    });
+    expect(view.getByTestId("global-voice-orb", { includeHiddenElements: true })).toBe(orb);
+  }
+  expect(onToggle).not.toHaveBeenCalled();
+  // Spatial animation is explicitly forbidden on every header wrapper, not only on the orb.
+  for (const node of view.UNSAFE_getAllByType(View)) {
+    expect(node.props.layout).toBeUndefined();
+    expect(node.props.entering).toBeUndefined();
+    expect(node.props.exiting).toBeUndefined();
+  }
+  view.unmount();
+  view = render(<GlobalVoiceEntryAction state="idle" orbState="idle" onToggle={onToggle} />);
+  for (const node of view.UNSAFE_getAllByType(View)) {
+    expect(node.props.entering).toBeUndefined();
+    expect(node.props.exiting).toBeUndefined();
+  }
+  view.unmount();
+});
 
 it("returns the failed orb to its muted inactive appearance after three seconds", () => {
   jest.useFakeTimers();
@@ -88,11 +114,11 @@ it("returns the failed orb to its muted inactive appearance after three seconds"
   }
 });
 
-it("places the assistant before search so its active placeholder stays next to the title", () => {
+it("keeps the assistant in the title row above search", () => {
   for (const file of ["MobileThreadsHeader.tsx", "ThreadSidebarHeader.tsx"]) {
     const source = readFileSync(join(__dirname, `../src/features/threadList/${file}`), "utf8");
     expect(source.indexOf("<GlobalVoiceEntryAction")).toBeLessThan(
-      source.indexOf('accessibilityLabel="Search threads and messages"'),
+      source.indexOf("<ThreadListSearchRow onOpenSearch={onOpenSearch} />"),
     );
   }
 });

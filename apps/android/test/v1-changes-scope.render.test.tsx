@@ -8,7 +8,7 @@ import type {
 import { ThreadResourceContextChips } from "../src/features/changes/ThreadResourceContextChips";
 import type { ChangesPreferences } from "../src/features/changes/changePresentation";
 
-const SCOPES: ThreadChangeScope[] = ["session", "lastTurn", "staged", "unstaged", "branch"];
+const SCOPES: ThreadChangeScope[] = ["session", "uncommitted", "branch"];
 
 function preferences(scope: ThreadChangeScope): ChangesPreferences {
   return { mode: "unified", scope, wrapLines: false };
@@ -66,7 +66,7 @@ it("reloads and displays the selected Changes scope without remounting", async (
   await waitFor(() => expect(calls).toEqual(["branch"]));
   expect(
     view.getByRole("button", {
-      name: "No changes, Branch. Long press to choose changes scope.",
+      name: "Changes, Branch · 0. Long press to choose changes scope.",
     }),
   ).toBeVisible();
 
@@ -75,7 +75,7 @@ it("reloads and displays the selected Changes scope without remounting", async (
   await waitFor(() => expect(calls).toEqual(["branch", "session"]));
   expect(
     view.getByRole("button", {
-      name: "Changes · 1, Session. Long press to choose changes scope.",
+      name: "Changes, Session · 1. Long press to choose changes scope.",
     }),
   ).toBeVisible();
 });

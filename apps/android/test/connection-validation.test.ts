@@ -42,6 +42,21 @@ describe("connection input validation", () => {
     });
   });
 
+  it("accepts a route-qualified Relay carrier and rejects malformed cleartext routes", () => {
+    const route = "a".repeat(64);
+    const input = {
+      displayName: "Relay",
+      emoji: "🖥️",
+      endpoint: `ws://45.142.36.65:8780/c/${route}/v1/sync`,
+      token: "a".repeat(43),
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+    };
+    expect(validateConnectionInput(input).endpoint).toBe(input.endpoint);
+    expect(() => validateConnectionInput({ ...input, endpoint: "ws://45.142.36.65:8780/v1/sync" })).toThrow("wss://");
+    expect(() => validateConnectionInput({ ...input, endpoint: "ws://45.142.36.65:8780/c/short/v1/sync" })).toThrow("wss://");
+    expect(() => validateConnectionInput({ ...input, endpoint: `ws://45.142.36.65:8780/c/${route}/v1/other` })).toThrow("wss://");
+  });
+
   it("rejects every profile without a companion identity pin", () => {
     expect(() => validateConnectionInput({
       displayName: "Unpinned ingress",

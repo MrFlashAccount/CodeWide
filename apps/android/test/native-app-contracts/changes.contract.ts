@@ -21,7 +21,7 @@ it("preserves changes integration contracts", () => {
   expect(migratedThreadResourceContextChips).toContain("{!attachmentsUnavailable && (");
   expect(
     sourceHasJsxElement(migratedThreadResourceContextChips, "ComposerContextCount", [
-      'label="Changes"',
+      "label={scopeTitle}",
       'testID="composer-changes-label"',
       "value={changeCount}",
     ]),

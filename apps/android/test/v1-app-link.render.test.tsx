@@ -4,6 +4,7 @@ import { ThreadRow } from "../src/features/threadList/ThreadRow";
 import { Pressable } from "react-native-gesture-handler";
 import { linkTo } from "expo-router/build/global-state/routing";
 import { AppLink } from "../src/ui/AppLink";
+import { AppNoticeContext } from "../src/ui/appNoticeContext";
 
 // Exercise Expo's actual href resolution, Slot and native event composition;
 // substitute only the router dispatch boundary, which requires a NavigationContainer.
@@ -56,26 +57,28 @@ it.each([false, true])(
 
 it("retains row geometry and selection styling through the real Link Slot", () => {
   const view = render(
-    <ThreadRow
-      link={{
-        dismissTo: false,
-        href: {
-          pathname: "/threads/[connectionId]/[threadId]",
-          params: { connectionId: "server", threadId: "thread" },
-        },
-      }}
-      onNavigate={jest.fn()}
-      selected
-      server={undefined}
-      thread={{
-        id: "thread",
-        serverId: "server",
-        title: "Thread",
-        preview: "",
-        pinned: false,
-        unread: 0,
-      }}
-    />,
+    <AppNoticeContext.Provider value={{ show: jest.fn() }}>
+      <ThreadRow
+        link={{
+          dismissTo: false,
+          href: {
+            pathname: "/threads/[connectionId]/[threadId]",
+            params: { connectionId: "server", threadId: "thread" },
+          },
+        }}
+        onNavigate={jest.fn()}
+        selected
+        server={undefined}
+        thread={{
+          id: "thread",
+          serverId: "server",
+          title: "Thread",
+          preview: "",
+          pinned: false,
+          unread: 0,
+        }}
+      />
+    </AppNoticeContext.Provider>,
   );
   const style = StyleSheet.flatten(view.getByRole("link").props.style);
   expect(style.height).toBeGreaterThan(0);

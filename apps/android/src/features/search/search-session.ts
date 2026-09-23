@@ -1,13 +1,22 @@
-import { observable } from "@legendapp/state";
+import { batch, observable } from "@legendapp/state";
 
 import { searchDateBoundary } from "../../data/message-search";
 import type { SearchFilterValue } from "./SearchFilters";
+import { SearchResultFeed } from "./searchResultFeed";
+import type { ServerSearchResult } from "./searchResultTypes";
 
-export interface SearchRequest extends SearchFilterValue {
-  readonly page: number;
+type SearchRequestBase = SearchFilterValue & {
   readonly revision: number;
   readonly text: string;
-}
+};
+
+export type SearchRequest =
+  | (SearchRequestBase & { readonly kind: "initial" })
+  | (SearchRequestBase & {
+      readonly kind: "continuation";
+      readonly offsets: Readonly<Record<string, number>>;
+      readonly page: number;
+    });
 
 /** Owned by the workspace, not the sidebar: opening a mobile chat must not reset search. */
 export class SearchSession {
@@ -21,8 +30,10 @@ export class SearchSession {
   });
   readonly request$ = observable<SearchRequest | null>(null);
   readonly error$ = observable<string | null>(null);
+  readonly results = new SearchResultFeed();
   scrollOffset = 0;
   private focusRequested = true;
+  private loadingPage = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   readonly id: string;
@@ -35,8 +46,12 @@ export class SearchSession {
     this.text$.set(text);
     this.cancelPending();
     if (text.trim() === "") {
-      this.request$.set(null);
+      this.loadingPage = false;
       this.scrollOffset = 0;
+      batch(() => {
+        this.results.reset();
+        this.request$.set(null);
+      });
       return;
     }
     this.timer = setTimeout(() => {
@@ -64,22 +79,47 @@ export class SearchSession {
     }
     this.error$.set(null);
     this.scrollOffset = 0;
-    this.request$.set({
-      ...filters,
-      page: 0,
-      revision: (this.request$.peek()?.revision ?? 0) + 1,
-      text,
+    this.loadingPage = true;
+    batch(() => {
+      const revision = (this.request$.peek()?.revision ?? 0) + 1;
+      this.results.reset();
+      this.request$.set({ ...filters, kind: "initial", revision, text });
     });
     return true;
   }
 
-  changePage(delta: number): void {
+  loadMore(): boolean {
     const request = this.request$.peek();
-    if (request === null) {
+    const results = this.results.snapshot$.peek();
+    if (
+      request === null ||
+      this.loadingPage ||
+      results.loadedPage !== (request.kind === "initial" ? 0 : request.page) ||
+      Object.keys(results.nextOffsets).length === 0
+    ) {
+      return false;
+    }
+    this.loadingPage = true;
+    this.request$.set({
+      ...request,
+      kind: "continuation",
+      offsets: results.nextOffsets,
+      page: results.loadedPage + 1,
+    });
+    return true;
+  }
+
+  acceptPage(request: SearchRequest, serverResults: readonly ServerSearchResult[]): void {
+    const current = this.request$.peek();
+    const page = request.kind === "initial" ? 0 : request.page;
+    if (
+      current?.revision !== request.revision ||
+      (current.kind === "initial" ? 0 : current.page) !== page
+    ) {
       return;
     }
-    this.scrollOffset = 0;
-    this.request$.set({ ...request, page: Math.max(0, request.page + delta) });
+    this.results.append(page, serverResults);
+    this.loadingPage = false;
   }
 
   cancelPending(): void {

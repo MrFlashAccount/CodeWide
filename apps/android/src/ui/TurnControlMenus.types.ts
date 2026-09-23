@@ -7,6 +7,7 @@ type ModelControl = {
   efforts: string[];
   id: string;
   label: string;
+  serviceTiers?: readonly { description: string; id: string; name: string }[];
   supportsPersonality: boolean;
 };
 
@@ -32,9 +33,11 @@ export type ModelThinkingMenuProps = TriggerProps & {
   onSelectEffort: (effort: string) => void;
   onSelectModel: (model: string, effort: string) => void;
   onSelectPersonality: (personality: Personality | null) => void;
+  onSelectServiceTier: (serviceTier: string) => void;
   selectedEffort: string | null;
   selectedModel: string | null;
   selectedPersonality: Personality | null;
+  selectedServiceTier: string | null;
 };
 
 export type PermissionsMenuProps = TriggerProps & {

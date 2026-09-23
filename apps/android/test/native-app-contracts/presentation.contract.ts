@@ -5,6 +5,7 @@ import {
   appSheet,
   appFullscreenModal,
   turnControlMenus,
+  modelThinkingSheet,
   actionMenu,
   messageActionMenu,
   appDialog,
@@ -44,10 +45,12 @@ it("preserves presentation integration contracts", () => {
   );
   expect(appSheet).toContain("export function AppSheetScrollView");
   expect(appFullscreenModal).toContain('presentationStyle="fullScreen"');
-  expect(turnControlMenus).toContain('section: "Model"');
-  expect(turnControlMenus).toContain('section: "Thinking level"');
+  expect(turnControlMenus).toContain("ModelThinkingSheet as ModelThinkingMenu");
+  expect(modelThinkingSheet).toContain("<AppSheet");
+  expect(modelThinkingSheet).toContain("<ModelListPage");
+  expect(modelThinkingSheet).toContain("<ThinkingSlider");
+  expect(modelThinkingSheet).toContain("<PersonalityChoices");
   expect(turnControlMenus).toContain('section: "Security permissions"');
-  expect(turnControlMenus).toContain('section: "Personality"');
   expect(turnControlMenus).toContain("<ActionMenu");
   expect(turnControlMenus).not.toContain("heroui-native/menu");
   expect(turnControlMenus).not.toContain("heroui-native/sub-menu");

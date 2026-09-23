@@ -7,6 +7,7 @@ export interface AppNoticeRequest {
   readonly icon?: ReactNode;
   readonly label: string;
   readonly onActionPress?: () => void;
+  readonly variant?: "default" | "success" | "error" | "warning" | "info";
 }
 
 export interface AppNoticeController {

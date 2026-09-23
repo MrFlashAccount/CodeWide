@@ -69,6 +69,7 @@ describe("document preview", () => {
     expect(remoteFileKind("CMakeLists.txt", "/repo/CMakeLists.txt")).toBe("text");
     expect(remoteFileKind(".gitignore", "/repo/.gitignore")).toBe("text");
     expect(remoteFileKind("screen.PNG", "/repo/screen.PNG")).toBe("image");
+    expect(remoteFileKind("diagram.svg", "/repo/diagram.svg")).toBe("image");
     expect(remoteFileKind("archive.zip", "/repo/archive.zip")).toBe("download");
   });
 

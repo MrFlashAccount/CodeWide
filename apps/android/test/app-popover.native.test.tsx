@@ -66,7 +66,7 @@ it("keeps its anchor mounted and forwards open, dismissal, live data and body ac
   fireEvent.press(result.getByLabelText("Open usage"));
   expect(originalPress).toHaveBeenCalledTimes(1);
   expect(result.getByTestId("compose-menu").props.expanded).toBe(true);
-  expect(result.getByTestId("compose-menu").props.cornerRadius).toBe(radii.selected);
+  expect(result.getByTestId("compose-menu").props.cornerRadius).toBe(radii.menu);
   expect(result.getByText("10 tokens")).toBeVisible();
   fireEvent.press(result.getByLabelText("Body action"));
   expect(bodyAction).toHaveBeenCalledTimes(1);

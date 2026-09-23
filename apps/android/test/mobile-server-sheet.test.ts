@@ -191,19 +191,19 @@ describe("unified thread filters", () => {
     }
   });
 
-  it("keeps title, Voice, Search, filters and overflow in one ordered header row", () => {
+  it("keeps title, Voice, filters and overflow above the search row", () => {
     for (const body of [sidebarHeader, mobileHeader]) {
       const row = body.indexOf("<ThreadListHeaderRow");
       const header = body.indexOf("<SidebarProjectHeader");
-      const search = body.indexOf('accessibilityLabel="Search threads and messages"');
+      const search = body.indexOf("<ThreadListSearchRow onOpenSearch={onOpenSearch} />");
       const filter = body.indexOf("<ThreadFilterMenu");
       const voice = body.indexOf("<GlobalVoiceEntryAction");
       const overflow = body.indexOf("<ThreadListMenu");
       expect(header).toBeGreaterThan(row);
       expect(voice).toBeGreaterThan(header);
-      expect(search).toBeGreaterThan(voice);
-      expect(filter).toBeGreaterThan(search);
+      expect(filter).toBeGreaterThan(voice);
       expect(overflow).toBeGreaterThan(filter);
+      expect(search).toBeGreaterThan(overflow);
       expect(body.slice(header + 1)).not.toContain("<SidebarProjectHeader");
       expect(body).not.toContain("threadSearchRow");
       expect(body).not.toContain("mobileSearchWrap");

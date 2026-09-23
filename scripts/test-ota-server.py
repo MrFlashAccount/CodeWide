@@ -164,8 +164,53 @@ class ArtifactTransportTest(unittest.TestCase):
 class OtaServerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        catalog = SERVER_MODULE.ArtifactCatalog(REPO_ROOT)
-        ota_catalog = SERVER_MODULE.OtaCatalog(REPO_ROOT)
+        # Endpoint tests own their signed fixture; release retention must not affect them.
+        directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(directory.cleanup)
+        repo_root = Path(directory.name)
+        private_key = repo_root / "test-key.pem"
+        subprocess.run(
+            ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+             "-out", str(private_key)],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        cls.public_key = subprocess.run(
+            ["openssl", "pkey", "-in", str(private_key), "-pubout"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ).stdout
+        runtime = "0.1.5-native-8"
+        update_id = "8b1c9491-85e2-416b-b2e5-93b00eac2fae"
+        created_at = "2026-01-01T00:00:00.000Z"
+        release_root = repo_root / "builds/ota" / runtime / update_id
+        release_root.mkdir(parents=True)
+        asset = b"console.log('OTA integration fixture');\n"
+        (release_root / "entry.js").write_bytes(asset)
+        manifest = {
+            "id": update_id,
+            "createdAt": created_at,
+            "runtimeVersion": runtime,
+            "assets": [],
+            "launchAsset": {
+                "url": f"https://updates.example.invalid/api/updates/assets/{runtime}/{update_id}/entry.js",
+                "hash": base64.urlsafe_b64encode(hashlib.sha256(asset).digest()).decode().rstrip("="),
+            },
+        }
+        for name, payload in [("manifest", manifest), ("no-update", {"type": "noUpdateAvailable"})]:
+            body = json.dumps(payload).encode()
+            (release_root / f"{name}.json").write_bytes(body)
+            signature = subprocess.run(
+                ["openssl", "dgst", "-sha256", "-sign", str(private_key)],
+                input=body, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            ).stdout
+            (release_root / f"{name}.sig").write_text(base64.b64encode(signature).decode(), encoding="utf-8")
+        (release_root / "release.json").write_text(json.dumps({
+            "updateId": update_id, "runtimeVersion": runtime, "createdAt": created_at,
+        }), encoding="utf-8")
+        (release_root / "metadata.json").write_text(json.dumps({
+            "fileMetadata": {"android": {"bundle": "entry.js", "assets": []}},
+        }), encoding="utf-8")
+        catalog = SERVER_MODULE.ArtifactCatalog(repo_root)
+        ota_catalog = SERVER_MODULE.OtaCatalog(repo_root)
         cls.server = SERVER_MODULE.BuildShelfServer(("127.0.0.1", 0), catalog, ota_catalog)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -255,13 +300,7 @@ class OtaServerTest(unittest.TestCase):
             public_key_path = root / "public.pem"
             body_path.write_bytes(body)
             signature_path.write_bytes(base64.b64decode(signature))
-            certificate = REPO_ROOT / "apps/android/certs/certificate.pem"
-            public_key = subprocess.run(
-                ["openssl", "x509", "-pubkey", "-noout", "-in", str(certificate)],
-                check=True,
-                stdout=subprocess.PIPE,
-            ).stdout
-            public_key_path.write_bytes(public_key)
+            public_key_path.write_bytes(self.public_key)
             verification = subprocess.run(
                 [
                     "openssl", "dgst", "-sha256", "-verify", str(public_key_path),

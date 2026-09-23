@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { StoredConnection } from "../src/data/connection-profile-types";
 import { createGlobalSupervisorAttentionOwner } from "../src/data/globalSupervisorAttention";
+import { createGlobalSupervisorAttentionDeliverySession } from "../src/data/globalSupervisorAttentionDelivery";
 import { createGlobalSupervisorAttentionStorage } from "../src/data/globalSupervisorAttentionStorage.web";
 import {
   globalSupervisorQualifiedChatRef,
@@ -350,5 +351,68 @@ describe("GlobalSupervisorToolCapabilities", () => {
       text: "hello",
       threadId: "target-thread",
     });
+  });
+
+  it("delivers concurrent worker completions after sendText follow survives runtime unload", async () => {
+    const lower = capabilities({ rpcAfterAttach: vi.fn() });
+    const supervisor = globalSupervisorQualifiedChatRef("home", "supervisor");
+    await lower.attention.enableDelivery(supervisor);
+    await lower.value.sendText({
+      commandId: "global-supervisor-targetSend-worker",
+      supervisor,
+      target: TARGET,
+      text: "Do the work",
+    });
+    await lower.attention.ingestEvents(TARGET.connectionId, [
+      {
+        cursor: 1,
+        payload: { method: "thread/closed", params: { threadId: TARGET.threadId } },
+      },
+    ]);
+    const completed = (cursor: number, turnId: string, observedAt: number) => ({
+      cursor,
+      payload: {
+        codewideThreadPatch: {
+          operation: {
+            kind: "turnCompleted" as const,
+            summary: { previewText: `completed-${turnId}` },
+            turn: { completedAt: observedAt, id: turnId, status: "completed" as const },
+          },
+          threadId: TARGET.threadId,
+          version: 1 as const,
+        },
+        method: "turn/completed",
+        params: {
+          threadId: TARGET.threadId,
+          turn: { completedAt: observedAt, id: turnId, status: "completed" },
+        },
+      },
+    });
+    await Promise.all([
+      lower.attention.ingestEvents(TARGET.connectionId, [completed(3, "turn-2", 3_000)]),
+      lower.attention.ingestEvents(TARGET.connectionId, [completed(2, "turn-1", 2_000)]),
+    ]);
+    const appendText = vi.fn(async () => undefined);
+    const delivery = createGlobalSupervisorAttentionDeliverySession({
+      appendText,
+      attention: lower.attention,
+      home: supervisor,
+      onTerminal: vi.fn(),
+    });
+
+    delivery.setSpeechBusy(false);
+    await vi.waitFor(() => expect(appendText).toHaveBeenCalledOnce());
+    delivery.setSpeechBusy(false);
+    await vi.waitFor(() => expect(appendText).toHaveBeenCalledTimes(2));
+    delivery.setSpeechBusy(false);
+    await vi.waitFor(async () => {
+      await expect(lower.attention.pendingCount(supervisor)).resolves.toBe(0);
+    });
+
+    expect(appendText.mock.calls.map(([text]) => text)).toEqual([
+      expect.stringContaining('summary="completed-turn-1"'),
+      expect.stringContaining('summary="completed-turn-2"'),
+    ]);
+    await delivery.stop();
   });
 });

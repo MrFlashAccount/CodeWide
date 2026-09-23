@@ -1,10 +1,31 @@
 import { fireEvent, render } from "@testing-library/react-native";
+import type { GetAccountRateLimitsResponse } from "@codewide/codex-protocol/v0.155.1/v2";
 import { Pressable, StyleSheet, Text } from "react-native";
 
 import type { AccountPoolProfile } from "../src/data/account-pool";
 import type { AccountUsageSource } from "../src/data/account-usage-presentation";
 import { UsageMenu } from "../src/features/accounts/UsageMenu";
 import { ContentMenu } from "../src/ui/ContentMenu";
+
+const LIMITS: GetAccountRateLimitsResponse = {
+  accountId: null,
+  ordinaryUsageAllowed: null,
+  rateLimitResetCredits: { availableCount: 0, credits: [] },
+  rateLimitUpsell: null,
+  rateLimits: {
+    credits: null,
+    individualLimit: null,
+    limitId: "codex",
+    limitName: "Codex",
+    normalModelSlug: null,
+    planType: null,
+    primary: { resetsAt: 4_000_000_000, usedPercent: 10, windowDurationMins: 300 },
+    rateLimitReachedType: null,
+    secondary: { resetsAt: 4_000_000_000, usedPercent: 20, windowDurationMins: 10_080 },
+    spendControlReached: null,
+  },
+  rateLimitsByLimitId: null,
+};
 
 function profile(id: string): AccountPoolProfile {
   return {
@@ -16,8 +37,8 @@ function profile(id: string): AccountPoolProfile {
     active: false,
     exhaustedUntil: null,
     exhaustedIndefinitely: false,
-    rateLimits: null,
-    rateLimitsUpdatedAt: null,
+    rateLimits: LIMITS,
+    rateLimitsUpdatedAt: Math.floor(Date.now() / 1000),
     rateLimitsError: null,
     lastUsedAt: null,
   };
@@ -25,6 +46,7 @@ function profile(id: string): AccountPoolProfile {
 
 function setup(withAccounts: boolean) {
   const onProjects = jest.fn();
+  const onRefresh = jest.fn(async () => undefined);
   const sources: readonly AccountUsageSource[] = [
     {
       id: "server",
@@ -33,9 +55,9 @@ function setup(withAccounts: boolean) {
         id: "limits",
         connectionId: "server",
         status: "ready",
-        snapshot: null,
+        snapshot: LIMITS,
         error: null,
-        updatedAt: 0,
+        updatedAt: Date.now(),
         accountPool: {
           activeProfileId: null,
           profiles: [profile("first"), profile("second")],
@@ -48,7 +70,7 @@ function setup(withAccounts: boolean) {
   const view = render(
     <>
       <UsageMenu
-        {...(withAccounts ? { accountSources: sources } : {})}
+        {...(withAccounts ? { accountSources: sources, onRefresh } : {})}
         actions={[
           { id: "projects", label: "Manage Projects", icon: "folder-outline", onPress: onProjects },
           { id: "settings", label: "Settings", icon: "settings-outline", onPress: jest.fn() },
@@ -64,8 +86,13 @@ function setup(withAccounts: boolean) {
   fireEvent(view.UNSAFE_getByType(ContentMenu), "openChange", true);
   // Native popup placement is unavailable in Jest; render the actual supplied menu body.
   const body = render(view.UNSAFE_getByType(ContentMenu).props.children);
-  return { view: body, shell: view, onProjects };
+  return { view: body, shell: view, onProjects, onRefresh };
 }
+
+it("refreshes even fresh account data when the menu opens", () => {
+  const test = setup(true);
+  expect(test.onRefresh).toHaveBeenCalledTimes(1);
+});
 
 it("keeps only the account-to-actions divider and removes action arrows", () => {
   const test = setup(true);

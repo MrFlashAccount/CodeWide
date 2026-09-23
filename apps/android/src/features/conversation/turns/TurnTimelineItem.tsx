@@ -15,7 +15,7 @@ import { PrivateAssetRecoveryProvider } from "../../../rendering/use-private-ima
 import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary";
 import { MessageActionRail } from "./MessageActionRail";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
-import { TurnUsageContext } from "./turnContexts";
+import { TurnMetricsProvider } from "./TurnMetricsProvider";
 import { TurnFooter } from "./TurnFooter";
 import { styles } from "./TurnTimelineItem.styles";
 
@@ -45,7 +45,7 @@ export function TurnTimelineItem({
 
   const agentReviewTarget = presentation.agentReviewTarget;
   return (
-    <TurnUsageContext.Provider value={usage}>
+    <TurnMetricsProvider turn={turn.turn} usage={usage}>
       <PrivateAssetRecoveryProvider
         {...(onLoadItems === undefined ? {} : { recover: async () => onLoadItems(turn.id) })}
       >
@@ -129,6 +129,6 @@ export function TurnTimelineItem({
           </RecoverableRenderBoundary>
         </View>
       </PrivateAssetRecoveryProvider>
-    </TurnUsageContext.Provider>
+    </TurnMetricsProvider>
   );
 }

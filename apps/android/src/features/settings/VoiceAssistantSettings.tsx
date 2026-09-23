@@ -18,7 +18,6 @@ import { styles } from "./SettingsFeature.styles";
 import { OrbStyleSettings } from "./OrbStyleSettings";
 import { SettingsSection } from "./SettingsSheet";
 import { VoiceSettings } from "./VoiceSettings";
-import { ConnectedVoiceInputSettings } from "./VoiceInputSettings";
 
 type SaveState =
   | { readonly status: "idle" | "saved" }
@@ -32,18 +31,18 @@ type PersonalityEditorState = {
 };
 
 type PersonalityEditorAction =
-  | {
-      readonly field: keyof VoiceAssistantPersonality;
-      readonly type: "edit";
-      readonly value: string;
-    }
+  | { readonly type: "edit"; readonly value: string }
   | { readonly type: "saveStarted" }
   | { readonly personality: VoiceAssistantPersonality; readonly type: "saveSucceeded" }
   | { readonly message: string; readonly type: "saveFailed" };
 
 function initialEditorState(personality: VoiceAssistantPersonality): PersonalityEditorState {
   const normalized = normalizeVoiceAssistantPersonality(personality);
-  return { draft: normalized, persisted: normalized, save: { status: "idle" } };
+  return {
+    draft: { character: normalized.character, communicationStyle: "", rules: "" },
+    persisted: normalized,
+    save: { status: "idle" },
+  };
 }
 
 function personalityEditorReducer(
@@ -53,10 +52,9 @@ function personalityEditorReducer(
   switch (action.type) {
     case "edit": {
       const draft = {
-        character: action.field === "character" ? action.value : state.draft.character,
-        communicationStyle:
-          action.field === "communicationStyle" ? action.value : state.draft.communicationStyle,
-        rules: action.field === "rules" ? action.value : state.draft.rules,
+        character: action.value,
+        communicationStyle: "",
+        rules: "",
       };
       return { draft, persisted: state.persisted, save: { status: "idle" } };
     }
@@ -96,33 +94,28 @@ function samePersonality(
 
 function PersonalityField({
   accessibilityLabel,
-  label,
   onChangeText,
   placeholder,
   value,
 }: {
   readonly accessibilityLabel: string;
-  readonly label: string;
   readonly onChangeText: (value: string) => void;
   readonly placeholder: string;
   readonly value: string;
 }): React.JSX.Element {
   return (
-    <View style={styles.personalityField}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        accessibilityLabel={accessibilityLabel}
-        maxLength={VOICE_ASSISTANT_PERSONALITY_FIELD_MAX_LENGTH}
-        multiline
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textDim}
-        style={styles.personalityInput}
-        textAlignVertical="top"
-        value={value}
-        voiceInput={false}
-      />
-    </View>
+    <TextInput
+      accessibilityLabel={accessibilityLabel}
+      maxLength={VOICE_ASSISTANT_PERSONALITY_FIELD_MAX_LENGTH}
+      multiline
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor={colors.textDim}
+      style={styles.personalityInput}
+      textAlignVertical="top"
+      value={value}
+      voiceInput={false}
+    />
   );
 }
 
@@ -138,13 +131,7 @@ function PersonalitySettings({
   const draft = normalizeVoiceAssistantPersonality(editor.draft);
   const dirty = !samePersonality(draft, editor.persisted);
   const changeCharacter = useEvent((value: string) => {
-    dispatch({ field: "character", type: "edit", value });
-  });
-  const changeCommunicationStyle = useEvent((value: string) => {
-    dispatch({ field: "communicationStyle", type: "edit", value });
-  });
-  const changeRules = useEvent((value: string) => {
-    dispatch({ field: "rules", type: "edit", value });
+    dispatch({ type: "edit", value });
   });
   const save = useEvent(async () => {
     if (!dirty || saveInFlight.current) {
@@ -171,28 +158,13 @@ function PersonalitySettings({
   return (
     <View style={styles.personalityForm}>
       <Text style={styles.helpText}>
-        Set one persistent character, speaking style and rule set for new Voice Assistant sessions.
+        Set the persistent personality for new Voice Assistant sessions.
       </Text>
       <PersonalityField
-        accessibilityLabel="Voice Assistant character"
-        label="Character"
+        accessibilityLabel="Voice Assistant personality"
         onChangeText={changeCharacter}
         placeholder="For example: calm, candid, curious and pragmatic"
         value={editor.draft.character}
-      />
-      <PersonalityField
-        accessibilityLabel="Voice Assistant communication style"
-        label="Communication style"
-        onChangeText={changeCommunicationStyle}
-        placeholder="For example: concise, warm, ask one question at a time"
-        value={editor.draft.communicationStyle}
-      />
-      <PersonalityField
-        accessibilityLabel="Voice Assistant rules"
-        label="Rules"
-        onChangeText={changeRules}
-        placeholder="One rule per line"
-        value={editor.draft.rules}
       />
       <AppButton
         accessibilityLabel="Save Voice Assistant personality"
@@ -426,10 +398,7 @@ export function VoiceAssistantSettings({
       <SettingsSection title="Personality">
         <PersonalitySettings onSave={onSavePersonality} personality={personality} />
       </SettingsSection>
-      <SettingsSection title="Audio input">
-        <ConnectedVoiceInputSettings />
-      </SettingsSection>
-      <SettingsSection title="Microphone filtering">
+      <SettingsSection title="Microphone filtering (Experimental)">
         <PersonalVoiceFilterSettings
           enabled={personalVoiceFilterEnabled}
           hasProfile={personalVoiceProfileAvailable}

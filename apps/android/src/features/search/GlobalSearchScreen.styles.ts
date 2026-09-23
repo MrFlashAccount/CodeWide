@@ -5,7 +5,6 @@ import {
 } from "../../presentation/input/filterIconButtonLayout";
 import { searchFieldLayout } from "../../presentation/input/searchLayout";
 import { colors, controlSize, radii, spacing, typeScale } from "../../theme";
-import { threadListLayout } from "../../ui/thread-list-layout";
 
 export const styles = StyleSheet.create({
   apply: {
@@ -27,7 +26,6 @@ export const styles = StyleSheet.create({
     flexShrink: 0,
     height: controlSize.regular,
     justifyContent: "center",
-    marginLeft: spacing.xs,
     width: controlSize.regular,
   },
   empty: {
@@ -51,11 +49,10 @@ export const styles = StyleSheet.create({
   },
   header: {
     alignItems: "center",
+    flex: 1,
     flexDirection: "row",
     gap: spacing.optical,
-    paddingBottom: spacing.xs,
-    paddingLeft: spacing.md,
-    paddingRight: threadListLayout.edgeInset,
+    minWidth: 0,
   },
   highlight: {
     backgroundColor: colors.warningContainer,
@@ -79,12 +76,6 @@ export const styles = StyleSheet.create({
     ...typeScale.caption,
     color: colors.textMuted,
     margin: spacing.md,
-  },
-  pagination: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    justifyContent: "flex-end",
-    paddingHorizontal: spacing.sm,
   },
   partialNotice: {
     alignItems: "center",
@@ -125,12 +116,6 @@ export const styles = StyleSheet.create({
   root: {
     flex: 1,
     minHeight: 0,
-  },
-  screenTitle: {
-    ...typeScale.title,
-    color: colors.text,
-    flex: 1,
-    minWidth: 0,
   },
   searchBar: {
     ...searchFieldLayout,

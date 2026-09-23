@@ -99,14 +99,14 @@ describe("V1 thread resource response boundary", () => {
     const diff = {
       threadId: "thread",
       path: "/workspace/src/file.ts",
-      changeScope: "staged",
+      changeScope: "uncommitted",
       truncated: false,
       patches: [{ turnId: "turn", itemId: "item", kind: "update", diff: "patch" }],
     };
-    expect(parseThreadChangeDiff(diff, "thread", "src/file.ts", "staged").patches[0]?.diff).toBe(
+    expect(parseThreadChangeDiff(diff, "thread", "src/file.ts", "uncommitted").patches[0]?.diff).toBe(
       "patch",
     );
-    expect(() => parseThreadChangeDiff(diff, "thread", "different.ts", "staged")).toThrow(
+    expect(() => parseThreadChangeDiff(diff, "thread", "different.ts", "uncommitted")).toThrow(
       "different path",
     );
     expect(() => parseThreadChangeDiff(diff, "thread", "src/file.ts", "unstaged")).toThrow(

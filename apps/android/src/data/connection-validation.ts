@@ -51,17 +51,16 @@ export function validateConnectionInput(
     url.hostname === "127.0.0.1" ||
     url.hostname === "[::1]" ||
     url.hostname === "10.0.2.2";
-  if (url.protocol === "ws:" && !localDevelopmentHost) {
-    throw new Error(
-      "Remote endpoints must use wss://; cleartext ws:// is limited to local development",
-    );
+  const relayRoute = /^\/c\/[a-f0-9]{64}\/v1\/sync$/u.test(url.pathname);
+  if (url.protocol === "ws:" && !localDevelopmentHost && !relayRoute) {
+    throw new Error("Remote endpoints must use wss:// or an explicit inner-TLS relay route");
   }
   if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
     throw new Error("Endpoint must not contain credentials, query parameters, or fragments");
   }
   const pathname = url.pathname === "/" || url.pathname === "" ? "/v1/sync" : url.pathname;
-  if (pathname !== "/v1/sync") {
-    throw new Error("Endpoint path must be /v1/sync");
+  if (pathname !== "/v1/sync" && !relayRoute) {
+    throw new Error("Endpoint path must be /v1/sync or an explicit relay route");
   }
   if (tlsPinSha256 === undefined || !/^sha256\/[A-Za-z0-9+/]{43}=$/.test(tlsPinSha256)) {
     throw new Error("TLS pin must be an OkHttp sha256/base64 certificate pin");

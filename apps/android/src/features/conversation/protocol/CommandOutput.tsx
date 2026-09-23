@@ -1,6 +1,6 @@
 /** V1 CommandOutput owner, extracted without changing interaction or resource lifetime. */
 import type { RenderBlock } from "@codewide/renderers";
-import { commandOutputReferences, type OutputFootprintProjection } from "@codewide/sync-client";
+import { commandOutputReferences, type ActivityFootprint } from "@codewide/sync-client";
 import { useContext, useState } from "react";
 import { Pressable, View } from "react-native";
 import type { GetTransferAccess } from "../../../data/private-transfer";
@@ -9,7 +9,6 @@ import {
   commandActivityInput,
   commandActivityTitle,
   commandOutputFootprint,
-  estimatedOutputInputCostUsd,
 } from "../../../rendering/command-activity";
 import {
   COMMAND_OUTPUT_PAGE_BYTES,
@@ -27,7 +26,7 @@ import { WaveText } from "../../../ui/WaveText";
 import { LargeContentControls } from "../content/FullContentViewer";
 import { Card } from "../turns/Card";
 import { CopyButton } from "../turns/MessageActionRail";
-import { ActiveToolCallContext, TurnUsageContext } from "../turns/turnContexts";
+import { ActiveToolCallContext, TurnActivityMetricsContext } from "../turns/turnContexts";
 import { styles } from "./CommandOutput.styles";
 import { ProtocolBody, TOOL_RESULT_MAX_HEIGHT } from "./ToolContent";
 
@@ -41,7 +40,8 @@ export function CommandExecutionProtocolBlock({
   const activeToolCall = useContext(ActiveToolCallContext);
   const command = commandActivityInput(block.raw, block.title);
   const running = activeToolCall || block.status === "inProgress" || block.status === "running";
-  const outputFootprint = commandOutputFootprint(block.raw, block.body ?? "");
+  const metrics = useContext(TurnActivityMetricsContext);
+  const outputFootprint = commandOutputFootprint(block.raw, metrics);
   return (
     <Card
       icon="terminal-outline"
@@ -150,16 +150,11 @@ export function LazyCommandOutput(props: LazyCommandOutputProps) {
   );
 }
 
-export function OutputFootprintMetric({
-  footprint,
-}: {
-  footprint: OutputFootprintProjection | null;
-}) {
-  const usage = useContext(TurnUsageContext);
+export function OutputFootprintMetric({ footprint }: { footprint: ActivityFootprint | null }) {
   if (footprint === null || footprint.estimatedTokens === 0) {
     return null;
   }
-  const costUsd = estimatedOutputInputCostUsd(footprint, usage);
+  const costUsd = footprint.estimatedInputCostUsd;
   const label =
     costUsd === null
       ? `Estimated command output footprint ${footprint.estimatedTokens.toLocaleString()} tokens`

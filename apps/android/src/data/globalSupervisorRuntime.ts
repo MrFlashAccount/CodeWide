@@ -20,6 +20,10 @@ import type { GlobalSupervisorAttentionOwner } from "./globalSupervisorAttention
 import { createGlobalSupervisorEventSignalSession } from "./globalSupervisorEventSignals";
 import { globalSupervisorLimitsV1 } from "./globalSupervisorLimitsV1";
 import { createGlobalSupervisorSpeechState } from "./globalSupervisorSpeechState";
+import {
+  createGlobalSupervisorStartupContextOwner,
+  type GlobalSupervisorStartupContextOwner,
+} from "./globalSupervisorStartupContext";
 import { createGlobalSupervisorMediaOwner } from "./globalSupervisorMediaOwner";
 import {
   createGlobalSupervisorReconnectOwner,
@@ -29,7 +33,10 @@ import {
 } from "./globalSupervisorReconnectOwner";
 import type { GlobalVoiceName } from "./globalVoicePreferences";
 import type { GlobalSupervisorRuntimeIngress } from "./globalSupervisorRuntimeIngress";
-import { globalSupervisorRealtimeStartInstructions } from "./globalSupervisorThreadProfile";
+import {
+  globalSupervisorActivationGreetingPrompt,
+  globalSupervisorRealtimeStartInstructions,
+} from "./globalSupervisorThreadProfile";
 import { unknownRecord } from "./unknownRecord";
 import type { VoiceAssistantPersonality } from "./voiceAssistantPersonality";
 import type { V1MicrophoneLeaseRegistry } from "./v1MicrophoneLease";
@@ -174,6 +181,7 @@ type LiveSessionState = {
   realtimeStarted: boolean;
   realtimeStartRequested: boolean;
   readonly speech: ReturnType<typeof createGlobalSupervisorSpeechState>;
+  readonly startupContext: GlobalSupervisorStartupContextOwner;
   stopping: boolean;
   transcriptSequence: number;
   readonly webRtc: GlobalSupervisorWebRtcSession;
@@ -323,6 +331,7 @@ function acceptTranscript(
     return;
   }
   state.transcriptSequence += 1;
+  state.startupContext.acceptTranscript(role, text);
   appLogger.info({
     event: "global_voice.realtime.transcript_accepted",
     fields: { role, sequence: state.transcriptSequence },
@@ -612,6 +621,8 @@ export function createGlobalSupervisorRuntime(
         );
         const personality = await authority.personality();
         const realtimeInstructions = globalSupervisorRealtimeStartInstructions(personality);
+        const startupContext = createGlobalSupervisorStartupContextOwner();
+        let activationGreetingAccepted = false;
         const activationId = authority.randomUUID();
         const recordStartupStage = (stage: GlobalSupervisorStartupStage): void => {
           authority.recordStartupStage({
@@ -721,6 +732,7 @@ export function createGlobalSupervisorRuntime(
                 publish({ activationId, event: phase });
               },
             }),
+            startupContext,
             stopping: false,
             transcriptSequence: 0,
             webRtc,
@@ -753,13 +765,28 @@ export function createGlobalSupervisorRuntime(
           const activitySubscription = authority.ingress.subscribeThreadEvents(
             state.speech.acceptThreadEvents,
           );
+          let startupContextSnapshot = startupContext.snapshot([]);
           try {
             await supervisor.subscribeLive(home.connectionId, channelId, home.threadId);
             recordStartupStage("subscriptionReady");
             subscribed = true;
             state.realtimeStartRequested = true;
+            startupContextSnapshot = startupContext.snapshot(
+              await authority.attention.pending(home),
+            );
+            appLogger.info({
+              event: "global_voice.realtime.startup_context_built",
+              fields: {
+                activationId,
+                connectionId: home.connectionId,
+                initialItemCount: startupContextSnapshot.initialItems.length,
+                seededAttentionCount: startupContextSnapshot.seededAttentionEventIds.size,
+                threadId: home.threadId,
+              },
+            });
             await authority.rpcAfterAttach(attemptSession, "thread/realtime/start", {
               includeStartupContext: false,
+              initialItems: startupContextSnapshot.initialItems,
               outputModality: "audio",
               realtimeStartInstructions: realtimeInstructions,
               threadId: home.threadId,
@@ -810,11 +837,11 @@ export function createGlobalSupervisorRuntime(
             onTerminal: () => {
               failLiveState(state, "realtimeFailed");
             },
+            seededEventIds: startupContextSnapshot.seededAttentionEventIds,
           });
           state.attentionDelivery = attentionDelivery;
-          attentionDelivery.setSpeechBusy(false);
           let stopped = false;
-          return {
+          const transport = {
             async setMicrophoneMuted(muted: boolean): Promise<void> {
               await state.webRtc.setMicrophoneMuted(muted);
             },
@@ -872,6 +899,30 @@ export function createGlobalSupervisorRuntime(
               }
             },
           };
+          if (activationGreetingAccepted) {
+            attentionDelivery.setSpeechBusy(false);
+            return transport;
+          }
+          try {
+            await authority.rpcAfterAttach(attemptSession, "thread/realtime/appendText", {
+              role: "developer",
+              text: globalSupervisorActivationGreetingPrompt(),
+              threadId: home.threadId,
+            });
+            activationGreetingAccepted = true;
+            appLogger.info({
+              event: "global_voice.activation_greeting.append_accepted",
+              fields: {
+                activationId,
+                connectionId: home.connectionId,
+                threadId: home.threadId,
+              },
+            });
+          } catch (error) {
+            await transport.stop().catch(() => undefined);
+            throw error;
+          }
+          return transport;
         };
         const reconnect = createGlobalSupervisorReconnectOwner({
           onExhausted() {

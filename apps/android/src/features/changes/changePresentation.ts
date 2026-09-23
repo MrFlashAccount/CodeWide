@@ -8,10 +8,11 @@ import type {
 } from "../../data/workspace-resource-database";
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
+import { isSelectableChangeScope, selectableChangeScopes } from "../../rendering/change-menu";
 
 type ChangesDisplayMode = "unified" | "split" | "source";
 
-const DEFAULT_CHANGE_SCOPES: ThreadChangeScope[] = ["session", "lastTurn"];
+const DEFAULT_CHANGE_SCOPES: ThreadChangeScope[] = ["session"];
 
 export type ChangesPreferences = {
   mode: ChangesDisplayMode;
@@ -22,7 +23,16 @@ export type ChangesPreferences = {
 const changesPreferencesByThread = new Map<string, ChangesPreferences>();
 
 function readChangesPreferences(key: string): ChangesPreferences {
-  return changesPreferencesByThread.get(key) ?? { mode: "unified", scope: null, wrapLines: false };
+  const stored = changesPreferencesByThread.get(key);
+  return stored === undefined
+    ? { mode: "unified", scope: null, wrapLines: false }
+    : selectableChangesPreferences(stored);
+}
+
+function selectableChangesPreferences(preferences: ChangesPreferences): ChangesPreferences {
+  return preferences.scope === null || isSelectableChangeScope(preferences.scope)
+    ? preferences
+    : { mode: preferences.mode, scope: null, wrapLines: preferences.wrapLines };
 }
 
 export function recordedTurnChangeResources(
@@ -113,14 +123,16 @@ export function useChangesPreferences(composerScope: string) {
     }),
   );
 
-  const changesPreferences =
+  const changesPreferences = selectableChangesPreferences(
     changesPreferencesState.key === composerScope
       ? changesPreferencesState.value
-      : readChangesPreferences(composerScope);
+      : readChangesPreferences(composerScope),
+  );
 
   const setChangesPreferences = useEvent((next: ChangesPreferences) => {
-    changesPreferencesByThread.set(composerScope, next);
-    setChangesPreferencesState({ key: composerScope, value: next });
+    const selected = selectableChangesPreferences(next);
+    changesPreferencesByThread.set(composerScope, selected);
+    setChangesPreferencesState({ key: composerScope, value: selected });
   });
   return { changesPreferences, setChangesPreferences };
 }
@@ -151,11 +163,13 @@ export function selectChangePresentation(
   scope: ThreadChangeScope;
   scopes: ThreadChangeScope[];
 } {
-  const scopes = resource?.changeScopes ?? DEFAULT_CHANGE_SCOPES;
+  const scopes = selectableChangeScopes(resource?.changeScopes ?? DEFAULT_CHANGE_SCOPES);
   const scope =
     preferredScope !== null && scopes.includes(preferredScope)
       ? preferredScope
-      : (resource?.changeScope ?? scopes[0] ?? "session");
+      : resource !== null && scopes.includes(resource.changeScope)
+        ? resource.changeScope
+        : (scopes[0] ?? "session");
   return {
     resource: resource?.changeScope === scope ? resource : null,
     scope,

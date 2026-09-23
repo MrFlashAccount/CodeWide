@@ -34,6 +34,7 @@ const TASK_BOUNDARY_NEEDLES: [&[u8]; 4] = [
     b"\"type\":\"turn_aborted\"",
     b"\"type\":\"thread_rolled_back\"",
 ];
+const REALTIME_TRANSCRIPT_NEEDLE: &[u8] = b"\"type\":\"transcript_segment\"";
 type ActiveSummary = (u64, String, SummaryProjectionState);
 
 #[derive(Debug, Serialize)]
@@ -274,13 +275,15 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
             &mut active_summary,
             &mut summary_batch,
         )?;
-        update_turn_index(
+        update_turn_indexes(
             boundary.as_ref(),
+            &line,
             offset,
             length,
             &mut active_turn,
             &mut turn_batch,
-        );
+            &mut summary_batch,
+        )?;
         sequence += 1;
         offset += u64::from(length);
         if batch.len() == WRITE_BATCH_RECORDS {
@@ -623,13 +626,15 @@ fn index_prefix_range(
             &mut active_summary,
             &mut summary_batch,
         )?;
-        update_turn_index(
+        update_turn_indexes(
             boundary.as_ref(),
+            &line,
             offset,
             length,
             &mut active_turn,
             &mut turn_batch,
-        );
+            &mut summary_batch,
+        )?;
         indexed_records = indexed_records.saturating_add(1);
         offset = next_offset;
         if batch.len() == WRITE_BATCH_RECORDS {
@@ -820,6 +825,26 @@ fn update_turn_index(
     }
 }
 
+fn update_turn_indexes(
+    boundary: Option<&TaskBoundary>,
+    line: &[u8],
+    offset: u64,
+    length: u32,
+    active_turn: &mut Option<TurnRef>,
+    turn_batch: &mut Vec<TurnRef>,
+    summary_batch: &mut Vec<(u64, Vec<u8>)>,
+) -> Result<(), IndexError> {
+    update_turn_index(boundary, offset, length, active_turn, turn_batch);
+    index_standalone_realtime_transcript(
+        line,
+        offset,
+        length,
+        active_turn.as_ref(),
+        turn_batch,
+        summary_batch,
+    )
+}
+
 fn update_summary_index(
     boundary: Option<&TaskBoundary>,
     offset: u64,
@@ -854,6 +879,62 @@ fn update_summary_index(
         *active = None;
     }
     Ok(())
+}
+
+fn index_standalone_realtime_transcript(
+    line: &[u8],
+    offset: u64,
+    length: u32,
+    active_turn: Option<&TurnRef>,
+    turn_batch: &mut Vec<TurnRef>,
+    summary_batch: &mut Vec<(u64, Vec<u8>)>,
+) -> Result<(), IndexError> {
+    if active_turn.is_some() {
+        return Ok(());
+    }
+    let Some(id) = realtime_transcript_id(line) else {
+        return Ok(());
+    };
+    let end_offset = offset + u64::from(length);
+    let mut summary = SummaryProjectionState::new(id.clone());
+    summary.ingest_rollout_record(line, offset)?;
+    summary_batch.push((
+        offset,
+        serde_json::to_vec(&summary).map_err(StoreError::from)?,
+    ));
+    turn_batch.push(TurnRef {
+        id,
+        start_offset: offset,
+        end_offset,
+        completed: true,
+    });
+    Ok(())
+}
+
+fn realtime_transcript_id(line: &[u8]) -> Option<String> {
+    memchr::memmem::find(line, REALTIME_TRANSCRIPT_NEEDLE)?;
+    let envelope = serde_json::from_slice::<Value>(line).ok()?;
+    if envelope.get("type").and_then(Value::as_str) != Some("realtime_item") {
+        return None;
+    }
+    let payload = envelope.get("payload")?;
+    if payload.get("type").and_then(Value::as_str) != Some("transcript_segment")
+        || !matches!(
+            payload.get("role").and_then(Value::as_str),
+            Some("user" | "assistant")
+        )
+        || payload
+            .get("text")
+            .and_then(Value::as_str)
+            .is_none_or(|text| text.trim().is_empty())
+    {
+        return None;
+    }
+    payload
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn remember_active_summary(
@@ -1146,7 +1227,7 @@ fn collect_rollback_removals(
     if remaining == 0 {
         return Ok(());
     }
-    visit_logical_turns_reverse(file, offset, |turn| {
+    visit_logical_task_turns_reverse(file, offset, |turn| {
         removed.push(turn.start_offset);
         remaining -= 1;
         remaining > 0
@@ -1155,6 +1236,77 @@ fn collect_rollback_removals(
 }
 
 fn visit_logical_turns_reverse(
+    file: &File,
+    durable_bytes: u64,
+    mut visit: impl FnMut(TurnRef) -> bool,
+) -> Result<u64, IndexError> {
+    let mut skipped = 0_u64;
+    let mut next_start = 0;
+    let mut terminal: Option<(String, u64, bool)> = None;
+    let mut pending_realtime = Vec::new();
+    let mut stopped = false;
+    let bytes_scanned = visit_timeline_boundaries_reverse(file, durable_bytes, |boundary| {
+        match boundary {
+            TimelineBoundary::RealtimeTranscript(turn) => pending_realtime.push(turn),
+            TimelineBoundary::Task {
+                boundary: TaskBoundary::Rollback(count),
+                ..
+            } => {
+                skipped = skipped.saturating_add(count);
+            }
+            TimelineBoundary::Task {
+                end_offset,
+                boundary: TaskBoundary::Terminal { turn_id, completed },
+                ..
+            } => {
+                for turn in pending_realtime.drain(..) {
+                    if !visit(turn) {
+                        stopped = true;
+                        return false;
+                    }
+                }
+                terminal = Some((turn_id, end_offset, completed));
+            }
+            TimelineBoundary::Task {
+                start_offset,
+                boundary: TaskBoundary::Started(id),
+                ..
+            } => {
+                // Realtime transcript items between this start and its terminal
+                // belong to the task summary. Items outside a task were
+                // already flushed at the terminal encountered in reverse.
+                pending_realtime.clear();
+                let (end_offset, completed) = terminal
+                    .take()
+                    .filter(|(turn_id, _, _)| turn_id == &id)
+                    .map_or((next_start, false), |(_, end, completed)| (end, completed));
+                next_start = start_offset;
+                if skipped > 0 {
+                    skipped -= 1;
+                } else if !visit(TurnRef {
+                    id,
+                    start_offset,
+                    end_offset,
+                    completed,
+                }) {
+                    stopped = true;
+                    return false;
+                }
+            }
+        }
+        true
+    })?;
+    if !stopped {
+        for turn in pending_realtime {
+            if !visit(turn) {
+                break;
+            }
+        }
+    }
+    Ok(bytes_scanned)
+}
+
+fn visit_logical_task_turns_reverse(
     file: &File,
     durable_bytes: u64,
     mut visit: impl FnMut(TurnRef) -> bool,
@@ -1427,6 +1579,88 @@ fn visit_task_boundaries_reverse(
     Ok(bytes_scanned)
 }
 
+enum TimelineBoundary {
+    Task {
+        start_offset: u64,
+        end_offset: u64,
+        boundary: TaskBoundary,
+    },
+    RealtimeTranscript(TurnRef),
+}
+
+#[derive(Clone, Copy)]
+enum TimelineNeedle {
+    Task,
+    RealtimeTranscript,
+}
+
+fn visit_timeline_boundaries_reverse(
+    file: &File,
+    search_end: u64,
+    mut visit: impl FnMut(TimelineBoundary) -> bool,
+) -> Result<u64, IndexError> {
+    let overlap = TASK_BOUNDARY_NEEDLES
+        .iter()
+        .copied()
+        .chain(std::iter::once(REALTIME_TRANSCRIPT_NEEDLE))
+        .map(<[u8]>::len)
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(1) as u64;
+    let mut position = search_end;
+    let mut bytes_scanned = 0_u64;
+    while position > 0 {
+        let core_start = position.saturating_sub(REVERSE_SCAN_BLOCK_BYTES as u64);
+        let read_end = search_end.min(position.saturating_add(overlap));
+        let read_size = usize::try_from(read_end - core_start).map_err(std::io::Error::other)?;
+        let mut buffer = vec![0_u8; read_size];
+        read_exact_at(file, &mut buffer, core_start)?;
+        bytes_scanned = bytes_scanned.saturating_add(position - core_start);
+        let mut matches = TASK_BOUNDARY_NEEDLES
+            .iter()
+            .flat_map(|needle| {
+                memchr::memmem::find_iter(&buffer, needle)
+                    .map(|index| (core_start + index as u64, TimelineNeedle::Task))
+            })
+            .chain(
+                memchr::memmem::find_iter(&buffer, REALTIME_TRANSCRIPT_NEEDLE).map(|index| {
+                    (
+                        core_start + index as u64,
+                        TimelineNeedle::RealtimeTranscript,
+                    )
+                }),
+            )
+            .filter(|(offset, _)| *offset >= core_start && *offset < position)
+            .collect::<Vec<_>>();
+        matches.sort_unstable_by_key(|item| std::cmp::Reverse(item.0));
+        for (offset, needle) in matches {
+            let (line_start, line) = read_line_at(file, offset, search_end)?;
+            let boundary = match needle {
+                TimelineNeedle::Task => {
+                    task_boundary(&line, line_start)?.map(|boundary| TimelineBoundary::Task {
+                        start_offset: line_start,
+                        end_offset: line_start + line.len() as u64,
+                        boundary,
+                    })
+                }
+                TimelineNeedle::RealtimeTranscript => realtime_transcript_id(&line).map(|id| {
+                    TimelineBoundary::RealtimeTranscript(TurnRef {
+                        id,
+                        start_offset: line_start,
+                        end_offset: line_start + line.len() as u64,
+                        completed: true,
+                    })
+                }),
+            };
+            if boundary.is_some_and(|boundary| !visit(boundary)) {
+                return Ok(bytes_scanned);
+            }
+        }
+        position = core_start;
+    }
+    Ok(bytes_scanned)
+}
+
 fn read_line_at(
     file: &File,
     inside_offset: u64,
@@ -1504,10 +1738,11 @@ mod tests {
     use super::{
         TaskBoundary, classify_record, current_indexed_turns_from_file, index_rollout,
         index_rollout_metadata, index_rollout_through_anchor, rollout_file_id,
-        rollout_witness_from_file, rollout_witness_matches, scan_turns_after_from_file,
-        scan_turns_before_from_file, task_boundary,
+        rollout_witness_from_file, rollout_witness_matches, scan_tail_turns_from_file,
+        scan_turns_after_from_file, scan_turns_before_from_file, task_boundary,
     };
-    use crate::store::IndexStore;
+    use crate::history::project_summary_turn;
+    use crate::store::{IndexStore, TurnRef};
 
     #[test]
     fn classifies_known_rollout_records() {
@@ -1534,6 +1769,115 @@ mod tests {
             task_boundary(aborted, 0)?,
             Some(TaskBoundary::Terminal { turn_id, completed: false }) if turn_id == "turn-2"
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_voice_transcripts_join_active_tasks_and_form_standalone_turns()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut writer = std::fs::File::create(&path)?;
+        for line in [
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"voice-before","realtime_session_id":"session","role":"user","text":"Before"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"assistant-before","realtime_session_id":"session","role":"assistant","text":"Hello"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"task"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"voice-inside","realtime_session_id":"session","role":"user","text":"Inside"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"task","last_agent_message":"Answer"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"voice-after","realtime_session_id":"session","role":"user","text":"After"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"assistant-after","realtime_session_id":"session","role":"assistant","text":"Goodbye"}}"#,
+        ] {
+            writeln!(writer, "{line}")?;
+        }
+        writer.sync_all()?;
+
+        let file = std::fs::File::open(&path)?;
+        let bytes = file.metadata()?.len();
+        let cold = scan_tail_turns_from_file(&file, bytes, None, 10)?;
+        assert_eq!(
+            cold.turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "assistant-after",
+                "voice-after",
+                "task",
+                "assistant-before",
+                "voice-before"
+            ]
+        );
+
+        let task = cold
+            .turns
+            .iter()
+            .find(|turn| turn.id == "task")
+            .ok_or("task turn")?;
+        let task = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: task.id.clone(),
+                start_offset: task.start_offset,
+                end_offset: task.end_offset,
+                completed: task.completed,
+            },
+        )?;
+        assert_eq!(task["items"][0]["id"], "voice-inside");
+        assert_eq!(task["items"][0]["content"][0]["text"], "Inside");
+
+        let standalone = cold
+            .turns
+            .iter()
+            .find(|turn| turn.id == "voice-after")
+            .ok_or("standalone voice turn")?;
+        let standalone = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: standalone.id.clone(),
+                start_offset: standalone.start_offset,
+                end_offset: standalone.end_offset,
+                completed: standalone.completed,
+            },
+        )?;
+        assert_eq!(standalone["status"], "completed");
+        assert_eq!(standalone["items"][0]["id"], "voice-after");
+        assert_eq!(standalone["items"][0]["content"][0]["text"], "After");
+
+        let assistant = cold
+            .turns
+            .iter()
+            .find(|turn| turn.id == "assistant-after")
+            .ok_or("standalone assistant turn")?;
+        let assistant = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: assistant.id.clone(),
+                start_offset: assistant.start_offset,
+                end_offset: assistant.end_offset,
+                completed: assistant.completed,
+            },
+        )?;
+        assert_eq!(assistant["status"], "completed");
+        assert_eq!(assistant["items"][0]["type"], "agentMessage");
+        assert_eq!(assistant["items"][0]["id"], "assistant-after");
+        assert_eq!(assistant["items"][0]["text"], "Goodbye");
+
+        let store = IndexStore::open(directory.path().join("index.redb"))?;
+        index_rollout(&store, &path)?;
+        assert_eq!(
+            store
+                .turns_desc(&rollout_file_id(&path), None, 10)?
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "assistant-after",
+                "voice-after",
+                "task",
+                "assistant-before",
+                "voice-before"
+            ]
+        );
         Ok(())
     }
 

@@ -1,7 +1,6 @@
 import { useSelector } from "@legendapp/state/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import Reanimated, { Easing, Keyframe, LinearTransition } from "react-native-reanimated";
 
 import { globalVoiceOrbStyle$ } from "../../data/globalVoiceOrbStyleState";
 import {
@@ -12,92 +11,19 @@ import {
 import { supportsGlobalVoiceFloatingOverlay } from "../../native/globalVoiceOverlayPresentation";
 import type { GlobalVoiceOrbState } from "../../native/globalVoiceOverlayActions";
 import { useEvent } from "../../react/useEvent";
-import { useReducedMotionPreference } from "../../rendering/reduced-motion-store";
 import { radii, touchTarget } from "../../theme";
-import { VoiceAssistantOrb, type VoiceAssistantOrbProps } from "../../ui/VoiceAssistantOrb";
+import { VoiceAssistantOrb } from "../../ui/VoiceAssistantOrb";
 
 const PRESSED_OPACITY = 0.68;
 const HEADER_ORB_SIZE = 34;
 const CENTER_DIVISOR = 2;
 const ERROR_INDICATOR_DURATION_MS = 3000;
-const MOTION_START = 0;
-const MOTION_END = 100;
-const VISIBLE_OPACITY = 1;
-const HIDDEN_OPACITY = 0;
-const RESTING_SCALE = 1;
-const ENTERING_SCALE = 0.82;
-const EXITING_SCALE = 0.78;
-const COLLAPSED_SLOT_WIDTH = 0;
-const HEADER_SLOT_DURATION_MS = 220;
-const HEADER_ORB_ENTER_DURATION_MS = 180;
-const HEADER_ORB_EXIT_DURATION_MS = 120;
-const HEADER_SLOT_TRANSITION = LinearTransition.duration(HEADER_SLOT_DURATION_MS).easing(
-  Easing.out(Easing.cubic),
-);
-const HEADER_ORB_ENTERING = new Keyframe({
-  [MOTION_END]: { opacity: VISIBLE_OPACITY, transform: [{ scale: RESTING_SCALE }] },
-  [MOTION_START]: { opacity: HIDDEN_OPACITY, transform: [{ scale: ENTERING_SCALE }] },
-}).duration(HEADER_ORB_ENTER_DURATION_MS);
-const HEADER_ORB_EXITING = new Keyframe({
-  [MOTION_END]: { opacity: HIDDEN_OPACITY, transform: [{ scale: EXITING_SCALE }] },
-  [MOTION_START]: { opacity: VISIBLE_OPACITY, transform: [{ scale: RESTING_SCALE }] },
-}).duration(HEADER_ORB_EXIT_DURATION_MS);
 
 export type GlobalVoiceControl = {
   readonly onToggle: (origin: GlobalVoiceOrbLaunchOrigin | null) => void;
   readonly orbState: GlobalVoiceOrbState;
   readonly state: "idle" | "starting" | "active" | "reconnecting" | "stopping";
 };
-
-function HeaderMotionSlot({
-  children,
-  hidden,
-  onLayout,
-  reducedMotion,
-}: {
-  readonly children: ReactNode;
-  readonly hidden: boolean;
-  readonly onLayout: () => void;
-  readonly reducedMotion: boolean;
-}): React.JSX.Element {
-  return (
-    <Reanimated.View
-      {...(reducedMotion ? {} : { layout: HEADER_SLOT_TRANSITION })}
-      onLayout={onLayout}
-      style={[styles.slot, hidden && styles.slotHidden]}
-      testID="global-voice-slot"
-    >
-      {children}
-    </Reanimated.View>
-  );
-}
-
-function HeaderOrbMotion({
-  orbState,
-  orbStyle,
-  reducedMotion,
-}: {
-  readonly orbState: VoiceAssistantOrbProps["orbState"];
-  readonly orbStyle: VoiceAssistantOrbProps["orbStyle"];
-  readonly reducedMotion: boolean;
-}): React.JSX.Element {
-  return (
-    <Reanimated.View
-      {...(reducedMotion ? {} : { entering: HEADER_ORB_ENTERING, exiting: HEADER_ORB_EXITING })}
-      style={styles.orbFill}
-      testID="global-voice-orb-motion"
-    >
-      <VoiceAssistantOrb
-        accessibilityElementsHidden
-        orbState={orbState}
-        orbStyle={orbStyle}
-        pointerEvents="none"
-        style={styles.orbFill}
-        testID="global-voice-orb"
-      />
-    </Reanimated.View>
-  );
-}
 
 function HeaderActionSurface({
   children,
@@ -140,12 +66,11 @@ function HeaderActionSurface({
   );
 }
 
-/** Header launch affordance that hands its screen origin to the single floating orb. */
+/** Stable header anchor; only the native activation handoff owns spatial orb animation. */
 export function GlobalVoiceEntryAction(props: GlobalVoiceControl): React.JSX.Element | null {
   const orbOriginRef = useRef<View>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
   const orbStyle = useSelector(globalVoiceOrbStyle$);
-  const reducedMotion = useReducedMotionPreference();
   useEffect(() => {
     if (props.orbState !== "error" || errorDismissed) {
       return undefined;
@@ -215,7 +140,7 @@ export function GlobalVoiceEntryAction(props: GlobalVoiceControl): React.JSX.Ele
         ? "disabled"
         : props.orbState;
   return (
-    <HeaderMotionSlot hidden={hideHeaderOrb} onLayout={measureOrigin} reducedMotion={reducedMotion}>
+    <View onLayout={measureOrigin} style={styles.slot} testID="global-voice-slot">
       <HeaderActionSurface
         hidden={hideHeaderOrb}
         measureOrigin={measureOrigin}
@@ -224,14 +149,17 @@ export function GlobalVoiceEntryAction(props: GlobalVoiceControl): React.JSX.Ele
         state={props.state}
       >
         {hideHeaderOrb ? null : (
-          <HeaderOrbMotion
+          <VoiceAssistantOrb
+            accessibilityElementsHidden
             orbState={visibleOrbState}
             orbStyle={orbStyle}
-            reducedMotion={reducedMotion}
+            pointerEvents="none"
+            style={styles.orbFill}
+            testID="global-voice-orb"
           />
         )}
       </HeaderActionSurface>
-    </HeaderMotionSlot>
+    </View>
   );
 }
 
@@ -269,8 +197,5 @@ const styles = StyleSheet.create({
     height: touchTarget,
     overflow: "hidden",
     width: touchTarget,
-  },
-  slotHidden: {
-    width: COLLAPSED_SLOT_WIDTH,
   },
 });

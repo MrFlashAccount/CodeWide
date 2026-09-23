@@ -1818,7 +1818,8 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           // cursor sync must never hold an already-cached chat behind network
           // recovery.
           await installAndReconcilePending(cachedWindow);
-          void hydrateAndInstall().catch(() => {
+          void hydrateAndInstall().catch((error: unknown) => {
+            chat.failWindow(request, generation, error);
             appLogger.warn({
               event: "thread.background_repair.failed",
               fields: { connectionId: request.connectionId, threadId: request.threadId },

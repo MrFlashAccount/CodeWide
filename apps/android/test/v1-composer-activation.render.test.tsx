@@ -60,6 +60,7 @@ const preferences: StoredComposerPreferences = {
   permissions: null,
   skillPaths: [],
   sendMode: "start",
+  serviceTier: undefined,
 };
 type SettingsCapabilities = Parameters<typeof useComposerSettings>[0];
 function settingsCapabilities(scope: string): SettingsCapabilities {

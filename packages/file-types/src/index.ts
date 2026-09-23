@@ -361,7 +361,7 @@ const CODE_FILE_IDENTIFIERS = new Set<string>([
 
 const MARKDOWN_EXTENSIONS = new Set(["md", "markdown"]);
 const HTML_EXTENSIONS = new Set(["htm", "html", "xhtml"]);
-const IMAGE_EXTENSIONS = new Set(["avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "webp"]);
+const IMAGE_EXTENSIONS = new Set(["avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "svg", "webp"]);
 const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "ogg", "opus", "wav", "webm"]);
 
 /** Filename-only classification used before bytes or MIME metadata exist.

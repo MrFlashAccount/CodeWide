@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufRead, BufReader, Cursor, Seek},
+    io::{BufRead, BufReader, Cursor, Read, Seek},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -13,11 +13,13 @@ use axum::{
 };
 use bytes::Bytes;
 use image::{GenericImageView, ImageReader, Limits, imageops::FilterType};
+use resvg::{tiny_skia, usvg};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Semaphore;
 
 const MAX_SOURCE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_SVG_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_DECODE_DIMENSION: u32 = 16_384;
 const MAX_DECODE_ALLOC_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_CACHE_BYTES: usize = 16 * 1024 * 1024;
@@ -299,15 +301,86 @@ fn encode_webp(
 ) -> Result<CachedPreview, ImagePreviewError> {
     match source {
         PreviewSource::Bytes(bytes) => {
+            if looks_like_svg(&bytes) {
+                return encode_svg_webp(&bytes, variant);
+            }
             encode_webp_reader(ImageReader::new(Cursor::new(bytes)), variant)
         }
         PreviewSource::Path(path) => {
-            encode_webp_reader(ImageReader::new(BufReader::new(File::open(path)?)), variant)
+            let svg_extension = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
+            let mut reader = BufReader::new(File::open(path)?);
+            if svg_extension || looks_like_svg(reader.fill_buf()?) {
+                let mut bytes = Vec::new();
+                reader
+                    .take((MAX_SVG_SOURCE_BYTES + 1) as u64)
+                    .read_to_end(&mut bytes)?;
+                return encode_svg_webp(&bytes, variant);
+            }
+            encode_webp_reader(ImageReader::new(reader), variant)
         }
         PreviewSource::Shared(bytes) => {
+            if looks_like_svg(&bytes) {
+                return encode_svg_webp(&bytes, variant);
+            }
             encode_webp_reader(ImageReader::new(Cursor::new(bytes)), variant)
         }
     }
+}
+
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let prefix = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    let prefix = prefix.trim_ascii_start();
+    prefix.starts_with(b"<svg") || prefix.starts_with(b"<?xml") || prefix.starts_with(b"<!--")
+}
+
+fn encode_svg_webp(
+    bytes: &[u8],
+    variant: ImageVariant,
+) -> Result<CachedPreview, ImagePreviewError> {
+    if bytes.len() > MAX_SVG_SOURCE_BYTES {
+        return Err(ImagePreviewError::TooLarge);
+    }
+    let mut options = usvg::Options::default();
+    // SVG attachments are untrusted: never read a host path embedded in an image element.
+    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    let tree =
+        usvg::Tree::from_data(bytes, &options).map_err(|_| ImagePreviewError::Unsupported)?;
+    let size = tree.size();
+    let (max_dimension, max_dimension_float) = match variant {
+        ImageVariant::Preview => (640_u32, 640.0_f32),
+        ImageVariant::Detail => (2_560_u32, 2_560.0_f32),
+    };
+    let scale = (max_dimension_float / size.width().max(size.height())).min(1.0);
+    let scaled = size
+        .scale_by(scale)
+        .ok_or(ImagePreviewError::Unsupported)?
+        .to_int_size();
+    let width = scaled.width().min(max_dimension);
+    let height = scaled.height().min(max_dimension);
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or(ImagePreviewError::TooLarge)?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let rgba = pixmap.take_demultiplied();
+    let quality = match variant {
+        ImageVariant::Preview => 78.0,
+        ImageVariant::Detail => 84.0,
+    };
+    let encoded = webp::Encoder::from_rgba(&rgba, width, height)
+        .encode_simple(false, quality)
+        .map_err(|_| ImagePreviewError::Processing)?;
+    Ok(CachedPreview {
+        bytes: Bytes::copy_from_slice(&encoded),
+        etag: String::new(),
+        height,
+        last_access: 0,
+        width,
+    })
 }
 
 fn encode_webp_reader<R: BufRead + Seek>(
@@ -453,6 +526,7 @@ fn lock_cache(cache: &Mutex<PreviewCache>) -> std::sync::MutexGuard<'_, PreviewC
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
 
     #[tokio::test]
     async fn creates_distinct_bounded_webp_variants() -> Result<(), Box<dyn std::error::Error>> {
@@ -523,6 +597,72 @@ mod tests {
             )
             .await;
         assert!(matches!(removed, Err(ImagePreviewError::Unsupported)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rasterizes_svg_for_inline_and_fullscreen_previews()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = Bytes::from_static(
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600"><rect width="1200" height="600" fill="#f00"/></svg>"##,
+        );
+        let service = ImagePreviewService::new();
+        for (variant, expected_width, expected_height) in [
+            (ImageVariant::Preview, "640", "320"),
+            (ImageVariant::Detail, "1200", "600"),
+        ] {
+            let response = service
+                .preview_bytes(
+                    "content:svg".into(),
+                    source.clone(),
+                    variant,
+                    &HeaderMap::new(),
+                    false,
+                )
+                .await?;
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "image/webp");
+            assert_eq!(response.headers()["x-image-width"], expected_width);
+            assert_eq!(response.headers()["x-image-height"], expected_height);
+            let body = to_bytes(response.into_body(), usize::MAX).await?;
+            let image = image::load_from_memory_with_format(&body, image::ImageFormat::WebP)?;
+            let pixel = image.get_pixel(0, 0);
+            assert!(pixel[0] > 240 && pixel[1] < 20 && pixel[2] < 20 && pixel[3] == 255);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rasterizes_svg_host_file_for_bubble_preview() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("diagram.svg");
+        tokio::fs::write(
+            &path,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="12"><rect width="24" height="12"/></svg>"#,
+        )
+        .await?;
+        let response = ImagePreviewService::new()
+            .preview_file(
+                "file:diagram".into(),
+                path,
+                ImageVariant::Preview,
+                &HeaderMap::new(),
+                false,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-image-width"], "24");
+        assert_eq!(response.headers()["x-image-height"], "12");
+        Ok(())
+    }
+
+    #[test]
+    fn svg_external_image_references_cannot_read_host_files()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><image width="8" height="8" href="file:///etc/passwd"/></svg>"#;
+        let preview = encode_svg_webp(source, ImageVariant::Preview)?;
+        let image = image::load_from_memory_with_format(&preview.bytes, image::ImageFormat::WebP)?;
+        assert_eq!(image.get_pixel(0, 0)[3], 0);
         Ok(())
     }
 }

@@ -21,7 +21,7 @@ const appRootProviders = readFileSync(
   new URL("../src/ui/AppRootProviders.tsx", import.meta.url),
   "utf8",
 );
-const appNotice = readFileSync(new URL("../src/ui/AppNotice.tsx", import.meta.url), "utf8");
+const appNotice = readFileSync(new URL("../src/ui/AppNoticeCard.tsx", import.meta.url), "utf8");
 const expoFileHandlePatch = readFileSync(
   new URL("../../../patches/expo-file-system@57.0.2.patch", import.meta.url),
   "utf8",

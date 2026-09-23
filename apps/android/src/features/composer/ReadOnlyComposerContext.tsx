@@ -29,9 +29,11 @@ export function ReadOnlyComposerContext({
         selectedModel={null}
         selectedPermissions={null}
         selectedPersonality={null}
+        selectedServiceTier={undefined}
         selectEffort={() => undefined}
         selectModel={() => undefined}
         selectPermissions={() => undefined}
+        selectServiceTier={() => undefined}
         setSelectedPersonality={() => undefined}
         toolContextChips={children}
         workspaceResources={null}

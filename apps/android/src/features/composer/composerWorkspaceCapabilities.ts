@@ -1,7 +1,7 @@
 import type { SendMode, TurnSendOptions } from "../../data/thread-delivery-state";
 import type { StoredComposerPreferences } from "../../data/thread-ui-state-types";
 import type { StoredDraftAttachment } from "../../data/thread-ui-state-types";
-import type { ThreadSettings, TurnControlsValue } from "../../data/turn-controls-types";
+import type { LoadTurnControls, ThreadSettings } from "../../data/turn-controls-types";
 import type { VoiceInputController } from "../../data/voice-input-controller";
 import type {
   VoiceTranscriptionEvent,
@@ -14,7 +14,7 @@ export type ComposerWorkspaceCapabilities = {
   controlsResourceId: string | null;
   loadDraft: ((connectionId: string, threadId: string) => Promise<string>) | undefined;
   onInterrupt: ((turnId: string) => Promise<void>) | undefined;
-  onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
+  onLoadControls: LoadTurnControls | undefined;
   onRetryFailedMessage: ((commandId: string) => Promise<void>) | undefined;
   onSend: ((text: string, mode: SendMode, options: TurnSendOptions) => Promise<string>) | undefined;
   onStartVoiceTranscription:

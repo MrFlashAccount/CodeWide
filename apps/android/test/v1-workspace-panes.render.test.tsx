@@ -20,6 +20,7 @@ let mockDesktop = false;
 jest.mock("../src/services/workspace/workspaceRouteResources", () => ({
   useWorkspaceRouteResources: () => ({
     desktop: mockDesktop,
+    runtime: { connectionProfiles: null, ready: false },
     viewportWidth: mockDesktop ? 1100 : 400,
   }),
 }));

@@ -17,6 +17,12 @@
   - Background refreshes and WebSocket/native events update the global model outside React effects and publish resolved changes to Legend State atomically. When React-owned navigation, range, or Promise-selection state changes, schedule that state change in a Transition; do not assume that merely wrapping an external-store mutation makes it deferred.
 - Effects remain valid only for synchronizing with external systems after commit: subscriptions, timers, native listeners, imperative handles, and cleanup/retention. They must not be used as a data-loading scheduler. If retention is required, prefer hiding it behind the store subscription lifecycle rather than coupling it to a component fetch effect.
 
+## Frequently changing interaction state
+
+- Keep frequently changing interaction state that React needs in a stable owner-held Legend State observable, whether one or several components consume it. Pass the observable owner through a narrow context or typed props when needed, and subscribe with `useSelector` only where a value is rendered. Do not mirror the same state into component-local React state or force a parent to rerender on every update.
+- Keep raw gesture coordinates and animation progress that change each frame in Reanimated shared values on the UI thread. Publish semantic transitions such as armed, opened, cancelled, and settled to Legend State when React UI needs them; do not bridge every animation frame through JavaScript or Legend State.
+- Keep the gesture and its Legend State projection under the feature that owns the interaction. The context or props carry the stable owner, not a copied snapshot.
+
 ## Android V1 feature boundary
 
 - The selected V1 ownership contract and implemented source tree are in [docs/android-v1-feature-architecture.md](docs/android-v1-feature-architecture.md); exact owner moves, lifetimes and migration gates are in [docs/android-v1-feature-migration.md](docs/android-v1-feature-migration.md). Read [apps/android/src/CONTEXT.md](apps/android/src/CONTEXT.md) and the nearest local ownership contract before a V1 source move. M0–M8 source migration is implemented; the migration ledger records completed automated checks and unverified device scenarios.

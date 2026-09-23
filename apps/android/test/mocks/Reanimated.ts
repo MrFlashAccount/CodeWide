@@ -109,6 +109,10 @@ export function withSpring<Value>(value: Value, _configuration?: unknown): Value
   return value;
 }
 
+export function cancelAnimation<Value>(_value: SharedValue<Value>): void {
+  // Mock animations settle synchronously, so there is no scheduled frame to cancel.
+}
+
 function createAnimatedComponent<Props>(component: ComponentType<Props>): ComponentType<Props> {
   return component;
 }

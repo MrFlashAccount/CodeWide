@@ -1,9 +1,7 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import {
-  projectedOutputFootprint,
   projectedTurnMetadata,
   reconcileTurnItems,
-  sumOutputFootprints,
   type ProjectedTurnMetadata,
   type RemoteFileAttachment,
 } from "@codewide/sync-client";
@@ -689,22 +687,11 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
   }
   const metadata = projectedTurnMetadata(turn) ?? {};
   const artifacts = compactTurnArtifactReferences(turn);
-  const outputFootprint = sumOutputFootprints(
-    turn.items.map((item) =>
-      projectedOutputFootprint(unknownRecord(item)?.codewideOutputFootprint),
-    ),
-  );
   const compacted: Turn & { codewide: ProjectedTurnMetadata } = {
     ...turn,
     codewide: {
       ...metadata,
       ...(artifacts.length === 0 ? {} : { artifacts }),
-      activity: {
-        ...metadata.activity,
-        count: kinds.length,
-        kinds,
-        ...(outputFootprint === null ? {} : { outputFootprint }),
-      },
     },
     items: retained,
     itemsView: "summary",

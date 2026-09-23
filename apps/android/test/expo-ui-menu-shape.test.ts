@@ -25,12 +25,12 @@ describe("Expo UI menu shape", () => {
     expect(patch).toContain("takeUnless { it.alpha == 0f }");
   });
 
-  it("uses the bubble radius and compiles the patched Compose source, not the prebuilt AAR", () => {
+  it("uses the menu radius and compiles the patched Compose source, not the prebuilt AAR", () => {
     const menu = readSource("../src/ui/CodeWideMenu.native.tsx");
     const bubble = readSource("../src/rendering/Bubble.tsx");
     const manifest = JSON.parse(readSource("../package.json"));
     expect(manifest.expo.autolinking.android.buildFromSource).toEqual(["expo-ui"]);
-    expect(menu).toContain("cornerRadius={radii.selected}");
+    expect(menu).toContain("cornerRadius={radii.menu}");
     expect(bubble).toContain("borderRadius: radii.selected");
   });
 

@@ -20,18 +20,18 @@ describe("native action-menu icons", () => {
   });
 
   it("keeps menu glyphs on the RN Ionicons renderer after the menu-only rollback", () => {
-    expect(codeWideMenu).toContain("<Ionicons color={color} name={icon} size={size} />");
+    expect(codeWideMenu).toContain("<Ionicons color={color} name={icon} size={iconSize.action} />");
     expect(codeWideMenu).not.toContain("ComposeNamedIcon");
     expect(codeWideMenu).not.toContain("isComposeIconName");
-    expect(codeWideMenu).toContain("<RNHostView matchContents>{children}</RNHostView>");
+    expect(codeWideMenu).toContain("<RNHostView matchContents>{trigger}</RNHostView>");
     expect(codeWideMenu).not.toContain("assets/menu-icons");
   });
 
   it("preserves custom React Native image sources as a fallback", () => {
     expect(codeWideMenu).toContain("ActionMenuIconName | ImageSourcePropType");
-    expect(codeWideMenu).toContain('if (typeof icon !== "string")');
+    expect(codeWideMenu).toContain('if (typeof icon === "string")');
     expect(
-      sourceHasJsxElement(codeWideMenu, "Icon", ["source={icon}", "size={size}", "tint={color}"]),
+      sourceHasJsxElement(codeWideMenu, "Image", ["source={icon}", "tintColor: color"]),
     ).toBe(true);
   });
 });

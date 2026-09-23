@@ -6,16 +6,11 @@ export const styles = StyleSheet.create({
     color: colors.red,
     ...typeScale.body,
   },
-  fieldLabel: {
-    color: colors.textMuted,
-    ...typeScale.label,
-  },
   helpText: {
     color: colors.textMuted,
     ...typeScale.body,
   },
   orbStyleSettings: { gap: spacing.md },
-  personalityField: { gap: spacing.xxs },
   personalityForm: { gap: spacing.sm },
   personalityInput: {
     backgroundColor: colors.surfaceContainerLow,

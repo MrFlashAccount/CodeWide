@@ -628,6 +628,42 @@ impl HistoryService {
         .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
     }
 
+    /// Reads canonical usage for explicit full-turn activity hydration.
+    pub(crate) async fn activity_metadata(
+        &self,
+        thread_id: String,
+        turn_ids: Vec<String>,
+    ) -> Result<HashMap<String, Value>, HistoryServiceError> {
+        let catalog = self.catalog.clone();
+        let store = self.store.clone();
+        let summaries = self.summaries.clone();
+        tokio::task::spawn_blocking(move || {
+            let path = catalog.resolve(&thread_id)?;
+            index_rollout(&store, &path)?;
+            let reader = HistoryReader::open(&store, &summaries, &thread_id, &path)?;
+            let mut usages = HashMap::new();
+            for id in turn_ids {
+                if let Some(reference) = store.turn_by_id(&rollout_file_id(&path), &id)? {
+                    let offset = reference.start_offset;
+                    let projected = reader.project(&[reference], true)?;
+                    let full = store.turn_summary_state::<SummaryProjectionState>(
+                        &rollout_file_id(&path),
+                        offset,
+                    )?;
+                    if let Some(state) = full.filter(SummaryProjectionState::is_current) {
+                        usages.insert(id, state.activity_read_metadata());
+                    } else if let Some(metadata) = projected.first().and_then(|t| t.get("codewide"))
+                    {
+                        usages.insert(id, metadata.clone());
+                    }
+                }
+            }
+            Ok(usages)
+        })
+        .await
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
+    }
+
     /// Adds only recorded question evidence to an App Server-owned active checkpoint.
     /// Missing rollout data leaves the checkpoint unchanged; lifecycle and items remain authoritative.
     ///
@@ -668,6 +704,71 @@ impl HistoryService {
                 .as_object_mut()
         {
             metadata.insert("questions".into(), questions);
+        }
+        Ok(())
+    }
+
+    /// Adds canonical realtime user transcript items to an App Server-owned active checkpoint.
+    /// Lifecycle, existing items and agent output remain authoritative.
+    ///
+    /// # Errors
+    /// Returns errors from the bounded rollout history read.
+    pub(crate) async fn enrich_active_realtime_transcripts(
+        &self,
+        thread_id: &str,
+        active_turn: &mut Value,
+    ) -> Result<(), HistoryServiceError> {
+        let Some(turn_id) = active_turn
+            .get("id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+        else {
+            return Ok(());
+        };
+        let catalog = self.catalog.clone();
+        let store = self.store.clone();
+        let summaries = self.summaries.clone();
+        let thread_id = thread_id.to_owned();
+        let realtime_users =
+            tokio::task::spawn_blocking(move || -> Result<Vec<Value>, HistoryServiceError> {
+                let path = match catalog.resolve(&thread_id) {
+                    Ok(path) => path,
+                    Err(CatalogError::NotFound(_)) => return Ok(Vec::new()),
+                    Err(error) => return Err(error.into()),
+                };
+                index_rollout(&store, &path)?;
+                let file_id = rollout_file_id(&path);
+                let Some(reference) = store.turn_by_id(&file_id, &turn_id)? else {
+                    return Ok(Vec::new());
+                };
+                let reader = HistoryReader::open(&store, &summaries, &thread_id, &path)?;
+                reader.project(std::slice::from_ref(&reference), true)?;
+                Ok(store
+                    .turn_summary_state::<SummaryProjectionState>(&file_id, reference.start_offset)?
+                    .filter(SummaryProjectionState::is_current)
+                    .map_or_else(Vec::new, |state| state.realtime_user_items()))
+            })
+            .await
+            .map_err(|error| HistoryServiceError::Worker(error.to_string()))??;
+        let Some(items) = active_turn.get_mut("items").and_then(Value::as_array_mut) else {
+            return Ok(());
+        };
+        let mut insertion = items
+            .iter()
+            .rposition(|item| item.get("type").and_then(Value::as_str) == Some("userMessage"))
+            .map_or(0, |index| index + 1);
+        for user in realtime_users {
+            let Some(id) = user.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if items
+                .iter()
+                .any(|item| item.get("id").and_then(Value::as_str) == Some(id))
+            {
+                continue;
+            }
+            items.insert(insertion, user);
+            insertion += 1;
         }
         Ok(())
     }
@@ -1712,6 +1813,97 @@ mod tests {
             Arc::new(SessionCatalog::scan(root)),
             Arc::new(IndexStore::open(root.join("history-index.redb"))?),
         ))
+    }
+
+    #[tokio::test]
+    async fn turns_page_includes_durable_realtime_conversation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(path)?;
+        for line in [
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"voice-before","realtime_session_id":"session","role":"user","text":"Before"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"assistant-before","realtime_session_id":"session","role":"assistant","text":"Hello"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"task"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"voice-inside","realtime_session_id":"session","role":"user","text":"Inside"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"task","last_agent_message":"Answer"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"voice-after","realtime_session_id":"session","role":"user","text":"After"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"assistant-after","realtime_session_id":"session","role":"assistant","text":"Goodbye"}}"#,
+        ] {
+            writeln!(rollout, "{line}")?;
+        }
+        rollout.sync_all()?;
+
+        let service = history_service(directory.path())?;
+        let page = service
+            .try_turns_page(
+                "thread/turns/list",
+                &json!({
+                    "threadId": THREAD_ID,
+                    "limit": 10,
+                    "sortDirection": "desc",
+                    "itemsView": "summary"
+                }),
+            )
+            .await
+            .ok_or("history page was not handled")??;
+
+        assert_eq!(page["data"].as_array().map(Vec::len), Some(5));
+        assert_eq!(page["data"][0]["id"], "assistant-after");
+        assert_eq!(page["data"][0]["items"][0]["text"], "Goodbye");
+        assert_eq!(page["data"][1]["id"], "voice-after");
+        assert_eq!(page["data"][1]["items"][0]["content"][0]["text"], "After");
+        assert_eq!(page["data"][2]["id"], "task");
+        assert_eq!(page["data"][2]["items"][0]["content"][0]["text"], "Inside");
+        assert_eq!(page["data"][3]["id"], "assistant-before");
+        assert_eq!(page["data"][3]["items"][0]["text"], "Hello");
+        assert_eq!(page["data"][4]["id"], "voice-before");
+        assert_eq!(page["data"][4]["items"][0]["content"][0]["text"], "Before");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn active_checkpoint_adds_realtime_user_transcript_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(path)?;
+        for line in [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"active"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"voice-user","realtime_session_id":"session","role":"user","text":"Spoken now"}}"#,
+        ] {
+            writeln!(rollout, "{line}")?;
+        }
+        rollout.sync_all()?;
+
+        let service = history_service(directory.path())?;
+        let mut active = json!({
+            "id": "active",
+            "status": "inProgress",
+            "items": [{"id":"live-agent","type":"agentMessage","text":"Working"}]
+        });
+        service
+            .enrich_active_realtime_transcripts(THREAD_ID, &mut active)
+            .await?;
+        service
+            .enrich_active_realtime_transcripts(THREAD_ID, &mut active)
+            .await?;
+
+        assert_eq!(active["items"].as_array().map(Vec::len), Some(2));
+        assert_eq!(active["items"][0]["id"], "voice-user");
+        assert_eq!(active["items"][0]["content"][0]["text"], "Spoken now");
+        assert_eq!(active["items"][1]["id"], "live-agent");
+
+        let mut unrelated = json!({"id":"other", "items":[]});
+        service
+            .enrich_active_realtime_transcripts(THREAD_ID, &mut unrelated)
+            .await?;
+        assert!(unrelated["items"].as_array().is_some_and(Vec::is_empty));
+        Ok(())
     }
 
     #[tokio::test]

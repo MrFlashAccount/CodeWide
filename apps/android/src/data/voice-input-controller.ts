@@ -218,7 +218,22 @@ export class VoiceInputController {
     }
     this.put(binding.scope, { ...IDLE_VOICE, phase: "starting" });
     this.activeBinding = binding;
-    const acquisition = await this.microphoneLeases.acquireDictation(binding.scope);
+    let acquisition: Awaited<ReturnType<V1MicrophoneLeaseRegistry["acquireDictation"]>>;
+    try {
+      acquisition = await this.microphoneLeases.acquireDictation(binding.scope);
+    } catch (error) {
+      if (operation === this.operation) {
+        this.failOperation(binding.scope, messageOf(error));
+      }
+      return;
+    }
+    // A cancelled start must not reset a replacement recording when handoff settles.
+    if (operation !== this.operation || recording.signal.aborted) {
+      if (acquisition.status === "acquired") {
+        void acquisition.lease.release().catch(() => undefined);
+      }
+      return;
+    }
     if (acquisition.status === "busy") {
       this.activeBinding = null;
       this.recording = null;
@@ -235,10 +250,6 @@ export class VoiceInputController {
         }
       });
     };
-    if (operation !== this.operation || recording.signal.aborted) {
-      releaseMicrophone();
-      return;
-    }
     const source = binding.source();
     this.originalDraft = source;
     const selection = binding.selection();

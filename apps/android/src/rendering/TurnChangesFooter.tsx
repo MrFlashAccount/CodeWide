@@ -16,9 +16,12 @@ interface TurnChangesFooterProps {
 /** Opens the immutable patch from this turn, never Session or Last Turn. */
 export function TurnChangesFooter(props: TurnChangesFooterProps) {
   const present = useContext(TurnChangesContext);
-  const files = turnChangedFiles(props.diff);
-  const open = useEvent(() => present?.(props.target, files));
-  if (present === null || files.length === 0) {
+  const open = useEvent(() => {
+    if (present !== null) {
+      present(props.target, turnChangedFiles(props.diff));
+    }
+  });
+  if (present === null || props.diff.trim() === "") {
     return null;
   }
   return (

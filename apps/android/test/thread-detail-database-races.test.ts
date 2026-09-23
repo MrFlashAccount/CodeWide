@@ -373,6 +373,39 @@ describe("thread detail ownership races", () => {
     await details.close();
   });
 
+  it("marks a revealed cached window stale when its authoritative repair fails", async () => {
+    harness.loadResolvedWindow.mockResolvedValue(completeResolvedWindow());
+    const details = createThreadDetailDatabase();
+    details.setRemoteLoader({
+      reconcilePending: async () => undefined,
+      hydrateWindow: async () => {
+        throw new Error("upstream unavailable");
+      },
+      repairProjection: async () => undefined,
+      loadOlder: async () => undefined,
+      loadNewer: async () => ({ status: "superseded" }),
+    });
+    await details.prepare();
+
+    const resource = details.windowResource({
+      connectionId: "server",
+      threadId: "thread",
+      anchorTurnId: null,
+    });
+    await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
+    await vi.waitFor(() =>
+      expect(details.chat.window$("server", "thread").peek()).toEqual(
+        expect.objectContaining({
+          backendRefreshing: false,
+          error: "upstream unavailable",
+          status: "background-retrying",
+        }),
+      ),
+    );
+    expect(details.readWindowRows(resource.window$.peek()).turnRows).not.toHaveLength(0);
+    await details.close();
+  });
+
   it("does not reveal a cached empty thread before its activation refresh confirms the head", async () => {
     const refresh = Promise.withResolvers<void>();
     harness.loadResolvedWindow

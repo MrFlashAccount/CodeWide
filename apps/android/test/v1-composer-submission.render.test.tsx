@@ -20,6 +20,7 @@ function createActivation(
     permissions: null,
     skillPaths: [],
     sendMode: "start",
+    serviceTier: undefined,
   };
   const composerSession = composerSessionFixture(threadId, preferences);
   const draft: Parameters<typeof useComposerDraftCommands>[0] = {
@@ -79,6 +80,7 @@ function useActivation(activation: ReturnType<typeof createActivation>) {
     composerInputRef: { current: activation.composerInput },
     composerSession: activation.composerSession,
     selectedModel: settings.selectedModel,
+    selectedServiceTier: settings.selectedServiceTier,
     selectedEffort: settings.selectedEffort,
     selectedPersonality: settings.selectedPersonality,
     selectedPermissions: settings.selectedPermissions,
@@ -101,6 +103,42 @@ function useActivation(activation: ReturnType<typeof createActivation>) {
     saveDraftAttachments: activation.draft.saveDraftAttachments,
   });
 }
+
+it("sends the selected Fast tier with a new chat turn", async () => {
+  const activation = createActivation("fast-message");
+  activation.settings.composerPreferences = {
+    ...activation.settings.composerPreferences,
+    serviceTier: "priority",
+  };
+  activation.composerSession.updateText({ markdown: "fast-message", plainText: "fast-message" });
+  const hook = renderHook(useActivation, { initialProps: activation });
+
+  await act(async () => { await hook.result.current.send(); });
+
+  expect(activation.onSend).toHaveBeenCalledWith(
+    "fast-message",
+    { type: "start" },
+    expect.objectContaining({ serviceTier: "priority" }),
+  );
+});
+
+it("keeps an explicit standard choice on a new chat turn", async () => {
+  const activation = createActivation("standard-message");
+  activation.settings.composerPreferences = {
+    ...activation.settings.composerPreferences,
+    serviceTier: "default",
+  };
+  activation.composerSession.updateText({ markdown: "standard-message", plainText: "standard-message" });
+  const hook = renderHook(useActivation, { initialProps: activation });
+
+  await act(async () => { await hook.result.current.send(); });
+
+  expect(activation.onSend).toHaveBeenCalledWith(
+    "standard-message",
+    { type: "start" },
+    expect.objectContaining({ serviceTier: "default" }),
+  );
+});
 
 it("keeps visible plain text when the markdown event lags behind an attachment send", async () => {
   const activation = createActivation("caption");

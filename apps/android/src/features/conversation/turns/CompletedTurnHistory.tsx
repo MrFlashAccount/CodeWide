@@ -1,11 +1,11 @@
+import { collapsedActivitySummary } from "../../../rendering/activityMetrics";
 import type { CollapsedTurnActivityProps } from "./CollapsedTurnActivity.types";
 import type { CompletedTurnHistoryProps } from "./CompletedTurnHistory.types";
 /** V1 CompletedTurnHistory owner, extracted without changing interaction or resource lifetime. */
-import { projectedTurnMetadata } from "@codewide/sync-client";
+import { projectedActivityMetrics } from "@codewide/sync-client";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { useRef } from "react";
 import { Pressable } from "react-native";
-import { activityOutputFootprint } from "../../../rendering/command-activity";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { selectTurnRenderWindow } from "../../../rendering/thread-render-window";
 import { chronologicalTurnSequence } from "../../../rendering/turn-sequence";
@@ -15,12 +15,7 @@ import { usePersistentExpansion } from "./Card";
 import { styles } from "./CompletedTurnHistory.styles";
 import { TurnActivity, TurnActivitySegment } from "./TurnActivity";
 import { ExpansionItemKeyContext } from "./turnContexts";
-import {
-  projectThreadItem,
-  turnActivityLabel,
-  turnMetadataBlocks,
-  turnMetadataKinds,
-} from "./turnProjection";
+import { projectThreadItem, turnActivityLabel, turnMetadataBlocks } from "./turnProjection";
 
 export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
   const rawTurn = props.item.turn;
@@ -40,27 +35,14 @@ export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
         const rawItem = rawTurn.items[index];
         return rawItem === undefined ? [] : [projectThreadItem(props.item, rawItem, index)];
       });
-  const outputFootprint = activityOutputFootprint(
-    props.indexes.flatMap((index) => {
-      const rawItem = rawTurn.items[index];
-      if (rawItem === undefined || rawItem.type !== "commandExecution") {
-        return [];
-      }
-      const raw: Record<string, unknown> = rawItem;
-      return [
-        {
-          raw,
-          visibleOutput: typeof raw.aggregatedOutput === "string" ? raw.aggregatedOutput : "",
-        },
-      ];
-    }),
-  );
+  const summary = collapsedActivitySummary(rawTurn, props.indexes);
+  const outputFootprint = summary?.outputFootprint ?? null;
 
   return (
     <TurnActivity
       expanded={isExpanded}
       forceExpandCards={props.forceExpanded}
-      label={`${turnActivityLabel(activityKinds, props.compact)} · ${String(props.indexes.length)}`}
+      label={collapsedActivityLabel(summary, activityKinds, props.compact)}
       onToggle={() => {
         setExpanded(!isExpanded);
       }}
@@ -119,34 +101,10 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
       return rawItem === undefined ? [] : [{ index, rawItem }];
     },
   );
-  const metadataKinds = turnMetadataKinds(rawTurn);
-  const activitySummary = projectedTurnMetadata(rawTurn)?.activity;
-  const hasFullItems = rawTurn.itemsView === "full";
-  const activityKinds = [
-    ...(hasFullItems
-      ? activityItems.map(({ rawItem }) => rawItem.type)
-      : (activitySummary?.kinds ?? [])),
-    ...metadataKinds,
-  ];
-  const activityCount = hasFullItems
-    ? activityItems.length + metadataKinds.length
-    : (activitySummary?.count ?? 0) + metadataKinds.length;
-  const outputFootprint = hasFullItems
-    ? activityOutputFootprint(
-        activityItems.flatMap(({ rawItem }) => {
-          if (rawItem.type !== "commandExecution") {
-            return [];
-          }
-          const raw: Record<string, unknown> = rawItem;
-          return [
-            {
-              raw,
-              visibleOutput: typeof raw.aggregatedOutput === "string" ? raw.aggregatedOutput : "",
-            },
-          ];
-        }),
-      )
-    : (activitySummary?.outputFootprint ?? null);
+  const activitySummary = projectedActivityMetrics(rawTurn)?.total;
+  const activityKinds = activitySummary?.kinds ?? [];
+  const activityCount = activitySummary?.count;
+  const outputFootprint = activitySummary?.outputFootprint ?? null;
   const historyBlocks =
     !isExpanded || rawTurn.itemsView !== "full"
       ? []
@@ -176,7 +134,7 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
         setLoading(false);
       });
   };
-  if (rawTurn.itemsView === "full" && activityCount === 0) {
+  if (activityCount === 0) {
     return null;
   }
   return (
@@ -189,11 +147,7 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
           ? "Loading activity…"
           : error !== null
             ? "Activity unavailable"
-            : rawTurn.itemsView === "full"
-              ? `${turnActivityLabel(activityKinds, props.compact)} · ${String(activityCount)}`
-              : activityCount > 0
-                ? `${turnActivityLabel(activityKinds, props.compact)} · ${String(activityCount)}`
-                : "Activity"
+            : turnActivityLabel(activityKinds, props.compact, activityCount)
       }
       loading={loading}
       onToggle={() => {
@@ -229,4 +183,12 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
       )}
     </TurnActivity>
   );
+}
+
+function collapsedActivityLabel(
+  summary: ReturnType<typeof collapsedActivitySummary>,
+  fallbackKinds: readonly string[],
+  compact: boolean,
+): string {
+  return turnActivityLabel(summary?.kinds ?? fallbackKinds, compact, summary?.count);
 }

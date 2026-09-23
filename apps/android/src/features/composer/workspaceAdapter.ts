@@ -5,7 +5,7 @@ import type {
   StoredComposerPreferences,
   StoredDraftAttachment,
 } from "../../data/thread-ui-state-types";
-import type { ThreadSettings } from "../../data/turn-controls-types";
+import type { ThreadSettings, TurnControlsLoadOptions } from "../../data/turn-controls-types";
 import type { TurnControlsValue } from "../../data/workspace-resource-database";
 import { enqueueNativeCommand } from "../../native/native-transport";
 
@@ -19,7 +19,11 @@ export function createComposerWorkspaceAdapter({
   startVoiceTranscription,
 }: {
   getThreadUiState: () => ThreadUiStateDatabase | null;
-  loadTurnControls: (connectionId: string, cwd: string) => Promise<TurnControlsValue>;
+  loadTurnControls: (
+    connectionId: string,
+    cwd: string,
+    options?: TurnControlsLoadOptions,
+  ) => Promise<TurnControlsValue>;
   retryFailedMessage: ComposerWorkspaceCapabilities["retryFailedMessage"];
   sendText: ComposerWorkspaceCapabilities["sendText"];
   startVoiceTranscription: ComposerWorkspaceCapabilities["startVoiceTranscription"];

@@ -92,7 +92,7 @@ export function useComposerVoiceState(
     if (voiceError === null) {
       return;
     }
-    showNotice({ duration: VOICE_ERROR_NOTICE_DURATION_MS, label: voiceError });
+    showNotice({ duration: VOICE_ERROR_NOTICE_DURATION_MS, label: voiceError, variant: "error" });
   }, [showNotice, voiceError]);
 
   const voiceRetryAvailable = voiceResource?.retryAvailable ?? false;

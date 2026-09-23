@@ -10,6 +10,7 @@ import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
 import { styles } from "./ThreadSidebar.styles";
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";
 import { GlobalVoiceEntryAction } from "./GlobalVoiceEntryAction";
+import { ThreadListSearchRow } from "./ThreadListSearchRow";
 
 export function ThreadSidebarHeader({
   props,
@@ -84,11 +85,6 @@ export function ThreadSidebarHeader({
           </Text>
         )}
         <GlobalVoiceEntryAction {...globalVoice} />
-        <ThreadListHeaderAction
-          accessibilityLabel="Search threads and messages"
-          name="search"
-          onPress={onOpenSearch}
-        />
         <ThreadFilterMenu
           mode={mode}
           onSelect={onFilterChange}
@@ -112,6 +108,7 @@ export function ThreadSidebarHeader({
           {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
         />
       </ThreadListHeaderRow>
+      <ThreadListSearchRow onOpenSearch={onOpenSearch} />
     </View>
   );
 }

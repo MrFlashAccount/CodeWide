@@ -36,8 +36,8 @@ export function projectThreadResourcePatch(
 }
 
 function projectsLiveFileChanges(scope: ThreadResourcesValue["changeScope"]): boolean {
-  // Branch is a commit comparison owned by the Companion VCS snapshot. A live
-  // step patch describes session/worktree edits and cannot update it safely.
+  // Branch and Uncommitted are Companion VCS snapshots. A live step patch
+  // cannot reconcile their committed/index/worktree diff safely.
   return scope === "session" || scope === "lastTurn" || scope === "unstaged";
 }
 

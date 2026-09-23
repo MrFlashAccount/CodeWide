@@ -23,8 +23,8 @@ export function PairingChoose({
         Connect this phone to Codex running on another machine.
       </Text>
       <Text style={styles.pairingHint}>
-        On the host, run <Text style={styles.pairingCode}>codewide-host pair</Text>. Then scan or
-        paste the one-time link.
+        Follow the setup instructions for your computer's OS, then scan its pairing QR code or paste
+        the one-time link.
       </Text>
       <View style={styles.pairingActionStack}>
         <Pressable

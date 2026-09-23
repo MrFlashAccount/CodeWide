@@ -20,6 +20,7 @@ export type ComposerSubmissionCapabilities = Pick<
   Pick<
     Settings,
     | "selectedModel"
+    | "selectedServiceTier"
     | "selectedEffort"
     | "selectedPersonality"
     | "selectedPermissions"

@@ -30,8 +30,8 @@ function NativeContentMenu({
 }): React.JSX.Element {
   return (
     <DropdownMenu
-      color={colors.surfaceContainer}
-      cornerRadius={radii.selected}
+      color={colors.menuSurface}
+      cornerRadius={radii.menu}
       expanded={props.open}
       onDismissRequest={dismiss}
     >

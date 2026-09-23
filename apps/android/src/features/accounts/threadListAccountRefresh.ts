@@ -6,7 +6,10 @@ import type { ThreadListServer } from "../connections/connectionPresentation";
 export function useThreadListAccountRefresh(
   servers: ThreadListServer[],
   serverScope: ServerScope,
-  refreshAccountRateLimits: (connectionId: string) => Promise<GetAccountRateLimitsResponse>,
+  refreshAccountRateLimits: (
+    connectionId: string,
+    force?: boolean,
+  ) => Promise<GetAccountRateLimitsResponse>,
 ) {
   const refreshThreadListAccountRateLimits = useEvent(async (): Promise<void> => {
     const refreshableServers = servers.filter(
@@ -17,7 +20,7 @@ export function useThreadListAccountRefresh(
           server.status === "syncing"),
     );
     await Promise.all(
-      refreshableServers.map(async (server) => refreshAccountRateLimits(server.id)),
+      refreshableServers.map(async (server) => refreshAccountRateLimits(server.id, true)),
     );
   });
   return { refreshThreadListAccountRateLimits };

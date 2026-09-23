@@ -52,6 +52,8 @@ export const colors = {
   borderSoft: "#242424",
   conversationSurface: scheme.surface,
   green: scheme.success,
+  menuHighlight: "#333333",
+  menuSurface: "#1E1E1E",
   messageSurface: scheme.background,
   nebula: "#1a73f2",
   nebulaHighlight: "#fcffff",
@@ -83,7 +85,7 @@ export const radii = {
   composer: 24,
   large: 24,
   medium: 16,
-  menu: 30, // Menu surfaces use the established 30dp rounded shape.
+  menu: 32,
   pill: 999,
   selected: 16,
   small: 8,

@@ -82,9 +82,74 @@ function emitAudio(): void {
 
 describe("VoiceInputController", () => {
   beforeEach(() => {
+    vi.mocked(startPcmCapture).mockClear();
     capture.onChunk = null;
     capture.stop.mockReset();
     capture.stop.mockImplementation(async () => undefined);
+  });
+
+  it("recovers from a rejected microphone handoff and can record and send on the next tap", async () => {
+    const { database, rows } = resources();
+    const leases = createV1MicrophoneLeaseRegistry(() => "microphone-token");
+    const pause = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("Capture handoff failed"))
+      .mockResolvedValue(undefined);
+    leases.acquireGlobalSupervisor("activation", {
+      pauseForDictation: pause,
+      resumeAfterDictation: async () => undefined,
+    });
+    const controller = new VoiceInputController(database, leases);
+    const send = vi.fn();
+    controller.bind({
+      scope: "composer",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send,
+      startRemote: async (listener) => remoteSession(listener, ["Recovered dictation"]),
+    });
+    await expect(controller.toggle("composer")).resolves.toBeUndefined();
+    expect(rows.get("composer")).toMatchObject({ phase: "idle", error: "Capture handoff failed" });
+    expect(leases.state().phase).toBe("assistantOwned");
+    await controller.toggle("composer");
+    expect(rows.get("composer")?.phase).toBe("recording");
+    emitAudio();
+    await controller.finish("composer", true);
+    expect(send).toHaveBeenCalledExactlyOnceWith("Recovered dictation");
+    expect(rows.get("composer")?.phase).toBe("idle");
+  });
+
+  it("ignores a cancelled acquisition failure after another input starts recording", async () => {
+    const { database, rows } = resources();
+    const leases = createV1MicrophoneLeaseRegistry(() => "microphone-token");
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof leases.acquireDictation>>>();
+    vi.spyOn(leases, "acquireDictation").mockImplementationOnce(() => pending.promise);
+    const controller = new VoiceInputController(database, leases);
+    const send = vi.fn();
+    const bind = (scope: string) =>
+      controller.bind({
+        scope,
+        source: () => "",
+        selection: () => ({ start: 0, end: 0 }),
+        thread: null,
+        updateDraft: vi.fn(),
+        send,
+        startRemote: async (listener) => remoteSession(listener, ["New recording"]),
+      });
+    bind("first");
+    const oldStart = controller.toggle("first");
+    await controller.discard("first");
+    bind("second");
+    await controller.toggle("second");
+    pending.reject(new Error("Old handoff failed"));
+    await expect(oldStart).resolves.toBeUndefined();
+    expect(rows.get("first")).toMatchObject({ phase: "idle", error: null });
+    expect(rows.get("second")).toMatchObject({ phase: "recording", error: null });
+    emitAudio();
+    await controller.finish("second", true);
+    expect(send).toHaveBeenCalledExactlyOnceWith("New recording");
   });
 
   it("waits for Global Voice to yield capture, writes to the requesting input, then resumes it", async () => {

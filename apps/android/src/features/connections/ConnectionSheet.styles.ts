@@ -1,4 +1,4 @@
-import { Platform, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
 import {
   colors,
   controlSize,
@@ -48,13 +48,6 @@ export const styles = StyleSheet.create({
   pairingBody: {
     gap: spacing.md,
     paddingBottom: spacing.optical,
-  },
-  pairingCode: {
-    color: colors.text,
-    fontFamily: Platform.select({
-      android: "monospace",
-      default: "Courier",
-    }),
   },
   pairingEmojiInput: {
     backgroundColor: colors.surfaceRaised,

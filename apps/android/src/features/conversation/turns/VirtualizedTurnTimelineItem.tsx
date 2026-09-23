@@ -12,7 +12,7 @@ import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary
 import { MessageActionRail } from "./MessageActionRail";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
 import type { projectTurnPresentation } from "./turnProjection";
-import { TurnUsageContext } from "./turnContexts";
+import { TurnMetricsProvider } from "./TurnMetricsProvider";
 import { TurnFooter } from "./TurnFooter";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
@@ -53,12 +53,15 @@ export function VirtualizedTurnTimelineItem({
     }
     await props.onLoadItems(props.turn.id);
   });
+  const content = (
+    <PrivateAssetRecoveryProvider {...(props.onLoadItems === undefined ? {} : { recover })}>
+      <VirtualizedTurnSlice {...props} agentDateLabel={agentDateLabel} usage={usage} />
+    </PrivateAssetRecoveryProvider>
+  );
   return (
-    <TurnUsageContext.Provider value={usage}>
-      <PrivateAssetRecoveryProvider {...(props.onLoadItems === undefined ? {} : { recover })}>
-        <VirtualizedTurnSlice {...props} agentDateLabel={agentDateLabel} usage={usage} />
-      </PrivateAssetRecoveryProvider>
-    </TurnUsageContext.Provider>
+    <TurnMetricsProvider turn={props.turn.turn} usage={usage}>
+      {content}
+    </TurnMetricsProvider>
   );
 }
 

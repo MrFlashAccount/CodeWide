@@ -11,10 +11,12 @@ import { ThreadRowMenu } from "./ThreadRowMenu";
 import { CommitOnChangeProbe } from "../../ui/CommitProbe";
 import { ThreadRowCommitBoundary } from "../diagnostics/ThreadNavigationCommit";
 import { copySessionId } from "../turnActions/turnActions";
+import { useAppNotice } from "../../ui/useAppNotice";
 import { styles } from "./ThreadRow.styles";
 import { ThreadSwipeAction, ThreadSwipeActions } from "./ThreadSwipeActions";
 
 export function ThreadRow(props: ThreadRowProps) {
+  const showNotice = useAppNotice().show;
   const { onMarkRead, onNavigate, onTogglePin, selected, server, thread } = props;
   const actions = useThreadRowActions(props);
   const {
@@ -38,7 +40,7 @@ export function ThreadRow(props: ThreadRowProps) {
   });
   const selectMenuAction = useEvent((id: string) => {
     if (id === "copy-session-id") {
-      void copySessionId(thread.id).catch((error: unknown) => {
+      void copySessionId(thread.id, showNotice).catch((error: unknown) => {
         dialog.alert(
           "Copy failed",
           error instanceof Error ? error.message : "Could not copy session ID",

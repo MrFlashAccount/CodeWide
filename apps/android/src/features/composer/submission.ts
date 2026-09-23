@@ -12,6 +12,12 @@ import { mergeFailedComposerAttachments, mergeFailedComposerText } from "./submi
 import { composerTextForSubmission } from "./composerSubmissionText";
 import { sameComposerAttachments, sameComposerPreferences } from "./composerSession";
 
+type InterruptRequest =
+  | { readonly status: "idle" }
+  | { readonly status: "requested"; readonly turnId: string };
+
+const IDLE_INTERRUPT_REQUEST: InterruptRequest = { status: "idle" };
+
 export function useComposerSubmission({
   captureControlsResource,
   captureDraftMutations,
@@ -37,6 +43,7 @@ export function useComposerSubmission({
   selectedModel,
   selectedPermissions,
   selectedPersonality,
+  selectedServiceTier,
   threadLifecycleActive,
 }: ComposerSubmissionCapabilities) {
   const captureSend = useEvent(() => {
@@ -111,6 +118,7 @@ export function useComposerSubmission({
         }
         operation = onSend(text, mode, {
           ...(selectedModel === null ? {} : { model: selectedModel }),
+          ...(selectedServiceTier === undefined ? {} : { serviceTier: selectedServiceTier }),
           ...(selectedEffort === null ? {} : { effort: selectedEffort }),
           ...(selectedPersonality === null ? {} : { personality: selectedPersonality }),
           ...(selectedPermissions === null ? {} : { permissions: selectedPermissions }),
@@ -268,6 +276,10 @@ export function useComposerDeliveryActions({
 }: ComposerDeliveryCapabilities) {
   const dialog = useAppDialog();
   const [actionPending, setActionPending] = useConversationState(composerScope, () => false);
+  const [interruptRequest, setInterruptRequest] = useConversationState<InterruptRequest>(
+    composerScope,
+    () => IDLE_INTERRUPT_REQUEST,
+  );
   const runAction = useEvent((operation: () => Promise<void>, fallback: string): void => {
     if (actionPending) {
       return;
@@ -283,6 +295,35 @@ export function useComposerDeliveryActions({
       },
     );
   });
+  const runVoiceAction = useEvent((operation: () => Promise<void>, fallback: string): void => {
+    // VoiceInputController owns recording/finalization admission. Holding the
+    // message-send lock here would block the very discard that cancels a wait.
+    void operation().catch((error: unknown) => {
+      dialog.alert(fallback, error instanceof Error ? error.message : fallback);
+    });
+  });
+  const requestInterrupt = useEvent(
+    (turnId: string, interrupt: (turnId: string) => Promise<void>): void => {
+      if (interruptRequest.status === "requested" && interruptRequest.turnId === turnId) {
+        return;
+      }
+      // The RPC can succeed before the thread projection clears currentTurnId.
+      // Retain the accepted turn id so that stale UI cannot interrupt it again.
+      setInterruptRequest({ status: "requested", turnId });
+      runAction(async () => {
+        try {
+          await interrupt(turnId);
+        } catch (error) {
+          setInterruptRequest((current) =>
+            current.status === "requested" && current.turnId === turnId
+              ? IDLE_INTERRUPT_REQUEST
+              : current,
+          );
+          throw error;
+        }
+      }, "Could not stop response");
+    },
+  );
   const deliveryActions: ActionMenuItem[] = [
     { disabled: threadLifecycleActive, icon: "send-outline", id: "start", label: "Send now" },
     {
@@ -304,7 +345,7 @@ export function useComposerDeliveryActions({
       return;
     }
     if (voicePhase !== "idle") {
-      runAction(async () => {
+      runVoiceAction(async () => {
         await finishVoice(true, id);
       }, "Could not finish voice input");
     } else {
@@ -323,9 +364,14 @@ export function useComposerDeliveryActions({
     voicePhase === "idle" &&
     draft.trim() === "" &&
     attachments.length === 0;
+  const interruptAlreadyRequested =
+    stoppingResponse &&
+    interruptRequest.status === "requested" &&
+    interruptRequest.turnId === currentTurnId;
 
   const sendDisabled =
     actionPending ||
+    interruptAlreadyRequested ||
     voicePhase === "finishing" ||
     queuedComposerEditBusy ||
     (editingQueuedMessage && onEditQueued === undefined) ||
@@ -348,7 +394,7 @@ export function useComposerDeliveryActions({
     if (editingQueuedMessage) {
       cancelQueuedComposerEdit();
     } else if (voicePhase !== "idle" || voiceRetryAvailable || voiceError !== null) {
-      runAction(discardVoice, "Could not discard voice input");
+      runVoiceAction(discardVoice, "Could not discard voice input");
     } else {
       clearComposerText();
     }
@@ -358,7 +404,7 @@ export function useComposerDeliveryActions({
     if (editingQueuedMessage) {
       saveQueuedComposerEdit();
     } else if (voicePhase !== "idle") {
-      runAction(async () => {
+      runVoiceAction(async () => {
         await finishVoice(true);
       }, "Could not finish voice input");
     } else if (
@@ -368,9 +414,7 @@ export function useComposerDeliveryActions({
       draft.trim() === "" &&
       attachments.length === 0
     ) {
-      runAction(async () => {
-        await onInterrupt(currentTurnId);
-      }, "Could not stop response");
+      requestInterrupt(currentTurnId, onInterrupt);
     } else {
       runAction(async () => {
         await send();

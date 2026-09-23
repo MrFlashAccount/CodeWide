@@ -197,7 +197,7 @@ describe("Global Supervisor attention", () => {
     await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(1);
   });
 
-  it("keeps repeated turns scoped across supervisors and unlinks a closed worker", async () => {
+  it("keeps follow across runtime unload and removes it only when the worker is deleted", async () => {
     const attention = owner();
     await attention.enableDelivery(SUPERVISOR);
     await attention.enableDelivery(SUPERVISOR_B);
@@ -226,7 +226,20 @@ describe("Global Supervisor attention", () => {
       completed({ cursor: 4, observedAt: 13_000, worker: WORKER_A.threadId }),
     ]);
 
-    await expect(attention.pendingCount(SUPERVISOR_B)).resolves.toBe(2);
+    await expect(attention.pendingCount(SUPERVISOR_B)).resolves.toBe(3);
+
+    await attention.ingestEvents(WORKER_A.connectionId, [
+      {
+        cursor: 5,
+        payload: {
+          method: "thread/deleted",
+          params: { threadId: WORKER_A.threadId },
+        },
+      },
+      completed({ cursor: 6, observedAt: 14_000, worker: WORKER_A.threadId }),
+    ]);
+
+    await expect(attention.pendingCount(SUPERVISOR_B)).resolves.toBe(3);
   });
 
   it("commits attention before the source batch can be acknowledged", async () => {

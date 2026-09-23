@@ -449,6 +449,7 @@ describe("thread detail projection", () => {
     const final = { id: "final", type: "agentMessage", text: "done" } as Turn["items"][number];
     const compacted = compactCompletedTurnForStorage({
       ...turn(),
+      codewide: { activity: { count: 17, kinds: ["commandExecution"] } },
       itemsView: "full",
       items: [user, tool, intermediate, reasoning, final],
     } as Turn);
@@ -456,8 +457,8 @@ describe("thread detail projection", () => {
     expect(compacted.itemsView).toBe("summary");
     expect(compacted.items.map((item) => item.id)).toEqual(["user", "final"]);
     expect((compacted as Turn & { codewide?: { activity?: { count: number; kinds: string[] } } }).codewide?.activity).toEqual({
-      count: 3,
-      kinds: ["commandExecution", "agentMessage", "reasoning"],
+      count: 17,
+      kinds: ["commandExecution"],
     });
   });
 
@@ -488,6 +489,7 @@ describe("thread detail projection", () => {
 
     const compacted = compactCompletedTurnForStorage({
       ...turn(),
+      codewide: { activity: { count: 1, kinds: ["commandExecution"], outputFootprint: { version: 1, basis: "approxBytesPerToken", bytes: 8000, estimatedTokens: 2000 } } },
       itemsView: "full",
       items: [user, tool, final],
     } as Turn);
@@ -495,8 +497,8 @@ describe("thread detail projection", () => {
     expect((compacted as Turn & { codewide?: { activity?: { outputFootprint?: unknown } } }).codewide?.activity?.outputFootprint).toEqual({
       version: 1,
       basis: "approxBytesPerToken",
-      bytes: 4_000,
-      estimatedTokens: 1_000,
+      bytes: 8000,
+      estimatedTokens: 2000,
     });
   });
 

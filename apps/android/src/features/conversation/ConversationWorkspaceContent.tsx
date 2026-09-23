@@ -18,7 +18,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
           props.activeConnectionId === ""
             ? undefined
             : async () =>
-                props.features.accounts.refreshAccountRateLimits(props.activeConnectionId),
+                props.features.accounts.refreshAccountRateLimits(props.activeConnectionId, true),
       }}
       actions={{
         archived: props.activeThread?.archived ?? false,

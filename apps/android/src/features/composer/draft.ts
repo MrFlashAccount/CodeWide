@@ -8,6 +8,7 @@ export const EMPTY_COMPOSER_PREFERENCES: StoredComposerPreferences = {
   permissions: null,
   personality: null,
   sendMode: "start",
+  serviceTier: undefined,
   skillPaths: [],
 };
 

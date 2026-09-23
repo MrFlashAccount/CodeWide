@@ -63,7 +63,6 @@ export function useComposerCommands({
   });
   const composerControlActionsBinding = useComposerControlActions({
     closeInlineQueueOverlay: queueVisibilityBinding.closeInlineQueueOverlay,
-    currentControlsResource: composerStateBinding.composerEditingBinding.currentControlsResource,
     dismissComposerKeyboardForOverlay:
       overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay,
     openToolRoute: (page) => {

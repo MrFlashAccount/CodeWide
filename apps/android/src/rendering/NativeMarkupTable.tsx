@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 
 import { colors, spacing, typeScale } from "../theme";
-import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayout";
+import { RichContentWidthProvider } from "./RichContentLayout";
 import {
   markupTableGrid,
   markupTableRowHeights,
@@ -13,10 +13,11 @@ import { NativeRevealSurface } from "./NativeRevealSurface";
 import { markupNodePath } from "./markup-node-path";
 import { useStreamingRevealKey } from "./streaming-reveal-context";
 import { FluidLayoutFrame } from "./FluidLayoutFrame";
+import { useTableViewport } from "./useTableViewport";
 
 /** The upstream native table plugin does not handle HTML rowspan=0; keep this measured layout. */
 export function NativeMarkupTable(props: CustomRendererProps<TBlock>) {
-  const available = useRichContentWidth() ?? 0;
+  const viewport = useTableViewport();
   const streamKey = useStreamingRevealKey();
   const [measured, setMeasured] = useState<Readonly<Record<number, number>>>({});
   const grid = markupTableGrid(props.tnode);
@@ -25,7 +26,7 @@ export function NativeMarkupTable(props: CustomRendererProps<TBlock>) {
   for (const height of heights) {
     offsets.push((offsets[offsets.length - 1] ?? 0) + height);
   }
-  const cellWidth = Math.max(120, available / grid.columns);
+  const cellWidth = Math.max(120, viewport.contentWidth / grid.columns);
   const caption = props.tnode.children.find((child) => child.tagName === "caption");
   const rows: { cell: MarkupTableCell; index: number }[][] = Array.from(
     { length: grid.rows },
@@ -35,13 +36,14 @@ export function NativeMarkupTable(props: CustomRendererProps<TBlock>) {
     rows[cell.row]?.push({ cell, index });
   });
   return (
-    <FluidLayoutFrame animate={streamKey !== null}>
+    <FluidLayoutFrame
+      animate={streamKey !== null}
+      onLayout={viewport.onLayout}
+      style={[styles.viewport, { width: viewport.width }]}
+      testID="markup-table-viewport"
+    >
       {caption !== undefined && <TNodeChildrenRenderer tnode={caption} />}
-      <ScrollView
-        horizontal
-        nestedScrollEnabled
-        style={available > 0 ? { width: available } : undefined}
-      >
+      <ScrollView horizontal nestedScrollEnabled style={styles.scroller}>
         <View
           style={[
             styles.table,
@@ -115,8 +117,15 @@ const styles = StyleSheet.create({
   },
   content: { padding: spacing.xs },
   header: { backgroundColor: colors.surfaceContainerHigh },
+  scroller: { width: "100%" },
   table: {
     borderColor: colors.outline,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  viewport: {
+    alignSelf: "stretch",
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
   },
 });

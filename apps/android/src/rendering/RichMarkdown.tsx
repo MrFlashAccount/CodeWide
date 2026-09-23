@@ -46,6 +46,7 @@ import {
 } from "./ImagePreviewHost";
 import { useMarkdownLocalLinkHandler } from "./MarkdownLinkHandler";
 import { markdownTableLayout } from "./markdown-table-layout";
+import { useTableViewport } from "./useTableViewport";
 import { markdownNodeIdentity } from "./markdownNodeIdentity";
 import { collectMarkdownImageOrder, type MarkdownImageNode } from "./markdown-image-order";
 import type { MarkdownDocumentBlock } from "./markdown-document-blocks";
@@ -812,24 +813,12 @@ function MarkdownImage({
 
 function MarkdownTable({ path, table }: { path: string; table: Table }) {
   const animateStreaming = useContext(RichMarkdownRevealContext);
-  const availableWidth = useRichContentWidth();
-  const [viewportWidth, setViewportWidth] = useState(0);
+  const viewport = useTableViewport();
   const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
-  // The surrounding bubble is intrinsic-width. Measuring only this child
-  // creates a circular layout in which a narrow table can never pull the
-  // bubble out to its available width. The pane owns the concrete rich-content
-  // width, so use it as the minimum and keep onLayout only as a fallback for
-  // standalone renderers without a provider.
-  const minimumWidth =
-    availableWidth !== null && availableWidth > 0 ? availableWidth : viewportWidth;
+  const minimumWidth = viewport.contentWidth;
   const { cellWidth, tableWidth } = markdownTableLayout(minimumWidth, columnCount);
   return (
-    <View
-      onLayout={({ nativeEvent }) => {
-        setViewportWidth(Math.ceil(nativeEvent.layout.width));
-      }}
-      style={[styles.tableViewport, minimumWidth > 0 ? { width: minimumWidth } : null]}
-    >
+    <View onLayout={viewport.onLayout} style={[styles.tableViewport, { width: viewport.width }]}>
       <HorizontalScrollView
         contentContainerStyle={[
           styles.tableHorizontalContent,
@@ -841,28 +830,24 @@ function MarkdownTable({ path, table }: { path: string; table: Table }) {
         style={styles.tableHorizontalScroller}
       >
         <View style={[styles.table, { width: tableWidth }]}>
+          {/* Table rows/cells can lack source offsets; their append-only grid coordinates
+              preserve identity across streaming and resize, including duplicate text. */}
           {table.children.map((row, rowIndex) => {
             const content = (
-              <View
-                key={markdownNodeKey(row)}
-                style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}
-              >
+              <View key={rowIndex} style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}>
                 {row.children.map((cell, cellIndex) => (
                   <TableCellView
                     align={table.align?.[cellIndex] ?? null}
                     cell={cell}
                     header={rowIndex === 0}
-                    key={markdownNodeKey(cell)}
+                    key={cellIndex}
                     width={cellWidth}
                   />
                 ))}
               </View>
             );
             return animateStreaming ? (
-              <NativeRevealSurface
-                key={markdownNodeKey(row)}
-                revealKey={`${path}:row:${String(rowIndex)}`}
-              >
+              <NativeRevealSurface key={rowIndex} revealKey={`${path}:row:${String(rowIndex)}`}>
                 {content}
               </NativeRevealSurface>
             ) : (

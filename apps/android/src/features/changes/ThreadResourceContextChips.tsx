@@ -6,7 +6,11 @@ import type {
   ThreadChangeScope,
   ThreadResourcesValue,
 } from "../../data/workspace-resource-database";
-import { changeScopeMenuActions, changeScopeTitle } from "../../rendering/change-menu";
+import {
+  changeScopeMenuActions,
+  changeScopeTitle,
+  isSelectableChangeScope,
+} from "../../rendering/change-menu";
 import { colors } from "../../theme";
 import { ActionMenu } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
@@ -36,7 +40,10 @@ export function ThreadResourceContextChips({
   revision: string;
 }) {
   const dialog = useAppDialog();
-  const requestedScope = preferences.scope ?? undefined;
+  const requestedScope =
+    preferences.scope !== null && isSelectableChangeScope(preferences.scope)
+      ? preferences.scope
+      : undefined;
   const resource = useThreadResources(model, resourceId, async () => load(requestedScope), {
     revision: `${revision}:changes:${requestedScope ?? "default"}`,
   });
@@ -72,13 +79,12 @@ export function ThreadResourceContextChips({
   const changeScope = presentation.scope;
   const changesEmpty = changesReady && changeCount === 0;
   const attachmentsEmpty = attachmentsReady && attachmentCount === 0;
+  const scopeTitle = changeScopeTitle(changeScope);
   const changesLabel = changesInitialLoading
     ? "Loading changes…"
     : changesUnavailable
       ? "Changes unavailable"
-      : changesEmpty
-        ? "No changes"
-        : `Changes · ${String(changeCount)}`;
+      : `${scopeTitle} · ${String(changeCount)}`;
   const attachmentsLabel = attachmentsInitialLoading
     ? "Loading attachments…"
     : attachmentsUnavailable
@@ -114,7 +120,7 @@ export function ThreadResourceContextChips({
           trigger="long-press"
         >
           <Pressable
-            accessibilityLabel={`${changesLabel}, ${changeScopeTitle(changeScope)}. Long press to choose changes scope.`}
+            accessibilityLabel={`Changes, ${changesLabel}. Long press to choose changes scope.`}
             accessibilityRole="button"
             onPress={() => {
               onOpen("changes");
@@ -126,7 +132,7 @@ export function ThreadResourceContextChips({
               name="git-compare-outline"
               role="label"
             />
-            {changesInitialLoading || changesEmpty ? (
+            {changesInitialLoading ? (
               <ComposerContextLabel
                 loading={changesInitialLoading}
                 testID="composer-changes-label"
@@ -134,7 +140,7 @@ export function ThreadResourceContextChips({
               />
             ) : (
               <ComposerContextCount
-                label="Changes"
+                label={scopeTitle}
                 testID="composer-changes-label"
                 value={changeCount}
               />
@@ -183,6 +189,7 @@ function threadChangeScope(value: string): ThreadChangeScope | null {
     case "lastTurn":
     case "staged":
     case "unstaged":
+    case "uncommitted":
     case "branch":
       return value;
     default:

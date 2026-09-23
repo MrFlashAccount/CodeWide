@@ -107,19 +107,23 @@ function useGlobalVoiceControl() {
     showNotice({
       duration: VOICE_FAILURE_NOTICE_DURATION_MS,
       label: render.failureSummary,
+      variant: "error",
     });
   }, [render, showNotice]);
   const showUnavailable = useEvent((): void => {
     const snapshot = features.globalSupervisor.render$.peek();
     if (snapshot.phase === "unbound") {
-      showNotice({ label: "Global Voice Mode needs a home server." });
+      showNotice({ label: "Global Voice Mode needs a home server.", variant: "warning" });
     }
   });
   const toggle = useEvent(async (): Promise<void> => {
     if (state === "idle") {
       const overlayPermission = await ensureGlobalVoiceOverlayPermission();
       if (overlayPermission === "requested") {
-        showNotice({ label: "Allow CodeWide to display the Voice Assistant over other apps." });
+        showNotice({
+          label: "Allow CodeWide to display the Voice Assistant over other apps.",
+          variant: "warning",
+        });
         return;
       }
     }

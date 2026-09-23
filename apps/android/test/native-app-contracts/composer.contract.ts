@@ -20,7 +20,7 @@ import {
 
 it("preserves composer integration contracts", () => {
   expect(ownerSettings).not.toContain("setMenuVisible");
-  expect(ownerSettings).toContain("requestControls()");
+  expect(ownerSettings).toContain("requestControls(");
   expect(ownerComposerMicrophone).toContain('"Stop voice input and insert transcript"');
   expect(ownerComposerSubmitAction).toContain('"Finish voice input and send transcript"');
   expect(
@@ -109,9 +109,7 @@ it("preserves composer integration contracts", () => {
   const composerInput = sourceObjectDeclaration(ownerComposerEditorStyles, "composerInput");
   expect(composerInput).toContain("maxHeight: COMPOSER_MAX_HEIGHT");
   expect(composerInput).toContain("minHeight: COMPOSER_MIN_HEIGHT");
-  expect(ownerSettings).toContain("an already loaded sheet\n    // never refetches its model");
-  expect(ownerSettings).toContain(
-    'if (initialPage !== "ports" && (current === null || current.status === "error"))',
-  );
-  expect(ownerSettings).toContain("requestControls();");
+  expect(ownerSettings).toContain('void onLoadControls(cwd, { mode: "refresh", sections })');
+  expect(ownerSettings).toContain('scope === "model-menu" ? ["models", "defaults"]');
+  expect(ownerSettings).toContain('if (page === "skills")');
 });

@@ -7,6 +7,7 @@ export type StoredComposerPreferences = {
   permissions: string | null;
   personality: Personality | null;
   sendMode: "start" | "queue" | "steer";
+  serviceTier: string | null | undefined;
   skillPaths: string[];
 };
 

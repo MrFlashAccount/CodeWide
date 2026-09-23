@@ -13,9 +13,10 @@ import type {
   TurnChangesRouteRequest,
 } from "../../services/changes/changesRouteSession";
 import type { ThreadChangeResource } from "../../data/thread-resource-types";
+import { isSelectableChangeScope, selectableChangeScopes } from "../../rendering/change-menu";
 
 const EMPTY_CHANGES: ThreadChangeResource[] = [];
-const DEFAULT_CHANGE_SCOPES: ThreadChangeScope[] = ["session", "lastTurn"];
+const DEFAULT_CHANGE_SCOPES: ThreadChangeScope[] = ["session"];
 const LAST_TURN_CHANGE_SCOPES: ThreadChangeScope[] = [];
 
 /** Renders current-thread review state captured by one route activation. */
@@ -66,7 +67,28 @@ function currentChangesPresentation(request: CurrentChangesRouteRequest): {
 }
 
 function currentChangeScope(request: CurrentChangesRouteRequest): ThreadChangeScope {
-  return request.preferences.scope ?? request.initialResource?.changeScope ?? "session";
+  const scopes = currentChangeScopes(request);
+  const preferredScope = currentPreferredScope(request, scopes);
+  if (preferredScope !== null) {
+    return preferredScope;
+  }
+  const resourceScope = request.initialResource?.changeScope;
+  return resourceScope !== undefined && isSelectableChangeScope(resourceScope)
+    ? resourceScope
+    : (scopes[0] ?? "session");
+}
+
+function currentPreferredScope(
+  request: CurrentChangesRouteRequest,
+  scopes: ThreadChangeScope[],
+): ThreadChangeScope | null {
+  const preferredScope = request.preferences.scope;
+  if (preferredScope === null || !isSelectableChangeScope(preferredScope)) {
+    return null;
+  }
+  return request.initialResource === null || scopes.includes(preferredScope)
+    ? preferredScope
+    : null;
 }
 
 function currentChanges(request: CurrentChangesRouteRequest): ThreadChangeResource[] {
@@ -81,7 +103,7 @@ function currentResourceScope(
 }
 
 function currentChangeScopes(request: CurrentChangesRouteRequest): ThreadChangeScope[] {
-  return request.initialResource?.changeScopes ?? DEFAULT_CHANGE_SCOPES;
+  return selectableChangeScopes(request.initialResource?.changeScopes ?? DEFAULT_CHANGE_SCOPES);
 }
 
 function currentChangesDiff(request: CurrentChangesRouteRequest): {

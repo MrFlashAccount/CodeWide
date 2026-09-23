@@ -7,6 +7,8 @@ import { MobileThreads } from "./MobileThreads";
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 
+export { ThreadListSearchPullProvider } from "./ThreadListSearchPull";
+
 type ThreadListView =
   | { mode: "desktop"; props: ThreadSidebarProps }
   | { mode: "mobile"; props: MobileThreadsProps };

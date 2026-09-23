@@ -2,7 +2,10 @@ import { RpcResponseError } from "@codewide/sync-client";
 import { describe, expect, it, vi } from "vitest";
 
 import { globalSupervisorQualifiedChatRef } from "../src/data/globalSupervisorBinding";
-import type { GlobalSupervisorAttentionOwner } from "../src/data/globalSupervisorAttention";
+import type {
+  GlobalSupervisorAttentionEvent,
+  GlobalSupervisorAttentionOwner,
+} from "../src/data/globalSupervisorAttention";
 import { createGlobalSupervisorRuntime } from "../src/data/globalSupervisorRuntime";
 import { createGlobalSupervisorRuntimeIngress } from "../src/data/globalSupervisorRuntimeIngress";
 import { createV1MicrophoneLeaseRegistry } from "../src/data/v1MicrophoneLease";
@@ -154,6 +157,13 @@ describe("GlobalSupervisorRuntime", () => {
           threadId: "supervisor",
         });
       }
+      if (method === "thread/realtime/appendText") {
+        expect(params).toMatchObject({
+          role: "developer",
+          text: expect.stringMatching(/greet the user briefly[\s\S]*anything interesting/),
+          threadId: "supervisor",
+        });
+      }
       if (method === "thread/realtime/stop") {
         await finishRemoteStop.promise;
         ingress.publishLive("home", {
@@ -283,17 +293,27 @@ describe("GlobalSupervisorRuntime", () => {
         .filter((event) => ["listening", "thinking", "speaking"].includes(event)),
     ).toEqual(["listening", "thinking", "speaking", "listening"]);
 
-    ingress.publishThreadEvents("home", [{
-      cursor: "1",
-      payload: { method: "turn/started", params: { threadId: "supervisor", turn: { id: "hidden-turn" } } },
-    }]);
+    ingress.publishThreadEvents("home", [
+      {
+        cursor: "1",
+        payload: {
+          method: "turn/started",
+          params: { threadId: "supervisor", turn: { id: "hidden-turn" } },
+        },
+      },
+    ]);
     expect(published.at(-1)?.event).toBe("thinking");
     publishPlaybackLevel(0.1);
     expect(published.at(-1)?.event).toBe("speaking");
-    ingress.publishThreadEvents("home", [{
-      cursor: "2",
-      payload: { method: "turn/completed", params: { threadId: "supervisor", turn: { id: "hidden-turn" } } },
-    }]);
+    ingress.publishThreadEvents("home", [
+      {
+        cursor: "2",
+        payload: {
+          method: "turn/completed",
+          params: { threadId: "supervisor", turn: { id: "hidden-turn" } },
+        },
+      },
+    ]);
     expect(published.at(-1)?.event).toBe("speaking");
     now += 500;
     publishPlaybackLevel(0);
@@ -338,6 +358,7 @@ describe("GlobalSupervisorRuntime", () => {
       "subscribe",
       "thread/realtime/start",
       "answer",
+      "thread/realtime/appendText",
       "media-stop",
       "attention-off",
       "thread/realtime/stop",
@@ -352,6 +373,8 @@ describe("GlobalSupervisorRuntime", () => {
     const published: Array<{ readonly activationId: string; readonly event: string }> = [];
     const terminalCallbacks: Array<() => void> = [];
     const realtimeStarts: unknown[] = [];
+    const realtimeAppends: unknown[] = [];
+    let pendingAttention: readonly GlobalSupervisorAttentionEvent[] = [];
     let activeChannel = "";
     let nextSequence = 1;
     const subscribeLive = vi.fn(async (_connectionId, channelId, threadId) => {
@@ -387,6 +410,9 @@ describe("GlobalSupervisorRuntime", () => {
           threadId: HOME.threadId,
         });
       }
+      if (method === "thread/realtime/appendText") {
+        realtimeAppends.push(params);
+      }
       if (method === "thread/realtime/stop") {
         ingress.publishLive("home", {
           channelId: activeChannel,
@@ -402,8 +428,15 @@ describe("GlobalSupervisorRuntime", () => {
       return undefined;
     });
     const identifiers = ["logical-activation", "channel-before-vpn", "channel-after-vpn"];
+    const attention = attentionFixture();
+    vi.mocked(attention.pending).mockImplementation(async (_home, limit = 32) =>
+      pendingAttention.slice(0, limit),
+    );
+    vi.mocked(attention.acknowledge).mockImplementation(async (_home, eventId) => {
+      pendingAttention = pendingAttention.filter((event) => event.eventId !== eventId);
+    });
     const runtime = createGlobalSupervisorRuntime({
-      attention: attentionFixture(),
+      attention,
       acquireForegroundLease: async () => ({
         release: foregroundRelease,
         setPlaybackLevel: vi.fn(),
@@ -449,6 +482,38 @@ describe("GlobalSupervisorRuntime", () => {
     });
 
     const activation = await runtime.start(HOME, (event) => published.push(event));
+    ingress.publishLive("home", {
+      channelId: activeChannel,
+      event: "payload",
+      payload: {
+        method: "thread/realtime/transcript/done",
+        params: { role: "user", text: "Keep this question", threadId: HOME.threadId },
+      },
+      sequence: nextSequence++,
+      threadId: HOME.threadId,
+    });
+    ingress.publishLive("home", {
+      channelId: activeChannel,
+      event: "payload",
+      payload: {
+        method: "thread/realtime/transcript/done",
+        params: { role: "assistant", text: "Keep this answer", threadId: HOME.threadId },
+      },
+      sequence: nextSequence++,
+      threadId: HOME.threadId,
+    });
+    pendingAttention = [
+      {
+        eventId: "worker-completed",
+        kind: "completed",
+        observedAt: 1,
+        sourceCursor: 9,
+        summary: "Worker completed while the route changed.",
+        supervisor: HOME,
+        turnId: "worker-turn",
+        worker: globalSupervisorQualifiedChatRef("worker-home", "worker-thread"),
+      },
+    ];
     terminalCallbacks[0]?.();
 
     await vi.waitFor(() => expect(realtimeStarts).toHaveLength(2));
@@ -460,9 +525,39 @@ describe("GlobalSupervisorRuntime", () => {
       event: "listening",
     });
     expect(realtimeStarts).toEqual([
-      expect.objectContaining({ threadId: "supervisor" }),
-      expect.objectContaining({ threadId: "supervisor" }),
+      expect.objectContaining({ initialItems: [], threadId: "supervisor" }),
+      expect.objectContaining({
+        includeStartupContext: false,
+        initialItems: [
+          { role: "user", text: "Keep this question" },
+          { role: "assistant", text: "Keep this answer" },
+          expect.objectContaining({
+            role: "developer",
+            text: expect.stringContaining('eventId="worker-completed"'),
+          }),
+        ],
+        threadId: "supervisor",
+      }),
     ]);
+    await vi.waitFor(() => expect(realtimeAppends).toHaveLength(2));
+    expect(realtimeAppends[0]).toMatchObject({
+      role: "developer",
+      text: expect.stringMatching(/greet the user briefly[\s\S]*anything interesting/),
+      threadId: "supervisor",
+    });
+    expect(realtimeAppends[1]).toMatchObject({
+      role: "developer",
+      text: expect.stringMatching(/already present in startup context[\s\S]*worker-completed/),
+      threadId: "supervisor",
+    });
+    expect(JSON.stringify(realtimeAppends[1])).not.toContain(
+      "Worker completed while the route changed.",
+    );
+    expect(
+      realtimeAppends.filter((payload) =>
+        JSON.stringify(payload).includes("greet the user briefly"),
+      ),
+    ).toHaveLength(1);
     expect(foregroundRelease).not.toHaveBeenCalled();
 
     await activation.stop();
@@ -782,7 +877,9 @@ describe("GlobalSupervisorRuntime", () => {
       }
       if (method === "thread/realtime/appendText") {
         appendTextPayloads.push(params);
-        compactionReasserted.resolve();
+        if (JSON.stringify(params).includes("Rules:\\nAlways answer in Russian")) {
+          compactionReasserted.resolve();
+        }
       }
       if (method === "thread/realtime/stop") {
         ingress.publishLive("home", {
@@ -877,6 +974,16 @@ describe("GlobalSupervisorRuntime", () => {
       realtimeStartInstructions: expect.stringContaining("Always answer in English"),
     });
     expect(appendTextPayloads).toEqual([
+      {
+        role: "developer",
+        text: expect.stringMatching(/greet the user briefly[\s\S]*anything interesting/),
+        threadId: "supervisor",
+      },
+      {
+        role: "developer",
+        text: expect.stringMatching(/greet the user briefly[\s\S]*anything interesting/),
+        threadId: "supervisor",
+      },
       {
         role: "developer",
         text: expect.stringContaining("Rules:\nAlways answer in Russian"),

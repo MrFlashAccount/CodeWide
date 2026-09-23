@@ -44,6 +44,7 @@ it("presents composer microphone failures through the application notice surface
     expect(show).toHaveBeenCalledWith({
       duration: 3000,
       label: "Microphone is already in use",
+      variant: "error",
     });
   });
   view.unmount();

@@ -37,6 +37,10 @@ export const turnControlMenus = readFileSync(
   new URL("../../src/ui/TurnControlMenus.native.tsx", import.meta.url),
   "utf8",
 );
+export const modelThinkingSheet = readFileSync(
+  new URL("../../src/ui/ModelThinkingSheet.native.tsx", import.meta.url),
+  "utf8",
+);
 export const actionMenu = readFileSync(
   new URL("../../src/ui/ActionMenu.native.tsx", import.meta.url),
   "utf8",

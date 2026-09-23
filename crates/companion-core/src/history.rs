@@ -46,6 +46,10 @@ struct ProjectedItem {
     key: String,
     kind: String,
     text_bytes: Option<usize>,
+    #[serde(default)]
+    output_bytes: Option<u64>,
+    #[serde(default)]
+    phase: crate::activity_metrics::AgentPhase,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -169,6 +173,8 @@ impl DigestBuilder {
             key: format!("generated:{}", self.generated),
             kind: kind.to_owned(),
             text_bytes,
+            output_bytes: None,
+            phase: crate::activity_metrics::AgentPhase::Ordinary,
         });
     }
 
@@ -183,7 +189,13 @@ impl DigestBuilder {
                 },
                 ToOwned::to_owned,
             );
-        self.upsert(key, kind);
+        self.upsert(key.clone(), kind);
+        if kind == "commandExecution"
+            && let Some(output) = payload.get("aggregated_output").and_then(Value::as_str)
+            && let Some(index) = self.item_indexes.get(&key)
+        {
+            self.items[*index].output_bytes = Some(output.len() as u64);
+        }
     }
 
     fn upsert_or_generate(&mut self, payload: &Value, kind: &str) {
@@ -205,6 +217,21 @@ impl DigestBuilder {
             return;
         };
         self.upsert(id.to_owned(), canonical_materialized_item_kind(kind));
+        if let Some(index) = self.item_indexes.get(id) {
+            if let Some(projected) = crate::activity_metrics::ActivityItem::from_item(item) {
+                self.items[*index].phase = projected.phase;
+            }
+            if let Some(output) = item
+                .get("aggregatedOutput")
+                .or_else(|| item.get("aggregated_output"))
+                .and_then(Value::as_str)
+            {
+                self.items[*index].output_bytes = Some(output.len() as u64);
+            }
+            if let Some(text) = item.get("text").and_then(Value::as_str) {
+                self.items[*index].text_bytes = Some(text.len());
+            }
+        }
     }
 
     fn upsert(&mut self, key: String, kind: &str) {
@@ -217,6 +244,8 @@ impl DigestBuilder {
             key,
             kind: kind.to_owned(),
             text_bytes: None,
+            output_bytes: None,
+            phase: crate::activity_metrics::AgentPhase::Ordinary,
         });
     }
 
@@ -262,6 +291,22 @@ fn canonical_materialized_item_kind(kind: &str) -> &str {
     match kind {
         "AgentMessage" => "agentMessage",
         "UserMessage" => "userMessage",
+        "CommandExecution" => "commandExecution",
+        "Reasoning" => "reasoning",
+        "FileChange" => "fileChange",
+        "McpToolCall" => "mcpToolCall",
+        "DynamicToolCall" => "dynamicToolCall",
+        "CollabAgentToolCall" => "collabAgentToolCall",
+        "SubAgentActivity" => "subAgentActivity",
+        "WebSearch" => "webSearch",
+        "ImageView" => "imageView",
+        "ImageGeneration" => "imageGeneration",
+        "EnteredReviewMode" => "enteredReviewMode",
+        "ExitedReviewMode" => "exitedReviewMode",
+        "ContextCompaction" => "contextCompaction",
+        "Plan" => "plan",
+        "HookPrompt" => "hookPrompt",
+        "FunctionCallOutput" => "functionCallOutput",
         _ => kind,
     }
 }
@@ -370,7 +415,7 @@ pub(crate) fn summary_projection_state_from_file(
     Ok(builder)
 }
 
-pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 8;
+pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 11;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct SummaryProjectionState {
@@ -381,6 +426,8 @@ pub(crate) struct SummaryProjectionState {
     user: Option<Value>,
     #[serde(default)]
     authored_users: Vec<Value>,
+    #[serde(default)]
+    realtime_user_ids: Vec<String>,
     client_id: Option<String>,
     agent: Option<Value>,
     #[serde(default)]
@@ -412,6 +459,7 @@ impl SummaryProjectionState {
             },
             user: None,
             authored_users: Vec::new(),
+            realtime_user_ids: Vec::new(),
             client_id: None,
             agent: None,
             questions: Vec::new(),
@@ -598,6 +646,68 @@ impl SummaryProjectionState {
         self.user = None;
     }
 
+    fn handle_realtime_transcript(&mut self, payload: &Value) {
+        if payload.get("type").and_then(Value::as_str) != Some("transcript_segment") {
+            return;
+        }
+        let (Some(id), Some(text)) = (
+            payload
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty()),
+            payload
+                .get("text")
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty()),
+        ) else {
+            return;
+        };
+        if payload.get("role").and_then(Value::as_str) == Some("assistant") {
+            // A spoken response outside an App Server task has no response_item
+            // to project. Its canonical realtime item is the complete turn.
+            if self.id == id {
+                self.agent = Some(json!({
+                    "type": "agentMessage",
+                    "id": id,
+                    "text": text,
+                    "phase": "final_answer",
+                    "memoryCitation": Value::Null
+                }));
+                self.digest.status = "completed".into();
+            }
+            return;
+        }
+        if payload.get("role").and_then(Value::as_str) != Some("user") {
+            return;
+        }
+        let user = json!({
+            "type": "userMessage",
+            "id": id,
+            "clientId": Value::Null,
+            "content": [{
+                "type": "text",
+                "text": text,
+                "text_elements": []
+            }]
+        });
+        if let Some(previous) = self.authored_users.iter_mut().find(|user| user["id"] == id) {
+            *previous = user;
+        } else {
+            self.authored_users.push(user);
+        }
+        if !self
+            .realtime_user_ids
+            .iter()
+            .any(|candidate| candidate == id)
+        {
+            self.realtime_user_ids.push(id.to_owned());
+        }
+        self.user = None;
+        if self.id == id {
+            self.digest.status = "completed".into();
+        }
+    }
+
     fn collect_artifact(&mut self, payload: &Value) {
         let candidate = match payload.get("type").and_then(Value::as_str) {
             Some("image_generation_end") => payload,
@@ -706,8 +816,18 @@ impl SummaryProjectionState {
             b"\"type\":\"response_item\",\"payload\":{\"type\":\"message\"",
         )
         .is_some();
+        let realtime_transcript = memchr::memmem::find(
+            prefix,
+            b"\"type\":\"realtime_item\",\"payload\":{\"type\":\"transcript_segment\"",
+        )
+        .is_some();
         let question_record = crate::history_questions::relevant(prefix, &self.rpc_questions);
-        if !relevant_event && !response_message && !turn_context && !question_record {
+        if !relevant_event
+            && !response_message
+            && !turn_context
+            && !question_record
+            && !realtime_transcript
+        {
             return Ok(());
         }
         let envelope = serde_json::from_slice::<Value>(line)
@@ -717,6 +837,8 @@ impl SummaryProjectionState {
         };
         if question_record {
             crate::history_questions::ingest(&mut self.rpc_questions, payload);
+        } else if realtime_transcript {
+            self.handle_realtime_transcript(payload);
         } else if turn_context {
             self.handle_turn_context(payload);
         } else if relevant_event {
@@ -740,8 +862,59 @@ impl SummaryProjectionState {
         }
     }
 
+    pub(crate) fn activity_read_metadata(&self) -> Value {
+        let usage = self.usage_projection(self.digest.status != "inProgress");
+        json!({"activityMetrics": self.activity_metrics(usage.as_ref()), "usage": usage})
+    }
+
+    pub(crate) fn realtime_user_items(&self) -> Vec<Value> {
+        self.realtime_user_ids
+            .iter()
+            .filter_map(|id| {
+                self.authored_users
+                    .iter()
+                    .find(|user| user.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn activity_metadata(
+        &self,
+        usage: Option<&TurnUsageProjection>,
+    ) -> serde_json::Map<String, Value> {
+        let mut metrics = self.activity_metrics(usage);
+        crate::activity_metrics::compact_summary(&mut metrics);
+        serde_json::Map::from_iter([("activityMetrics".into(), metrics)])
+    }
+
+    fn activity_metrics(&self, usage: Option<&TurnUsageProjection>) -> Value {
+        crate::activity_metrics::ActivityState {
+            items: self
+                .digest
+                .items
+                .iter()
+                .map(|item| crate::activity_metrics::ActivityItem {
+                    id: item.key.clone(),
+                    kind: item.kind.clone(),
+                    output_bytes: item.output_bytes,
+                    phase: item.phase.clone(),
+                    text: item.text_bytes.is_some_and(|bytes| bytes > 0),
+                    ..crate::activity_metrics::ActivityItem::default()
+                })
+                .collect(),
+            input_price: usage
+                .and_then(|u| u.turn.cost.as_ref())
+                .map(|c| c.price.input),
+            active: self.digest.status == "inProgress",
+            ..crate::activity_metrics::ActivityState::default()
+        }
+        .projection()
+    }
+
     fn finish(mut self) -> Value {
         let usage = self.usage_projection(self.digest.status != "inProgress");
+        let mut metadata = self.activity_metadata(usage.as_ref());
         let client_id = self.client_id.take().map_or(Value::Null, Value::String);
         if let Some(text) = self.fallback_user.take() {
             if let Some(content) = self
@@ -817,7 +990,6 @@ impl SummaryProjectionState {
             || !self.artifacts.is_empty()
             || !self.rpc_questions.is_empty()
         {
-            let mut metadata = serde_json::Map::new();
             if !self.rpc_questions.is_empty() {
                 metadata.insert(
                     "questions".into(),
@@ -1122,6 +1294,8 @@ mod tests {
                 key: format!("command-{index}"),
                 kind: "commandExecution".into(),
                 text_bytes: None,
+                output_bytes: None,
+                phase: crate::activity_metrics::AgentPhase::Ordinary,
             });
         }
         let mut serialized = serde_json::to_value(&state)?;
@@ -1452,6 +1626,77 @@ mod tests {
         assert_eq!(projected["status"], "completed");
         assert_eq!(projected["items"][0]["content"][0]["text"], "hello");
         assert_eq!(projected["items"][1]["text"], "final");
+        Ok(())
+    }
+
+    #[test]
+    fn summary_projects_canonical_realtime_user_transcript()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = std::fs::File::create(&path)?;
+        let lines = [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn","started_at":10}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"assistant-voice","realtime_session_id":"session","role":"assistant","text":"Spoken answer"}}"#,
+            r#"{"type":"realtime_item","payload":{"type":"transcript_segment","id":"user-voice","realtime_session_id":"session","role":"user","text":"My spoken question"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","last_agent_message":"Done","completed_at":12}}"#,
+        ];
+        for line in lines {
+            writeln!(file, "{line}")?;
+        }
+        file.sync_all()?;
+
+        let projected = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+
+        assert_eq!(projected["items"].as_array().map(Vec::len), Some(2));
+        assert_eq!(projected["items"][0]["id"], "user-voice");
+        assert_eq!(
+            projected["items"][0]["content"][0]["text"],
+            "My spoken question"
+        );
+        assert_eq!(projected["items"][1]["type"], "agentMessage");
+        assert_eq!(projected["items"][1]["text"], "Done");
+        Ok(())
+    }
+
+    #[test]
+    fn activity_figures_survive_durable_summary_replay() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = SummaryProjectionState::new("turn".into());
+        for payload in [
+            json!({"type":"task_started","turn_id":"turn"}),
+            json!({"type":"user_message","message":"run"}),
+            json!({"type":"exec_command_begin","call_id":"a"}),
+            json!({"type":"exec_command_end","call_id":"a","aggregated_output":"λa"}),
+            json!({"type":"item_completed","item":{"id":"a","type":"CommandExecution","aggregated_output":"λa"}}),
+            json!({"type":"exec_command_end","call_id":"b","aggregated_output":"12345"}),
+            json!({"type":"exec_command_end","call_id":"b","aggregated_output":"12345"}),
+            json!({"type":"task_complete","last_agent_message":"done"}),
+        ] {
+            state.ingest_rollout_record(
+                &serde_json::to_vec(&json!({"type":"event_msg","payload":payload}))?,
+                0,
+            )?;
+        }
+        let restored: SummaryProjectionState =
+            serde_json::from_slice(&serde_json::to_vec(&state)?)?;
+        let projected = restored.project();
+        assert_eq!(
+            projected["codewide"]["activityMetrics"]["total"]["count"],
+            2
+        );
+        assert_eq!(
+            projected["codewide"]["activityMetrics"]["total"]["outputFootprint"],
+            crate::activity_metrics::footprint(8, 3, None)
+        );
+        assert_eq!(projected, state.project());
         Ok(())
     }
 

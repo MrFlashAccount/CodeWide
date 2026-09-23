@@ -85,15 +85,34 @@ export type ThreadChatWindowResource = {
 type ThreadChatResourceRecord = {
   committedToken: number;
   hasReadySnapshot: boolean;
+  loader: () => Promise<void>;
   loadingKey: string | null;
+  reactivationReady: boolean;
+  reactivationTimer: ReturnType<typeof setTimeout> | null;
   ready$: Observable<boolean> | null;
+  request: ThreadChatWindowRequest;
   requestKey: string | null;
   readonly retain: ThreadChatWindowResource["retain"];
+  retainedOnce: boolean;
   readonly retentionSnapshot: ThreadChatWindowResource["retentionSnapshot"];
   retryAttempt: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
   token: number;
 };
+
+function clearTimer(timer: ReturnType<typeof setTimeout> | null): void {
+  if (timer !== null) {
+    clearTimeout(timer);
+  }
+}
+
+function clearResourceTimers(resource: ThreadChatResourceRecord | undefined): void {
+  if (resource === undefined) {
+    return;
+  }
+  clearTimer(resource.retryTimer);
+  clearTimer(resource.reactivationTimer);
+}
 
 export type ThreadChatModelOptions = {
   onEvictWindow?: (connectionId: string, threadId: string) => void;
@@ -164,9 +183,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const evictWindow = (scope: string): void => {
     const identity = windowIdentities.get(scope);
     const resource = resources.get(scope);
-    if (resource?.retryTimer !== null && resource?.retryTimer !== undefined) {
-      clearTimeout(resource.retryTimer);
-    }
+    clearResourceTimers(resource);
     windowNodes.delete(scope);
     activeRequests.delete(scope);
     retainCounts.delete(scope);
@@ -404,7 +421,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
         revision: previous.revision + (publishedContentChanged || rowsChanged ? 1 : 0),
         status:
-          previous.status === "initial-loading" || previous.status === "initial-error"
+          previous.status === "initial-loading" ||
+          previous.status === "initial-error" ||
+          previous.status === "background-retrying"
             ? "ready"
             : previous.status,
       });
@@ -530,9 +549,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       residentResourceScope = null;
       closed = true;
       for (const resource of resources.values()) {
-        if (resource.retryTimer !== null) {
-          clearTimeout(resource.retryTimer);
-        }
+        clearResourceTimers(resource);
       }
       activeRequests.clear();
       retainCounts.clear();
@@ -684,20 +701,51 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         const holder: ThreadChatResourceRecord = {
           committedToken: 0,
           hasReadySnapshot: false,
+          loader,
           loadingKey: requestKey,
+          reactivationReady: false,
+          reactivationTimer: null,
           ready$: null,
+          request,
           requestKey,
           retain: (_notify) => {
+            const shouldReactivate = holder.retainedOnce && holder.reactivationReady;
+            holder.retainedOnce = true;
+            holder.reactivationReady = false;
+            if (holder.reactivationTimer !== null) {
+              clearTimeout(holder.reactivationTimer);
+              holder.reactivationTimer = null;
+            }
             const releaseObservation = options.onRetainWindow?.(
-              request.connectionId,
-              request.threadId,
+              holder.request.connectionId,
+              holder.request.threadId,
             );
-            const releaseWindow = retainWindow(request.connectionId, request.threadId);
+            const releaseWindow = retainWindow(
+              holder.request.connectionId,
+              holder.request.threadId,
+            );
+            if (shouldReactivate && holder.loadingKey === null) {
+              beginResourceLoad(holder.request, holder.loader, false).catch(() => false);
+            }
+            let retained = true;
             return () => {
+              if (!retained) {
+                return;
+              }
+              retained = false;
               releaseObservation?.();
               releaseWindow();
+              if ((retainCounts.get(scope) ?? 0) === 0) {
+                holder.reactivationTimer = setTimeout(() => {
+                  holder.reactivationTimer = null;
+                  if (resources.get(scope) === holder && (retainCounts.get(scope) ?? 0) === 0) {
+                    holder.reactivationReady = true;
+                  }
+                }, 0);
+              }
             };
           },
+          retainedOnce: false,
           retentionSnapshot: () => 0,
           retryAttempt: 0,
           retryTimer: null,
@@ -706,7 +754,11 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         resources.set(scope, holder);
         holder.ready$ = observablePromise(beginResourceLoad(request, loader, true));
         record = holder;
-      } else if (record.requestKey !== requestKey && record.loadingKey !== requestKey) {
+      } else {
+        record.loader = loader;
+        record.request = request;
+      }
+      if (record.requestKey !== requestKey && record.loadingKey !== requestKey) {
         // Window changes preserve the current rows. The SQLite page is merged
         // into the active resident set atomically, so pagination never removes
         // the visible anchor or the mutable head.

@@ -9,7 +9,7 @@ it("copies the real session id from both thread action menus", () => {
   expect(threadRowActions).toContain('label: "Copy session ID"');
   expect(threadRowActions).toContain('icon: "copy-outline"');
   for (const menu of [threadRow, threadRowWebMenu])
-    expect(menu).toContain("copySessionId(thread.id)");
-  expect(migratedThreadHeaderActions).toContain("copySessionId(threadId)");
-  expect(copySession).toContain('ToastAndroid.show("Session ID copied", ToastAndroid.SHORT)');
+    expect(menu).toContain("copySessionId(thread.id, showNotice)");
+  expect(migratedThreadHeaderActions).toContain("copySessionId(threadId, showNotice)");
+  expect(copySession).toContain('showNotice({ label: "Session ID copied" })');
 });

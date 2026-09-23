@@ -624,11 +624,7 @@ impl ContentProjector {
             .and_then(Value::as_array)
             .map(|items| summarize_turn_items(items))
             .unwrap_or_default();
-        let activity = activity_summary(
-            raw.get("items")
-                .and_then(Value::as_array)
-                .unwrap_or(&Vec::new()),
-        );
+        let activity = raw.pointer("/codewide/activity").cloned();
         summary.insert("items".into(), Value::Array(items));
         summary.insert("itemsView".into(), Value::String("summary".into()));
         let mut metadata = raw
@@ -647,17 +643,28 @@ impl ContentProjector {
         if !artifacts.is_empty() {
             metadata.insert("artifacts".into(), Value::Array(artifacts));
         }
+        if let Some(metrics) = metadata.get_mut("activityMetrics") {
+            crate::activity_metrics::compact_summary(metrics);
+        }
         if !metadata.is_empty() {
             summary.insert("codewide".into(), Value::Object(metadata));
         }
         Self::attach_whole(Value::Object(summary), whole)
     }
 
-    fn project_turn_items(&self, mut turn: Value) -> Value {
+    fn project_turn_items(&self, turn: Value) -> Value {
+        let mut turn = crate::activity_metrics::attach_to_turn(turn);
+        let metrics = turn.pointer("/codewide/activityMetrics").cloned();
         if let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) {
             for item in items {
                 *item = self.project_item(item.take());
+                if let Some(metrics) = &metrics {
+                    crate::activity_metrics::attach_item_metrics(item, metrics);
+                }
             }
+        }
+        if let Some(metrics) = turn.pointer_mut("/codewide/activityMetrics") {
+            metrics["commands"] = json!({});
         }
         turn
     }
@@ -1291,36 +1298,6 @@ fn summarize_turn_items(items: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-fn activity_summary(items: &[Value]) -> Option<Value> {
-    let final_agent = items
-        .iter()
-        .rposition(|item| item.get("type").and_then(Value::as_str) == Some("agentMessage"));
-    let mut count = 0;
-    let mut kinds = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        let Some(kind) = item.get("type").and_then(Value::as_str) else {
-            continue;
-        };
-        if kind == "userMessage" || Some(index) == final_agent {
-            continue;
-        }
-        count += 1;
-        if !kinds.contains(&kind) {
-            kinds.push(kind);
-        }
-    }
-    (count > 0).then(|| {
-        let output_footprint = aggregate_output_footprint(items);
-        let mut activity = json!({"count": count, "kinds": kinds});
-        if let (Some(activity), Some(output_footprint)) =
-            (activity.as_object_mut(), output_footprint)
-        {
-            activity.insert("outputFootprint".into(), output_footprint);
-        }
-        activity
-    })
-}
-
 fn attach_command_output_footprint(mut item: Value) -> Value {
     let Some(object) = item.as_object_mut() else {
         return item;
@@ -1331,6 +1308,12 @@ fn attach_command_output_footprint(mut item: Value) -> Value {
     let Some(output) = object.get("aggregatedOutput").and_then(Value::as_str) else {
         return item;
     };
+    if object
+        .get("codewideOutputFootprint")
+        .is_some_and(|f| f.get("estimatedInputCostUsd").is_some())
+    {
+        return item;
+    }
     if output.is_empty() {
         return item;
     }
@@ -1346,37 +1329,8 @@ fn output_footprint(bytes: usize) -> Value {
         "version": 1,
         "basis": "approxBytesPerToken",
         "bytes": bytes,
-        "estimatedTokens": bytes.saturating_add(APPROX_BYTES_PER_TOKEN - 1) / APPROX_BYTES_PER_TOKEN
-    })
-}
-
-fn aggregate_output_footprint(items: &[Value]) -> Option<Value> {
-    let (bytes, estimated_tokens) = items
-        .iter()
-        .filter(|item| item.get("type").and_then(Value::as_str) == Some("commandExecution"))
-        .filter_map(|item| {
-            let footprint = item.get("codewideOutputFootprint")?;
-            Some((
-                footprint.get("bytes")?.as_u64()?,
-                footprint.get("estimatedTokens")?.as_u64()?,
-            ))
-        })
-        .fold(
-            (0_u64, 0_u64),
-            |(bytes, tokens), (next_bytes, next_tokens)| {
-                (
-                    bytes.saturating_add(next_bytes),
-                    tokens.saturating_add(next_tokens),
-                )
-            },
-        );
-    (bytes > 0 || estimated_tokens > 0).then(|| {
-        json!({
-            "version": 1,
-            "basis": "approxBytesPerToken",
-            "bytes": bytes,
-            "estimatedTokens": estimated_tokens
-        })
+        "estimatedTokens": bytes.saturating_add(APPROX_BYTES_PER_TOKEN - 1) / APPROX_BYTES_PER_TOKEN,
+        "estimatedInputCostUsd": Value::Null
     })
 }
 
@@ -2583,45 +2537,6 @@ mod tests {
             projected["codewideOutputFootprint"]["estimatedTokens"],
             expected_bytes.div_ceil(APPROX_BYTES_PER_TOKEN)
         );
-    }
-
-    #[test]
-    fn activity_summary_aggregates_command_output_footprints() {
-        let items = vec![
-            attach_command_output_footprint(json!({
-                "id": "one",
-                "type": "commandExecution",
-                "aggregatedOutput": "12345"
-            })),
-            json!({ "id": "reasoning", "type": "reasoning" }),
-            attach_command_output_footprint(json!({
-                "id": "two",
-                "type": "commandExecution",
-                "aggregatedOutput": "123"
-            })),
-        ];
-
-        let summary = activity_summary(&items).expect("activity summary");
-        assert_eq!(summary["count"], 3);
-        assert_eq!(summary["kinds"], json!(["commandExecution", "reasoning"]));
-        assert_eq!(summary["outputFootprint"]["bytes"], 8);
-        assert_eq!(summary["outputFootprint"]["estimatedTokens"], 3);
-    }
-
-    #[test]
-    fn activity_summary_compacts_repeated_kinds_beyond_protocol_limit() {
-        let items = (0..300)
-            .map(|index| {
-                json!({
-                    "id": format!("command-{index}"),
-                    "type": "commandExecution"
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let summary = activity_summary(&items).expect("activity summary");
-        assert_eq!(summary["count"], 300);
-        assert_eq!(summary["kinds"], json!(["commandExecution"]));
     }
 
     #[tokio::test]

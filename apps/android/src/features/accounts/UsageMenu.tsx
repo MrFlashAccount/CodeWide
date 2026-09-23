@@ -17,7 +17,6 @@ import { AccountUsageSection } from "./accountUsage";
 
 import { appLogger } from "../../observability/logger";
 import {
-  accountRateLimitsStale,
   contextUsageFromProjection,
   currentThreadUsageProjection,
 } from "../../data/account-rate-limits";
@@ -97,13 +96,9 @@ export function UsageMenu({
     if (!open) {
       setSessionExpanded(false);
     }
-    if (
-      open &&
-      accountSources?.some((source) => accountRateLimitsStale(source.rateLimits)) === true &&
-      onRefresh !== undefined
-    ) {
-      // The current limits stay visible while this stale refresh runs; failures are observable
-      // and the next menu activation may retry without blocking interaction.
+    if (open && accountSources !== undefined && onRefresh !== undefined) {
+      // Keep the current limits visible while every menu activation verifies the remote pool.
+      // Banked reset grants can change without a rate-limit notification or local cache expiry.
       void onRefresh().catch((error: unknown) => {
         appLogger.warnCaught({ error, event: "account_usage.refresh.failed" });
       });

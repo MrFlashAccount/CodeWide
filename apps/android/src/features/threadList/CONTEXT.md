@@ -15,6 +15,11 @@ stack remains mounted in one pane, full width on compact layouts and left of the
 on wide layouts. One shared header stays above Expo Stack; root/project content scenes contain no header.
 Expo Stack owns content placement and transition timing, while Orb and Search retain their native instances.
 
+The header orb reserves a fixed hit-target slot while its floating counterpart is active.
+It has no mount/unmount or layout-driven spatial animations: opening Search, switching a
+project or resizing the window must not start an orb transition. Android alone owns the
+activation flight to the floating overlay and the return flight to the measured header anchor.
+
 Pagination follows the catalog owner's continuation, including unshown rows already in the merged local range; displayed row counts do not authorize or reject a page request. `threadListPageRequest` retains and deduplicates end intent across asynchronous loads. `threadListViewportPaging` uses native layout/content measurements to fill an undersized viewport, stops at exhaustion or failure, and owns no fetch effect. During drag/momentum, `threadListScroll` freezes existing order but admits newly loaded tail rows. Catalog membership is decided by Companion, never by a local supervisor binding.
 
 Idle native thread rows mount no Compose hosts or menu-item trees. `ThreadRowMenu` measures the RN row only on long press, then mounts a separate anchored Compose popup without reparenting the visible trigger. Its keyed lifetime follows the qualified thread identity so recycling cannot retain an old popup or redirect a pending measurement/action to another thread. Native popup dismissal removes the host. Web rows retain their sheet; swipe gestures and command-before-close ordering remain unchanged.

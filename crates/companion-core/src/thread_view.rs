@@ -155,6 +155,9 @@ impl ThreadViewService {
         self.history
             .enrich_active_questions(thread_id, &mut active_turn)
             .await?;
+        self.history
+            .enrich_active_realtime_transcripts(thread_id, &mut active_turn)
+            .await?;
         let through_cursor = fence.wait().await?;
         Ok(json!({
             "readModelVersion": READ_MODEL_VERSION,

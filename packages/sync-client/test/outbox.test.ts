@@ -2,6 +2,15 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 
 import { DurableOutbox, MAX_OUTBOX_COMMANDS_PER_CONNECTION, MAX_TURN_ATTACHMENTS, MAX_TURN_SKILLS, MAX_TURN_TEXT_CHARS, RpcResponseError, type OutboxCommand, type OutboxStore, type RpcClient } from "../src/index.js";
+import { createTextOutboxCommand } from "../src/outbox.js";
+
+it("sends the selected Fast tier on a new turn without changing a steer command", () => {
+  const options = { model: "gpt-6-sol", effort: "ultra", serviceTier: "priority" };
+  const start = createTextOutboxCommand("server", "thread", "hello", { type: "start" }, options);
+  const steer = createTextOutboxCommand("server", "thread", "hello", { type: "steer", expectedTurnId: "turn" }, options);
+  expect(start.params).toMatchObject({ model: "gpt-6-sol", effort: "ultra", serviceTier: "priority" });
+  expect(steer.params).not.toHaveProperty("serviceTier");
+});
 
 describe("DurableOutbox", () => {
   it("reconciles a response lost after acceptance without creating a duplicate turn", async () => {

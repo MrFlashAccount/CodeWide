@@ -3,3 +3,10 @@
 export function runOnUISync(worklet: () => void): void {
   worklet();
 }
+
+export function scheduleOnRN<Arguments extends unknown[]>(
+  callback: (...arguments_: Arguments) => void,
+  ...arguments_: Arguments
+): void {
+  callback(...arguments_);
+}

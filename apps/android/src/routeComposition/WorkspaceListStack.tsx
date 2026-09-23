@@ -1,15 +1,21 @@
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { useEffect } from "react";
-import { View, type LayoutChangeEvent } from "react-native";
+import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 
 import { workspaceCatalogDiagnostics } from "../data/workspaceCatalogDiagnostics";
-import { ThreadListHeader } from "../features/threadList/ThreadListFeature";
+import {
+  ThreadListHeader,
+  ThreadListSearchPullProvider,
+} from "../features/threadList/ThreadListFeature";
 import { effectiveThreadListFilter } from "../features/threadList/threadListFilters";
+import { NoServerWelcome } from "../features/threadList/NoServerWelcome";
 import { useEvent } from "../react/useEvent";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import { projectListRouteSessions } from "../services/projects/projectListRouteSession";
 import { useWorkspaceListRouteResources } from "./workspaceListRouteResources";
 import { useWorkspaceRouteModel } from "./WorkspaceRouteModel";
+import { isNoServerWorkspace } from "./noServerWorkspace";
+import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import {
   v1ProjectListScreenOptions,
   v1RouteScreenOptions,
@@ -38,22 +44,35 @@ export function WorkspaceListStack(): React.JSX.Element {
   });
   return (
     <View onLayout={onLayout} style={styles.flex} testID="workspace-list-layout">
-      <View style={searchVisible ? styles.hidden : styles.flex}>
+      <View
+        accessibilityElementsHidden={searchVisible}
+        importantForAccessibility={searchVisible ? "no-hide-descendants" : "auto"}
+        pointerEvents={searchVisible ? "none" : "auto"}
+        style={styles.flex}
+      >
         <CatalogContent />
       </View>
-      {searchVisible ? sidebarSearch : null}
+      {searchVisible ? <View style={StyleSheet.absoluteFill}>{sidebarSearch}</View> : null}
     </View>
   );
 }
 
 function CatalogContent(): React.JSX.Element {
+  const { runtime } = useWorkspaceRouteResources();
+  const router = useRouter();
+  const openPairing = useEvent((): void => {
+    router.push("/settings/servers/new");
+  });
+  if (isNoServerWorkspace(runtime)) {
+    return <NoServerWelcome onConnect={openPairing} />;
+  }
   return (
-    <>
+    <ThreadListSearchPullProvider>
       <WorkspaceListHeader />
       <View style={styles.listScenes} testID="workspace-list-scenes">
         <ListContentNavigator />
       </View>
-    </>
+    </ThreadListSearchPullProvider>
   );
 }
 

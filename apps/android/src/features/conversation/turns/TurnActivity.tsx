@@ -1,9 +1,9 @@
+import { blockActivitySummary } from "../../../rendering/activityMetrics";
 /** V1 TurnActivity owner, extracted without changing interaction or resource lifetime. */
 import type { RenderBlock } from "@codewide/renderers";
-import type { OutputFootprintProjection } from "@codewide/sync-client";
+import type { ActivityFootprint } from "@codewide/sync-client";
 import { useContext, useState, type ReactElement } from "react";
 import { Pressable, View } from "react-native";
-import { activityOutputFootprint } from "../../../rendering/command-activity";
 import { TimelineMotionContext } from "../../../rendering/FluidLayoutFrame";
 import { NativeRevealSurface } from "../../../rendering/NativeRevealSurface";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
@@ -19,6 +19,7 @@ import { ActivityDetailSheet } from "./ActivityDetailSheet";
 import { styles } from "./TurnActivity.styles";
 import {
   ActiveToolCallContext,
+  TurnActivityMetricsContext,
   ExpansionItemKeyContext,
   ForceExpandCardsContext,
   TurnActivityContentContext,
@@ -45,14 +46,19 @@ export function TurnActivitySegment({
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
 }): ReactElement {
   const insideActivity = useContext(TurnActivityContentContext);
+  const metrics = useContext(TurnActivityMetricsContext);
+  const summary = blockActivitySummary(part.blocks, metrics);
   const label = turnActivityLabel(
-    part.blocks.map((block) => block.kind),
+    summary?.kinds ?? part.blocks.map((block) => block.kind),
     compact,
+    summary?.count,
   );
+  const outputFootprint = summary?.outputFootprint ?? null;
   const props = {
     animateNew,
     forceExpanded,
     label,
+    outputFootprint,
     part,
     turnKey,
     turnStatus,
@@ -72,6 +78,7 @@ type ActivitySegmentProps = {
   getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
   label: string;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
+  outputFootprint: ActivityFootprint | null;
   part: Extract<TurnSequencePart, { kind: "activity" }>;
   turnKey: string;
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
@@ -91,7 +98,7 @@ function SheetActivitySegment(props: ActivitySegmentProps): ReactElement {
         expanded={false}
         label={props.label}
         onToggle={openDetail}
-        outputFootprint={segmentOutputFootprint(props.part.blocks)}
+        outputFootprint={props.outputFootprint}
       >
         {null}
       </TurnActivity>
@@ -190,7 +197,7 @@ function DisclosureActivitySegment(props: ActivitySegmentProps): ReactElement {
       forceExpandCards={props.forceExpanded}
       label={props.label}
       onToggle={toggle}
-      outputFootprint={segmentOutputFootprint(props.part.blocks)}
+      outputFootprint={props.outputFootprint}
       showToggle={!shouldAutoExpand}
     >
       {props.part.blocks.map((block, index) => (
@@ -268,14 +275,6 @@ function activitySegmentKind(
   return "disclosure";
 }
 
-function segmentOutputFootprint(blocks: readonly RenderBlock[]): OutputFootprintProjection | null {
-  return activityOutputFootprint(
-    blocks.flatMap((block) =>
-      block.kind === "commandExecution" ? [{ raw: block.raw, visibleOutput: block.body }] : [],
-    ),
-  );
-}
-
 export interface TurnActivityProps {
   children: React.ReactNode;
   compactHeader?: boolean;
@@ -284,7 +283,7 @@ export interface TurnActivityProps {
   label: string;
   loading?: boolean;
   onToggle: () => void;
-  outputFootprint?: OutputFootprintProjection | null;
+  outputFootprint?: ActivityFootprint | null;
   showToggle?: boolean;
 }
 
@@ -348,7 +347,7 @@ function TurnActivityToggle({
   label: string;
   loading: boolean;
   onToggle: () => void;
-  outputFootprint: OutputFootprintProjection | null;
+  outputFootprint: ActivityFootprint | null;
 }): ReactElement {
   const labelContent = loading ? (
     <WaveText

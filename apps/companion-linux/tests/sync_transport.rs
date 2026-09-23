@@ -3171,6 +3171,15 @@ async fn catalog_visibility_and_reconciliation_are_server_owned_over_rpc()
         supervisor["response"]["result"]["data"],
         json!([{"id":"home","threadSource":"codewide-global-supervisor:mine"}])
     );
+    send_json(&mut client, &json!({"type":"rpc","request":{"id":"direct-chat","method":"companion/thread/sync","params":{"threadId":"home","afterTurnId":null,"limit":36}}})).await?;
+    let direct = receive_type(&mut client, "rpc").await?;
+    assert!(direct["response"].get("error").is_none());
+    assert_eq!(direct["response"]["result"]["thread"]["id"], "home");
+    assert_eq!(
+        direct["response"]["result"]["thread"]["codewideCatalogExcluded"],
+        true
+    );
+    assert_eq!(direct["response"]["result"]["history"]["turns"], json!([]));
     send_json(&mut client, &json!({"type":"rpc","request":{"id":"invalid","method":"companion/supervisor/threadList","params":{"threadSource":"ordinary"}}})).await?;
     assert_eq!(
         receive_type(&mut client, "rpc").await?["response"]["error"]["code"],
@@ -3192,12 +3201,17 @@ async fn run_catalog_visibility_app_server(
         if request.get("id").is_none() {
             continue;
         }
-        assert_eq!(request["method"], "thread/list");
-        assert!(request["params"].get("threadSource").is_none());
-        let result = if request["params"]["cursor"] == "older" {
-            json!({"data":[{"id":"ordinary","threadSource":null,"name":"Global Voice"}],"nextCursor":null})
+        let result = if request["method"] == "thread/resume" {
+            assert_eq!(request["params"]["threadId"], "home");
+            json!({"thread":{"id":"home","threadSource":"codewide-global-supervisor:mine","status":{"type":"idle"},"turns":[]}})
         } else {
-            json!({"data":[{"id":"home","threadSource":"codewide-global-supervisor:mine"},{"id":"other-home","threadSource":"codewide-global-supervisor:other"}],"nextCursor":"older"})
+            assert_eq!(request["method"], "thread/list");
+            assert!(request["params"].get("threadSource").is_none());
+            if request["params"]["cursor"] == "older" {
+                json!({"data":[{"id":"ordinary","threadSource":null,"name":"Global Voice"}],"nextCursor":null})
+            } else {
+                json!({"data":[{"id":"home","threadSource":"codewide-global-supervisor:mine"},{"id":"other-home","threadSource":"codewide-global-supervisor:other"}],"nextCursor":"older"})
+            }
         };
         send_value(&mut socket, &json!({"id":request["id"],"result":result})).await?;
     }

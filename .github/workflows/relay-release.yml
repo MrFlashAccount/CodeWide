@@ -60,24 +60,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6.1.0
         with:
           version: 10.14.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Restore Linux Cargo build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: .cache/relay-linux
           key: cargo-relay-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/build-relay-linux') }}-${{ github.sha }}
@@ -120,7 +120,7 @@ jobs:
         run: ./scripts/install-relay.test.sh
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: codewide-relay-${{ env.CODEWIDE_RELAY_VERSION }}-linux-x86_64
           path: |

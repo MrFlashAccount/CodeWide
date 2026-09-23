@@ -201,6 +201,7 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }): Reac
       duration: 6000,
       icon: <Ionicons color={colors.green} name="checkmark-circle" size={iconSize.navigation} />,
       label: "File saved",
+      variant: "success" as const,
     };
     if (completed.uri === undefined) {
       notice.show(common);

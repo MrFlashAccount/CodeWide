@@ -5,6 +5,7 @@ import { TurnChangesContext } from "../../rendering/TurnChangesContext";
 import { conversationHeaderChromeHeight } from "../../ui/conversation-chrome-layout";
 import { ConversationPanelUnderlay } from "../../ui/ConversationPanelUnderlay";
 import { MessageActionMenuProvider } from "../../ui/MessageActionMenu";
+import { CostBreakdownMenuProvider } from "../accounts/CostBreakdownMenu";
 import { styles } from "./ConversationLayout.styles";
 import type { ConversationLayoutProps } from "./ConversationLayoutContract";
 import { ThreadCwdContext } from "./turns/turnContexts";
@@ -64,7 +65,9 @@ export function ConversationLayout({
             >
               <ThreadCwdContext.Provider value={cwd}>
                 <TurnChangesContext.Provider value={presentTurnChanges}>
-                  <MessageActionMenuProvider>{timelineSurface}</MessageActionMenuProvider>
+                  <MessageActionMenuProvider>
+                    <CostBreakdownMenuProvider>{timelineSurface}</CostBreakdownMenuProvider>
+                  </MessageActionMenuProvider>
                 </TurnChangesContext.Provider>
               </ThreadCwdContext.Provider>
             </KeyboardGestureArea>

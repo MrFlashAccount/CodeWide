@@ -3,11 +3,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  activityOutputFootprint,
   commandActivityInput,
   commandActivityTitle,
   commandOutputFootprint,
-  estimatedOutputInputCostUsd,
 } from "../src/rendering/command-activity";
 import { compactSource, sourceHasJsxElement, sourceObjectDeclaration } from "./source-contract";
 
@@ -228,96 +226,11 @@ describe("command activity presentation", () => {
     expect(footer).toContain("style={styles.turnTokenMetrics}");
   });
 
-  it("prefers companion attribution and falls back to the visible UTF-8 output", () => {
-    expect(
-      commandOutputFootprint(
-        {
-          codewideOutputFootprint: {
-            version: 1,
-            basis: "approxBytesPerToken",
-            bytes: 400,
-            estimatedTokens: 100,
-          },
-        },
-        "short preview",
-      ),
-    ).toEqual({
-      version: 1,
-      basis: "approxBytesPerToken",
-      bytes: 400,
-      estimatedTokens: 100,
-    });
-    expect(commandOutputFootprint({}, "λa")).toEqual({
-      version: 1,
-      basis: "approxBytesPerToken",
-      bytes: 3,
-      estimatedTokens: 1,
-    });
-  });
-
-  it("aggregates command output and prices it as API-equivalent input", () => {
-    const footprint = activityOutputFootprint([
-      { raw: {}, visibleOutput: "1234" },
-      { raw: {}, visibleOutput: "12345678" },
-    ]);
-    expect(footprint).toEqual({
-      version: 1,
-      basis: "approxBytesPerToken",
-      bytes: 12,
-      estimatedTokens: 3,
-    });
-    expect(
-      estimatedOutputInputCostUsd(footprint, {
-        version: 1,
-        status: "final",
-        modelContextWindow: null,
-        latestRequest: {
-          totalTokens: 0,
-          inputTokens: 0,
-          cachedInputTokens: 0,
-          cacheWriteInputTokens: 0,
-          outputTokens: 0,
-          reasoningOutputTokens: 0,
-        },
-        turn: {
-          tokens: {
-            totalTokens: 0,
-            inputTokens: 0,
-            cachedInputTokens: 0,
-            cacheWriteInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          cost: {
-            model: "gpt-5.6",
-            pricingVersion: "test",
-            currency: "USD",
-            basis: "apiEquivalent",
-            price: { input: 5, cachedInput: 0.5, output: 30 },
-            uncachedInputTokens: 0,
-            cachedInputTokens: 0,
-            cacheWriteInputTokens: 0,
-            outputTokens: 0,
-            cacheHitPercent: 0,
-            uncachedInputCostUsd: 0,
-            cachedInputCostUsd: 0,
-            cacheWriteInputCostUsd: 0,
-            outputCostUsd: 0,
-            totalCostUsd: 0,
-          },
-        },
-        thread: {
-          tokens: {
-            totalTokens: 0,
-            inputTokens: 0,
-            cachedInputTokens: 0,
-            cacheWriteInputTokens: 0,
-            outputTokens: 0,
-            reasoningOutputTokens: 0,
-          },
-          cost: null,
-        },
-      }),
-    ).toBe(0.000015);
+  it("shows only server figures and never estimates from command output", () => {
+    const projected = { version: 1, basis: "approxBytesPerToken", bytes: 400, estimatedTokens: 137, estimatedInputCostUsd: 0.125 };
+    expect(commandOutputFootprint({ codewideOutputFootprint: projected, aggregatedOutput: "short preview" })).toEqual(projected);
+    expect(commandOutputFootprint({ aggregatedOutput: "λa" })).toBeNull();
+    expect(commandOutputFootprint({ codewideOutputFootprint: { ...projected, estimatedTokens: -1 } })).toBeNull();
+    expect(commandOutputFootprint({ codewideOutputFootprint: { ...projected, estimatedInputCostUsd: null } })).toEqual({ ...projected, estimatedInputCostUsd: null });
   });
 });

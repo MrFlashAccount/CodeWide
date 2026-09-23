@@ -92,7 +92,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-## Reacticx Apple Intelligence, Skia Ripple and Nebula Orb shaders
+## Reacticx Apple Intelligence, Skia Ripple, Nebula Orb and Toast
 
 The live voice aura shader in
 `android/app/src/main/java/dev/codewide/app/rendering/VoiceAuraOverlay.kt`
@@ -109,6 +109,10 @@ The Global Voice companion renderer in
 uses the shader, colors and defaults from
 `src/components/organisms/nebula-orb`, commit
 `58479704f1f831913970aa5e78e3691bcb9fa3f7` of Reacticx.
+
+The Android and web notification stack in `src/ui/AppNotice*.tsx` and
+`src/ui/appNoticeMotion.ts` adapts Reacticx Toast's layout, gesture thresholds,
+and spring motion from commit `010a54d6f299c96556c004e4887d6ef1c234bb8c`.
 
 MIT License
 

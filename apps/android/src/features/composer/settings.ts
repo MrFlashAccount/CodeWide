@@ -1,6 +1,6 @@
 /** V1 settings owner, extracted without changing interaction or resource lifetime. */
 import type { projectedThreadExecutionSettings } from "@codewide/sync-client";
-import type { TurnControlsValue } from "../../data/turn-controls-types";
+import type { TurnControlsSection, TurnControlsValue } from "../../data/turn-controls-types";
 
 export function executionPermissionsLabel(
   settings: ReturnType<typeof projectedThreadExecutionSettings>,
@@ -49,7 +49,7 @@ export function permissionProfileLabel(id: string): string {
 }
 
 export const EMPTY_TURN_CONTROLS: TurnControlsValue = {
-  defaults: { effort: null, model: null, permissions: null },
+  defaults: { effort: null, model: null, permissions: null, serviceTier: null },
   models: [],
   permissions: [],
   skills: [],
@@ -59,6 +59,7 @@ import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { StoredComposerPreferences } from "../../data/thread-ui-state-types";
 import type { TurnControlsRow } from "../../data/workspace-resource-database";
 import { useEvent } from "../../react/useEvent";
+import { retainedServiceTier } from "../../ui/modelServiceTier";
 import { useConversationRef, useConversationState } from "../../ui/use-conversation-scope";
 import type { ComposerSettingsCapabilities } from "./settingsCapabilities";
 import { rollbackOwnedModelSelection } from "./submissionRecovery";
@@ -114,6 +115,7 @@ export function useComposerSettings({
   const selectedModel = newChat ? composerPreferences.model : null;
 
   const selectedEffort = newChat ? composerPreferences.effort : null;
+  const selectedServiceTier = newChat ? composerPreferences.serviceTier : undefined;
 
   const selectedPersonality = composerPreferences.personality;
 
@@ -145,15 +147,16 @@ export function useComposerSettings({
     effort: 0,
     model: 0,
     permissions: 0,
+    serviceTier: 0,
   }));
 
-  const requestControls = useEvent(() => {
+  const requestControls = useEvent((sections: readonly TurnControlsSection[]) => {
     const current = currentControlsResource();
     if (onLoadControls === undefined || (current?.status === "loading" && current.value === null)) {
       return;
     }
     setControlError(null);
-    void onLoadControls(cwd)
+    void onLoadControls(cwd, { mode: "refresh", sections })
       .then((next) => {
         if (!conversationOwner.isCurrent()) {
           return;
@@ -182,32 +185,46 @@ export function useComposerSettings({
     const effortMutation = ++settingsMutationRef.current.effort;
     const previousModel = selectedModel;
     const previousEffort = selectedEffort;
-    updateCurrentPreferences((current) => ({ ...current, effort, model }));
+    const modelTiers = currentControlsResource()?.value?.models.find(
+      (item) => item.id === model,
+    )?.serviceTiers;
+    const serviceTier = retainedServiceTier(selectedServiceTier, modelTiers);
+    const previousServiceTier = selectedServiceTier;
+    const tierMutation = ++settingsMutationRef.current.serviceTier;
+    updateCurrentPreferences((current) => ({ ...current, effort, model, serviceTier }));
     if (onUpdateSettings === undefined) {
       return;
     }
     setControlError(null);
-    void onUpdateSettings({ effort, model }).catch((error: unknown) => {
-      const ownsModel = settingsMutationRef.current.model === modelMutation;
-      const ownsEffort = settingsMutationRef.current.effort === effortMutation;
-      if (
-        (ownsModel || ownsEffort) &&
-        (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())
-      ) {
-        updateCurrentPreferences((current) => ({
-          ...current,
-          ...rollbackOwnedModelSelection(
-            current,
-            { effort, model },
-            { effort: previousEffort, model: previousModel },
-            { effort: ownsEffort, model: ownsModel },
-          ),
-        }));
-      }
-      if ((ownsModel || ownsEffort) && conversationOwner.isCurrent()) {
-        setControlError(error instanceof Error ? error.message : "Could not update model settings");
-      }
-    });
+    void onUpdateSettings({ effort, model, serviceTier: serviceTier ?? null }).catch(
+      (error: unknown) => {
+        const ownsModel = settingsMutationRef.current.model === modelMutation;
+        const ownsEffort = settingsMutationRef.current.effort === effortMutation;
+        const ownsTier = settingsMutationRef.current.serviceTier === tierMutation;
+        if (
+          (ownsModel || ownsEffort) &&
+          (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())
+        ) {
+          updateCurrentPreferences((current) => ({
+            ...current,
+            ...rollbackOwnedModelSelection(
+              current,
+              { effort, model },
+              { effort: previousEffort, model: previousModel },
+              { effort: ownsEffort, model: ownsModel },
+            ),
+            ...(ownsTier && current.serviceTier === serviceTier
+              ? { serviceTier: previousServiceTier }
+              : {}),
+          }));
+        }
+        if ((ownsModel || ownsEffort) && conversationOwner.isCurrent()) {
+          setControlError(
+            error instanceof Error ? error.message : "Could not update model settings",
+          );
+        }
+      },
+    );
   });
 
   const selectEffort = useEvent((effort: string) => {
@@ -227,6 +244,27 @@ export function useComposerSettings({
         setControlError(
           error instanceof Error ? error.message : "Could not update thinking effort",
         );
+      }
+    });
+  });
+
+  const selectServiceTier = useEvent((serviceTier: string) => {
+    const mutation = ++settingsMutationRef.current.serviceTier;
+    const previous = selectedServiceTier;
+    updateCurrentPreferences((current) => ({ ...current, serviceTier }));
+    if (onUpdateSettings === undefined) {
+      return;
+    }
+    setControlError(null);
+    void onUpdateSettings({ serviceTier }).catch((error: unknown) => {
+      const ownsMutation = settingsMutationRef.current.serviceTier === mutation;
+      if (ownsMutation && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
+        updateCurrentPreferences((current) =>
+          current.serviceTier === serviceTier ? { ...current, serviceTier: previous } : current,
+        );
+      }
+      if (ownsMutation && conversationOwner.isCurrent()) {
+        setControlError(error instanceof Error ? error.message : "Could not update Fast mode");
       }
     });
   });
@@ -266,9 +304,11 @@ export function useComposerSettings({
     selectedModel,
     selectedPermissions,
     selectedPersonality,
+    selectedServiceTier,
     selectEffort,
     selectModel,
     selectPermissions,
+    selectServiceTier,
     setSelectedPersonality,
     updateComposerPreferences,
   };
@@ -276,10 +316,7 @@ export function useComposerSettings({
 
 import type { Dispatch, SetStateAction } from "react";
 import type { ComposerMenuPage } from "./composerTypes";
-type ComposerControlActions = Pick<
-  ReturnType<typeof useComposerSettings>,
-  "currentControlsResource" | "requestControls"
-> & {
+type ComposerControlActions = Pick<ReturnType<typeof useComposerSettings>, "requestControls"> & {
   closeInlineQueueOverlay: () => void;
   dismissComposerKeyboardForOverlay: () => void;
   openToolRoute: (page: ComposerMenuPage) => void;
@@ -287,7 +324,6 @@ type ComposerControlActions = Pick<
 };
 export function useComposerControlActions({
   closeInlineQueueOverlay,
-  currentControlsResource,
   dismissComposerKeyboardForOverlay,
   openToolRoute,
   requestControls,
@@ -298,23 +334,31 @@ export function useComposerControlActions({
     setComposerTrayVisible(false);
     dismissComposerKeyboardForOverlay();
     openToolRoute(initialPage);
-    // A failed/background prefetch may be retried, but an already loaded sheet
-    // never refetches its model, skill and permission lists.
-    const current = currentControlsResource();
-    if (initialPage !== "ports" && (current === null || current.status === "error")) {
-      requestControls();
+    const sections = controlSectionsForPage(initialPage);
+    if (sections !== null) {
+      requestControls(sections);
     }
   });
 
-  const openQuickControlMenu = useEvent((_scope: "model-menu" | "permissions-menu") => {
+  const openQuickControlMenu = useEvent((scope: "model-menu" | "permissions-menu") => {
     setComposerTrayVisible(false);
     dismissComposerKeyboardForOverlay();
-    const current = currentControlsResource();
-    if (current === null || current.status === "error") {
-      requestControls();
-    }
+    requestControls(scope === "model-menu" ? ["models", "defaults"] : ["permissions", "defaults"]);
   });
 
   const closeQuickControlMenu = useEvent((_scope: "model-menu" | "permissions-menu") => undefined);
   return { closeQuickControlMenu, openControls, openQuickControlMenu };
+}
+
+function controlSectionsForPage(page: ComposerMenuPage): readonly TurnControlsSection[] | null {
+  if (page === "model") {
+    return ["models", "defaults"];
+  }
+  if (page === "skills") {
+    return ["skills"];
+  }
+  if (page === "permissions") {
+    return ["permissions", "defaults"];
+  }
+  return null;
 }

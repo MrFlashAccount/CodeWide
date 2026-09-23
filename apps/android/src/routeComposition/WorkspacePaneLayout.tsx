@@ -14,6 +14,7 @@ import { ConversationSelectionPlaceholder } from "../features/conversation/Conve
 import { desktopThreadSidebarWidth } from "../presentation/layouts/windowLayout";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { v1WorkspaceShellStyles } from "./WorkspaceShell.styles";
+import { isNoServerWorkspace } from "./noServerWorkspace";
 
 type PaneLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["layout"]>>[0];
 type ScreenLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["screenLayout"]>>[0];
@@ -22,8 +23,9 @@ const DestinationPlacement = createContext(false);
 
 /** Places the one Router-owned catalog beside or beneath the native detail stack. */
 export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
-  const { desktop, viewportWidth } = useWorkspaceRouteResources();
+  const { desktop, runtime, viewportWidth } = useWorkspaceRouteResources();
   const catalogFocused = props.state.routes[props.state.index]?.name === "(lists)";
+  const welcomeVisible = catalogFocused && isNoServerWorkspace(runtime);
   const { content: catalogContent, status: catalogStatus } = catalogPresentation(props);
   useEffect(() => {
     workspaceCatalogDiagnostics.record({
@@ -36,11 +38,19 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   }, [catalogStatus, desktop, catalogFocused, viewportWidth]);
   return (
     <View style={styles.panes}>
-      <CatalogPane focused={catalogFocused}>{catalogContent}</CatalogPane>
+      <CatalogPane focused={catalogFocused} fullWidth={welcomeVisible}>
+        {catalogContent}
+      </CatalogPane>
       <View
         collapsable={false}
         pointerEvents={desktop || !catalogFocused ? "auto" : "none"}
-        style={desktop ? v1WorkspaceShellStyles.destination : styles.detail}
+        style={
+          welcomeVisible
+            ? styles.hidden
+            : desktop
+              ? v1WorkspaceShellStyles.destination
+              : styles.detail
+        }
         testID="v1-workspace-destination"
       >
         <DestinationPlacement.Provider value={true}>{props.children}</DestinationPlacement.Provider>
@@ -64,9 +74,11 @@ function catalogPresentation(props: PaneLayoutProps) {
 function CatalogPane({
   children,
   focused,
+  fullWidth,
 }: {
   readonly children: ReactElement | null | undefined;
   readonly focused: boolean;
+  readonly fullWidth: boolean;
 }): React.JSX.Element {
   const { desktop, viewportWidth } = useWorkspaceRouteResources();
   const accessible = desktop || focused;
@@ -81,9 +93,11 @@ function CatalogPane({
       onLayout={onLayout}
       pointerEvents={accessible ? "auto" : "none"}
       style={
-        desktop
-          ? [styles.catalog, { width: desktopThreadSidebarWidth(viewportWidth) }]
-          : StyleSheet.absoluteFill
+        fullWidth
+          ? styles.fullWidthCatalog
+          : desktop
+            ? [styles.catalog, { width: desktopThreadSidebarWidth(viewportWidth) }]
+            : StyleSheet.absoluteFill
       }
       testID="workspace-catalog-pane"
     >
@@ -117,6 +131,8 @@ function CatalogPlacement({
 const styles = StyleSheet.create({
   catalog: { flexShrink: 0 },
   detail: { flex: 1 },
+  fullWidthCatalog: { flex: 1 },
+  hidden: { display: "none" },
   panes: {
     flex: 1,
     flexDirection: "row",

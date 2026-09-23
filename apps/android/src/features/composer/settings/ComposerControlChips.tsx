@@ -3,12 +3,14 @@ import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { View } from "react-native";
-import type { TurnControlsValue } from "../../../data/turn-controls-types";
+import { Ionicons } from "@expo/vector-icons";
+import type { LoadTurnControls, TurnControlsValue } from "../../../data/turn-controls-types";
 import { useTurnControlsRow } from "../../../data/use-workspace-resource-row";
 import type { WorkspaceResourceDatabase } from "../../../data/workspace-resource-database";
 import { useAsyncResource } from "../../../rendering/async-resource-store";
-import { colors } from "../../../theme";
+import { colors, iconSize } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
+import { fastServiceTier, isFastServiceTier } from "../../../ui/modelServiceTier";
 import { ComposerContextLabel } from "../../../ui/ResourceContextChip";
 import { ModelThinkingMenu, PermissionsMenu } from "../../../ui/TurnControlMenus";
 import { composerModelSettings } from "../modelSettings";
@@ -31,6 +33,7 @@ export function ComposerControlChips({
   onSelectModel,
   onSelectPermissions,
   onSelectPersonality,
+  onSelectServiceTier,
   readOnly,
   remoteThread,
   resourceId,
@@ -39,10 +42,11 @@ export function ComposerControlChips({
   selectedModel,
   selectedPermissions,
   selectedPersonality,
+  selectedServiceTier,
 }: {
   cwd: string;
   error: string | null;
-  load?: (cwd: string) => Promise<TurnControlsValue>;
+  load?: LoadTurnControls;
   newChat: boolean;
   onClose: (scope: "model-menu" | "permissions-menu") => void;
   onFallback: (page: "model" | "permissions") => void;
@@ -51,6 +55,7 @@ export function ComposerControlChips({
   onSelectModel: (model: string, effort: string) => void;
   onSelectPermissions: (permissions: string | null) => void;
   onSelectPersonality: (personality: Personality | null) => void;
+  onSelectServiceTier: (serviceTier: string) => void;
   readOnly: boolean;
   remoteThread: Thread | null | undefined;
   resourceId: string | null;
@@ -59,6 +64,7 @@ export function ComposerControlChips({
   selectedModel: string | null;
   selectedPermissions: string | null;
   selectedPersonality: Personality | null;
+  selectedServiceTier: string | null | undefined;
 }) {
   const resource = useTurnControlsRow(resources, resourceId);
   useAsyncResource<TurnControlsValue>(
@@ -85,11 +91,20 @@ export function ComposerControlChips({
   );
   const effectivePermissions =
     selectedPermissions ?? serverExecution?.permissions ?? controls.defaults.permissions;
+  const selectedControlModel = controls.models.find((candidate) => candidate.id === effectiveModel);
   const modelLabel =
-    controls.models.find((candidate) => candidate.id === effectiveModel)?.label ??
+    selectedControlModel?.label ??
     effectiveModel ??
     (pending ? "Loading model…" : "Model not confirmed");
   const modelText = effectiveEffort === null ? modelLabel : `${modelLabel} · ${effectiveEffort}`;
+  const effectiveServiceTier = newChat
+    ? selectedServiceTier === undefined
+      ? (controls.defaults.serviceTier ?? selectedControlModel?.defaultServiceTier ?? null)
+      : selectedServiceTier
+    : serverExecution?.serviceTier === undefined
+      ? (controls.defaults.serviceTier ?? selectedControlModel?.defaultServiceTier ?? null)
+      : serverExecution.serviceTier;
+  const fastTier = fastServiceTier(selectedControlModel?.serviceTiers);
   const permissionLabel =
     effectivePermissions === null
       ? executionPermissionsLabel(serverExecution, pending)
@@ -106,6 +121,9 @@ export function ComposerControlChips({
             testID="composer-model-label"
             text={modelPending ? "Loading model…" : modelText}
           />
+          {fastTier !== undefined && isFastServiceTier(effectiveServiceTier, fastTier) && (
+            <Ionicons color={colors.text} name="flash" size={iconSize.inline} />
+          )}
         </View>
       ) : (
         <ModelThinkingMenu
@@ -129,9 +147,11 @@ export function ComposerControlChips({
           onSelectEffort={onSelectEffort}
           onSelectModel={onSelectModel}
           onSelectPersonality={onSelectPersonality}
+          onSelectServiceTier={onSelectServiceTier}
           selectedEffort={effectiveEffort}
           selectedModel={effectiveModel}
           selectedPersonality={selectedPersonality}
+          selectedServiceTier={effectiveServiceTier}
           triggerChildren={
             <>
               <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
@@ -140,6 +160,9 @@ export function ComposerControlChips({
                 testID="composer-model-label"
                 text={modelPending ? "Loading model…" : modelText}
               />
+              {fastTier !== undefined && isFastServiceTier(effectiveServiceTier, fastTier) && (
+                <Ionicons color={colors.text} name="flash" size={iconSize.inline} />
+              )}
             </>
           }
           triggerStyle={styles.composerContextChip}

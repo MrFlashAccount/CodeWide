@@ -440,6 +440,7 @@ function clonePreferences(
     ? null
     : {
         ...preferences,
+        serviceTier: preferences.serviceTier,
         skillPaths: preferences.skillPaths.slice(0, 256),
       };
 }

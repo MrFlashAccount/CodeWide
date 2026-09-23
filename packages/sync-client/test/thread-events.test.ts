@@ -366,8 +366,8 @@ describe("thread event projection", () => {
 
   it("reads current model and effort from the App Server thread, ahead of old projected settings", () => {
     const value = seedThreadExecutionSettings(thread(), { model: "gpt-5.6-sol", effort: "medium", permissions: null });
-    Object.assign(value, { model: "gpt-6-astra", reasoningEffort: "high" });
-    expect(projectedThreadExecutionSettings(value)).toMatchObject({ model: "gpt-6-astra", effort: "high" });
+    Object.assign(value, { model: "gpt-6-astra", reasoningEffort: "high", serviceTier: "priority" });
+    expect(projectedThreadExecutionSettings(value)).toMatchObject({ model: "gpt-6-astra", effort: "high", serviceTier: "priority" });
   });
 
   it("does not replace a null or missing server effort with an old effort", () => {
@@ -376,6 +376,12 @@ describe("thread event projection", () => {
     expect(projectedThreadExecutionSettings(value)?.effort).toBeNull();
     Reflect.deleteProperty(value, "reasoningEffort");
     expect(projectedThreadExecutionSettings(value)?.effort).toBeNull();
+  });
+
+  it("keeps an explicit standard tier from the thread ahead of cached Fast settings", () => {
+    const value = seedThreadExecutionSettings(thread(), { model: "gpt-6-sol", effort: "high", permissions: null, serviceTier: "priority" });
+    Object.assign(value, { serviceTier: null });
+    expect(projectedThreadExecutionSettings(value)?.serviceTier).toBeNull();
   });
 
   it("rejects invalid direct model fields instead of falling back to an older model", () => {
@@ -389,9 +395,9 @@ describe("thread event projection", () => {
   it("updates direct settings when a newer App Server settings notification arrives", () => {
     const value = Object.assign(thread(), { model: "gpt-5.6-sol", reasoningEffort: "medium" });
     applyThreadEvent(value, event("thread/settings/updated", {
-      threadSettings: { model: "gpt-6-astra", effort: "high" },
+      threadSettings: { model: "gpt-6-astra", effort: "high", serviceTier: "priority" },
     }));
-    expect(projectedThreadExecutionSettings(value)).toMatchObject({ model: "gpt-6-astra", effort: "high" });
+    expect(projectedThreadExecutionSettings(value)).toMatchObject({ model: "gpt-6-astra", effort: "high", serviceTier: "priority" });
   });
 
   it("does not inherit old execution authority across authoritative snapshot replacement", () => {

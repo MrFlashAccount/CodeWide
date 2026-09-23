@@ -10,6 +10,7 @@ import { styles } from "./MobileThreads.styles";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
 import { GlobalVoiceEntryAction } from "./GlobalVoiceEntryAction";
+import { ThreadListSearchRow } from "./ThreadListSearchRow";
 
 type MobileThreadsHeaderProps = Pick<
   MobileThreadsProps,
@@ -104,11 +105,6 @@ export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps
           </Text>
         )}
         <GlobalVoiceEntryAction {...globalVoice} />
-        <ThreadListHeaderAction
-          accessibilityLabel="Search threads and messages"
-          name="search"
-          onPress={onOpenSearch}
-        />
         <ThreadFilterMenu
           mode={mode}
           onSelect={onFilterChange}
@@ -132,6 +128,7 @@ export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps
           {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
         />
       </ThreadListHeaderRow>
+      <ThreadListSearchRow onOpenSearch={onOpenSearch} />
     </View>
   );
 }

@@ -111,6 +111,7 @@ export function useComposerInteractions({
     selectedModel: composerStateBinding.composerEditingBinding.selectedModel,
     selectedPermissions: composerStateBinding.composerEditingBinding.selectedPermissions,
     selectedPersonality: composerStateBinding.composerEditingBinding.selectedPersonality,
+    selectedServiceTier: composerStateBinding.composerEditingBinding.selectedServiceTier,
     threadLifecycleActive: threadLifecycleActive,
     uploadsBlockSend: composerStateBinding.composerEditingBinding.uploadsBlockSend,
     voiceController,

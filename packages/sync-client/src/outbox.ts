@@ -43,6 +43,7 @@ export interface RpcClient {
 export type OutboxTurnOptions = {
   model?: string | null;
   effort?: string | null;
+  serviceTier?: string | null;
   personality?: Personality | null;
   permissions?: string | null;
   skills?: Array<{ name: string; path: string }>;
@@ -220,6 +221,7 @@ export function createTextOutboxCommand(
       ],
       ...(mode.type === "steer" || options.model === undefined ? {} : { model: options.model }),
       ...(mode.type === "steer" || options.effort === undefined ? {} : { effort: options.effort }),
+      ...(mode.type === "steer" || options.serviceTier === undefined ? {} : { serviceTier: options.serviceTier }),
       ...(mode.type === "steer" || options.personality === undefined ? {} : { personality: options.personality }),
       ...(mode.type === "steer" || options.permissions === undefined ? {} : { permissions: options.permissions }),
       ...(mode.type === "steer" ? { expectedTurnId: mode.expectedTurnId } : {}),

@@ -29,92 +29,89 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
           name="arrow-back"
           onPress={props.close}
         />
-        <Text numberOfLines={1} style={styles.screenTitle}>
-          Search
-        </Text>
-        <ContentMenu
-          align="end"
-          onOpenChange={props.setFilters}
-          open={props.filters}
-          placement="bottom"
-          trigger={
-            <ThreadListHeaderAction
-              accessibilityLabel="Search filters"
-              accessibilityState={{ expanded: props.filters, selected: props.filterCount > 0 }}
-              name={props.filterCount > 0 ? "filter" : "filter-outline"}
-              onPress={props.toggleFilters}
-            >
-              {props.filterCount > 0 && <View style={styles.filterDot} />}
-            </ThreadListHeaderAction>
-          }
-          width={Math.min(320, props.window.width - spacing.lg * 2)}
-        >
-          <View
-            style={{ maxHeight: Math.max(controlSize.regular * 3, props.window.height * 0.65) }}
-          >
-            <View style={styles.filterHeader}>
-              <Text style={styles.title}>Filters</Text>
+        <View style={styles.header} testID="search-top-input">
+          <View style={styles.searchBar} testID="expanded-thread-search-field">
+            <InlineIcon color={colors.textMuted} name="search" role="body" />
+            <TextInput
+              accessibilityLabel="Search all messages"
+              accessibilityRole="search"
+              autoFocus={props.autoFocus}
+              compact
+              onChangeText={props.setText}
+              onFocus={props.didFocus}
+              onSubmitEditing={props.search}
+              placeholder="Search messages"
+              returnKeyType="search"
+              style={styles.input}
+              value={props.text}
+            />
+            {props.text !== "" && (
               <Pressable
-                accessibilityLabel="Reset search filters"
-                onPress={props.resetFilters}
-                style={styles.reset}
+                accessibilityLabel="Clear search query"
+                accessibilityRole="button"
+                hitSlop={controlHitSlop.regular}
+                onPress={props.clear}
+                style={({ pressed }) => [styles.clearButton, pressed && styles.iconButtonPressed]}
               >
-                <Text style={styles.label}>Reset</Text>
+                <Ionicons color={colors.textMuted} name="close" size={iconSize.action} />
+              </Pressable>
+            )}
+          </View>
+          <ContentMenu
+            align="end"
+            onOpenChange={props.setFilters}
+            open={props.filters}
+            placement="bottom"
+            trigger={
+              <ThreadListHeaderAction
+                accessibilityLabel="Search filters"
+                accessibilityState={{ expanded: props.filters, selected: props.filterCount > 0 }}
+                name={props.filterCount > 0 ? "filter" : "filter-outline"}
+                onPress={props.toggleFilters}
+              >
+                {props.filterCount > 0 && <View style={styles.filterDot} />}
+              </ThreadListHeaderAction>
+            }
+            width={Math.min(320, props.window.width - spacing.lg * 2)}
+          >
+            <View
+              style={{ maxHeight: Math.max(controlSize.regular * 3, props.window.height * 0.65) }}
+            >
+              <View style={styles.filterHeader}>
+                <Text style={styles.title}>Filters</Text>
+                <Pressable
+                  accessibilityLabel="Reset search filters"
+                  onPress={props.resetFilters}
+                  style={styles.reset}
+                >
+                  <Text style={styles.label}>Reset</Text>
+                </Pressable>
+              </View>
+              {props.filterError !== null && (
+                <Text accessibilityRole="alert" style={styles.error}>
+                  {props.filterError}
+                </Text>
+              )}
+              <SearchFilters
+                onChange={props.setFilterValue}
+                onPickDate={props.pickDate}
+                projects={props.props.projects}
+                servers={props.props.servers}
+                threads={props.props.threads}
+                value={props.filterValue}
+              />
+              <Pressable
+                accessibilityLabel="Apply search filters"
+                accessibilityRole="button"
+                onPress={props.search}
+                style={styles.apply}
+              >
+                <Text style={styles.title}>Apply</Text>
               </Pressable>
             </View>
-            {props.filterError !== null && (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {props.filterError}
-              </Text>
-            )}
-            <SearchFilters
-              onChange={props.setFilterValue}
-              onPickDate={props.pickDate}
-              projects={props.props.projects}
-              servers={props.props.servers}
-              threads={props.props.threads}
-              value={props.filterValue}
-            />
-            <Pressable
-              accessibilityLabel="Apply search filters"
-              accessibilityRole="button"
-              onPress={props.search}
-              style={styles.apply}
-            >
-              <Text style={styles.title}>Apply</Text>
-            </Pressable>
-          </View>
-        </ContentMenu>
-      </ThreadListHeaderRow>
-      <View style={styles.header} testID="search-top-input">
-        <View style={styles.searchBar} testID="expanded-thread-search-field">
-          <InlineIcon color={colors.textMuted} name="search" role="body" />
-          <TextInput
-            accessibilityLabel="Search all messages"
-            accessibilityRole="search"
-            autoFocus={props.autoFocus}
-            compact
-            onChangeText={props.setText}
-            onFocus={props.didFocus}
-            onSubmitEditing={props.search}
-            placeholder="Search messages"
-            returnKeyType="search"
-            style={styles.input}
-            value={props.text}
-          />
-          {props.text !== "" && (
-            <Pressable
-              accessibilityLabel="Clear search query"
-              accessibilityRole="button"
-              hitSlop={controlHitSlop.regular}
-              onPress={props.clear}
-              style={({ pressed }) => [styles.clearButton, pressed && styles.iconButtonPressed]}
-            >
-              <Ionicons color={colors.textMuted} name="close" size={iconSize.action} />
-            </Pressable>
-          )}
+          </ContentMenu>
         </View>
-      </View>
+      </ThreadListHeaderRow>
       {props.calendar !== null && (
         <Suspense fallback={null}>
           <SearchCalendar
@@ -124,7 +121,7 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
           />
         </Suspense>
       )}
-      {props.resource.status === "loading" && (
+      {props.resource.status === "loading" && props.request?.kind === "initial" && (
         <WaveText style={styles.notice} text="Searching messages" />
       )}
       {props.resource.error !== null && (
@@ -132,7 +129,7 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
           {props.resource.error}
         </Text>
       )}
-      {(props.resource.value ?? []).map((server) => (
+      {props.notices.map((server) => (
         <SearchServerNotice
           key={server.connectionId}
           name={serverName(props.props.servers, server.connectionId)}
@@ -142,7 +139,7 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
       <LegendList
         data={props.results}
         initialScrollOffset={props.session.scrollOffset}
-        key={`${String(props.request?.revision ?? 0)}:${String(props.request?.page ?? 0)}`}
+        key={String(props.request?.revision ?? 0)}
         keyboardShouldPersistTaps="handled"
         keyExtractor={resultKey}
         ListEmptyComponent={
@@ -159,9 +156,13 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
             </View>
           ) : null
         }
-        ListHeaderComponent={
-          props.results.length > 0 ? <Text style={styles.notice}>Threads & messages</Text> : null
+        ListFooterComponent={
+          props.resource.status === "loading" && props.request?.kind === "continuation" ? (
+            <WaveText style={styles.notice} text="Loading more results" />
+          ) : null
         }
+        onEndReached={props.loadMore}
+        onEndReachedThreshold={0.4}
         onScroll={props.saveOffset}
         recycleItems
         renderItem={(entry) => (
@@ -173,21 +174,8 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
         )}
         scrollEventThrottle={100}
         style={styles.list}
+        testID="global-search-results"
       />
-      <View style={styles.pagination}>
-        {(props.request?.page ?? 0) > 0 && (
-          <Pressable onPress={props.previousPage} style={styles.reset}>
-            <Text style={styles.label}>Previous</Text>
-          </Pressable>
-        )}
-        {props.resource.value?.some(
-          (server) => server.status === "ready" && server.page.nextOffset !== null,
-        ) === true && (
-          <Pressable onPress={props.nextPage} style={styles.reset}>
-            <Text style={styles.label}>Next</Text>
-          </Pressable>
-        )}
-      </View>
     </View>
   );
 }

@@ -4,7 +4,7 @@ import { unknownRecord } from "../data/unknownRecord";
 export type VoiceInputKind = "system" | "builtin" | "wired" | "usb" | "bluetooth" | "ble";
 
 /** One currently connected, input-capable Android device. */
-export type VoiceInputDevice = {
+type VoiceInputDevice = {
   readonly id: number;
   readonly kind: Exclude<VoiceInputKind, "system">;
   readonly label: string;

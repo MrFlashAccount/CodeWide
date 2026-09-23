@@ -321,6 +321,7 @@ pub enum VcsState {
 pub enum VcsScope {
     Staged,
     Unstaged,
+    Uncommitted,
     Branch,
 }
 
@@ -477,6 +478,9 @@ impl GitProvider {
         if !output.status.success() {
             return Err(command_failure("git status", &output.stderr));
         }
+        if scope == VcsScope::Uncommitted {
+            return git_uncommitted_snapshot(&root, &output.stdout).await;
+        }
         let mut snapshot = parse_git_status(&root, &output.stdout, scope)?;
         populate_git_diff_stats(&root, scope, None, &mut snapshot.files).await?;
         snapshot.snapshot_id = snapshot_id(
@@ -502,7 +506,9 @@ impl GitProvider {
             .path
             .strip_prefix(root)
             .map_err(|_| VcsError::FileNotChanged(file.path.clone()))?;
-        let raw = if file.status == VcsFileStatus::Untracked {
+        let raw = if file.status == VcsFileStatus::Untracked
+            || (snapshot.scope == VcsScope::Uncommitted && snapshot.repository.head.is_none())
+        {
             synthetic_added_diff(root, relative).await?
         } else {
             let mut command = Command::new("git");
@@ -515,6 +521,9 @@ impl GitProvider {
                     command.arg("--cached");
                 }
                 VcsScope::Unstaged => {}
+                VcsScope::Uncommitted => {
+                    command.arg("HEAD");
+                }
                 VcsScope::Branch => {
                     let base = snapshot.repository.base.as_deref().ok_or_else(|| {
                         VcsError::Command(
@@ -623,8 +632,9 @@ impl GitProvider {
             .map_err(|error| {
                 VcsError::Command(format!("could not read git diff stderr: {error}"))
             })?;
-        let untracked_difference =
-            file.status == VcsFileStatus::Untracked && status.code() == Some(1);
+        let untracked_difference = (file.status == VcsFileStatus::Untracked
+            || (snapshot.scope == VcsScope::Uncommitted && snapshot.repository.head.is_none()))
+            && status.code() == Some(1);
         if !status.success() && !untracked_difference {
             return Err(command_failure("git diff", &stderr));
         }
@@ -655,7 +665,9 @@ fn git_diff_command(snapshot: &VcsSnapshot, file: &VcsFile) -> Result<Command, V
         .arg("-C")
         .arg(root)
         .args(["diff", "--no-ext-diff", "--no-color"]);
-    if file.status == VcsFileStatus::Untracked {
+    if file.status == VcsFileStatus::Untracked
+        || (snapshot.scope == VcsScope::Uncommitted && snapshot.repository.head.is_none())
+    {
         command
             .args(["--no-index", "--", "/dev/null"])
             .arg(relative);
@@ -666,6 +678,9 @@ fn git_diff_command(snapshot: &VcsSnapshot, file: &VcsFile) -> Result<Command, V
             command.arg("--cached");
         }
         VcsScope::Unstaged => {}
+        VcsScope::Uncommitted => {
+            command.arg("HEAD");
+        }
         VcsScope::Branch => {
             let base = snapshot.repository.base.as_deref().ok_or_else(|| {
                 VcsError::Command("Git branch snapshot does not contain a merge base".into())
@@ -787,7 +802,7 @@ async fn git_scoped_source(
         return Ok(Some(String::new()));
     }
     let revision = match scope {
-        VcsScope::Unstaged => return Ok(None),
+        VcsScope::Unstaged | VcsScope::Uncommitted => return Ok(None),
         VcsScope::Staged => format!(":{}", relative.to_string_lossy()),
         VcsScope::Branch => format!("HEAD:{}", relative.to_string_lossy()),
     };
@@ -991,12 +1006,139 @@ async fn git_branch_snapshot(root: &Path) -> Result<VcsSnapshot, VcsError> {
             base: Some(base),
         },
         scope: VcsScope::Branch,
-        available_scopes: vec![VcsScope::Staged, VcsScope::Unstaged, VcsScope::Branch],
+        available_scopes: vec![
+            VcsScope::Staged,
+            VcsScope::Unstaged,
+            VcsScope::Uncommitted,
+            VcsScope::Branch,
+        ],
         snapshot_id,
         state,
         summary,
         files,
     })
+}
+
+async fn git_uncommitted_snapshot(
+    root: &Path,
+    status_output: &[u8],
+) -> Result<VcsSnapshot, VcsError> {
+    let worktree = parse_git_status(root, status_output, VcsScope::Unstaged)?;
+    let has_head = worktree.repository.head.is_some();
+    let files = git_uncommitted_files(root, status_output, has_head, worktree.files).await?;
+    let summary = summarize(&files);
+    let state = if summary.conflicted > 0 {
+        VcsState::Conflicted
+    } else if summary.total > 0 {
+        VcsState::Dirty
+    } else {
+        VcsState::Clean
+    };
+    let repository = worktree.repository;
+    let snapshot_id = snapshot_id(
+        root,
+        repository.branch.as_deref(),
+        repository.head.as_deref(),
+        None,
+        VcsScope::Uncommitted,
+        &files,
+    )?;
+    Ok(VcsSnapshot {
+        capability: CHANGES_CAPABILITY.to_owned(),
+        repository,
+        scope: VcsScope::Uncommitted,
+        available_scopes: vec![
+            VcsScope::Staged,
+            VcsScope::Unstaged,
+            VcsScope::Uncommitted,
+            VcsScope::Branch,
+        ],
+        snapshot_id,
+        state,
+        summary,
+        files,
+    })
+}
+
+async fn git_uncommitted_files(
+    root: &Path,
+    status_output: &[u8],
+    has_head: bool,
+    worktree_files: Vec<VcsFile>,
+) -> Result<Vec<VcsFile>, VcsError> {
+    let staged = parse_git_status(root, status_output, VcsScope::Staged)?;
+    let mut files = BTreeMap::<PathBuf, VcsFile>::new();
+    if has_head {
+        let output = git_output(
+            root,
+            &[
+                "diff",
+                "--name-status",
+                "-z",
+                "--find-renames",
+                "HEAD",
+                "--",
+            ],
+        )
+        .await?;
+        if !output.status.success() {
+            return Err(command_failure(
+                "git diff HEAD --name-status",
+                &output.stderr,
+            ));
+        }
+        for file in parse_git_name_status(root, &output.stdout)? {
+            files.insert(file.path.clone(), file);
+        }
+    } else {
+        // An unborn branch has no HEAD. Every existing indexed file is new.
+        let output = git_output(root, &["ls-files", "-z", "--cached"]).await?;
+        if !output.status.success() {
+            return Err(command_failure("git ls-files", &output.stderr));
+        }
+        for path in output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+        {
+            let path = std::str::from_utf8(path).map_err(|_| VcsError::InvalidUtf8)?;
+            if tokio::fs::symlink_metadata(root.join(path)).await.is_ok() {
+                insert_file(
+                    &mut files,
+                    root,
+                    path,
+                    None,
+                    VcsFileStatus::Added,
+                    true,
+                    None,
+                );
+            }
+        }
+    }
+    for file in worktree_files.into_iter().chain(staged.files) {
+        if file.status == VcsFileStatus::Untracked || file.status == VcsFileStatus::Conflicted {
+            files.insert(file.path.clone(), file);
+        }
+    }
+    let mut files = files.into_values().collect::<Vec<_>>();
+    if has_head {
+        populate_git_diff_stats(root, VcsScope::Uncommitted, None, &mut files).await?;
+    } else {
+        for file in &mut files {
+            let relative = file
+                .path
+                .strip_prefix(root)
+                .map_err(|_| VcsError::FileNotChanged(file.path.clone()))?;
+            let diff = synthetic_added_diff(root, relative).await?;
+            file.binary = is_binary_diff(&diff.text);
+            if !file.binary {
+                let (additions, deletions) = count_diff_stats(&diff.text);
+                file.additions = Some(additions);
+                file.deletions = Some(deletions);
+            }
+        }
+    }
+    Ok(files)
 }
 
 async fn git_default_branch(root: &Path) -> Result<Option<String>, VcsError> {
@@ -1098,6 +1240,9 @@ async fn populate_git_diff_stats(
             command.arg("--cached");
         }
         VcsScope::Unstaged => {}
+        VcsScope::Uncommitted => {
+            command.arg("HEAD");
+        }
         VcsScope::Branch => {
             let base =
                 base.ok_or_else(|| VcsError::Command("branch numstat has no base".into()))?;
@@ -1201,7 +1346,7 @@ fn take_git_field<'a>(
 
 #[allow(clippy::too_many_lines)]
 fn parse_git_status(root: &Path, output: &[u8], scope: VcsScope) -> Result<VcsSnapshot, VcsError> {
-    if scope == VcsScope::Branch {
+    if matches!(scope, VcsScope::Branch | VcsScope::Uncommitted) {
         return Err(VcsError::UnsupportedScope {
             workspace: root.to_path_buf(),
             scope,
@@ -1334,7 +1479,12 @@ fn parse_git_status(root: &Path, output: &[u8], scope: VcsScope) -> Result<VcsSn
             base: None,
         },
         scope,
-        available_scopes: vec![VcsScope::Staged, VcsScope::Unstaged, VcsScope::Branch],
+        available_scopes: vec![
+            VcsScope::Staged,
+            VcsScope::Unstaged,
+            VcsScope::Uncommitted,
+            VcsScope::Branch,
+        ],
         snapshot_id,
         state,
         summary,
@@ -1383,7 +1533,7 @@ fn status_for_scope(xy: &str, renamed_record: bool, scope: VcsScope) -> Option<V
     let index = match scope {
         VcsScope::Staged => 0,
         VcsScope::Unstaged => 1,
-        VcsScope::Branch => return None,
+        VcsScope::Uncommitted | VcsScope::Branch => return None,
     };
     let status = *xy.as_bytes().get(index)?;
     if status == b'.' || status == b' ' {
@@ -1702,6 +1852,64 @@ mod tests {
         assert_eq!(staged_diff.source.as_deref(), Some("staged\n"));
         assert!(unstaged_diff.diff.contains("-staged\n+unstaged"));
         assert_eq!(unstaged_diff.source, None);
+
+        tokio::fs::write(directory.path().join("new.txt"), "new file\n")
+            .await
+            .expect("untracked file writes");
+        let uncommitted = provider
+            .changes(directory.path(), VcsScope::Uncommitted)
+            .await
+            .expect("combined snapshot loads");
+        assert_eq!(uncommitted.files.len(), 2);
+        let combined_file = uncommitted
+            .files
+            .iter()
+            .find(|file| file.path == path.canonicalize().expect("file canonicalizes"))
+            .expect("combined file exists only once");
+        assert_eq!(
+            (combined_file.additions, combined_file.deletions),
+            (Some(1), Some(1))
+        );
+        let combined_diff = provider
+            .diff(&uncommitted, combined_file)
+            .await
+            .expect("combined diff loads");
+        assert!(combined_diff.diff.contains("-base\n+unstaged"));
+        assert!(!combined_diff.diff.contains("+staged"));
+        assert!(
+            uncommitted
+                .files
+                .iter()
+                .any(|file| file.status == VcsFileStatus::Untracked)
+        );
+    }
+
+    #[tokio::test]
+    async fn uncommitted_scope_reads_indexed_and_untracked_files_before_first_commit() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        initialize_git_repository(directory.path()).await;
+        let staged = directory.path().join("staged.txt");
+        tokio::fs::write(&staged, "staged\n")
+            .await
+            .expect("staged file writes");
+        run_git(directory.path(), &["add", "staged.txt"]).await;
+        tokio::fs::write(directory.path().join("new.txt"), "untracked\n")
+            .await
+            .expect("untracked file writes");
+
+        let provider = GitProvider;
+        let snapshot = provider
+            .changes(directory.path(), VcsScope::Uncommitted)
+            .await
+            .expect("unborn snapshot loads");
+        assert_eq!(snapshot.summary.total, 2);
+        let file = snapshot
+            .files
+            .iter()
+            .find(|file| file.path == staged.canonicalize().expect("file canonicalizes"))
+            .expect("indexed file is present");
+        let diff = provider.diff(&snapshot, file).await.expect("diff loads");
+        assert!(diff.diff.contains("+staged"));
     }
 
     #[tokio::test]

@@ -202,6 +202,7 @@ function parseThreadChangeScope(value: unknown): ThreadChangeScope | null {
     value === "lastTurn" ||
     value === "staged" ||
     value === "unstaged" ||
+    value === "uncommitted" ||
     value === "branch"
     ? value
     : null;

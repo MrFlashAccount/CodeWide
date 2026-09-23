@@ -90,9 +90,9 @@ const styles = StyleSheet.create({
     position: "absolute",
   },
   content: {
-    backgroundColor: colors.surfaceContainer,
+    backgroundColor: colors.menuSurface,
     borderColor: colors.borderSoft,
-    borderRadius: radii.selected,
+    borderRadius: radii.menu,
     borderWidth: 1,
     overflow: "hidden",
   },

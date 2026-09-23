@@ -9,3 +9,5 @@ export * from "./types";
 export * from "./command-output";
 
 export * from "./question-history";
+
+export * from "./activity-metrics";

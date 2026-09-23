@@ -115,7 +115,8 @@ it("preserves platform integration contracts — 1", () => {
   expect(mermaidNative).toContain("allowUniversalAccessFromFileURLs={false}");
   expect(mermaidNative).toContain("onContentProcessDidTerminate={restartRenderer}");
   expect(mermaidNative).toContain("onRenderProcessGone={restartRenderer}");
-  expect(richMarkdown).toContain("style={[styles.tableViewport, minimumWidth > 0");
+  // Viewport resizing is verified through mounted renders in rich-markdown-resize.native.test.tsx.
+  // Do not require the former measured-width feedback through a source-text assertion.
   const codeContainerStyle = sourceObjectDeclaration(richMarkdown, "codeContainer");
   expect(codeContainerStyle).toContain('width: "100%"');
   expect(codeContainerStyle).toContain("minWidth: 0");

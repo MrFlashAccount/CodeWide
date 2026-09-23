@@ -22,6 +22,7 @@ describe("file type registry", () => {
     expect(isMarkdownFile("README.MD#intro")).toBe(true);
     expect(isHtmlFile("preview/index.xhtml?raw=1")).toBe(true);
     expect(fileMediaKind("capture.HEIF")).toBe("image");
+    expect(fileMediaKind("diagram.SVG")).toBe("image");
     expect(fileMediaKind("recording.webm")).toBe("audio");
     expect(fileMediaKind("opaque", "image/png; charset=binary")).toBe("image");
     expect(fileMediaKind("archive.zip")).toBeNull();

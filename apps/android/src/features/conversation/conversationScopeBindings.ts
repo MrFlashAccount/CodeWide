@@ -1,6 +1,6 @@
 import type { ReviewDelivery, ReviewTarget } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { SendMode, TurnSendOptions } from "../../data/thread-delivery-state";
-import type { ThreadSettings } from "../../data/turn-controls-types";
+import type { ThreadSettings, TurnControlsLoadOptions } from "../../data/turn-controls-types";
 import type {
   VoiceTranscriptionEvent,
   VoiceTranscriptionOptions,
@@ -37,8 +37,8 @@ export function createConversationScopeBindings(
       onInterrupt: undefined,
       onListQueue: undefined,
       onListTerminals: undefined,
-      onLoadControls: async (cwd: string) =>
-        features.composer.loadTurnControls(newChatDraft.connectionId, cwd),
+      onLoadControls: async (cwd: string, options?: TurnControlsLoadOptions) =>
+        features.composer.loadTurnControls(newChatDraft.connectionId, cwd, options),
       onLoadThreadChangeDiff: undefined,
       onLoadThreadResources: undefined,
       onMoveQueued: undefined,
@@ -110,8 +110,8 @@ export function createConversationScopeBindings(
     onListQueue: queueCommands.onListQueue,
     onListTerminals: async () =>
       features.terminal.listBackgroundTerminals(activeConnectionId, activeRemoteThreadId),
-    onLoadControls: async (cwd: string) =>
-      features.composer.loadTurnControls(activeConnectionId, cwd),
+    onLoadControls: async (cwd: string, options?: TurnControlsLoadOptions) =>
+      features.composer.loadTurnControls(activeConnectionId, cwd, options),
     onLoadThreadChangeDiff: async (path: string, scope?: ThreadChangeScope) =>
       features.changes.loadThreadChangeDiff(activeConnectionId, activeRemoteThreadId, path, scope),
     onLoadThreadResources: async (

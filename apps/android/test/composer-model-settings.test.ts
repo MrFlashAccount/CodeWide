@@ -46,8 +46,10 @@ describe("composer model authority", () => {
     expect(screen).not.toContain("?? controls.models[0]");
     expect(ownerComposerControlOptions).toContain("selected={candidate.id === selectedModel}");
     const nativeMenu = readFileSync(new URL("../src/ui/TurnControlMenus.native.tsx", import.meta.url), "utf8");
+    const modelSheet = readFileSync(new URL("../src/ui/ModelThinkingSheet.native.tsx", import.meta.url), "utf8");
     expect(nativeMenu).not.toContain("?? models[0]");
-    expect(nativeMenu).toContain("const effectiveModel = selectedModel;");
-    expect(nativeMenu).toContain("const effectiveEffort = selectedEffort;");
+    expect(nativeMenu).toContain("ModelThinkingSheet as ModelThinkingMenu");
+    expect(modelSheet).toContain("candidate.id === props.selectedModel");
+    expect(modelSheet).not.toContain("?? models[0]");
   });
 });

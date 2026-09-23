@@ -184,9 +184,17 @@ export function sameComposerPreferences(
     left.model === right.model &&
     left.permissions === right.permissions &&
     left.personality === right.personality &&
+    sameServiceTier(left, right) &&
     left.sendMode === right.sendMode &&
     sameStrings(left.skillPaths, right.skillPaths)
   );
+}
+
+function sameServiceTier(
+  left: StoredComposerPreferences,
+  right: StoredComposerPreferences,
+): boolean {
+  return left.serviceTier === right.serviceTier;
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {

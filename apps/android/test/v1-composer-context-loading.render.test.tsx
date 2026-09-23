@@ -20,6 +20,7 @@ it("shimmers model and access labels until their controls resource is available"
       onSelectModel={action}
       onSelectPermissions={action}
       onSelectPersonality={action}
+      onSelectServiceTier={action}
       readOnly={false}
       remoteThread={null}
       resourceId="pending-controls"
@@ -28,6 +29,7 @@ it("shimmers model and access labels until their controls resource is available"
       selectedModel="restored-model-id"
       selectedPermissions=":workspace"
       selectedPersonality={null}
+      selectedServiceTier={null}
     />,
   );
 

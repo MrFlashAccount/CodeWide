@@ -757,6 +757,42 @@ describe("Legend thread chat model", () => {
     expect(snapshot.status).toBe("background-retrying");
     expect(snapshot.error).toBe("transient read failure");
     expect(snapshot.turnRowIds).toEqual(["turn-1", "turn-2"]);
+
+    model.refreshThread(request.connectionId, request.threadId, rows);
+    expect(model.window$(request.connectionId, request.threadId).peek()).toEqual(
+      expect.objectContaining({ error: null, status: "ready" }),
+    );
+  });
+
+  it("revalidates a resident window when a chat is entered again", async () => {
+    const model = createThreadChatModel();
+    let loads = 0;
+    const loader = async () => {
+      loads += 1;
+      const generation = model.startWindow(request);
+      model.commitWindow(request, generation, loaded([row(`turn-${String(loads)}`, loads)]));
+    };
+    const resource = model.resource(request, loader);
+    await resource.ready$.peek();
+
+    const releaseFirst = resource.retain(() => undefined);
+    releaseFirst();
+    const handoffRelease = resource.retain(() => undefined);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(loads).toBe(1);
+
+    handoffRelease();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    const reopened = model.resource(request, loader);
+    const releaseReopened = reopened.retain(() => undefined);
+    await vi.waitFor(() => expect(loads).toBe(2));
+    expect(model.readRows(reopened.window$.peek().turnRowIds)[0]?.id).toBe("turn-2");
+    releaseReopened();
+    model.close();
   });
 
   it("recovers an initially failed local window when authoritative rows arrive", () => {

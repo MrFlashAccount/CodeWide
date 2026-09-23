@@ -15,3 +15,5 @@ Verification: `v1-account-login.render.test.tsx`, usage-menu/workspace-subscript
 M7 capability closure: `workspaceCapabilities.ts` exposes only this owner's qualified operations. Private `workspaceAdapter.ts` binds existing lower model/session authority through exact workspace composition; it does not own shared in-flight maps, runtime construction or global cleanup. The broad RemoteWorkspace facade is deleted.
 
 `ContextRingView` renders the existing context percentage and SVG geometry from the menu owner; it introduces no state or platform reads.
+
+`CostBreakdownMenu` exports the conversation-scoped `CostBreakdownMenuProvider`. ConversationLayout installs it for both main and read-only timelines. Closed rows retain only ordinary RN triggers; one lazily mounted native popup owns the selected estimate. Estimate updates reach the open body without broadcasting popup state to all rows. Source removal, dismissal and window changes retire the request; stale measurement and dismissal callbacks cannot replace a newer selection.

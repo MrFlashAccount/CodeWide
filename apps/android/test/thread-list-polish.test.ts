@@ -16,6 +16,10 @@ const mobileHeader = readFileSync(
   new URL("../src/features/threadList/MobileThreadsHeader.tsx", import.meta.url),
   "utf8",
 );
+const searchRow = readFileSync(
+  new URL("../src/features/threadList/ThreadListSearchRow.tsx", import.meta.url),
+  "utf8",
+);
 const rowStyles = readFileSync(
   new URL("../src/features/threadList/ThreadRow.styles.ts", import.meta.url),
   "utf8",
@@ -45,7 +49,7 @@ describe("thread list visual contract", () => {
     );
   });
 
-  it("keeps search and filtering as transparent actions in the shared header", () => {
+  it("keeps filtering in the header and search in the fixed second row", () => {
     const headerRowStyle = sourceObjectDeclaration(header, "row");
     expect(headerRowStyle).toContain("paddingRight: threadListLayout.edgeInset");
     expect(headerRowStyle).toContain("minHeight: layoutSize.header");
@@ -56,10 +60,12 @@ describe("thread list visual contract", () => {
     expect(header).toContain("action: filterIconButtonLayout");
     expect(menus).toContain('testID="thread-filter-active-dot"');
     expect(menus).toContain("<ThreadListHeaderAction");
+    expect(searchRow).toContain("...searchFieldLayout");
+    expect(searchRow).toContain('testID="thread-search-row"');
     expect(filterButtonLayout).toContain('position: "relative"');
     expect(filterButtonLayout).not.toContain("backgroundColor");
     for (const owner of [sidebarHeader, mobileHeader]) {
-      expect(owner).not.toContain("threadSearchRow");
+      expect(owner).toContain("<ThreadListSearchRow onOpenSearch={onOpenSearch} />");
       expect(owner).not.toContain("mobileSearchWrap");
     }
     const filterMenu = menus.slice(menus.indexOf("function ThreadFilterMenu("));

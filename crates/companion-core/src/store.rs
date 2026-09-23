@@ -24,11 +24,12 @@ const ROLLOUT_CONTENT_BY_FILE: TableDefinition<&[u8], u8> =
     TableDefinition::new("rollout_content_by_file");
 const REPLAY: TableDefinition<u64, &[u8]> = TableDefinition::new("sync_replay");
 const OUTBOX: TableDefinition<&str, &[u8]> = TableDefinition::new("command_outbox");
+const ACTIVITY_METRICS: TableDefinition<&str, &[u8]> = TableDefinition::new("activity_metrics");
 const THREAD_USAGE: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_usage");
 const THREAD_METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_metadata");
 const THREADS_BY_PARENT: TableDefinition<&[u8], u8> = TableDefinition::new("threads_by_parent");
 const SCHEMA_VERSION: u32 = 7;
-const ROLLOUT_LOGIC_VERSION: u64 = 2;
+const ROLLOUT_LOGIC_VERSION: u64 = 4;
 const FILE_STATE_VERSION: u8 = 2;
 const FILE_STATE_V1_BYTES: usize = 65;
 const FILE_STATE_BYTES: usize = 73;
@@ -482,6 +483,7 @@ impl IndexStore {
             write.open_table(REPLAY)?;
             write.open_table(OUTBOX)?;
             write.open_table(THREAD_USAGE)?;
+            write.open_table(ACTIVITY_METRICS)?;
             write.open_table(THREAD_METADATA)?;
             write.open_table(THREADS_BY_PARENT)?;
         }
@@ -605,6 +607,44 @@ impl IndexStore {
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
         SCHEMA_VERSION
+    }
+
+    /// Reads one companion-owned activity metrics state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the table cannot be read or the stored JSON is invalid.
+    pub fn activity_metrics<T: for<'de> Deserialize<'de>>(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<T>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(ACTIVITY_METRICS)?;
+        table
+            .get(thread_id)?
+            .map(|value| serde_json::from_slice(value.value()))
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    /// Atomically replaces one companion-owned activity metrics state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when serialization or the redb transaction fails.
+    pub fn put_activity_metrics<T: Serialize>(
+        &self,
+        thread_id: &str,
+        value: &T,
+    ) -> Result<(), StoreError> {
+        let encoded = serde_json::to_vec(value)?;
+        let write = self.database.begin_write()?;
+        {
+            let mut table = write.open_table(ACTIVITY_METRICS)?;
+            table.insert(thread_id, encoded.as_slice())?;
+        }
+        write.commit()?;
+        Ok(())
     }
 
     /// Reads one companion-owned thread usage state.

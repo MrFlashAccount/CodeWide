@@ -36,6 +36,16 @@ it("keeps local text until persistence acknowledges it, then accepts later proje
   );
 });
 
+it("retains explicit standard routing distinct from an inherited default", () => {
+  const hook = renderHook(() => useComposerSession("tier-thread", projection("")));
+
+  act(() => {
+    hook.result.current.updatePreferences((current) => ({ ...current, serviceTier: "default" }));
+  });
+
+  expect(hook.result.current.snapshot.preferences.serviceTier).toBe("default");
+});
+
 it("applies paired native text and markdown changes without leaving Send disabled", () => {
   const hook = renderHook(() => {
     const composer = useComposerSession("thread", projection(""));

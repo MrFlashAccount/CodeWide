@@ -1,6 +1,7 @@
 import type { SyncEvent, SyncServerRequest, SyncSnapshotThread } from "@codewide/sync-client";
 import { threadProjectionPatchFromEvent } from "@codewide/sync-client";
 
+import { appLogger } from "../observability/logger";
 import {
   globalSupervisorQualifiedChatRef,
   type GlobalSupervisorQualifiedChatRef,
@@ -356,11 +357,7 @@ function creatingThreadFromEvent(
 }
 
 function isClosingEvent(event: SyncEvent): boolean {
-  return (
-    event.payload.method === "thread/archived" ||
-    event.payload.method === "thread/closed" ||
-    event.payload.method === "thread/deleted"
-  );
+  return event.payload.method === "thread/deleted";
 }
 
 function relationForActive(
@@ -518,18 +515,27 @@ function addEventAttention(input: {
   readonly connectionId: string;
   readonly event: SyncEvent;
   readonly now: number;
-}): void {
+}): {
+  readonly eventId: string;
+  readonly matchedRelations: number;
+  readonly pendingRowsAdded: number;
+  readonly sourceCursor: number | null;
+  readonly workerThreadId: string;
+} | null {
   const { batch, connectionId, event, now } = input;
   const { changedSupervisors, changes, deliveryEnabled, working } = batch;
   const candidate = eventCandidate(connectionId, event, now);
   if (candidate === null) {
-    return;
+    return null;
   }
   const worker = globalSupervisorQualifiedChatRef(connectionId, candidate.threadId);
   const params = unknownRecord(event.payload.params);
   const turn = unknownRecord(params?.turn);
   const terminalAt = turn === null ? null : completedAt(turn);
+  let matchedRelations = 0;
+  let pendingRowsAdded = 0;
   for (const relation of activeRelationsForWorker(working.values(), worker)) {
+    matchedRelations += 1;
     if (terminalAt !== null && terminalAt < relation.relation.createdAt) {
       continue;
     }
@@ -540,7 +546,15 @@ function addEventAttention(input: {
     working.set(row.id, row);
     changes.push({ row, type: "put" });
     markPendingSupervisorChanged(row, changedSupervisors);
+    pendingRowsAdded += Number(row.state === "pending");
   }
+  return {
+    eventId: candidate.source.eventId,
+    matchedRelations,
+    pendingRowsAdded,
+    sourceCursor: candidate.source.sourceCursor,
+    workerThreadId: worker.threadId,
+  };
 }
 
 function removeClosedRelations(input: {
@@ -758,12 +772,33 @@ export function createGlobalSupervisorAttentionOwner(options: {
     await enqueue(async () => {
       const id = relationRowId(supervisor, worker);
       if (options.storage.rows().some((row) => row.id === id)) {
+        appLogger.info({
+          event: "global_voice.attention.follow_committed",
+          fields: {
+            relationCreated: false,
+            supervisorConnectionId: supervisor.connectionId,
+            supervisorThreadId: supervisor.threadId,
+            workerConnectionId: worker.connectionId,
+            workerThreadId: worker.threadId,
+          },
+        });
         return new Set();
       }
-      return apply(
+      const changed = await apply(
         [{ row: relationForActive(supervisor, worker, options.now()), type: "put" }],
         new Set(),
       );
+      appLogger.info({
+        event: "global_voice.attention.follow_committed",
+        fields: {
+          relationCreated: true,
+          supervisorConnectionId: supervisor.connectionId,
+          supervisorThreadId: supervisor.threadId,
+          workerConnectionId: worker.connectionId,
+          workerThreadId: worker.threadId,
+        },
+      });
+      return changed;
     });
   };
 
@@ -864,17 +899,28 @@ export function createGlobalSupervisorAttentionOwner(options: {
         const changes: GlobalSupervisorAttentionStorageChange[] = [];
         const changedSupervisors = new Set<string>();
         const batch = { changedSupervisors, changes, deliveryEnabled, working };
+        const diagnostics = [];
         for (const event of events) {
           activateStartedRelations({ batch, connectionId, event });
-          addEventAttention({
+          const diagnostic = addEventAttention({
             batch,
             connectionId,
             event,
             now: options.now(),
           });
+          if (diagnostic !== null) {
+            diagnostics.push(diagnostic);
+          }
           removeClosedRelations({ batch, connectionId, event });
         }
-        return apply(changes, changedSupervisors);
+        const changed = await apply(changes, changedSupervisors);
+        for (const diagnostic of diagnostics) {
+          appLogger.info({
+            event: "global_voice.attention.event_committed",
+            fields: { connectionId, ...diagnostic },
+          });
+        }
+        return changed;
       });
     },
     async ingestPendingRequests(connectionId, requests) {

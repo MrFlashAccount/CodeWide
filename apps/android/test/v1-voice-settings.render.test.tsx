@@ -100,7 +100,7 @@ it("surfaces the Companion API-key requirement without waiting for a generic tim
   );
 });
 
-it("saves one structured personality without changing the synthesized voice", async () => {
+it("saves one unlabeled personality without changing the synthesized voice", async () => {
   const selectVoice = jest.fn(async () => undefined);
   const previewVoice = jest.fn(async () => undefined);
   const savePersonality = jest.fn(async () => undefined);
@@ -125,19 +125,17 @@ it("saves one structured personality without changing the synthesized voice", as
   expect(saveButton.props.accessibilityState).toMatchObject({
     disabled: true,
   });
-  fireEvent.changeText(view.getByLabelText("Voice Assistant character"), "  Calm and candid  ");
-  fireEvent.changeText(
-    view.getByLabelText("Voice Assistant communication style"),
-    "Short spoken answers",
-  );
-  fireEvent.changeText(view.getByLabelText("Voice Assistant rules"), "State uncertainty clearly");
+  expect(view.queryByText("Character")).toBeNull();
+  expect(view.queryByText("Communication style")).toBeNull();
+  expect(view.queryByText("Rules")).toBeNull();
+  fireEvent.changeText(view.getByLabelText("Voice Assistant personality"), "  Calm and candid  ");
   fireEvent.press(view.getByRole("button", { name: "Save Voice Assistant personality" }));
 
   await waitFor(() =>
     expect(savePersonality).toHaveBeenCalledWith({
       character: "Calm and candid",
-      communicationStyle: "Short spoken answers",
-      rules: "State uncertainty clearly",
+      communicationStyle: "",
+      rules: "",
     }),
   );
   expect(selectVoice).not.toHaveBeenCalled();
@@ -166,7 +164,10 @@ it("keeps an unsaved personality draft visible when persistence fails", async ()
     />,
   );
 
-  fireEvent.changeText(view.getByLabelText("Voice Assistant rules"), "Never pretend certainty");
+  fireEvent.changeText(
+    view.getByLabelText("Voice Assistant personality"),
+    "Never pretend certainty",
+  );
   fireEvent.press(view.getByRole("button", { name: "Save Voice Assistant personality" }));
 
   await waitFor(() =>
@@ -206,6 +207,27 @@ it("shows deterministic orb previews and switches only the visual preference", a
   await waitFor(() => expect(selectOrbStyle).toHaveBeenCalledWith("particles"));
   expect(selectVoice).not.toHaveBeenCalled();
   expect(savePersonality).not.toHaveBeenCalled();
+});
+
+it("omits audio input and labels microphone filtering as experimental", () => {
+  const view = render(
+    <VoiceAssistantSettings
+      onEnrollPersonalVoice={async () => undefined}
+      onPreviewVoice={async () => undefined}
+      onSavePersonality={async () => undefined}
+      onSetPersonalVoiceFilterEnabled={async () => undefined}
+      onSelectOrbStyle={async () => undefined}
+      onSelectVoice={async () => undefined}
+      personality={{ character: "", communicationStyle: "", rules: "" }}
+      personalVoiceFilterEnabled={false}
+      personalVoiceProfileAvailable={false}
+      selectedOrbStyle="nebula"
+      selectedVoice="cove"
+    />,
+  );
+
+  expect(view.queryByText("Audio input")).toBeNull();
+  expect(view.getByText("Microphone filtering (Experimental)")).toBeTruthy();
 });
 
 it("records and enables the experimental personal voice filter explicitly", async () => {

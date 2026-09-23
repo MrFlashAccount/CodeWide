@@ -9,6 +9,8 @@ import {
 import type { SearchScreenProps } from "./globalSearchContract";
 import { renderGlobalSearchView } from "./GlobalSearchView";
 import type { SearchResultTarget, ServerSearchResult } from "./searchResultTypes";
+import { SearchOverlayMotion } from "./SearchOverlayMotion";
+import { useSearchOverlayMotion } from "./searchOverlayMotion";
 
 import { searchDateBoundary } from "../../data/message-search";
 import { useConstant } from "../../react/useConstant";
@@ -27,6 +29,7 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
   const filterValue = useSelector<SearchFilterValue>(() => session.filters$.get());
   const request = useSelector(() => session.request$.get());
   const filterError = useSelector(() => session.error$.get());
+  const feed = useSelector(() => session.results.snapshot$.get());
   const [filters, setFilters] = useState(false);
   const [calendar, setCalendar] = useState<SearchDateField | null>(null);
   const pickDate = (field: SearchDateField) => {
@@ -68,11 +71,12 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
   const setFilterValue = useEvent((value: SearchFilterValue): void => {
     session.filters$.set(value);
   });
-  const close = useEvent(() => {
+  const closeRoute = useEvent(() => {
     session.cancelPending();
     Keyboard.dismiss();
     props.onClose();
   });
+  const overlay = useSearchOverlayMotion(closeRoute);
   const resetFilters = () => {
     session.filters$.set({ from: "", project: "", serverId: "", threadId: "", until: "" });
     session.error$.set(null);
@@ -87,7 +91,6 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
       const project = request.project.trim();
       const query = {
         from: searchDateBoundary(request.from, false),
-        offset: request.page * 30,
         project: project === "" ? null : project,
         query: request.text,
         threadId: request.threadId === "" ? null : request.threadId,
@@ -96,41 +99,36 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
       if (query.from !== null && query.until !== null && query.from >= query.until) {
         throw new Error("The start date must precede the end date");
       }
-      return Promise.all(
-        props.servers
-          .filter((server) => request.serverId === "" || server.id === request.serverId)
-          .map(async (server): Promise<ServerSearchResult> => {
-            try {
-              return {
-                connectionId: server.id,
-                page: await props.remote.searchMessages(server.id, query),
-                status: "ready",
-              };
-            } catch (error) {
-              return {
-                connectionId: server.id,
-                message: error instanceof Error ? error.message : "Search failed",
-                status: "error",
-              };
-            }
-          }),
+      const activeServers = props.servers.flatMap((server) => {
+        if (request.serverId !== "" && server.id !== request.serverId) {
+          return [];
+        }
+        const offset = request.kind === "initial" ? 0 : request.offsets[server.id];
+        return offset === undefined ? [] : [{ offset, server }];
+      });
+      const serverResults = await Promise.all(
+        activeServers.map(async ({ offset, server }): Promise<ServerSearchResult> => {
+          try {
+            return {
+              connectionId: server.id,
+              page: await props.remote.searchMessages(server.id, { ...query, offset }),
+              status: "ready",
+            };
+          } catch (error) {
+            return {
+              connectionId: server.id,
+              message: error instanceof Error ? error.message : "Search failed",
+              status: "error",
+            };
+          }
+        }),
       );
+      session.acceptPage(request, serverResults);
+      return serverResults;
     },
   );
-  const results: LocatedSearchHit[] = [];
-  for (const server of resource.value ?? []) {
-    if (server.status === "ready") {
-      for (const hit of server.page.data) {
-        results.push({ connectionId: server.connectionId, hit });
-      }
-    }
-  }
-  results.sort((left, right) => right.hit.timestamp.localeCompare(left.hit.timestamp));
-  const nextPage = useEvent(() => {
-    session.changePage(1);
-  });
-  const previousPage = useEvent(() => {
-    session.changePage(-1);
+  const loadMore = useEvent(() => {
+    session.loadMore();
   });
   const toggleFilters = () => {
     const open = !filters;
@@ -154,12 +152,12 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
     filterValue.until,
   ].filter((value) => value.trim() !== "").length;
   const failed =
-    resource.error !== null || resource.value?.some((server) => server.status === "error") === true;
+    resource.error !== null || feed.notices.some((server) => server.status === "error");
   const view = renderGlobalSearchView({
     autoFocus,
     calendar,
     clear,
-    close,
+    close: overlay.close,
     didFocus,
     dismissCalendar,
     failed,
@@ -167,14 +165,14 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
     filterError,
     filters,
     filterValue,
-    nextPage,
+    loadMore,
+    notices: feed.notices,
     pickDate,
-    previousPage,
     props,
     request,
     resetFilters,
     resource,
-    results,
+    results: feed.hits,
     saveOffset,
     search,
     selectCalendarDay,
@@ -187,5 +185,11 @@ export function GlobalSearchScreen(props: SearchScreenProps) {
     toggleFilters,
     window,
   });
-  return <AppVoiceInputProvider runtime={props.voiceRuntime}>{view}</AppVoiceInputProvider>;
+  return (
+    <AppVoiceInputProvider runtime={props.voiceRuntime}>
+      <SearchOverlayMotion onBackdropPress={overlay.close} progress={overlay.progress}>
+        {view}
+      </SearchOverlayMotion>
+    </AppVoiceInputProvider>
+  );
 }

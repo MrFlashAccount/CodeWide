@@ -31,7 +31,6 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.uimanager.UIManagerHelper
 import dev.codewide.app.rendering.VoiceAuraOverlay
 import java.io.IOException
-import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
@@ -193,7 +192,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   ) {
     try {
       require(savedServerId.isNotBlank()) { "Saved server id is required" }
-      validateEndpoint(endpoint)
+      validateConnectionEndpoint(endpoint)
       require(pairingToken.length in 32..512) { "Pairing token is invalid" }
       require(deviceName.length in 1..80 && !deviceName.any { it.code < 32 || it.code == 127 }) { "Device name is invalid" }
       val identityPin = requireNotNull(tlsPinSha256) { "Secure pairing requires a Companion identity pin" }
@@ -259,7 +258,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   private fun saveConnectionCredentials(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, deviceId: String?, promise: Promise) {
     try {
-      validateEndpoint(endpoint)
+      validateConnectionEndpoint(endpoint)
       require(connectionId.isNotBlank()) { "Connection id is required" }
       PinnedTls.requireTransport(endpoint, tlsPinSha256)
       processNativeAuthorityLifecycle.access {
@@ -1324,20 +1323,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
-
-  private fun validateEndpoint(endpoint: String) {
-    val uri = URI(endpoint)
-    require(uri.scheme == "wss" || uri.scheme == "ws") { "Endpoint must use ws or wss" }
-    require(uri.path == "/v1/sync") { "Endpoint path must be /v1/sync" }
-    require(uri.userInfo == null && uri.query == null && uri.fragment == null) {
-      "Endpoint must not contain credentials, query parameters, or fragments"
-    }
-    if (uri.scheme == "ws") {
-      require(uri.host == "127.0.0.1" || uri.host == "localhost" || uri.host == "[::1]" || uri.host == "10.0.2.2") {
-        "Cleartext WebSocket is only allowed for local development"
-      }
-    }
-  }
 
   private fun requireContentUri(value: String): Uri = Uri.parse(value).also { uri ->
     require(uri.scheme == "content") { "Only Storage Access Framework content URIs are supported" }

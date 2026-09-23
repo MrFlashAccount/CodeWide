@@ -49,7 +49,8 @@ class VoiceCaptureForegroundService : Service() {
     val health = captureHealth.snapshot()
     Log.i("CodeWideVoiceState", "peer=${webRtcObserver?.peerId} ${owner?.diagnostic() ?: "owner=absent state=${orbState.wireValue}"} " +
       "${ingressDiagnostics?.snapshot()} pcmAgeMs=${health.sampleAgeMs} ${audioLevels.diagnostic()} " +
-      "screenInteractive=${health.screenInteractive} style=${orbStyle.wireValue} reducedMotion=$orbReducedMotion")
+      "screenInteractive=${health.screenInteractive} wakeLockHeld=${::wakeLockOwner.isInitialized && wakeLockOwner.isHeld} " +
+      "style=${orbStyle.wireValue} reducedMotion=$orbReducedMotion")
   }
 
   private fun stopWebRtcObservation() {
@@ -73,12 +74,14 @@ class VoiceCaptureForegroundService : Service() {
   private lateinit var audioLevels: GlobalVoiceAudioLevelOwner
   private lateinit var captureHealth: GlobalVoiceCaptureHealthOwner
   private lateinit var globalVoiceOverlay: GlobalVoiceOverlayController
+  private lateinit var wakeLockOwner: GlobalVoiceWakeLockOwner
   private val healthHandler = Handler(Looper.getMainLooper())
   private var healthCheckScheduled = false
   private var screenReceiverRegistered = false
   private val healthCheck = object : Runnable {
     override fun run() {
       healthCheckScheduled = false
+      wakeLockOwner.setActivationActive(lifetime.hasOverlay())
       captureHealth.check()
       logVoiceDiagnostic()
       scheduleHealthCheckIfNeeded()
@@ -124,6 +127,7 @@ class VoiceCaptureForegroundService : Service() {
     captureHealth.setMicrophoneMuted(microphoneMuted)
     captureHealth.setExpectedCapture(orbState.expectsMicrophoneCapture())
     val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+    wakeLockOwner = GlobalVoiceWakeLockOwner.create(powerManager)
     captureHealth.setScreenInteractive(powerManager.isInteractive)
     ContextCompat.registerReceiver(
       this,
@@ -163,10 +167,11 @@ class VoiceCaptureForegroundService : Service() {
       } else {
         startForeground(NOTIFICATION_ID, notification())
       }
-      complete(token, null)
       syncOverlay()
+      complete(token, null)
     } catch (error: Throwable) {
       lifetime.release(token)
+      wakeLockOwner.setActivationActive(lifetime.hasOverlay())
       complete(token, error)
       stopIfIdle()
     }
@@ -181,6 +186,7 @@ class VoiceCaptureForegroundService : Service() {
     captureHealth.setActive(false)
     audioLevels.setActive(false)
     globalVoiceOverlay.hideImmediately()
+    wakeLockOwner.release()
     lifetime.clear()
     failPending(IllegalStateException("Voice capture foreground service stopped"))
     if (screenReceiverRegistered) {
@@ -200,6 +206,7 @@ class VoiceCaptureForegroundService : Service() {
   private fun release(token: String, completion: () -> Unit) {
     val finalRelease = lifetime.release(token)
     val hasOverlay = lifetime.hasOverlay()
+    wakeLockOwner.setActivationActive(hasOverlay)
     audioLevels.setActive(hasOverlay)
     captureHealth.setActive(hasOverlay)
     if (hasOverlay) {
@@ -220,6 +227,7 @@ class VoiceCaptureForegroundService : Service() {
 
   private fun syncOverlay() {
     val hasOverlay = lifetime.hasOverlay()
+    wakeLockOwner.setActivationActive(hasOverlay)
     audioLevels.setActive(hasOverlay)
     captureHealth.setActive(hasOverlay)
     if (hasOverlay) {

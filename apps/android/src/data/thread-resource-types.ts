@@ -10,7 +10,13 @@ export type ThreadChangeResource = {
   turnId: string;
 };
 
-export type ThreadChangeScope = "session" | "lastTurn" | "staged" | "unstaged" | "branch";
+export type ThreadChangeScope =
+  | "session"
+  | "lastTurn"
+  | "staged"
+  | "unstaged"
+  | "uncommitted"
+  | "branch";
 
 export type ThreadResourceKind = "changes" | "attachments";
 

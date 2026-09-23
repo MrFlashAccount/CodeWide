@@ -79,6 +79,18 @@ async fn git_runs_only_through_the_json_rpc_registry() {
         .expect("Git plugin returns a diff");
     assert_eq!(diff.repository.provider, "git");
     assert!(diff.diff.contains("-base\n+changed"));
+
+    let combined = service
+        .changes(directory.path(), VcsScope::Uncommitted)
+        .await
+        .expect("Git plugin returns uncommitted changes");
+    assert_eq!(combined.files.len(), 1);
+    assert!(combined.available_scopes.contains(&VcsScope::Uncommitted));
+    let combined_diff = service
+        .diff(directory.path(), &path, VcsScope::Uncommitted)
+        .await
+        .expect("Git plugin returns the uncommitted diff");
+    assert!(combined_diff.diff.contains("-base\n+changed"));
 }
 
 #[tokio::test]
@@ -156,7 +168,12 @@ async fn git_workspace_creation_is_capability_gated_and_idempotent() {
 
 #[tokio::test]
 async fn git_pages_diffs_beyond_the_legacy_cap_for_every_scope() {
-    for scope in [VcsScope::Staged, VcsScope::Unstaged, VcsScope::Branch] {
+    for scope in [
+        VcsScope::Staged,
+        VcsScope::Unstaged,
+        VcsScope::Uncommitted,
+        VcsScope::Branch,
+    ] {
         assert_large_diff_pages(scope).await;
     }
 }

@@ -126,9 +126,11 @@ export function createConversationComposerContent({
         selectedModel={composerStateBinding.composerEditingBinding.selectedModel}
         selectedPermissions={composerStateBinding.composerEditingBinding.selectedPermissions}
         selectedPersonality={composerStateBinding.composerEditingBinding.selectedPersonality}
+        selectedServiceTier={composerStateBinding.composerEditingBinding.selectedServiceTier}
         selectEffort={composerStateBinding.composerEditingBinding.selectEffort}
         selectModel={composerStateBinding.composerEditingBinding.selectModel}
         selectPermissions={composerStateBinding.composerEditingBinding.selectPermissions}
+        selectServiceTier={composerStateBinding.composerEditingBinding.selectServiceTier}
         sendDisabled={composerDelivery.composerDeliveryBinding.sendDisabled}
         setComposerTrayVisible={
           composerStateBinding.composerMenuStateBinding.setComposerTrayVisible

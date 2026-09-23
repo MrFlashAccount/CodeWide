@@ -1,13 +1,14 @@
 import { useEvent } from "../../react/useEvent";
 /** V1 turnActions owner, extracted without changing interaction or resource lifetime. */
 import * as Clipboard from "expo-clipboard";
-import { Platform, ToastAndroid } from "react-native";
+import type { AppNoticeController } from "../../ui/appNoticeContext";
 
-export async function copySessionId(sessionId: string): Promise<void> {
+export async function copySessionId(
+  sessionId: string,
+  showNotice: AppNoticeController["show"],
+): Promise<void> {
   await Clipboard.setStringAsync(sessionId);
-  if (Platform.OS === "android") {
-    ToastAndroid.show("Session ID copied", ToastAndroid.SHORT);
-  }
+  showNotice({ label: "Session ID copied" });
 }
 
 import type { ThreadForkOptions } from "../../data/thread-fork";

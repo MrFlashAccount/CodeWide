@@ -34,9 +34,11 @@ export function ComposerFeature(props: ComposerFeatureProps) {
         selectedModel={props.selectedModel}
         selectedPermissions={props.selectedPermissions}
         selectedPersonality={props.selectedPersonality}
+        selectedServiceTier={props.selectedServiceTier}
         selectEffort={props.selectEffort}
         selectModel={props.selectModel}
         selectPermissions={props.selectPermissions}
+        selectServiceTier={props.selectServiceTier}
         setSelectedPersonality={props.setSelectedPersonality}
         toolContextChips={props.toolContextChips}
         workspaceResources={props.workspaceResources}

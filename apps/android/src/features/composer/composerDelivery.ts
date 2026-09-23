@@ -38,6 +38,7 @@ export function useComposerDelivery({
   selectedModel,
   selectedPermissions,
   selectedPersonality,
+  selectedServiceTier,
   threadLifecycleActive,
   uploadsBlockSend,
   voiceController,
@@ -95,6 +96,7 @@ export function useComposerDelivery({
   selectedModel: Parameters<typeof useComposerSubmission>[0]["selectedModel"];
   selectedPermissions: Parameters<typeof useComposerSubmission>[0]["selectedPermissions"];
   selectedPersonality: Parameters<typeof useComposerSubmission>[0]["selectedPersonality"];
+  selectedServiceTier: Parameters<typeof useComposerSubmission>[0]["selectedServiceTier"];
   threadLifecycleActive: Parameters<typeof useComposerDeliveryActions>[0]["threadLifecycleActive"];
   uploadsBlockSend: Parameters<typeof useComposerDeliveryActions>[0]["uploadsBlockSend"];
   voiceController: Parameters<typeof useVoiceBinding>[0]["voiceController"];
@@ -127,6 +129,7 @@ export function useComposerDelivery({
     selectedModel,
     selectedPermissions,
     selectedPersonality,
+    selectedServiceTier,
     threadLifecycleActive,
   });
   const { discardVoice, finishVoice, microphoneAccess, retryVoice, toggleVoice } = useVoiceBinding({

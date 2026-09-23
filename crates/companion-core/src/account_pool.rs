@@ -806,11 +806,9 @@ impl AccountPoolService {
             .unwrap_or(Value::Null);
         let rate_limits = pending
             .upstream
-            .request(json!({
-                "id": "account-pool-enrollment-rate-limits",
-                "method": "account/rateLimits/read",
-                "params": {}
-            }))
+            .request(account_rate_limits_read_request(
+                "account-pool-enrollment-rate-limits",
+            ))
             .await
             .ok()
             .and_then(|response| response.get("result").cloned());
@@ -1000,13 +998,7 @@ impl AccountPoolService {
             let state = self.state.lock().await;
             (
                 state.persisted.active_profile_id.clone(),
-                state
-                    .persisted
-                    .profiles
-                    .iter()
-                    .filter(|profile| profile.enabled)
-                    .map(|profile| profile.id.clone())
-                    .collect::<Vec<_>>(),
+                refresh_profile_ids(&state.persisted),
             )
         };
         let mut observations = Vec::with_capacity(profile_ids.len());
@@ -1554,11 +1546,9 @@ async fn read_profile_observation(
     }
     let rate_limits = timeout(
         ACCOUNT_PROFILE_REFRESH_TIMEOUT,
-        upstream.request(json!({
-            "id": format!("account-pool-rate-limits-{profile_id}"),
-            "method": "account/rateLimits/read",
-            "params": {}
-        })),
+        upstream.request(account_rate_limits_read_request(&format!(
+            "account-pool-rate-limits-{profile_id}"
+        ))),
     )
     .await
     .map_err(|_| AccountPoolError::Upstream("rate-limit refresh timed out".into()))?
@@ -1576,6 +1566,22 @@ async fn read_profile_observation(
         rate_snapshot,
         refreshed_credentials,
     })
+}
+
+fn account_rate_limits_read_request(id: &str) -> Value {
+    json!({
+        "id": id,
+        "method": "account/rateLimits/read",
+        "params": {"excludeResetCreditDetails": false}
+    })
+}
+
+fn refresh_profile_ids(state: &PersistedAccountPool) -> Vec<String> {
+    state
+        .profiles
+        .iter()
+        .map(|profile| profile.id.clone())
+        .collect()
 }
 
 async fn consume_rate_limit_reset_credit(
@@ -2433,6 +2439,24 @@ mod tests {
         assert_eq!(
             next_refresh_delay_at(&state, 100),
             ACCOUNT_POOL_REFRESH_RETRY
+        );
+    }
+
+    #[test]
+    fn refresh_includes_disabled_profiles_and_detailed_banked_resets() {
+        let state = PersistedAccountPool {
+            version: STATE_VERSION,
+            active_profile_id: Some("primary".into()),
+            profiles: vec![
+                profile("primary", 0, None, true),
+                profile("disabled", 1, None, false),
+            ],
+        };
+        assert_eq!(refresh_profile_ids(&state), ["primary", "disabled"]);
+        assert_eq!(
+            account_rate_limits_read_request("refresh")
+                .pointer("/params/excludeResetCreditDetails"),
+            Some(&Value::Bool(false))
         );
     }
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadSkillCatalog } from "../src/data/load-skill-catalog";
 import { parseCatalogSkills, parseInstalledSkillPlugins } from "../src/data/skill-catalog-adapter";
-import { isTurnControlsCacheFresh } from "../src/data/turn-controls-loader";
+import { turnControlsCacheNeedsRepair } from "../src/data/turn-controls-loader";
 import { skillPickerRows } from "../src/ui/skill-picker-model";
 
 const rawSkill = (name: string, path: string, enabled = true, scope = "user") => ({ name, path, enabled, scope, description: "Long instructions", interface: { displayName: name, shortDescription: "Brief purpose" } });
@@ -69,7 +69,7 @@ describe("skill catalog plugin attribution", () => {
 
   it("refreshes legacy metadata caches without deleting the stored skills", () => {
     const value = { models: [], skills: [{ name: "old", path: "/old", description: "Old", enabled: true }], permissions: [], defaults: { model: null, effort: null, permissions: null } };
-    expect(isTurnControlsCacheFresh({ status: "ready", value, error: null, updatedAt: 100 }, 101, 1000)).toBe(false);
+    expect(turnControlsCacheNeedsRepair({ status: "ready", value, error: null })).toBe(true);
     expect(skillPickerRows(value.skills, "old", "all")).toHaveLength(2);
   });
 });

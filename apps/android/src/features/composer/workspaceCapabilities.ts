@@ -3,13 +3,16 @@ import type {
   StoredComposerPreferences,
   StoredDraftAttachment,
 } from "../../data/thread-ui-state-types";
-import type { ThreadSettings } from "../../data/turn-controls-types";
+import type {
+  LoadTurnControls,
+  ThreadSettings,
+  TurnControlsLoadOptions,
+} from "../../data/turn-controls-types";
 import type {
   VoiceTranscriptionOptions,
   VoiceTranscriptionSession,
 } from "../../data/voice-input-controller";
 import type { VoiceTranscriptionListener } from "../../data/voice-transport";
-import type { TurnControlsValue } from "../../data/workspace-resource-database";
 /** Qualified composer operations; transport and persisted state stay with their existing lower owners. */
 export type ComposerWorkspaceCapabilities = {
   loadComposerPreferences: (
@@ -21,7 +24,11 @@ export type ComposerWorkspaceCapabilities = {
     connectionId: string,
     threadId: string,
   ) => Promise<StoredDraftAttachment[]>;
-  loadTurnControls: (connectionId: string, cwd: string) => Promise<TurnControlsValue>;
+  loadTurnControls: (
+    connectionId: string,
+    cwd: string,
+    options?: TurnControlsLoadOptions,
+  ) => ReturnType<LoadTurnControls>;
   removeDraftAttachment: (
     connectionId: string,
     threadId: string,

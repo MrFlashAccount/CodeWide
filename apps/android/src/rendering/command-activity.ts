@@ -1,12 +1,10 @@
 import {
-  projectedOutputFootprint,
-  sumOutputFootprints,
-  type OutputFootprintProjection,
-  type TurnUsageProjection,
+  parseActivityFootprint,
+  type ActivityMetrics,
+  type ActivityFootprint,
 } from "@codewide/sync-client";
 
 const COMMAND_ACTIVITY_TITLE_CHARS = 120;
-const APPROX_BYTES_PER_TOKEN = 4;
 
 export function commandActivityInput(raw: Record<string, unknown>, fallbackTitle: string): string {
   const command = raw.command;
@@ -24,49 +22,12 @@ export function commandActivityTitle(command: string): string {
   return `${singleLine.slice(0, COMMAND_ACTIVITY_TITLE_CHARS - 1)}…`;
 }
 
+/** Reads server attribution only; absent metadata is unknown, never a text estimate. */
 export function commandOutputFootprint(
   raw: Record<string, unknown>,
-  visibleOutput = "",
-): OutputFootprintProjection | null {
-  const projected = projectedOutputFootprint(raw.codewideOutputFootprint);
-  if (projected !== null) {
-    return projected;
-  }
-  const bytes = utf8ByteLength(visibleOutput);
-  return bytes === 0
-    ? null
-    : {
-        basis: "approxBytesPerToken",
-        bytes,
-        estimatedTokens: Math.ceil(bytes / APPROX_BYTES_PER_TOKEN),
-        version: 1,
-      };
-}
-
-export function activityOutputFootprint(
-  items: readonly { raw: Record<string, unknown>; visibleOutput?: string | null }[],
-): OutputFootprintProjection | null {
-  return sumOutputFootprints(
-    items.map(({ raw, visibleOutput }) => commandOutputFootprint(raw, visibleOutput ?? "")),
-  );
-}
-
-export function estimatedOutputInputCostUsd(
-  footprint: OutputFootprintProjection | null,
-  usage: TurnUsageProjection | null,
-): number | null {
-  const inputPrice = usage?.turn.cost?.price.input;
-  if (footprint === null || inputPrice === undefined || !Number.isFinite(inputPrice)) {
-    return null;
-  }
-  return (footprint.estimatedTokens * inputPrice) / 1_000_000;
-}
-
-function utf8ByteLength(value: string): number {
-  let bytes = 0;
-  for (const character of value) {
-    const codePoint = character.codePointAt(0) ?? 0;
-    bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7_ff ? 2 : codePoint <= 0xff_ff ? 3 : 4;
-  }
-  return bytes;
+  metrics: ActivityMetrics | null = null,
+): ActivityFootprint | null {
+  const id = raw.id;
+  const live = typeof id === "string" ? metrics?.commands[id] : null;
+  return live ?? parseActivityFootprint(raw.codewideOutputFootprint);
 }

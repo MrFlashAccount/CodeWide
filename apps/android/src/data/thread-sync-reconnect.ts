@@ -25,30 +25,35 @@ export function createThreadSyncReconnect({
     "invalidateHistoryReads" | "desiredThreadId" | "readThread"
   >;
 }): (row: ConnectionStateRow) => void {
+  const refreshedLiveConnections = new Set<string>();
   return (row) => {
     sync.invalidateHistoryReads(row.connectionId);
     details.invalidateHistoryExhaustion(row.connectionId);
     recordConnectionUsability(row);
-    if (row.state === "live" && row.rpcAvailable) {
-      flushTelemetry().catch(() => undefined);
-      const desiredThreadId = sync.desiredThreadId(row.connectionId);
-      if (desiredThreadId !== undefined) {
-        void sync.readThread(row.connectionId, desiredThreadId, undefined, true).catch(() => {
-          appLogger.warn({
-            event: "thread.reconnect_sync.failed",
-            fields: { connectionId: row.connectionId, threadId: desiredThreadId },
-          });
-        });
-      }
-      void catalog.refreshThreadCatalog(row.connectionId).catch(() => {
+    if (row.state !== "live" || !row.rpcAvailable) {
+      refreshedLiveConnections.delete(row.connectionId);
+      return;
+    }
+    const forceAccountRefresh = !refreshedLiveConnections.has(row.connectionId);
+    refreshedLiveConnections.add(row.connectionId);
+    flushTelemetry().catch(() => undefined);
+    const desiredThreadId = sync.desiredThreadId(row.connectionId);
+    if (desiredThreadId !== undefined) {
+      void sync.readThread(row.connectionId, desiredThreadId, undefined, true).catch(() => {
         appLogger.warn({
-          event: "thread_catalog.reconnect_repair.failed",
-          fields: { connectionId: row.connectionId },
+          event: "thread.reconnect_sync.failed",
+          fields: { connectionId: row.connectionId, threadId: desiredThreadId },
         });
       });
-      if (accountRateLimitsStale(accountRateLimits.get(row.connectionId))) {
-        void refreshAccountRateLimits(row.connectionId).catch(() => undefined);
-      }
+    }
+    void catalog.refreshThreadCatalog(row.connectionId).catch(() => {
+      appLogger.warn({
+        event: "thread_catalog.reconnect_repair.failed",
+        fields: { connectionId: row.connectionId },
+      });
+    });
+    if (forceAccountRefresh || accountRateLimitsStale(accountRateLimits.get(row.connectionId))) {
+      void refreshAccountRateLimits(row.connectionId, forceAccountRefresh).catch(() => undefined);
     }
   };
 }

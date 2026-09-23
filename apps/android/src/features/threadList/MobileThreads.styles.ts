@@ -30,6 +30,7 @@ export const styles = StyleSheet.create({
     minWidth: 0,
     paddingHorizontal: 0,
   },
+  searchOverlayList: { backgroundColor: "transparent" },
   threadListContentSurface: {
     flex: 1,
     minHeight: 0,
