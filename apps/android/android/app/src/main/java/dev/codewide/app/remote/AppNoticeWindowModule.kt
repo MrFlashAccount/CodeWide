@@ -81,7 +81,7 @@ class AppNoticeWindowModule(
 
     val token = currentActivity.window.decorView.windowToken ?: return
     val windowManager = currentActivity.windowManager
-    val reactHost = (currentActivity.application as ReactApplication).reactHost
+    val reactHost = (currentActivity.application as ReactApplication).reactHost ?: return
     val nextSurface = reactHost.createSurface(currentActivity, "CodeWideAppNotice", null)
     val view = nextSurface.view ?: run {
       nextSurface.stop()
