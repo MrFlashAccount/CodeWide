@@ -486,12 +486,12 @@ function effortLabel(value: string): string {
 const styles = StyleSheet.create({
   applyButton: {
     alignItems: "center",
-    alignSelf: "flex-end",
+    alignSelf: "stretch",
     backgroundColor: colors.accent,
     borderRadius: radii.pill,
     justifyContent: "center",
     marginTop: spacing.md,
-    minHeight: controlSize.regular,
+    minHeight: controlSize.compact,
     paddingHorizontal: spacing.md,
   },
   applyButtonDisabled: {

@@ -1,4 +1,4 @@
-import { observable } from "@legendapp/state";
+import { observable, type Observable } from "@legendapp/state";
 import { useSelector } from "@legendapp/state/react";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
@@ -27,8 +27,8 @@ const THUMB_RADIUS = 3;
 const DOT_SIZE = 4;
 const TOOLTIP_WIDTH = 96;
 const CENTER_DIVISOR = 2;
-const SLIDER_TOUCH_HEIGHT = 86;
-const TRACK_TOP = 40;
+const SLIDER_TOUCH_HEIGHT = 74;
+const TRACK_TOP = 28;
 const THUMB_TOP = TRACK_TOP + (TRACK_HEIGHT - THUMB_HEIGHT) / CENTER_DIVISOR;
 const TOOLTIP_HEIGHT = 28;
 const ACTIVE_SCALE_Y = 1.35;
@@ -72,7 +72,8 @@ export function CodeWideSlider({
 }: CodeWideSliderProps): ReactNode {
   const selectedIndex = Math.max(0, values.indexOf(selected ?? values[0] ?? ""));
   const preview$ = useConstant(() => observable(selectedIndex));
-  const previewIndex = useSelector(() => preview$.get());
+  const committed$ = useConstant(() => observable(selectedIndex));
+  const committedIndex = useSelector(() => committed$.get());
   const index = useSharedValue(selectedIndex);
   const position = useSharedValue(values.length > 1 ? selectedIndex / (values.length - 1) : 0);
   const thumbScale = useSharedValue(1);
@@ -80,8 +81,16 @@ export function CodeWideSlider({
   const width = useSharedValue(0);
   const surfaceLeft = useSharedValue(0);
   const dragging = useSharedValue(false);
+  // The tooltip may update at each stop; the menu draft changes only after the gesture ends.
+  const previewStop = useEvent((next: number) => {
+    preview$.set(next);
+  });
   const publishStop = useEvent((next: number) => {
     preview$.set(next);
+    if (committed$.get() === next) {
+      return;
+    }
+    committed$.set(next);
     const value = values[next];
     if (value !== undefined) {
       onSelect(value);
@@ -104,12 +113,13 @@ export function CodeWideSlider({
     if (dragging.get()) {
       return;
     }
-    if (index.get() === next && preview$.get() === next) {
+    if (index.get() === next && preview$.get() === next && committed$.get() === next) {
       return;
     }
     index.set(next);
     position.set(withSpring(count > 1 ? next / (count - 1) : 0, SPRING_GLIDE));
     preview$.set(next);
+    committed$.set(next);
   });
   useEffect(() => {
     syncSelection(selectedIndex, values.length);
@@ -133,7 +143,7 @@ export function CodeWideSlider({
         position.set(sliderProgressAt(event.absoluteX - surfaceLeft.get(), width.get()));
         if (next !== index.get()) {
           index.set(next);
-          scheduleOnRN(publishStop, next);
+          scheduleOnRN(previewStop, next);
         }
       })
       .onUpdate((event) => {
@@ -145,15 +155,25 @@ export function CodeWideSlider({
         position.set(sliderProgressAt(event.absoluteX - surfaceLeft.get(), width.get()));
         if (next !== index.get()) {
           index.set(next);
-          scheduleOnRN(publishStop, next);
+          scheduleOnRN(previewStop, next);
         }
       })
-      .onFinalize(() => {
+      .onFinalize((event) => {
+        const wasDragging = dragging.get();
         dragging.set(false);
+        if (wasDragging) {
+          // A quick pan can end past its last update; settle at the lift point.
+          index.set(
+            sliderStopAt(event.absoluteX - surfaceLeft.get(), width.get(), stopCount.get()),
+          );
+        }
         position.set(
           withSpring(stopCount.get() > 1 ? index.get() / (stopCount.get() - 1) : 0, SPRING_GLIDE),
         );
         thumbScale.set(withSpring(1, SPRING_BOUNCY));
+        if (wasDragging) {
+          scheduleOnRN(publishStop, index.get());
+        }
       }),
   );
   const fillStyle = useAnimatedStyle<ViewStyle>(() => ({
@@ -183,18 +203,20 @@ export function CodeWideSlider({
       },
     ],
   }));
-  const previewValue = values[previewIndex];
-  const previewLabel = previewValue === undefined ? "" : formatValue(previewValue);
+  const committedValue = values[committedIndex];
+  const committedLabel = committedValue === undefined ? "" : formatValue(committedValue);
   return (
     <GestureHandlerRootView style={styles.root} unstable_forceActive>
       <Text style={styles.label}>{accessibilityLabel}</Text>
       <SliderGestureSurface
         accessibilityLabel={accessibilityLabel}
         fillStyle={fillStyle}
+        formatValue={formatValue}
         gesture={pan}
-        label={previewLabel}
+        label={committedLabel}
         onAccessibilityAction={onAccessibilityAction}
         onLayout={onLayout}
+        preview$={preview$}
         testID={testID}
         thumbStyle={thumbStyle}
         tooltipStyle={tooltipStyle}
@@ -208,10 +230,12 @@ export function CodeWideSlider({
 type SliderSurfaceProps = {
   accessibilityLabel: string;
   fillStyle: ReturnType<typeof useAnimatedStyle<ViewStyle>>;
+  formatValue: (value: string) => string;
   gesture: ReturnType<typeof Gesture.Pan>;
   label: string;
   onAccessibilityAction: (event: { nativeEvent: { actionName: string } }) => void;
   onLayout: (event: { nativeEvent: { layout: { width: number } } }) => void;
+  preview$: Observable<number>;
   testID: string | undefined;
   thumbStyle: ReturnType<typeof useAnimatedStyle<ViewStyle>>;
   tooltipStyle: ReturnType<typeof useAnimatedStyle<ViewStyle>>;
@@ -230,7 +254,12 @@ function SliderGestureSurface(props: SliderSurfaceProps): ReactNode {
         onLayout={props.onLayout}
         style={styles.sliderTouch}
       >
-        <SliderTooltip label={props.label} style={props.tooltipStyle} />
+        <SliderTooltip
+          formatValue={props.formatValue}
+          preview$={props.preview$}
+          style={props.tooltipStyle}
+          values={props.values}
+        />
         <SliderTrack fillStyle={props.fillStyle} testID={props.testID} values={props.values} />
         <Animated.View
           style={[styles.thumb, props.thumbStyle]}
@@ -242,12 +271,19 @@ function SliderGestureSurface(props: SliderSurfaceProps): ReactNode {
 }
 
 function SliderTooltip({
-  label,
+  formatValue,
+  preview$,
   style,
+  values,
 }: {
-  label: string;
+  formatValue: (value: string) => string;
+  preview$: Observable<number>;
   style: ReturnType<typeof useAnimatedStyle<ViewStyle>>;
+  values: readonly string[];
 }): ReactNode {
+  const previewIndex = useSelector(() => preview$.get());
+  const previewValue = values[previewIndex];
+  const label = previewValue === undefined ? "" : formatValue(previewValue);
   return (
     <Animated.View style={[styles.tooltip, style]}>
       <Text style={styles.tooltipText}>{label}</Text>
@@ -339,7 +375,7 @@ const styles = StyleSheet.create({
   sliderTouch: {
     height: SLIDER_TOUCH_HEIGHT,
     justifyContent: "center",
-    marginTop: spacing.xs,
+    marginTop: spacing.xxs,
   },
   smallText: {
     ...typeScale.label,

@@ -218,7 +218,7 @@ it("follows the controlled selection when it changes outside a gesture", () => {
   expect(view.getByLabelText("Volume, quiet")).toBeVisible();
 });
 
-it("updates a controlled draft at each reached stop without losing the drag", () => {
+it("commits only the final stop to the controlled draft after a drag", () => {
   const onSelect = jest.fn();
   function ControlledVolume(): ReactNode {
     const [selected, setSelected] = useState("normal");
@@ -248,18 +248,45 @@ it("updates a controlled draft at each reached stop without losing the drag", ()
       { state: State.END, x: 18, absoluteX: 118, numberOfPointers: 1 },
     ]),
   );
-  expect(onSelect.mock.calls).toEqual([["loud"], ["quiet"]]);
+  expect(onSelect.mock.calls).toEqual([["quiet"]]);
   expect(view.getByLabelText("Volume, quiet")).toBeVisible();
 });
 
-it("uses a compact, rounded Apply button", () => {
+it("uses the lift position when a fast drag ends beyond its last update", () => {
+  const onSelect = jest.fn();
+  const view = render(
+    <CodeWideSlider
+      accessibilityLabel="Volume"
+      formatValue={(value) => value}
+      onSelect={onSelect}
+      selected="normal"
+      testID="volume"
+      values={["quiet", "normal", "loud"]}
+    />,
+  );
+  fireEvent(view.getByLabelText("Volume, normal"), "layout", {
+    nativeEvent: { layout: { width: 300 } },
+  });
+  act(() =>
+    fireGestureHandler<ReturnType<typeof Gesture.Pan>>(getByGestureTestId("volume-pan"), [
+      { state: State.BEGAN, x: 150, absoluteX: 250, numberOfPointers: 1 },
+      { state: State.ACTIVE, x: 180, absoluteX: 280, numberOfPointers: 1 },
+      { state: State.END, x: 282, absoluteX: 382, numberOfPointers: 1 },
+    ]),
+  );
+  expect(onSelect).toHaveBeenCalledTimes(1);
+  expect(onSelect).toHaveBeenCalledWith("loud");
+  expect(view.getByLabelText("Volume, loud")).toBeVisible();
+});
+
+it("uses a short, full-width rounded Apply button", () => {
   const { view } = mount();
   const button = view.getByRole("button", { name: "Apply model settings" });
   expect(StyleSheet.flatten(button.props.style)).toEqual(
     expect.objectContaining({
-      alignSelf: "flex-end",
+      alignSelf: "stretch",
       borderRadius: radii.pill,
-      minHeight: controlSize.regular,
+      minHeight: controlSize.compact,
     }),
   );
 });
