@@ -13,8 +13,8 @@ def releaseKeyPassword = System.getenv("CODEWIDE_RELEASE_KEY_PASSWORD")
 def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL")?.trim()
 def codeWideUpdatesEnabled = codeWideUpdateUrl != null && !codeWideUpdateUrl.isEmpty()
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isBlank() }
-def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "199").toInteger()
-def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.186"
+def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "203").toInteger()
+def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.190"
 def nativeCodeAssetsDir = file("$buildDir/generated/nativeCodeAssets")
 def iconFontAssetsDir = file("$buildDir/generated/iconFontAssets")
 def iconFontSourceDir = file("$projectRoot/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts")

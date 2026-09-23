@@ -5,6 +5,8 @@ import {
   controlSize,
   iconSize,
   layoutSize,
+  menuContentInset,
+  radii,
   spacing,
   touchTarget,
   typeScale,
@@ -13,6 +15,7 @@ import {
 
 const DISABLED_OPACITY = 0.4;
 const PRESSED_OPACITY = 0.7;
+const MENU_ICON_SLOT_WIDTH = 26;
 
 export const styles = StyleSheet.create({
   accountValue: {
@@ -23,23 +26,26 @@ export const styles = StyleSheet.create({
   },
   action: {
     alignItems: "center",
+    borderRadius: radii.selected,
     flexDirection: "row",
     gap: spacing.sm,
+    marginHorizontal: spacing.xs,
     minHeight: touchTarget,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.xs,
   },
   actionIcon: {
     alignItems: "center",
     flexShrink: 0,
     height: iconSize.action,
     justifyContent: "center",
-    width: iconSize.action,
+    width: MENU_ICON_SLOT_WIDTH,
   },
+  actionPressed: { backgroundColor: colors.menuHighlight },
   actionTitle: {
     color: colors.text,
     ...typeScale.body,
   },
-  content: { paddingVertical: spacing.xxs },
+  content: { paddingBottom: 0 },
   contextRingLabel: {
     alignItems: "center",
     inset: 0,
@@ -87,7 +93,7 @@ export const styles = StyleSheet.create({
   pressed: { opacity: PRESSED_OPACITY },
   primaryValue: {
     color: colors.text,
-    ...typeScale.heading,
+    ...typeScale.title,
     fontVariant: ["tabular-nums"],
     fontWeight: typeWeight.semibold,
   },
@@ -104,8 +110,8 @@ export const styles = StyleSheet.create({
   },
   section: {
     gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingHorizontal: menuContentInset,
+    paddingTop: spacing.xs,
   },
   sessionCostText: {
     color: colors.textMuted,
@@ -160,7 +166,7 @@ export const styles = StyleSheet.create({
   weeklyValue: {
     color: colors.text,
     flexShrink: 1,
-    ...typeScale.title,
+    ...typeScale.body,
     fontVariant: ["tabular-nums"],
     fontWeight: typeWeight.semibold,
   },

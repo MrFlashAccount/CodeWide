@@ -1,6 +1,8 @@
 import { act, fireEvent, render, within } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
+import { State } from "react-native-gesture-handler";
+import { fireGestureHandler, getByGestureTestId } from "react-native-gesture-handler/jest-utils";
 
 import { ThreadRow } from "../src/features/threadList/ThreadRow";
 import type { ThreadListItem } from "../src/features/threadList/threadListTypes";
@@ -87,6 +89,14 @@ const thread: ThreadListItem = {
 };
 const press = jest.fn();
 const pin = jest.fn(async () => undefined);
+function tapRow() {
+  fireGestureHandler(getByGestureTestId("thread-row-tap"), [{ state: State.END }]);
+}
+
+function longPressRow() {
+  fireGestureHandler(getByGestureTestId("thread-row-long-press"), [{ state: State.ACTIVE }]);
+}
+
 function row(item = thread, onPin = pin) {
   return (
     <AppNoticeContext.Provider value={{ show: jest.fn() }}>
@@ -146,10 +156,10 @@ it("mounts no Compose hosts or popup items for idle rows, including overscan", (
 it("opens from the real row, preserves its instance, selects and removes the popup", () => {
   const view = render(row());
   const trigger = view.getByRole("link", { name: "Thread actions" });
-  fireEvent.press(trigger);
+  act(tapRow);
   expect(press).toHaveBeenCalledTimes(1);
   expect(view.queryByTestId("compose-host")).toBeNull();
-  fireEvent(trigger, "longPress");
+  act(longPressRow);
   expect(view.getAllByTestId("compose-host")).toHaveLength(1);
   expect(view.getByRole("link", { name: "Thread actions" })).toBe(trigger);
   fireEvent.press(within(view.getByTestId("native-popup")).getByRole("menuitem", { name: "Pin" }));
@@ -160,7 +170,7 @@ it("opens from the real row, preserves its instance, selects and removes the pop
 
 it("honors disabled actions and native dismissal without dispatching", () => {
   const view = render(row());
-  fireEvent(view.getByRole("link", { name: "Thread actions" }), "longPress");
+  act(longPressRow);
   fireEvent.press(view.getByRole("menuitem", { name: "Mark as read" }));
   expect(view.getByTestId("native-popup")).toBeTruthy();
   fireEvent(view.getByTestId("native-popup"), "touchCancel");
@@ -171,7 +181,7 @@ it("honors disabled actions and native dismissal without dispatching", () => {
 it("discards an open menu when the virtualizer reuses a row for another thread", () => {
   const secondPin = jest.fn(async () => undefined);
   const view = render(row());
-  fireEvent(view.getByRole("link", { name: "Thread actions" }), "longPress");
+  act(longPressRow);
   const staleItem = view.getByRole("menuitem", { name: "Pin" });
   view.rerender(row({ ...thread, id: "second", title: "Second chat" }, secondPin));
   expect(view.queryByTestId("compose-host")).toBeNull();
@@ -188,7 +198,7 @@ it("discards an open menu when the virtualizer reuses a row for another thread",
 it("ignores delayed measurements after row recycling or unmount", () => {
   deferMeasure = true;
   const view = render(row());
-  fireEvent(view.getByRole("link", { name: "Thread actions" }), "longPress");
+  act(longPressRow);
   const firstMeasure = pendingMeasure;
   expect(firstMeasure).toBeDefined();
   view.rerender(row({ ...thread, id: "second" }));
@@ -196,11 +206,30 @@ it("ignores delayed measurements after row recycling or unmount", () => {
     firstMeasure?.(0, 0, 360, 64);
   });
   expect(view.queryByTestId("compose-host")).toBeNull();
-  fireEvent(view.getByRole("link", { name: "Thread actions" }), "longPress");
+  act(longPressRow);
   const secondMeasure = pendingMeasure;
   view.unmount();
   act(() => {
     secondMeasure?.(0, 0, 360, 64);
   });
   expect(pin).not.toHaveBeenCalled();
+});
+
+it("rejects scroll displacement and cancelled taps, but retains accessible activation", () => {
+  const view = render(row());
+  const trigger = view.getByRole("link", { name: "Thread actions" });
+  const tap = getByGestureTestId("thread-row-tap");
+  const longPress = getByGestureTestId("thread-row-long-press");
+  expect(tap.config.maxDist).toBe(8);
+  expect(longPress.config.maxDist).toBe(8);
+  act(() => fireGestureHandler(tap, [{ state: State.FAILED, x: 0, y: 12 }]));
+  act(() => fireGestureHandler(tap, [{ state: State.CANCELLED }]));
+  expect(press).not.toHaveBeenCalled();
+  fireEvent(trigger, "accessibilityAction", { nativeEvent: { actionName: "activate" } });
+  expect(press).toHaveBeenCalledTimes(1);
+  fireEvent(trigger, "accessibilityTap");
+  expect(press).toHaveBeenCalledTimes(2);
+  fireEvent(trigger, "accessibilityAction", { nativeEvent: { actionName: "longpress" } });
+  expect(view.getByTestId("native-popup")).toBeTruthy();
+  expect(press).toHaveBeenCalledTimes(2);
 });

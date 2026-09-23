@@ -13,7 +13,15 @@ import {
 } from "react-native";
 
 import { useEvent } from "../react/useEvent";
-import { colors, radii, spacing, typeScale, iconSize, typeWeight } from "../theme";
+import {
+  colors,
+  menuContentInset,
+  radii,
+  spacing,
+  typeScale,
+  iconSize,
+  typeWeight,
+} from "../theme";
 import type { ActionMenuIconName } from "./ActionMenu.types";
 import { AppText } from "./Typography";
 
@@ -166,7 +174,11 @@ function MenuEntry({
   return (
     <View>
       {showSeparator && <View style={styles.separator} />}
-      {showSection && <AppText style={styles.sectionText}>{action.section}</AppText>}
+      {showSection && (
+        <AppText style={[styles.sectionText, !showSeparator && styles.firstSectionText]}>
+          {action.section}
+        </AppText>
+      )}
       <MenuRow action={action} onSelect={onSelect} />
     </View>
   );
@@ -248,6 +260,7 @@ function MenuLabel({ action }: { readonly action: CodeWideMenuAction }): ReactEl
 
 const styles = StyleSheet.create({
   destructive: { color: colors.red },
+  firstSectionText: { paddingTop: spacing.xs },
   iconImage: {
     height: iconSize.action,
     width: iconSize.action,
@@ -264,7 +277,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginHorizontal: spacing.xs,
     minHeight: MENU_MIN_ROW_HEIGHT,
-    paddingHorizontal: spacing.inputInset,
+    paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xs,
   },
   itemDescription: {
@@ -283,22 +296,22 @@ const styles = StyleSheet.create({
   itemTitle: {
     color: colors.text,
     fontFamily: "RobotoFlex-Medium",
-    ...typeScale.title,
+    ...typeScale.body,
     fontWeight: typeWeight.medium,
   },
-  menuBody: { paddingVertical: spacing.xxs },
+  menuBody: { paddingVertical: 0 },
   sectionText: {
     color: colors.textDim,
     ...typeScale.label,
     fontFamily: "RobotoFlex-Medium",
     paddingBottom: spacing.xxs,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
+    paddingHorizontal: menuContentInset,
+    paddingTop: spacing.xxs,
   },
   separator: {
     backgroundColor: colors.border,
     height: StyleSheet.hairlineWidth,
     marginHorizontal: spacing.sm,
-    marginVertical: spacing.xs,
+    marginVertical: spacing.xxs,
   },
 });

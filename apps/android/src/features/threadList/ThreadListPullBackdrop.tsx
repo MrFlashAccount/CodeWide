@@ -11,9 +11,10 @@ const PULL_OVERLAY_HALF_OPACITY = 0.5;
 /** The list darkens progressively during a pull while its fixed search row remains visible. */
 export function ThreadListPullBackdrop(): React.JSX.Element {
   const model = useThreadListSearchPullModel();
+  const distance = model?.distance;
   const style = useAnimatedStyle(() => ({
     opacity: interpolate(
-      model?.distance.get() ?? 0,
+      distance?.get() ?? 0,
       [0, PULL_OVERLAY_START_DISTANCE, PULL_OVERLAY_FULL_DISTANCE],
       [0, PULL_OVERLAY_HALF_OPACITY, 1],
       Extrapolation.CLAMP,

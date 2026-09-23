@@ -89,7 +89,7 @@ export function BubbleContent({ children }: { children: ReactNode }) {
 
 const styles = StyleSheet.create({
   surface: {
-    borderRadius: radii.selected,
+    borderRadius: radii.bubble,
     minWidth: 0,
   },
   // The body and footer share one intrinsic width; rich content may fill its cap.
@@ -110,9 +110,9 @@ const styles = StyleSheet.create({
   agentSurface: {
     alignSelf: "stretch",
     backgroundColor: colors.messageSurface,
-    paddingBottom: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.xs,
+    paddingBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
   },
   content: { minWidth: 0 },
   segmentedAgentSurface: {
@@ -121,21 +121,21 @@ const styles = StyleSheet.create({
     paddingTop: 0,
   },
   segmentedAgentSurfaceEnd: {
-    borderBottomLeftRadius: radii.selected,
-    borderBottomRightRadius: radii.selected,
-    paddingBottom: spacing.sm,
+    borderBottomLeftRadius: radii.bubble,
+    borderBottomRightRadius: radii.bubble,
+    paddingBottom: spacing.md,
   },
   segmentedAgentSurfaceStart: {
-    borderTopLeftRadius: radii.selected,
-    borderTopRightRadius: radii.selected,
-    paddingTop: spacing.xs,
+    borderTopLeftRadius: radii.bubble,
+    borderTopRightRadius: radii.bubble,
+    paddingTop: spacing.md,
   },
   userSurface: {
     alignSelf: "flex-end",
     backgroundColor: colors.messageSurface,
     maxWidth: "82%",
-    paddingBottom: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.xs,
+    paddingBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
   },
 });

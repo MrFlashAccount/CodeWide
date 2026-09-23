@@ -15,6 +15,14 @@ export function isV1ThreadContextPath(pathname: string): boolean {
   return THREAD_CONTEXT_ROUTE_PATTERN.test(pathname);
 }
 
+function isDesktopSearchThreadRoute(
+  desktop: boolean,
+  pathname: string,
+  globalSearchSessionId: string | null,
+): boolean {
+  return desktop && globalSearchSessionId !== null && pathname.startsWith("/threads/");
+}
+
 export type WorkspaceRouteModel = {
   readonly currentThread: V1ThreadRouteParams | null;
   readonly globalSearchSessionId: string | null;
@@ -51,7 +59,7 @@ export function ensureV1NewThreadRoute(
 }
 
 /** Adapts Expo Router state and commands to the V1 thread-navigation contract. */
-export function useWorkspaceRouteModel(): WorkspaceRouteModel {
+export function useWorkspaceRouteModel(desktop = false): WorkspaceRouteModel {
   const router = useRouter();
   const pathname = usePathname();
   const routeParams = useGlobalSearchParams<{
@@ -71,7 +79,13 @@ export function useWorkspaceRouteModel(): WorkspaceRouteModel {
     parsedSearchSessionId.status === "valid" ? parsedSearchSessionId.value.value : null;
   const projectListSessionId = useWorkspaceProjectSessionId();
   const searchWindow = routeSessionIdParam(routeParams.searchWindowId);
-  const searchSelectionMode = pathname === "/search" ? "push" : "replace";
+  const desktopSearchThreadRoute = isDesktopSearchThreadRoute(
+    desktop,
+    pathname,
+    globalSearchSessionId,
+  );
+  const searchSelectionMode =
+    pathname === "/search" || desktopSearchThreadRoute ? "push" : "replace";
   const threadRouter: V1ThreadRouter = {
     currentThread,
     dismissTo: router.dismissTo,
@@ -118,6 +132,10 @@ export function useWorkspaceRouteModel(): WorkspaceRouteModel {
     },
     navigate: router.navigate,
     push(destination: V1ThreadDestination, searchWindowId?: string) {
+      if (desktopSearchThreadRoute) {
+        // A result leaves Search on the new route, not on its history entry.
+        router.setParams({ globalSearchSessionId: undefined });
+      }
       router.push({
         ...destination,
         params: {

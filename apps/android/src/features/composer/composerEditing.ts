@@ -49,6 +49,7 @@ export function useComposerEditing({
     uploadsBlockSend,
   } = useComposerDraftState(composerScope, composerState, queuedComposerEdit);
   const {
+    applyModelSettings,
     captureControlsResource,
     capturePreferenceUpdate,
     controlError,
@@ -114,6 +115,7 @@ export function useComposerEditing({
     voiceController,
   });
   return {
+    applyModelSettings,
     attachmentCount,
     attachments,
     captureControlsResource,

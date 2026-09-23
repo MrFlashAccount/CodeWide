@@ -15,7 +15,7 @@ import {
   SearchMessage,
   SearchMessageFocus,
 } from "../src/rendering/SearchMessageFocus";
-import { colors, controlHitSlop, controlSize, touchTarget } from "../src/theme";
+import { colors, controlHitSlop, controlSize, radii, touchTarget } from "../src/theme";
 import { searchFieldLayout } from "../src/presentation/input/searchLayout";
 import { filterIconButtonLayout } from "../src/presentation/input/filterIconButtonLayout";
 import type { AppVoiceInputController, AppVoiceInputRuntime } from "../src/ui/VoiceInputRuntime";
@@ -344,6 +344,10 @@ it("appends search results on list reach without replacing earlier matches", asy
   expect(test.view.queryByText("Threads & messages")).toBeNull();
   expect(test.view.queryByText("Next")).toBeNull();
   expect(test.view.queryByText("Previous")).toBeNull();
+  expect(test.view.getByTestId("search-result-row")).toHaveStyle({
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.selected,
+  });
   expect(test.view.getByText("hello")).toHaveStyle({ backgroundColor: colors.warningContainer });
   expect(
     test.view.getByText(

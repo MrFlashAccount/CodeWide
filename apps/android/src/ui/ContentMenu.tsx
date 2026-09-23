@@ -23,7 +23,10 @@ export function ContentMenu(props: ContentMenuProps): React.JSX.Element {
       <ContentMenuModal
         close={close}
         content={props.children}
-        maxHeight={Math.max(MIN_MENU_DIMENSION, window.height - spacing.lg)}
+        maxHeight={Math.max(
+          MIN_MENU_DIMENSION,
+          window.height - spacing.md - spacing.md - spacing.xs - spacing.xs,
+        )}
         open={props.open}
         width={width}
       />
@@ -95,6 +98,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.menu,
     borderWidth: 1,
     overflow: "hidden",
+    paddingVertical: spacing.xs,
   },
   modalRoot: {
     alignItems: "center",

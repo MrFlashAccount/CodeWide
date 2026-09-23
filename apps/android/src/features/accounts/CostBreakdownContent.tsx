@@ -1,5 +1,5 @@
 import { StyleSheet, View } from "react-native";
-import { colors, controlSize, spacing, typeScale, typeWeight } from "../../theme";
+import { colors, controlSize, menuContentInset, spacing, typeScale, typeWeight } from "../../theme";
 import type { TokenCostEstimate } from "../../turn-cost";
 import { AnimatedNumber, integerNumberFormat, usdNumberFormat } from "../../ui/AnimatedNumber";
 import { AppText as Text } from "../../ui/Typography";
@@ -134,7 +134,8 @@ function TokenCostRow({
 const styles = StyleSheet.create({
   content: {
     gap: spacing.xs,
-    padding: spacing.sm,
+    paddingHorizontal: menuContentInset,
+    paddingVertical: spacing.xs,
   },
   heading: { gap: spacing.optical },
   model: {
@@ -166,7 +167,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    ...typeScale.title,
+    ...typeScale.body,
     fontWeight: typeWeight.semibold,
   },
   tokenCostValue: {
@@ -192,7 +193,7 @@ const styles = StyleSheet.create({
   },
   totalValue: {
     color: colors.text,
-    ...typeScale.title,
+    ...typeScale.body,
     fontVariant: ["tabular-nums"],
     fontWeight: typeWeight.semibold,
   },

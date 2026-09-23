@@ -1,5 +1,8 @@
 import { act, renderHook } from "@testing-library/react-native";
-import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
+import {
+  COMPLETE_STATIC_THREAD_HISTORY,
+  type ThreadHistoryViewport,
+} from "../src/data/use-thread-history-controller";
 import {
   useHistoryAnchorActions,
   useHistoryAnchorState,
@@ -27,7 +30,10 @@ const historyViewport = {
   trimAfterGesture,
 };
 
-function useTimelineSession(scope: string) {
+function useTimelineSession(
+  scope: string,
+  selectedHistoryViewport: ThreadHistoryViewport = historyViewport,
+) {
   const anchor = useHistoryAnchorState(scope, "server", scope, saveOffset);
   const viewport = useTimelineViewportState(scope);
   const search = useTimelineSearchState(scope, null);
@@ -46,7 +52,7 @@ function useTimelineSession(scope: string) {
     paginationTrimTimerRef: viewport.paginationTrimTimerRef,
     paginationEdgeLockRef: viewport.paginationEdgeLockRef,
     fullscreenScrollOwnership: overlayOwnership,
-    historyViewport,
+    historyViewport: selectedHistoryViewport,
   });
   const pagingActions = useTimelineViewportActions({
     displayedTimeline: [],
@@ -54,7 +60,7 @@ function useTimelineSession(scope: string) {
     draftThreadId: null,
     firstVisibleHistoryAnchorRef: anchor.firstVisibleHistoryAnchorRef,
     fullscreenScrollOwnership: overlayOwnership,
-    historyViewport,
+    historyViewport: selectedHistoryViewport,
     lastTimelineOffsetYRef: viewport.lastTimelineOffsetYRef,
     paginationEdgeLockRef: viewport.paginationEdgeLockRef,
     scrollOffsetRef: viewport.scrollOffsetRef,
@@ -120,7 +126,12 @@ it("settles a slow drag once, retaining its edge until the next gesture", () => 
 });
 
 it("ignores the transient opposite edge while a trimmed window settles", () => {
-  const hook = renderHook(() => useTimelineSession("sliding-window"));
+  const selectedHistoryViewport = {
+    ...historyViewport,
+    containsBeginning: false,
+    containsLatest: false,
+  };
+  const hook = renderHook(() => useTimelineSession("sliding-window", selectedHistoryViewport));
   act(() => {
     hook.result.current.viewport.paginationEdgeLockRef.current = "newer";
     hook.result.current.trim.trimPaginationWindow();
@@ -130,6 +141,42 @@ it("ignores the transient opposite edge while a trimmed window settles", () => {
   expect(trimAfterGesture).toHaveBeenCalledWith("newer");
   expect(loadOlder).not.toHaveBeenCalled();
   expect(hook.result.current.viewport.paginationEdgeLockRef.current).toBe("newer");
+});
+
+it("keeps genuine older paging authoritative for the gesture", () => {
+  const selectedHistoryViewport = {
+    ...historyViewport,
+    containsBeginning: false,
+    containsLatest: false,
+  };
+  const hook = renderHook(() => useTimelineSession("older-page", selectedHistoryViewport));
+
+  act(() => hook.result.current.pagingActions.loadOlderAtTimelineStart());
+  expect(loadOlder).toHaveBeenCalledTimes(1);
+  expect(hook.result.current.viewport.paginationEdgeLockRef.current).toBe("older");
+
+  act(() => hook.result.current.pagingActions.loadNewerAtTimelineEnd());
+  expect(loadNewer).not.toHaveBeenCalled();
+});
+
+it("does not let a reached beginning block newer history in the same gesture", () => {
+  const selectedHistoryViewport = {
+    ...historyViewport,
+    containsBeginning: true,
+    containsLatest: false,
+  };
+  const hook = renderHook(() => useTimelineSession("at-beginning", selectedHistoryViewport));
+
+  act(() => hook.result.current.pagingActions.loadOlderAtTimelineStart());
+  expect(loadOlder).not.toHaveBeenCalled();
+  expect(hook.result.current.viewport.paginationEdgeLockRef.current).toBeNull();
+
+  act(() => hook.result.current.pagingActions.loadNewerAtTimelineEnd());
+  expect(loadNewer).toHaveBeenCalledTimes(1);
+  expect(hook.result.current.viewport.paginationEdgeLockRef.current).toBe("newer");
+
+  act(() => hook.result.current.trim.trimPaginationWindow());
+  expect(trimAfterGesture).toHaveBeenCalledWith("newer");
 });
 
 it("publishes the LegendList initial load without overwriting a user scroll", () => {

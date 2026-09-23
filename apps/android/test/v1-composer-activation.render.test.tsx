@@ -110,3 +110,54 @@ it("restores captured skill preferences to the outgoing draft without replacing 
     first.composerSession.read().preferences,
   );
 });
+
+it("saves a model form as one settings update after Apply", () => {
+  const capabilities = settingsCapabilities("model-form");
+  const updateSettings = jest.fn(async () => undefined);
+  capabilities.onUpdateSettings = updateSettings;
+  const hook = renderHook(() => useComposerSettings(capabilities));
+
+  expect(capabilities.composerSession.read().preferences.model).toBeNull();
+  expect(updateSettings).not.toHaveBeenCalled();
+  act(() => {
+    hook.result.current.applyModelSettings({
+      effort: "ultra",
+      executionChanged: true,
+      model: "sol",
+      personality: null,
+      serviceTier: "priority",
+    });
+  });
+
+  expect(updateSettings).toHaveBeenCalledTimes(1);
+  expect(updateSettings).toHaveBeenCalledWith({
+    effort: "ultra",
+    model: "sol",
+    serviceTier: "priority",
+  });
+  expect(capabilities.composerSession.read().preferences).toEqual(
+    expect.objectContaining({ effort: "ultra", model: "sol", serviceTier: "priority" }),
+  );
+});
+
+it("keeps a personality-only form save local", () => {
+  const capabilities = settingsCapabilities("personality-form");
+  const updateSettings = jest.fn(async () => undefined);
+  capabilities.onUpdateSettings = updateSettings;
+  const hook = renderHook(() => useComposerSettings(capabilities));
+
+  act(() => {
+    hook.result.current.applyModelSettings({
+      effort: "high",
+      executionChanged: false,
+      model: "sol",
+      personality: "friendly",
+      serviceTier: null,
+    });
+  });
+
+  expect(updateSettings).not.toHaveBeenCalled();
+  expect(capabilities.composerSession.read().preferences).toEqual(
+    expect.objectContaining({ model: null, personality: "friendly" }),
+  );
+});

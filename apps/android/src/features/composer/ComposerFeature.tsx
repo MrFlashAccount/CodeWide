@@ -20,6 +20,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
   return (
     <View style={styles.composerDock} testID="composer-dock">
       <ComposerContextStrip
+        applyModelSettings={props.applyModelSettings}
         closeQuickControlMenu={props.closeQuickControlMenu}
         controlError={props.controlError}
         controlsResourceId={props.controlsResourceId}
@@ -35,11 +36,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
         selectedPermissions={props.selectedPermissions}
         selectedPersonality={props.selectedPersonality}
         selectedServiceTier={props.selectedServiceTier}
-        selectEffort={props.selectEffort}
-        selectModel={props.selectModel}
         selectPermissions={props.selectPermissions}
-        selectServiceTier={props.selectServiceTier}
-        setSelectedPersonality={props.setSelectedPersonality}
         toolContextChips={props.toolContextChips}
         workspaceResources={props.workspaceResources}
       />

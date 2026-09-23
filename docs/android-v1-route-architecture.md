@@ -49,7 +49,7 @@ app/(workspace)/
 │   ├── controls/{model,permissions,skills}.tsx
 │   ├── content/[sessionId].tsx
 │   └── documents/[sessionId].tsx
-├── search.tsx                                     /search; mobile stack screen, desktop list pane
+├── search.tsx                                     /search; mobile stack screen, desktop list pane when no chat is selected
 ├── projects/
 │   ├── index.tsx
 │   └── add/[connectionId].tsx
@@ -84,9 +84,9 @@ see [the retirement audit](android-v2-retirement.md).
 | Open a thread child                        | `push`; controls/lists use transparent sheets, content workspaces use an opaque fullscreen `transparentModal` | Back returns to the still-mounted owning thread; Android never detaches the covered Fabric screen                                                |
 | Close a route surface                      | `back`, with stable-parent replacement for direct entry                                                       | UI close and system Back share Router history                                                                                                    |
 | Delete the active thread                   | `dismissTo('/')`                                                                                            | no invalid active-thread route remains                                                                                                           |
-| Open global search | `push` at either width, carrying an opaque search-session id and its origin | Wide search occupies the left pane while retaining the selected chat; narrow search covers its origin without removing it from history. |
+| Open global search | `push` on compact layouts or without a selected chat; set the session parameter on a selected wide chat | Wide search occupies the left pane while the native chat screen keeps its scroll gestures; narrow search covers its origin without removing it from history. |
 | Toggle Global Voice Mode                   | activate the app-level live-assistant/stop control without navigation                                         | the process-lifetime supervisor continues across routes and app backgrounding; only explicit Stop or terminal failure releases it                |
-| Open a search result | first result `push`, subsequent result `replace`, independently of width | Back returns to the retained search query/results; closing Search explicitly keeps the selected result and removes the Search history entry. |
+| Open a search result | `push` from Search; clear the session parameter on a selected wide origin first | Back returns to the retained search query/results on compact layouts; closing wide Search keeps the selected result and removes its search parameter. |
 | Open browser, drawing, content or document | `push` with an opaque session id and fullscreen modal presentation                                            | private resources and callbacks stay in bounded services; root modals carry the owning thread identity                                           |
 | Navigate within a WebView                  | widget-owned history                                                                                          | page history stays separate from application navigation                                                                                          |
 
@@ -186,8 +186,9 @@ project entry. Device animation and rotation from an open project still need phy
 
 The agreed incremental contract preserves the wide conversation when changing the left project,
 server/filter, or opening Search. Only explicit thread selection changes that conversation.
-Search actions no longer branch on width, automatic initial thread selection is removed, and
+Search presentation branches on width when a chat is selected, automatic initial thread selection is removed, and
 project paging/offset keys are shared between presentations. The follow-up now renders the same Expo catalog stack in a persistent adaptive pane.
+Folding or unfolding an open Search moves its session between the mobile route and the wide chat parameter without dropping the origin or query.
 Project actions target that stack without focusing it over the selected conversation.
 
 The independent wide-sidebar native stack experiment was rejected before publication and removed:

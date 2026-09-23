@@ -59,6 +59,7 @@ export function createConversationComposerContent({
         anchoredComposerActions={
           composerDelivery.composerAccessoryActionsBinding.anchoredComposerActions
         }
+        applyModelSettings={composerStateBinding.composerEditingBinding.applyModelSettings}
         attachments={composerStateBinding.composerEditingBinding.attachments}
         cancelQueuedComposerEdit={composerCommands.queueEditActionsBinding.cancelQueuedComposerEdit}
         closeGoalAttachment={composerStateBinding.composerMenuStateBinding.closeGoalAttachment}

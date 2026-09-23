@@ -270,7 +270,7 @@ function UsageActionRow(props: UsageActionRowProps): React.JSX.Element {
       style={({ pressed }) => [
         styles.action,
         props.divided && styles.dividedAction,
-        pressed && styles.pressed,
+        pressed && styles.actionPressed,
       ]}
     >
       <View style={styles.actionIcon}>

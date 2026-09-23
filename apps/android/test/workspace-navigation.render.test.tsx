@@ -3,6 +3,7 @@ import { summary } from "./fixtures/thread-summary";
 import { MobileThreads } from "../src/features/threadList/MobileThreads";
 import { ThreadSidebar } from "../src/features/threadList/ThreadSidebar";
 import { useSelector } from "@legendapp/state/react";
+import { useIsFocused } from "expo-router";
 import {
   act,
   fireEvent,
@@ -15,10 +16,21 @@ import {
 } from "@testing-library/react-native";
 import { useState } from "react";
 import { ThreadRow } from "../src/features/threadList/ThreadRow";
+import { GlobalSearchScreen } from "../src/features/search/GlobalSearchScreen";
 import { KeyboardController } from "react-native-keyboard-controller";
 import { useEvent } from "../src/react/useEvent";
-import { Dimensions, Linking, Pressable, StyleSheet, Text, TextInput } from "react-native";
+import {
+  Animated,
+  Dimensions,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+} from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { LegendList } from "@legendapp/list/react-native";
+import { GestureDetector } from "react-native-gesture-handler";
 
 import { WorkspaceRouteComposition } from "../src/routeComposition/WorkspaceRouteComposition";
 import { MountedV1Workspace } from "../app/(workspace)/_layout";
@@ -107,6 +119,7 @@ const threadSearchTarget = {
 };
 
 beforeEach(() => {
+  jest.mocked(useIsFocused).mockReturnValue(true);
   registerMockLayout("lists", ["/", "/project/[sessionId]"], V1ListLayout);
   registerMockRoute("/", V1AllRoute);
   registerMockRoute("/search", V1SearchRoute);
@@ -473,6 +486,29 @@ it.each([
 });
 
 it.each([400, 1400])(
+  "attaches the search pull gesture to the thread list scroll view at width %s",
+  (width) => {
+    holdInitialDeepLink();
+    resetMockRouter("/");
+    setWindowSize(width, 800);
+    const view = render(<V1RouteTree />);
+    const list = view.UNSAFE_getByType(LegendList);
+    const scrollView = list.props.renderScrollComponent?.({});
+    expect(scrollView?.type).toBe(GestureDetector);
+    expect(scrollView?.props.children.type).toBe(Animated.ScrollView);
+    const pullGesture = scrollView?.props.gesture.gestures[0];
+    expect(pullGesture.config.testId).toBe("thread-list-pull-to-search");
+    expect(pullGesture.config.activeOffsetYEnd).toBe(8);
+    expect(pullGesture.config.failOffsetYStart).toBe(-8);
+    expect(pullGesture.config.minDist).toBe(32);
+    expect(typeof list.props.onScroll).toBe("function");
+    expect(view.getByTestId("thread-list-pull-backdrop")).toBeTruthy();
+    setWindowSize(400, 800);
+    view.unmount();
+  },
+);
+
+it.each([400, 1400])(
   "preserves the previous conversation when Search opens at width %s",
   (width) => {
     setWindowSize(width, 800);
@@ -497,12 +533,16 @@ it.each([400, 1400])(
 
     act(() => openWorkspaceSearch());
 
-    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
-      "/",
-      "/threads/[connectionId]/[threadId]",
-      "/search",
-    ]);
+    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual(
+      width === 1_400
+        ? ["/", "/threads/[connectionId]/[threadId]"]
+        : ["/", "/threads/[connectionId]/[threadId]", "/search"],
+    );
     expect(mockRouterHistory().at(-1)?.params.threadId).toBe("selected");
+    expect(view.getByTestId("sidebar-search")).toBeTruthy();
+    if (width === 1_400) {
+      expect(view.getByTestId("v1-workspace-destination").props.pointerEvents).toBe("auto");
+    }
 
     let closeControl = view.getByLabelText("Back to threads");
     while (typeof closeControl.props.onPress !== "function") {
@@ -552,6 +592,93 @@ it("closes desktop search without reverting the chat selected from its results",
     params: { connectionId: "server", threadId: "result" },
     pathname: "/threads/[connectionId]/[threadId]",
   });
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
+it("keeps the desktop chat route interactive while search opens and a result is selected", () => {
+  holdInitialDeepLink();
+  resetMockRouter("/");
+  setWindowSize(1_400, 800);
+  let openWorkspaceSearch = (): void => {
+    throw new Error("Search capability unavailable");
+  };
+  let selectSearchResult = (): void => {
+    throw new Error("Search result capability unavailable");
+  };
+  function ConversationSearchProbe(): React.JSX.Element {
+    const resources = useWorkspaceListRouteResources();
+    openWorkspaceSearch = resources.openGlobalSearch;
+    selectSearchResult = () => resources.list.openSearchThread(threadSearchTarget, "query");
+    return <Text>Selected conversation</Text>;
+  }
+  registerMockRoute("/threads/[connectionId]/[threadId]", ConversationSearchProbe);
+  const view = render(<V1RouteTree />);
+  const { result } = renderHook(useMountedThreadNavigation);
+  act(() => {
+    result.current.navigation.selectThread(
+      threadSelectionKey({ id: "selected", serverId: "server" }),
+    );
+  });
+
+  act(openWorkspaceSearch);
+  const searchSessionId = mockRouterHistory().at(-1)?.params.globalSearchSessionId;
+  expect(searchSessionId).toEqual(expect.any(String));
+  expect(mockRouterHistory()).toHaveLength(2);
+  expect(view.getByTestId("v1-workspace-destination").props.pointerEvents).toBe("auto");
+
+  act(selectSearchResult);
+  expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+    "/",
+    "/threads/[connectionId]/[threadId]",
+    "/threads/[connectionId]/[threadId]",
+  ]);
+  expect(mockRouterHistory()[1]?.params.globalSearchSessionId).toBeUndefined();
+  expect(mockRouterHistory().at(-1)?.params.globalSearchSessionId).toBe(searchSessionId);
+  expect(searchRouteSessions.get(searchSessionId, workspaceRouteSessionOwner)).not.toBeNull();
+  act(() => view.UNSAFE_getByType(GlobalSearchScreen).props.onClose());
+  expect(mockRouterHistory().at(-1)?.params.globalSearchSessionId).toBeUndefined();
+  expect(mockRouterHistory().at(-1)?.params.threadId).toBe("search-result");
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
+it("keeps the search session and chat origin while folding and unfolding", () => {
+  holdInitialDeepLink();
+  resetMockRouter("/");
+  setWindowSize(1_400, 800);
+  let openWorkspaceSearch = (): void => {
+    throw new Error("Search capability unavailable");
+  };
+  function ConversationSearchProbe(): React.JSX.Element {
+    openWorkspaceSearch = useWorkspaceListRouteResources().openGlobalSearch;
+    return <Text>Selected conversation</Text>;
+  }
+  registerMockRoute("/threads/[connectionId]/[threadId]", ConversationSearchProbe);
+  const view = render(<V1RouteTree />);
+  const { result } = renderHook(useMountedThreadNavigation);
+  act(() => {
+    result.current.navigation.selectThread(
+      threadSelectionKey({ id: "selected", serverId: "server" }),
+    );
+  });
+  act(openWorkspaceSearch);
+  const searchSessionId = mockRouterHistory().at(-1)?.params.globalSearchSessionId;
+  expect(searchSessionId).toEqual(expect.any(String));
+
+  setWindowSize(400, 800);
+  expect(mockRouterHistory().at(-1)?.pathname).toBe("/search");
+  expect(mockRouterHistory()[1]?.params.globalSearchSessionId).toBeUndefined();
+  expect(view.getByTestId("sidebar-search")).toBeTruthy();
+  expect(searchRouteSessions.get(searchSessionId, workspaceRouteSessionOwner)).not.toBeNull();
+
+  setWindowSize(1_400, 800);
+  expect(mockRouterHistory().at(-1)?.pathname).toBe("/threads/[connectionId]/[threadId]");
+  expect(mockRouterHistory().at(-1)?.params.globalSearchSessionId).toBe(searchSessionId);
+  expect(view.getByTestId("sidebar-search")).toBeTruthy();
+  act(() => view.UNSAFE_getByType(GlobalSearchScreen).props.onClose());
+  expect(mockRouterHistory().at(-1)?.params.globalSearchSessionId).toBeUndefined();
+  expect(mockRouterHistory().at(-1)?.params.threadId).toBe("selected");
   setWindowSize(400, 800);
   view.unmount();
 });
@@ -813,6 +940,7 @@ function ThreadLinkProbe({
 it.each(["server", "server/with space"])(
   "keeps the mounted conversation and edited draft after repeated real row taps on %s",
   async (connectionId) => {
+    jest.mocked(useIsFocused).mockReturnValue(false);
     holdInitialDeepLink();
     registerMockRoute("/threads/[connectionId]/[threadId]", RetainedDraftProbe);
     resetMockRouter({
@@ -849,6 +977,7 @@ it.each(["server", "server/with space"])(
 it.each(["/threads/[connectionId]/[threadId]/queue", "/drawing/[sessionId]", "/search"])(
   "returns from %s through the row link without retaining the child screen",
   async (pathname) => {
+    jest.mocked(useIsFocused).mockReturnValue(false);
     resetMockRouter("/");
     router.push({
       params: { connectionId: "server", threadId: "selected" },

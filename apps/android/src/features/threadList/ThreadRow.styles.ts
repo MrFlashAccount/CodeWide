@@ -2,9 +2,10 @@ import { StyleSheet } from "react-native";
 import { colors, iconSize, radii, spacing, typeScale } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
 import { THREAD_LIST_ROW_CONTENT_HEIGHT, THREAD_LIST_ROW_VERTICAL_MARGIN } from "./threadListModel";
+import { THREAD_ROW_PRESSED_OPACITY } from "./ThreadRowLinkTrigger.types";
 
 export const styles = StyleSheet.create({
-  pressed: { opacity: 0.68 },
+  pressed: { opacity: THREAD_ROW_PRESSED_OPACITY },
   selectionBar: { display: "none" },
   sheetTitle: {
     color: colors.text,

@@ -41,12 +41,12 @@ export const styles = StyleSheet.create({
   },
   userImageFrame: {
     backgroundColor: colors.surfaceRaised,
-    borderRadius: radii.selected,
+    borderRadius: radii.small,
     overflow: "hidden",
   },
   userImageGallery: {
     alignSelf: "flex-start",
-    borderRadius: radii.selected,
+    borderRadius: radii.small,
     maxWidth: "100%",
     overflow: "hidden",
     width: 320,

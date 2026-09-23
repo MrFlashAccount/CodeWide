@@ -5,16 +5,23 @@ import { Pressable } from "react-native-gesture-handler";
 import { linkTo } from "expo-router/build/global-state/routing";
 import { AppLink } from "../src/ui/AppLink";
 import { AppNoticeContext } from "../src/ui/appNoticeContext";
+import { State } from "react-native-gesture-handler";
+import { fireGestureHandler, getByGestureTestId } from "react-native-gesture-handler/jest-utils";
 
 // Exercise Expo's actual href resolution, Slot and native event composition;
 // substitute only the router dispatch boundary, which requires a NavigationContainer.
+let mockCatalogFocused = false;
 jest.mock("expo-router", () => ({
   Link: jest.requireActual("expo-router/build/link/BaseExpoRouterLink").BaseExpoRouterLink,
+  useIsFocused: () => mockCatalogFocused,
 }));
 jest.mock("expo-router/build/global-state/routing", () => ({ linkTo: jest.fn() }));
 jest.mock("expo-router/build/Prefetch", () => ({ Prefetch: () => null }));
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockCatalogFocused = false;
+});
 
 it.each([false, true])(
   "dispatches one real Link action with dismissTo=%s after child preparation",
@@ -84,3 +91,39 @@ it("retains row geometry and selection styling through the real Link Slot", () =
   expect(style.height).toBeGreaterThan(0);
   expect(style.backgroundColor).toBeTruthy();
 });
+
+it.each([true, false])(
+  "chooses the link action from catalog focus=%s even with a retained POP_TO link",
+  (focused) => {
+    mockCatalogFocused = focused;
+    const view = render(
+      <AppNoticeContext.Provider value={{ show: jest.fn() }}>
+        <ThreadRow
+          link={{
+            dismissTo: true,
+            href: {
+              pathname: "/threads/[connectionId]/[threadId]",
+              params: { connectionId: "server", threadId: "next" },
+            },
+          }}
+          onNavigate={jest.fn()}
+          selected={false}
+          server={undefined}
+          thread={{
+            id: "next",
+            serverId: "server",
+            title: "Next thread",
+            preview: "",
+            pinned: false,
+            unread: 0,
+          }}
+        />
+      </AppNoticeContext.Provider>,
+    );
+    fireGestureHandler(getByGestureTestId("thread-row-tap"), [{ state: State.END }]);
+    expect(linkTo).toHaveBeenCalledWith(
+      "/threads/server/next",
+      expect.objectContaining({ event: focused ? undefined : "POP_TO" }),
+    );
+  },
+);

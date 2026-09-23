@@ -4,6 +4,10 @@ export const threadRow = readFileSync(
   new URL("../../src/features/threadList/ThreadRow.tsx", import.meta.url),
   "utf8",
 );
+export const threadRowNativeTrigger = readFileSync(
+  new URL("../../src/features/threadList/ThreadRowLinkTrigger.native.tsx", import.meta.url),
+  "utf8",
+);
 export const threadRowActions = readFileSync(
   new URL("../../src/features/threadList/threadRowActions.ts", import.meta.url),
   "utf8",

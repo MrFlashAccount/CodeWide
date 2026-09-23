@@ -15,6 +15,7 @@ export function ReadOnlyComposerContext({
   return (
     <View style={styles.composerDock} testID="composer-dock">
       <ComposerContextStrip
+        applyModelSettings={() => undefined}
         closeQuickControlMenu={() => undefined}
         controlError={null}
         controlsResourceId={null}
@@ -30,11 +31,7 @@ export function ReadOnlyComposerContext({
         selectedPermissions={null}
         selectedPersonality={null}
         selectedServiceTier={undefined}
-        selectEffort={() => undefined}
-        selectModel={() => undefined}
         selectPermissions={() => undefined}
-        selectServiceTier={() => undefined}
-        setSelectedPersonality={() => undefined}
         toolContextChips={children}
         workspaceResources={null}
       />

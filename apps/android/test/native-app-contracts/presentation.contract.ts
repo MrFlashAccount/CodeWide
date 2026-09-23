@@ -46,9 +46,9 @@ it("preserves presentation integration contracts", () => {
   expect(appSheet).toContain("export function AppSheetScrollView");
   expect(appFullscreenModal).toContain('presentationStyle="fullScreen"');
   expect(turnControlMenus).toContain("ModelThinkingSheet as ModelThinkingMenu");
-  expect(modelThinkingSheet).toContain("<AppSheet");
-  expect(modelThinkingSheet).toContain("<ModelListPage");
-  expect(modelThinkingSheet).toContain("<ThinkingSlider");
+  expect(modelThinkingSheet).toContain("<ContentMenu");
+  expect(modelThinkingSheet).toContain("<ModelChoices");
+  expect(modelThinkingSheet).toContain("<CodeWideSlider");
   expect(modelThinkingSheet).toContain("<PersonalityChoices");
   expect(turnControlMenus).toContain('section: "Security permissions"');
   expect(turnControlMenus).toContain("<ActionMenu");

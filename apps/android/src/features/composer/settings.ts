@@ -60,6 +60,7 @@ import type { StoredComposerPreferences } from "../../data/thread-ui-state-types
 import type { TurnControlsRow } from "../../data/workspace-resource-database";
 import { useEvent } from "../../react/useEvent";
 import { retainedServiceTier } from "../../ui/modelServiceTier";
+import type { ModelSettingsChoice } from "../../ui/TurnControlMenus.types";
 import { useConversationRef, useConversationState } from "../../ui/use-conversation-scope";
 import type { ComposerSettingsCapabilities } from "./settingsCapabilities";
 import { rollbackOwnedModelSelection } from "./submissionRecovery";
@@ -180,6 +181,39 @@ export function useComposerSettings({
       });
   });
 
+  const applyModelSettings = useEvent((choice: ModelSettingsChoice) => {
+    updateCurrentPreferences((current) =>
+      choice.executionChanged
+        ? {
+            ...current,
+            effort: choice.effort,
+            model: choice.model,
+            personality: choice.personality,
+            serviceTier: choice.serviceTier,
+          }
+        : { ...current, personality: choice.personality },
+    );
+    if (!choice.executionChanged) {
+      return;
+    }
+    ++settingsMutationRef.current.model;
+    ++settingsMutationRef.current.effort;
+    ++settingsMutationRef.current.serviceTier;
+    if (onUpdateSettings === undefined) {
+      return;
+    }
+    setControlError(null);
+    void onUpdateSettings({
+      effort: choice.effort,
+      model: choice.model,
+      serviceTier: choice.serviceTier ?? null,
+    }).catch((error: unknown) => {
+      if (conversationOwner.isCurrent()) {
+        setControlError(error instanceof Error ? error.message : "Could not update model settings");
+      }
+    });
+  });
+
   const selectModel = useEvent((model: string, effort: string) => {
     const modelMutation = ++settingsMutationRef.current.model;
     const effortMutation = ++settingsMutationRef.current.effort;
@@ -295,6 +329,7 @@ export function useComposerSettings({
     };
   });
   return {
+    applyModelSettings,
     captureControlsResource,
     capturePreferenceUpdate,
     controlError,

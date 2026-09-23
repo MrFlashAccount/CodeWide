@@ -6,7 +6,16 @@ import { liveTurnPlanProgress, type LiveTurnPlan } from "../../rendering/live-tu
 import { occurrenceKey } from "../../rendering/listKey";
 import { ContentMenu } from "../../ui/ContentMenu";
 import { useEvent } from "../../react/useEvent";
-import { colors, controlSize, iconSize, radii, spacing, typeScale, typeWeight } from "../../theme";
+import {
+  colors,
+  controlSize,
+  iconSize,
+  menuContentInset,
+  radii,
+  spacing,
+  typeScale,
+  typeWeight,
+} from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import { WaveText } from "../../ui/WaveText";
 
@@ -287,7 +296,8 @@ const styles = StyleSheet.create({
   completedStep: { color: colors.textMuted },
   content: {
     gap: spacing.sm,
-    padding: spacing.sm,
+    paddingHorizontal: menuContentInset,
+    paddingVertical: spacing.xs,
   },
   explanation: {
     color: colors.textMuted,
@@ -298,7 +308,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xs,
     justifyContent: "space-between",
-    minHeight: typeScale.title.lineHeight,
+    minHeight: typeScale.body.lineHeight,
   },
   menu: {
     borderRadius: radii.large,
@@ -336,7 +346,7 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     flex: 1,
-    ...typeScale.title,
+    ...typeScale.body,
   },
   trigger: {
     alignItems: "center",

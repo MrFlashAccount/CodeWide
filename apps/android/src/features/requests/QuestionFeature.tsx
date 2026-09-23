@@ -214,13 +214,8 @@ function useCurrentQuestion(context: QuestionConversation): QuestionInteraction 
     },
     false,
   );
-  if (
-    context.summaries !== null &&
-    context.summaries !== undefined &&
-    summaryView?.phase !== "ready"
-  ) {
-    return undefined;
-  }
+  // The live turn owns the question. A delayed or failed catalog read must not
+  // hide it; the catalog contributes only the local Skip marker once available.
   return currentQuestion(context, summaryView?.selected[0]?.skippedQuestions);
 }
 function currentQuestion(

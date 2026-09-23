@@ -4,7 +4,12 @@ import { describe, expect, it } from "vitest";
 
 const readSource = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const railStyles = compactSource(readFileSync(new URL("../src/features/conversation/turns/MessageActionRail.styles.ts", import.meta.url), "utf8"));
+const railStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/MessageActionRail.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("Expo UI menu shape", () => {
   it("keeps the native corner-radius bridge as a persistent dependency patch", () => {
@@ -31,18 +36,22 @@ describe("Expo UI menu shape", () => {
     const manifest = JSON.parse(readSource("../package.json"));
     expect(manifest.expo.autolinking.android.buildFromSource).toEqual(["expo-ui"]);
     expect(menu).toContain("cornerRadius={radii.menu}");
-    expect(bubble).toContain("borderRadius: radii.selected");
+    expect(bubble).toContain("borderRadius: radii.bubble");
   });
 
   it("places the message action beside the bubble without shrinking its touch area", () => {
     const screen = readSource("../app/(workspace)/_layout.tsx");
 
-    expect(screen).not.toContain('style={styles.messageActionIcon}');
+    expect(screen).not.toContain("style={styles.messageActionIcon}");
     const actionStyle = railStyles.match(/messageActionButton: \{[^}]+\}/u)?.[0];
     expect(actionStyle).toContain('alignItems: "flex-start"');
-    expect(actionStyle).toContain('width: controlSize.compact');
-    expect(readSource("../src/features/conversation/turns/TurnTimelineItem.styles.ts").match(/agentMessageRow: \{[^}]+\}/u)?.[0]).toContain('gap: 0');
+    expect(actionStyle).toContain("width: controlSize.compact");
+    expect(
+      readSource("../src/features/conversation/turns/TurnTimelineItem.styles.ts").match(
+        /agentMessageRow: \{[^}]+\}/u,
+      )?.[0],
+    ).toContain("gap: 0");
     expect(actionStyle).toContain('justifyContent: "center"');
-    expect(actionStyle).not.toContain('marginLeft');
+    expect(actionStyle).not.toContain("marginLeft");
   });
 });

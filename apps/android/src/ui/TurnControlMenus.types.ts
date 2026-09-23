@@ -11,6 +11,14 @@ type ModelControl = {
   supportsPersonality: boolean;
 };
 
+export type ModelSettingsChoice = {
+  readonly effort: string;
+  readonly executionChanged: boolean;
+  readonly model: string;
+  readonly personality: Personality | null;
+  readonly serviceTier: string | null | undefined;
+};
+
 type PermissionControl = {
   allowed: boolean;
   description: string | null;
@@ -30,10 +38,7 @@ export type ModelThinkingMenuProps = TriggerProps & {
   error: string | null;
   loading: boolean;
   models: readonly ModelControl[];
-  onSelectEffort: (effort: string) => void;
-  onSelectModel: (model: string, effort: string) => void;
-  onSelectPersonality: (personality: Personality | null) => void;
-  onSelectServiceTier: (serviceTier: string) => void;
+  onApplySettings: (choice: ModelSettingsChoice) => void;
   selectedEffort: string | null;
   selectedModel: string | null;
   selectedPersonality: Personality | null;

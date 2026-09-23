@@ -4,7 +4,7 @@ import { Pressable, Text } from "react-native";
 
 import { ContentMenu as AppPopover } from "../src/ui/ContentMenu.android";
 import { useEvent } from "../src/react/useEvent";
-import { radii } from "../src/theme";
+import { radii, spacing } from "../src/theme";
 
 // WHY: Jest has no Expo Compose view registry. Replace only the external native
 // adapter; the actual shell owns state, trigger composition and body lifetime.
@@ -67,6 +67,7 @@ it("keeps its anchor mounted and forwards open, dismissal, live data and body ac
   expect(originalPress).toHaveBeenCalledTimes(1);
   expect(result.getByTestId("compose-menu").props.expanded).toBe(true);
   expect(result.getByTestId("compose-menu").props.cornerRadius).toBe(radii.menu);
+  expect(radii.menu - radii.selected).toBe(spacing.xs);
   expect(result.getByText("10 tokens")).toBeVisible();
   fireEvent.press(result.getByLabelText("Body action"));
   expect(bodyAction).toHaveBeenCalledTimes(1);

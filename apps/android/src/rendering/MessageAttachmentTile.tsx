@@ -98,7 +98,7 @@ const styles = StyleSheet.create({
   tile: {
     alignItems: "center",
     backgroundColor: colors.surfaceContainerHigh,
-    borderRadius: radii.selected,
+    borderRadius: radii.small,
     flexDirection: "row",
     flexShrink: 0,
     gap: spacing.xs,

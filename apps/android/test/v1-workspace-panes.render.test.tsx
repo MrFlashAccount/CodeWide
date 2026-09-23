@@ -7,6 +7,7 @@ import {
   ThemeProvider,
 } from "expo-router/build/react-navigation/core";
 import { DefaultTheme } from "expo-router/build/react-navigation/native";
+import { useIsFocused } from "expo-router/build/react-navigation/core/useIsFocused";
 import { createNativeStackNavigator } from "expo-router/build/react-navigation/native-stack/navigators/createNativeStackNavigator";
 
 const Wrapper = createNativeStackNavigator();
@@ -28,7 +29,13 @@ const mockReference = createNavigationContainerRef();
 jest.mock("expo-router", () => ({ useNavigationContainerRef: () => mockReference }));
 import { useWorkspaceProjectSessionId } from "../src/routeComposition/workspaceProjectNavigation";
 function RootList() {
-  return <Text testID="root-list">Root</Text>;
+  const focused = useIsFocused();
+  return (
+    <View>
+      <Text testID="root-list">Root</Text>
+      <Text testID="catalog-focus">{focused ? "focused" : "unfocused"}</Text>
+    </View>
+  );
 }
 function Project() {
   return <Text testID="project-list">Project</Text>;
@@ -71,6 +78,7 @@ it("mounts the catalog once outside the detail stack and updates it without chan
   mockDesktop = false;
   const view = render(<Application />);
   expect(view.getAllByTestId("header")).toHaveLength(1);
+  expect(view.getByTestId("catalog-focus").props.children).toBe("focused");
   const header = view.getByTestId("header");
   mockDesktop = true;
   view.rerender(<Application />);
@@ -80,6 +88,7 @@ it("mounts the catalog once outside the detail stack and updates it without chan
     mockReference.dispatch({ type: "PUSH", target: workspaceKey, payload: { name: "thread" } }),
   );
   const thread = view.getByTestId("thread");
+  expect(view.getByTestId("catalog-focus").props.children).toBe("unfocused");
   const state = mockReference.getRootState();
   const workspace = state.routes[0]?.state;
   const catalog = workspace?.routes[0]?.state;
@@ -105,6 +114,7 @@ it("mounts the catalog once outside the detail stack and updates it without chan
   expect(view.getByTestId("header")).toBe(header);
   act(() => mockReference.goBack());
   expect(mockReference.getCurrentRoute()?.name).toBe("index");
+  expect(view.getByTestId("catalog-focus").props.children).toBe("focused");
   view.unmount();
 });
 

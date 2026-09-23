@@ -353,6 +353,22 @@ describe("thread summary projection", () => {
     expect(completed?.value?.status).toEqual({ type: "idle" });
   });
 
+  it("retires Running from a terminal rollout when the completion event is missing", () => {
+    const running = { ...summary(), status: { type: "active", activeFlags: [] } as const };
+    const terminal = projectThreadSummaryEvent("server", {
+      method: "companion/thread/invalidated",
+      params: { threadId: "thread", archived: false, turnActive: false },
+      codewideThreadPatch: {
+        version: 1,
+        threadId: "thread",
+        operation: { kind: "threadInvalidated", summary: { activity: true } },
+      },
+    }, () => running, 43, 8);
+
+    expect(terminal?.value?.status).toEqual({ type: "idle" });
+    expect(terminal?.value?.latestActivityCursor).toBe(8);
+  });
+
   it("does not write the summary or relight unread state for token usage", () => {
     const current = { ...summary(), latestActivityCursor: 9, lastSeenCursor: 9, unread: 0 };
     const mutation = projectThreadSummaryEvent("server", semanticEvent({

@@ -224,7 +224,18 @@ function projectThreadSummaryPatch(
   } else if (operation.kind === "threadArchived") {
     next.archived = operation.archived === true;
   } else {
-    const lifecycleChanged = operation.kind === "turnStarted" || operation.kind === "turnCompleted";
+    // A rollout terminal boundary is the fallback when an App Server
+    // turn/completed notification was missed. Its turnActive bit comes from
+    // the persisted latest turn and must retire the sidebar's Running state.
+    if (operation.kind === "threadInvalidated" && operation.turnActive === false) {
+      if (next.status.type === "active") {
+        next.status = { type: "idle" };
+      }
+    }
+    const lifecycleChanged =
+      operation.kind === "turnStarted" ||
+      operation.kind === "turnCompleted" ||
+      next.status !== previous.status;
     if (operation.kind === "turnStarted" && next.status.type !== "active") {
       next.status = { activeFlags: [], type: "active" };
     } else if (operation.kind === "turnCompleted") {

@@ -38,6 +38,7 @@ export const styles = StyleSheet.create({
   threadListHeaderChrome: {
     backgroundColor: colors.threadListSurface,
     flexShrink: 0,
+    zIndex: 1,
   },
   threadListSuspended: { flex: 1 },
 });

@@ -2,7 +2,7 @@ import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { MobileThreadsHeader } from "./MobileThreadsHeader";
 import { useThreadListViewportPaging } from "./threadListViewportPaging";
 import { LegendList } from "@legendapp/list/react-native";
-import { View } from "react-native";
+import { Animated, View } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
@@ -92,7 +92,7 @@ export function MobileThreads(props: MobileThreadsProps) {
     listKey,
     project === null ? onLoadMore : projectSource.loadMore,
   );
-  const pullSearch = useThreadListPullGesture(props.onOpenSearch);
+  const pullSearch = useThreadListPullGesture(props.onOpenSearch, initialOffset, listKey);
 
   return (
     <View style={[styles.mobileList, searchContent !== null && styles.searchOverlayList]}>
@@ -105,82 +105,85 @@ export function MobileThreads(props: MobileThreadsProps) {
                 <ThreadListExperimentSuspended />
               </View>
             ) : (
-              <GestureDetector gesture={pullSearch.gesture}>
-                <Reanimated.View style={styles.threadListSuspended}>
-                  <LegendList
-                    data={scroll.rows}
-                    dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
-                    drawDistance={320}
-                    extraData={props.selectedThreadKey}
-                    getFixedItemSize={threadListRowHeight}
-                    getItemType={(item) => item.kind}
-                    initialScrollOffset={initialOffset}
-                    itemsAreEqual={threadListRowsEqual}
-                    key={listKey}
-                    keyExtractor={sidebarRowKey}
-                    ListEmptyComponent={
+              <Reanimated.View style={styles.threadListSuspended}>
+                <LegendList
+                  data={scroll.rows}
+                  dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
+                  drawDistance={320}
+                  extraData={props.selectedThreadKey}
+                  getFixedItemSize={threadListRowHeight}
+                  getItemType={(item) => item.kind}
+                  initialScrollOffset={initialOffset}
+                  itemsAreEqual={threadListRowsEqual}
+                  key={listKey}
+                  keyExtractor={sidebarRowKey}
+                  ListEmptyComponent={
+                    <SidebarListFeedback
+                      archived={mode === "archived"}
+                      key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
+                      state={project === null ? catalogState : projectSource.state}
+                    />
+                  }
+                  ListFooterComponent={
+                    scroll.rows.length > 0 &&
+                    mode === "active" &&
+                    !scroll.rows.some((row) => row.kind === "thread") ? (
                       <SidebarListFeedback
-                        archived={mode === "archived"}
+                        archived={false}
                         key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                         state={project === null ? catalogState : projectSource.state}
                       />
-                    }
-                    ListFooterComponent={
-                      scroll.rows.length > 0 &&
-                      mode === "active" &&
-                      !scroll.rows.some((row) => row.kind === "thread") ? (
-                        <SidebarListFeedback
-                          archived={false}
-                          key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
-                          state={project === null ? catalogState : projectSource.state}
-                        />
-                      ) : null
-                    }
-                    maintainVisibleContentPosition={THREAD_LIST_VISIBLE_CONTENT_POSITION}
-                    onContentSizeChange={paging.onContentSizeChange}
-                    onEndReached={paging.onEndReached}
-                    onEndReachedThreshold={0.4}
-                    onLayout={paging.onLayout}
-                    onMomentumScrollBegin={scroll.onMomentumScrollBegin}
-                    onMomentumScrollEnd={scroll.onMomentumScrollEnd}
-                    onScroll={pullSearch.onScroll}
-                    onScrollBeginDrag={scroll.onScrollBeginDrag}
-                    onScrollEndDrag={scroll.onScrollEndDrag}
-                    recycleItems
-                    renderItem={({ item }) =>
-                      item.kind === "header" ? (
-                        <SidebarSectionHeader title={item.title} />
-                      ) : item.kind === "project" ? (
-                        <SidebarProjectRow
-                          onPress={() => {
-                            onOpenProject(item.project);
-                          }}
-                          project={item.project}
-                        />
-                      ) : (
-                        <ThreadRow
-                          link={threadNavigation.getThreadLink(item.thread)}
-                          onArchive={async () => onArchive(item.thread)}
-                          onMarkRead={async () => onMarkRead(item.thread)}
-                          onNavigate={() => {
-                            threadNavigation.prepareThreadLink(threadSelectionKey(item.thread));
-                          }}
-                          onTogglePin={async () => onTogglePin(item.thread)}
-                          onUnarchive={async () => onUnarchive(item.thread)}
-                          selected={props.selectedThreadKey === threadSelectionKey(item.thread)}
-                          server={
-                            serverScope.kind === "all" && servers.length > 1
-                              ? servers.find((entry) => entry.id === item.thread.serverId)
-                              : undefined
-                          }
-                          thread={item.thread}
-                        />
-                      )
-                    }
-                    scrollEventThrottle={SCROLL_EVENT_THROTTLE_MS}
-                  />
-                </Reanimated.View>
-              </GestureDetector>
+                    ) : null
+                  }
+                  maintainVisibleContentPosition={THREAD_LIST_VISIBLE_CONTENT_POSITION}
+                  onContentSizeChange={paging.onContentSizeChange}
+                  onEndReached={paging.onEndReached}
+                  onEndReachedThreshold={0.4}
+                  onLayout={paging.onLayout}
+                  onMomentumScrollBegin={scroll.onMomentumScrollBegin}
+                  onMomentumScrollEnd={scroll.onMomentumScrollEnd}
+                  onScroll={pullSearch.onScroll}
+                  onScrollBeginDrag={scroll.onScrollBeginDrag}
+                  onScrollEndDrag={scroll.onScrollEndDrag}
+                  recycleItems
+                  renderItem={({ item }) =>
+                    item.kind === "header" ? (
+                      <SidebarSectionHeader title={item.title} />
+                    ) : item.kind === "project" ? (
+                      <SidebarProjectRow
+                        onPress={() => {
+                          onOpenProject(item.project);
+                        }}
+                        project={item.project}
+                      />
+                    ) : (
+                      <ThreadRow
+                        link={threadNavigation.getThreadLink(item.thread)}
+                        onArchive={async () => onArchive(item.thread)}
+                        onMarkRead={async () => onMarkRead(item.thread)}
+                        onNavigate={() => {
+                          threadNavigation.prepareThreadLink(threadSelectionKey(item.thread));
+                        }}
+                        onTogglePin={async () => onTogglePin(item.thread)}
+                        onUnarchive={async () => onUnarchive(item.thread)}
+                        selected={props.selectedThreadKey === threadSelectionKey(item.thread)}
+                        server={
+                          serverScope.kind === "all" && servers.length > 1
+                            ? servers.find((entry) => entry.id === item.thread.serverId)
+                            : undefined
+                        }
+                        thread={item.thread}
+                      />
+                    )
+                  }
+                  renderScrollComponent={(scrollViewProps) => (
+                    <GestureDetector gesture={pullSearch.gesture}>
+                      <Animated.ScrollView {...scrollViewProps} />
+                    </GestureDetector>
+                  )}
+                  scrollEventThrottle={SCROLL_EVENT_THROTTLE_MS}
+                />
+              </Reanimated.View>
             ))}
         </ThreadListRouteTransition>
         {searchContent === null && <ThreadListPullBackdrop />}

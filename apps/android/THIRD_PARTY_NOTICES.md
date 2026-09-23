@@ -92,7 +92,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-## Reacticx Apple Intelligence, Skia Ripple, Nebula Orb and Toast
+## Reacticx Apple Intelligence, Skia Ripple, Nebula Orb, Toast and Range Slider
 
 The live voice aura shader in
 `android/app/src/main/java/dev/codewide/app/rendering/VoiceAuraOverlay.kt`
@@ -113,6 +113,10 @@ uses the shader, colors and defaults from
 The Android and web notification stack in `src/ui/AppNotice*.tsx` and
 `src/ui/appNoticeMotion.ts` adapts Reacticx Toast's layout, gesture thresholds,
 and spring motion from commit `010a54d6f299c96556c004e4887d6ef1c234bb8c`.
+
+The Android model thinking control in `src/ui/CodeWideSlider.native.tsx` adapts
+Reacticx Range Slider's track, ticks, thumb and spring motion from the same
+commit.
 
 MIT License
 

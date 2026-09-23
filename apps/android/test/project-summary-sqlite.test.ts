@@ -150,6 +150,42 @@ describe("persisted project catalog", () => {
   });
 });
 
+it("does not reopen a completed sidebar row from an older thread read", async () => {
+  const database = createThreadSummaryDatabase();
+  await database.prepare();
+  const active = {
+    ...createV1TestThread("thread", null, 1, []),
+    preview: "Old answer",
+    status: { type: "active", activeFlags: [] } as const,
+  };
+  await database.mergeSnapshots("server", [{ archived: false, thread: active }]);
+  await database.applyEvents("server", [{
+    cursor: 20,
+    payload: {
+      method: "turn/completed",
+      params: { threadId: "thread" },
+      codewideThreadPatch: {
+        version: 1,
+        threadId: "thread",
+        operation: {
+          kind: "turnCompleted",
+          summary: { activity: true, finalAgentResponse: true, previewText: "Final answer" },
+        },
+      },
+    },
+  }]);
+
+  expect((await database.get("server", "thread"))?.status).toEqual({ type: "idle" });
+  await database.mergeSnapshots("server", [{ archived: false, thread: active }], 19);
+  const afterStaleRead = await database.get("server", "thread");
+  expect(afterStaleRead?.status).toEqual({ type: "idle" });
+  expect(afterStaleRead?.preview).toBe("Final answer");
+
+  await database.mergeSnapshots("server", [{ archived: false, thread: active }], 21);
+  expect((await database.get("server", "thread"))?.status).toEqual(active.status);
+  await database.close();
+});
+
 it("obeys server membership on live/replayed events and private metadata, without inspecting thread source", async () => {
   const ordinary = {
     ...createV1TestThread("ordinary", null, 1, []),

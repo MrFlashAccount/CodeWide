@@ -164,7 +164,7 @@ export function useTimelineViewportActions({
   );
 
   const loadOlderAtTimelineStart = useEvent(() => {
-    if (fullscreenScrollOwnership.isCovered()) {
+    if (fullscreenScrollOwnership.isCovered() || historyViewport.containsBeginning) {
       return;
     }
     const oppositeEdge = paginationEdgeLockRef.current === "newer";

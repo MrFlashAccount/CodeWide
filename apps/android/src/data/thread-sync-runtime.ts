@@ -182,12 +182,16 @@ export function createThreadSyncRuntime({
           await reconcileActiveThreadCommands(details, connectionId, threadId);
           if (summaries !== null) {
             const previous = await summaries.get(connectionId, threadId);
-            await summaries.mergeSnapshots(connectionId, [
-              {
-                archived: previous?.archived ?? readInvalidationArchived(requestKey) ?? false,
-                thread: synchronizedThread,
-              },
-            ]);
+            await summaries.mergeSnapshots(
+              connectionId,
+              [
+                {
+                  archived: previous?.archived ?? readInvalidationArchived(requestKey) ?? false,
+                  thread: synchronizedThread,
+                },
+              ],
+              response.throughCursor,
+            );
           }
           clearInvalidationArchived(requestKey);
           recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.synchronized", {

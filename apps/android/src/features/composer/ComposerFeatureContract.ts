@@ -13,6 +13,7 @@ import type {
 } from "../../data/workspace-resource-database";
 import type { LargePasteEvent } from "../../native/large-paste";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
+import type { ModelSettingsChoice } from "../../ui/TurnControlMenus.types";
 import type { GoalDialogProps } from "../goal/goalDialogContract";
 import type {
   ComposerAccessoryAction,
@@ -28,6 +29,7 @@ import type { ComposerTextSnapshot } from "./composerSession";
 export type ComposerFeatureProps = {
   activatePrimaryAction: () => void;
   anchoredComposerActions: ActionMenuItem[];
+  applyModelSettings: (choice: ModelSettingsChoice) => void;
   attachments: StoredDraftAttachment[];
   cancelQueuedComposerEdit: () => void;
   closeGoalAttachment: () => void;

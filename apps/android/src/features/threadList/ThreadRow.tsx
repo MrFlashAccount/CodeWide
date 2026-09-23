@@ -1,10 +1,9 @@
-import type { ComponentProps } from "react";
+import { useIsFocused } from "expo-router";
 import { AppLink } from "../../ui/AppLink";
 import { useThreadRowActions } from "./threadRowActions";
 import { ThreadRowContent } from "./ThreadRowContent";
 import type { ThreadRowProps } from "./threadRowContract";
 import { ThreadRowWebMenu } from "./ThreadRowWebMenu";
-import { Pressable as GesturePressable } from "react-native-gesture-handler";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useEvent } from "../../react/useEvent";
 import { ThreadRowMenu } from "./ThreadRowMenu";
@@ -14,8 +13,12 @@ import { copySessionId } from "../turnActions/turnActions";
 import { useAppNotice } from "../../ui/useAppNotice";
 import { styles } from "./ThreadRow.styles";
 import { ThreadSwipeAction, ThreadSwipeActions } from "./ThreadSwipeActions";
+import { ThreadRowLinkTrigger } from "./ThreadRowLinkTrigger";
 
 export function ThreadRow(props: ThreadRowProps) {
+  const catalogFocused = useIsFocused();
+  // A recycled row can retain POP_TO after Back. POP_TO from the catalog replaces its only route.
+  const dismissTo = props.link.dismissTo && !catalogFocused;
   const showNotice = useAppNotice().show;
   const { onMarkRead, onNavigate, onTogglePin, selected, server, thread } = props;
   const actions = useThreadRowActions(props);
@@ -58,13 +61,11 @@ export function ThreadRow(props: ThreadRowProps) {
   const rowMenu = (
     <ThreadRowMenu actions={menuActions} key={rowKey} onSelect={selectMenuAction} rowKey={rowKey}>
       {(openNativeMenu) => (
-        <AppLink {...props.link}>
+        <AppLink dismissTo={dismissTo} href={props.link.href}>
           <ThreadRowLinkTrigger
             accessibilityLabel="Thread actions"
             {...(selected ? { testID: "selected-thread-row" } : {})}
             accessibilityRole="link"
-            cancelable
-            delayLongPress={350}
             onLongPress={openNativeMenu ?? openWebMenu}
             onPress={press}
             selected={selected}
@@ -139,27 +140,5 @@ export function ThreadRow(props: ThreadRowProps) {
       )}
       <ThreadRowWebMenu actions={actions} props={props} />
     </ThreadRowCommitBoundary>
-  );
-}
-
-// Expo Link's Slot merges style objects. Keep the functional pressed style below that boundary.
-function ThreadRowLinkTrigger({
-  selected,
-  swipeEnabled,
-  ...props
-}: ComponentProps<typeof GesturePressable> & {
-  readonly selected: boolean;
-  readonly swipeEnabled: boolean;
-}): React.JSX.Element {
-  return (
-    <GesturePressable
-      {...props}
-      style={({ pressed }) => [
-        styles.threadRow,
-        swipeEnabled && styles.threadRowSwipeChild,
-        selected && styles.threadRowSelected,
-        pressed && styles.pressed,
-      ]}
-    />
   );
 }

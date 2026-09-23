@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import { colors, controlSize, radii, spacing, typeScale } from "../../theme";
+import { colors, controlSize, menuContentInset, radii, spacing, typeScale } from "../../theme";
 
 export const styles = StyleSheet.create({
   clearDate: {
@@ -47,7 +47,8 @@ export const styles = StyleSheet.create({
   },
   panel: {
     gap: spacing.md,
-    padding: spacing.lg,
+    paddingHorizontal: menuContentInset,
+    paddingVertical: spacing.xs,
   },
   scroll: { flexShrink: 1 },
   select: {

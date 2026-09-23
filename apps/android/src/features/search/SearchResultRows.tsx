@@ -61,12 +61,19 @@ export function SearchResultRow(props: ResultProps) {
     props.onSelect(props.target);
   });
   return (
-    <Pressable accessibilityRole="button" onPress={select} style={styles.result}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={select}
+      style={({ pressed }) => [styles.result, pressed && styles.resultPressed]}
+      testID="search-result-row"
+    >
       <View style={styles.resultHeading}>
         <Text numberOfLines={1} style={styles.resultTitle}>
           {props.target.hit.title.trim() === "" ? "Untitled chat" : props.target.hit.title}
         </Text>
-        <Text style={styles.caption}>{formatSearchTimestamp(props.target.hit.timestamp)}</Text>
+        <Text numberOfLines={1} style={styles.caption}>
+          {formatSearchTimestamp(props.target.hit.timestamp)}
+        </Text>
       </View>
       <SearchHighlightedText query={props.query} text={props.target.hit.excerpt} />
     </Pressable>
@@ -89,7 +96,7 @@ function SearchHighlightedText(props: HighlightProps) {
   const tokens = props.query.toLocaleLowerCase().split(/\s+/u).filter(Boolean);
   const occurrences = new Map<string, number>();
   return (
-    <Text numberOfLines={3} style={styles.label}>
+    <Text numberOfLines={2} style={styles.resultExcerpt}>
       {props.text.split(/(\s+)/u).map((part) => {
         const key = occurrenceKey(occurrences, part);
         return (

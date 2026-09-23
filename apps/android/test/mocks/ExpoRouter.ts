@@ -235,6 +235,18 @@ export const router = {
     entries[currentIndex] = route(href);
     publish();
   },
+  setParams(params: Readonly<Record<string, string | undefined>>): void {
+    const nextParams = { ...current().params };
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined) {
+        delete nextParams[key];
+      } else {
+        nextParams[key] = value;
+      }
+    }
+    updateDestination({ params: nextParams, pathname: current().pathname });
+    publish();
+  },
 };
 
 export function resetMockRouter(initial: MockHref = "/"): void {
@@ -284,9 +296,7 @@ export function useFocusEffect(effect: () => void | (() => void)): void {
   useEffect(effect, [effect]);
 }
 
-export function useIsFocused(): boolean {
-  return true;
-}
+export const useIsFocused = jest.fn((): boolean => true);
 
 export function usePathname(): string {
   const value = useSyncExternalStore(subscribe, snapshot, snapshot);

@@ -5,6 +5,7 @@ import { ComposerControlChips } from "./settings/ComposerControlChips";
 
 type Props = Pick<
   ComposerFeatureProps,
+  | "applyModelSettings"
   | "newChat"
   | "workspaceResources"
   | "controlsResourceId"
@@ -21,14 +22,11 @@ type Props = Pick<
   | "openQuickControlMenu"
   | "closeQuickControlMenu"
   | "openControls"
-  | "selectModel"
-  | "selectEffort"
-  | "selectServiceTier"
-  | "setSelectedPersonality"
   | "selectPermissions"
   | "toolContextChips"
 >;
 export function ComposerContextStrip({
+  applyModelSettings,
   closeQuickControlMenu,
   controlError,
   controlsResourceId,
@@ -44,11 +42,7 @@ export function ComposerContextStrip({
   selectedPermissions,
   selectedPersonality,
   selectedServiceTier,
-  selectEffort,
-  selectModel,
   selectPermissions,
-  selectServiceTier,
-  setSelectedPersonality,
   toolContextChips,
   workspaceResources,
 }: Props) {
@@ -64,6 +58,7 @@ export function ComposerContextStrip({
         cwd={cwd}
         error={controlError}
         newChat={newChat}
+        onApplySettings={applyModelSettings}
         readOnly={readOnly}
         remoteThread={remoteThread}
         resourceId={controlsResourceId}
@@ -77,11 +72,7 @@ export function ComposerContextStrip({
         onClose={closeQuickControlMenu}
         onFallback={openControls}
         onQuickOpen={openQuickControlMenu}
-        onSelectEffort={selectEffort}
-        onSelectModel={selectModel}
         onSelectPermissions={selectPermissions}
-        onSelectPersonality={setSelectedPersonality}
-        onSelectServiceTier={selectServiceTier}
       />
       {toolContextChips}
     </ScrollView>

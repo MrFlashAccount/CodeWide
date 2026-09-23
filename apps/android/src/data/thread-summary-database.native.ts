@@ -460,7 +460,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         await publish({ ...row, lastSeenCursor: row.latestActivityCursor, unread: 0 });
       }
     },
-    async mergeSnapshots(connectionId, snapshots) {
+    async mergeSnapshots(connectionId, snapshots, throughCursor) {
       await writes.run(async () => {
         if (disposed || snapshots.length === 0) {
           return;
@@ -481,6 +481,16 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
             continue;
           }
           const previous = current.get(key);
+          // A bounded thread read can finish after a newer live event has
+          // already updated the list. Never let that older read reopen a
+          // completed row or restore an outdated preview.
+          if (
+            previous !== undefined &&
+            throughCursor !== undefined &&
+            previous.latestActivityCursor > throughCursor
+          ) {
+            continue;
+          }
           const row = projectThreadSummarySnapshot(
             connectionId,
             snapshot.thread,

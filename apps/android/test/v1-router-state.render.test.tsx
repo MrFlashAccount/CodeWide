@@ -173,6 +173,31 @@ it.each(["NAVIGATE", "POP_TO"] as const)(
   },
 );
 
+it("keeps the catalog in history when opening a thread from the focused list", () => {
+  const options = {
+    routeNames: ["(lists)", "threads/[connectionId]/[threadId]"],
+    routeParamList: {},
+    routeGetIdList: {},
+  };
+  const router = StackRouter({ initialRouteName: "(lists)" });
+  const list = router.getInitialState(options);
+  const destination = {
+    name: "threads/[connectionId]/[threadId]",
+    params: { connectionId: "server", threadId: "next" },
+  };
+  const navigated = router.getStateForAction(
+    list,
+    { type: "NAVIGATE", payload: destination },
+    options,
+  );
+  const popped = router.getStateForAction(list, { type: "POP_TO", payload: destination }, options);
+  expect(navigated?.routes.map((route) => route.name)).toEqual([
+    "(lists)",
+    "threads/[connectionId]/[threadId]",
+  ]);
+  expect(popped?.routes.map((route) => route.name)).toEqual(["threads/[connectionId]/[threadId]"]);
+});
+
 it("anchors a cold draft URL to the catalog before replacing the admitted thread", () => {
   const state = getStateFromPath("/new", applicationConfig());
   expect(state?.routes[0]?.state?.routes.map((route) => route.name)).toEqual(["(lists)", "new"]);

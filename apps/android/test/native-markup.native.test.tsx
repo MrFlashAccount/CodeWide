@@ -102,7 +102,7 @@ it("stretches image previews from the content line while images cover them", () 
   );
   expect(result.getByTestId("user-image-tile-frame")).toHaveStyle({
     alignSelf: "stretch",
-    borderRadius: radii.selected,
+    borderRadius: radii.small,
     height: 180,
     overflow: "hidden",
     width: "100%",
@@ -181,7 +181,7 @@ it("renders compact file tiles without opening files until pressed", () => {
   expect(filename.props.ellipsizeMode).toBe("middle");
   const tile = result.getByLabelText(`Open ${names[0]}`);
   expect(tile).toHaveStyle({
-    borderRadius: radii.selected,
+    borderRadius: radii.small,
     flexShrink: 0,
     maxWidth: "100%",
     minHeight: controlSize.touch,
@@ -189,7 +189,7 @@ it("renders compact file tiles without opening files until pressed", () => {
   });
   const grid = result.getByTestId("message-attachment-grid");
   expect(grid).toHaveStyle({
-    alignSelf: "center",
+    alignSelf: "flex-start",
     flexGrow: 0,
     maxWidth: "100%",
     width: layoutSize.attachmentTile,

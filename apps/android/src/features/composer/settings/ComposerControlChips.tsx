@@ -13,6 +13,7 @@ import { InlineIcon } from "../../../ui/InlineIcon";
 import { fastServiceTier, isFastServiceTier } from "../../../ui/modelServiceTier";
 import { ComposerContextLabel } from "../../../ui/ResourceContextChip";
 import { ModelThinkingMenu, PermissionsMenu } from "../../../ui/TurnControlMenus";
+import type { ModelSettingsChoice } from "../../../ui/TurnControlMenus.types";
 import { composerModelSettings } from "../modelSettings";
 import {
   EMPTY_TURN_CONTROLS,
@@ -26,14 +27,11 @@ export function ComposerControlChips({
   error,
   load,
   newChat,
+  onApplySettings,
   onClose,
   onFallback,
   onQuickOpen,
-  onSelectEffort,
-  onSelectModel,
   onSelectPermissions,
-  onSelectPersonality,
-  onSelectServiceTier,
   readOnly,
   remoteThread,
   resourceId,
@@ -48,14 +46,11 @@ export function ComposerControlChips({
   error: string | null;
   load?: LoadTurnControls;
   newChat: boolean;
+  onApplySettings: (choice: ModelSettingsChoice) => void;
   onClose: (scope: "model-menu" | "permissions-menu") => void;
   onFallback: (page: "model" | "permissions") => void;
   onQuickOpen: (scope: "model-menu" | "permissions-menu") => void;
-  onSelectEffort: (effort: string) => void;
-  onSelectModel: (model: string, effort: string) => void;
   onSelectPermissions: (permissions: string | null) => void;
-  onSelectPersonality: (personality: Personality | null) => void;
-  onSelectServiceTier: (serviceTier: string) => void;
   readOnly: boolean;
   remoteThread: Thread | null | undefined;
   resourceId: string | null;
@@ -135,6 +130,7 @@ export function ComposerControlChips({
           error={effectiveError}
           loading={initialLoading}
           models={controls.models}
+          onApplySettings={onApplySettings}
           onClose={() => {
             onClose("model-menu");
           }}
@@ -144,10 +140,6 @@ export function ComposerControlChips({
           onOpen={() => {
             onQuickOpen("model-menu");
           }}
-          onSelectEffort={onSelectEffort}
-          onSelectModel={onSelectModel}
-          onSelectPersonality={onSelectPersonality}
-          onSelectServiceTier={onSelectServiceTier}
           selectedEffort={effectiveEffort}
           selectedModel={effectiveModel}
           selectedPersonality={selectedPersonality}

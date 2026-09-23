@@ -78,6 +78,9 @@ export const spacing = {
   xxs: 4,
 } as const;
 
+/** Keeps menu labels and custom content on the same inner edge. */
+export const menuContentInset = spacing.md;
+
 export const radii = {
   bubble: 24,
   bubbleTail: 8,
@@ -85,7 +88,7 @@ export const radii = {
   composer: 24,
   large: 24,
   medium: 16,
-  menu: 32,
+  menu: 24,
   pill: 999,
   selected: 16,
   small: 8,

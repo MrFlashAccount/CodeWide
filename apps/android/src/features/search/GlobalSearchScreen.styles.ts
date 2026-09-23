@@ -4,21 +4,26 @@ import {
   filterIconButtonPressed,
 } from "../../presentation/input/filterIconButtonLayout";
 import { searchFieldLayout } from "../../presentation/input/searchLayout";
-import { colors, controlSize, radii, spacing, typeScale } from "../../theme";
+import { threadListLayout } from "../../ui/thread-list-layout";
+import { colors, controlSize, menuContentInset, radii, spacing, typeScale } from "../../theme";
 
 export const styles = StyleSheet.create({
   apply: {
     alignItems: "center",
     backgroundColor: colors.surfaceRaised,
-    borderRadius: radii.medium,
+    borderRadius: radii.small,
     justifyContent: "center",
-    margin: spacing.sm,
+    marginBottom: spacing.xs,
+    marginHorizontal: menuContentInset,
+    marginTop: spacing.sm,
     minHeight: controlSize.regular,
   },
   caption: {
     ...typeScale.caption,
     color: colors.textDim,
     flexShrink: 0,
+    fontVariant: ["tabular-nums"],
+    textAlign: "right",
   },
   clearButton: {
     alignItems: "center",
@@ -35,7 +40,8 @@ export const styles = StyleSheet.create({
   error: {
     ...typeScale.caption,
     color: colors.error,
-    margin: spacing.md,
+    marginHorizontal: menuContentInset,
+    marginVertical: spacing.md,
   },
   filterDot: {
     ...filterIconButtonDotLayout,
@@ -45,7 +51,7 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: menuContentInset,
   },
   header: {
     alignItems: "center",
@@ -96,21 +102,31 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   result: {
-    borderBottomColor: colors.border,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.selected,
     gap: spacing.xs,
-    paddingHorizontal: spacing.md,
+    marginHorizontal: threadListLayout.edgeInset,
+    marginVertical: spacing.optical,
+    minWidth: 0,
+    paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
   },
+  resultExcerpt: {
+    ...typeScale.label,
+    color: colors.textMuted,
+  },
   resultHeading: {
-    alignItems: "baseline",
+    alignItems: "center",
     flexDirection: "row",
     gap: spacing.sm,
+  },
+  resultPressed: {
+    backgroundColor: colors.secondaryContainer,
   },
   resultTitle: {
     flex: 1,
     minWidth: 0,
-    ...typeScale.body,
+    ...typeScale.title,
     color: colors.text,
   },
   root: {

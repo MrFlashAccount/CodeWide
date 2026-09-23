@@ -8,11 +8,12 @@ import { searchFieldLayout } from "../../presentation/input/searchLayout";
 import { colors, controlSize, iconSize, spacing, typeScale } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
 import { AppText as Text } from "../../ui/Typography";
-import { useThreadListSearchPullModel } from "./threadListSearchPull";
+import { PULL_TO_SEARCH_THRESHOLD, useThreadListSearchPullModel } from "./threadListSearchPull";
 
-const SEARCH_PULL_SCALE_DISTANCE = 120;
-const SEARCH_PULL_SHADOW_DISTANCE = 60;
-const SEARCH_PULL_MAX_SCALE = 1.05;
+const SEARCH_ROW_HEIGHT = controlSize.regular + spacing.xs;
+const SEARCH_PULL_ROW_HEIGHT_RATIO = 0.7;
+const SEARCH_PULL_TRANSLATE_Y = SEARCH_ROW_HEIGHT * SEARCH_PULL_ROW_HEIGHT_RATIO;
+const SEARCH_PULL_MAX_SCALE = 1.02;
 const SEARCH_PULL_MAX_ELEVATION = 5;
 
 /** The fixed list header keeps search available while the catalog scrolls. */
@@ -23,20 +24,29 @@ export function ThreadListSearchRow({
 }): React.JSX.Element {
   const model = useThreadListSearchPullModel();
   const phase = useSelector(() => model?.phase$.get() ?? "idle");
+  const distance = model?.distance;
   const pullStyle = useAnimatedStyle(() => {
-    const pull = model?.distance.get() ?? 0;
+    const pull = distance?.get() ?? 0;
     return {
       elevation: interpolate(
         pull,
-        [0, SEARCH_PULL_SHADOW_DISTANCE],
+        [0, PULL_TO_SEARCH_THRESHOLD],
         [0, SEARCH_PULL_MAX_ELEVATION],
         Extrapolation.CLAMP,
       ),
       transform: [
         {
+          translateY: interpolate(
+            pull,
+            [0, PULL_TO_SEARCH_THRESHOLD],
+            [0, SEARCH_PULL_TRANSLATE_Y],
+            Extrapolation.CLAMP,
+          ),
+        },
+        {
           scale: interpolate(
             pull,
-            [0, SEARCH_PULL_SCALE_DISTANCE],
+            [0, PULL_TO_SEARCH_THRESHOLD],
             [1, SEARCH_PULL_MAX_SCALE],
             Extrapolation.CLAMP,
           ),
@@ -47,7 +57,7 @@ export function ThreadListSearchRow({
   return (
     <Reanimated.View style={[styles.row, pullStyle]} testID="thread-search-row">
       <Pressable
-        accessibilityHint={phase === "armed" ? "Opening search" : "Pull down to search"}
+        accessibilityHint={phase === "armed" ? "Release to search" : "Pull down to search"}
         accessibilityLabel="Search threads and messages"
         accessibilityRole="button"
         onPress={onOpenSearch}

@@ -43,7 +43,6 @@ import { newThreadService } from "../services/threads/newThreadService";
 import { useWorkspaceProjectNavigation } from "./workspaceProjectNavigation";
 import type { SidebarProject } from "../features/projects/sidebarProjects";
 import {
-  v1ThreadDestination,
   v1ThreadRouteParams,
   threadRouteSessionOwner,
   workspaceRouteSessionOwner,
@@ -56,6 +55,7 @@ import type { AppVoiceInputRuntime } from "../ui/VoiceInputRuntime";
 import { WorkspaceListRouteShell } from "./WorkspaceListRoute";
 import { ensureV1NewThreadRoute, useWorkspaceRouteModel } from "./WorkspaceRouteModel";
 import { workspaceCapabilities } from "./workspaceCapabilities";
+import { useAdaptiveSearchRoute } from "./useAdaptiveSearchRoute";
 
 const SEARCH_REMOTE = {
   searchMessages: features.search.searchMessages.bind(features.search),
@@ -176,7 +176,11 @@ function sidebarSearchContent({
 export function WorkspaceRouteComposition(): React.JSX.Element {
   const [terminalsVisible, setTerminalsVisible] = useState(false);
   const windowLayout = useWindowLayout();
-  const route = useWorkspaceRouteModel();
+  const route = useWorkspaceRouteModel(windowLayout.desktop);
+  const { closeGlobalSearch, openGlobalSearch } = useAdaptiveSearchRoute(
+    windowLayout.desktop,
+    route,
+  );
   const projectSelection = useWorkspaceProjectNavigation(route.projectListSessionId);
   const globalVoice = useGlobalVoiceControl();
   const insets = useSafeAreaInsets();
@@ -241,56 +245,10 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
       project.projectWorkspace.defaultProjectCwd(destination.serverId),
     );
   };
-  const openGlobalSearch = useEvent((): void => {
-    const session = searchRouteSessions.open(workspaceRouteSessionOwner);
-    route.router.push({
-      params: {
-        globalSearchSessionId: session.id,
-        ...(route.projectListSessionId === null
-          ? {}
-          : { projectListSessionId: route.projectListSessionId }),
-        ...(route.currentThread === null
-          ? {}
-          : {
-              connectionId: route.currentThread.connectionId.value,
-              threadId: route.currentThread.threadId.value,
-            }),
-      },
-      pathname: "/search",
-    });
-  });
   const openSidebarProject = useEvent((selectedProject: SidebarProject): void => {
     list.listState.setMobileThreadQuery("");
     list.projectListState.setProjectListMode("active");
     projectSelection.openSidebarProject(selectedProject);
-  });
-  const closeGlobalSearch = useEvent((): void => {
-    if (route.globalSearchSessionId !== null) {
-      searchRouteSessions.close(route.globalSearchSessionId);
-    }
-    if (route.currentThread !== null && route.pathname.startsWith("/threads/")) {
-      const threadDestination = v1ThreadDestination(route.currentThread);
-      const destination = {
-        ...threadDestination,
-        params: {
-          ...threadDestination.params,
-          ...(route.projectListSessionId === null
-            ? {}
-            : { projectListSessionId: route.projectListSessionId }),
-        },
-      };
-      // Explicitly closing Search removes its history entry but keeps the selected result.
-      route.router.dismissTo("/search");
-      route.router.replace(destination);
-      return;
-    }
-    if (route.router.canGoBack()) {
-      route.router.back();
-      return;
-    }
-    route.router.replace(
-      route.currentThread === null ? "/" : v1ThreadDestination(route.currentThread),
-    );
   });
   const openTerminals = useEvent((): void => {
     setTerminalsVisible(true);
