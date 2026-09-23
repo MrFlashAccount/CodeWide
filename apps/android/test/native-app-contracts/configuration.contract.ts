@@ -150,18 +150,21 @@ it("packages icon fonts as permanent Android assets under the library's exact fa
   expect(gradle).toContain("dependsOn(cleanReleaseReactResources)");
 });
 
-it("keeps signed self-hosted updates enabled and applies them without a process restart", () => {
+it("enables signed self-hosted updates only when an endpoint is configured", () => {
   expect(appConfig.expo.updates.enabled).toBe(true);
   expect(appConfig.expo.updates.url).toBe("https://updates.example.invalid/api/updates");
   expect(manifest).toContain(
     'android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="${expoUpdatesUrl}"',
   );
   expect(gradle).toContain('System.getenv("CODEWIDE_UPDATE_URL")');
-  expect(gradle).toContain("manifestPlaceholders = [expoUpdatesUrl: codeWideUpdateUrl]");
+  expect(gradle).toContain("expoUpdatesEnabled: codeWideUpdatesEnabled.toString()");
+  expect(gradle).toContain('expoUpdatesUrl: codeWideUpdateUrl ?: ""');
   expect(appConfig.expo.updates.checkAutomatically).toBe("NEVER");
   expect(appConfig.expo.updates.fallbackToCacheTimeout).toBe(0);
   expect(appConfig.expo.updates.codeSigningCertificate).toBe("./certs/certificate.pem");
-  expect(manifest).toContain('android:name="expo.modules.updates.ENABLED" android:value="true"');
+  expect(manifest).toContain(
+    'android:name="expo.modules.updates.ENABLED" android:value="${expoUpdatesEnabled}"',
+  );
   expect(manifest).toContain(
     'android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="NEVER"',
   );

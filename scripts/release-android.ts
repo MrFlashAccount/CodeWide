@@ -15,6 +15,9 @@ import {
 } from "./android-release-lib";
 
 type ReleaseMode = "ota" | "apk";
+type UpdatesConfiguration =
+  | { readonly status: "enabled"; readonly endpoint: string }
+  | { readonly status: "disabled" };
 type JsonObject = Record<string, unknown>;
 type BuildShelfArtifact = {
   id: string;
@@ -41,10 +44,15 @@ const localShelfUrl = "http://127.0.0.1:4190";
 const { mode, dryRun, requestedVersion, requestedVersionCode } = parseArguments(process.argv.slice(2));
 const lock = await acquireLock();
 try {
-  const endpoint = await resolveUpdateEndpoint();
-  if (!dryRun) await requireHealthyShelf(endpoint);
-  if (mode === "ota") await releaseOta(endpoint, dryRun);
-  else await releaseApk(endpoint, dryRun, requestedVersion, requestedVersionCode);
+  const updates = await resolveUpdatesConfiguration();
+  if (mode === "ota") {
+    const endpoint = requireUpdateEndpoint(updates, "OTA publication");
+    if (!dryRun) await requireHealthyShelf(endpoint);
+    await releaseOta(endpoint, dryRun);
+  } else {
+    if (!dryRun) await requireHealthyShelf(requireUpdateEndpoint(updates, "local APK publication"));
+    await releaseApk(updates, dryRun, requestedVersion, requestedVersionCode);
+  }
 } finally {
   await lock.close();
   await rm(lockPath, { force: true });
@@ -108,13 +116,15 @@ async function releaseOta(endpoint: string, dryRun: boolean): Promise<void> {
 }
 
 async function releaseApk(
-  endpoint: string,
+  updates: UpdatesConfiguration,
   dryRun: boolean,
   requestedVersion?: string,
   requestedVersionCode?: number,
 ): Promise<void> {
   const source = await readReleaseSourceFiles();
-  const publishedBaseline = dryRun ? undefined : await findLatestPublishedApkVersion(endpoint);
+  const publishedBaseline = dryRun
+    ? undefined
+    : await findLatestPublishedApkVersion(requireUpdateEndpoint(updates, "local APK publication"));
   const updated = updateAndroidReleaseVersion(source, {
     requestedVersion,
     requestedVersionCode,
@@ -129,7 +139,7 @@ async function releaseApk(
     sourceUpdated = true;
     await writeReleaseSourceFiles(updated);
     await run("pnpm", ["android:gradle", "--", ":app:assembleRelease"], {
-      CODEWIDE_UPDATE_URL: endpoint,
+      CODEWIDE_UPDATE_URL: updates.status === "enabled" ? updates.endpoint : "",
       CODEWIDE_RELEASE_STORE_FILE: signing.storeFile,
       CODEWIDE_RELEASE_STORE_PASSWORD: signing.storePassword,
       CODEWIDE_RELEASE_KEY_ALIAS: signing.keyAlias,
@@ -148,7 +158,8 @@ async function releaseApk(
         kind: "apk",
         previous: updated.previous,
         next: updated.next,
-        updateUrl: endpoint,
+        updatesEnabled: updates.status === "enabled",
+        updateUrl: updates.status === "enabled" ? updates.endpoint : null,
         sha256,
         size: apkBytes.byteLength,
         architectures: process.env.CODEWIDE_RELEASE_ARCHITECTURES ?? "arm64-v8a",
@@ -158,6 +169,7 @@ async function releaseApk(
     }
     await archiveReleaseApk(updated.next, sha256);
     published = true;
+    const endpoint = requireUpdateEndpoint(updates, "local APK publication");
     const artifact = await findPublishedArtifact(endpoint, sha256, updated.next);
     const publicOrigin = new URL(endpoint).origin;
     const downloadUrl = new URL(artifact.downloadUrl, publicOrigin).toString();
@@ -349,19 +361,28 @@ function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function resolveUpdateEndpoint(): Promise<string> {
+async function resolveUpdatesConfiguration(): Promise<UpdatesConfiguration> {
   const explicit = process.env.CODEWIDE_UPDATE_URL?.trim();
-  if (explicit !== undefined && explicit !== "") return validateUpdateEndpoint(explicit);
+  if (explicit !== undefined && explicit !== "") {
+    return { status: "enabled", endpoint: validateUpdateEndpoint(explicit) };
+  }
   const releases = await allOtaReleaseDirectories();
   for (const directory of releases) {
     try {
       const manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")) as { launchAsset?: { url?: unknown } };
-      if (typeof manifest.launchAsset?.url === "string") return validateUpdateEndpoint(deriveUpdateEndpoint(manifest.launchAsset.url));
+      if (typeof manifest.launchAsset?.url === "string") {
+        return { status: "enabled", endpoint: validateUpdateEndpoint(deriveUpdateEndpoint(manifest.launchAsset.url)) };
+      }
     } catch {
       // Ignore incomplete historical releases and continue to the next one.
     }
   }
-  throw new Error("Could not determine CODEWIDE_UPDATE_URL from the environment or a previous OTA release");
+  return { status: "disabled" };
+}
+
+function requireUpdateEndpoint(configuration: UpdatesConfiguration, purpose: string): string {
+  if (configuration.status === "enabled") return configuration.endpoint;
+  throw new Error(`CODEWIDE_UPDATE_URL is required for ${purpose}`);
 }
 
 function validateUpdateEndpoint(value: string): string {

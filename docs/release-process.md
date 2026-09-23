@@ -73,8 +73,9 @@ The Android release environment requires:
 - secrets `ANDROID_RELEASE_KEYSTORE_BASE64`,
   `ANDROID_RELEASE_STORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS`, and
   `ANDROID_RELEASE_KEY_PASSWORD`;
-- repository variable `CODEWIDE_UPDATE_URL`, pointing to the existing HTTPS
-  `/api/updates` endpoint.
+- optional repository variable `CODEWIDE_UPDATE_URL`, pointing to an HTTPS
+  `/api/updates` endpoint. When it is absent, the APK is built with Expo Updates
+  disabled and does not perform update checks.
 
 The APK is published as a GitHub Release asset. The existing local
 `./scripts/release-apk` path still publishes to Build Shelf; the two channels do

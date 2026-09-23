@@ -10,7 +10,8 @@ def releaseStoreFile = System.getenv("CODEWIDE_RELEASE_STORE_FILE")
 def releaseStorePassword = System.getenv("CODEWIDE_RELEASE_STORE_PASSWORD")
 def releaseKeyAlias = System.getenv("CODEWIDE_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("CODEWIDE_RELEASE_KEY_PASSWORD")
-def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL") ?: "https://updates.example.invalid/api/updates"
+def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL")?.trim()
+def codeWideUpdatesEnabled = codeWideUpdateUrl != null && !codeWideUpdateUrl.isEmpty()
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isBlank() }
 def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "196").toInteger()
 def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.183"
@@ -153,7 +154,10 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode codewideVersionCode
         versionName codewideVersionName
-        manifestPlaceholders = [expoUpdatesUrl: codeWideUpdateUrl]
+        manifestPlaceholders = [
+            expoUpdatesEnabled: codeWideUpdatesEnabled.toString(),
+            expoUpdatesUrl: codeWideUpdateUrl ?: "",
+        ]
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
 

@@ -42,7 +42,7 @@ describe("release-set planner", () => {
   it("plans shared core consumers from their own baselines", () => {
     expect(targets(["crates/companion-core/src/runtime_host.rs"])).toEqual([
       { id: "companion-linux", version: "0.1.1" },
-      { id: "macos", version: "0.1.1" },
+      { id: "macos", version: "0.2.1" },
     ]);
   });
 

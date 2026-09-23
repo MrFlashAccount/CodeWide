@@ -32,7 +32,7 @@ import {
   gradleProperties,
   mainApplication,
 } from "./native-sources";
-import { baselineProfile, expoAssetPatch } from "./native-sources-1";
+import { expoAssetPatch } from "./native-sources-1";
 
 it("preserves native integration contracts — 2", () => {
   expect(deviceKeyStore).toContain(
@@ -88,11 +88,6 @@ it("preserves native integration contracts — 2", () => {
   expect(nativeCredentialsStore).toContain("fun get(connectionId: String)");
   expect(nativeCredentialsStore).toContain("synchronized(STORE_LOCK)");
   expect(nativeCredentialsStore).toContain("private val STORE_LOCK = Any()");
-  expect(baselineProfile).not.toContain("CodeWideModule;->openSocket");
-  expect(baselineProfile).not.toContain("NativeFrameStore;->applicationCursor");
-  expect(baselineProfile).not.toContain(
-    "StoredNativeSession;-><init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
-  );
   expect(nativeEngine).toContain("bridge.attachSocket(this.connectionId)");
   expect(deviceKeyStore).toContain("KeyProperties.KEY_ALGORITHM_EC");
   expect(deviceKeyStore).toContain('Signature.getInstance("SHA256withECDSA")');

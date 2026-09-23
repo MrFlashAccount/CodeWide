@@ -30,13 +30,6 @@ export const startupBenchmark = readFileSync(
   ),
   "utf8",
 );
-export const baselineProfile = readFileSync(
-  new URL(
-    "../../android/app/src/release/generated/baselineProfiles/baseline-prof.txt",
-    import.meta.url,
-  ),
-  "utf8",
-);
 export const androidGradleScript = readFileSync(
   new URL("../../../../scripts/android-gradle.sh", import.meta.url),
   "utf8",

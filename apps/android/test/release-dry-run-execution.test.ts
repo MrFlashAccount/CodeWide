@@ -167,11 +167,29 @@ exit 0
     expect(readAndroidSources(fixture)).toEqual(originalSources);
     expect(releaseFiles(fixture, "builds/android")).toEqual([]);
 
+    const apkWithoutUpdates = runCommand(
+      tsx,
+      [
+        "scripts/release-android.ts",
+        "apk",
+        "--dry-run",
+        "--version",
+        "9.8.8",
+        "--version-code",
+        "9008008",
+      ],
+      fixture,
+      { ...environment, CODEWIDE_UPDATE_URL: "" },
+    );
+    expect(apkWithoutUpdates.stdout).toContain('"updatesEnabled": false');
+    expect(apkWithoutUpdates.stdout).toContain('"updateUrl": null');
+    expect(readAndroidSources(fixture)).toEqual(originalSources);
+
     const log = readFileSync(commandLog, "utf8");
     expect(log).toContain("pnpm ota:publish:raw -- --dry-run");
     expect(log).toContain("pnpm exec expo export --platform android --output-dir");
     expect(log).toContain("pnpm android:gradle -- :app:assembleRelease");
-    expect(log.match(/pnpm security:scan-artifacts/gmu)).toHaveLength(2);
+    expect(log.match(/pnpm security:scan-artifacts/gmu)).toHaveLength(3);
   });
 });
 
