@@ -139,8 +139,9 @@ describe("Android release automation", () => {
       const bodyStart = releaseAndroid.indexOf(`async function ${functionName}`);
       const nextFunction = releaseAndroid.indexOf("\nasync function ", bodyStart + 1);
       const body = releaseAndroid.slice(bodyStart, nextFunction);
-      expect(body.indexOf("await runReleaseChecks();")).toBeGreaterThan(-1);
-      expect(body.indexOf("await runReleaseChecks();")).toBeLessThan(body.indexOf("if (dryRun)"));
+      const gateIndex = body.indexOf("await runReleaseChecks(");
+      expect(gateIndex).toBeGreaterThan(-1);
+      expect(gateIndex).toBeLessThan(body.indexOf("if (dryRun)"));
     }
   });
 
