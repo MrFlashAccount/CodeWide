@@ -17,6 +17,7 @@ import {
   sliderStopAt,
 } from "./sliderGeometry";
 import { AppText as Text } from "./Typography";
+import { SliderTouchCapture } from "./SliderTouchCapture.native";
 
 // Reacticx Range Slider's track, ticks, thumb and spring motion.
 const TRACK_HEIGHT = 40;
@@ -208,20 +209,22 @@ export function CodeWideSlider({
   return (
     <GestureHandlerRootView style={styles.root} unstable_forceActive>
       <Text style={styles.label}>{accessibilityLabel}</Text>
-      <SliderGestureSurface
-        accessibilityLabel={accessibilityLabel}
-        fillStyle={fillStyle}
-        formatValue={formatValue}
-        gesture={pan}
-        label={committedLabel}
-        onAccessibilityAction={onAccessibilityAction}
-        onLayout={onLayout}
-        preview$={preview$}
-        testID={testID}
-        thumbStyle={thumbStyle}
-        tooltipStyle={tooltipStyle}
-        values={values}
-      />
+      <SliderTouchCapture style={styles.capture}>
+        <SliderGestureSurface
+          accessibilityLabel={accessibilityLabel}
+          fillStyle={fillStyle}
+          formatValue={formatValue}
+          gesture={pan}
+          label={committedLabel}
+          onAccessibilityAction={onAccessibilityAction}
+          onLayout={onLayout}
+          preview$={preview$}
+          testID={testID}
+          thumbStyle={thumbStyle}
+          tooltipStyle={tooltipStyle}
+          values={values}
+        />
+      </SliderTouchCapture>
       <SliderEndLabels formatValue={formatValue} values={values} />
     </GestureHandlerRootView>
   );
@@ -339,6 +342,9 @@ function SliderEndLabels({
 }
 
 const styles = StyleSheet.create({
+  capture: {
+    alignSelf: "stretch",
+  },
   dot: {
     backgroundColor: TICK_COLOR,
     borderRadius: DOT_SIZE / CENTER_DIVISOR,

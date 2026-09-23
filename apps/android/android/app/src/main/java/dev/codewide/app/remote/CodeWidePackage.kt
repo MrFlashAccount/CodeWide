@@ -14,6 +14,7 @@ import dev.codewide.app.rendering.VoiceAssistantOrbManager
 import dev.codewide.app.rendering.NativeRevealManager
 import dev.codewide.app.rendering.NativeStreamingRevealManager
 import dev.codewide.app.rendering.NativeFluidLayoutManager
+import dev.codewide.app.rendering.SliderTouchCaptureManager
 import dev.codewide.app.performance.CodexPerformanceModule
 import dev.codewide.app.diagnostics.WindowDiagnosticsModule
 
@@ -40,6 +41,7 @@ class CodeWidePackage : ReactPackage {
       NativeRevealManager(),
       NativeStreamingRevealManager(),
       NativeFluidLayoutManager(),
+      SliderTouchCaptureManager(),
       NebulaOrbManager(),
       VoiceAssistantOrbManager(),
     )
