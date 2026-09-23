@@ -7,6 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncReadExt, process::Command};
 
+mod arc_uncommitted;
 mod plugin;
 
 pub use plugin::{PluginRegistry, VcsPluginConfig};
@@ -73,8 +74,20 @@ impl VcsService {
     ) -> Result<VcsSnapshot, VcsError> {
         validate_workspace(workspace)?;
         for plugin in self.registry.enabled_plugins()? {
+            if scope == VcsScope::Uncommitted && plugin.id == "arc" {
+                match arc_uncommitted::resolve(&plugin, workspace).await {
+                    Ok(resolved) => return Ok(resolved.snapshot()),
+                    Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
+                    Err(error) => return Err(VcsError::Plugin(format!("{}: {error}", plugin.id))),
+                }
+            }
             match plugin::changes(&plugin, workspace, scope).await {
-                Ok(snapshot) => return Ok(snapshot),
+                Ok(mut snapshot) => {
+                    if plugin.id == "arc" {
+                        arc_uncommitted::advertise(&mut snapshot);
+                    }
+                    return Ok(snapshot);
+                }
                 Err(plugin::PluginCallError::WorkspaceNotOwned) => {}
                 Err(error) => {
                     return Err(VcsError::Plugin(format!("{}: {error}", plugin.id)));
@@ -106,6 +119,14 @@ impl VcsService {
             return Err(VcsError::InvalidWorkspace(path.to_path_buf()));
         }
         for plugin in self.registry.enabled_plugins()? {
+            if scope == VcsScope::Uncommitted && plugin.id == "arc" {
+                let resolved = match arc_uncommitted::resolve(&plugin, workspace).await {
+                    Ok(resolved) => resolved,
+                    Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
+                    Err(error) => return Err(VcsError::Plugin(format!("{}: {error}", plugin.id))),
+                };
+                return resolved.diff(&plugin, workspace, path).await;
+            }
             let snapshot = match plugin::changes(&plugin, workspace, scope).await {
                 Ok(snapshot) => snapshot,
                 Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
@@ -145,6 +166,36 @@ impl VcsService {
             return Err(VcsError::InvalidWorkspace(path.to_path_buf()));
         }
         for provider in self.registry.enabled_plugins()? {
+            if scope == VcsScope::Uncommitted && provider.id == "arc" {
+                // Arc's staged+unstaged compatibility scope has no native paged-diff
+                // protocol; a provider must advertise native uncommitted to page it.
+                let resolved = match arc_uncommitted::resolve(&provider, workspace).await {
+                    Ok(resolved) => resolved,
+                    Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
+                    Err(error) => {
+                        return Err(VcsError::Plugin(format!("{}: {error}", provider.id)));
+                    }
+                };
+                if let Some(snapshot) = resolved.native_snapshot() {
+                    let file = find_snapshot_file(snapshot, path)
+                        .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
+                    return plugin::diff_page(
+                        &provider,
+                        workspace,
+                        file,
+                        &snapshot.snapshot_id,
+                        scope,
+                        offset,
+                        limit,
+                    )
+                    .await
+                    .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)));
+                }
+                return Err(VcsError::UnsupportedScope {
+                    workspace: workspace.to_path_buf(),
+                    scope,
+                });
+            }
             let snapshot = match plugin::changes(&provider, workspace, scope).await {
                 Ok(snapshot) => snapshot,
                 Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,

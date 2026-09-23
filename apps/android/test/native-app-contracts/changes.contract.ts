@@ -17,7 +17,8 @@ it("preserves changes integration contracts", () => {
   expect(migratedThreadResourceContextChips).toContain(
     "const attachmentsUnavailable = attachmentsError !== null && !attachmentsReady;",
   );
-  expect(migratedThreadResourceContextChips).toContain("{!changesUnavailable && (");
+  expect(migratedThreadResourceContextChips).toContain("changesError !== null && styles.errorChip");
+  expect(migratedThreadResourceContextChips).toContain("changesUnavailable ? (");
   expect(migratedThreadResourceContextChips).toContain("{!attachmentsUnavailable && (");
   expect(
     sourceHasJsxElement(migratedThreadResourceContextChips, "ComposerContextCount", [

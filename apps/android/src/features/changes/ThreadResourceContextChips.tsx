@@ -1,5 +1,6 @@
 /** V1 ThreadResourceContextChips owner, extracted without changing interaction or resource lifetime. */
 import { Pressable } from "react-native";
+import { useEvent } from "../../react/useEvent";
 import type { ThreadResourcesModel } from "../../data/thread-resources-model";
 import { useThreadResources } from "../../data/use-thread-resources";
 import type {
@@ -16,6 +17,7 @@ import { ActionMenu } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { ComposerContextCount, ComposerContextLabel } from "../../ui/ResourceContextChip";
+import { AppText } from "../../ui/Typography";
 import { selectChangePresentation, type ChangesPreferences } from "./changePresentation";
 import { styles } from "./ThreadResourceContextChips.styles";
 
@@ -40,8 +42,14 @@ export function ThreadResourceContextChips({
   revision: string;
 }) {
   const dialog = useAppDialog();
+  const advertisedScopes =
+    model === null || resourceId === null ? null : model.get(resourceId)?.value?.changeScopes;
   const requestedScope =
-    preferences.scope !== null && isSelectableChangeScope(preferences.scope)
+    preferences.scope !== null &&
+    isSelectableChangeScope(preferences.scope) &&
+    (preferences.scope === "session" ||
+      preferences.scope === "branch" ||
+      advertisedScopes?.includes(preferences.scope) === true)
       ? preferences.scope
       : undefined;
   const resource = useThreadResources(model, resourceId, async () => load(requestedScope), {
@@ -92,7 +100,14 @@ export function ThreadResourceContextChips({
       : attachmentsEmpty
         ? "No attachments"
         : `Attachments · ${String(attachmentCount)}`;
-  const selectScope = (id: string) => {
+  const openChanges = useEvent(() => {
+    if (changesUnavailable) {
+      dialog.alert("Changes unavailable", changesError);
+      return;
+    }
+    onOpen("changes");
+  });
+  const selectScope = useEvent((id: string) => {
     if (!id.startsWith("scope:")) {
       return;
     }
@@ -107,47 +122,53 @@ export function ThreadResourceContextChips({
         error instanceof Error ? error.message : "Could not load changes",
       );
     });
-  };
+  });
   return (
     <>
-      {!changesUnavailable && (
-        <ActionMenu
-          accessibilityLabel="Choose changes scope"
-          actions={changeScopeMenuActions(changeScopes, changeScope)}
-          align="start"
-          onSelect={selectScope}
-          placement="top"
-          trigger="long-press"
+      <ActionMenu
+        accessibilityLabel="Choose changes scope"
+        actions={changeScopeMenuActions(changeScopes, changeScope)}
+        align="start"
+        onSelect={selectScope}
+        placement="top"
+        trigger="long-press"
+      >
+        <Pressable
+          accessibilityLabel={
+            changesUnavailable
+              ? "Changes unavailable. Long press to choose changes scope."
+              : `Changes, ${changesLabel}. Long press to choose changes scope.`
+          }
+          accessibilityRole="button"
+          onPress={openChanges}
+          style={[styles.composerContextChip, changesError !== null && styles.errorChip]}
         >
-          <Pressable
-            accessibilityLabel={`Changes, ${changesLabel}. Long press to choose changes scope.`}
-            accessibilityRole="button"
-            onPress={() => {
-              onOpen("changes");
-            }}
-            style={styles.composerContextChip}
-          >
-            <InlineIcon
-              color={changesEmpty ? colors.textDim : colors.textMuted}
-              name="git-compare-outline"
-              role="label"
+          <InlineIcon
+            color={
+              changesError !== null ? colors.red : changesEmpty ? colors.textDim : colors.textMuted
+            }
+            name="git-compare-outline"
+            role="label"
+          />
+          {changesUnavailable ? (
+            <AppText style={styles.errorText} testID="composer-changes-label">
+              Changes unavailable
+            </AppText>
+          ) : changesInitialLoading ? (
+            <ComposerContextLabel
+              loading={changesInitialLoading}
+              testID="composer-changes-label"
+              text={changesLabel}
             />
-            {changesInitialLoading ? (
-              <ComposerContextLabel
-                loading={changesInitialLoading}
-                testID="composer-changes-label"
-                text={changesLabel}
-              />
-            ) : (
-              <ComposerContextCount
-                label={scopeTitle}
-                testID="composer-changes-label"
-                value={changeCount}
-              />
-            )}
-          </Pressable>
-        </ActionMenu>
-      )}
+          ) : (
+            <ComposerContextCount
+              label={scopeTitle}
+              testID="composer-changes-label"
+              value={changeCount}
+            />
+          )}
+        </Pressable>
+      </ActionMenu>
       {!attachmentsUnavailable && (
         <Pressable
           accessibilityLabel={attachmentsLabel}

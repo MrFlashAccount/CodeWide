@@ -53,6 +53,15 @@ Request parameters contain one absolute `workspace` path. The result is a
 `VcsSnapshot`: repository identity, stable snapshot id, aggregate state and
 summary, and absolute file records.
 
+For Arc providers that advertise `staged` and `unstaged` but not `uncommitted`,
+the companion exposes `uncommitted` as a compatibility scope. It requests both
+component snapshots from that same provider, deduplicates files by absolute
+path, and derives the aggregate revision from both snapshot ids. The matching
+file preview contains the staged patch followed by the unstaged patch. A
+failure in either component remains an Arc error; it never falls back to Git.
+The compatibility scope does not offer `vcs.diffPage`; full-output paging
+requires native provider support for `uncommitted` and `vcs.diffPage@1`.
+
 ### `vcs.diff`
 
 Request parameters contain an absolute `workspace`, an absolute changed-file

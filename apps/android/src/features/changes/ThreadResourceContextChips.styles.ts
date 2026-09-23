@@ -18,4 +18,9 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.xxs,
   },
   disabled: { opacity: 0.42 },
+  errorChip: {
+    backgroundColor: colors.errorContainer,
+    borderColor: colors.red,
+  },
+  errorText: { color: colors.red },
 });

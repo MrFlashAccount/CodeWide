@@ -6,6 +6,7 @@ import {
   recordedTurnChangeDiff,
   recordedTurnChangeResources,
   recordedTurnResourcesValue,
+  selectChangePresentation,
 } from "./changePresentation";
 import { CodeReviewWorkspace } from "../review/workspace/CodeReviewWorkspace";
 import type {
@@ -13,10 +14,8 @@ import type {
   TurnChangesRouteRequest,
 } from "../../services/changes/changesRouteSession";
 import type { ThreadChangeResource } from "../../data/thread-resource-types";
-import { isSelectableChangeScope, selectableChangeScopes } from "../../rendering/change-menu";
 
 const EMPTY_CHANGES: ThreadChangeResource[] = [];
-const DEFAULT_CHANGE_SCOPES: ThreadChangeScope[] = ["session"];
 const LAST_TURN_CHANGE_SCOPES: ThreadChangeScope[] = [];
 
 /** Renders current-thread review state captured by one route activation. */
@@ -57,53 +56,13 @@ function currentChangesPresentation(request: CurrentChangesRouteRequest): {
   readonly changeScopes: ThreadChangeScope[];
   readonly scope: ThreadChangeScope;
 } {
-  const scope = currentChangeScope(request);
+  const selected = selectChangePresentation(request.initialResource, request.preferences.scope);
   return {
-    changes: currentChanges(request),
-    changeScope: currentResourceScope(request, scope),
-    changeScopes: currentChangeScopes(request),
-    scope,
+    changes: selected.resource?.changes ?? EMPTY_CHANGES,
+    changeScope: selected.scope,
+    changeScopes: selected.scopes,
+    scope: selected.scope,
   };
-}
-
-function currentChangeScope(request: CurrentChangesRouteRequest): ThreadChangeScope {
-  const scopes = currentChangeScopes(request);
-  const preferredScope = currentPreferredScope(request, scopes);
-  if (preferredScope !== null) {
-    return preferredScope;
-  }
-  const resourceScope = request.initialResource?.changeScope;
-  return resourceScope !== undefined && isSelectableChangeScope(resourceScope)
-    ? resourceScope
-    : (scopes[0] ?? "session");
-}
-
-function currentPreferredScope(
-  request: CurrentChangesRouteRequest,
-  scopes: ThreadChangeScope[],
-): ThreadChangeScope | null {
-  const preferredScope = request.preferences.scope;
-  if (preferredScope === null || !isSelectableChangeScope(preferredScope)) {
-    return null;
-  }
-  return request.initialResource === null || scopes.includes(preferredScope)
-    ? preferredScope
-    : null;
-}
-
-function currentChanges(request: CurrentChangesRouteRequest): ThreadChangeResource[] {
-  return request.initialResource?.changes ?? EMPTY_CHANGES;
-}
-
-function currentResourceScope(
-  request: CurrentChangesRouteRequest,
-  fallback: ThreadChangeScope,
-): ThreadChangeScope {
-  return request.initialResource?.changeScope ?? fallback;
-}
-
-function currentChangeScopes(request: CurrentChangesRouteRequest): ThreadChangeScope[] {
-  return selectableChangeScopes(request.initialResource?.changeScopes ?? DEFAULT_CHANGE_SCOPES);
 }
 
 function currentChangesDiff(request: CurrentChangesRouteRequest): {
