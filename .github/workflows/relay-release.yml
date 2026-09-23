@@ -56,6 +56,7 @@ jobs:
     env:
       NX_CACHE_DIRECTORY: .nx/cache
       NX_TUI: "false"
+      CODEWIDE_RELAY_CACHE_ROOT: ${{ github.workspace }}/.cache/relay-linux
 
     steps:
       - name: Checkout
@@ -75,13 +76,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Restore Nx task cache
+      - name: Restore Linux Cargo build cache
         uses: actions/cache@v5
         with:
-          path: .nx/cache
-          key: nx-relay-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-${{ github.sha }}
+          path: .cache/relay-linux
+          key: cargo-relay-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/build-relay-linux') }}-${{ github.sha }}
           restore-keys: |
-            nx-relay-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
+            cargo-relay-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/build-relay-linux') }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

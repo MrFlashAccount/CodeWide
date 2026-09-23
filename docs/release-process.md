@@ -106,6 +106,14 @@ affected since the last successful CI base. Nx caches deterministic task output
 and terminal results. GitHub Actions persists separate Linux and macOS Nx caches;
 pnpm, Cargo, and Gradle keep their own tool-native caches.
 
+Release workflows do not run cacheable Nx build tasks, so they do not restore
+an Nx task cache. The Linux Companion and Relay workflows instead persist their
+Docker Cargo registry, git, and target directories through GitHub Actions.
+The cache is a build accelerator, not a release artifact: Cargo still rebuilds
+changed crates and version-embedded binaries, and every delivery still performs
+packaging and validation. Android restores Gradle User Home; macOS restores
+Cargo and SwiftPM state.
+
 Do not mark `release`, signing, update-feed, installation, or publication tasks
 as cacheable. A cache hit is valid only when the declared task inputs and outputs
 fully describe a deterministic computation.

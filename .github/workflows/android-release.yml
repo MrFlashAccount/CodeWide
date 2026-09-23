@@ -96,14 +96,6 @@ jobs:
         with:
           cache-provider: basic
 
-      - name: Restore Nx task cache
-        uses: actions/cache@v5
-        with:
-          path: .nx/cache
-          key: nx-android-release-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            nx-android-release-${{ hashFiles('pnpm-lock.yaml') }}-
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

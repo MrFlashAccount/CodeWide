@@ -22,6 +22,23 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 2
 fi
 
+if [ -n "${CODEWIDE_RELAY_CACHE_ROOT:-}" ]; then
+  case "$CODEWIDE_RELAY_CACHE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'CODEWIDE_RELAY_CACHE_ROOT must be an absolute path.' >&2; exit 2 ;;
+  esac
+  mkdir -p "$CODEWIDE_RELAY_CACHE_ROOT/registry" "$CODEWIDE_RELAY_CACHE_ROOT/git" "$CODEWIDE_RELAY_CACHE_ROOT/target"
+  registry_volume="$CODEWIDE_RELAY_CACHE_ROOT/registry"
+  git_volume="$CODEWIDE_RELAY_CACHE_ROOT/git"
+  target_volume="$CODEWIDE_RELAY_CACHE_ROOT/target"
+  cache_owner="$(id -u):$(id -g)"
+else
+  registry_volume=codewide-relay-cargo-registry
+  git_volume=codewide-relay-cargo-git
+  target_volume=codewide-relay-musl-target
+  cache_owner=
+fi
+
 artifact_name="codewide-relay-$TARGET"
 artifact="$DIST_ROOT/$artifact_name"
 checksum="$artifact.sha256"
@@ -41,14 +58,22 @@ trap cleanup EXIT HUP INT TERM
 docker run --rm \
   --volume "$REPO_ROOT:/workspace:ro" \
   --volume "$build_root:/output" \
-  --volume codewide-relay-cargo-registry:/usr/local/cargo/registry \
-  --volume codewide-relay-cargo-git:/usr/local/cargo/git \
-  --volume codewide-relay-musl-target:/build-target \
+  --volume "$registry_volume:/usr/local/cargo/registry" \
+  --volume "$git_volume:/usr/local/cargo/git" \
+  --volume "$target_volume:/build-target" \
   --workdir /workspace \
   --env CARGO_TARGET_DIR=/build-target \
+  --env CODEWIDE_CACHE_OWNER="$cache_owner" \
   --env CODEWIDE_RELAY_VERSION \
   "$BUILD_IMAGE" \
-  sh -eu -c 'cargo build --locked --release -p codewide-relay --target x86_64-unknown-linux-musl && install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-relay /output/codewide-relay'
+  sh -eu -c '
+    cargo build --locked --release -p codewide-relay --target x86_64-unknown-linux-musl
+    install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-relay /output/codewide-relay
+    # The GitHub cache archiver runs as the host user, not container root.
+    if [ -n "$CODEWIDE_CACHE_OWNER" ]; then
+      chown -R "$CODEWIDE_CACHE_OWNER" /usr/local/cargo/registry /usr/local/cargo/git /build-target
+    fi
+  '
 
 install -m 0755 "$build_root/codewide-relay" "$temporary"
 if ! file "$temporary" | grep -E 'statically linked|static-pie linked' >/dev/null; then

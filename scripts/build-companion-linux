@@ -17,6 +17,22 @@ command -v docker >/dev/null 2>&1 || {
   exit 2
 }
 
+if [ -n "${CODEWIDE_COMPANION_CACHE_ROOT:-}" ]; then
+  case "$CODEWIDE_COMPANION_CACHE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'CODEWIDE_COMPANION_CACHE_ROOT must be an absolute path.' >&2; exit 2 ;;
+  esac
+  mkdir -p "$CODEWIDE_COMPANION_CACHE_ROOT/registry" "$CODEWIDE_COMPANION_CACHE_ROOT/git" "$CODEWIDE_COMPANION_CACHE_ROOT/target"
+  registry_volume="$CODEWIDE_COMPANION_CACHE_ROOT/registry"
+  git_volume="$CODEWIDE_COMPANION_CACHE_ROOT/git"
+  target_volume="$CODEWIDE_COMPANION_CACHE_ROOT/target"
+  cache_owner="$(id -u):$(id -g)"
+else
+  registry_volume=codewide-companion-cargo-registry
+  git_volume=codewide-companion-cargo-git
+  cache_owner=
+fi
+
 case "$dist_root" in
   /*) ;;
   *) dist_root="$repo_root/$dist_root" ;;
@@ -40,11 +56,12 @@ mkdir -p "$bundle_root/bin" "$bundle_root/libexec" "$bundle_root/systemd/user"
 docker run --rm \
   --volume "$repo_root:/workspace:ro" \
   --volume "$build_root:/output" \
-  --volume codewide-companion-cargo-registry:/usr/local/cargo/registry \
-  --volume codewide-companion-cargo-git:/usr/local/cargo/git \
+  --volume "$registry_volume:/usr/local/cargo/registry" \
+  --volume "$git_volume:/usr/local/cargo/git" \
   --volume "$target_volume:/build-target" \
   --workdir /workspace \
   --env CARGO_TARGET_DIR=/build-target \
+  --env CODEWIDE_CACHE_OWNER="$cache_owner" \
   --env CODEWIDE_COMPANION_VERSION \
   --env CODEWIDE_CORE_VERSION \
   "$build_image" \
@@ -55,6 +72,10 @@ docker run --rm \
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-vcs-git /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
     strip /output/codewide-companion-x86_64-unknown-linux-musl/bin/codewide-companion
     strip /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
+    # The GitHub cache archiver runs as the host user, not container root.
+    if [ -n "$CODEWIDE_CACHE_OWNER" ]; then
+      chown -R "$CODEWIDE_CACHE_OWNER" /usr/local/cargo/registry /usr/local/cargo/git /build-target
+    fi
   '
 
 install -m 0755 "$repo_root/apps/companion-linux/deploy/install.sh" "$bundle_root/install.sh"
