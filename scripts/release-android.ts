@@ -62,7 +62,7 @@ async function releaseOta(endpoint: string, dryRun: boolean): Promise<void> {
   const version = await readCurrentVersion();
   const privateKeyPath = await resolvePrivateKey();
   await validateOtaSigningKey(privateKeyPath);
-  await runReleaseChecks();
+  await runReleaseChecks(true);
   if (dryRun) {
     await run("pnpm", ["ota:publish:raw", "--", "--dry-run"], {
       CODEWIDE_UPDATE_URL: endpoint,
@@ -132,7 +132,7 @@ async function releaseApk(
   });
   const signing = await resolveApkSigning();
   await validateApkSigning(signing);
-  await runReleaseChecks();
+  await runReleaseChecks(updates.status === "enabled");
   let sourceUpdated = false;
   let published = false;
   try {
@@ -195,12 +195,12 @@ async function releaseApk(
   }
 }
 
-async function runReleaseChecks(): Promise<void> {
+async function runReleaseChecks(includeOta: boolean): Promise<void> {
   await run("pnpm", ["validate:android:v1"]);
   await run("pnpm", ["--filter", "@codewide/android", "typecheck"]);
   await run("pnpm", ["--filter", "@codewide/android", "lint"]);
   await run("pnpm", ["test"]);
-  await run("pnpm", ["test:ota"]);
+  if (includeOta) await run("pnpm", ["test:ota"]);
   await run("pnpm", ["security:scan-secrets"]);
 }
 

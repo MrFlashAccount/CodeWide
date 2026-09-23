@@ -189,6 +189,7 @@ exit 0
     expect(log).toContain("pnpm ota:publish:raw -- --dry-run");
     expect(log).toContain("pnpm exec expo export --platform android --output-dir");
     expect(log).toContain("pnpm android:gradle -- :app:assembleRelease");
+    expect(log.match(/pnpm test:ota/gmu)).toHaveLength(2);
     expect(log.match(/pnpm security:scan-artifacts/gmu)).toHaveLength(3);
   });
 });
