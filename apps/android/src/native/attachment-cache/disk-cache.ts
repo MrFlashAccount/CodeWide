@@ -59,16 +59,7 @@ export class AttachmentDiskCache {
     if (!this.canAdmit(admission)) {
       return null;
     }
-    if (this.initialized === null) {
-      const initialization = this.initialize();
-      this.initialized = initialization;
-      void initialization.catch(() => {
-        if (this.initialized === initialization) {
-          this.initialized = null;
-        }
-      });
-    }
-    await this.initialized;
+    await this.ready();
     const admitted = await this.exclusive(async () => {
       if (!this.canAdmit(admission)) {
         return null;
@@ -139,6 +130,20 @@ export class AttachmentDiskCache {
     };
   }
 
+  /** Restores the cache before a caller creates temporary files in its directory. */
+  async ready(): Promise<void> {
+    if (this.initialized === null) {
+      const initialization = this.initialize();
+      this.initialized = initialization;
+      void initialization.catch(() => {
+        if (this.initialized === initialization) {
+          this.initialized = null;
+        }
+      });
+    }
+    await this.initialized;
+  }
+
   private canAdmit(admission: AttachmentAdmission): boolean {
     return (
       Number.isSafeInteger(admission.bytes) &&
@@ -179,16 +184,7 @@ export class AttachmentDiskCache {
   /** Removes the deleted server's bytes and legacy entries with no owner metadata. */
   async deleteScope(scopeKey: string): Promise<void> {
     this.blockedScopes.add(scopeKey);
-    if (this.initialized === null) {
-      const initialization = this.initialize();
-      this.initialized = initialization;
-      void initialization.catch(() => {
-        if (this.initialized === initialization) {
-          this.initialized = null;
-        }
-      });
-    }
-    await this.initialized;
+    await this.ready();
     await Promise.all(
       [...this.pending.values()].map(async (operation) => {
         await operation.catch(() => undefined);

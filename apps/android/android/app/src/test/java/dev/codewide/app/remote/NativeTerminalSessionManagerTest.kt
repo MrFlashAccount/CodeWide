@@ -6,6 +6,30 @@ import org.junit.Test
 
 class NativeTerminalSessionManagerTest {
   @Test
+  fun stripsRelayRouteBeforeBuildingTheInnerTerminalRequest() {
+    val saved = StoredNativeSession(
+      id = "server",
+      endpoint = "ws://relay.example:8780/c/${"a".repeat(64)}/v1/sync",
+      token = "c".repeat(43),
+      tlsPinSha256 = null,
+      innerTlsPinSha256 = "pin",
+    )
+    assertEquals(
+      "wss://relay.example:8780/v1/terminals?cols=80&rows=24&sessionId=terminal-12345678-1234-1234-1234-123456789abc&offset=0&create=true",
+      NativeTerminalSessionManager.innerTerminalEndpoint(
+        saved,
+        "new-chat-1",
+        null,
+        80,
+        24,
+        "terminal-12345678-1234-1234-1234-123456789abc",
+        0,
+        true,
+      ),
+    )
+  }
+
+  @Test
   fun identifiesPersistedThreadWithoutSendingItsWorkingDirectory() {
     assertEquals(
       "wss://codex.example.test/v1/terminals?threadId=01a03e19-ee87-7a33-adcb-a93b9e5b0768&cols=120&rows=40&sessionId=terminal-12345678-1234-1234-1234-123456789abc&offset=42&create=false",

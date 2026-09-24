@@ -293,16 +293,21 @@ internal class NativeTerminalSessionManager(
     generation: Long,
   ) {
     if (session.disposed.get() || session.finished || session.generation != generation) return
-    val endpoint = InnerTlsTransport.url(saved, terminalEndpoint(
-      saved.endpoint,
-      session.threadId,
-      session.cwd,
-      session.cols,
-      session.rows,
-      session.id,
-      session.transcript.length(),
-      !session.serverSessionCreated,
-    ))
+    val endpoint = try {
+      innerTerminalEndpoint(
+        saved,
+        session.threadId,
+        session.cwd,
+        session.cols,
+        session.rows,
+        session.id,
+        session.transcript.length(),
+        !session.serverSessionCreated,
+      )
+    } catch (_: Exception) {
+      fail(session, "Terminal endpoint is invalid")
+      return
+    }
     val request = Request.Builder()
       .url(endpoint)
       .header("Authorization", "Bearer ${credential.token}")
@@ -490,6 +495,26 @@ internal class NativeTerminalSessionManager(
         frame[0] = opcode
         payload.copyInto(frame, 1)
       }.toByteString()
+
+    internal fun innerTerminalEndpoint(
+      saved: StoredNativeSession,
+      threadId: String,
+      cwd: String?,
+      cols: Int,
+      rows: Int,
+      sessionId: String,
+      offset: Long,
+      create: Boolean,
+    ): String = terminalEndpoint(
+      InnerTlsTransport.url(saved, saved.endpoint),
+      threadId,
+      cwd,
+      cols,
+      rows,
+      sessionId,
+      offset,
+      create,
+    )
 
     internal fun terminalEndpoint(
       syncEndpoint: String,

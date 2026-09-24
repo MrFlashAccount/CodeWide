@@ -130,6 +130,7 @@ export async function cachedAttachmentSourceFromResponse(
     digest(JSON.stringify([options.scope, options.identity, sequence])),
     attachmentScopeKey(options.scope),
   ]);
+  await cache.ready();
   const { deleteAsync, downloadAsync, getInfoAsync, moveAsync } = fileSystem;
   const partial = `${storage.uri(provisionalKey)}.partial`;
   try {

@@ -93,6 +93,19 @@ afterEach(() => { vi.unstubAllGlobals(); });
 afterAll(async () => { await rm(fileURLToPath(environment.directory), { recursive: true, force: true }); });
 
 describe("native attachment cache", () => {
+  it("materializes transformed images on a cold cache with one GET and no HEAD probe", async () => {
+    const remote = server("webp bytes");
+    const source = await cachedAttachmentSourceFromResponse({
+      headers: {},
+      options: { identity: "content:image:preview", scope: "server" },
+      uri: "https://example.test/image?variant=preview",
+    });
+
+    expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("webp bytes");
+    expect(remote.heads()).toBe(0);
+    expect(remote.gets()).toBe(1);
+  });
+
   it("opens cached documents with the AbortController shipped by React Native", async () => {
     // Resolve React Native's real dependency instead of Node's newer DOM API.
     const require = createRequire(import.meta.url);
@@ -140,19 +153,6 @@ describe("native attachment cache", () => {
       uri: "https://example.test/image",
     });
     expect(reopened.uri).toBe(source.uri);
-    expect(remote.gets()).toBe(1);
-  });
-
-  it("materializes transformed images with one GET and no HEAD probe", async () => {
-    const remote = server("webp bytes");
-    const source = await cachedAttachmentSourceFromResponse({
-      headers: {},
-      options: { identity: "content:image:preview", scope: "server" },
-      uri: "https://example.test/image?variant=preview",
-    });
-
-    expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("webp bytes");
-    expect(remote.heads()).toBe(0);
     expect(remote.gets()).toBe(1);
   });
 
