@@ -23,30 +23,15 @@ export async function loadCodeReviewResource(
   publish: (value: CodeReviewResourceValue) => void,
   sourceAsset: PrivateAssetSource | undefined,
 ): Promise<CodeReviewResourceValue> {
-  const name = change.path.split("/").at(-1) ?? change.path;
-  const sourceOverride = sourceOverrides?.[change.path];
-  const sourcePromise =
-    sourceOverride !== undefined
-      ? Promise.resolve(sourceOverride)
-      : change.availability === "available" || change.availability === "unknown"
-        ? loadDocumentPreview(
-            {
-              getTransferAccess,
-              kind: "text",
-              name,
-              path: change.path,
-              ...(sourceAsset === undefined ? {} : { source: sourceAsset }),
-            },
-            signal,
-          )
-            .then((loaded) => loaded.source)
-            .catch((error: unknown) => {
-              if (signal.aborted) {
-                throw error;
-              }
-              return `// Current file could not be loaded\n// ${error instanceof Error ? error.message : "File preview failed"}\n`;
-            })
-        : Promise.resolve(change.availability === "deleted" ? "" : "// File is unavailable\n");
+  const fullFileDiff = usesCompleteFile(changeScope);
+  const sourcePromise = readReviewSource({
+    change,
+    fullFileDiff,
+    getTransferAccess,
+    signal,
+    sourceAsset,
+    sourceOverrides,
+  });
   let diffFailed = false;
   const diffPromise =
     onLoadDiff === undefined || change.sourceOnly === true
@@ -55,7 +40,12 @@ export async function loadCodeReviewResource(
           diffFailed = true;
           return null;
         });
-  const fallbackSource = await sourcePromise;
+  const fallbackSource = await resolveReviewSource({
+    diffPromise,
+    fullFileDiff,
+    signal,
+    sourcePromise,
+  });
   if (signal.aborted) {
     throw new DOMException("Aborted", "AbortError");
   }
@@ -66,11 +56,12 @@ export async function loadCodeReviewResource(
       ? "empty"
       : undefined;
   const sourceDocument: CodeReviewDocument = {
+    ...(fullFileDiff ? { fullFileDiff } : {}),
     patches: [],
     path: change.path,
     source: fallbackSource,
     ...(sourceDisplayState === undefined ? {} : { displayState: sourceDisplayState }),
-    revision: codeReviewDocumentRevision(change.path, fallbackSource, [], sourceDisplayState),
+    revision: `${codeReviewDocumentRevision(change.path, fallbackSource, [], sourceDisplayState)}${fullFileDiff ? ":full" : ""}`,
   };
   publish({
     diffTruncated: false,
@@ -94,11 +85,12 @@ export async function loadCodeReviewResource(
       ? "empty"
       : undefined;
   const materializedDocument: CodeReviewDocument = {
+    ...(fullFileDiff ? { fullFileDiff } : {}),
     patches,
     path: change.path,
     source,
     ...(displayState === undefined ? {} : { displayState }),
-    revision: codeReviewDocumentRevision(change.path, source, patches, displayState),
+    revision: `${codeReviewDocumentRevision(change.path, source, patches, displayState)}${fullFileDiff ? ":full" : ""}`,
   };
   return {
     diffTruncated: diff?.truncated ?? false,
@@ -111,6 +103,117 @@ export async function loadCodeReviewResource(
         ? "Diff contained no renderable patches. Showing the complete current file."
         : null,
   };
+}
+
+function usesCompleteFile(scope: ThreadChangeScope): boolean {
+  return scope === "session" || scope === "uncommitted" || scope === "branch";
+}
+
+async function resolveReviewSource({
+  diffPromise,
+  fullFileDiff,
+  signal,
+  sourcePromise,
+}: {
+  diffPromise: Promise<ThreadChangeDiffValue | null>;
+  fullFileDiff: boolean;
+  signal: AbortSignal;
+  sourcePromise: Promise<string>;
+}): Promise<string> {
+  if (!fullFileDiff) {
+    return sourcePromise;
+  }
+  try {
+    return await sourcePromise;
+  } catch (error) {
+    if (signal.aborted) {
+      throw error;
+    }
+    // VCS scopes can return the complete file with the diff even if the
+    // separate private-file request fails through the relay.
+    const source = (await diffPromise)?.source;
+    if (source === null || source === undefined) {
+      throw error;
+    }
+    return source;
+  }
+}
+
+async function readReviewSource({
+  change,
+  fullFileDiff,
+  getTransferAccess,
+  signal,
+  sourceAsset,
+  sourceOverrides,
+}: {
+  change: CodeReviewFileResource;
+  fullFileDiff: boolean;
+  getTransferAccess: GetTransferAccess;
+  signal: AbortSignal;
+  sourceAsset: PrivateAssetSource | undefined;
+  sourceOverrides: Readonly<Record<string, string>> | undefined;
+}): Promise<string> {
+  const override = sourceOverrides?.[change.path];
+  if (override !== undefined) {
+    return override;
+  }
+  if (change.availability !== "available" && change.availability !== "unknown") {
+    return unavailableReviewSource(change.availability, fullFileDiff);
+  }
+  return readAvailableReviewSource({
+    change,
+    fullFileDiff,
+    getTransferAccess,
+    signal,
+    sourceAsset,
+  });
+}
+
+function unavailableReviewSource(
+  availability: CodeReviewFileResource["availability"],
+  fullFileDiff: boolean,
+): string {
+  if (availability === "deleted") {
+    return "";
+  }
+  if (fullFileDiff) {
+    throw new Error("File is unavailable");
+  }
+  return "// File is unavailable\n";
+}
+
+async function readAvailableReviewSource({
+  change,
+  fullFileDiff,
+  getTransferAccess,
+  signal,
+  sourceAsset,
+}: {
+  change: CodeReviewFileResource;
+  fullFileDiff: boolean;
+  getTransferAccess: GetTransferAccess;
+  signal: AbortSignal;
+  sourceAsset: PrivateAssetSource | undefined;
+}): Promise<string> {
+  try {
+    const loaded = await loadDocumentPreview(
+      {
+        getTransferAccess,
+        kind: "text",
+        name: change.path.split("/").at(-1) ?? change.path,
+        path: change.path,
+        ...(sourceAsset === undefined ? {} : { source: sourceAsset }),
+      },
+      signal,
+    );
+    return loaded.source;
+  } catch (error) {
+    if (signal.aborted || fullFileDiff) {
+      throw error;
+    }
+    return `// Current file could not be loaded\n// ${error instanceof Error ? error.message : "File preview failed"}\n`;
+  }
 }
 
 export function estimateCodeReviewResourceWeight(value: CodeReviewResourceValue): number {

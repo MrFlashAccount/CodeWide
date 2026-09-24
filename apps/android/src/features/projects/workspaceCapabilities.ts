@@ -8,6 +8,7 @@ export type ProjectsWorkspaceCapabilities = {
     workspace: string,
     requestId: string,
   ) => Promise<CreatedWorkspace>;
+  forgetConnection: (connectionId: string) => Promise<void>;
   inspectWorkspace: (connectionId: string, workspace: string) => Promise<WorkspaceSupport | null>;
   listProjects: (connectionId: string) => Promise<RemoteProject[]>;
   readDirectory: (connectionId: string, path: string) => Promise<RemoteDirectoryEntry[]>;

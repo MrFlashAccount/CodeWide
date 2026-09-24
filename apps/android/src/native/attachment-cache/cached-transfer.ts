@@ -36,3 +36,7 @@ export async function cacheInlineAttachment(uri: string, _base64: string): Promi
   await Promise.resolve();
   return uri;
 }
+
+export async function purgeCachedConnectionAttachments(_connectionId: string): Promise<void> {
+  await Promise.resolve();
+}

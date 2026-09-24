@@ -125,6 +125,18 @@ export class FileTransferController {
     this.put(scope, "idle", null, null, null);
   }
 
+  deleteConnection(connectionId: string): void {
+    const prefix = `${connectionId}\u0000`;
+    for (const scope of this.generations.keys()) {
+      if (scope.startsWith(prefix)) {
+        this.generations.set(scope, (this.generations.get(scope) ?? 0) + 1);
+        this.running.get(scope)?.cancel();
+        this.running.delete(scope);
+        this.generations.delete(scope);
+      }
+    }
+  }
+
   private isCurrent(scope: string, generation: number): boolean {
     return this.generations.get(scope) === generation;
   }

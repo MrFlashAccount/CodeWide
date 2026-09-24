@@ -56,9 +56,8 @@ const OUTBOX_RETRY_BASE_MS: u64 = 1_000;
 const OUTBOX_RETRY_MAX_MS: u64 = 30_000;
 const OUTBOX_ACCOUNT_SWITCH_WAIT_MS: u64 = 1_000;
 const OUTBOX_RECONCILE_PAGE_SIZE: u64 = 100;
-const ROLLOUT_UPSTREAM_SUPPRESSION: Duration = Duration::from_secs(2);
 const ROLLOUT_RECONCILIATION_POLL: Duration = Duration::from_millis(50);
-const MAX_RECENT_UPSTREAM_THREADS: usize = 4_096;
+const ROLLOUT_RECONCILIATION_RETRY: Duration = Duration::from_secs(1);
 const MAX_CONCURRENT_SESSION_RPCS: usize = 32;
 const SESSION_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE: i64 = -32_061;
@@ -442,12 +441,10 @@ impl SyncHub {
         let usage_projector = Arc::new(std::sync::Mutex::new(
             crate::usage::LiveUsageProjector::new(store.clone()),
         ));
-        let recent_upstream_threads = Arc::new(std::sync::Mutex::new(HashMap::new()));
         tokio::spawn(forward_upstream_events(
             upstream.take_ordered_events(),
             ordered_ingest.clone(),
             outbox_wakeup.clone(),
-            recent_upstream_threads.clone(),
             live_channels.clone(),
         ));
         tokio::spawn(forward_local_events(ingest_rx, ordered_ingest));
@@ -457,7 +454,6 @@ impl SyncHub {
                     changes,
                     history.clone(),
                     local_events.clone(),
-                    recent_upstream_threads,
                     resources.clone(),
                 ));
             }
@@ -1869,7 +1865,6 @@ async fn forward_upstream_events(
     mut upstream: tokio::sync::mpsc::Receiver<OrderedUpstreamEvent>,
     ingest: tokio::sync::mpsc::Sender<IngestInput>,
     outbox_wakeup: Arc<tokio::sync::Notify>,
-    recent_upstream_threads: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
     live_channels: Arc<LiveChannelRegistry>,
 ) {
     while let Some(event) = upstream.recv().await {
@@ -1878,9 +1873,6 @@ async fn forward_upstream_events(
                 if is_realtime_notification(&payload) {
                     live_channels.route(payload).await;
                     continue;
-                }
-                if let Some(thread_id) = event_thread_id(&payload) {
-                    remember_upstream_thread(&recent_upstream_threads, thread_id);
                 }
                 if payload.get("method").and_then(Value::as_str) == Some("turn/completed") {
                     outbox_wakeup.notify_one();
@@ -1917,34 +1909,12 @@ async fn forward_rollout_changes(
     mut changes: tokio::sync::mpsc::Receiver<crate::rollout_monitor::RolloutChange>,
     history: HistoryService,
     ingest: tokio::sync::mpsc::Sender<Value>,
-    recent_upstream_threads: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
     resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
-) {
-    forward_rollout_changes_with_suppression(
-        &mut changes,
-        history,
-        ingest,
-        recent_upstream_threads,
-        resources,
-        ROLLOUT_UPSTREAM_SUPPRESSION,
-    )
-    .await;
-}
-
-async fn forward_rollout_changes_with_suppression(
-    changes: &mut tokio::sync::mpsc::Receiver<crate::rollout_monitor::RolloutChange>,
-    history: HistoryService,
-    ingest: tokio::sync::mpsc::Sender<Value>,
-    recent_upstream_threads: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
-    resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
-    suppression: Duration,
 ) {
     let mut pending = HashMap::<String, crate::rollout_monitor::RolloutChange>::new();
+    let mut retry_after = HashMap::<String, Instant>::new();
     let mut changes_open = true;
-    let poll_interval = ROLLOUT_RECONCILIATION_POLL
-        .min(suppression)
-        .max(Duration::from_millis(1));
-    let mut poll = tokio::time::interval(poll_interval);
+    let mut poll = tokio::time::interval(ROLLOUT_RECONCILIATION_POLL);
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
@@ -1962,28 +1932,35 @@ async fn forward_rollout_changes_with_suppression(
                         // Coalesce every filesystem echo for one thread, but
                         // never discard the trailing write. That final write is
                         // the canonical repair boundary for a live projection.
-                        pending.insert(change.thread_id.clone(), change);
+                        let thread_id = change.thread_id.clone();
+                        pending.insert(thread_id.clone(), change);
+                        retry_after.remove(&thread_id);
                     }
                     None => changes_open = false,
                 }
             }
             _ = poll.tick(), if !pending.is_empty() => {
-                let due = pending
-                    .keys()
-                    .filter(|thread_id| !recently_seen_upstream_for(
-                        &recent_upstream_threads,
-                        thread_id,
-                        suppression,
-                    ))
-                    .cloned()
-                    .collect::<Vec<_>>();
+                let now = Instant::now();
+                let due = pending.keys().filter(|thread_id| {
+                    retry_after.get(*thread_id).is_none_or(|retry_at| *retry_at <= now)
+                }).cloned().collect::<Vec<_>>();
                 for thread_id in due {
-                    let Some(change) = pending.remove(&thread_id) else {
+                    let Some(change) = pending.get(&thread_id).cloned() else {
                         continue;
                     };
-                    let payload = history.rollout_invalidation_event(change).await;
-                    if ingest.send(payload).await.is_err() {
-                        return;
+                    match history.rollout_invalidation_event(change).await {
+                        Ok(payload) => {
+                            pending.remove(&thread_id);
+                            retry_after.remove(&thread_id);
+                            if let Some(payload) = payload
+                                && ingest.send(payload).await.is_err() {
+                                    return;
+                                }
+                        }
+                        Err(error) => {
+                            tracing::warn!(thread_id, %error, "canonical rollout reconciliation failed");
+                            retry_after.insert(thread_id, Instant::now() + ROLLOUT_RECONCILIATION_RETRY);
+                        }
                     }
                 }
             }
@@ -1992,61 +1969,6 @@ async fn forward_rollout_changes_with_suppression(
             return;
         }
     }
-}
-
-fn event_thread_id(payload: &Value) -> Option<&str> {
-    payload
-        .get("params")
-        .and_then(Value::as_object)
-        .and_then(|params| {
-            params.get("threadId").and_then(Value::as_str).or_else(|| {
-                params
-                    .get("thread")
-                    .and_then(Value::as_object)
-                    .and_then(|thread| thread.get("id"))
-                    .and_then(Value::as_str)
-            })
-        })
-        .or_else(|| {
-            payload
-                .get(crate::thread_patch::THREAD_PATCH_FIELD)
-                .and_then(Value::as_object)
-                .and_then(|patch| patch.get("threadId"))
-                .and_then(Value::as_str)
-        })
-}
-
-fn remember_upstream_thread(recent: &std::sync::Mutex<HashMap<String, Instant>>, thread_id: &str) {
-    let now = Instant::now();
-    let mut recent = match recent.lock() {
-        Ok(recent) => recent,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if recent.len() >= MAX_RECENT_UPSTREAM_THREADS {
-        recent.retain(|_thread_id, seen_at| {
-            now.saturating_duration_since(*seen_at) <= ROLLOUT_UPSTREAM_SUPPRESSION
-        });
-    }
-    recent.insert(thread_id.to_owned(), now);
-}
-
-fn recently_seen_upstream_for(
-    recent: &std::sync::Mutex<HashMap<String, Instant>>,
-    thread_id: &str,
-    suppression: Duration,
-) -> bool {
-    let now = Instant::now();
-    let mut recent = match recent.lock() {
-        Ok(recent) => recent,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let is_recent = recent
-        .get(thread_id)
-        .is_some_and(|seen_at| now.saturating_duration_since(*seen_at) <= suppression);
-    if !is_recent {
-        recent.remove(thread_id);
-    }
-    is_recent
 }
 
 async fn send_local_rpc_result(
@@ -4136,25 +4058,6 @@ mod tests {
     }
 
     #[test]
-    fn extracts_thread_ids_from_raw_and_projected_events() {
-        assert_eq!(
-            event_thread_id(&json!({"params": {"threadId": "raw"}})),
-            Some("raw")
-        );
-        assert_eq!(
-            event_thread_id(&json!({
-                "params": {},
-                "codewideThreadPatch": {
-                    "version": 1,
-                    "threadId": "projected",
-                    "operation": {"kind": "threadInvalidated"}
-                }
-            })),
-            Some("projected")
-        );
-    }
-
-    #[test]
     fn live_broadcast_signal_cannot_retain_event_payloads() {
         assert!(
             std::mem::size_of::<DurableSignal>() <= 16,
@@ -4275,24 +4178,8 @@ mod tests {
         assert_eq!(payloads[1]["futureField"], 2);
     }
 
-    #[test]
-    fn suppresses_only_recent_upstream_rollout_echoes() {
-        let recent = std::sync::Mutex::new(HashMap::new());
-        remember_upstream_thread(&recent, "thread");
-        assert!(recently_seen_upstream_for(
-            &recent,
-            "thread",
-            ROLLOUT_UPSTREAM_SUPPRESSION
-        ));
-        assert!(!recently_seen_upstream_for(
-            &recent,
-            "other",
-            ROLLOUT_UPSTREAM_SUPPRESSION
-        ));
-    }
-
     #[tokio::test]
-    async fn recent_rollout_echo_becomes_one_trailing_reconciliation()
+    async fn rollout_echoes_publish_one_semantic_reconciliation_without_a_silence_window()
     -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let directory = tempfile::tempdir()?;
         let thread_id = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
@@ -4315,9 +4202,7 @@ mod tests {
             Arc::new(crate::catalog::SessionCatalog::scan(directory.path())),
             store,
         );
-        let recent = Arc::new(std::sync::Mutex::new(HashMap::new()));
-        remember_upstream_thread(&recent, thread_id);
-        let (change_tx, mut change_rx) = tokio::sync::mpsc::channel(4);
+        let (change_tx, change_rx) = tokio::sync::mpsc::channel(4);
         let (ingest_tx, mut ingest_rx) = tokio::sync::mpsc::channel(4);
         for _ in 0..2 {
             change_tx
@@ -4329,27 +4214,16 @@ mod tests {
                 .await?;
         }
         drop(change_tx);
-        let forwarder = tokio::spawn(async move {
-            forward_rollout_changes_with_suppression(
-                &mut change_rx,
-                history,
-                ingest_tx,
-                recent,
-                Arc::new(std::sync::RwLock::new(None)),
-                Duration::from_millis(30),
-            )
-            .await;
-        });
+        let forwarder = tokio::spawn(forward_rollout_changes(
+            change_rx,
+            history,
+            ingest_tx,
+            Arc::new(std::sync::RwLock::new(None)),
+        ));
 
-        assert!(
-            tokio::time::timeout(Duration::from_millis(10), ingest_rx.recv())
-                .await
-                .is_err(),
-            "an upstream echo must stay suppressed during its live window"
-        );
         let repaired = tokio::time::timeout(Duration::from_millis(300), ingest_rx.recv())
             .await?
-            .ok_or("trailing reconciliation was not emitted")?;
+            .ok_or("semantic reconciliation was not emitted")?;
         assert_eq!(repaired["method"], "companion/thread/invalidated");
         assert_eq!(repaired["params"]["threadId"], thread_id);
         forwarder.await?;

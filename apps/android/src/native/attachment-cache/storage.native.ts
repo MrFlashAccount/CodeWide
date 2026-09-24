@@ -89,6 +89,7 @@ function parseEntry(value: unknown, key: string): CachedAttachment | null {
   }
   const bytes: unknown = Reflect.get(value, "bytes");
   const touchedAt: unknown = Reflect.get(value, "touchedAt");
+  const scopeKey: unknown = Reflect.get(value, "scopeKey");
   if (
     typeof bytes !== "number" ||
     !Number.isSafeInteger(bytes) ||
@@ -98,5 +99,14 @@ function parseEntry(value: unknown, key: string): CachedAttachment | null {
   ) {
     return null;
   }
-  return { bytes, key, touchedAt };
+  return {
+    bytes,
+    key,
+    touchedAt,
+    ...parseScopeKey(scopeKey),
+  };
+}
+
+function parseScopeKey(value: unknown): { scopeKey?: string } {
+  return typeof value === "string" && KEY.test(value) ? { scopeKey: value } : {};
 }

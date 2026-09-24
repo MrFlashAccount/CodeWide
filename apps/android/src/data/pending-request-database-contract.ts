@@ -7,6 +7,7 @@ export type PendingRequestDatabase = {
   claim: (connectionId: string, requestKey: string) => boolean;
   close: () => void;
   collection: Collection<PendingServerRequest, string>;
+  deleteConnection: (connectionId: string) => Promise<void>;
   release: (connectionId: string, requestKey: string) => void;
   replace: (connectionId: string, requests: SyncServerRequest[]) => void;
 };

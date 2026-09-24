@@ -102,6 +102,7 @@ type NativeBridge = {
   removePortForward: (profileId: string) => Promise<void>;
   resetSocket: (connectionId: string, reason: string) => void;
   resizeTerminal?: (sessionId: string, cols: number, rows: number) => Promise<void>;
+  revokeStoredConnection?: (connectionId: string) => Promise<void>;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
   // oxlint-disable-next-line eslint/max-params
   saveConnectionCredentials: (
@@ -411,6 +412,17 @@ export async function deleteNativeConnection(connectionId: string): Promise<void
     throw new Error("Native connection storage is unavailable");
   }
   await bridge.deleteConnectionCredentials(connectionId);
+}
+
+export async function revokeRemoteConnection(connectionId: string): Promise<void> {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.revokeStoredConnection !== "function"
+  ) {
+    throw new Error("Update the Android app before removing this paired device");
+  }
+  await bridge.revokeStoredConnection(connectionId);
 }
 
 export async function setNativeConnectionEnabled(

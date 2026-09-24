@@ -10,6 +10,7 @@ import type { AccountPoolSnapshot } from "./account-pool";
 export type AccountRateLimitsDatabase = {
   close: () => void;
   collection: Collection<AccountRateLimitsRow, string>;
+  deleteConnection: (connectionId: string) => Promise<void>;
   get: (connectionId: string) => AccountRateLimitsRow | null;
   markError: (connectionId: string, error: string) => void;
   markLoading: (connectionId: string) => void;

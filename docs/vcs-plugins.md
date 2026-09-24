@@ -9,10 +9,17 @@ executes `git worktree`, `arc-wt`, or another provider command itself.
 
 ## Provider selection
 
-1. Enabled external providers run by descending priority.
-2. Error `-32004` means “workspace not owned” and permits the next provider.
-3. Every other provider error is terminal. In particular, a failing Arc
-   provider is never hidden by Git or rollout-history fallback.
+1. A removed workspace is unsupported before any provider starts. Enabled
+   providers are asked to inspect the workspace in descending priority order.
+2. A provider advertising `vcs.inspect@1` receives `vcs.inspect` before any
+   changes or diff request. It must claim the workspace with its repository
+   identity or return `-32004` (“workspace not owned”). Older providers use
+   `workspace.inspect` when available, then their existing `vcs.changes`
+   ownership response as the final compatibility path.
+3. An unavailable executable cannot claim a workspace. Its startup error is
+   retained while lower-priority providers are inspected; if none claims the
+   workspace, that error is returned. Once a provider claims ownership, every
+   operation error is terminal and no other provider is tried.
 4. The bundled Git executable is installed as the lowest-priority provider.
 5. Rollout-projected changes are retained only when no VCS provider owns the
    workspace. Attachments always remain rollout-derived.
@@ -29,7 +36,7 @@ Content-Length: <bytes>\r\n
 ```
 
 The current protocol version is `1`. The companion starts a provider for one
-bounded operation, sends `initialize`, then the requested VCS method, and
+bounded operation, sends `initialize`, then the ownership probe or requested VCS method, and
 closes stdin. The executable path is absolute and no shell is involved.
 
 ### `initialize`
@@ -40,12 +47,20 @@ Request parameters:
 {
   "protocolVersion": 1,
   "client": { "name": "codewide-companion" },
-  "capabilities": ["vcs.changes@2"]
+  "capabilities": ["vcs.inspect@1", "vcs.changes@2"]
 }
 ```
 
 The result must contain the same `protocolVersion`, the configured provider
 id, and every supported method in `capabilities`.
+
+### `vcs.inspect`
+
+An optional capability `vcs.inspect@1` lets a provider decide whether one
+absolute workspace belongs to it without collecting changes. The response
+contains `capability`, `provider`, and an absolute `repositoryRoot`; a provider
+that does not own the folder returns `-32004`. The companion does not infer
+ownership from provider names, filesystem markers, or repository layout.
 
 ### `vcs.changes`
 

@@ -6,10 +6,22 @@ import Foundation
 final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
     private let core: CoreHost
     private let runtimeExecutablePath: String
+    private let selectionStore: AppServerSelectionStore
+    private let selectedCodexHome: URL
+    private let userHome: URL
 
-    init(core: CoreHost, runtimeExecutablePath: String) {
+    init(
+        core: CoreHost,
+        runtimeExecutablePath: String,
+        selectionStore: AppServerSelectionStore,
+        selectedCodexHome: URL,
+        userHome: URL
+    ) {
         self.core = core
         self.runtimeExecutablePath = runtimeExecutablePath
+        self.selectionStore = selectionStore
+        self.selectedCodexHome = selectedCodexHome
+        self.userHome = userHome
     }
 
     func health(
@@ -31,6 +43,50 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
             reply(payload(from: health), nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 exit(EXIT_SUCCESS)
+            }
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    func appServer(
+        withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
+    ) {
+        reply(currentAppServerPayload(), nil)
+    }
+
+    func discoverAppServers(
+        withReply reply: @escaping @Sendable (AppServerListPayload?, NSError?) -> Void
+    ) {
+        do {
+            let candidates = try core.discoverAppServers(homeDirectory: userHome.path)
+            reply(
+                AppServerListPayload(servers: candidates.map { appServerPayload(from: $0) }),
+                nil
+            )
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    func selectAppServer(
+        id: String,
+        withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
+    ) {
+        do {
+            let candidates = try core.discoverAppServers(homeDirectory: userHome.path)
+            guard let candidate = candidates.first(where: { $0.id == id }) else {
+                throw RuntimeServiceError.appServerNotFound
+            }
+            guard case .available = candidate.availability else {
+                throw RuntimeServiceError.appServerUnavailable
+            }
+            try selectionStore.save(codexHome: candidate.codexHome)
+            reply(appServerPayload(from: candidate, selected: true), nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                // The LaunchAgent restarts unsuccessful exits. A successful
+                // exit is reserved for Sparkle's deliberate update shutdown.
+                exit(EXIT_FAILURE)
             }
         } catch {
             reply(nil, error as NSError)
@@ -143,5 +199,60 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
             connection: status.connection,
             publicEndpoint: status.publicEndpoint
         )
+    }
+
+    private func currentAppServerPayload() -> AppServerPayload {
+        let state: AppServerState = switch core.appServerConnection() {
+        case let .live(version):
+            .available(version: version)
+        case let .reconnecting(lastKnownVersion):
+            .unavailable(lastKnownVersion: lastKnownVersion)
+        }
+        return AppServerPayload(
+            id: selectedCodexHome.path,
+            displayName: displayName(for: selectedCodexHome),
+            codexHome: selectedCodexHome.path,
+            state: state,
+            selected: true
+        )
+    }
+
+    private func appServerPayload(
+        from candidate: FfiAppServerCandidate,
+        selected: Bool? = nil
+    ) -> AppServerPayload {
+        let state: AppServerState = switch candidate.availability {
+        case let .available(version):
+            .available(version: version)
+        case .unavailable:
+            .unavailable(lastKnownVersion: nil)
+        }
+        return AppServerPayload(
+            id: candidate.id,
+            displayName: candidate.displayName,
+            codexHome: candidate.codexHome,
+            state: state,
+            selected: selected ?? candidate.selected
+        )
+    }
+
+    private func displayName(for codexHome: URL) -> String {
+        codexHome.lastPathComponent == ".codex"
+            ? "Default"
+            : String(codexHome.lastPathComponent.dropFirst(".codex-".count))
+    }
+}
+
+private enum RuntimeServiceError: LocalizedError {
+    case appServerNotFound
+    case appServerUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .appServerNotFound:
+            "The selected Codex App Server is no longer available."
+        case .appServerUnavailable:
+            "The selected Codex App Server did not answer its initialize handshake."
+        }
     }
 }

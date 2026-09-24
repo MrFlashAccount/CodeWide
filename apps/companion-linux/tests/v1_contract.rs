@@ -134,7 +134,7 @@ fn companion_implements_the_frozen_v1_contract() -> Result<(), Box<dyn std::erro
             expected.archived
         );
     }
-    assert_eq!(contract.http_routes.len(), 20);
+    assert_eq!(contract.http_routes.len(), 21);
     assert_eq!(contract.rpc_policy.method_filter, "none");
     assert_eq!(
         contract.rpc_policy.unknown_method_handling,

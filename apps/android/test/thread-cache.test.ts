@@ -36,6 +36,21 @@ describe("Android thread cache bounds", () => {
     expect(value).toBe("Покажи картинку");
   });
 
+  it("uses the authored realtime input for the latest user preview", () => {
+    const value = latestThreadMessagePreview(threadWithTurns([
+      { id: "turn-1", items: [{
+        type: "userMessage",
+        content: [{
+          type: "text",
+          text: "<realtime_delegation><input>Покажи эту реплику</input><transcript_delta>assistant: hidden</transcript_delta></realtime_delegation>",
+          text_elements: [],
+        }],
+      }] },
+    ]));
+
+    expect(value).toBe("Покажи эту реплику");
+  });
+
   it("projects Markdown as a compact plain-text thread subtitle", () => {
     const value = latestThreadMessagePreview(threadWithTurns([
       { id: "turn-1", items: [{

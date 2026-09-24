@@ -16,6 +16,29 @@ afterEach(() => {
 });
 
 describe("Legend remote project catalog", () => {
+  it("forgets only the deleted server and ignores its late refresh", async () => {
+    const refresh = Promise.withResolvers<RemoteProject[]>();
+    const deleteCached = vi.fn(async () => undefined);
+    const model = createRemoteProjectCatalogModel({
+      cache: {
+        delete: deleteCached,
+        read: async (connectionId) => [project(`/${connectionId}`)],
+        write: async () => undefined,
+      },
+    });
+    await Promise.all([
+      model.resource("removed", "connecting", null).peek(),
+      model.resource("kept", "connecting", null).peek(),
+    ]);
+    model.resource("removed", "live", async () => await refresh.promise);
+    await model.forgetConnection("removed");
+    refresh.resolve([project("/late")]);
+    await Promise.resolve();
+    expect(deleteCached).toHaveBeenCalledExactlyOnceWith("removed");
+    expect(model.snapshot$.projectsByConnection.peek()).toEqual({ kept: [project("/kept")] });
+    model.clear();
+  });
+
   it("publishes the durable catalog before a connection can refresh it", async () => {
     const cached = { ...project("/cached"), pinned: true };
     const write = vi.fn(async () => undefined);

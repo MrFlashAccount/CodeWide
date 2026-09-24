@@ -1,5 +1,5 @@
 import { useSelector } from "@legendapp/state/react";
-import { createElement, useEffect, useState } from "react";
+import { createElement, useEffect, useState, useSyncExternalStore } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RouteUnavailable } from "../components/navigation/RouteUnavailable";
@@ -47,7 +47,7 @@ import {
   threadRouteSessionOwner,
   workspaceRouteSessionOwner,
 } from "../services/threads/threadRouteParams";
-import { useRouteSessionLifetime } from "../services/useRouteSessionLifetime";
+import { routeSessionSnapshot, subscribeRouteSessions } from "../services/routeSessionPolicy";
 import type { WorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { useEvent } from "../react/useEvent";
 import { useAppNotice } from "../ui/useAppNotice";
@@ -170,6 +170,18 @@ function sidebarSearchContent({
           threads: resources.list.scopedThreads,
           voiceRuntime: searchVoiceRuntime,
         });
+}
+
+function useSearchSessionRetention(sessionId: string | null): void {
+  useSyncExternalStore(subscribeRouteSessions, routeSessionSnapshot, routeSessionSnapshot);
+  useEffect(() => {
+    if (sessionId === null) {
+      return undefined;
+    }
+    // Search can briefly leave the active route while a selected result is pushed.
+    // Explicit close, workspace teardown, and idle expiry own its retirement.
+    return searchRouteSessions.retain(sessionId, workspaceRouteSessionOwner);
+  }, [sessionId]);
 }
 
 /** Composes the mounted V1 route resources, list chrome, and active destination slot. */
@@ -378,13 +390,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     searchEntry,
     startRemote: startSearchVoiceTranscription,
   });
-  useRouteSessionLifetime(
-    searchEntry?.id ?? null,
-    (entryId) => {
-      searchRouteSessions.close(entryId);
-    },
-    (entryId) => searchRouteSessions.retain(entryId, workspaceRouteSessionOwner),
-  );
+  useSearchSessionRetention(searchEntry?.id ?? null);
   const sidebarSearch = sidebarSearchContent({
     closeGlobalSearch,
     resources,

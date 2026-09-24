@@ -217,7 +217,7 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
     .await?;
     assert_eq!(bootstrap_challenge_status, StatusCode::FORBIDDEN);
     let second_identity = test_device_identity()?;
-    let _ = secure_pair_and_authorize(
+    let (_, second_device_id, second_capability) = secure_pair_and_authorize(
         &public_client,
         &control_client,
         &public_base,
@@ -302,12 +302,42 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
             .get("secureTransportRequired")
             .is_none()
     );
-    control_client
-        .delete(format!("{control_base}/v1/devices/{device_id}"))
+    assert_eq!(
+        public_client
+            .delete(format!("{public_base}/v1/device"))
+            .bearer_auth(&capability)
+            .send()
+            .await?
+            .status(),
+        StatusCode::NOT_FOUND,
+        "self revocation must stay inside device-bound TLS"
+    );
+    let (mismatched_revoke, _) = tunneled_delete_request(
+        public_address,
+        &certificate,
+        &device_identity,
+        Some(&second_capability),
+    )
+    .await?;
+    assert_eq!(mismatched_revoke, StatusCode::UNAUTHORIZED);
+    let (revoke_status, revoke_body) =
+        tunneled_delete_request(public_address, &certificate, &device_identity, None).await?;
+    assert_eq!(revoke_status, StatusCode::OK);
+    assert_eq!(revoke_body, json!({"revoked": true}));
+    let remaining: Value = control_client
+        .get(format!("{control_base}/v1/devices"))
         .bearer_auth(ADMIN_TOKEN)
         .send()
         .await?
-        .error_for_status()?;
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(
+        remaining["devices"]
+            .as_array()
+            .is_some_and(|devices| { devices.len() == 1 && devices[0]["id"] == second_device_id })
+    );
+    assert_ne!(device_id, second_device_id);
     assert!(
         tunneled_json_request(
             public_address,
@@ -322,6 +352,12 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
         .is_err(),
         "revocation must reject the next TLS handshake"
     );
+    control_client
+        .delete(format!("{control_base}/v1/devices/{second_device_id}"))
+        .bearer_auth(ADMIN_TOKEN)
+        .send()
+        .await?
+        .error_for_status()?;
     public_task.abort();
     bootstrap_task.abort();
     inner_task.abort();
@@ -469,6 +505,45 @@ async fn tunneled_json_request(
     bearer: Option<&str>,
     body: &Value,
 ) -> Result<(StatusCode, Value), Box<dyn std::error::Error + Send + Sync>> {
+    tunneled_http_request(
+        address,
+        certificate,
+        tunnel_path,
+        identity,
+        path,
+        bearer,
+        ("POST", Some(body)),
+    )
+    .await
+}
+
+async fn tunneled_delete_request(
+    address: std::net::SocketAddr,
+    certificate: &[u8],
+    identity: &TestDeviceIdentity,
+    bearer: Option<&str>,
+) -> Result<(StatusCode, Value), Box<dyn std::error::Error + Send + Sync>> {
+    tunneled_http_request(
+        address,
+        certificate,
+        "/v1/e2ee-tunnel",
+        Some(identity),
+        "/v1/device",
+        bearer,
+        ("DELETE", None),
+    )
+    .await
+}
+
+async fn tunneled_http_request(
+    address: std::net::SocketAddr,
+    certificate: &[u8],
+    tunnel_path: &str,
+    identity: Option<&TestDeviceIdentity>,
+    path: &str,
+    bearer: Option<&str>,
+    method_and_body: (&str, Option<&Value>),
+) -> Result<(StatusCode, Value), Box<dyn std::error::Error + Send + Sync>> {
     let (mut socket, _) = connect_async(format!("ws://{address}{tunnel_path}")).await?;
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from(certificate.to_vec()))?;
@@ -486,12 +561,13 @@ async fn tunneled_json_request(
     )?;
     drive_inner_tls(&mut socket, &mut tls).await?;
 
-    let body = serde_json::to_vec(body)?;
+    let (method, body) = method_and_body;
+    let body = body.map_or_else(|| Ok(Vec::new()), serde_json::to_vec)?;
     let authorization = bearer.map_or_else(String::new, |token| {
         format!("Authorization: Bearer {token}\r\n")
     });
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: codewide-companion\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: codewide-companion\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     tls.writer().write_all(request.as_bytes())?;

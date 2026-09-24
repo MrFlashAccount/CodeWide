@@ -115,6 +115,11 @@ export async function deleteNativeConnection(_connectionId: string): Promise<voi
   return unavailable;
 }
 
+export async function revokeRemoteConnection(_connectionId: string): Promise<void> {
+  const unavailable = await androidOnly("Paired device removal is available on Android only");
+  return unavailable;
+}
+
 export async function setNativeConnectionEnabled(
   _connectionId: string,
   _enabled: boolean,

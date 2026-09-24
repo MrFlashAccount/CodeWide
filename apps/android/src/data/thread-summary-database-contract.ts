@@ -32,6 +32,7 @@ export type ThreadSummaryDatabase = {
   beginCatalogRead: (connectionId: string) => ThreadCatalogRead;
   beginDelete: (connectionId: string, threadId: string, commandId: string) => Promise<void>;
   close: () => void;
+  deleteConnection: (connectionId: string) => Promise<void>;
   /** Satisfies catalog demand and reports whether remote cursors or the persisted range can continue. */
   ensureCatalog: (request: ThreadSummaryViewRequest) => Promise<boolean>;
   get: (connectionId: string, threadId: string) => Promise<StoredThreadSummary | null>;

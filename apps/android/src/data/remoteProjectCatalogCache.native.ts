@@ -46,6 +46,14 @@ function decodeCachedProjects(value: unknown): RemoteProject[] {
 
 /** Point-read stale-while-refresh cache for the reconstructable project catalog. */
 export const remoteProjectCatalogCache = {
+  async delete(connectionId: string): Promise<void> {
+    const operation = writeQueue.then(async () => {
+      await ensurePrepared();
+      await getDatabase().execute(`DELETE FROM ${TABLE} WHERE connection_id = ?`, [connectionId]);
+    });
+    writeQueue = operation.catch(() => undefined);
+    return operation;
+  },
   async read(connectionId: string): Promise<RemoteProject[]> {
     await ensurePrepared();
     const result = await getDatabase().execute(

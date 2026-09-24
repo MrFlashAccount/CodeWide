@@ -13,6 +13,7 @@ mod plugin;
 pub use plugin::{PluginRegistry, VcsPluginConfig};
 
 pub const CHANGES_CAPABILITY: &str = "vcs.changes@2";
+pub const INSPECT_CAPABILITY: &str = "vcs.inspect@1";
 pub const DIFF_CAPABILITY: &str = "vcs.diff@2";
 pub const DIFF_PAGE_CAPABILITY: &str = "vcs.diffPage@1";
 pub const WORKSPACE_CREATE_CAPABILITY: &str = "workspace.create@1";
@@ -58,10 +59,10 @@ impl VcsService {
 
     /// Resolves the first provider that explicitly owns the workspace.
     ///
-    /// Providers run in configured priority order. A provider may decline a
-    /// workspace with the contract's `workspace_not_owned` error; every other
-    /// provider error is terminal so a failing owner cannot be silently hidden
-    /// by another provider.
+    /// Providers run in configured priority order and inspect the workspace
+    /// before any changes are requested. A provider may decline with the
+    /// contract's `workspace_not_owned` error. Once it claims ownership, its
+    /// operation errors are terminal.
     ///
     /// # Errors
     ///
@@ -73,33 +74,25 @@ impl VcsService {
         scope: VcsScope,
     ) -> Result<VcsSnapshot, VcsError> {
         validate_workspace(workspace)?;
-        for plugin in self.registry.enabled_plugins()? {
-            if scope == VcsScope::Uncommitted && plugin.id == "arc" {
-                match arc_uncommitted::resolve(&plugin, workspace).await {
-                    Ok(resolved) => return Ok(resolved.snapshot()),
-                    Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
-                    Err(error) => return Err(VcsError::Plugin(format!("{}: {error}", plugin.id))),
-                }
-            }
-            match plugin::changes(&plugin, workspace, scope).await {
-                Ok(mut snapshot) => {
-                    if plugin.id == "arc" {
-                        arc_uncommitted::advertise(&mut snapshot);
-                    }
-                    return Ok(snapshot);
-                }
-                Err(plugin::PluginCallError::WorkspaceNotOwned) => {}
-                Err(error) => {
-                    return Err(VcsError::Plugin(format!("{}: {error}", plugin.id)));
-                }
-            }
+        let plugin = self.owning_plugin(workspace, scope).await?;
+        if scope == VcsScope::Uncommitted && plugin.id == "arc" {
+            return arc_uncommitted::resolve(&plugin, workspace)
+                .await
+                .map(arc_uncommitted::Resolved::snapshot)
+                .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)));
         }
-        Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf()))
+        let mut snapshot = plugin::changes(&plugin, workspace, scope)
+            .await
+            .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)))?;
+        if plugin.id == "arc" {
+            arc_uncommitted::advertise(&mut snapshot);
+        }
+        Ok(snapshot)
     }
 
     /// Reads one file diff from the same provider that owns the workspace.
     ///
-    /// Provider ownership is resolved through `vcs.changes` first. This keeps
+    /// Provider ownership is resolved through inspection first. This keeps
     /// capability fallback honest: a provider that owns a workspace but fails
     /// to produce its diff may not be hidden by another provider.
     ///
@@ -118,29 +111,21 @@ impl VcsService {
         if !path.is_absolute() {
             return Err(VcsError::InvalidWorkspace(path.to_path_buf()));
         }
-        for plugin in self.registry.enabled_plugins()? {
-            if scope == VcsScope::Uncommitted && plugin.id == "arc" {
-                let resolved = match arc_uncommitted::resolve(&plugin, workspace).await {
-                    Ok(resolved) => resolved,
-                    Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
-                    Err(error) => return Err(VcsError::Plugin(format!("{}: {error}", plugin.id))),
-                };
-                return resolved.diff(&plugin, workspace, path).await;
-            }
-            let snapshot = match plugin::changes(&plugin, workspace, scope).await {
-                Ok(snapshot) => snapshot,
-                Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
-                Err(error) => {
-                    return Err(VcsError::Plugin(format!("{}: {error}", plugin.id)));
-                }
-            };
-            let file = find_snapshot_file(&snapshot, path)
-                .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
-            return plugin::diff(&plugin, workspace, file, &snapshot.snapshot_id, scope)
+        let plugin = self.owning_plugin(workspace, scope).await?;
+        if scope == VcsScope::Uncommitted && plugin.id == "arc" {
+            let resolved = arc_uncommitted::resolve(&plugin, workspace)
                 .await
-                .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)));
+                .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)))?;
+            return resolved.diff(&plugin, workspace, path).await;
         }
-        Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf()))
+        let snapshot = plugin::changes(&plugin, workspace, scope)
+            .await
+            .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)))?;
+        let file = find_snapshot_file(&snapshot, path)
+            .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
+        plugin::diff(&plugin, workspace, file, &snapshot.snapshot_id, scope)
+            .await
+            .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)))
     }
 
     /// Reads one bounded page of a file diff without materializing the whole diff.
@@ -165,57 +150,49 @@ impl VcsService {
         if !path.is_absolute() {
             return Err(VcsError::InvalidWorkspace(path.to_path_buf()));
         }
-        for provider in self.registry.enabled_plugins()? {
-            if scope == VcsScope::Uncommitted && provider.id == "arc" {
-                // Arc's staged+unstaged compatibility scope has no native paged-diff
-                // protocol; a provider must advertise native uncommitted to page it.
-                let resolved = match arc_uncommitted::resolve(&provider, workspace).await {
-                    Ok(resolved) => resolved,
-                    Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
-                    Err(error) => {
-                        return Err(VcsError::Plugin(format!("{}: {error}", provider.id)));
-                    }
-                };
-                if let Some(snapshot) = resolved.native_snapshot() {
-                    let file = find_snapshot_file(snapshot, path)
-                        .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
-                    return plugin::diff_page(
-                        &provider,
-                        workspace,
-                        file,
-                        &snapshot.snapshot_id,
-                        scope,
-                        offset,
-                        limit,
-                    )
-                    .await
-                    .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)));
-                }
-                return Err(VcsError::UnsupportedScope {
-                    workspace: workspace.to_path_buf(),
+        let provider = self.owning_plugin(workspace, scope).await?;
+        if scope == VcsScope::Uncommitted && provider.id == "arc" {
+            // Arc's staged+unstaged compatibility scope has no native paged-diff
+            // protocol; a provider must advertise native uncommitted to page it.
+            let resolved = arc_uncommitted::resolve(&provider, workspace)
+                .await
+                .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)))?;
+            if let Some(snapshot) = resolved.native_snapshot() {
+                let file = find_snapshot_file(snapshot, path)
+                    .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
+                return plugin::diff_page(
+                    &provider,
+                    workspace,
+                    file,
+                    &snapshot.snapshot_id,
                     scope,
-                });
+                    offset,
+                    limit,
+                )
+                .await
+                .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)));
             }
-            let snapshot = match plugin::changes(&provider, workspace, scope).await {
-                Ok(snapshot) => snapshot,
-                Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
-                Err(error) => return Err(VcsError::Plugin(format!("{}: {error}", provider.id))),
-            };
-            let file = find_snapshot_file(&snapshot, path)
-                .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
-            return plugin::diff_page(
-                &provider,
-                workspace,
-                file,
-                &snapshot.snapshot_id,
+            return Err(VcsError::UnsupportedScope {
+                workspace: workspace.to_path_buf(),
                 scope,
-                offset,
-                limit,
-            )
-            .await
-            .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)));
+            });
         }
-        Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf()))
+        let snapshot = plugin::changes(&provider, workspace, scope)
+            .await
+            .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)))?;
+        let file = find_snapshot_file(&snapshot, path)
+            .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
+        plugin::diff_page(
+            &provider,
+            workspace,
+            file,
+            &snapshot.snapshot_id,
+            scope,
+            offset,
+            limit,
+        )
+        .await
+        .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)))
     }
 
     /// Resolves the provider that can create an isolated workspace for this
@@ -230,6 +207,8 @@ impl VcsService {
         workspace: &Path,
     ) -> Result<Option<WorkspaceSupport>, VcsError> {
         validate_workspace(workspace)?;
+        validate_existing_workspace(workspace)?;
+        let mut start_error = None;
         for plugin in self.registry.enabled_plugins()? {
             match plugin::workspace_support(&plugin, workspace).await {
                 Ok(support) => return Ok(Some(support)),
@@ -237,10 +216,17 @@ impl VcsService {
                     plugin::PluginCallError::WorkspaceNotOwned
                     | plugin::PluginCallError::CapabilityUnsupported,
                 ) => {}
+                Err(error @ plugin::PluginCallError::Start(_)) => {
+                    start_error
+                        .get_or_insert_with(|| VcsError::Plugin(format!("{}: {error}", plugin.id)));
+                }
                 Err(error) => {
                     return Err(VcsError::Plugin(format!("{}: {error}", plugin.id)));
                 }
             }
+        }
+        if let Some(error) = start_error {
+            return Err(error);
         }
         Ok(None)
     }
@@ -251,7 +237,7 @@ impl VcsService {
     /// # Errors
     ///
     /// Returns an error for invalid input, unsupported repositories, or a
-    /// provider failure. Provider failures are never hidden by fallback.
+    /// provider failure. Errors after a provider claims ownership are terminal.
     pub async fn create_workspace(
         &self,
         workspace: &Path,
@@ -289,6 +275,8 @@ impl VcsService {
         validate_workspace(workspace)?;
         validate_workspace(storage_root)?;
         validate_workspace_request_id(request_id)?;
+        validate_existing_workspace(workspace)?;
+        let mut start_error = None;
         for plugin in self.registry.enabled_plugins()? {
             match plugin::workspace_support(&plugin, workspace).await {
                 Ok(_) => {
@@ -306,12 +294,40 @@ impl VcsService {
                     plugin::PluginCallError::WorkspaceNotOwned
                     | plugin::PluginCallError::CapabilityUnsupported,
                 ) => {}
+                Err(error @ plugin::PluginCallError::Start(_)) => {
+                    start_error
+                        .get_or_insert_with(|| VcsError::Plugin(format!("{}: {error}", plugin.id)));
+                }
                 Err(error) => {
                     return Err(VcsError::Plugin(format!("{}: {error}", plugin.id)));
                 }
             }
         }
-        Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf()))
+        Err(start_error.unwrap_or_else(|| VcsError::UnsupportedWorkspace(workspace.to_path_buf())))
+    }
+
+    async fn owning_plugin(
+        &self,
+        workspace: &Path,
+        scope: VcsScope,
+    ) -> Result<VcsPluginConfig, VcsError> {
+        validate_existing_workspace(workspace)?;
+        let mut start_error = None;
+        for candidate in self.registry.enabled_plugins()? {
+            match plugin::inspect(&candidate, workspace, scope).await {
+                Ok(()) => return Ok(candidate),
+                Err(plugin::PluginCallError::WorkspaceNotOwned) => {}
+                Err(error @ plugin::PluginCallError::Start(_)) => {
+                    start_error.get_or_insert_with(|| {
+                        VcsError::Plugin(format!("{}: {error}", candidate.id))
+                    });
+                }
+                Err(error) => {
+                    return Err(VcsError::Plugin(format!("{}: {error}", candidate.id)));
+                }
+            }
+        }
+        Err(start_error.unwrap_or_else(|| VcsError::UnsupportedWorkspace(workspace.to_path_buf())))
     }
 }
 
@@ -948,6 +964,20 @@ fn validate_workspace(workspace: &Path) -> Result<(), VcsError> {
         Ok(())
     } else {
         Err(VcsError::InvalidWorkspace(workspace.to_path_buf()))
+    }
+}
+
+fn validate_existing_workspace(workspace: &Path) -> Result<(), VcsError> {
+    match std::fs::metadata(workspace) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf()))
+        }
+        Err(error) => Err(VcsError::Command(format!(
+            "could not inspect workspace {}: {error}",
+            workspace.display()
+        ))),
     }
 }
 

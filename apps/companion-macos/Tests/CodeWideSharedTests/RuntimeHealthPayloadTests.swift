@@ -56,3 +56,35 @@ import Testing
     #expect(decoded.devices[0].name == "Phone")
     #expect(decoded.devices[0].activeConnections == 2)
 }
+
+@Test func appServerPayloadsPreserveAvailabilityAndSelection() throws {
+    let original = AppServerListPayload(servers: [
+        AppServerPayload(
+            id: "default",
+            displayName: "Default",
+            codexHome: "/Users/test/.codex",
+            state: .available(version: "0.156.1"),
+            selected: true
+        ),
+        AppServerPayload(
+            id: "work",
+            displayName: "work",
+            codexHome: "/Users/test/.codex-work",
+            state: .unavailable(lastKnownVersion: "0.155.0"),
+            selected: false
+        ),
+    ])
+    let data = try NSKeyedArchiver.archivedData(
+        withRootObject: original,
+        requiringSecureCoding: true
+    )
+    let unarchived = try NSKeyedUnarchiver.unarchivedObject(
+        ofClass: AppServerListPayload.self,
+        from: data
+    )
+    let decoded = try #require(unarchived)
+    #expect(decoded.servers.count == 2)
+    #expect(decoded.servers[0].selected)
+    #expect(decoded.servers[0].state == .available(version: "0.156.1"))
+    #expect(decoded.servers[1].state == .unavailable(lastKnownVersion: "0.155.0"))
+}

@@ -52,7 +52,7 @@
     "@codewide/tanstack-db-sqlite": "workspace:*",
     "@expo/ui": "57.0.9",
     "@expo/vector-icons": "^15.1.1",
-    "@legendapp/list": "3.3.11",
+    "@legendapp/list": "3.4.0",
     "@legendapp/state": "2.1.15",
     "@native-html/render": "1.0.3",
     "@noble/hashes": "2.0.1",

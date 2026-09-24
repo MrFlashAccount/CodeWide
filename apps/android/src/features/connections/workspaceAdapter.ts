@@ -1,6 +1,5 @@
 import { randomUUID } from "expo-crypto";
 import { PermissionsAndroid, Platform } from "react-native";
-import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
 import { composerUploads } from "../../data/composer-uploads";
 import type { ConnectionProfileDatabase } from "../../data/connection-profile-database";
 import type { StoredConnection } from "../../data/connection-profile-types";
@@ -11,13 +10,13 @@ import {
   type ConnectionInput,
   type ConnectionUpdateInput,
 } from "../../data/connection-validation";
-import type { ThreadUiStateDatabase } from "../../data/thread-ui-state-database";
 import type { WorkspaceSyncSession } from "../../data/workspace-session";
 import {
   claimNativePairing,
   deleteNativeConnection,
   listNativeConnectionConfigs,
   reconnectNativeConnection,
+  revokeRemoteConnection,
   saveNativeConnectionCredentials,
   setNativeConnectionEnabled,
   wakeNativeConnection,
@@ -28,24 +27,24 @@ import type { ConnectionsWorkspaceCapabilities } from "./workspaceCapabilities";
 export function createConnectionsWorkspaceAdapter({
   closeCatalogWindows,
   currentConnections,
+  deleteLocalConnectionData,
   forgetHttpAuthorization,
   forgetObservedThread,
-  getAccountRateLimits,
+  forgetProjectCatalog,
   getConnectionState,
   getProfiles,
   getSession,
-  getThreadUiState,
   invalidateCatalog,
 }: {
   closeCatalogWindows: (connectionId: string) => void;
   currentConnections: () => StoredConnection[];
+  deleteLocalConnectionData: (connectionId: string) => Promise<void>;
   forgetHttpAuthorization: (connectionId: string) => void;
   forgetObservedThread: (connectionId: string) => void;
-  getAccountRateLimits: () => AccountRateLimitsDatabase | null;
+  forgetProjectCatalog: (connectionId: string) => Promise<void>;
   getConnectionState: () => ConnectionStateModel | null;
   getProfiles: () => ConnectionProfileDatabase | null;
   getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
-  getThreadUiState: () => ThreadUiStateDatabase | null;
   invalidateCatalog: (connectionId: string) => void;
 }): ConnectionsWorkspaceCapabilities {
   const refreshConnectionProfiles = async (): Promise<StoredConnection[]> =>
@@ -108,20 +107,18 @@ export function createConnectionsWorkspaceAdapter({
   };
 
   const deleteConnection = async (connectionId: string) => {
+    await revokeRemoteConnection(connectionId);
     composerUploads.deleteConnection(connectionId);
     getSession(connectionId)?.stop();
-    const finalizeSavedServerDelete = async () => {
-      await deleteNativeConnection(connectionId);
-      await requireConnectionProfileDatabase(getProfiles()).delete(connectionId);
-    };
-    await finalizeSavedServerDelete();
     forgetHttpAuthorization(connectionId);
     forgetObservedThread(connectionId);
     invalidateCatalog(connectionId);
+    await deleteLocalConnectionData(connectionId);
+    await forgetProjectCatalog(connectionId);
+    await deleteNativeConnection(connectionId);
+    await requireConnectionProfileDatabase(getProfiles()).delete(connectionId);
     await refreshConnectionProfiles();
     getConnectionState()?.remove(connectionId);
-    getAccountRateLimits()?.remove(connectionId);
-    await getThreadUiState()?.deleteConnection(connectionId);
   };
 
   const setConnectionEnabled = async (connectionId: string, enabled: boolean) => {

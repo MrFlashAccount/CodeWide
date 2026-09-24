@@ -4,7 +4,6 @@ import {
   processFile,
   type DiffLineAnnotation,
   type FileContents,
-  type FileDiffMetadata,
   type FileDiffOptions,
   type FileOptions,
   type LineAnnotation,
@@ -18,6 +17,7 @@ import {
   type TreeThemeInput,
 } from "@pierre/trees";
 import { canonicalPatch } from "./canonicalPatch.web";
+import { materializeBeforeSource as reconstructBeforeSource } from "./materializeRecordedDiff.web";
 
 import {
   CODE_REVIEW_BRIDGE_VERSION,
@@ -136,11 +136,16 @@ const workspaceHost = requiredElement("workspace");
 const fileHost = document.createElement("div");
 const diffHost = document.createElement("div");
 const patchHost = document.createElement("div");
+const patchFallbackLabel = document.createElement("div");
 const patchRenderers: { host: HTMLElement; renderer: FileDiff<AnnotationMetadata> }[] = [];
 fileHost.className = "pierre-preview-host";
 diffHost.className = "pierre-preview-host";
 patchHost.className = "pierre-preview-host";
 patchHost.hidden = true;
+patchFallbackLabel.className = "review-patch-fallback-label";
+patchFallbackLabel.textContent = "Recorded edits could not be aligned with the current file";
+patchFallbackLabel.hidden = true;
+patchHost.append(patchFallbackLabel);
 previewHost.replaceChildren(fileHost, diffHost, patchHost);
 
 // Pierre reports selection changes, not activation of an already selected file.
@@ -509,7 +514,7 @@ function renderRecordedPatches(
   mode: Exclude<CodeReviewViewMode, "source">,
   forceRender: boolean,
 ): void {
-  fileHost.hidden = true;
+  renderRecordedSource(payload, forceRender);
   diffHost.hidden = true;
   patchHost.hidden = false;
   while (patchRenderers.length > payload.patches.length) {
@@ -550,6 +555,17 @@ function renderRecordedPatches(
       lineAnnotations: diffAnnotations(payload),
     });
   }
+}
+
+function renderRecordedSource(payload: CodeReviewDocument, forceRender: boolean): void {
+  const showSource =
+    payload.fullFileDiff === true && payload.source !== "" && payload.displayState !== "deleted";
+  patchFallbackLabel.hidden = !showSource;
+  if (showSource) {
+    renderSource(payload, forceRender);
+    return;
+  }
+  fileHost.hidden = true;
 }
 
 function ensureFileRenderer(): PierreFile<AnnotationMetadata> {
@@ -629,64 +645,9 @@ function materializeBeforeSource(payload: CodeReviewDocument): string | null {
   if (materializedBefore.has(payload.revision)) {
     return materializedBefore.get(payload.revision) ?? null;
   }
-  const source = tryMaterializeBeforeSource(payload);
+  const source = reconstructBeforeSource(payload);
   rememberMaterialized(payload.revision, source);
   return source;
-}
-
-function tryMaterializeBeforeSource(payload: CodeReviewDocument): string | null {
-  const lines = payload.source.split("\n");
-  try {
-    return reverseRecordedPatches(payload, lines) ? lines.join("\n") : null;
-  } catch {
-    return null;
-  }
-}
-
-function reverseRecordedPatches(payload: CodeReviewDocument, lines: string[]): boolean {
-  for (let patchIndex = payload.patches.length - 1; patchIndex >= 0; patchIndex -= 1) {
-    const patch = payload.patches.at(patchIndex);
-    if (patch === undefined || patch.diff === "") {
-      continue;
-    }
-    const metadata = processFile(canonicalPatch(payload.path, patch), {
-      cacheKey: `${payload.revision}:patch:${String(patchIndex)}`,
-      throwOnError: true,
-    });
-    if (metadata === undefined || !reversePatch(lines, metadata)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function reversePatch(lines: string[], metadata: FileDiffMetadata): boolean {
-  for (let hunkIndex = metadata.hunks.length - 1; hunkIndex >= 0; hunkIndex -= 1) {
-    const hunk = metadata.hunks.at(hunkIndex);
-    if (hunk === undefined) {
-      continue;
-    }
-    const start = Math.max(0, hunk.additionStart - 1);
-    const after = metadata.additionLines
-      .slice(hunk.additionLineIndex, hunk.additionLineIndex + hunk.additionCount)
-      .map(stripLineEnding);
-    const before = metadata.deletionLines
-      .slice(hunk.deletionLineIndex, hunk.deletionLineIndex + hunk.deletionCount)
-      .map(stripLineEnding);
-    if (!sameLines(lines, start, after)) {
-      return false;
-    }
-    lines.splice(start, after.length, ...before);
-  }
-  return true;
-}
-
-function sameLines(lines: readonly string[], start: number, expected: readonly string[]): boolean {
-  return expected.every((line, offset) => lines[start + offset] === line);
-}
-
-function stripLineEnding(value: string): string {
-  return value.replace(/\r?\n$/, "");
 }
 
 function rememberMaterialized(revision: string, source: string | null): void {

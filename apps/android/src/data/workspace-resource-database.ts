@@ -93,6 +93,7 @@ type FileTransferRow = {
 
 export type WorkspaceResourceDatabase = {
   backgroundTerminals: LocalCollection<BackgroundTerminalsRow>;
+  deleteConnection: (connectionId: string) => Promise<void>;
   fileTransfers: LocalCollection<FileTransferRow>;
   putBackgroundTerminals: (row: Omit<BackgroundTerminalsRow, "updatedAt">) => void;
   putFileTransfer: (row: Omit<FileTransferRow, "updatedAt">) => void;
@@ -111,6 +112,11 @@ export type WorkspaceResourceDatabase = {
 };
 
 export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
+  const deletedConnections = new Set<string>();
+  const isDeleted = (id: string): boolean => {
+    const separator = id.indexOf("\u0000");
+    return deletedConnections.has(separator === -1 ? id : id.slice(0, separator));
+  };
   const threadHistories = createThreadHistoryModel();
   const turnControls = createTurnControlsCollection();
   const backgroundTerminals = createCollection(
@@ -146,34 +152,84 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
   const threadResources = createThreadResourcesModel();
   return {
     backgroundTerminals,
+    async deleteConnection(connectionId) {
+      deletedConnections.add(connectionId);
+      const prefix = `${connectionId}\u0000`;
+      for (const collection of [
+        backgroundTerminals,
+        threadGoals,
+        tunnels,
+        voiceInputs,
+        fileTransfers,
+      ]) {
+        const keys = collection.toArray
+          .filter((row) => row.id === connectionId || row.id.startsWith(prefix))
+          .map((row) => row.id);
+        if (keys.length > 0) {
+          await collection.delete(keys).isPersisted.promise;
+        }
+      }
+      const controlKeys = turnControls.toArray
+        .filter((row) => row.id.startsWith(prefix))
+        .map((row) => row.id);
+      if (controlKeys.length > 0) {
+        await turnControls.delete(controlKeys).isPersisted.promise;
+      }
+      threadHistories.forgetConnection(connectionId);
+      threadResources.forgetConnection(connectionId);
+    },
     fileTransfers,
     putBackgroundTerminals(row) {
+      if (deletedConnections.has(row.connectionId)) {
+        return;
+      }
       put(backgroundTerminals, { ...row, updatedAt: Date.now() });
       trimOldest(backgroundTerminals, 48);
     },
     putFileTransfer(row) {
+      if (isDeleted(row.id)) {
+        return;
+      }
       put(fileTransfers, { ...row, updatedAt: Date.now() });
       trimOldest(fileTransfers, 16);
     },
     putThreadGoal(row) {
+      if (deletedConnections.has(row.connectionId)) {
+        return;
+      }
       put(threadGoals, { ...row, updatedAt: Date.now() });
       trimOldest(threadGoals, 48);
     },
     putThreadHistory(row) {
+      if (deletedConnections.has(row.connectionId)) {
+        return;
+      }
       threadHistories.put(row);
     },
     putThreadResources(row) {
+      if (deletedConnections.has(row.connectionId)) {
+        return;
+      }
       threadResources.put({ ...row, updatedAt: Date.now() });
     },
     putTunnel(row) {
+      if (deletedConnections.has(row.connectionId)) {
+        return;
+      }
       put(tunnels, { ...row, updatedAt: Date.now() });
       trimOldest(tunnels, 24);
     },
     putTurnControls(row) {
+      if (isDeleted(row.id)) {
+        return;
+      }
       put(turnControls, { ...row, updatedAt: Date.now() });
       trimOldest(turnControls, 48);
     },
     putVoiceInput(row) {
+      if (isDeleted(row.id)) {
+        return;
+      }
       put(voiceInputs, { ...row, updatedAt: Date.now() });
       trimOldest(voiceInputs, 8);
     },

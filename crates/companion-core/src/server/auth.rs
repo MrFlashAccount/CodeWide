@@ -235,13 +235,38 @@ async fn device_revoke(
     if headers.get("origin").is_some() || !registry.authorize_admin(header_auth(&headers)).await {
         return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
     }
-    match registry.revoke(&device_id).await {
+    revoke_registered_device(&state, registry, &device_id).await
+}
+
+async fn device_self_revoke(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    tls: Option<axum::Extension<DeviceTlsConnectInfo>>,
+) -> Response {
+    let Some(registry) = registry(&state.authorization) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some() {
+        return json_error(StatusCode::UNAUTHORIZED, "browser_origin_rejected");
+    }
+    let Some(axum::Extension(tls)) = tls else {
+        return json_error(StatusCode::UNAUTHORIZED, "device_bound_transport_required");
+    };
+    revoke_registered_device(&state, registry, &tls.device_id).await
+}
+
+async fn revoke_registered_device(
+    state: &AppState,
+    registry: &DeviceRegistry,
+    device_id: &str,
+) -> Response {
+    match registry.revoke(device_id).await {
         Ok(revoked) => {
             if revoked && let Some(media) = &state.services.media {
-                media.purge_owner(&device_id);
+                media.purge_owner(device_id);
             }
             if revoked && let Some(image_previews) = &state.services.image_previews {
-                image_previews.purge_media_owner(&device_id);
+                image_previews.purge_media_owner(device_id);
             }
             let status = if revoked {
                 StatusCode::OK

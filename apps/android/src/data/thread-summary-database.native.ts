@@ -423,6 +423,25 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         appLogger.warnCaught({ error: error, event: "thread_summary.close.failed" });
       });
     },
+    async deleteConnection(connectionId) {
+      await writes.run(async () => {
+        const rows = await loadConnectionRows(connectionId);
+        if (rows.length === 0) {
+          return;
+        }
+        const changes = rows.map((row) => ({
+          key: threadSummaryKey(connectionId, row.remoteThreadId),
+          type: "delete" as const,
+        }));
+        storage.begin();
+        for (const change of changes) {
+          storage.write(change);
+        }
+        const checkpoint = storage.commit({ durable: true });
+        publishModelChanges(changes, true);
+        await checkpoint;
+      });
+    },
     async ensureCatalog(request) {
       const remoteContinuation = catalogLoader === null ? false : await catalogLoader(request);
       return remoteContinuation || storage.hasMoreViewRows(request);

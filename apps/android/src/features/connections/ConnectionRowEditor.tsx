@@ -110,18 +110,22 @@ export function ConnectionRowEditor({
     } else if (id === "edit") {
       setEditing(true);
     } else if (id === "delete") {
-      dialog.alert("Delete server?", `Remove ${connection.displayName} from this device?`, [
-        { style: "cancel", text: "Cancel" },
-        {
-          onPress: () => {
-            runAction(async () => {
-              await onDelete(connection.id);
-            }, "Could not delete server");
+      dialog.alert(
+        "Delete server?",
+        `Delete ${connection.displayName} and its data from this phone, and revoke this phone on Companion? Companion must be reachable.`,
+        [
+          { style: "cancel", text: "Cancel" },
+          {
+            onPress: () => {
+              runAction(async () => {
+                await onDelete(connection.id);
+              }, "Could not delete server");
+            },
+            style: "destructive",
+            text: "Delete",
           },
-          style: "destructive",
-          text: "Delete",
-        },
-      ]);
+        ],
+      );
     }
   };
   return (

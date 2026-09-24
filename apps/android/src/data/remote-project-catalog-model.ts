@@ -10,6 +10,7 @@ type RemoteProjectCatalogSnapshot = {
 
 export type RemoteProjectCatalogModel = {
   clear: () => void;
+  forgetConnection: (connectionId: string) => Promise<void>;
   mergeProject: (connectionId: string, project: RemoteProject) => void;
   resource: (
     connectionId: string,
@@ -34,6 +35,7 @@ type ProjectResource = {
 };
 
 type RemoteProjectCatalogCache = {
+  delete?: (connectionId: string) => Promise<void>;
   read: (connectionId: string) => Promise<RemoteProject[]>;
   write: (connectionId: string, projects: readonly RemoteProject[]) => Promise<void>;
 };
@@ -251,6 +253,19 @@ export function createRemoteProjectCatalogModel(
       resources.clear();
       retainCounts.clear();
       snapshot$.set({ errorsByConnection: {}, projectsByConnection: {} });
+    },
+    async forgetConnection(connectionId) {
+      const resource = resources.get(connectionId);
+      if (resource?.retryTimer !== null && resource?.retryTimer !== undefined) {
+        clearTimeout(resource.retryTimer);
+      }
+      resources.delete(connectionId);
+      retainCounts.delete(connectionId);
+      const snapshot = snapshot$.peek();
+      const { [connectionId]: _projects, ...projectsByConnection } = snapshot.projectsByConnection;
+      const { [connectionId]: _error, ...errorsByConnection } = snapshot.errorsByConnection;
+      snapshot$.set({ errorsByConnection, projectsByConnection });
+      await options.cache?.delete?.(connectionId);
     },
     mergeProject(connectionId, project) {
       const resource = resources.get(connectionId);

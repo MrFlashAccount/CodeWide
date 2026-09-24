@@ -33,6 +33,9 @@ export function ComposerMarkdownInput({
   const lastPlainText = useRef(externalValue);
   const lastMarkdown = useRef(externalValue);
   const discardNextMarkdown = useRef(false);
+  // Android emits text first for typing, but Markdown first for paste.
+  const textBeforeMarkdown = useRef(false);
+  const awaitingTextAfterMarkdown = useRef(false);
   const suggestions = useConstant(() => new ComposerSuggestions());
   const suggestionState = useSelector(() => suggestions.state$.get().value);
   const suggestionPopupOpen =
@@ -53,6 +56,8 @@ export function ComposerMarkdownInput({
     }
     lastPlainText.current = externalValue;
     lastMarkdown.current = externalValue;
+    textBeforeMarkdown.current = false;
+    awaitingTextAfterMarkdown.current = false;
     editor.current?.setValue(externalValue);
   }, [externalValue]);
 
@@ -108,12 +113,20 @@ export function ComposerMarkdownInput({
       paste.text.length > threshold
     ) {
       discardNextMarkdown.current = true;
+      textBeforeMarkdown.current = false;
+      awaitingTextAfterMarkdown.current = false;
       editor.current?.setValue(previous);
       editor.current?.setSelection(paste.start, paste.start);
       onLargePaste(paste);
       return;
     }
     lastPlainText.current = next;
+    if (awaitingTextAfterMarkdown.current) {
+      awaitingTextAfterMarkdown.current = false;
+      props.onChangeValue({ markdown: lastMarkdown.current, plainText: next });
+      return;
+    }
+    textBeforeMarkdown.current = true;
     lastMarkdown.current = next;
   });
   const changeMarkdown = useEvent((next: string) => {
@@ -122,6 +135,8 @@ export function ComposerMarkdownInput({
       return;
     }
     lastMarkdown.current = next;
+    awaitingTextAfterMarkdown.current = !textBeforeMarkdown.current;
+    textBeforeMarkdown.current = false;
     props.onChangeValue({ markdown: next, plainText: lastPlainText.current });
   });
   const changeSelection = useEvent((next: { end: number; start: number }) => {

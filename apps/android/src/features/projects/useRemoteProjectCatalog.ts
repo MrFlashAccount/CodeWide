@@ -22,6 +22,11 @@ const remoteProjectCatalogModel = createRemoteProjectCatalogModel({
   cache: remoteProjectCatalogCache,
 });
 
+/** Removes a deleted server from both the resident catalog and its disk cache. */
+export async function forgetRemoteProjectCatalogConnection(connectionId: string): Promise<void> {
+  await remoteProjectCatalogModel.forgetConnection(connectionId);
+}
+
 /**
  * React declares the demanded live connections. Legend owns Promise identity,
  * stale-while-refresh state and granular catalog publication.

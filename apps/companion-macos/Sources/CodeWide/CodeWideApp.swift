@@ -59,29 +59,29 @@ private struct CompanionPanel: View {
     @State private var revokingDeviceID: String?
     @State private var actionError: String?
     @State private var actionInProgress = false
+    @State private var pairAfterRelaySetup = false
+    @State private var dismissedError: String?
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
-            ScrollView {
-                VStack(spacing: 12) {
-                    relayCard
-                    devicesCard
-                    if let error = actionError ?? runtime.lastError ?? updates.lastError {
-                        errorBanner(error)
-                    }
-                }
-                .padding(14)
-            }
-            Divider()
+            overview
+            errorBanner
+            clients
             footer
         }
-        .frame(width: 390, height: 540)
+        .frame(width: 400, height: 560)
         .tint(CodeWideBrand.accent)
+        .task {
+            await runtime.discoverAppServers()
+        }
         .sheet(isPresented: $showsRelaySetup) {
             RelaySetupSheet { address, invitation in
                 try await runtime.pairRelay(address: address, invitationJSON: invitation)
+                if pairAfterRelaySetup {
+                    pairing = try await runtime.createPairing()
+                    pairAfterRelaySetup = false
+                }
             }
         }
         .sheet(
@@ -95,13 +95,13 @@ private struct CompanionPanel: View {
             }
         }
         .confirmationDialog(
-            "Revoke this device?",
+            "Revoke this client?",
             isPresented: Binding(
                 get: { revokingDeviceID != nil },
                 set: { if !$0 { revokingDeviceID = nil } }
             )
         ) {
-            Button("Revoke Device", role: .destructive) {
+            Button("Revoke Client", role: .destructive) {
                 guard let id = revokingDeviceID else { return }
                 revokingDeviceID = nil
                 runAction {
@@ -110,125 +110,200 @@ private struct CompanionPanel: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("It will be disconnected immediately and must be paired again.")
+            Text("It will be disconnected immediately and must be added again.")
         }
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 11) {
             ZStack {
                 Circle()
-                    .fill(statusColor.opacity(0.16))
-                    .frame(width: 34, height: 34)
-                Image(systemName: "bolt.fill")
+                    .fill(appServerColor.opacity(0.14))
+                Image(systemName: "server.rack")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(statusColor)
             }
+            .frame(width: 32, height: 32)
+
             VStack(alignment: .leading, spacing: 2) {
-                Text("CodeWide Companion")
-                    .font(.headline)
-                Text(runtime.status)
+                appServerPicker
+                Text(appServerSummary)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(appServerColor)
+                    .lineLimit(1)
             }
-            Spacer()
+
+            Spacer(minLength: 12)
+
             Button {
-                Task { await runtime.refresh() }
+                beginPairing()
+            } label: {
+                Image(systemName: "person.badge.plus")
+            }
+            .buttonStyle(.glass)
+            .help("Add client")
+            .disabled(runtime.health == nil || actionInProgress)
+
+            Button {
+                Task {
+                    await runtime.refresh()
+                    await runtime.discoverAppServers()
+                }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
             .help("Refresh")
         }
-        .padding(14)
+        .padding(.horizontal, 16)
+        .padding(.top, 15)
+        .padding(.bottom, 11)
     }
 
-    private var relayCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    statusDot(color: relayColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(relayTitle)
-                            .font(.subheadline.weight(.semibold))
-                        if let endpoint = runtime.relay?.publicEndpoint {
-                            Text(endpoint)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    Spacer()
-                    if runtime.relay?.configured == true {
-                        Toggle(
-                            "Relay enabled",
-                            isOn: Binding(
-                                get: { runtime.relay?.enabled == true },
-                                set: { enabled in
-                                    runAction {
-                                        try await runtime.setRelayEnabled(enabled)
-                                    }
-                                }
-                            )
-                        )
-                        .labelsHidden()
-                        .disabled(actionInProgress)
-                    }
-                }
-                HStack {
-                    Button(runtime.relay?.configured == true ? "Change Relay…" : "Add Relay…") {
-                        showsRelaySetup = true
-                    }
-                    Spacer()
-                    Button("Pair Device…") {
+    @ViewBuilder
+    private var appServerPicker: some View {
+        if runtime.appServers.count > 1 {
+            Menu {
+                ForEach(runtime.appServers, id: \.id) { server in
+                    Button {
                         runAction {
-                            pairing = try await runtime.createPairing()
+                            try await runtime.selectAppServer(id: server.id)
+                        }
+                    } label: {
+                        if server.selected {
+                            Label(appServerMenuTitle(server), systemImage: "checkmark")
+                        } else {
+                            Text(appServerMenuTitle(server))
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(runtime.relay?.connection != "online" || actionInProgress)
+                    .disabled(!isAvailable(server) || server.selected || actionInProgress)
+                }
+                Divider()
+                Button("Scan Again") {
+                    Task { await runtime.discoverAppServers() }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(runtime.appServer?.displayName ?? "Codex App Server")
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.tertiary)
                 }
             }
-            .padding(4)
-        } label: {
-            Label("Relay", systemImage: "network")
-                .font(.subheadline.weight(.semibold))
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .fixedSize()
+        } else {
+            Text(runtime.appServer?.displayName ?? "Codex App Server")
+                .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
         }
     }
 
-    private var devicesCard: some View {
-        GroupBox {
-            if runtime.devices.isEmpty {
-                VStack(spacing: 7) {
-                    Image(systemName: "iphone.slash")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                    Text("No paired devices")
-                        .font(.subheadline.weight(.medium))
-                    Text("Pair a phone after the Relay is online.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(runtime.devices, id: \.id) { device in
-                        if device.id != runtime.devices.first?.id { Divider() }
-                        deviceRow(device)
-                    }
-                }
-            }
-        } label: {
-            HStack {
-                Label("Devices", systemImage: "iphone.and.arrow.forward")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(runtime.devices.count)")
-                    .font(.caption.monospacedDigit())
+    private var overview: some View {
+        HStack(spacing: 14) {
+            metric(
+                value: runtime.health == nil ? "Offline" : "Running",
+                label: "Companion",
+                color: runtime.health == nil ? .secondary : .green
+            )
+            metric(
+                value: relayMetricValue,
+                label: "Relay",
+                color: relayColor
+            )
+            metric(
+                value: "\(runtime.devices.count)",
+                label: runtime.devices.count == 1 ? "Client" : "Clients",
+                color: runtime.devices.isEmpty ? .secondary : CodeWideBrand.accent
+            )
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(Color.primary.opacity(0.035))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    @ViewBuilder
+    private var errorBanner: some View {
+        if let error = visibleError, dismissedError != error {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .frame(width: 16, height: 16)
+                Text(error)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    dismissedError = error
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .padding(11)
+            .background(
+                Color.red.opacity(0.075),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.red.opacity(0.16), lineWidth: 1)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 11)
+        }
+    }
+
+    private var clients: some View {
+        Group {
+            if runtime.devices.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "iphone.and.arrow.forward")
+                        .font(.system(size: 30, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 64, height: 64)
+                        .background(Color.primary.opacity(0.055), in: Circle())
+                    Text("No clients")
+                        .font(.headline)
+                    Text(emptyClientsDescription)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 260)
+                    Button("Add client") {
+                        beginPairing()
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(runtime.health == nil || actionInProgress)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(runtime.devices, id: \.id) { device in
+                            deviceRow(device)
+                            if device.id != runtime.devices.last?.id {
+                                Divider().padding(.leading, 42)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func deviceRow(_ device: DeviceStatusPayload) -> some View {
@@ -248,17 +323,17 @@ private struct CompanionPanel: View {
                 Image(systemName: "trash")
             }
             .buttonStyle(.plain)
-            .help("Revoke \(device.name)")
+            .help("Revoke client \(device.name)")
             .disabled(actionInProgress)
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 11)
         .padding(.horizontal, 4)
     }
 
     private var footer: some View {
         HStack {
             if let health = runtime.health {
-                Text("v\(health.appVersion) · PID \(health.processID)")
+                Text("CodeWide \(health.appVersion) · Core \(health.coreVersion)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -269,6 +344,18 @@ private struct CompanionPanel: View {
                         runtime.openLoginItemsSettings()
                     }
                 }
+                Button(runtime.relay?.configured == true ? "Change Relay…" : "Add Relay…") {
+                    pairAfterRelaySetup = false
+                    showsRelaySetup = true
+                }
+                if runtime.relay?.configured == true {
+                    Button(runtime.relay?.enabled == true ? "Disable Relay" : "Enable Relay") {
+                        runAction {
+                            try await runtime.setRelayEnabled(runtime.relay?.enabled != true)
+                        }
+                    }
+                }
+                Divider()
                 Button(updates.availableVersion.map { "Install \($0)" } ?? "Check for Updates…") {
                     updates.checkForUpdates()
                 }
@@ -287,11 +374,22 @@ private struct CompanionPanel: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
-        .padding(12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .overlay(alignment: .top) { Divider() }
     }
 
     private var statusColor: Color {
-        runtime.health == nil ? .secondary : (runtime.health?.phase == "running" ? .green : .orange)
+        appServerColor
+    }
+
+    private var appServerColor: Color {
+        guard runtime.health != nil else { return .secondary }
+        guard let appServer = runtime.appServer else { return .orange }
+        switch appServer.state {
+        case .available: .green
+        case .unavailable: .orange
+        }
     }
 
     private var relayColor: Color {
@@ -302,15 +400,60 @@ private struct CompanionPanel: View {
         }
     }
 
-    private var relayTitle: String {
-        guard let relay = runtime.relay else { return "Relay unavailable" }
-        guard relay.configured else { return "Relay not configured" }
+    private var relayMetricValue: String {
+        guard let relay = runtime.relay, relay.configured else { return "Not set" }
         switch relay.connection {
-        case "online": return "Relay online"
-        case "connecting": return "Connecting to Relay"
-        case "reconnecting": return "Relay unreachable · retrying"
-        default: return "Relay disabled"
+        case "online": "Online"
+        case "connecting", "reconnecting": "Connecting"
+        default: "Disabled"
         }
+    }
+
+    private var appServerSummary: String {
+        guard let server = runtime.appServer else { return runtime.status }
+        switch server.state {
+        case let .available(version):
+            version.map { "App Server \($0)" } ?? "App Server connected"
+        case let .unavailable(lastKnownVersion):
+            lastKnownVersion.map { "App Server \($0) unavailable" } ?? "App Server unavailable"
+        }
+    }
+
+    private var emptyClientsDescription: String {
+        runtime.relay?.connection == "online"
+            ? "Create a secure QR code or copyable link for a new client."
+            : "Add a Relay before connecting your first client."
+    }
+
+    private var visibleError: String? {
+        actionError ?? runtime.lastError ?? updates.lastError
+    }
+
+    private func metric(value: String, label: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(value)
+                .font(.caption.weight(.semibold))
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func appServerMenuTitle(_ server: AppServerPayload) -> String {
+        switch server.state {
+        case let .available(version):
+            version.map { "\(server.displayName) · \($0)" } ?? server.displayName
+        case .unavailable:
+            "\(server.displayName) · Unavailable"
+        }
+    }
+
+    private func isAvailable(_ server: AppServerPayload) -> Bool {
+        if case .available = server.state {
+            return true
+        }
+        return false
     }
 
     private func statusDot(color: Color) -> some View {
@@ -322,19 +465,27 @@ private struct CompanionPanel: View {
         return "Last seen \(date.formatted(.relative(presentation: .named)))"
     }
 
-    private func errorBanner(_ error: String) -> some View {
-        Label(error, systemImage: "exclamationmark.triangle.fill")
-            .font(.caption)
-            .foregroundStyle(.red)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+    private func beginPairing() {
+        dismissedError = nil
+        guard runtime.relay?.connection == "online" else {
+            if runtime.relay?.configured == true {
+                actionError = "Relay is unavailable. Wait for it to reconnect before adding a client."
+            } else {
+                pairAfterRelaySetup = true
+                showsRelaySetup = true
+            }
+            return
+        }
+        runAction {
+            pairing = try await runtime.createPairing()
+        }
     }
 
     private func runAction(_ action: @escaping @MainActor () async throws -> Void) {
         guard !actionInProgress else { return }
         actionInProgress = true
         actionError = nil
+        dismissedError = nil
         Task {
             defer { actionInProgress = false }
             do {
@@ -362,6 +513,12 @@ private struct RelaySetupSheet: View {
             Text("Run `codewide-relay invite` on the Relay host, then paste its host:port and JSON bundle here.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            if let installURL = URL(
+                string: "https://github.com/MrFlashAccount/CodeWide/blob/main/docs/relay-rollout.md#start-relay"
+            ) {
+                Link("How to install Relay", destination: installURL)
+                    .font(.callout)
+            }
             TextField("relay.example.com:8780", text: $address)
                 .textFieldStyle(.roundedBorder)
             TextEditor(text: $invitation)
@@ -406,13 +563,25 @@ private struct PairingSheet: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Text("Pair a Device")
+            Text("Add a Client")
                 .font(.title2.weight(.semibold))
             Text("Scan this code in CodeWide. It expires \(expiryText).")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             PairingQRCode(value: pairing.link)
                 .frame(width: 230, height: 230)
+            Text(pairing.link)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .frame(width: 280)
+                .padding(9)
+                .background(
+                    Color.primary.opacity(0.055),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
             HStack {
                 Button("Copy Link") {
                     NSPasteboard.general.clearContents()
@@ -422,7 +591,7 @@ private struct PairingSheet: View {
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent)
             }
-            .frame(width: 230)
+            .frame(width: 280)
         }
         .padding(22)
     }

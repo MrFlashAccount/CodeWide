@@ -53,6 +53,15 @@ export function createAccountRateLimitsDatabase(): AccountRateLimitsDatabase {
       model.close();
     },
     collection,
+    async deleteConnection(connectionId) {
+      await model.ready;
+      if (collection.get(connectionId) === undefined) {
+        return;
+      }
+      storage.begin();
+      storage.write({ key: connectionId, type: "delete" });
+      await storage.commit({ durable: true });
+    },
     get,
     markError(connectionId, error) {
       const previous = get(connectionId);

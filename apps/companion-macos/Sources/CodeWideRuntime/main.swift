@@ -6,14 +6,22 @@ import Foundation
 do {
     let executableURL = try AppBundleMetadata.currentExecutableURL()
     let metadata = try AppBundleMetadata.load(runtimeExecutableURL: executableURL)
+    let userHome = FileManager.default.homeDirectoryForCurrentUser
+    let selectionStore = AppServerSelectionStore(userHome: userHome)
+    let selectedCodexHome = selectionStore.load()
     let core = try CoreHost(
         stateDirectory: RuntimeConstants.stateDirectory.path,
-        codexHome: FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".codex", directoryHint: .isDirectory).path,
+        codexHome: selectedCodexHome.path,
         appVersion: metadata.version,
         hostVersion: metadata.version
     )
-    let service = RuntimeService(core: core, runtimeExecutablePath: executableURL.path)
+    let service = RuntimeService(
+        core: core,
+        runtimeExecutablePath: executableURL.path,
+        selectionStore: selectionStore,
+        selectedCodexHome: selectedCodexHome,
+        userHome: userHome
+    )
     let delegate = RuntimeListenerDelegate(
         service: service,
         runtimeExecutableURL: executableURL

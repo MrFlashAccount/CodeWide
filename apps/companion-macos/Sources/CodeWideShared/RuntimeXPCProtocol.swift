@@ -10,6 +10,19 @@ import Foundation
         withReply reply: @escaping @Sendable (RuntimeHealthPayload?, NSError?) -> Void
     )
 
+    func appServer(
+        withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
+    )
+
+    func discoverAppServers(
+        withReply reply: @escaping @Sendable (AppServerListPayload?, NSError?) -> Void
+    )
+
+    func selectAppServer(
+        id: String,
+        withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
+    )
+
     func relayStatus(
         withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void
     )

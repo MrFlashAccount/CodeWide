@@ -31,6 +31,7 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.uimanager.UIManagerHelper
 import dev.codewide.app.rendering.VoiceAuraOverlay
 import java.io.IOException
+import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
@@ -357,6 +358,58 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
+  fun revokeStoredConnection(connectionId: String, promise: Promise) {
+    val (store, saved) = try {
+      require(connectionId.isNotBlank()) { "Connection id is required" }
+      val credentials = NativeSessionCredentialsStore(context)
+      val session = requireNotNull(credentials.get(connectionId)) {
+        "Saved native credentials are missing"
+      }
+      credentials to session
+    } catch (error: Throwable) {
+      promise.reject("REVOKE_CONNECTION_FAILED", "Could not read paired device credentials", error)
+      return
+    }
+    if (saved.revocationConfirmed) {
+      promise.resolve(null)
+      return
+    }
+    try {
+      val endpoint = URI(saved.endpoint)
+      val revokeUrl = URI("https", endpoint.rawAuthority, "/v1/device", null, null).toString()
+      val client = InnerTlsTransport.client(pairingHttpClient, saved, "device_revoke")
+      val request = Request.Builder()
+        .url(revokeUrl)
+        .delete()
+        .build()
+      client.newCall(request).enqueue(object : Callback {
+        override fun onFailure(call: Call, error: IOException) {
+          promise.reject("REVOKE_CONNECTION_FAILED", "Could not reach Companion to remove this device", error)
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+          response.use {
+            if (it.code == 200) {
+              try {
+                store.confirmRevocation(connectionId)
+                promise.resolve(null)
+              } catch (error: Throwable) {
+                promise.reject("REVOKE_CONNECTION_FAILED", "Companion removed this device but local confirmation could not be saved", error)
+              }
+            } else if (it.code == 404) {
+              promise.reject("REVOKE_CONNECTION_UNSUPPORTED", "Companion does not support device removal; update Companion")
+            } else {
+              promise.reject("REVOKE_CONNECTION_FAILED", "Companion rejected device removal (HTTP ${it.code})")
+            }
+          }
+        }
+      })
+    } catch (error: Throwable) {
+      promise.reject("REVOKE_CONNECTION_FAILED", "Could not start Companion device removal", error)
+    }
+  }
+
+  @ReactMethod
   fun deleteConnectionCredentials(connectionId: String, promise: Promise) {
     try {
       require(connectionId.isNotBlank()) { "Connection id is required" }
@@ -381,6 +434,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       require(connectionId.isNotBlank()) { "Connection id is required" }
       val store = NativeSessionCredentialsStore(context)
       val saved = store.get(connectionId) ?: throw IllegalStateException("Saved native credentials are missing")
+      require(!enabled || !saved.revocationConfirmed) { "This device was removed from Companion; pair it again" }
       store.upsert(saved.copy(enabled = enabled))
       if (!enabled) {
         CodexConnectionService.instance?.suspend(connectionId)

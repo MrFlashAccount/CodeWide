@@ -1,3 +1,5 @@
+import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
+
 import { checkAborted } from "../check-aborted";
 import { AttachmentDiskCache, type AttachmentLease } from "./disk-cache";
 import { AttachmentResponse } from "./attachment-response";
@@ -26,7 +28,6 @@ async function cacheState(): Promise<{
 }
 
 async function digest(value: string): Promise<string> {
-  const { CryptoDigestAlgorithm, digestStringAsync } = await import("expo-crypto");
   return digestStringAsync(CryptoDigestAlgorithm.SHA256, value);
 }
 
@@ -123,10 +124,11 @@ export async function cachedAttachmentSourceFromResponse(
   checkOptionalAbort(signal);
   const sequence = responseDownloadSequence;
   responseDownloadSequence += 1;
-  const [{ cache, storage }, fileSystem, provisionalKey] = await Promise.all([
+  const [{ cache, storage }, fileSystem, provisionalKey, scopeKey] = await Promise.all([
     cacheState(),
     import("expo-file-system/legacy"),
     digest(JSON.stringify([options.scope, options.identity, sequence])),
+    attachmentScopeKey(options.scope),
   ]);
   const { deleteAsync, downloadAsync, getInfoAsync, moveAsync } = fileSystem;
   const partial = `${storage.uri(provisionalKey)}.partial`;
@@ -144,7 +146,7 @@ export async function cachedAttachmentSourceFromResponse(
         metadata.bytes,
       ]),
     );
-    const lease = await cache.acquire(key, metadata.bytes, async () => {
+    const lease = await cache.acquire(key, { bytes: metadata.bytes, scopeKey }, async () => {
       await moveAsync({ from: partial, to: storage.uri(key) });
     });
     if (lease === null) {
@@ -184,6 +186,16 @@ export function retainCachedAttachment(uri: string): () => void {
   return residentCache?.retain(uri) ?? (() => undefined);
 }
 
+/** Removes a deleted connection's cached attachments, including legacy unowned files. */
+export async function purgeCachedConnectionAttachments(connectionId: string): Promise<void> {
+  const [{ cache }, scopeKey] = await Promise.all([cacheState(), digest(connectionId)]);
+  await cache.deleteScope(scopeKey);
+}
+
+async function attachmentScopeKey(scope: string): Promise<string | undefined> {
+  return scope === "direct" ? undefined : digest(scope);
+}
+
 export async function cacheInlineAttachment(uri: string, base64: string): Promise<string> {
   const [state, fileSystem, key] = await Promise.all([
     cacheState(),
@@ -195,7 +207,7 @@ export async function cacheInlineAttachment(uri: string, base64: string): Promis
   const bytes =
     Math.floor((base64.length * 3) / 4) -
     (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
-  const lease = await cache.acquire(key, bytes, async () => {
+  const lease = await cache.acquire(key, { bytes, scopeKey: undefined }, async () => {
     const partial = `${storage.uri(key)}.partial`;
     try {
       await writeAsStringAsync(partial, base64, { encoding: "base64" });
@@ -218,7 +230,7 @@ async function acquireDownload(
   metadata: AttachmentMetadata,
 ): Promise<AttachmentLease | null> {
   // The namespace is independent of rotating session credentials and local transport ports.
-  const [state, fileSystem, key] = await Promise.all([
+  const [state, fileSystem, key, scopeKey] = await Promise.all([
     cacheState(),
     import("expo-file-system/legacy"),
     digest(
@@ -230,10 +242,11 @@ async function acquireDownload(
         metadata.bytes,
       ]),
     ),
+    attachmentScopeKey(options.scope),
   ]);
   const { cache, storage } = state;
   const { deleteAsync, downloadAsync, getInfoAsync, moveAsync } = fileSystem;
-  return cache.acquire(key, metadata.bytes, async () => {
+  return cache.acquire(key, { bytes: metadata.bytes, scopeKey }, async () => {
     const partial = `${storage.uri(key)}.partial`;
     try {
       const downloaded = await downloadAsync(uri, partial, {

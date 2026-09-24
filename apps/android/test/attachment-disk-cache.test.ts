@@ -9,7 +9,7 @@ class Storage implements AttachmentStorage {
   async exists(key: string, bytes: number) { return this.files.get(key)?.length === bytes; }
   async touch(entry: CachedAttachment) {
     // Capture the durable metadata snapshot, independent of subsequent in-memory touches.
-    this.records.set(entry.key, { key: entry.key, bytes: entry.bytes, touchedAt: entry.touchedAt });
+    this.records.set(entry.key, { ...entry });
   }
   async remove(key: string) { this.files.delete(key); this.records.delete(key); }
   uri(key: string) { return `file:///cache/${key}`; }
@@ -23,7 +23,7 @@ function fixture(limit: number) {
   return {
     storage, cache, downloads: () => downloads,
     load(key: string, body: string) {
-      return cache.acquire(key, body.length, async () => { downloads += 1; storage.files.set(key, body); });
+      return cache.acquire(key, { bytes: body.length, scopeKey: undefined }, async () => { downloads += 1; storage.files.set(key, body); });
     },
   };
 }
@@ -37,7 +37,7 @@ describe("attachment disk budget", () => {
     const f = fixture(12);
     (await f.load("document", "# Hello"))?.release();
     const restarted = new AttachmentDiskCache(f.storage, () => 10, 12);
-    const lease = await restarted.acquire("document", 7, async () => { throw new Error("must use disk"); });
+    const lease = await restarted.acquire("document", { bytes: 7, scopeKey: undefined }, async () => { throw new Error("must use disk"); });
     expect(lease?.uri).toBe("file:///cache/document");
     expect(f.storage.files.get("document")).toBe("# Hello");
     lease?.release();
@@ -74,9 +74,9 @@ describe("attachment disk budget", () => {
     const finish = Promise.withResolvers<void>();
     let writes = 0;
     const write = async () => { writes += 1; start.resolve(); await finish.promise; f.storage.files.set("a", "123456"); };
-    const first = f.cache.acquire("a", 6, write);
+    const first = f.cache.acquire("a", { bytes: 6, scopeKey: undefined }, write);
     await start.promise;
-    const second = f.cache.acquire("a", 6, write);
+    const second = f.cache.acquire("a", { bytes: 6, scopeKey: undefined }, write);
     expect(await f.load("b", "123456")).toBeNull();
     finish.resolve();
     const leases = await Promise.all([first, second]);
@@ -90,7 +90,7 @@ describe("attachment disk budget", () => {
 
   it("does not retain failed writes and admits a retry", async () => {
     const f = fixture(6);
-    await expect(f.cache.acquire("a", 6, async () => { f.storage.files.set("a", "12"); throw new Error("interrupted"); })).rejects.toThrow("interrupted");
+    await expect(f.cache.acquire("a", { bytes: 6, scopeKey: undefined }, async () => { f.storage.files.set("a", "12"); throw new Error("interrupted"); })).rejects.toThrow("interrupted");
     expect(f.storage.files.has("a")).toBe(false);
     (await f.load("a", "123456"))?.release();
     expect(f.storage.files.get("a")).toBe("123456");
@@ -104,6 +104,40 @@ describe("attachment disk budget", () => {
     expect(f.downloads()).toBe(2);
     expect(await f.load("large", "1234567")).toBeNull();
     expect(f.downloads()).toBe(2);
+  });
+
+  it("deletes one server's files and legacy unowned files while preserving other servers", async () => {
+    const f = fixture(40);
+    const load = (key: string, scopeKey?: string) =>
+      f.cache.acquire(key, { bytes: 3, scopeKey }, async () => { f.storage.files.set(key, "abc"); });
+    (await load("removed", "server-a"))?.release();
+    (await load("kept", "server-b"))?.release();
+    (await load("legacy"))?.release();
+    const restarted = new AttachmentDiskCache(f.storage, () => 10, 40);
+    await restarted.deleteScope("server-a");
+    expect([...f.storage.files.keys()]).toEqual(["kept"]);
+    expect(await restarted.acquire("removed", { bytes: 3, scopeKey: "server-a" }, async () => { throw new Error("resurrected"); })).toBeNull();
+    const kept = await restarted.acquire("kept", { bytes: 3, scopeKey: "server-b" }, async () => { throw new Error("redownloaded"); });
+    expect(kept?.uri).toBe("file:///cache/kept");
+    kept?.release();
+  });
+
+  it("waits for an in-flight write before erasing a deleted server", async () => {
+    const f = fixture(10);
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const download = f.cache.acquire("removed", { bytes: 3, scopeKey: "server-a" }, async () => {
+      started.resolve();
+      await finish.promise;
+      f.storage.files.set("removed", "abc");
+    });
+    await started.promise;
+    const deletion = f.cache.deleteScope("server-a");
+    finish.resolve();
+    expect(await download).toBeNull();
+    await deletion;
+    expect(f.storage.files.has("removed")).toBe(false);
+    expect(f.storage.records.has("removed")).toBe(false);
   });
 });
 

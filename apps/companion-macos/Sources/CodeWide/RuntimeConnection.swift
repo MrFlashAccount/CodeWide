@@ -6,6 +6,9 @@ import ServiceManagement
 @MainActor
 final class RuntimeConnection: ObservableObject {
     @Published private(set) var health: RuntimeHealthPayload?
+    @Published private(set) var appServer: AppServerPayload?
+    @Published private(set) var appServers: [AppServerPayload] = []
+    @Published private(set) var isDiscoveringAppServers = false
     @Published private(set) var relay: RelayStatusPayload?
     @Published private(set) var devices: [DeviceStatusPayload] = []
     @Published private(set) var status = "Starting"
@@ -47,6 +50,7 @@ final class RuntimeConnection: ObservableObject {
         } catch {
             disconnect()
             self.health = nil
+            self.appServer = nil
             self.relay = nil
             self.devices = []
             status = "Unavailable"
@@ -55,6 +59,10 @@ final class RuntimeConnection: ObservableObject {
         }
 
         do {
+            appServer = try await requestAppServer()
+            if appServers.isEmpty {
+                appServers = try await requestAppServers().servers
+            }
             relay = try await requestRelayStatus()
             let deviceList = try await requestDevices()
             devices = deviceList.devices
@@ -86,6 +94,36 @@ final class RuntimeConnection: ObservableObject {
     func pairRelay(address: String, invitationJSON: String) async throws {
         relay = try await requestPairRelay(address: address, invitationJSON: invitationJSON)
         await refresh()
+    }
+
+    func discoverAppServers() async {
+        guard !isDiscoveringAppServers else { return }
+        isDiscoveringAppServers = true
+        defer { isDiscoveringAppServers = false }
+        do {
+            appServers = try await requestAppServers().servers
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func selectAppServer(id: String) async throws {
+        let selected = try await requestSelectAppServer(id: id)
+        appServer = selected
+        appServers = appServers.map { server in
+            AppServerPayload(
+                id: server.id,
+                displayName: server.displayName,
+                codexHome: server.codexHome,
+                state: server.state,
+                selected: server.id == selected.id
+            )
+        }
+        status = "Switching App Server"
+        health = nil
+        relay = nil
+        devices = []
+        disconnect()
     }
 
     func setRelayEnabled(_ enabled: Bool) async throws {
@@ -188,6 +226,47 @@ final class RuntimeConnection: ObservableObject {
                 return
             }
             proxy.relayStatus { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestAppServer() async throws -> AppServerPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.appServer { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestAppServers() async throws -> AppServerListPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            gate.timeout(after: .seconds(8), with: RuntimeConnectionError.requestTimedOut)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.discoverAppServers { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestSelectAppServer(id: String) async throws -> AppServerPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = XPCReplyGate(continuation: continuation)
+            gate.timeout(after: .seconds(8), with: RuntimeConnectionError.requestTimedOut)
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.selectAppServer(id: id) { payload, error in
                 gate.resume(with: Self.result(payload: payload, error: error))
             }
         }

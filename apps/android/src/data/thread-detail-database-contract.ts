@@ -53,6 +53,7 @@ export type ThreadDetailDatabase = {
     options?: { durable?: boolean },
   ) => Promise<boolean>;
   createPending: (input: PendingTimelineInput) => ThreadDetailRow;
+  deleteConnection: (connectionId: string) => Promise<void>;
   getThread: (connectionId: string, threadId: string) => Thread | null;
   hasPendingDelivery: (connectionId: string, threadId: string, commandId: string) => boolean;
   historyCursor: (connectionId: string, threadId: string) => string | null | undefined;

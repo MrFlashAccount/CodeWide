@@ -20,6 +20,7 @@ import {
 } from "./thread-history-queries";
 import {
   collectUnreferencedHistoryContent,
+  deleteConnectionHistory,
   persistHistoryRow,
   prepareHistoryRelations,
 } from "./thread-history-relations";
@@ -103,6 +104,7 @@ export type ThreadDetailSqlite = ThreadDetailSqliteControls & {
     connectionId: string,
     receipts: readonly CommandReceipt[],
   ) => Promise<ThreadDetailRow[]>;
+  deleteConnection: (connectionId: string) => Promise<void>;
   diagnostics: () => Promise<ThreadDetailSqliteDiagnostics>;
   flush: () => Promise<void>;
   loadAdjacentWindow: (input: {
@@ -399,6 +401,16 @@ export function createThreadDetailSqlite(
           updated.push(confirmed);
         }
         return updated;
+      });
+    },
+    async deleteConnection(connectionId) {
+      if (closed) {
+        throw new Error("Thread detail SQLite adapter is closed");
+      }
+      await ensurePrepared();
+      await flushPending();
+      await database.transaction(async (executor) => {
+        await deleteConnectionHistory(executor, connectionId);
       });
     },
     async diagnostics() {

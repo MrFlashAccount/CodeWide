@@ -16,9 +16,9 @@ use tokio::{
 };
 
 use super::{
-    CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, VcsDiff, VcsDiffPage, VcsError,
-    VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult,
-    WorkspaceSupport,
+    CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, INSPECT_CAPABILITY, VcsDiff,
+    VcsDiffPage, VcsError, VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY,
+    WorkspaceCreateResult, WorkspaceSupport,
 };
 
 const REGISTRY_VERSION: u32 = 1;
@@ -259,6 +259,66 @@ pub enum PluginCallError {
     Protocol(String),
     #[error("plugin returned error {code}: {message}")]
     Remote { code: i64, message: String },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VcsInspection {
+    capability: String,
+    provider: String,
+    repository_root: PathBuf,
+}
+
+pub async fn inspect(
+    plugin: &VcsPluginConfig,
+    workspace: &Path,
+    scope: VcsScope,
+) -> Result<(), PluginCallError> {
+    let mut session = PluginSession::spawn(plugin, workspace)?;
+    let initialized = session
+        .request(
+            1,
+            "initialize",
+            json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "client": { "name": "codewide-companion" },
+                "capabilities": [INSPECT_CAPABILITY, CHANGES_CAPABILITY]
+            }),
+        )
+        .await?;
+    validate_initialize(plugin, &initialized, CHANGES_CAPABILITY)?;
+    if validate_initialize_metadata(plugin, &initialized, INSPECT_CAPABILITY)? {
+        let result = session
+            .request(2, "vcs.inspect", json!({ "workspace": workspace }))
+            .await;
+        session.shutdown().await;
+        let inspection = serde_json::from_value::<VcsInspection>(result?).map_err(|error| {
+            PluginCallError::Protocol(format!("invalid vcs.inspect result: {error}"))
+        })?;
+        if inspection.capability != INSPECT_CAPABILITY
+            || inspection.provider != plugin.id
+            || !inspection.repository_root.is_absolute()
+        {
+            return Err(PluginCallError::Protocol(
+                "vcs.inspect returned invalid provider or repository identity".into(),
+            ));
+        }
+        return Ok(());
+    }
+    if validate_initialize_metadata(plugin, &initialized, WORKSPACE_CREATE_CAPABILITY)? {
+        // Older providers exposed repository ownership through workspace.inspect.
+        let result = session
+            .request(2, "workspace.inspect", json!({ "workspace": workspace }))
+            .await;
+        session.shutdown().await;
+        let support = serde_json::from_value::<WorkspaceSupport>(result?).map_err(|error| {
+            PluginCallError::Protocol(format!("invalid workspace.inspect result: {error}"))
+        })?;
+        return validate_workspace_support(plugin, &support);
+    }
+    session.shutdown().await;
+    // VCS-only legacy providers still declare ownership through vcs.changes.
+    changes(plugin, workspace, scope).await.map(|_| ())
 }
 
 pub async fn changes(

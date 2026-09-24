@@ -59,14 +59,24 @@ new PID and higher launch count before publishing.
 ## Menu workflows
 
 On first launch, the app presents one temporary native setup window with
-animated transitions through local Companion readiness, optional Relay setup,
-and device pairing. The whole flow can be skipped and reopened later from the
-menu bar. Its persisted completion marker controls presentation only; every
-readiness state comes from the live runtime.
+short native transitions through Codex App Server selection, optional Relay
+setup, and client pairing. Relay can be skipped and client pairing deferred; a
+reachable App Server is required because it is the Companion's upstream. The
+flow can be reopened later from the menu bar. Its persisted completion marker
+controls presentation only; every readiness state comes from the live runtime.
 
-The menu-bar panel exposes four production workflows over signed XPC:
+The LaunchAgent discovers the default `~/.codex` plus local `~/.codex-*`
+profiles that own a live App Server control endpoint. Rust performs the bounded
+initialize handshake and reports the actual App Server version through UniFFI;
+Swift receives only typed candidates over signed XPC. Selecting another profile
+atomically persists its validated Codex home, exits the helper unsuccessfully,
+and lets launchd restart a fresh core against that upstream while retaining the
+same Companion state directory.
 
-- current runtime state and recovery failures;
+The client-first menu-bar panel exposes four production workflows over signed XPC:
+
+- selected App Server, its live connection and version, plus compact Companion
+  state and recovery failures;
 - Relay pairing from `host:port` plus the one-time JSON invitation, live
   `connecting / online / reconnecting / disabled` reachability, and enable or
   disable;

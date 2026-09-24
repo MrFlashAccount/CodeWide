@@ -36,7 +36,7 @@ use crate::{
     telemetry::TelemetryStore,
     terminal,
     tunnels::LocalhostTunnelService,
-    upstream::UpstreamHandle,
+    upstream::{ConnectionStatus, UpstreamHandle},
     vcs::VcsService,
     workspaces::WorkspaceService,
 };
@@ -76,7 +76,14 @@ pub struct PairingPresentation {
     pub expires_at: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AppServerConnection {
+    Live { version: Option<String> },
+    Reconnecting { last_known_version: Option<String> },
+}
+
 pub struct ManagedRuntime {
+    upstream: UpstreamHandle,
     registry: Arc<DeviceRegistry>,
     relay: RelayRuntime,
     identity: TransportIdentity,
@@ -138,7 +145,7 @@ impl ManagedRuntime {
         let sync = if config.enable_mutations {
             SyncHub::with_mutations(upstream.clone(), store.clone(), history.clone())
         } else {
-            SyncHub::new(upstream, store.clone(), history.clone())
+            SyncHub::new(upstream.clone(), store.clone(), history.clone())
         };
 
         let attachment_root = config.codex_home.join("attachments/codewide");
@@ -276,6 +283,7 @@ impl ManagedRuntime {
         );
 
         Ok(Self {
+            upstream,
             registry,
             relay,
             identity: identity.public().clone(),
@@ -294,6 +302,17 @@ impl ManagedRuntime {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    #[must_use]
+    pub fn app_server_connection(&self) -> AppServerConnection {
+        let version = self.upstream.version();
+        match self.upstream.status() {
+            ConnectionStatus::Live => AppServerConnection::Live { version },
+            ConnectionStatus::Reconnecting => AppServerConnection::Reconnecting {
+                last_known_version: version,
+            },
+        }
     }
 
     /// Creates a one-time pairing link for the configured Relay endpoint.

@@ -326,3 +326,15 @@ export async function collectUnreferencedHistoryContent(executor: HistoryExecuto
     `DELETE FROM ${CONTENT} WHERE NOT EXISTS (SELECT 1 FROM ${MEMBERS} WHERE ${MEMBERS}.content_id=${CONTENT}.content_id)`,
   );
 }
+
+/** Erases every epoch and off-window row for one removed device connection. */
+export async function deleteConnectionHistory(
+  executor: HistoryExecutor,
+  connectionId: string,
+): Promise<void> {
+  // Delete children before their referenced chain/content rows even when an
+  // older SQLite database has not enabled foreign-key cascades.
+  for (const table of [MEMBERS, HEADS, "codewide_history_turns", CHAINS, PENDING, CONTENT]) {
+    await executor.execute(`DELETE FROM ${table} WHERE connection_id = ?`, [connectionId]);
+  }
+}

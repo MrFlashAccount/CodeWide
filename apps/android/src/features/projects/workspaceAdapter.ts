@@ -24,6 +24,7 @@ import type { TurnControlsValue } from "../../data/workspace-resource-database";
 import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/workspace-session";
 
 import type { ProjectsWorkspaceCapabilities } from "./workspaceCapabilities";
+import { forgetRemoteProjectCatalogConnection } from "./useRemoteProjectCatalog";
 /** Converts projects intents using retained lower authorities. */
 export function createProjectsWorkspaceAdapter({
   getDetails,
@@ -164,6 +165,7 @@ export function createProjectsWorkspaceAdapter({
   return {
     addProject,
     createWorkspace,
+    forgetConnection: forgetRemoteProjectCatalogConnection,
     inspectWorkspace,
     listProjects,
     readDirectory,

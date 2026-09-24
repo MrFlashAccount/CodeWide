@@ -195,10 +195,11 @@ fn preview_from_event(
         });
     }
     if matches!(method, "item/started" | "item/completed") {
-        if item
-            .and_then(|item| item.get("type"))
-            .and_then(Value::as_str)
-            == Some("agentMessage")
+        if method == "item/started"
+            && item
+                .and_then(|item| item.get("type"))
+                .and_then(Value::as_str)
+                == Some("agentMessage")
             && item
                 .and_then(|item| item.get("phase"))
                 .and_then(Value::as_str)
@@ -442,6 +443,45 @@ mod tests {
         assert_eq!(summary["previewText"], "**Answer**");
         assert_eq!(summary["conversationMessage"], true);
         assert_eq!(summary["finalAgentResponse"], true);
+    }
+
+    #[test]
+    fn completed_messages_publish_previews_without_token_delta_churn() {
+        let preview = |method: &str, item: Value| {
+            attach_thread_patch(json!({
+                "method": method,
+                "params": {"threadId": "thread-1", "item": item}
+            }))[THREAD_PATCH_FIELD]["operation"]["summary"]["previewText"]
+                .clone()
+        };
+        assert_eq!(
+            preview(
+                "item/completed",
+                json!({"type":"userMessage","content":[{"type":"text","text":"Prompt"}]})
+            ),
+            "Prompt"
+        );
+        assert_eq!(
+            preview(
+                "item/completed",
+                json!({"type":"agentMessage","phase":"commentary","text":"Progress"})
+            ),
+            "Progress"
+        );
+        assert_eq!(
+            preview(
+                "item/completed",
+                json!({"type":"agentMessage","phase":"final_answer","text":"Final answer"})
+            ),
+            "Final answer"
+        );
+        assert!(
+            preview(
+                "item/started",
+                json!({"type":"agentMessage","phase":"final_answer","text":"Incomplete"})
+            )
+            .is_null()
+        );
     }
 
     #[test]

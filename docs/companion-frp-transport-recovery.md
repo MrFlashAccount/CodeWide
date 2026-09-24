@@ -1,6 +1,28 @@
 # Companion transport recovery, 2026-09-22
 
-## Evidence and scope
+## Current route since 2026-09-24
+
+The FRP client connects directly to `monitoring.garin.dev:7000` over TCP with
+FRP TLS enabled. The Docker loopback override and the systemd dependency on
+`codewide-frp-transport.service` were removed. The stunnel service is disabled;
+the managed HTTPS proxy remains available for unrelated traffic.
+
+The proxy route stopped reaching the monitoring host at 05:30 MSK on
+2026-09-24. Companion and the remote Nginx/FRP processes remained healthy.
+Authenticated CONNECT through the selected proxy timed out for the monitoring
+host and its IP, while direct TLS to port 7000 succeeded. After switching back
+to the direct route, FRP authenticated and opened remote port 8885; the public
+WebSocket completed 10 ping/pong checks and remained reachable after stunnel
+was stopped. An authenticated Android session was not tested. The direct route
+had significant packet loss during the 2026-09-22 incident, so continued
+stability needs observation.
+
+The replaced local configuration is backed up at
+`~/.config/frp/backup-20260924T064850Z-direct-cutover/`.
+
+## Historical proxy route, 2026-09-22
+
+### Evidence and scope
 
 The Companion process remained healthy (no restarts, approximately 133 MiB RSS).
 Local health took 0.5 ms; a local App Server bridge opened in 4 ms and returned
@@ -17,7 +39,7 @@ The repair bypasses that route for this FRP client. Companion was not restarted;
 no Android release, app data migration, proxy ACL relaxation, or global network
 change was needed. A wholesale Relay migration was unnecessary for recovery.
 
-## Active transport
+### Transport used on 2026-09-22
 
 1. `frpc-codex-remote.service` connects to local port 17443 using FRP `websocket`
    transport, with its existing token and TLS enabled inside the WebSocket.
@@ -48,7 +70,7 @@ over Nginx's monitoring server configuration through `/root/docker-compose.yml`.
 Preserve that mount during subsequent edge deployments. SSH is available on port
 27494; the local agent environment did not contain the user's `monitor` alias.
 
-## Validation and rollback
+### Validation and rollback
 
 Before switching the production client, a separate FRP client with no published
 proxies successfully authenticated through the new path. Compose, Nginx, FRP,

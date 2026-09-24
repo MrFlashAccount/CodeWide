@@ -3,6 +3,28 @@ import { describe, expect, it } from "vitest";
 import { normalizeUserMessage } from "../src/rendering/user-message-normalizer";
 
 describe("normalizeUserMessage", () => {
+  it("shows only the authored input from a realtime delegation", () => {
+    const source = [
+      "<realtime_delegation>",
+      "  <input>Первая строка\n\nВторая строка с &lt;тегом&gt;.</input>",
+      "  <transcript_delta>assistant: hidden\nuser: hidden too</transcript_delta>",
+      "</realtime_delegation>",
+    ].join("\n");
+
+    expect(normalizeUserMessage(source)).toEqual({
+      text: "Первая строка\n\nВторая строка с &lt;тегом&gt;.",
+      files: [],
+    });
+  });
+
+  it.each([
+    "<realtime_delegation><input>Keep malformed</input></realtime_delegation>",
+    "Prefix <realtime_delegation><input>Keep quoted</input><transcript_delta>hidden</transcript_delta></realtime_delegation>",
+    "```xml\n<realtime_delegation><input>Keep fenced</input><transcript_delta>hidden</transcript_delta></realtime_delegation>\n```",
+  ])("preserves malformed or quoted realtime delegations", (source) => {
+    expect(normalizeUserMessage(source)).toEqual({ text: source, files: [] });
+  });
+
   it("shows authored question replies without the transport envelope", () => {
     const source = `<send_user_message_question_reply>\n${JSON.stringify([
       { questionItemId: "question-1", question: "Which logs?", answer: "https://example.invalid/logs" },

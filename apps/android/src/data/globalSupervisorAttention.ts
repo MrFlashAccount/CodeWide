@@ -51,6 +51,7 @@ export type GlobalSupervisorAttentionOwner = {
     readonly source: string;
     readonly worker: GlobalSupervisorQualifiedChatRef;
   }) => Promise<void>;
+  readonly deleteConnection: (connectionId: string) => Promise<void>;
   readonly disableDelivery: (supervisor: GlobalSupervisorQualifiedChatRef) => Promise<void>;
   readonly enableDelivery: (supervisor: GlobalSupervisorQualifiedChatRef) => Promise<void>;
   readonly follow: (
@@ -884,6 +885,34 @@ export function createGlobalSupervisorAttentionOwner(options: {
           }
         }
         return apply(changes, new Set());
+      });
+    },
+    async deleteConnection(connectionId) {
+      await enqueue(async () => {
+        const changes: GlobalSupervisorAttentionStorageChange[] = [];
+        const changedSupervisors = new Set<string>();
+        for (const row of options.storage.rows()) {
+          if (
+            row.supervisorConnectionId !== connectionId &&
+            row.workerConnectionId !== connectionId
+          ) {
+            continue;
+          }
+          changes.push({ id: row.id, type: "delete" });
+          changedSupervisors.add(
+            qualifiedKey(
+              globalSupervisorQualifiedChatRef(row.supervisorConnectionId, row.supervisorThreadId),
+            ),
+          );
+        }
+        await options.storage.commit(changes);
+        const prefix = `[${JSON.stringify(connectionId)},`;
+        for (const key of deliveryEnabled) {
+          if (key.startsWith(prefix)) {
+            deliveryEnabled.delete(key);
+          }
+        }
+        return changedSupervisors;
       });
     },
     async disableDelivery(supervisor) {

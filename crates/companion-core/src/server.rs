@@ -349,6 +349,7 @@ fn build_secure_router(state: AppState) -> Router {
     let authorization = state.authorization.clone();
     let transport = Router::new()
         .route("/v1/auth", post(authenticate))
+        .route("/v1/device", delete(device_self_revoke))
         .route("/v1/sync", get(sync_upgrade))
         .route("/v1/port-forwards/discovery", get(port_discovery))
         .route("/v1/port-forwards/{port}", get(port_forward_upgrade))

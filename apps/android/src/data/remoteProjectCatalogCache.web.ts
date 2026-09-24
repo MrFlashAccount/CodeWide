@@ -22,6 +22,13 @@ function decodeCachedProjects(value: string | null | undefined): RemoteProject[]
 
 /** Process-local web fallback for the stale-while-refresh project catalog. */
 export const remoteProjectCatalogCache = {
+  async delete(connectionId: string): Promise<void> {
+    await database.ready;
+    const key = cacheKey(connectionId);
+    if (database.collection.has(key)) {
+      await database.collection.delete(key).isPersisted.promise;
+    }
+  },
   async read(connectionId: string): Promise<RemoteProject[]> {
     await database.ready;
     return decodeCachedProjects(database.collection.get(cacheKey(connectionId))?.value);

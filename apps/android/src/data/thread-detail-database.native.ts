@@ -196,6 +196,17 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
     }
   }
 
+  removeConnectionLoaded(connectionId: string): ThreadDetailRow[] {
+    const removed: ThreadDetailRow[] = [];
+    for (const row of this.values()) {
+      if (row.connectionId === connectionId) {
+        removed.push(row);
+        this.delete(row.id);
+      }
+    }
+    return removed;
+  }
+
   rowsForThread(connectionId: string, threadId: string): ThreadDetailRow[] {
     const keys = this.rowKeysByThread.get(threadScope(connectionId, threadId));
     if (keys === undefined) {
@@ -2220,6 +2231,20 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     createPending(input) {
       const order = input.order ?? input.createdAt;
       return pendingRow(input.connectionId, input.threadId, { ...input, order });
+    },
+    async deleteConnection(connectionId) {
+      await writes.run(async () => {
+        await detailStorage.deleteConnection(connectionId);
+        const removed = source.removeConnectionLoaded(connectionId);
+        chat.publishChanges(removed.map((row) => ({ key: row.id, type: "delete" })));
+        chat.forgetConnection(connectionId);
+        invalidateHistoryExhaustion(connectionId);
+        for (const scope of startedThreadShells.keys()) {
+          if (scope.startsWith(`${connectionId}\u0000`)) {
+            startedThreadShells.delete(scope);
+          }
+        }
+      });
     },
     getThread(connectionId, threadId) {
       const rows = source.rowsForThread(connectionId, threadId);

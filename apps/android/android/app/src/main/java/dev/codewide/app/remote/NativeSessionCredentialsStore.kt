@@ -20,6 +20,7 @@ internal data class StoredNativeSession(
   val enabled: Boolean = true,
   val innerTlsPinSha256: String,
   val deviceId: String? = null,
+  val revocationConfirmed: Boolean = false,
 )
 
 internal fun mergeNativeSessionCredentials(
@@ -39,14 +40,16 @@ internal fun mergeNativeSessionCredentials(
   }
   val pairedDeviceId = requireNotNull(deviceId ?: existing?.deviceId) { "Secure pairing requires a device identity" }
   require(pairedDeviceId.matches(Regex("^device-[a-f0-9]{64}$"))) { "Paired device id is invalid" }
+  val revocationConfirmed = existing?.takeIf { it.deviceId == pairedDeviceId }?.revocationConfirmed ?: false
   return StoredNativeSession(
     id = id,
     endpoint = endpoint,
     token = token,
     tlsPinSha256 = tlsPinSha256,
-    enabled = enabled,
+    enabled = enabled && !revocationConfirmed,
     innerTlsPinSha256 = innerPin,
     deviceId = pairedDeviceId,
+    revocationConfirmed = revocationConfirmed,
   )
 }
 
@@ -85,6 +88,15 @@ internal class NativeSessionCredentialsStore(context: Context) {
     }
   }
 
+  fun confirmRevocation(connectionId: String) {
+    synchronized(STORE_LOCK) {
+      val sessions = readUnlocked().associateByTo(linkedMapOf()) { it.id }
+      val saved = requireNotNull(sessions[connectionId]) { "Saved native credentials are missing" }
+      sessions[connectionId] = saved.copy(enabled = false, revocationConfirmed = true)
+      writeUnlocked(sessions.values.toList())
+    }
+  }
+
   private fun readUnlocked(): List<StoredNativeSession> {
     val envelopeText = preferences.getString(BLOB_KEY, null) ?: return emptyList()
     return try {
@@ -105,9 +117,10 @@ internal class NativeSessionCredentialsStore(context: Context) {
           val enabled = value.optBoolean("enabled", true)
           val innerTlsPinSha256 = value.optString("innerTlsPinSha256").takeIf { it.isNotBlank() }
           val deviceId = value.getString("deviceId")
+          val revocationConfirmed = value.optBoolean("revocationConfirmed", false)
           require(deviceId.matches(Regex("^device-[a-f0-9]{64}$")))
           if (id.isNotBlank() && endpoint.isNotBlank() && token.length in 32..512 && innerTlsPinSha256 != null) {
-            add(StoredNativeSession(id, endpoint, token, tlsPinSha256, enabled, innerTlsPinSha256, deviceId))
+            add(StoredNativeSession(id, endpoint, token, tlsPinSha256, enabled && !revocationConfirmed, innerTlsPinSha256, deviceId, revocationConfirmed))
           }
         }
       }
@@ -134,6 +147,7 @@ internal class NativeSessionCredentialsStore(context: Context) {
         put("enabled", session.enabled)
         put("innerTlsPinSha256", session.innerTlsPinSha256)
         put("deviceId", requireNotNull(session.deviceId) { "Stored connection requires a device identity" })
+        put("revocationConfirmed", session.revocationConfirmed)
       })
     }
     val cipher = Cipher.getInstance(TRANSFORMATION)

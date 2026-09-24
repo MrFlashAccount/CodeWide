@@ -18,6 +18,8 @@ const FILES_HEADING = /^# Files mentioned by the user:\s*$/m;
 const AMBIENT_CONTEXT = /<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>/gi;
 const IMAGE_TAG = /<\/?image(?:\s[^>]*)?>/gi;
 const FILE_ENTRY = /^##\s+(.+?):\s*(?:`([^`\n]+)`|([^\n]+))\s*$/gm;
+const REALTIME_DELEGATION =
+  /^\s*<realtime_delegation>\s*<input>([\s\S]*?)<\/input>\s*<transcript_delta>[\s\S]*?<\/transcript_delta>\s*<\/realtime_delegation>\s*$/;
 
 /**
  * Codex appends transport-only context to the user input item. Keep that
@@ -26,18 +28,21 @@ const FILE_ENTRY = /^##\s+(.+?):\s*(?:`([^`\n]+)`|([^\n]+))\s*$/gm;
  * which merely resembles metadata must remain visible.
  */
 export function normalizeUserMessage(source: string): NormalizedUserMessage {
-  const reply = userQuestionReplyText(source);
+  const authoredSource = source.replace(REALTIME_DELEGATION, "$1");
+  const reply = userQuestionReplyText(authoredSource);
   if (reply !== null) {
     return { files: [], text: reply };
   }
-  const request = DESKTOP_BROWSER_REQUEST.exec(source) ?? REQUEST_HEADING.exec(source);
-  const filesHeading = FILES_HEADING.exec(source);
-  const metadataEnd = request?.index ?? source.length;
+  const request =
+    DESKTOP_BROWSER_REQUEST.exec(authoredSource) ?? REQUEST_HEADING.exec(authoredSource);
+  const filesHeading = FILES_HEADING.exec(authoredSource);
+  const metadataEnd = request?.index ?? authoredSource.length;
   const files =
     filesHeading !== null && filesHeading.index < metadataEnd
-      ? parseMentionedFiles(source.slice(filesHeading.index, metadataEnd))
+      ? parseMentionedFiles(authoredSource.slice(filesHeading.index, metadataEnd))
       : [];
-  const authored = request === null ? source : source.slice(request.index + request[0].length);
+  const authored =
+    request === null ? authoredSource : authoredSource.slice(request.index + request[0].length);
   return {
     files,
     text: authored.replace(AMBIENT_CONTEXT, "").replace(IMAGE_TAG, "").trim(),

@@ -4,6 +4,7 @@ export const ATTACHMENT_CACHE_BYTES = 1024 * 1024 * 1024;
 export interface CachedAttachment {
   bytes: number;
   key: string;
+  scopeKey?: string;
   touchedAt: number;
 }
 
@@ -21,6 +22,11 @@ export interface AttachmentLease {
   uri: string;
 }
 
+export interface AttachmentAdmission {
+  bytes: number;
+  scopeKey: string | undefined;
+}
+
 interface ResidentEntry {
   readers: number;
   value: CachedAttachment;
@@ -30,6 +36,7 @@ interface ResidentEntry {
 export class AttachmentDiskCache {
   private readonly entries = new Map<string, ResidentEntry>();
   private readonly pending = new Map<string, Promise<void>>();
+  private readonly blockedScopes = new Set<string>();
   private initialized: Promise<void> | null = null;
   private queue: Promise<void> = Promise.resolve();
   private bytes = 0;
@@ -46,10 +53,10 @@ export class AttachmentDiskCache {
   /** Null means bypass the optional cache; a large attachment must remain readable. */
   async acquire(
     key: string,
-    bytes: number,
+    admission: AttachmentAdmission,
     write: () => Promise<void>,
   ): Promise<AttachmentLease | null> {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.limit) {
+    if (!this.canAdmit(admission)) {
       return null;
     }
     if (this.initialized === null) {
@@ -63,15 +70,10 @@ export class AttachmentDiskCache {
     }
     await this.initialized;
     const admitted = await this.exclusive(async () => {
-      let entry = this.entries.get(key);
-      if (
-        entry !== undefined &&
-        !this.pending.has(key) &&
-        !(await this.storage.exists(key, bytes))
-      ) {
-        await this.remove(entry);
-        entry = undefined;
+      if (!this.canAdmit(admission)) {
+        return null;
       }
+      const entry = await this.validExistingEntry(key, admission.bytes);
       if (entry !== undefined) {
         entry.value.touchedAt = this.now();
         if (!this.pending.has(key)) {
@@ -80,12 +82,20 @@ export class AttachmentDiskCache {
         entry.readers += 1;
         return { entry, ready: this.pending.get(key) ?? Promise.resolve() };
       }
-      if (!(await this.makeRoom(bytes))) {
+      if (!(await this.makeRoom(admission.bytes))) {
         return null;
       }
-      const created: ResidentEntry = { readers: 1, value: { bytes, key, touchedAt: this.now() } };
+      const created: ResidentEntry = {
+        readers: 1,
+        value: {
+          bytes: admission.bytes,
+          key,
+          touchedAt: this.now(),
+          ...(admission.scopeKey === undefined ? {} : { scopeKey: admission.scopeKey }),
+        },
+      };
       this.entries.set(key, created);
-      this.bytes += bytes;
+      this.bytes += admission.bytes;
       // Download outside the metadata queue; one failed generation cleans itself up exactly once.
       const operation = Promise.resolve()
         .then(write)
@@ -112,6 +122,10 @@ export class AttachmentDiskCache {
       return null;
     }
     await admitted.ready;
+    if (!this.canAdmit(admission)) {
+      admitted.entry.readers -= 1;
+      return null;
+    }
     let released = false;
     return {
       release: () => {
@@ -123,6 +137,24 @@ export class AttachmentDiskCache {
       },
       uri: this.storage.uri(key),
     };
+  }
+
+  private canAdmit(admission: AttachmentAdmission): boolean {
+    return (
+      Number.isSafeInteger(admission.bytes) &&
+      admission.bytes >= 0 &&
+      admission.bytes <= this.limit &&
+      (admission.scopeKey === undefined || !this.blockedScopes.has(admission.scopeKey))
+    );
+  }
+
+  private async validExistingEntry(key: string, bytes: number): Promise<ResidentEntry | undefined> {
+    const entry = this.entries.get(key);
+    if (entry === undefined || this.pending.has(key) || (await this.storage.exists(key, bytes))) {
+      return entry;
+    }
+    await this.remove(entry);
+    return undefined;
   }
 
   /** A native image/player retains a local URI while it owns the file. */
@@ -142,6 +174,33 @@ export class AttachmentDiskCache {
       };
     }
     return () => undefined;
+  }
+
+  /** Removes the deleted server's bytes and legacy entries with no owner metadata. */
+  async deleteScope(scopeKey: string): Promise<void> {
+    this.blockedScopes.add(scopeKey);
+    if (this.initialized === null) {
+      const initialization = this.initialize();
+      this.initialized = initialization;
+      void initialization.catch(() => {
+        if (this.initialized === initialization) {
+          this.initialized = null;
+        }
+      });
+    }
+    await this.initialized;
+    await Promise.all(
+      [...this.pending.values()].map(async (operation) => {
+        await operation.catch(() => undefined);
+      }),
+    );
+    await this.exclusive(async () => {
+      for (const entry of this.entries.values()) {
+        if (entry.value.scopeKey === scopeKey || entry.value.scopeKey === undefined) {
+          await this.remove(entry);
+        }
+      }
+    });
   }
 
   private async initialize(): Promise<void> {

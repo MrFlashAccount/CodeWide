@@ -187,6 +187,28 @@ it("publishes one coherent text snapshot after native Markdown compilation", () 
   });
 });
 
+it("publishes the pasted plain text when Android emits Markdown before text", () => {
+  const onChangeValue = jest.fn();
+  const view = render(
+    <ComposerMarkdownInput
+      accessibilityLabel="New chat composer"
+      mentionIndicators={["/"]}
+      onChangeValue={onChangeValue}
+      placeholder="Message"
+      search={async () => []}
+      value=""
+    />,
+  );
+
+  fireEvent(view.getByTestId("native-editor"), "changeMarkdown", "**pasted**");
+  fireEvent(view.getByTestId("native-editor"), "changeText", "pasted");
+
+  expect(onChangeValue).toHaveBeenLastCalledWith({
+    markdown: "**pasted**",
+    plainText: "pasted",
+  });
+});
+
 it("filters suggestions and inserts the selected display name and URL", async () => {
   jest.useFakeTimers();
   const view = mountEditor();

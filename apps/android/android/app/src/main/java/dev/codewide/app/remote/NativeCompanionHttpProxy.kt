@@ -57,7 +57,7 @@ internal class NativeCompanionHttpProxy(
   ) : Closeable {
     private val endpointUri = URI(saved.endpoint)
     private val carrierClient = OkHttpClient()
-    private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    private val server = ServerSocket(0, LISTENER_BACKLOG, InetAddress.getByName("127.0.0.1"))
     private val socketLifetime = NativeProxySocketLifetime()
     private val capability = newLoopbackCapability()
     private val clientSlots = Semaphore(MAX_ACTIVE_CLIENTS, true)
@@ -78,9 +78,16 @@ internal class NativeCompanionHttpProxy(
           } catch (_: Throwable) {
             if (closed) break else continue
           }
-          if (!clientSlots.tryAcquire()) {
+          try {
+            clientSlots.acquire()
+          } catch (_: InterruptedException) {
             runCatching { client.close() }
-            continue
+            break
+          }
+          if (closed) {
+            clientSlots.release()
+            runCatching { client.close() }
+            break
           }
           try {
             workers.execute {
@@ -297,7 +304,9 @@ internal class NativeCompanionHttpProxy(
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val AUTHORIZATION_TIMEOUT_MS = 10_000
     private const val HTTP_IDLE_TIMEOUT_MS = 60_000
-    private const val MAX_ACTIVE_CLIENTS = 16
+    // Relay admits 64 streams per route; leave headroom for sync and port forwards.
+    private const val MAX_ACTIVE_CLIENTS = 48
+    private const val LISTENER_BACKLOG = 128
     private const val MAX_REQUEST_BODY_BYTES = 512L * 1024 * 1024
     private const val MAX_HEADER_BYTES = 64 * 1024
     private const val STREAM_BUFFER_BYTES = 16 * 1024

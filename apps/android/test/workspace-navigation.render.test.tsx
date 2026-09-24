@@ -643,6 +643,50 @@ it("keeps the desktop chat route interactive while search opens and a result is 
   view.unmount();
 });
 
+it("retains desktop Search when result navigation commits route parameters separately", () => {
+  holdInitialDeepLink();
+  resetMockRouter("/");
+  setWindowSize(1_400, 800);
+  let openWorkspaceSearch = (): void => {
+    throw new Error("Search capability unavailable");
+  };
+  function ConversationSearchProbe(): React.JSX.Element {
+    openWorkspaceSearch = useWorkspaceListRouteResources().openGlobalSearch;
+    return <Text>Selected conversation</Text>;
+  }
+  registerMockRoute("/threads/[connectionId]/[threadId]", ConversationSearchProbe);
+  const view = render(<V1RouteTree />);
+  const { result } = renderHook(useMountedThreadNavigation);
+  act(() => {
+    result.current.navigation.selectThread(
+      threadSelectionKey({ id: "selected", serverId: "server" }),
+    );
+  });
+  act(openWorkspaceSearch);
+  const sessionId = mockRouterHistory().at(-1)?.params.globalSearchSessionId;
+  if (sessionId === undefined) {
+    throw new Error("Expected desktop search session");
+  }
+  const session = searchRouteSessions.get(sessionId, workspaceRouteSessionOwner)?.session;
+  if (session === undefined) {
+    throw new Error("Expected retained desktop search");
+  }
+  act(() => session.changeText("selected result"));
+
+  act(() => router.setParams({ globalSearchSessionId: undefined }));
+  expect(searchRouteSessions.get(sessionId, workspaceRouteSessionOwner)?.session).toBe(session);
+  act(() => {
+    router.push({
+      params: { connectionId: "server", globalSearchSessionId: sessionId, threadId: "result" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+  expect(view.UNSAFE_getByType(GlobalSearchScreen).props.session).toBe(session);
+  expect(session.text$.peek()).toBe("selected result");
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
 it("keeps the search session and chat origin while folding and unfolding", () => {
   holdInitialDeepLink();
   resetMockRouter("/");

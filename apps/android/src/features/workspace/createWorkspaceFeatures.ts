@@ -2,6 +2,7 @@ import { appLockVoiceLifecycle } from "../../data/appLockVoiceLifecycle";
 import {
   commandDelivery,
   currentConnections,
+  deleteLocalConnectionData,
   forgetHttpAuthorization,
   globalSupervisorRuntime,
   loadTurnControls,
@@ -34,29 +35,29 @@ import { createTurnActionsWorkspaceAdapter } from "../turnActions/workspaceAdapt
 
 /** Constructs stable feature capabilities over the existing module-lifetime runtime. */
 function createWorkspaceFeatures() {
+  const projects = createProjectsWorkspaceAdapter({
+    getDetails: () => workspaceRuntime.snapshot.threadDetails,
+    getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
+    loadTurnControls: loadTurnControls,
+    rpcAfterAttach: rpcAfterAttach,
+  });
   const connections = createConnectionsWorkspaceAdapter({
     closeCatalogWindows: workspaceCatalog.closeCatalogWindows,
     currentConnections: currentConnections,
+    deleteLocalConnectionData,
     forgetHttpAuthorization: forgetHttpAuthorization,
     forgetObservedThread: workspaceThreadSync.forgetObservedThread,
-    getAccountRateLimits: () => workspaceRuntime.snapshot.accountRateLimits,
+    forgetProjectCatalog: projects.forgetConnection,
     getConnectionState: () => workspaceRuntime.snapshot.connectionState,
     getProfiles: () => workspaceRuntime.snapshot.connectionProfiles,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
-    getThreadUiState: () => workspaceRuntime.snapshot.threadUiState,
     invalidateCatalog: workspaceCatalog.invalidateConnection,
   });
   const search = createSearchWorkspaceAdapter({
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
-    rpcAfterAttach: rpcAfterAttach,
-  });
-  const projects = createProjectsWorkspaceAdapter({
-    getDetails: () => workspaceRuntime.snapshot.threadDetails,
-    getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
-    getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
-    loadTurnControls: loadTurnControls,
     rpcAfterAttach: rpcAfterAttach,
   });
   const turnActions = createTurnActionsWorkspaceAdapter({

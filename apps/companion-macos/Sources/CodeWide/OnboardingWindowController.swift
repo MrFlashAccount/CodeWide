@@ -37,11 +37,11 @@ final class OnboardingWindowController: NSObject, ObservableObject, NSWindowDele
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        window.isOpaque = true
+        window.backgroundColor = .windowBackgroundColor
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 760, height: 500))
-        window.minSize = NSSize(width: 700, height: 460)
+        window.setContentSize(NSSize(width: 660, height: 470))
+        window.minSize = NSSize(width: 620, height: 430)
         window.center()
         window.delegate = self
         self.window = window

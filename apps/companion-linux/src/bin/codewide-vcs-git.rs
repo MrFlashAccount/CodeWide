@@ -4,8 +4,9 @@ use std::{
 };
 
 use codewide_companion::vcs::{
-    CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, GitProvider, VcsError, VcsFile,
-    VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult, WorkspaceSupport,
+    CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, GitProvider, INSPECT_CAPABILITY,
+    VcsError, VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult,
+    WorkspaceSupport,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -59,6 +60,7 @@ async fn dispatch(request: Request) -> Response {
     }
     let result = match request.method.as_str() {
         "initialize" => initialize(&request.params),
+        "vcs.inspect" => vcs_inspect_request(&request.params).await,
         "vcs.changes" => changes_request(&request.params).await,
         "vcs.diff" => diff_request(&request.params).await,
         "vcs.diffPage" => diff_page_request(&request.params).await,
@@ -113,11 +115,25 @@ fn initialize(params: &Value) -> Result<Value, ProviderError> {
         "displayName": "Git",
         "version": env!("CODEWIDE_COMPANION_VERSION"),
         "capabilities": [
+            INSPECT_CAPABILITY,
             CHANGES_CAPABILITY,
             DIFF_CAPABILITY,
             DIFF_PAGE_CAPABILITY,
             WORKSPACE_CREATE_CAPABILITY
         ]
+    }))
+}
+
+async fn vcs_inspect_request(params: &Value) -> Result<Value, ProviderError> {
+    let workspace = required_absolute_path(params, "workspace")?;
+    let root = GitProvider
+        .detect(&workspace)
+        .await?
+        .ok_or(VcsError::UnsupportedWorkspace(workspace))?;
+    Ok(json!({
+        "capability": INSPECT_CAPABILITY,
+        "provider": "git",
+        "repositoryRoot": root,
     }))
 }
 
@@ -404,6 +420,7 @@ mod tests {
         assert_eq!(
             value["capabilities"],
             json!([
+                INSPECT_CAPABILITY,
                 CHANGES_CAPABILITY,
                 DIFF_CAPABILITY,
                 DIFF_PAGE_CAPABILITY,
@@ -419,5 +436,30 @@ mod tests {
             Some("new-chat_12")
         );
         assert!(required_token(&json!({ "requestId": "../escape" }), "requestId").is_err());
+    }
+
+    #[tokio::test]
+    async fn inspection_claims_only_git_workspaces() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let request = json!({ "workspace": directory.path() });
+        assert!(matches!(
+            vcs_inspect_request(&request).await,
+            Err(ProviderError::Vcs(VcsError::UnsupportedWorkspace(_)))
+        ));
+
+        let initialized = std::process::Command::new("git")
+            .arg("init")
+            .arg("--quiet")
+            .arg(directory.path())
+            .status()?;
+        assert!(initialized.success());
+        let inspection = vcs_inspect_request(&request).await?;
+        assert_eq!(inspection["capability"], INSPECT_CAPABILITY);
+        assert_eq!(inspection["provider"], "git");
+        assert_eq!(
+            inspection["repositoryRoot"],
+            json!(directory.path().canonicalize()?)
+        );
+        Ok(())
     }
 }

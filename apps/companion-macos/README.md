@@ -41,19 +41,29 @@ Shared Companion behavior and durable domain state belong in
 ## Current menu and capability boundary
 
 The application has no ordinary window. Clicking the menu-bar icon opens a
-native panel with Companion health, live Relay reachability, Relay invitation
-setup and enable/disable control, QR device pairing, paired devices, exact live
-connection presence, durable last-seen time, and revoke. Update and quit actions
-live in the panel footer.
+native client-first panel. Its compact header shows the selected Codex App
+Server and reported version; the body is either a centered `No clients` action
+or the live client list with revoke. Companion, Relay, and client counts stay in
+a narrow overview strip. Relay setup, updates, setup replay, and quit live in
+the footer menu instead of permanent diagnostic cards.
 
 On first launch, a native animated setup assistant opens as the application's
-only temporary ordinary window. It verifies the local LaunchAgent, offers an
-optional Relay connection, waits for the first device pairing, and can be
-skipped completely. Its completion marker controls presentation only: live
-step status always comes from the runtime. `Run Setup Again` in the menu-bar
-panel reopens the flow. The assistant uses the native macOS 26 Liquid Glass
-APIs and the canonical CodeWide accent (`#5878FF`), graphite, warm-white, and
-C/W mark assets; reduced-motion and system appearance remain authoritative.
+only temporary ordinary window. It discovers reachable local Codex App Servers,
+shows the version returned by their initialize handshake, and asks the user to
+choose when multiple instances exist. Relay has one `Add Relay` path plus
+`How to install` and `Skip`; there is no fake local-pairing mode. The final step
+shows a QR code and selectable link when Relay is online, or lets the user add a
+client later. `Run Setup Again` reopens the flow. Liquid Glass is reserved for
+primary actions; layout, fields, selection rows, and backgrounds use native
+SwiftUI controls. The palette shares Android's nebula blue (`#1A73F2`),
+graphite, and warm-white values.
+
+App Server discovery is deliberately split by layer. Rust probes the private
+control endpoint and returns typed candidate/version state through UniFFI; Swift
+never opens the endpoint directly. The host inspects the default `~/.codex` and
+active `~/.codex-*` profiles, keeps the selected profile visible while offline,
+persists a validated selection under Companion state, and restarts the
+LaunchAgent before the core binds to a different Codex home.
 
 The Swift LaunchAgent composes the production Companion services in-process
 through `companion-core`. Menu management uses only authenticated typed XPC.

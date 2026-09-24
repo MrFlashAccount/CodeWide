@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -127,6 +127,7 @@ pub struct UpstreamHandle {
     events: broadcast::Sender<Value>,
     ordered_events: Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
     status: watch::Receiver<ConnectionStatus>,
+    version: watch::Receiver<Option<String>>,
     generation: Arc<AtomicU64>,
 }
 
@@ -163,6 +164,13 @@ struct UpstreamResponse {
     delivered: oneshot::Sender<Result<(), UpstreamError>>,
 }
 
+#[derive(Clone)]
+struct ConnectionStateWriter {
+    status: watch::Sender<ConnectionStatus>,
+    version: watch::Sender<Option<String>>,
+    generation: Arc<AtomicU64>,
+}
+
 enum UpstreamCommand {
     Request(UpstreamRequest),
     ServerResponse(UpstreamResponse),
@@ -192,21 +200,27 @@ impl UpstreamHandle {
         let (events, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let ordered_events = Arc::new(std::sync::Mutex::new(None));
         let (status_tx, status) = watch::channel(ConnectionStatus::Reconnecting);
+        let (version_tx, version) = watch::channel(None);
         let generation = Arc::new(AtomicU64::new(0));
         let handle = Self {
             commands,
             events: events.clone(),
             ordered_events: ordered_events.clone(),
             status,
+            version,
             generation: generation.clone(),
+        };
+        let connection_state = ConnectionStateWriter {
+            status: status_tx,
+            version: version_tx,
+            generation,
         };
         tokio::spawn(run(
             socket_path,
             command_rx,
             events,
             ordered_events,
-            status_tx,
-            generation,
+            connection_state,
             max_message_bytes,
         ));
         handle
@@ -233,13 +247,20 @@ impl UpstreamHandle {
         let (events, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let ordered_events = Arc::new(std::sync::Mutex::new(None));
         let (status_tx, status) = watch::channel(ConnectionStatus::Reconnecting);
+        let (version_tx, version) = watch::channel(None);
         let generation = Arc::new(AtomicU64::new(0));
         let handle = Self {
             commands,
             events: events.clone(),
             ordered_events: ordered_events.clone(),
             status,
+            version,
             generation: generation.clone(),
+        };
+        let connection_state = ConnectionStateWriter {
+            status: status_tx,
+            version: version_tx,
+            generation,
         };
         tokio::spawn(run_stdio(
             stdin,
@@ -247,8 +268,7 @@ impl UpstreamHandle {
             command_rx,
             events,
             ordered_events,
-            status_tx,
-            generation,
+            connection_state,
         ));
         Ok(handle)
     }
@@ -256,6 +276,11 @@ impl UpstreamHandle {
     #[must_use]
     pub fn status(&self) -> ConnectionStatus {
         *self.status.borrow()
+    }
+
+    #[must_use]
+    pub fn version(&self) -> Option<String> {
+        self.version.borrow().clone()
     }
 
     /// Monotonically increases after each successful App Server connection.
@@ -367,20 +392,18 @@ async fn run(
     mut commands: mpsc::Receiver<UpstreamCommand>,
     events: broadcast::Sender<Value>,
     ordered_events: Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
-    status: watch::Sender<ConnectionStatus>,
-    generation: Arc<AtomicU64>,
+    connection_state: ConnectionStateWriter,
     max_message_bytes: usize,
 ) {
     let mut attempt = 0_u32;
     loop {
-        let _ = status.send(ConnectionStatus::Reconnecting);
+        let _ = connection_state.status.send(ConnectionStatus::Reconnecting);
         match run_connection(
             &socket_path,
             &mut commands,
             &events,
             &ordered_events,
-            &status,
-            &generation,
+            &connection_state,
             max_message_bytes,
         )
         .await
@@ -409,8 +432,7 @@ async fn run_stdio(
     mut commands: mpsc::Receiver<UpstreamCommand>,
     events: broadcast::Sender<Value>,
     ordered_events: Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
-    status: watch::Sender<ConnectionStatus>,
-    generation: Arc<AtomicU64>,
+    connection_state: ConnectionStateWriter,
 ) {
     let mut lines = BufReader::new(stdout).lines();
     let result = run_stdio_connection(
@@ -419,11 +441,10 @@ async fn run_stdio(
         &mut commands,
         &events,
         &ordered_events,
-        &status,
-        &generation,
+        &connection_state,
     )
     .await;
-    let _ = status.send(ConnectionStatus::Reconnecting);
+    let _ = connection_state.status.send(ConnectionStatus::Reconnecting);
     if let Err(error) = result {
         warn!(%error, "private App Server stdio connection failed");
     }
@@ -439,8 +460,7 @@ async fn run_stdio_connection(
     commands: &mut mpsc::Receiver<UpstreamCommand>,
     events: &broadcast::Sender<Value>,
     ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
-    status: &watch::Sender<ConnectionStatus>,
-    generation: &AtomicU64,
+    connection_state: &ConnectionStateWriter,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     write_json_line(
         stdin,
@@ -474,8 +494,11 @@ async fn run_stdio_connection(
         return Err(UpstreamError::Protocol(initialized.to_string()).into());
     }
     write_json_line(stdin, &json!({"method": "initialized"})).await?;
-    generation.fetch_add(1, Ordering::AcqRel);
-    let _ = status.send(ConnectionStatus::Live);
+    let _ = connection_state
+        .version
+        .send(app_server_version(&initialized));
+    connection_state.generation.fetch_add(1, Ordering::AcqRel);
+    let _ = connection_state.status.send(ConnectionStatus::Live);
     info!("Connected to private Codex App Server over stdio");
 
     let mut counter = 0_u64;
@@ -557,17 +580,18 @@ async fn write_json_line(stdin: &mut ChildStdin, value: &Value) -> std::io::Resu
 }
 
 async fn run_connection(
-    socket_path: &PathBuf,
+    socket_path: &Path,
     commands: &mut mpsc::Receiver<UpstreamCommand>,
     events: &broadcast::Sender<Value>,
     ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
-    status: &watch::Sender<ConnectionStatus>,
-    generation: &AtomicU64,
+    connection_state: &ConnectionStateWriter,
     max_message_bytes: usize,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut socket = connect_initialized(socket_path, max_message_bytes).await?;
-    generation.fetch_add(1, Ordering::AcqRel);
-    let _ = status.send(ConnectionStatus::Live);
+    let initialized = connect_initialized(socket_path, max_message_bytes).await?;
+    let mut socket = initialized.socket;
+    let _ = connection_state.version.send(initialized.version);
+    connection_state.generation.fetch_add(1, Ordering::AcqRel);
+    let _ = connection_state.status.send(ConnectionStatus::Live);
     info!(socket = %socket_path.display(), "Connected to Codex App Server");
 
     let mut counter = 0_u64;
@@ -640,7 +664,7 @@ async fn run_connection(
             }
         }
     }
-    let _ = status.send(ConnectionStatus::Reconnecting);
+    let _ = connection_state.status.send(ConnectionStatus::Reconnecting);
     for (_, request) in pending {
         let _ = request.response.send(Err(UpstreamError::Disconnected));
     }
@@ -712,10 +736,15 @@ fn clear_ordered_event_sender(
     }
 }
 
+struct InitializedAppServerSocket {
+    socket: AppServerSocket,
+    version: Option<String>,
+}
+
 async fn connect_initialized(
-    socket_path: &PathBuf,
+    socket_path: &Path,
     max_message_bytes: usize,
-) -> Result<AppServerSocket, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<InitializedAppServerSocket, Box<dyn std::error::Error + Send + Sync>> {
     let stream = UnixStream::connect(socket_path).await?;
     let (mut socket, _) = client_async_with_config(
         "ws://localhost/",
@@ -761,7 +790,41 @@ async fn connect_initialized(
             json!({ "method": "initialized" }).to_string().into(),
         ))
         .await?;
-    Ok(socket)
+    Ok(InitializedAppServerSocket {
+        socket,
+        version: app_server_version(&initialized),
+    })
+}
+
+/// Passively verifies one Codex App Server endpoint and returns its version.
+///
+/// # Errors
+/// Returns when the endpoint cannot complete the initialize handshake within
+/// two seconds or omits the version required by the discovery contract.
+pub async fn probe_app_server_version(
+    socket_path: &Path,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let initialized = connect_initialized(socket_path, APP_SERVER_MAX_MESSAGE_BYTES).await?;
+        let version = initialized
+            .version
+            .ok_or("App Server initialize response omitted userAgent")?;
+        let mut socket = initialized.socket;
+        let _ = socket.close(None).await;
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(version)
+    })
+    .await
+    .map_err(|_| "timed out probing Codex App Server")?
+}
+
+fn app_server_version(initialize_response: &Value) -> Option<String> {
+    initialize_response
+        .pointer("/result/userAgent")
+        .and_then(Value::as_str)
+        .and_then(|user_agent| user_agent.split_once('/').map(|(_, suffix)| suffix))
+        .and_then(|suffix| suffix.split_whitespace().next())
+        .filter(|version| !version.is_empty())
+        .map(str::to_owned)
 }
 
 fn app_server_websocket_config(max_message_bytes: usize) -> WebSocketConfig {
@@ -862,6 +925,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn probe_requires_and_returns_the_reported_app_server_version()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let directory = tempfile::tempdir()?;
+        let socket_path = directory.path().join("app-server.sock");
+        let listener = UnixListener::bind(&socket_path)?;
+        let fake = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            let mut socket = accept_async(stream).await?;
+            let initialize = receive_json(&mut socket).await?;
+            socket
+                .send(Message::Text(
+                    json!({
+                        "id": initialize["id"].clone(),
+                        "result": {"userAgent": "codex_cli_rs/0.156.1 (macOS 26)"}
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await?;
+            let initialized = receive_json(&mut socket).await?;
+            assert_eq!(initialized["method"], "initialized");
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+
+        assert_eq!(probe_app_server_version(&socket_path).await?, "0.156.1");
+        fake.await??;
+        Ok(())
+    }
+
+    #[test]
+    fn initialize_version_parser_rejects_missing_or_empty_versions() {
+        assert_eq!(
+            app_server_version(&json!({
+                "result": {"userAgent": "codex_cli_rs/1.2.3 (macOS)"}
+            })),
+            Some("1.2.3".to_owned())
+        );
+        assert_eq!(
+            app_server_version(&json!({"result": {"userAgent": "codex_cli_rs/"}})),
+            None
+        );
+        assert_eq!(app_server_version(&json!({"result": {}})), None);
+    }
+
+    #[tokio::test]
     async fn stdio_child_supports_initialized_requests()
     -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut child = Command::new("sh")
@@ -912,7 +1020,12 @@ mod tests {
                     .ok_or_else(|| std::io::Error::other("initialize id missing"))?;
                 socket
                     .send(Message::Text(
-                        json!({"id": id, "result": {}}).to_string().into(),
+                        json!({
+                            "id": id,
+                            "result": {"userAgent": format!("codex_cli_rs/1.0.{cycle}")}
+                        })
+                        .to_string()
+                        .into(),
                     ))
                     .await?;
                 let initialized = receive_json(&mut socket).await?;
@@ -935,6 +1048,7 @@ mod tests {
         });
 
         wait_for_status(&handle, ConnectionStatus::Live).await?;
+        assert_eq!(handle.version().as_deref(), Some("1.0.1"));
         assert_eq!(
             handle
                 .request(json!({"method":"thread/list","params":{}}))
@@ -943,6 +1057,7 @@ mod tests {
         );
         wait_for_status(&handle, ConnectionStatus::Reconnecting).await?;
         wait_for_status(&handle, ConnectionStatus::Live).await?;
+        assert_eq!(handle.version().as_deref(), Some("1.0.2"));
         assert_eq!(
             handle
                 .request(json!({"method":"thread/list","params":{}}))

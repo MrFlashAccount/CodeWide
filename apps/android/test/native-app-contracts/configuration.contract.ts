@@ -209,7 +209,7 @@ it("dispatches foreground attach off the UI thread without restoring every serve
   expect(connectionService).toContain('"lockWaitMs"');
 });
 
-it("permits cleartext only for device-local SSH and emulator forwards", () => {
+it("permits cleartext only for local forwards and the explicit Relay IP", () => {
   expect(manifest).toContain('android:usesCleartextTraffic="false"');
   expect(manifest).toContain('android:networkSecurityConfig="@xml/network_security_config"');
   expect(networkSecurity).toContain('<base-config cleartextTrafficPermitted="false"');
@@ -217,5 +217,6 @@ it("permits cleartext only for device-local SSH and emulator forwards", () => {
   expect(networkSecurity).toContain(">127.0.0.1</domain>");
   expect(networkSecurity).toContain(">[::1]</domain>");
   expect(networkSecurity).toContain(">10.0.2.2</domain>");
+  expect(networkSecurity).toContain(">45.142.36.65</domain>");
   expect(networkSecurity).not.toContain('includeSubdomains="true"');
 });

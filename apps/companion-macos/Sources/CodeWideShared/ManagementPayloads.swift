@@ -1,5 +1,99 @@
 import Foundation
 
+public enum AppServerState: Equatable, Sendable {
+    case available(version: String?)
+    case unavailable(lastKnownVersion: String?)
+}
+
+public final class AppServerPayload: NSObject, NSSecureCoding, @unchecked Sendable {
+    public static let supportsSecureCoding = true
+
+    public let id: String
+    public let displayName: String
+    public let codexHome: String
+    public let state: AppServerState
+    public let selected: Bool
+
+    public init(
+        id: String,
+        displayName: String,
+        codexHome: String,
+        state: AppServerState,
+        selected: Bool
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.codexHome = codexHome
+        self.state = state
+        self.selected = selected
+    }
+
+    public required init?(coder: NSCoder) {
+        guard
+            let id = coder.decodeObject(of: NSString.self, forKey: "id") as String?,
+            let displayName = coder.decodeObject(
+                of: NSString.self,
+                forKey: "displayName"
+            ) as String?,
+            let codexHome = coder.decodeObject(of: NSString.self, forKey: "codexHome") as String?
+        else {
+            return nil
+        }
+        let version = coder.decodeObject(of: NSString.self, forKey: "version") as String?
+        switch coder.decodeInteger(forKey: "state") {
+        case 1:
+            state = .available(version: version)
+        case 2:
+            state = .unavailable(lastKnownVersion: version)
+        default:
+            return nil
+        }
+        self.id = id
+        self.displayName = displayName
+        self.codexHome = codexHome
+        selected = coder.decodeBool(forKey: "selected")
+    }
+
+    public func encode(with coder: NSCoder) {
+        coder.encode(id, forKey: "id")
+        coder.encode(displayName, forKey: "displayName")
+        coder.encode(codexHome, forKey: "codexHome")
+        coder.encode(selected, forKey: "selected")
+        switch state {
+        case let .available(version):
+            coder.encode(1, forKey: "state")
+            coder.encode(version, forKey: "version")
+        case let .unavailable(lastKnownVersion):
+            coder.encode(2, forKey: "state")
+            coder.encode(lastKnownVersion, forKey: "version")
+        }
+    }
+}
+
+public final class AppServerListPayload: NSObject, NSSecureCoding, @unchecked Sendable {
+    public static let supportsSecureCoding = true
+
+    public let servers: [AppServerPayload]
+
+    public init(servers: [AppServerPayload]) {
+        self.servers = servers
+    }
+
+    public required init?(coder: NSCoder) {
+        guard let servers = coder.decodeObject(
+            of: [NSArray.self, AppServerPayload.self],
+            forKey: "servers"
+        ) as? [AppServerPayload] else {
+            return nil
+        }
+        self.servers = servers
+    }
+
+    public func encode(with coder: NSCoder) {
+        coder.encode(servers, forKey: "servers")
+    }
+}
+
 public final class RelayStatusPayload: NSObject, NSSecureCoding, @unchecked Sendable {
     public static let supportsSecureCoding = true
 

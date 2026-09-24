@@ -25,6 +25,7 @@ export type ThreadHistoryModel = {
   close: () => void;
   cursor$: (id: string) => Observable<ThreadHistoryCursor | null>;
   delete: (id: string) => void;
+  forgetConnection: (connectionId: string) => void;
   get: (id: string) => ThreadHistoryRow | undefined;
   put: (row: Omit<ThreadHistoryRow, "updatedAt">) => void;
 };
@@ -92,6 +93,23 @@ export function createThreadHistoryModel(maxResidentRows = 72): ThreadHistoryMod
       cursors.delete(id);
       activities.delete(id);
       updatedAt.delete(id);
+    },
+    forgetConnection(connectionId) {
+      for (const id of cursors.keys()) {
+        if (id.startsWith(`${connectionId}\u0000`)) {
+          cursors.get(id)?.set(null);
+          activities.get(id)?.set(IDLE_ACTIVITY);
+          cursors.delete(id);
+          activities.delete(id);
+          updatedAt.delete(id);
+        }
+      }
+      for (const id of activities.keys()) {
+        if (id.startsWith(`${connectionId}\u0000`)) {
+          activities.get(id)?.set(IDLE_ACTIVITY);
+          activities.delete(id);
+        }
+      }
     },
     get(id) {
       const cursor = cursors.get(id)?.peek() ?? null;

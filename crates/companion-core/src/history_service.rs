@@ -81,7 +81,7 @@ pub struct HistoryService {
     store: Arc<IndexStore>,
     summaries: Arc<Mutex<SummaryCache>>,
     previews: Arc<Mutex<PreviewCache>>,
-    invalidation_previews: Arc<Mutex<HashMap<String, Option<String>>>>,
+    invalidation_states: Arc<Mutex<HashMap<String, PublishedRolloutState>>>,
     index_jobs: Arc<Mutex<IndexJobs>>,
 }
 
@@ -135,6 +135,12 @@ enum PreviewCacheLookup {
 struct LatestThreadState {
     preview: Option<String>,
     active: bool,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct PublishedRolloutState {
+    thread: LatestThreadState,
+    archived: bool,
 }
 
 #[derive(Default)]
@@ -203,7 +209,7 @@ impl HistoryService {
             store,
             summaries: Arc::new(Mutex::new(SummaryCache::default())),
             previews: Arc::new(Mutex::new(PreviewCache::default())),
-            invalidation_previews: Arc::new(Mutex::new(HashMap::new())),
+            invalidation_states: Arc::new(Mutex::new(HashMap::new())),
             index_jobs: Arc::new(Mutex::new(IndexJobs::default())),
         }
     }
@@ -427,29 +433,43 @@ impl HistoryService {
 
     /// Builds a small semantic invalidation for changes written by a different
     /// App Server process. Detailed turns remain lazy and bounded.
-    pub async fn rollout_invalidation_event(&self, change: RolloutChange) -> Value {
+    ///
+    /// # Errors
+    ///
+    /// Returns a canonical rollout read or worker error so the caller can retry
+    /// without publishing an incorrect terminal state.
+    pub async fn rollout_invalidation_event(
+        &self,
+        change: RolloutChange,
+    ) -> Result<Option<Value>, HistoryServiceError> {
         let thread_id = change.thread_id.clone();
         let archived = change.archived;
         let catalog = self.catalog.clone();
         let store = self.store.clone();
         let summaries = self.summaries.clone();
         let previews = self.previews.clone();
-        let invalidation_previews = self.invalidation_previews.clone();
+        let invalidation_states = self.invalidation_states.clone();
         tokio::task::spawn_blocking(move || {
-            let state = latest_thread_state(&catalog, &store, &summaries, &previews, &thread_id)
-                .unwrap_or_default();
-            let preview = state.preview;
-            let conversation_message = match invalidation_previews.lock() {
-                Ok(mut previous) => {
-                    previous.insert(thread_id.clone(), preview.clone()) != Some(preview.clone())
-                }
-                Err(poisoned) => {
-                    poisoned
-                        .into_inner()
-                        .insert(thread_id.clone(), preview.clone())
-                        != Some(preview.clone())
-                }
-            };
+            let state = latest_thread_state(&catalog, &store, &summaries, &previews, &thread_id)?;
+            let mut published = invalidation_states
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let previous = published.get(&thread_id);
+            let conversation_message = state.preview.is_some()
+                && previous.is_none_or(|previous| previous.thread.preview != state.preview);
+            if previous
+                .is_some_and(|previous| previous.thread == state && previous.archived == archived)
+            {
+                return Ok(None);
+            }
+            let preview = state.preview.clone();
+            published.insert(
+                thread_id.clone(),
+                PublishedRolloutState {
+                    thread: state.clone(),
+                    archived,
+                },
+            );
             let mut summary = json!({
                 "activity": true,
                 "conversationMessage": conversation_message,
@@ -473,7 +493,7 @@ impl HistoryService {
             } else {
                 "threadInvalidated"
             };
-            json!({
+            Ok(Some(json!({
                 "method": method,
                 "params": {
                     "threadId": thread_id,
@@ -487,38 +507,18 @@ impl HistoryService {
                     "operation": {
                         "kind": operation_kind,
                         "archived": archived,
+                        "turnActive": state.active,
                         "summary": summary
                     }
                 }
-            })
+            })))
         })
         .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "rollout invalidation projection task failed");
-            json!({
-                "method": "companion/thread/invalidated",
-                "params": {
-                    "threadId": change.thread_id,
-                    "archived": archived,
-                    "turnActive": false,
-                    "source": "rollout"
-                },
-                "codewideThreadPatch": {
-                    "version": 1,
-                    "threadId": change.thread_id,
-                    "operation": {
-                        "kind": "threadInvalidated",
-                        "archived": archived,
-                        "turnActive": false
-                    }
-                }
-            })
-        })
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
     }
 
-    /// Advances the local catalog and offset index immediately. UI
-    /// invalidation may still be suppressed for upstream-originated writes,
-    /// but local indexed reads must never wait for that suppression window.
+    /// Advances the local catalog and offset index immediately. UI notifications
+    /// are independently coalesced at semantic message and lifecycle boundaries.
     pub fn observe_rollout_change(&self, change: &RolloutChange) {
         if let Err(error) = self
             .catalog
@@ -1031,28 +1031,38 @@ fn remember_preview(
 
 fn summary_preview(turn: &Value) -> Option<String> {
     let items = turn.get("items")?.as_array()?;
-    for expected_type in ["agentMessage", "userMessage"] {
+    if turn.get("status").and_then(Value::as_str) != Some("inProgress") {
         for item in items.iter().rev() {
-            if item.get("type").and_then(Value::as_str) != Some(expected_type) {
-                continue;
+            if item.get("type").and_then(Value::as_str) == Some("agentMessage")
+                && item.get("phase").and_then(Value::as_str) == Some("final_answer")
+                && let Some(text) = item.get("text").and_then(Value::as_str)
+            {
+                let preview = normalize_preview(text);
+                if !preview.is_empty() {
+                    return Some(preview);
+                }
             }
-            let raw = if expected_type == "agentMessage" {
-                item.get("text").and_then(Value::as_str).unwrap_or_default()
-            } else {
-                return item
-                    .get("content")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
-                    .filter_map(|part| part.get("text").and_then(Value::as_str))
-                    .map(normalize_preview)
-                    .find(|text| !text.is_empty());
-            };
-            let preview = normalize_preview(raw);
-            if !preview.is_empty() {
-                return Some(preview);
-            }
+        }
+    }
+    for item in items.iter().rev() {
+        let preview = match item.get("type").and_then(Value::as_str) {
+            Some("agentMessage") => item
+                .get("text")
+                .and_then(Value::as_str)
+                .map(normalize_preview),
+            Some("userMessage") => item
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .map(normalize_preview)
+                .find(|text| !text.is_empty()),
+            _ => None,
+        };
+        if let Some(preview) = preview.filter(|text| !text.is_empty()) {
+            return Some(preview);
         }
     }
     None
@@ -3099,7 +3109,8 @@ mod tests {
                 path: path.clone(),
                 archived: false,
             })
-            .await;
+            .await?
+            .ok_or("first rollout message did not produce an event")?;
 
         assert_eq!(event["method"], "companion/thread/progress");
         assert_eq!(event["params"]["threadId"], THREAD_ID);
@@ -3107,6 +3118,10 @@ mod tests {
         assert_eq!(
             event["codewideThreadPatch"]["operation"]["kind"],
             "threadProgress"
+        );
+        assert_eq!(
+            event["codewideThreadPatch"]["operation"]["turnActive"],
+            true
         );
         assert_eq!(
             event["codewideThreadPatch"]["operation"]["summary"]["previewText"],
@@ -3128,13 +3143,149 @@ mod tests {
                 path,
                 archived: false,
             })
-            .await;
+            .await?
+            .ok_or("terminal rollout did not produce an event")?;
         assert!(!service.thread_active(THREAD_ID).await?);
         assert_eq!(completed["method"], "companion/thread/invalidated");
         assert_eq!(completed["params"]["turnActive"], false);
         assert_eq!(
             completed["codewideThreadPatch"]["operation"]["kind"],
             "threadInvalidated"
+        );
+        assert_eq!(
+            completed["codewideThreadPatch"]["operation"]["turnActive"],
+            false
+        );
+        Ok(())
+    }
+
+    fn append_summary_fixture(
+        rollout: &mut std::fs::File,
+        payload: &serde_json::Value,
+    ) -> std::io::Result<()> {
+        writeln!(
+            rollout,
+            "{}",
+            json!({ "type": "event_msg", "payload": payload })
+        )
+    }
+
+    #[test]
+    fn active_summary_uses_the_latest_authored_message() {
+        let turn = json!({
+            "status": "inProgress",
+            "items": [
+                {"type":"agentMessage","text":"Question from agent","phase":"commentary"},
+                {"type":"userMessage","content":[{"type":"text","text":"User reply"}]}
+            ]
+        });
+        assert_eq!(super::summary_preview(&turn).as_deref(), Some("User reply"));
+    }
+
+    #[tokio::test]
+    async fn modern_rollout_publishes_user_progress_and_final_message_boundaries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(&path)?;
+        let change = || crate::rollout_monitor::RolloutChange {
+            thread_id: THREAD_ID.to_owned(),
+            path: path.clone(),
+            archived: false,
+        };
+        append_summary_fixture(
+            &mut rollout,
+            &json!({"type":"task_started","turn_id":"turn"}),
+        )?;
+        append_summary_fixture(
+            &mut rollout,
+            &json!({"type":"item_completed","item":{"type":"UserMessage","id":"user","content":[{"type":"text","text":"Question"}]}}),
+        )?;
+        rollout.sync_all()?;
+
+        let service = history_service(directory.path())?;
+        let user = service
+            .rollout_invalidation_event(change())
+            .await?
+            .ok_or("missing user event")?;
+        assert_eq!(user["method"], "companion/thread/progress");
+        assert_eq!(
+            user["codewideThreadPatch"]["operation"]["summary"]["previewText"],
+            "Question"
+        );
+        assert!(
+            service
+                .rollout_invalidation_event(change())
+                .await?
+                .is_none()
+        );
+
+        append_summary_fixture(
+            &mut rollout,
+            &json!({"type":"item_completed","item":{"type":"CommandExecution","id":"tool"}}),
+        )?;
+        rollout.sync_all()?;
+        assert!(
+            service
+                .rollout_invalidation_event(change())
+                .await?
+                .is_none()
+        );
+
+        append_summary_fixture(
+            &mut rollout,
+            &json!({"type":"item_completed","item":{"type":"AgentMessage","id":"progress","phase":"commentary"}}),
+        )?;
+        let progress_record = r#"{"type":"response_item","payload":{"type":"message","id":"progress","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"Progress"}]}}"#;
+        writeln!(rollout, "{progress_record}")?;
+        rollout.sync_all()?;
+        let progress = service
+            .rollout_invalidation_event(change())
+            .await?
+            .ok_or("missing progress event")?;
+        assert_eq!(
+            progress["codewideThreadPatch"]["operation"]["summary"]["previewText"],
+            "Progress"
+        );
+
+        append_summary_fixture(
+            &mut rollout,
+            &json!({"type":"item_completed","item":{"type":"AgentMessage","id":"final","phase":"final_answer"}}),
+        )?;
+        let final_record = r#"{"type":"response_item","payload":{"type":"message","id":"final","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Final answer"}]}}"#;
+        writeln!(rollout, "{final_record}")?;
+        rollout.sync_all()?;
+        let final_message = service
+            .rollout_invalidation_event(change())
+            .await?
+            .ok_or("missing final message event")?;
+        assert_eq!(
+            final_message["codewideThreadPatch"]["operation"]["summary"]["previewText"],
+            "Final answer"
+        );
+
+        let refreshed = service
+            .enrich_thread_list(json!({"data":[{"id":THREAD_ID,"preview":"Question"}]}))
+            .await;
+        assert_eq!(refreshed["data"][0]["preview"], "Final answer");
+
+        append_summary_fixture(
+            &mut rollout,
+            &json!({"type":"task_complete","turn_id":"turn","last_agent_message":"Final answer"}),
+        )?;
+        rollout.sync_all()?;
+        let terminal = service
+            .rollout_invalidation_event(change())
+            .await?
+            .ok_or("missing terminal event")?;
+        assert_eq!(terminal["method"], "companion/thread/invalidated");
+        assert!(
+            service
+                .rollout_invalidation_event(change())
+                .await?
+                .is_none()
         );
         Ok(())
     }

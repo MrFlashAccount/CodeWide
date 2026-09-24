@@ -64,6 +64,20 @@ export function createPendingRequestDatabase(): PendingRequestDatabase {
       model.close();
     },
     collection,
+    async deleteConnection(connectionId) {
+      await model.ready;
+      const keys = collection.toArray
+        .filter((row) => row.connectionId === connectionId)
+        .map((row) => rowKey(row.connectionId, row.requestKey));
+      if (keys.length === 0) {
+        return;
+      }
+      storage.begin();
+      for (const key of keys) {
+        storage.write({ key, type: "delete" });
+      }
+      await storage.commit({ durable: true });
+    },
     release(connectionId, requestKey) {
       const current = collection.get(rowKey(connectionId, requestKey));
       if (current?.state === "resolving") {

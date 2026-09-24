@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use codewide_companion::vcs::{VcsPluginConfig, VcsScope, VcsService, WORKSPACE_CREATE_CAPABILITY};
+use codewide_companion::vcs::{
+    VcsError, VcsPluginConfig, VcsScope, VcsService, WORKSPACE_CREATE_CAPABILITY,
+};
 use tokio::process::Command;
 
 fn git_plugin() -> std::path::PathBuf {
@@ -91,6 +93,89 @@ async fn git_runs_only_through_the_json_rpc_registry() {
         .await
         .expect("Git plugin returns the uncommitted diff");
     assert!(combined_diff.diff.contains("-base\n+changed"));
+}
+
+#[tokio::test]
+async fn unavailable_provider_does_not_hide_git_and_errors_without_an_owner() {
+    let repository = tempfile::tempdir().expect("repository");
+    let state = tempfile::tempdir().expect("state");
+    git(
+        repository.path(),
+        &["init", "--quiet", "--initial-branch=main"],
+    )
+    .await;
+    git(
+        repository.path(),
+        &["config", "user.email", "test@example.com"],
+    )
+    .await;
+    git(repository.path(), &["config", "user.name", "Test"]).await;
+    tokio::fs::write(repository.path().join("file.txt"), "base\n")
+        .await
+        .expect("base file writes");
+    git(repository.path(), &["add", "file.txt"]).await;
+    git(repository.path(), &["commit", "--quiet", "-m", "base"]).await;
+
+    let arc_executable = state.path().join("arc-plugin");
+    std::fs::write(&arc_executable, "#!/bin/sh\nexit 0\n").expect("Arc stub writes");
+    let service = VcsService::new(state.path().join("vcs-plugins.json"));
+    service
+        .registry()
+        .install(VcsPluginConfig {
+            id: "arc".into(),
+            executable: arc_executable.clone(),
+            args: Vec::new(),
+            enabled: true,
+            priority: 100,
+        })
+        .expect("Arc stub registers");
+    service
+        .registry()
+        .install(VcsPluginConfig {
+            id: "git".into(),
+            executable: git_plugin(),
+            args: Vec::new(),
+            enabled: true,
+            priority: -1000,
+        })
+        .expect("Git plugin registers");
+    std::fs::remove_file(&arc_executable).expect("Arc stub becomes unavailable");
+
+    let snapshot = service
+        .changes(repository.path(), VcsScope::Uncommitted)
+        .await
+        .expect("Git owns a Git-only workspace");
+    assert_eq!(snapshot.repository.provider, "git");
+    let support = service
+        .workspace_support(repository.path())
+        .await
+        .expect("Git workspace inspection succeeds")
+        .expect("Git owns workspace creation");
+    assert_eq!(support.provider, "git");
+
+    std::fs::create_dir(repository.path().join(".arc")).expect("unrelated marker writes");
+    let snapshot = service
+        .changes(repository.path(), VcsScope::Uncommitted)
+        .await
+        .expect("provider names and markers do not override Git ownership");
+    assert_eq!(snapshot.repository.provider, "git");
+
+    let unowned = state.path().join("plain-directory");
+    std::fs::create_dir(&unowned).expect("plain directory writes");
+    let error = service
+        .changes(&unowned, VcsScope::Uncommitted)
+        .await
+        .expect_err("the unresolved provider startup error remains visible");
+    assert!(
+        matches!(error, VcsError::Plugin(message) if message.starts_with("arc: could not start plugin"))
+    );
+
+    let absent = repository.path().join("removed-workspace");
+    let error = service
+        .changes(&absent, VcsScope::Uncommitted)
+        .await
+        .expect_err("removed workspace cannot spawn any plugin");
+    assert!(matches!(error, VcsError::UnsupportedWorkspace(path) if path == absent));
 }
 
 #[tokio::test]

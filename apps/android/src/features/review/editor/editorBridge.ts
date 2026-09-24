@@ -15,6 +15,8 @@ export type CodeReviewPatch = {
  */
 export type CodeReviewDocument = {
   displayState?: "deleted" | "empty";
+  /** Session and VCS scopes retain the complete file when patch reconstruction fails. */
+  fullFileDiff?: boolean;
   patches: readonly CodeReviewPatch[];
   path: string;
   revision: string;

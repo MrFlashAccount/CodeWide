@@ -6,6 +6,7 @@ import { createGlobalSupervisorWebRtcSession } from "../native/globalSupervisorW
 import type { GlobalSupervisorWebRtcSessionFactory } from "../native/globalSupervisorWebRtcSessionContract";
 import { acquireGlobalVoiceForegroundLease } from "../native/globalVoiceForegroundLease.native";
 import { NativeEngineSupervisor } from "../native/native-engine";
+import { purgeCachedConnectionAttachments } from "../native/attachment-cache/cached-transfer";
 import {
   enqueueNativeCommand,
   listNativeCommands,
@@ -34,6 +35,7 @@ import {
   type PendingRequestDatabase,
 } from "./pending-request-database";
 import { createPrivateTransferAccess } from "./private-transfer";
+import { deleteConnectionQuestionDrafts } from "./questionDraftStorage";
 import {
   configureTelemetryAppVersion,
   configureTelemetryTransport,
@@ -381,6 +383,36 @@ const globalSupervisorAttention = createGlobalSupervisorAttentionOwner({
   now: () => Date.now(),
   storage: createGlobalSupervisorAttentionStorage(),
 });
+
+/** Erases the removed connection's local data before its saved profile disappears. */
+export async function deleteLocalConnectionData(connectionId: string): Promise<void> {
+  const snapshot = workspaceRuntime.snapshot;
+  requireConnectionDataReady(snapshot);
+  workspaceRuntime.fileTransferController?.deleteConnection(connectionId);
+  await globalSupervisorAttention.deleteConnection(connectionId);
+  await snapshot.pendingRequests?.deleteConnection(connectionId);
+  await snapshot.threadDetails?.deleteConnection(connectionId);
+  await snapshot.threadSummaries?.deleteConnection(connectionId);
+  await snapshot.threadUiState?.deleteConnection(connectionId);
+  await snapshot.accountRateLimits?.deleteConnection(connectionId);
+  await snapshot.resources?.deleteConnection(connectionId);
+  await deleteConnectionQuestionDrafts(connectionId);
+  await purgeCachedConnectionAttachments(connectionId);
+}
+
+function requireConnectionDataReady(snapshot: WorkspaceRuntimeSnapshot): void {
+  const stores = [
+    snapshot.pendingRequests,
+    snapshot.threadDetails,
+    snapshot.threadSummaries,
+    snapshot.threadUiState,
+    snapshot.accountRateLimits,
+    snapshot.resources,
+  ];
+  if (stores.some((store) => store === null)) {
+    throw new Error("Local server data is not ready for deletion");
+  }
+}
 const userPreferences = getUserPreferencesDatabase();
 
 async function readVoiceAssistantPersonality() {

@@ -1,14 +1,21 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashSet,
+    os::unix::fs::FileTypeExt,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use companion_core::runtime_host::{
     RuntimeHealth, RuntimeHost, RuntimeHostError, RuntimePhase, UpdateStatus,
 };
 use companion_core::{
     managed_runtime::{
-        ManagedRuntime, ManagedRuntimeConfig, PairingPresentation, relay_connection_label,
+        AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
+        relay_connection_label,
     },
     relay::RelayStatus,
     secure_store::SecretStoragePolicy,
+    upstream::probe_app_server_version,
 };
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -75,11 +82,33 @@ pub struct FfiPairing {
     pub expires_at_unix_ms: u64,
 }
 
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum FfiAppServerAvailability {
+    Available { version: String },
+    Unavailable,
+}
+
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum FfiAppServerConnection {
+    Live { version: Option<String> },
+    Reconnecting { last_known_version: Option<String> },
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct FfiAppServerCandidate {
+    pub id: String,
+    pub display_name: String,
+    pub codex_home: String,
+    pub availability: FfiAppServerAvailability,
+    pub selected: bool,
+}
+
 #[derive(uniffi::Object)]
 pub struct CoreHost {
     lifecycle: Mutex<RuntimeHost>,
     companion: ManagedRuntime,
     executor: tokio::runtime::Runtime,
+    codex_home: PathBuf,
 }
 
 #[uniffi::export]
@@ -98,12 +127,13 @@ impl CoreHost {
         host_version: String,
     ) -> Result<Arc<Self>, CompanionFfiError> {
         let lifecycle = RuntimeHost::open(&state_directory, app_version, host_version)?;
+        let codex_home = PathBuf::from(codex_home);
         let executor = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_name("codewide-core")
             .build()
             .map_err(CompanionFfiError::runtime)?;
-        let config = ManagedRuntimeConfig::desktop(state_directory.into(), codex_home.into())
+        let config = ManagedRuntimeConfig::desktop(state_directory.into(), codex_home.clone())
             .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly);
         let companion = executor
             .block_on(ManagedRuntime::start(config))
@@ -112,7 +142,38 @@ impl CoreHost {
             lifecycle: Mutex::new(lifecycle),
             companion,
             executor,
+            codex_home,
         }))
+    }
+
+    #[must_use]
+    pub fn app_server_connection(&self) -> FfiAppServerConnection {
+        match self.companion.app_server_connection() {
+            AppServerConnection::Live { version } => FfiAppServerConnection::Live { version },
+            AppServerConnection::Reconnecting { last_known_version } => {
+                FfiAppServerConnection::Reconnecting { last_known_version }
+            }
+        }
+    }
+
+    /// Finds local Codex homes with a reachable App Server endpoint.
+    ///
+    /// The default and currently selected homes remain visible while offline,
+    /// so the macOS host can explain and recover the unavailable state.
+    ///
+    /// # Errors
+    /// Returns when the user's home directory cannot be inspected safely.
+    pub fn discover_app_servers(
+        &self,
+        home_directory: String,
+    ) -> Result<Vec<FfiAppServerCandidate>, CompanionFfiError> {
+        let home_directory = PathBuf::from(home_directory);
+        let homes = candidate_codex_homes(&home_directory, &self.codex_home)
+            .map_err(CompanionFfiError::runtime)?;
+        Ok(homes
+            .iter()
+            .map(|codex_home| self.app_server_candidate(codex_home))
+            .collect())
     }
 
     /// Returns the current lifecycle and version proof.
@@ -218,6 +279,81 @@ impl CoreHost {
     }
 }
 
+impl CoreHost {
+    fn app_server_candidate(&self, codex_home: &Path) -> FfiAppServerCandidate {
+        let socket_path = codex_home.join("app-server-control/app-server-control.sock");
+        let availability = socket_path
+            .symlink_metadata()
+            .ok()
+            .filter(|metadata| metadata.file_type().is_socket())
+            .and_then(|_| {
+                self.executor
+                    .block_on(probe_app_server_version(&socket_path))
+                    .ok()
+            })
+            .map_or(FfiAppServerAvailability::Unavailable, |version| {
+                FfiAppServerAvailability::Available { version }
+            });
+        let id = codex_home.to_string_lossy().into_owned();
+        FfiAppServerCandidate {
+            display_name: app_server_display_name(codex_home),
+            codex_home: id.clone(),
+            selected: codex_home == self.codex_home,
+            id,
+            availability,
+        }
+    }
+}
+
+fn candidate_codex_homes(home_directory: &Path, selected: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let default = home_directory.join(".codex");
+    let mut seen = HashSet::new();
+    let mut homes = Vec::new();
+    push_candidate(&mut homes, &mut seen, default);
+    push_candidate(&mut homes, &mut seen, selected.to_path_buf());
+    for entry in std::fs::read_dir(home_directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let path = entry.path();
+        if (name == ".codex" || name.starts_with(".codex-"))
+            && entry.file_type()?.is_dir()
+            && has_app_server_socket(&path)
+        {
+            push_candidate(&mut homes, &mut seen, path);
+        }
+    }
+    homes.sort_by(|left, right| {
+        let left_default = left == &home_directory.join(".codex");
+        let right_default = right == &home_directory.join(".codex");
+        right_default
+            .cmp(&left_default)
+            .then_with(|| left.file_name().cmp(&right.file_name()))
+    });
+    Ok(homes)
+}
+
+fn has_app_server_socket(codex_home: &Path) -> bool {
+    codex_home
+        .join("app-server-control/app-server-control.sock")
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_socket())
+}
+
+fn push_candidate(homes: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, candidate: PathBuf) {
+    if seen.insert(candidate.clone()) {
+        homes.push(candidate);
+    }
+}
+
+fn app_server_display_name(codex_home: &Path) -> String {
+    match codex_home.file_name().and_then(|name| name.to_str()) {
+        Some(".codex") => "Default".to_owned(),
+        Some(name) => name.trim_start_matches(".codex-").to_owned(),
+        None => "Codex App Server".to_owned(),
+    }
+}
+
 impl From<RelayStatus> for FfiRelayStatus {
     fn from(status: RelayStatus) -> Self {
         Self {
@@ -292,6 +428,42 @@ impl From<RuntimeHealth> for FfiRuntimeHealth {
             update_target_version,
             update_failure_reason,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn discovery_keeps_default_and_selected_but_ignores_inactive_profiles()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = tempfile::tempdir()?;
+        let default = home.path().join(".codex");
+        let work = home.path().join(".codex-work");
+        let inactive = home.path().join(".codex-inactive");
+        std::fs::create_dir_all(work.join("app-server-control"))?;
+        std::fs::create_dir_all(&inactive)?;
+        let _socket = UnixListener::bind(work.join("app-server-control/app-server-control.sock"))?;
+
+        let candidates = candidate_codex_homes(home.path(), &work)?;
+
+        assert_eq!(candidates, vec![default, work]);
+        assert!(!candidates.contains(&inactive));
+        Ok(())
+    }
+
+    #[test]
+    fn display_name_distinguishes_default_and_named_profiles() {
+        assert_eq!(
+            app_server_display_name(Path::new("/Users/me/.codex")),
+            "Default"
+        );
+        assert_eq!(
+            app_server_display_name(Path::new("/Users/me/.codex-work")),
+            "work"
+        );
     }
 }
 

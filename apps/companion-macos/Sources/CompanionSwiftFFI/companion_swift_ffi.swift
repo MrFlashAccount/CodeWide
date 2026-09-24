@@ -569,6 +569,8 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol CoreHostProtocol: AnyObject, Sendable {
 
+    func appServerConnection()  -> FfiAppServerConnection
+
     /**
      * Creates a time-bounded device pairing link.
      * # Errors
@@ -577,6 +579,17 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
     func createPairing() throws  -> FfiPairing
 
     func devices()  -> [FfiDeviceStatus]
+
+    /**
+     * Finds local Codex homes with a reachable App Server endpoint.
+     *
+     * The default and currently selected homes remain visible while offline,
+     * so the macOS host can explain and recover the unavailable state.
+     *
+     * # Errors
+     * Returns when the user's home directory cannot be inspected safely.
+     */
+    func discoverAppServers(homeDirectory: String) throws  -> [FfiAppServerCandidate]
 
     /**
      * Returns the current lifecycle and version proof.
@@ -699,6 +712,15 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
 
 
 
+open func appServerConnection() -> FfiAppServerConnection  {
+    return try!  FfiConverterTypeFfiAppServerConnection_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_app_server_connection(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
     /**
      * Creates a time-bounded device pairing link.
      * # Errors
@@ -718,6 +740,25 @@ open func devices() -> [FfiDeviceStatus]  {
         uniffiCallStatus in
     uniffi_companion_swift_ffi_fn_method_corehost_devices(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Finds local Codex homes with a reachable App Server endpoint.
+     *
+     * The default and currently selected homes remain visible while offline,
+     * so the macOS host can explain and recover the unavailable state.
+     *
+     * # Errors
+     * Returns when the user's home directory cannot be inspected safely.
+     */
+open func discoverAppServers(homeDirectory: String)throws  -> [FfiAppServerCandidate]  {
+    return try  FfiConverterSequenceTypeFfiAppServerCandidate.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_discover_app_servers(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(homeDirectory),uniffiCallStatus
     )
 })
 }
@@ -862,6 +903,72 @@ public func FfiConverterTypeCoreHost_lower(_ value: CoreHost) -> UInt64 {
 }
 
 
+
+
+public struct FfiAppServerCandidate: Equatable, Hashable {
+    public var id: String
+    public var displayName: String
+    public var codexHome: String
+    public var availability: FfiAppServerAvailability
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, displayName: String, codexHome: String, availability: FfiAppServerAvailability, selected: Bool) {
+        self.id = id
+        self.displayName = displayName
+        self.codexHome = codexHome
+        self.availability = availability
+        self.selected = selected
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiAppServerCandidate: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAppServerCandidate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAppServerCandidate {
+        return
+            try FfiAppServerCandidate(
+                id: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterString.read(from: &buf),
+                codexHome: FfiConverterString.read(from: &buf),
+                availability: FfiConverterTypeFfiAppServerAvailability.read(from: &buf),
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiAppServerCandidate, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterString.write(value.codexHome, into: &buf)
+        FfiConverterTypeFfiAppServerAvailability.write(value.availability, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAppServerCandidate_lift(_ buf: RustBuffer) throws -> FfiAppServerCandidate {
+    return try FfiConverterTypeFfiAppServerCandidate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAppServerCandidate_lower(_ value: FfiAppServerCandidate) -> RustBuffer {
+    return FfiConverterTypeFfiAppServerCandidate.lower(value)
+}
 
 
 public struct FfiDeviceStatus: Equatable, Hashable {
@@ -1224,6 +1331,147 @@ public func FfiConverterTypeCompanionFfiError_lower(_ value: CompanionFfiError) 
     return FfiConverterTypeCompanionFfiError.lower(value)
 }
 
+
+
+public enum FfiAppServerAvailability: Equatable, Hashable {
+
+    case available(version: String
+    )
+    case unavailable
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiAppServerAvailability: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAppServerAvailability: FfiConverterRustBuffer {
+    typealias SwiftType = FfiAppServerAvailability
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAppServerAvailability {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .available(version: try FfiConverterString.read(from: &buf)
+        )
+
+        case 2: return .unavailable
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiAppServerAvailability, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .available(version):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(version, into: &buf)
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAppServerAvailability_lift(_ buf: RustBuffer) throws -> FfiAppServerAvailability {
+    return try FfiConverterTypeFfiAppServerAvailability.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAppServerAvailability_lower(_ value: FfiAppServerAvailability) -> RustBuffer {
+    return FfiConverterTypeFfiAppServerAvailability.lower(value)
+}
+
+
+
+
+public enum FfiAppServerConnection: Equatable, Hashable {
+
+    case live(version: String?
+    )
+    case reconnecting(lastKnownVersion: String?
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiAppServerConnection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAppServerConnection: FfiConverterRustBuffer {
+    typealias SwiftType = FfiAppServerConnection
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAppServerConnection {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .live(version: try FfiConverterOptionString.read(from: &buf)
+        )
+
+        case 2: return .reconnecting(lastKnownVersion: try FfiConverterOptionString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiAppServerConnection, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .live(version):
+            writeInt(&buf, Int32(1))
+            FfiConverterOptionString.write(version, into: &buf)
+
+
+        case let .reconnecting(lastKnownVersion):
+            writeInt(&buf, Int32(2))
+            FfiConverterOptionString.write(lastKnownVersion, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAppServerConnection_lift(_ buf: RustBuffer) throws -> FfiAppServerConnection {
+    return try FfiConverterTypeFfiAppServerConnection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAppServerConnection_lower(_ value: FfiAppServerConnection) -> RustBuffer {
+    return FfiConverterTypeFfiAppServerConnection.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1245,6 +1493,31 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         case 1: return try FfiConverterString.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiAppServerCandidate: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiAppServerCandidate]
+
+    public static func write(_ value: [FfiAppServerCandidate], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiAppServerCandidate.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiAppServerCandidate] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiAppServerCandidate]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiAppServerCandidate.read(from: &buf))
+        }
+        return seq
     }
 }
 
@@ -1288,10 +1561,16 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_create_pairing() != 24799) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_devices() != 59987) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_discover_app_servers() != 45098) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_health() != 9536) {

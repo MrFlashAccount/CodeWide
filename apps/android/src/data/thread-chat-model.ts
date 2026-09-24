@@ -56,6 +56,7 @@ export type ThreadChatModel = {
     loaded: LoadedThreadChatWindow,
   ) => boolean;
   failWindow: (request: ThreadChatWindowRequest, generation: number, cause: unknown) => void;
+  forgetConnection: (connectionId: string) => void;
   publishChanges: (
     changes: readonly (
       | { type: "insert" | "update"; value: ThreadDetailRow }
@@ -563,6 +564,20 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       rowNodes.clear();
       residentRowCount = 0;
       reportResidentRowCount();
+    },
+    forgetConnection(connectionId) {
+      for (const [scope, identity] of windowIdentities) {
+        if (identity.connectionId === connectionId) {
+          evictWindow(scope);
+        }
+      }
+      if (
+        residentResourceScope !== null &&
+        residentResourceScope.startsWith(`${connectionId}\u0000`)
+      ) {
+        residentResourceScope = null;
+      }
+      pruneUnreferencedRows();
     },
     // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
     // oxlint-disable-next-line eslint/max-params

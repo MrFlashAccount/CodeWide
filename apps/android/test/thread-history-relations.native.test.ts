@@ -218,6 +218,29 @@ describe("sidebar access paths", () => {
 });
 
 describe("relational thread history", () => {
+  it("erases all epochs and pending history for one server without touching another", async () => {
+    const storage = createThreadDetailSqlite(() => undefined);
+    await storage.prepare();
+    await write(storage, [meta(), row("old-turn"), pending()]);
+    await write(storage, [meta(1), { ...row("new-turn"), historyEpoch: 1 }]);
+    const other = "other";
+    await write(storage, [
+      { ...meta(), id: "other-meta", connectionId: other },
+      { ...row("other-turn"), connectionId: other },
+      { ...pending(), id: "other-pending", connectionId: other },
+    ]);
+    await storage.deleteConnection("server");
+    for (const table of ["codewide_history_heads", "codewide_history_chains", "codewide_history_turns", "codewide_history_members", "codewide_history_pending", "codewide_history_content"]) {
+      expect(database().prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE connection_id = ?`).get("server")).toEqual({ count: 0 });
+      const retained = database().prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE connection_id = ?`).get(other);
+      expect(Number(retained?.count)).toBeGreaterThan(0);
+    }
+    expect(database().prepare("SELECT COUNT(*) AS count FROM codewide_history_items i JOIN codewide_history_content c USING(content_id) WHERE c.connection_id = ?").get(other)).toMatchObject({ count: expect.any(Number) });
+    expect(database().prepare("SELECT COUNT(*) AS count FROM codewide_history_items").get()).toEqual({ count: 1 });
+    expect((await storage.loadResolvedWindow({ connectionId: other, threadId: "thread", anchorTurnId: null, turnLimit: 36, newerBuffer: 12 })).turnRows.map((value) => value.remoteTurnId)).toContain("other-turn");
+    await storage.close();
+  });
+
   const receipt = { threadId: "thread", commandId: "pending", turnId: "sent-turn", itemId: "sent-user" };
   const sentItem = { type: "userMessage", id: receipt.itemId, clientId: receipt.commandId, content: [] } as const;
   const receiptEvent = { cursor: 42, payload: { method: "item/completed",

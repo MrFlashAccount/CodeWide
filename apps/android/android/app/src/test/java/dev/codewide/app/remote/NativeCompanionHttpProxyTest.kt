@@ -34,6 +34,7 @@ class NativeCompanionHttpProxyTest {
     assertFalse(secondText.contains(capability))
     assertTrue(firstText.startsWith("HEAD /v1/files/upload HTTP/1.1\r\n"))
     assertTrue(firstText.contains("Authorization: Bearer one\r\n"))
+    assertFalse(firstText.contains("Connection: close\r\n"))
     assertTrue(secondText.contains("Authorization: Bearer two\r\n"))
     assertEquals(4L, second.contentLength)
   }
@@ -48,6 +49,7 @@ class NativeCompanionHttpProxyTest {
     val rewritten = request.withAuthority("companion.example").toString(StandardCharsets.ISO_8859_1)
 
     assertTrue(rewritten.contains("Origin: http://untrusted.example\r\n"))
+    assertTrue(rewritten.contains("Connection: keep-alive\r\n"))
     assertTrue(request.chunked)
     assertFalse(request.close)
     assertFalse(request.upgrade)
@@ -61,6 +63,8 @@ class NativeCompanionHttpProxyTest {
     ).authorize(capability)
 
     assertTrue(request.upgrade)
+    assertTrue(request.withAuthority("companion.example").toString(StandardCharsets.ISO_8859_1)
+      .contains("Connection: keep-alive, Upgrade\r\n"))
   }
 
   @Test

@@ -7,6 +7,7 @@ import type { ThreadResourcesRow } from "./thread-resource-types";
 export type ThreadResourcesModel = {
   close: () => void;
   delete: (id: string) => void;
+  forgetConnection: (connectionId: string) => void;
   get: (id: string) => ThreadResourcesRow | undefined;
   put: (row: ThreadResourcesRow) => void;
   resource: (id: string, revision: string, loader: () => Promise<unknown>) => Observable<boolean>;
@@ -110,6 +111,22 @@ export function createThreadResourcesModel(maxResidentRows = 48): ThreadResource
       rows.get(id)?.set(null);
       rows.delete(id);
       resources.delete(id);
+    },
+    forgetConnection(connectionId) {
+      for (const id of rows.keys()) {
+        if (id.startsWith(`${connectionId}\u0000`)) {
+          rows.get(id)?.set(null);
+          rows.delete(id);
+          resources.delete(id);
+          retainCounts.delete(id);
+        }
+      }
+      for (const id of resources.keys()) {
+        if (id.startsWith(`${connectionId}\u0000`)) {
+          resources.delete(id);
+          retainCounts.delete(id);
+        }
+      }
     },
     get(id) {
       return rows.get(id)?.peek() ?? undefined;

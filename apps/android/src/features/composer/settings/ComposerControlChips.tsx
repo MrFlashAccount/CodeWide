@@ -2,6 +2,9 @@
 import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
+import { observable } from "@legendapp/state";
+import { useSelector } from "@legendapp/state/react";
+import { useEffect } from "react";
 import { View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { LoadTurnControls, TurnControlsValue } from "../../../data/turn-controls-types";
@@ -15,12 +18,21 @@ import { ComposerContextLabel } from "../../../ui/ResourceContextChip";
 import { ModelThinkingMenu, PermissionsMenu } from "../../../ui/TurnControlMenus";
 import type { ModelSettingsChoice } from "../../../ui/TurnControlMenus.types";
 import { composerModelSettings } from "../modelSettings";
+import { useConstant } from "../../../react/useConstant";
+import { useEvent } from "../../../react/useEvent";
 import {
   EMPTY_TURN_CONTROLS,
   executionPermissionsLabel,
   permissionProfileLabel,
 } from "../settings";
 import { styles } from "./ComposerControlChips.styles";
+
+const MODEL_CONFIRMATION_TIMEOUT_MS = 15_000;
+
+type PendingModelChoice = {
+  readonly choice: ModelSettingsChoice;
+  readonly threadId: string;
+};
 
 export function ComposerControlChips({
   cwd,
@@ -61,6 +73,30 @@ export function ComposerControlChips({
   selectedPersonality: Personality | null;
   selectedServiceTier: string | null | undefined;
 }) {
+  const pendingModel$ = useConstant(() => observable<PendingModelChoice | null>(null));
+  const pendingModel = useSelector(() => pendingModel$.get());
+  useEffect(() => {
+    if (pendingModel === null) {
+      return undefined;
+    }
+    const timeout = setTimeout(() => {
+      pendingModel$.set(null);
+    }, MODEL_CONFIRMATION_TIMEOUT_MS);
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [pendingModel, pendingModel$]);
+  const applyModelSettings = useEvent((choice: ModelSettingsChoice) => {
+    if (
+      !newChat &&
+      remoteThread !== null &&
+      remoteThread !== undefined &&
+      choice.executionChanged
+    ) {
+      pendingModel$.set({ choice, threadId: remoteThread.id });
+    }
+    onApplySettings(choice);
+  });
   const resource = useTurnControlsRow(resources, resourceId);
   useAsyncResource<TurnControlsValue>(
     load === undefined || resourceId === null ? null : "conversation-turn-controls",
@@ -78,27 +114,57 @@ export function ComposerControlChips({
     remoteThread === null || remoteThread === undefined
       ? null
       : projectedThreadExecutionSettings(remoteThread);
+  const pendingConfirmed =
+    pendingModel !== null &&
+    remoteThread?.id === pendingModel.threadId &&
+    serverExecution?.model === pendingModel.choice.model &&
+    serverExecution.effort === pendingModel.choice.effort &&
+    (serverExecution.serviceTier ?? null) === pendingModel.choice.serviceTier;
+  useEffect(() => {
+    if (pendingConfirmed) {
+      pendingModel$.set(null);
+    }
+  }, [pendingConfirmed, pendingModel$]);
+  const pendingChoice =
+    !newChat &&
+    error === null &&
+    remoteThread !== null &&
+    remoteThread !== undefined &&
+    pendingModel?.threadId === remoteThread.id &&
+    !pendingConfirmed
+      ? pendingModel.choice
+      : null;
   const { effort: effectiveEffort, model: effectiveModel } = composerModelSettings(
     newChat,
     serverExecution,
-    { effort: selectedEffort, model: selectedModel },
+    {
+      effort: pendingChoice?.effort ?? selectedEffort,
+      model: pendingChoice?.model ?? selectedModel,
+    },
     controls,
   );
+  const displayedEffort = pendingChoice?.effort ?? effectiveEffort;
+  const displayedModel = pendingChoice?.model ?? effectiveModel;
   const effectivePermissions =
     selectedPermissions ?? serverExecution?.permissions ?? controls.defaults.permissions;
-  const selectedControlModel = controls.models.find((candidate) => candidate.id === effectiveModel);
+  const selectedControlModel = controls.models.find((candidate) => candidate.id === displayedModel);
   const modelLabel =
     selectedControlModel?.label ??
-    effectiveModel ??
+    displayedModel ??
     (pending ? "Loading model…" : "Model not confirmed");
-  const modelText = effectiveEffort === null ? modelLabel : `${modelLabel} · ${effectiveEffort}`;
+  const modelNameAndEffort =
+    displayedEffort === null ? modelLabel : `${modelLabel} · ${displayedEffort}`;
+  const modelText =
+    pendingChoice === null ? modelNameAndEffort : `${modelNameAndEffort} · Updating…`;
   const effectiveServiceTier = newChat
     ? selectedServiceTier === undefined
       ? (controls.defaults.serviceTier ?? selectedControlModel?.defaultServiceTier ?? null)
       : selectedServiceTier
-    : serverExecution?.serviceTier === undefined
-      ? (controls.defaults.serviceTier ?? selectedControlModel?.defaultServiceTier ?? null)
-      : serverExecution.serviceTier;
+    : pendingChoice !== null
+      ? (pendingChoice.serviceTier ?? null)
+      : serverExecution?.serviceTier === undefined
+        ? (controls.defaults.serviceTier ?? selectedControlModel?.defaultServiceTier ?? null)
+        : serverExecution.serviceTier;
   const fastTier = fastServiceTier(selectedControlModel?.serviceTiers);
   const permissionLabel =
     effectivePermissions === null
@@ -130,7 +196,7 @@ export function ComposerControlChips({
           error={effectiveError}
           loading={initialLoading}
           models={controls.models}
-          onApplySettings={onApplySettings}
+          onApplySettings={applyModelSettings}
           onClose={() => {
             onClose("model-menu");
           }}
@@ -140,8 +206,8 @@ export function ComposerControlChips({
           onOpen={() => {
             onQuickOpen("model-menu");
           }}
-          selectedEffort={effectiveEffort}
-          selectedModel={effectiveModel}
+          selectedEffort={displayedEffort}
+          selectedModel={displayedModel}
           selectedPersonality={selectedPersonality}
           selectedServiceTier={effectiveServiceTier}
           triggerChildren={

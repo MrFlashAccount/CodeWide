@@ -7,4 +7,8 @@
     <domain includeSubdomains="false">[::1]</domain>
     <domain includeSubdomains="false">10.0.2.2</domain>
   </domain-config>
+  <!-- The Relay carrier uses ws://; Companion traffic inside it remains pinned TLS. -->
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="false">45.142.36.65</domain>
+  </domain-config>
 </network-security-config>
