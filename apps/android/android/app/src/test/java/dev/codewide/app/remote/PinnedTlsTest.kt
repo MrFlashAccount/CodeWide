@@ -35,6 +35,18 @@ class PinnedTlsTest {
   }
 
   @Test
+  fun `pinned relay requires wss without a route in the endpoint`() {
+    val relay = PinnedRelayRoute("a".repeat(64), "sha256/${"B".repeat(43)}=")
+    PinnedTls.requireRelayEndpoint("wss://192.0.2.10:8780/v1/sync", relay)
+    assertThrows(IllegalArgumentException::class.java) {
+      PinnedTls.requireRelayEndpoint("ws://192.0.2.10:8780/c/${relay.routeId}/v1/sync", relay)
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      PinnedRelayRoute("bad", relay.tlsPinSha256)
+    }
+  }
+
+  @Test
   fun `every profile route is rewritten through inner tls`() {
     assertEquals("/v1/e2ee-tunnel", InnerTlsTransport.DATA_TUNNEL_PATH)
     assertEquals("/v1/e2ee-bootstrap-tunnel", InnerTlsTransport.BOOTSTRAP_TUNNEL_PATH)
@@ -86,6 +98,22 @@ class PinnedTlsTest {
     )
     assertEquals(pin, rotatedCapability.innerTlsPinSha256)
     assertEquals(deviceId, rotatedCapability.deviceId)
+  }
+
+  @Test
+  fun `relay identity survives credential rotation and clears when endpoint moves`() {
+    val pin = "sha256/${"A".repeat(43)}="
+    val relay = PinnedRelayRoute("a".repeat(64), "sha256/${"B".repeat(43)}=")
+    val paired = mergeNativeSessionCredentials(
+      null, "server", "wss://192.0.2.10:8780/v1/sync", "x".repeat(32), pin, true,
+      "device-${"a".repeat(64)}", relay,
+    )
+    assertEquals(relay, mergeNativeSessionCredentials(
+      paired, paired.id, paired.endpoint, "y".repeat(32), null, true,
+    ).relay)
+    assertEquals(null, mergeNativeSessionCredentials(
+      paired, paired.id, "wss://other.example/v1/sync", paired.token, null, true,
+    ).relay)
   }
 
   @Test

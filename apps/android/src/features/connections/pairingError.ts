@@ -1,6 +1,9 @@
 export function humanPairingError(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : "Could not connect to this server";
   const normalized = message.toLocaleLowerCase();
+  if (normalized.includes("install an apk with pinned relay support")) {
+    return message;
+  }
   if (normalized.includes("expired")) {
     return "This connection code has expired. Generate a new one on the host.";
   }

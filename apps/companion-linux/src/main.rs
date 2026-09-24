@@ -705,13 +705,16 @@ fn print_pairing(
     qr_output: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pairing = serde_json::from_str::<serde_json::Value>(body)?;
+    let relay_transport = codewide_companion::relay::RelayConfig::load(
+        &codewide_companion::relay::default_config_path(),
+    )?
+    .filter(codewide_companion::relay::RelayConfig::is_enabled)
+    .map(|config| config.public_pairing_transport());
     let configured_endpoint = match std::env::var_os("CODEWIDE_PUBLIC_ENDPOINT") {
         Some(endpoint) => Some(endpoint.to_string_lossy().into_owned()),
-        None => codewide_companion::relay::RelayConfig::load(
-            &codewide_companion::relay::default_config_path(),
-        )?
-        .filter(codewide_companion::relay::RelayConfig::is_enabled)
-        .map(|config| config.public_endpoint()),
+        None => relay_transport
+            .as_ref()
+            .map(|transport| transport.endpoint.clone()),
     };
     let Some(endpoint) = configured_endpoint else {
         println!("{pairing}");
@@ -733,6 +736,9 @@ fn print_pairing(
         std::env::var("CODEWIDE_SERVER_NAME").unwrap_or_else(|_| "CodeWide host".to_owned());
     let emoji = std::env::var("CODEWIDE_SERVER_EMOJI").unwrap_or_else(|_| "🖥️".to_owned());
     let (pin, identity_expires_at) = pairing_transport_identity(&pairing, &endpoint)?;
+    let active_relay = relay_transport
+        .as_ref()
+        .filter(|transport| transport.endpoint == endpoint.as_str());
     let link = pairing_qr::build_link(&pairing_qr::PairingLinkInput {
         endpoint: &endpoint,
         pairing_token,
@@ -741,10 +747,14 @@ fn print_pairing(
         emoji: &emoji,
         tls_pin_sha256: &pin,
         identity_expires_at,
+        relay: active_relay.map(|transport| pairing_qr::RelayPairing {
+            route_id: &transport.route_id,
+            tls_pin_sha256: &transport.tls_pin_sha256,
+        }),
     })?;
     let mut payload = serde_json::json!({
         "type": "codewide-pairing",
-        "version": 1,
+        "version": if active_relay.is_some() { 2 } else { 1 },
         "endpoint": endpoint.as_str(),
         "pairingToken": pairing_token,
         "expiresAt": expires_at,
@@ -763,6 +773,9 @@ fn print_pairing(
                 "identityExpiresAt".into(),
                 serde_json::Value::from(expires_at),
             );
+    }
+    if let Some(transport) = active_relay {
+        add_relay_pairing_metadata(&mut payload, transport)?;
     }
     let mut output = pairing
         .as_object()
@@ -785,6 +798,22 @@ fn print_pairing(
         eprintln!("\nOpen on Android:\n{link}");
         print_pairing_qr(link.as_str(), qr_mode, qr_output)?;
     }
+    Ok(())
+}
+
+fn add_relay_pairing_metadata(
+    payload: &mut serde_json::Value,
+    relay: &codewide_companion::relay::RelayPairingTransport,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let object = payload.as_object_mut().ok_or("invalid pairing payload")?;
+    object.insert(
+        "relayRouteId".into(),
+        serde_json::Value::String(relay.route_id.clone()),
+    );
+    object.insert(
+        "relayTlsPinSha256".into(),
+        serde_json::Value::String(relay.tls_pin_sha256.clone()),
+    );
     Ok(())
 }
 

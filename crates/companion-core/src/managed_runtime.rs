@@ -24,7 +24,7 @@ use crate::{
     image_previews::ImagePreviewService,
     media::MediaProxyService,
     message_search::MessageSearch,
-    pairing_qr::{PairingLinkInput, build_link},
+    pairing_qr::{PairingLinkInput, RelayPairing, build_link},
     projects::ProjectService,
     relay::{RelayConnectionStatus, RelayPairCommand, RelayRuntime, RelayStatus},
     resources::ResourceService,
@@ -319,14 +319,11 @@ impl ManagedRuntime {
     /// # Errors
     /// Requires a configured and enabled Relay and durable pairing state.
     pub async fn create_pairing(&self) -> RuntimeResult<PairingPresentation> {
-        let status = self.relay.status()?;
-        if !status.enabled {
-            return Err("Relay must be configured and enabled before pairing a device".into());
-        }
-        let endpoint = status
-            .public_endpoint
-            .ok_or("Relay has no public endpoint")?;
-        let endpoint = Url::parse(&endpoint)?;
+        let transport = self
+            .relay
+            .pairing_transport()?
+            .ok_or("Relay must be configured and enabled before pairing a device")?;
+        let endpoint = Url::parse(&transport.endpoint)?;
         let pairing = self.registry.create_pairing().await?;
         let link = build_link(&PairingLinkInput {
             endpoint: &endpoint,
@@ -336,6 +333,10 @@ impl ManagedRuntime {
             emoji: "🖥️",
             tls_pin_sha256: &self.identity.tls_pin_sha256,
             identity_expires_at: Some(self.identity.expires_at),
+            relay: Some(RelayPairing {
+                route_id: &transport.route_id,
+                tls_pin_sha256: &transport.tls_pin_sha256,
+            }),
         })?;
         Ok(PairingPresentation {
             link: link.into(),
@@ -518,7 +519,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn relay_pairing_produces_a_route_qualified_device_link() -> RuntimeResult<()> {
+    async fn relay_pairing_produces_a_pinned_wss_device_link() -> RuntimeResult<()> {
         let directory = tempfile::tempdir()?;
         let relay_state = directory.path().join("relay");
         let registry = Registry::open(&relay_state)?;
@@ -568,11 +569,16 @@ mod tests {
         let link = Url::parse(&pairing.link)?;
         let query = link.query_pairs().collect::<HashMap<_, _>>();
         assert_eq!(link.scheme(), "codewide");
-        assert_eq!(query.get("v").map(AsRef::as_ref), Some("1"));
-        assert!(query.get("e").is_some_and(|endpoint| {
-            endpoint.starts_with(&format!("ws://{relay_address}/c/"))
-                && endpoint.ends_with("/v1/sync")
-        }));
+        assert_eq!(query.get("v").map(AsRef::as_ref), Some("2"));
+        assert_eq!(
+            query.get("e").map(AsRef::as_ref),
+            Some(format!("wss://{relay_address}/v1/sync").as_str())
+        );
+        assert_eq!(
+            query.get("q").map(AsRef::as_ref),
+            Some(identity.pin().as_str())
+        );
+        assert!(query.get("r").is_some_and(|route| route.len() == 64));
         assert!(query.contains_key("t"));
         assert!(query.contains_key("p"));
 

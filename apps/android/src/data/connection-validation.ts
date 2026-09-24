@@ -2,6 +2,7 @@ export type ConnectionInput = {
   displayName: string;
   emoji: string;
   endpoint: string;
+  relay?: { routeId: string; tlsPinSha256: string };
   tlsPinSha256?: string;
   token: string;
 };
@@ -34,6 +35,7 @@ export function validateConnectionInput(
   const endpoint = input.endpoint.trim();
   const token = input.token.trim();
   const tlsPinSha256 = input.tlsPinSha256?.trim();
+  const relay = input.relay;
   if (token.length < 32 || token.length > 512) {
     throw new Error("Capability token is invalid");
   }
@@ -65,12 +67,22 @@ export function validateConnectionInput(
   if (tlsPinSha256 === undefined || !/^sha256\/[A-Za-z0-9+/]{43}=$/.test(tlsPinSha256)) {
     throw new Error("TLS pin must be an OkHttp sha256/base64 certificate pin");
   }
+  if (
+    relay !== undefined &&
+    (!/^[a-f0-9]{64}$/u.test(relay.routeId) ||
+      !/^sha256\/[A-Za-z0-9+/]{43}=$/u.test(relay.tlsPinSha256) ||
+      url.protocol !== "wss:" ||
+      pathname !== "/v1/sync")
+  ) {
+    throw new Error("Pinned Relay requires a valid route, certificate pin and WSS endpoint");
+  }
   return {
     displayName,
     emoji,
     endpoint: (pathname === url.pathname ? url : new URL(pathname, url)).toString(),
     tlsPinSha256,
     token,
+    ...(relay === undefined ? {} : { relay }),
   };
 }
 

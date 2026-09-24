@@ -10,9 +10,15 @@ describe("companion transport trust boundary", () => {
     expect(workspace).toContain("nativeCompanionHttpOrigin");
     expect(workspace).not.toContain("companionHttpUrl(connection.endpoint");
     // Both tunnel operations, private transfers and telemetry keep the pinned native origin.
-    for (const [path, calls] of [["../src/features/ports/workspaceAdapter.ts", 2], ["../src/data/private-transfer.ts", 1], ["../src/data/workspace-telemetry.ts", 1]] as const) {
+    for (const [path, calls] of [
+      ["../src/features/ports/workspaceAdapter.ts", 2],
+      ["../src/data/private-transfer.ts", 1],
+      ["../src/data/workspace-telemetry.ts", 1],
+    ] as const) {
       const owner = read(path);
-      expect(owner.match(/nativeCompanionHttpOrigin\(connection\.id, connection\.endpoint\)/gu)).toHaveLength(calls);
+      expect(
+        owner.match(/nativeCompanionHttpOrigin\(connection\.id, connection\.endpoint\)/gu),
+      ).toHaveLength(calls);
       expect(owner).not.toContain("companionHttpUrl(connection.endpoint");
     }
 
@@ -28,17 +34,26 @@ describe("companion transport trust boundary", () => {
     expect(pinnedTls).toContain("pinFor(chain[0])");
     expect(pinnedTls).not.toContain("chain.any");
     expect(pinnedTls).toContain("Companion identity pin mismatch");
-    expect(pinnedTls).toContain("PinTrustManager verifies the exact leaf SPKI during the TLS handshake");
+    expect(pinnedTls).toContain(
+      "PinTrustManager verifies the exact leaf SPKI during the TLS handshake",
+    );
     expect(pinnedTls).not.toContain("CertificatePinner.Builder()");
     expect(pinnedTls).toContain("saved Companion pin is deliberately");
 
-    const nativeProxy = read("../android/app/src/main/java/dev/codewide/app/remote/NativeCompanionHttpProxy.kt");
+    const nativeProxy = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/NativeCompanionHttpProxy.kt",
+    );
     expect(nativeProxy).toContain("InnerTlsTransport.openSocket");
     expect(nativeProxy).not.toContain("SSLSocket");
 
-    const innerTls = read("../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt");
-    expect(innerTls).toContain("PinnedTls.client");
+    const innerTls = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt",
+    );
+    expect(innerTls).toContain("PinnedTls.carrierClient(base, saved.endpoint, saved.relay)");
     expect(innerTls).toContain("PinnedTls.innerTlsClient");
+    expect(innerTls).toContain('header("x-codewide-relay-route", it)');
+    expect(pinnedTls).toContain("pinForCertificate(chain[0])");
+    expect(pinnedTls).toContain("Relay certificate pin mismatch");
     expect(innerTls).toContain('Regex("^/c/([a-f0-9]{64})/v1/sync$")');
     expect(innerTls).toContain('"$routePrefix$path"');
     expect(innerTls).toContain("uri.rawPath.removePrefix(routePrefix)");
@@ -57,13 +72,17 @@ describe("companion transport trust boundary", () => {
   });
 
   it("has no opt-out, legacy transport state, or upgrade path", () => {
-    const credentials = read("../android/app/src/main/java/dev/codewide/app/remote/NativeSessionCredentialsStore.kt");
+    const credentials = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/NativeSessionCredentialsStore.kt",
+    );
     expect(credentials).toContain("val innerTlsPinSha256: String");
     expect(credentials).toContain("Secure pairing requires a Companion identity pin");
     expect(credentials).not.toContain("certificatePinningEnabled");
     expect(credentials).not.toContain("InnerTlsMode");
 
-    const nativeModule = read("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
+    const nativeModule = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt",
+    );
     expect(nativeModule).toContain("Secure pairing requires a Companion identity pin");
     expect(nativeModule).not.toContain("setCertificatePinningEnabled");
     expect(nativeModule).not.toContain("saveSecureConnectionCredentials");
@@ -79,12 +98,16 @@ describe("companion transport trust boundary", () => {
   });
 
   it("persists the authoritative paired device id for the native credential bridge", () => {
-    const credentials = read("../android/app/src/main/java/dev/codewide/app/remote/NativeSessionCredentialsStore.kt");
+    const credentials = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/NativeSessionCredentialsStore.kt",
+    );
     expect(credentials).toContain("val deviceId: String? = null");
     expect(credentials).toContain('put("deviceId", requireNotNull(session.deviceId)');
     expect(credentials).toContain('Regex("^device-[a-f0-9]{64}$")');
 
-    const nativeModule = read("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
+    const nativeModule = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt",
+    );
     expect(nativeModule).toContain("fun saveConnectionCredentialsV2(");
     expect(nativeModule).toContain('putString("deviceId", saved.deviceId)');
     expect(nativeModule).toContain('putString("savedServerId", saved.id)');

@@ -64,6 +64,12 @@ pub struct RelayStatus {
     pub public_endpoint: Option<String>,
 }
 
+pub struct RelayPairingTransport {
+    pub endpoint: String,
+    pub route_id: String,
+    pub tls_pin_sha256: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RelayConnectionStatus {
@@ -98,6 +104,15 @@ impl Drop for RunningAdapter {
 }
 
 impl RelayRuntime {
+    /// Returns the route and pinned Relay identity for a new phone pairing link.
+    /// # Errors
+    /// Rejects invalid or unreadable durable Relay configuration.
+    pub fn pairing_transport(&self) -> Result<Option<RelayPairingTransport>, RelayError> {
+        Ok(RelayConfig::load(&self.0.config_path)?
+            .filter(RelayConfig::is_enabled)
+            .map(|config| config.public_pairing_transport()))
+    }
+
     /// Starts the configured outbound adapter and owns all later live reconfiguration.
     /// # Errors
     /// Rejects an unsafe or invalid durable Relay configuration.
@@ -339,7 +354,6 @@ impl RelayConfig {
     #[must_use]
     pub fn adapter(&self, device_target: SocketAddr, pairing_target: SocketAddr) -> Adapter {
         Adapter {
-            public_url: Arc::from(public_origin(&self.relay_address)),
             companion_url: Arc::from(companion_origin(&self.relay_address)),
             relay_tls_pin_sha256: self.relay_tls_pin_sha256.clone(),
             route_id: self.route_id.clone(),
@@ -369,14 +383,19 @@ impl RelayConfig {
         config.save(path)
     }
 
-    /// Returns the route-qualified endpoint stored by Android after normal pairing.
+    /// Returns the public WSS endpoint; the route travels in a separate header.
     #[must_use]
     pub fn public_endpoint(&self) -> String {
-        format!(
-            "{}/c/{}/v1/sync",
-            public_origin(&self.relay_address),
-            self.route_id
-        )
+        format!("{}/v1/sync", companion_origin(&self.relay_address))
+    }
+
+    #[must_use]
+    pub fn public_pairing_transport(&self) -> RelayPairingTransport {
+        RelayPairingTransport {
+            endpoint: self.public_endpoint(),
+            route_id: self.route_id.to_string(),
+            tls_pin_sha256: self.relay_tls_pin_sha256.to_string(),
+        }
     }
 
     fn from_stored(stored: StoredRelayConfig) -> codewide_relay::Result<Self> {
@@ -460,10 +479,6 @@ fn validate_relay_address(value: &str) -> codewide_relay::Result<String> {
     Ok(value.to_owned())
 }
 
-fn public_origin(relay_address: &str) -> String {
-    format!("ws://{relay_address}")
-}
-
 fn companion_origin(relay_address: &str) -> String {
     format!("wss://{relay_address}")
 }
@@ -508,14 +523,10 @@ mod tests {
     }
 
     #[test]
-    fn derives_both_transports_from_one_relay_address() -> codewide_relay::Result<()> {
+    fn derives_pinned_transport_from_one_relay_address() -> codewide_relay::Result<()> {
         assert_eq!(
             validate_relay_address("relay.example:8780")?,
             "relay.example:8780"
-        );
-        assert_eq!(
-            public_origin("relay.example:8780"),
-            "ws://relay.example:8780"
         );
         assert_eq!(
             companion_origin("relay.example:8780"),

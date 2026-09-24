@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react-native";
+import { encodePairingLink } from "@codewide/codex-protocol/pairing";
 import type { ReactNode } from "react";
 import { usePairingSession } from "../src/features/connections/pairingSession";
 import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
@@ -55,4 +56,32 @@ it("rejects save while local profiles are unavailable without consuming pairing"
   expect(props.onSave).not.toHaveBeenCalled();
   expect(props.setSaving).not.toHaveBeenCalled();
   expect(result.current.error).toBe("Local storage is still preparing. Try again in a moment.");
+});
+
+it("passes both Relay and Companion pins from a WSS pairing link to secure pairing", async () => {
+  const now = Date.now();
+  const props = {
+    ...sessionProps(),
+    initialCode: encodePairingLink({
+      type: "codewide-pairing",
+      version: 2,
+      endpoint: "wss://192.0.2.10:8780/v1/sync",
+      pairingToken: "t".repeat(43),
+      expiresAt: now + 60_000,
+      displayName: "Host",
+      emoji: "🖥️",
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+      relayRouteId: "a".repeat(64),
+      relayTlsPinSha256: `sha256/${"B".repeat(43)}=`,
+    }),
+  };
+  const { result } = renderHook(usePairingSession, { initialProps: props, wrapper });
+  await act(async () => result.current.save());
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      endpoint: "wss://192.0.2.10:8780/v1/sync",
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+      relay: { routeId: "a".repeat(64), tlsPinSha256: `sha256/${"B".repeat(43)}=` },
+    }),
+  );
 });

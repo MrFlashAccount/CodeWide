@@ -2,7 +2,7 @@ package dev.codewide.app.remote
 
 import java.net.URI
 
-/** Admits only the versioned Companion endpoint or a route-qualified blind Relay carrier. */
+/** Admits versioned Companion and pinned Relay endpoints plus legacy route-qualified carriers. */
 internal fun validateConnectionEndpoint(endpoint: String) {
   val uri = URI(endpoint)
   require(uri.scheme == "wss" || uri.scheme == "ws") { "Endpoint must use ws or wss" }

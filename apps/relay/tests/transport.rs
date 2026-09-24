@@ -67,7 +67,6 @@ impl Fixture {
             registry,
             _state: state,
             adapter: Adapter {
-                public_url: Arc::from(format!("ws://{relay}")),
                 companion_url: Arc::from(format!("wss://{relay}")),
                 relay_tls_pin_sha256: Arc::from(relay_tls_pin_sha256),
                 route_id: Arc::from(paired.route_id),
@@ -143,6 +142,32 @@ impl Fixture {
             }
         })
         .await?
+    }
+
+    async fn pinned_client(&self, route_id: &str, suffix: &str) -> Result<Client> {
+        let address = format!("wss://{}/v1/{suffix}", self.relay);
+        let mut request = address.into_client_request()?;
+        request
+            .headers_mut()
+            .insert("x-codewide-relay-route", HeaderValue::from_str(route_id)?);
+        let tls = pinned_client_config(&self.relay_tls_pin_sha256)?;
+        Ok(tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                match connect_async_tls_with_config(
+                    request.clone(),
+                    None,
+                    true,
+                    Some(Connector::Rustls(tls.clone())),
+                )
+                .await
+                {
+                    Ok((socket, _)) => return Ok(socket),
+                    Err(error) if route_id != self.route_id => return Err(error),
+                    Err(_) => tokio::time::sleep(Duration::from_millis(30)).await,
+                }
+            }
+        })
+        .await??)
     }
 }
 
@@ -236,6 +261,26 @@ async fn normal_companion_paths_forward_opaque_device_and_pairing_bytes() -> Res
     let mut second = fixture.client("e2ee-bootstrap-tunnel").await?;
     echoed(&mut first, &vec![0xa5; 50_000]).await?;
     echoed(&mut second, b"independent bootstrap stream").await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn pinned_public_routes_use_header_without_exposing_route_in_url() -> Result<()> {
+    let fixture = Fixture::start().await?;
+    let mut device = fixture
+        .pinned_client(&fixture.route_id, "e2ee-tunnel")
+        .await?;
+    let mut pairing = fixture
+        .pinned_client(&fixture.route_id, "e2ee-bootstrap-tunnel")
+        .await?;
+    echoed(&mut device, b"pinned device bytes").await?;
+    echoed(&mut pairing, b"pinned pairing bytes").await?;
+    assert!(
+        fixture
+            .pinned_client("unknown", "e2ee-tunnel")
+            .await
+            .is_err()
+    );
     Ok(())
 }
 
@@ -395,7 +440,6 @@ async fn routes_isolate_companions_credentials_and_revocation() -> Result<()> {
         .registry
         .pair(&invitation.route_id, &invitation.token)?;
     let second = Adapter {
-        public_url: fixture.adapter.public_url.clone(),
         companion_url: fixture.adapter.companion_url.clone(),
         relay_tls_pin_sha256: fixture.adapter.relay_tls_pin_sha256.clone(),
         route_id: Arc::from(paired.route_id.clone()),

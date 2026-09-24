@@ -43,10 +43,10 @@ it("preserves native integration contracts — 2", () => {
   expect(innerTlsTransport).toContain('BOOTSTRAP_TUNNEL_PATH = "/v1/e2ee-bootstrap-tunnel"');
   expect(innerTlsTransport).toContain("DeviceKeyStore.clientKeyManager(saved.id)");
   expect(innerTlsTransport).toContain(
-    "TunnelSocketFactory(carrier, tunnelUrl(endpoint, BOOTSTRAP_TUNNEL_PATH))",
+    "TunnelSocketFactory(carrier, tunnelUrl(endpoint, BOOTSTRAP_TUNNEL_PATH), relay?.routeId)",
   );
   expect(nativeModule).toContain(
-    "InnerTlsTransport.bootstrapClient(pairingHttpClient, endpoint, identityPin)",
+    "InnerTlsTransport.bootstrapClient(pairingHttpClient, endpoint, identityPin, relay)",
   );
   expect(nativeCommandStore).toContain(
     'database.delete("native_commands", "state = \'accepted\'", null)',

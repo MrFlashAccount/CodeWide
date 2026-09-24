@@ -62,6 +62,7 @@ export function createConnectionsWorkspaceAdapter({
       deviceName: "CodeWide Android",
       endpoint: validated.endpoint,
       pairingToken: validated.token,
+      ...relayCredentials(validated.relay),
       savedServerId: connectionId,
       tlsPinSha256: validated.tlsPinSha256,
     });
@@ -70,6 +71,7 @@ export function createConnectionsWorkspaceAdapter({
       deviceId: claimed.deviceId,
       enabled: true,
       endpoint: validated.endpoint,
+      ...relayCredentials(validated.relay),
       tlsPinSha256: validated.tlsPinSha256,
       token: claimed.capabilityToken,
     };
@@ -204,4 +206,8 @@ function requireConnectionProfileDatabase(
     throw new Error("Local connection profiles are not ready");
   }
   return database;
+}
+
+function relayCredentials(relay: ConnectionInput["relay"]): Pick<ConnectionInput, "relay"> {
+  return relay === undefined ? {} : { relay };
 }

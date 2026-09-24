@@ -190,6 +190,34 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     deviceName: String,
     tlsPinSha256: String?,
     promise: Promise
+  ) = claimPairingWithRelay(savedServerId, endpoint, pairingToken, deviceName, tlsPinSha256, null, promise)
+
+  @ReactMethod
+  fun claimRelayPairing(
+    savedServerId: String,
+    endpoint: String,
+    pairingToken: String,
+    deviceName: String,
+    tlsPinSha256: String?,
+    relayRouteId: String,
+    relayTlsPinSha256: String,
+    promise: Promise
+  ) {
+    try {
+      claimPairingWithRelay(savedServerId, endpoint, pairingToken, deviceName, tlsPinSha256, PinnedRelayRoute(relayRouteId, relayTlsPinSha256), promise)
+    } catch (error: Throwable) {
+      promise.reject("PAIRING_INPUT_INVALID", error.message, error)
+    }
+  }
+
+  private fun claimPairingWithRelay(
+    savedServerId: String,
+    endpoint: String,
+    pairingToken: String,
+    deviceName: String,
+    tlsPinSha256: String?,
+    relay: PinnedRelayRoute?,
+    promise: Promise
   ) {
     try {
       require(savedServerId.isNotBlank()) { "Saved server id is required" }
@@ -198,6 +226,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       require(deviceName.length in 1..80 && !deviceName.any { it.code < 32 || it.code == 127 }) { "Device name is invalid" }
       val identityPin = requireNotNull(tlsPinSha256) { "Secure pairing requires a Companion identity pin" }
       PinnedTls.requireTransport(endpoint, identityPin)
+      PinnedTls.requireRelayEndpoint(endpoint, relay)
       val innerClaimUrl = endpoint
         .replaceFirst("wss://", "https://")
         .replaceFirst("ws://", "http://")
@@ -213,7 +242,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         .toString()
         .toRequestBody(JSON_MEDIA_TYPE)
       val request = Request.Builder().url(claimUrl).post(requestBody).build()
-      val client = InnerTlsTransport.bootstrapClient(pairingHttpClient, endpoint, identityPin)
+      val client = InnerTlsTransport.bootstrapClient(pairingHttpClient, endpoint, identityPin, relay)
       client.newCall(request).enqueue(object : Callback {
         override fun onFailure(call: Call, error: IOException) {
           promise.reject("PAIRING_NETWORK_FAILED", "Secure pairing connection failed", error)
@@ -249,19 +278,29 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   @ReactMethod
   fun saveConnectionCredentials(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, promise: Promise) {
-    saveConnectionCredentials(connectionId, endpoint, token, tlsPinSha256, enabled, null, promise)
+    saveConnectionCredentials(connectionId, endpoint, token, tlsPinSha256, enabled, null, null, promise)
   }
 
   @ReactMethod
   fun saveConnectionCredentialsV2(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, deviceId: String, promise: Promise) {
-    saveConnectionCredentials(connectionId, endpoint, token, tlsPinSha256, enabled, deviceId, promise)
+    saveConnectionCredentials(connectionId, endpoint, token, tlsPinSha256, enabled, deviceId, null, promise)
   }
 
-  private fun saveConnectionCredentials(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, deviceId: String?, promise: Promise) {
+  @ReactMethod
+  fun saveConnectionCredentialsV3(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, deviceId: String, relayRouteId: String, relayTlsPinSha256: String, promise: Promise) {
+    try {
+      saveConnectionCredentials(connectionId, endpoint, token, tlsPinSha256, enabled, deviceId, PinnedRelayRoute(relayRouteId, relayTlsPinSha256), promise)
+    } catch (error: Throwable) {
+      promise.reject("SAVE_CONNECTION_FAILED", "Could not persist native connection credentials", error)
+    }
+  }
+
+  private fun saveConnectionCredentials(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, deviceId: String?, relay: PinnedRelayRoute?, promise: Promise) {
     try {
       validateConnectionEndpoint(endpoint)
       require(connectionId.isNotBlank()) { "Connection id is required" }
       PinnedTls.requireTransport(endpoint, tlsPinSha256)
+      PinnedTls.requireRelayEndpoint(endpoint, relay)
       processNativeAuthorityLifecycle.access {
         val store = NativeSessionCredentialsStore(context)
         val existing = store.get(connectionId)
@@ -275,6 +314,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           tlsPinSha256,
           enabled,
           deviceId,
+          relay,
         )
         if (replacement == existing) return@access
         val service = CodexConnectionService.instance

@@ -51,6 +51,7 @@ export async function claimNativePairing(_input: {
   deviceName: string;
   endpoint: string;
   pairingToken: string;
+  relay?: { routeId: string; tlsPinSha256: string };
   savedServerId: string;
   tlsPinSha256: string;
 }): Promise<{ capabilityToken: string; deviceId: string }> {
@@ -70,6 +71,7 @@ export async function saveNativeConnectionCredentials(_input: {
   deviceId?: string;
   enabled: boolean;
   endpoint: string;
+  relay?: { routeId: string; tlsPinSha256: string };
   tlsPinSha256?: string;
   token?: string;
 }): Promise<void> {

@@ -80,13 +80,16 @@ impl Relay {
             .with_state(self.clone())
     }
 
-    /// Routes reachable only through the built-in pinned TLS service plane.
+    /// Pinned TLS routes for phone tunnels and Companion control/attachments.
     pub fn companion_router(&self) -> Router {
         Router::new()
             .route("/healthz", get(health))
             .route("/readyz", get(ready))
             .route("/relay/pair/{route_id}", post(pair))
             .route("/relay/control/{route_id}", get(control))
+            .route("/relay/attach/{route_id}/{ticket}", get(attach))
+            .route("/v1/e2ee-tunnel", get(pinned_device))
+            .route("/v1/e2ee-bootstrap-tunnel", get(pinned_pairing))
             .layer(DefaultBodyLimit::max(4096))
             .with_state(self.clone())
     }
@@ -334,6 +337,36 @@ async fn pairing(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     forward(&relay, &route_id, upgrade, Target::Pairing)
+}
+
+const ROUTE_HEADER: &str = "x-codewide-relay-route";
+
+async fn pinned_device(
+    State(relay): State<Relay>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let Some(route_id) = headers
+        .get(ROUTE_HEADER)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    forward(&relay, route_id, upgrade, Target::Device)
+}
+
+async fn pinned_pairing(
+    State(relay): State<Relay>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let Some(route_id) = headers
+        .get(ROUTE_HEADER)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    forward(&relay, route_id, upgrade, Target::Pairing)
 }
 
 async fn pair(

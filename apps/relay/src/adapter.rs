@@ -13,7 +13,7 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_tungstenite::{
-    Connector, MaybeTlsStream, WebSocketStream, connect_async, connect_async_tls_with_config,
+    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
     tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
 };
 use tokio_util::sync::CancellationToken;
@@ -29,7 +29,6 @@ pub enum AdapterConnectionState {
 
 #[derive(Clone)]
 pub struct Adapter {
-    pub public_url: Arc<str>,
     pub companion_url: Arc<str>,
     pub relay_tls_pin_sha256: Arc<str>,
     pub route_id: Arc<str>,
@@ -55,7 +54,6 @@ impl Adapter {
         stop: CancellationToken,
         status: watch::Sender<AdapterConnectionState>,
     ) -> Result<()> {
-        validate_public_url(&self.public_url)?;
         validate_companion_url(&self.companion_url)?;
         pinned_client_config(&self.relay_tls_pin_sha256)?;
         crate::registry::validate_route_id(&self.route_id)?;
@@ -172,23 +170,15 @@ impl Adapter {
     }
 
     async fn connect_attach(&self, path: &str) -> Result<RelaySocket> {
-        let url = format!("{}{path}", self.public_url.trim_end_matches('/'));
-        Ok(tokio::time::timeout(DEADLINE, connect_async(url)).await??.0)
+        let url = format!("{}{path}", self.companion_url.trim_end_matches('/'));
+        let tls = pinned_client_config(&self.relay_tls_pin_sha256)?;
+        Ok(tokio::time::timeout(
+            DEADLINE,
+            connect_async_tls_with_config(url, None, true, Some(Connector::Rustls(tls))),
+        )
+        .await??
+        .0)
     }
-}
-
-fn validate_public_url(value: &str) -> Result<()> {
-    let uri: tokio_tungstenite::tungstenite::http::Uri = value.parse()?;
-    if !matches!(uri.scheme_str(), Some("ws" | "wss"))
-        || uri.authority().is_none()
-        || !matches!(uri.path(), "" | "/")
-        || uri.query().is_some()
-    {
-        return Err(
-            std::io::Error::other("Relay public URL must be a ws:// or wss:// origin").into(),
-        );
-    }
-    Ok(())
 }
 
 fn validate_companion_url(value: &str) -> Result<()> {

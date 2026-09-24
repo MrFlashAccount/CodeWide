@@ -157,9 +157,9 @@ class CodexConnectionService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   @Synchronized
-  fun open(id: String, endpoint: String, token: String, tlsPinSha256: String) {
+  internal fun open(id: String, endpoint: String, token: String, tlsPinSha256: String, relay: PinnedRelayRoute? = null) {
     val existing = sessions[id]
-    if (existing != null && existing.endpoint == endpoint && existing.token == token && existing.tlsPinSha256 == tlsPinSha256) {
+    if (existing != null && existing.endpoint == endpoint && existing.token == token && existing.tlsPinSha256 == tlsPinSha256 && existing.relay == relay) {
       // Attaching a recreated React runtime must not cancel the service-owned
       // socket. Replay the latest protocol checkpoint and durable event tail so
       // the new SyncSession can resume immediately on the existing transport.
@@ -167,7 +167,7 @@ class CodexConnectionService : Service() {
       return
     }
     existing?.close("connection_replaced")
-    val session = Session(id, endpoint, token, tlsPinSha256)
+    val session = Session(id, endpoint, token, tlsPinSha256, relay)
     sessions[id] = session
     session.replayBuffered()
     handler.post { if (!destroyed) session.connect() }
@@ -275,12 +275,13 @@ class CodexConnectionService : Service() {
       && existing.endpoint == saved.endpoint
       && existing.token == saved.token
       && existing.tlsPinSha256 == saved.innerTlsPinSha256
+      && existing.relay == saved.relay
     ) {
       existing.attachRuntime()
       collectPreviousProcessExit(existing)
       return
     }
-    open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256)
+    open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256, saved.relay)
     sessions[connectionId]?.let(::collectPreviousProcessExit)
   }
 
@@ -363,6 +364,7 @@ class CodexConnectionService : Service() {
       || session.endpoint != saved.endpoint
       || session.token != saved.token
       || session.tlsPinSha256 != saved.innerTlsPinSha256
+      || session.relay != saved.relay
     ) {
       attach(connectionId)
       return
@@ -477,7 +479,7 @@ class CodexConnectionService : Service() {
 
   private fun restoreLegacySync() {
     credentialsStore.list().filter { it.enabled }.forEach { saved ->
-      open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256)
+      open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256, saved.relay)
     }
   }
 
@@ -622,7 +624,8 @@ class CodexConnectionService : Service() {
     val id: String,
     val endpoint: String,
     val token: String,
-    val tlsPinSha256: String
+    val tlsPinSha256: String,
+    val relay: PinnedRelayRoute?,
   ) {
     private var socket: WebSocket? = null
     private var closed = false
@@ -707,6 +710,7 @@ class CodexConnectionService : Service() {
         tlsPinSha256 = persisted?.tlsPinSha256,
         enabled = persisted?.enabled ?: true,
         innerTlsPinSha256 = tlsPinSha256,
+        relay = relay,
       )
     }
 

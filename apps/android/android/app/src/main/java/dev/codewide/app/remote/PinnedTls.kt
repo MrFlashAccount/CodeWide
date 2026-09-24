@@ -36,6 +36,44 @@ internal object PinnedTls {
     return base
   }
 
+  fun requireRelayEndpoint(endpoint: String, relay: PinnedRelayRoute?) {
+    if (relay == null) return
+    val uri = requireTransport(endpoint, null)
+    require(uri.scheme == "wss" && uri.path == "/v1/sync") { "Pinned Relay requires WSS /v1/sync" }
+  }
+
+  fun carrierClient(base: OkHttpClient, endpoint: String, relay: PinnedRelayRoute?): OkHttpClient {
+    requireRelayEndpoint(endpoint, relay)
+    if (relay == null) return client(base, endpoint, null)
+    val trustManager = RelayPinTrustManager(relay.tlsPinSha256)
+    val context = SSLContext.getInstance("TLSv1.3")
+    context.init(null, arrayOf(trustManager), null)
+    val expectedHost = requireNotNull(URI(endpoint).host)
+    return base.newBuilder()
+      .sslSocketFactory(context.socketFactory, trustManager)
+      .hostnameVerifier { host, _ -> host.equals(expectedHost, ignoreCase = true) }
+      .build()
+  }
+
+  internal fun pinForCertificate(certificate: X509Certificate): String =
+    "sha256/${certificate.encoded.toByteString().sha256().base64()}"
+
+  private class RelayPinTrustManager(private val expectedPin: String) : X509TrustManager {
+    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+      throw CertificateException("Relay transport does not accept client certificates")
+    }
+
+    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+      if (chain.isNullOrEmpty()) throw CertificateException("Relay certificate chain is empty")
+      chain[0].checkValidity()
+      if (!MessageDigest.isEqual(pinForCertificate(chain[0]).toByteArray(), expectedPin.toByteArray())) {
+        throw CertificateException("Relay certificate pin mismatch")
+      }
+    }
+
+    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+  }
+
   fun socketFactory(endpoint: String, pin: String?): SSLSocketFactory {
     val uri = requireTransport(endpoint, pin)
     require(uri.scheme == "wss") { "TLS socket requires WSS" }

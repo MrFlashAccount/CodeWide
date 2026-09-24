@@ -11,6 +11,8 @@ import { PairingQrScanner } from "./PairingQrScanner";
 import { useEvent } from "../../react/useEvent";
 import type { ConnectionSheetSessionProps } from "./connectionSheetContract";
 
+const RELAY_PAIRING_VERSION = 2;
+
 /** Owns pairing form reset, retained scanner callbacks and save completion for one mounted session. */
 export function usePairingSession({
   initialCode,
@@ -34,6 +36,14 @@ export function usePairingSession({
   const [endpoint, setEndpoint] = useState(initialValue?.endpoint ?? "");
   const [token, setToken] = useState(initialValue?.pairingToken ?? "");
   const [tlsPinSha256, setTlsPinSha256] = useState(initialValue?.tlsPinSha256 ?? "");
+  const [relay, setRelay] = useState(
+    initialValue?.version === RELAY_PAIRING_VERSION
+      ? {
+          routeId: initialValue.relayRouteId,
+          tlsPinSha256: initialValue.relayTlsPinSha256,
+        }
+      : undefined,
+  );
   const [expiresAt, setExpiresAt] = useState<number | null>(initialValue?.expiresAt ?? null);
   const [pairingParsedAt, setPairingParsedAt] = useState<number | null>(
     initialPairing?.parsedAt ?? null,
@@ -58,6 +68,14 @@ export function usePairingSession({
     setEndpoint(initialValue?.endpoint ?? "");
     setToken(initialValue?.pairingToken ?? "");
     setTlsPinSha256(initialValue?.tlsPinSha256 ?? "");
+    setRelay(
+      initialValue?.version === RELAY_PAIRING_VERSION
+        ? {
+            routeId: initialValue.relayRouteId,
+            tlsPinSha256: initialValue.relayTlsPinSha256,
+          }
+        : undefined,
+    );
     setExpiresAt(initialValue?.expiresAt ?? null);
     setPairingParsedAt(initialPairing?.parsedAt ?? null);
     setError(initialPairing?.error ?? null);
@@ -75,6 +93,14 @@ export function usePairingSession({
       setEndpoint(pairing.endpoint);
       setToken(pairing.pairingToken);
       setTlsPinSha256(pairing.tlsPinSha256);
+      setRelay(
+        pairing.version === RELAY_PAIRING_VERSION
+          ? {
+              routeId: pairing.relayRouteId,
+              tlsPinSha256: pairing.relayTlsPinSha256,
+            }
+          : undefined,
+      );
       setExpiresAt(pairing.expiresAt);
       setPairingParsedAt(result.parsedAt);
       setError(null);
@@ -126,6 +152,7 @@ export function usePairingSession({
       endpoint,
       token,
       ...(tlsPinSha256.trim() === "" ? {} : { tlsPinSha256 }),
+      ...(relay === undefined ? {} : { relay }),
     };
     try {
       await onSave(input);

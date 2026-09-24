@@ -21,7 +21,15 @@ internal data class StoredNativeSession(
   val innerTlsPinSha256: String,
   val deviceId: String? = null,
   val revocationConfirmed: Boolean = false,
+  val relay: PinnedRelayRoute? = null,
 )
+
+internal data class PinnedRelayRoute(val routeId: String, val tlsPinSha256: String) {
+  init {
+    require(routeId.matches(Regex("^[a-f0-9]{64}$"))) { "Relay route is invalid" }
+    require(tlsPinSha256.matches(Regex("^sha256/[A-Za-z0-9+/]{43}=$"))) { "Relay certificate pin is invalid" }
+  }
+}
 
 internal fun mergeNativeSessionCredentials(
   existing: StoredNativeSession?,
@@ -31,6 +39,7 @@ internal fun mergeNativeSessionCredentials(
   tlsPinSha256: String?,
   enabled: Boolean,
   deviceId: String? = null,
+  relay: PinnedRelayRoute? = null,
 ): StoredNativeSession {
   // Relay endpoints and capability tokens may rotate independently. A normal
   // profile edit preserves the already pinned Companion identity; only an
@@ -50,6 +59,7 @@ internal fun mergeNativeSessionCredentials(
     innerTlsPinSha256 = innerPin,
     deviceId = pairedDeviceId,
     revocationConfirmed = revocationConfirmed,
+    relay = relay ?: existing?.takeIf { it.endpoint == endpoint }?.relay,
   )
 }
 
@@ -118,9 +128,11 @@ internal class NativeSessionCredentialsStore(context: Context) {
           val innerTlsPinSha256 = value.optString("innerTlsPinSha256").takeIf { it.isNotBlank() }
           val deviceId = value.getString("deviceId")
           val revocationConfirmed = value.optBoolean("revocationConfirmed", false)
+          val relayValue = value.optJSONObject("relay")
+          val relay = relayValue?.let { PinnedRelayRoute(it.getString("routeId"), it.getString("tlsPinSha256")) }
           require(deviceId.matches(Regex("^device-[a-f0-9]{64}$")))
           if (id.isNotBlank() && endpoint.isNotBlank() && token.length in 32..512 && innerTlsPinSha256 != null) {
-            add(StoredNativeSession(id, endpoint, token, tlsPinSha256, enabled && !revocationConfirmed, innerTlsPinSha256, deviceId, revocationConfirmed))
+            add(StoredNativeSession(id, endpoint, token, tlsPinSha256, enabled && !revocationConfirmed, innerTlsPinSha256, deviceId, revocationConfirmed, relay))
           }
         }
       }
@@ -148,6 +160,7 @@ internal class NativeSessionCredentialsStore(context: Context) {
         put("innerTlsPinSha256", session.innerTlsPinSha256)
         put("deviceId", requireNotNull(session.deviceId) { "Stored connection requires a device identity" })
         put("revocationConfirmed", session.revocationConfirmed)
+        session.relay?.let { relay -> put("relay", JSONObject().put("routeId", relay.routeId).put("tlsPinSha256", relay.tlsPinSha256)) }
       })
     }
     val cipher = Cipher.getInstance(TRANSFORMATION)

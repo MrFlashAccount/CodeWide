@@ -64,6 +64,17 @@ type NativeBridge = {
     deviceName: string,
     tlsPinSha256: string,
   ) => Promise<{ capabilityToken: string; deviceId: string }>;
+  // WHY: This positional signature mirrors the Kotlin React Native bridge ABI and cannot use an object parameter.
+  // oxlint-disable-next-line eslint/max-params
+  claimRelayPairing?: (
+    savedServerId: string,
+    endpoint: string,
+    pairingToken: string,
+    deviceName: string,
+    tlsPinSha256: string,
+    relayRouteId: string,
+    relayTlsPinSha256: string,
+  ) => Promise<{ capabilityToken: string; deviceId: string }>;
   closeTerminal?: (sessionId: string) => void;
   companionHttpOrigin: (connectionId: string) => Promise<string>;
   configureFullscreenWindow?: (reactTag: number) => void;
@@ -121,6 +132,18 @@ type NativeBridge = {
     tlsPinSha256: string | null,
     enabled: boolean,
     deviceId: string,
+  ) => Promise<void>;
+  // WHY: This positional signature mirrors the Kotlin React Native bridge ABI and cannot use an object parameter.
+  // oxlint-disable-next-line eslint/max-params
+  saveConnectionCredentialsV3?: (
+    connectionId: string,
+    endpoint: string,
+    token: string | null,
+    tlsPinSha256: string | null,
+    enabled: boolean,
+    deviceId: string,
+    relayRouteId: string,
+    relayTlsPinSha256: string,
   ) => Promise<void>;
   setConnectionEnabled: (connectionId: string, enabled: boolean) => Promise<void>;
   setVoiceAuraOrigin?: (reactTag: number | null) => void;
@@ -214,23 +237,45 @@ export async function claimNativePairing(input: {
   deviceName: string;
   endpoint: string;
   pairingToken: string;
+  relay?: { routeId: string; tlsPinSha256: string };
   savedServerId: string;
   tlsPinSha256: string;
 }): Promise<{ capabilityToken: string; deviceId: string }> {
   if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native secure pairing is unavailable in this build");
   }
-  const claimed = await bridge.claimPairing(
-    input.savedServerId,
-    input.endpoint,
-    input.pairingToken,
-    input.deviceName,
-    input.tlsPinSha256,
-  );
+  const claimRelayPairing = bridge.claimRelayPairing;
+  const claimed =
+    input.relay === undefined
+      ? await bridge.claimPairing(
+          input.savedServerId,
+          input.endpoint,
+          input.pairingToken,
+          input.deviceName,
+          input.tlsPinSha256,
+        )
+      : await requireRelayPairing(claimRelayPairing)(
+          input.savedServerId,
+          input.endpoint,
+          input.pairingToken,
+          input.deviceName,
+          input.tlsPinSha256,
+          input.relay.routeId,
+          input.relay.tlsPinSha256,
+        );
   if (typeof claimed.deviceId !== "string" || typeof claimed.capabilityToken !== "string") {
     throw new Error("Native pairing returned an invalid security state");
   }
   return claimed;
+}
+
+function requireRelayPairing(
+  claim: NativeBridge["claimRelayPairing"],
+): NonNullable<NativeBridge["claimRelayPairing"]> {
+  if (claim === undefined) {
+    throw new Error("Install an APK with pinned Relay support to use this pairing link");
+  }
+  return claim;
 }
 
 export async function saveNativeConnectionCredentials(input: {
@@ -238,13 +283,28 @@ export async function saveNativeConnectionCredentials(input: {
   deviceId?: string;
   enabled: boolean;
   endpoint: string;
+  relay?: { routeId: string; tlsPinSha256: string };
   tlsPinSha256?: string;
   token?: string;
 }): Promise<void> {
   if (bridge === undefined || Platform.OS !== "android") {
     throw new Error("Native credential storage is unavailable in this build");
   }
-  if (input.deviceId !== undefined && bridge.saveConnectionCredentialsV2 !== undefined) {
+  if (input.relay !== undefined) {
+    if (input.deviceId === undefined || bridge.saveConnectionCredentialsV3 === undefined) {
+      throw new Error("Install an APK with pinned Relay support to save this connection");
+    }
+    await bridge.saveConnectionCredentialsV3(
+      input.connectionId,
+      input.endpoint,
+      input.token ?? null,
+      input.tlsPinSha256 ?? null,
+      input.enabled,
+      input.deviceId,
+      input.relay.routeId,
+      input.relay.tlsPinSha256,
+    );
+  } else if (input.deviceId !== undefined && bridge.saveConnectionCredentialsV2 !== undefined) {
     await bridge.saveConnectionCredentialsV2(
       input.connectionId,
       input.endpoint,

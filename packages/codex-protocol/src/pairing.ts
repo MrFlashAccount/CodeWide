@@ -1,6 +1,5 @@
-export type CodeWidePairingPayload = {
+type PairingBase = {
   type: "codewide-pairing";
-  version: 1;
   endpoint: string;
   pairingToken: string;
   expiresAt: number;
@@ -9,6 +8,13 @@ export type CodeWidePairingPayload = {
   tlsPinSha256: string;
   identityExpiresAt?: number;
 };
+export type CodeWidePairingPayload =
+  | (PairingBase & { version: 1 })
+  | (PairingBase & {
+      version: 2;
+      relayRouteId: string;
+      relayTlsPinSha256: string;
+    });
 
 export function encodePairingPayload(payload: CodeWidePairingPayload): string {
   return JSON.stringify(validatePairingPayload(payload, Date.now())).replace(
@@ -20,7 +26,7 @@ export function encodePairingPayload(payload: CodeWidePairingPayload): string {
 export function encodePairingLink(payload: CodeWidePairingPayload): string {
   const validated = validatePairingPayload(payload, Date.now());
   const url = new URL("codewide://pair");
-  url.searchParams.set("v", "1");
+  url.searchParams.set("v", String(validated.version));
   url.searchParams.set("e", validated.endpoint);
   url.searchParams.set("t", validated.pairingToken);
   url.searchParams.set("x", String(validated.expiresAt));
@@ -28,6 +34,10 @@ export function encodePairingLink(payload: CodeWidePairingPayload): string {
   url.searchParams.set("i", validated.emoji);
   url.searchParams.set("p", validated.tlsPinSha256);
   if (validated.identityExpiresAt !== undefined) url.searchParams.set("y", String(validated.identityExpiresAt));
+  if (validated.version === 2) {
+    url.searchParams.set("r", validated.relayRouteId);
+    url.searchParams.set("q", validated.relayTlsPinSha256);
+  }
   return url.toString();
 }
 
@@ -68,51 +78,70 @@ function parsePairingLink(raw: string, now: number): CodeWidePairingPayload {
     emoji: url.searchParams.get("i"),
     tlsPinSha256: pin,
     ...(identityExpiry === null ? {} : { identityExpiresAt: Number(identityExpiry) }),
+    relayRouteId: url.searchParams.get("r"),
+    relayTlsPinSha256: url.searchParams.get("q"),
   }, now);
 }
 
 function validatePairingPayload(value: unknown, now: number): CodeWidePairingPayload {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid pairing payload");
-  const payload = value as Partial<CodeWidePairingPayload> & { type?: unknown };
-  if ((payload.type !== "codewide-pairing" && payload.type !== "codex-remote-pairing") || payload.version !== 1) {
+  const field = (name: string): unknown => Reflect.get(value, name);
+  const version = field("version");
+  if ((field("type") !== "codewide-pairing" && field("type") !== "codex-remote-pairing") || (version !== 1 && version !== 2)) {
     throw new Error("Unsupported pairing QR");
   }
-  if (typeof payload.expiresAt !== "number" || !Number.isSafeInteger(payload.expiresAt)) throw new Error("Invalid pairing expiry");
-  if (payload.expiresAt <= now) throw new Error("Pairing QR has expired");
-  if (payload.expiresAt > now + 10 * 60_000) throw new Error("Pairing QR expiry is outside the allowed window");
-  if (typeof payload.pairingToken !== "string" || payload.pairingToken.length < 32 || payload.pairingToken.length > 512) {
+  const expiresAt = field("expiresAt");
+  if (typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt)) throw new Error("Invalid pairing expiry");
+  if (expiresAt <= now) throw new Error("Pairing QR has expired");
+  if (expiresAt > now + 10 * 60_000) throw new Error("Pairing QR expiry is outside the allowed window");
+  const pairingToken = field("pairingToken");
+  if (typeof pairingToken !== "string" || pairingToken.length < 32 || pairingToken.length > 512) {
     throw new Error("Invalid pairing token");
   }
-  if (typeof payload.displayName !== "string" || payload.displayName.trim().length < 1 || payload.displayName.trim().length > 80) {
+  const displayName = field("displayName");
+  if (typeof displayName !== "string" || displayName.trim().length < 1 || displayName.trim().length > 80) {
     throw new Error("Invalid server name");
   }
-  if (typeof payload.emoji !== "string" || payload.emoji.trim().length < 1 || payload.emoji.trim().length > 16) {
+  const emoji = field("emoji");
+  if (typeof emoji !== "string" || emoji.trim().length < 1 || emoji.trim().length > 16) {
     throw new Error("Invalid server emoji");
   }
-  if (typeof payload.endpoint !== "string") throw new Error("Invalid pairing endpoint");
-  const endpoint = validateEndpoint(payload.endpoint);
-  if (typeof payload.tlsPinSha256 !== "string" || !/^sha256\/[A-Za-z0-9+/]{43}=$/.test(payload.tlsPinSha256)) {
+  const rawEndpoint = field("endpoint");
+  if (typeof rawEndpoint !== "string") throw new Error("Invalid pairing endpoint");
+  const endpoint = validateEndpoint(rawEndpoint, version === 2);
+  const tlsPinSha256 = field("tlsPinSha256");
+  if (typeof tlsPinSha256 !== "string" || !/^sha256\/[A-Za-z0-9+/]{43}=$/.test(tlsPinSha256)) {
     throw new Error("Invalid TLS certificate pin");
   }
-  if (payload.identityExpiresAt !== undefined && (
-    typeof payload.identityExpiresAt !== "number"
-    || !Number.isSafeInteger(payload.identityExpiresAt)
-    || payload.identityExpiresAt <= now
+  const identityExpiresAt = field("identityExpiresAt");
+  if (identityExpiresAt !== undefined && (
+    typeof identityExpiresAt !== "number"
+    || !Number.isSafeInteger(identityExpiresAt)
+    || identityExpiresAt <= now
   )) throw new Error("Invalid companion identity expiry");
-  return {
+  const common = {
     type: "codewide-pairing",
-    version: 1,
     endpoint,
-    pairingToken: payload.pairingToken,
-    expiresAt: payload.expiresAt,
-    displayName: payload.displayName.trim(),
-    emoji: payload.emoji.trim(),
-    tlsPinSha256: payload.tlsPinSha256,
-    ...(payload.identityExpiresAt === undefined ? {} : { identityExpiresAt: payload.identityExpiresAt }),
-  };
+    pairingToken,
+    expiresAt,
+    displayName: displayName.trim(),
+    emoji: emoji.trim(),
+    tlsPinSha256,
+    ...(identityExpiresAt === undefined ? {} : { identityExpiresAt }),
+  } as const;
+  if (version === 1) return { ...common, version: 1 };
+  const relayRouteId = field("relayRouteId");
+  const relayTlsPinSha256 = field("relayTlsPinSha256");
+  if (typeof relayRouteId !== "string" || !/^[a-f0-9]{64}$/u.test(relayRouteId)) {
+    throw new Error("Invalid Relay route");
+  }
+  if (typeof relayTlsPinSha256 !== "string" || !/^sha256\/[A-Za-z0-9+/]{43}=$/u.test(relayTlsPinSha256)) {
+    throw new Error("Invalid Relay certificate pin");
+  }
+  return { ...common, version: 2, relayRouteId, relayTlsPinSha256 };
 }
 
-function validateEndpoint(raw: string): string {
+function validateEndpoint(raw: string, pinnedRelay: boolean): string {
   let url: URL;
   try {
     url = new URL(raw);
@@ -122,6 +151,9 @@ function validateEndpoint(raw: string): string {
   if (url.protocol !== "wss:" && url.protocol !== "ws:") throw new Error("Pairing endpoint must use WebSocket");
   const local = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]" || url.hostname === "10.0.2.2";
   const relay = /^\/c\/[a-f0-9]{64}\/v1\/sync$/u.test(url.pathname);
+  if (pinnedRelay && (url.protocol !== "wss:" || url.pathname !== "/v1/sync")) {
+    throw new Error("Pinned Relay endpoint must use WSS and /v1/sync");
+  }
   if (url.protocol === "ws:" && !local && !relay) throw new Error("Remote pairing endpoint must use WSS or an explicit inner-TLS relay route");
   const pathname = url.pathname === "/" || url.pathname === "" ? "/v1/sync" : url.pathname;
   if ((pathname !== "/v1/sync" && !relay) || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {

@@ -12,6 +12,12 @@ pub struct PairingLinkInput<'a> {
     pub emoji: &'a str,
     pub tls_pin_sha256: &'a str,
     pub identity_expires_at: Option<u64>,
+    pub relay: Option<RelayPairing<'a>>,
+}
+
+pub struct RelayPairing<'a> {
+    pub route_id: &'a str,
+    pub tls_pin_sha256: &'a str,
 }
 
 /// Builds the canonical mobile pairing deep link shared by every host.
@@ -23,7 +29,7 @@ pub fn build_link(input: &PairingLinkInput<'_>) -> Result<url::Url, url::ParseEr
     let mut link = url::Url::parse("codewide://pair")?;
     let mut query = link.query_pairs_mut();
     query
-        .append_pair("v", "1")
+        .append_pair("v", if input.relay.is_some() { "2" } else { "1" })
         .append_pair("e", input.endpoint.as_str())
         .append_pair("t", input.pairing_token)
         .append_pair("x", &input.expires_at.to_string())
@@ -32,6 +38,11 @@ pub fn build_link(input: &PairingLinkInput<'_>) -> Result<url::Url, url::ParseEr
         .append_pair("p", input.tls_pin_sha256);
     if let Some(expires_at) = input.identity_expires_at {
         query.append_pair("y", &expires_at.to_string());
+    }
+    if let Some(relay) = &input.relay {
+        query
+            .append_pair("r", relay.route_id)
+            .append_pair("q", relay.tls_pin_sha256);
     }
     drop(query);
     Ok(link)

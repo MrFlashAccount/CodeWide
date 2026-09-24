@@ -80,8 +80,8 @@ The client-first menu-bar panel exposes four production workflows over signed XP
 - Relay pairing from `host:port` plus the one-time JSON invitation, live
   `connecting / online / reconnecting / disabled` reachability, and enable or
   disable;
-- device pairing as a native QR code containing the route-qualified Relay
-  endpoint, one-time token, Companion TLS pin, and identity expiry;
+- device pairing as a native QR code containing the Relay WSS endpoint, route
+  ID, Relay certificate pin, one-time token, Companion TLS pin, and identity expiry;
 - paired device inventory with active sync-connection count, durable last-seen
   time, and immediate revoke.
 

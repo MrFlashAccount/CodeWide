@@ -2,25 +2,26 @@
 
 Relay is a standalone Rust application. Each Companion owns one random
 256-bit route ID and one independently generated Relay access token. The phone
-uses the route-qualified endpoint; Companion authenticates its outbound control
+uses a WSS endpoint with the route ID in the WebSocket handshake header;
+Companion authenticates its outbound control
 socket with the token. Relay maps the route to the current outbound Companion
 socket and forwards only opaque inner-TLS bytes.
 
 Relay exposes one TCP listener. Both sides connect outbound to that same
 `IP:port`:
 
-- plain HTTP/WebSocket connections carry phone tunnels and Companion data
-  attachments; they never accept long-lived Relay credentials;
-- TLS ClientHello connections on the same port serve health, pairing, and
-  control through built-in pinned TLS 1.3.
+- TLS ClientHello connections on the same port serve phone tunnels, Companion
+  attachments, health, pairing, and control through built-in pinned TLS 1.3;
+- plain HTTP/WebSocket routes remain temporarily for installed clients paired
+  under the earlier `/c/<route-id>` link.
 
 The Relay application replaces `frps`; the outbound adapter built into
 Companion replaces `frpc`. FRP is not present anywhere in this data path.
 
-The route ID is a selector, not an authentication secret. With plain WS it is
-visible on the network. The existing phone-to-Companion TLS/mTLS still protects
+The route ID is a selector, not an authentication secret. New phone connections
+send it as `x-codewide-relay-route` inside the pinned WSS handshake. The existing phone-to-Companion TLS/mTLS still protects
 all application data and Companion authority end to end; Relay terminates only
-its service-plane TLS and sees only pairing/control metadata there. Data-plane
+its outer TLS and sees route and control metadata there. Data-plane
 frames remain inner-TLS ciphertext.
 
 ## Start Relay
@@ -77,7 +78,8 @@ early data. Invitations, access tokens, health, and control messages exist only
 inside pinned TLS. The access token is sent only after the certificate pin is
 verified.
 
-The data-plane connections may remain `ws://`. Data attachments carry only
+Legacy data-plane connections may remain `ws://` during migration. New data
+attachments use pinned WSS. Attachments carry only
 opaque inner-TLS bytes and a 256-bit ticket that is delivered over control,
 expires after 15 seconds, and is consumed exactly once. The long-lived Relay
 access token never enters the plain channel. An active network attacker can
@@ -126,14 +128,16 @@ codewide-companion pair
 When Relay pairing exists, the generated link/QR automatically contains:
 
 ```text
-ws://203.0.113.10:8780/c/<route-id>/v1/sync
+codewide://pair?v=2&e=wss%3A%2F%2F203.0.113.10%3A8780%2Fv1%2Fsync&...&r=<route-id>&q=<relay-cert-pin>
 ```
 
-No `CODEWIDE_PUBLIC_ENDPOINT` is required for this path. Android keeps the
-existing Companion certificate pin and inner TLS/mTLS. The carrier opens
-`/c/<route-id>/v1/e2ee-bootstrap-tunnel` during pairing and
-`/c/<route-id>/v1/e2ee-tunnel` afterwards; the route prefix is removed before
-the inner HTTP request reaches Companion.
+No `CODEWIDE_PUBLIC_ENDPOINT` is required for this path. The link also carries
+the Companion identity pin `p`; Android checks the Relay's exact certificate
+`q` for the outer WSS and the Companion identity independently for the inner
+TLS/mTLS. The carrier opens `/v1/e2ee-bootstrap-tunnel` during pairing and
+`/v1/e2ee-tunnel` afterwards, passing `r` in the `x-codewide-relay-route`
+header. The route is absent from the URL. Installed clients with version 1
+links continue using the old `/c/<route-id>` path until they re-pair.
 
 ## Multiple Companions, rotation and revocation
 
@@ -161,17 +165,17 @@ target/release/codewide-relay revoke --route <route-id>
 
 ## Rollout and rollback
 
-During migration only, keep the old FRP profile beside the new Relay profile.
-Canary Relay on one Companion and one phone. Roll back without deleting
-credentials:
+Deploy the compatible Relay first, then Companion, then the Android APK. The
+new Relay still accepts version 1 phone routes, while a new Companion adapter
+needs the Relay's WSS attachment route. A phone must use an APK with native
+Relay pin support before claiming a version 2 link.
 
-```sh
-codewide-companion relay disable
-# select the existing FRP phone profile
-```
-
-Return to Relay with `codewide-companion relay enable`; both changes apply
-immediately. Do not delete FRP or revoke Relay while collecting failure evidence.
+Canary the new pairing path on one Companion and phone. Existing version 1
+phone profiles keep using their route-qualified WS tunnels on the upgraded
+Relay. To roll back the new adapter, restore the previous Companion build and
+its retained Relay configuration; the Relay still accepts the old attachment
+route. Keep the old phone profile until the new WSS profile is verified. Do not
+revoke its route while collecting failure evidence.
 
 Before canary:
 
@@ -185,8 +189,8 @@ pnpm test:companion
 pnpm validate:android:v1
 ```
 
-Before removing FRP, additionally verify a deployed phone and Companion across
+Before making WSS the only accepted phone carrier, additionally verify a deployed phone and Companion across
 Relay/Companion restart, process death, sleep/wake, Wi-Fi/mobile handoff,
 blackholed networks, slow consumers, 64-stream saturation, route isolation and
 connection storms. Record memory per idle stream, throughput, reconnect time
-and p50/p95/p99 latency. FRP removal is a separate approved change.
+and p50/p95/p99 latency. Removing legacy WS routes is a separate change.

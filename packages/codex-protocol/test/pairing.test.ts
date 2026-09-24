@@ -74,8 +74,29 @@ describe("CodeWide pairing QR", () => {
       displayName: "Home workstation",
       emoji: "🏠",
     });
-    expect(() => parsePairingPayload(link.replace("v=1", "v=2"), now)).toThrow("Unsupported pairing QR");
+    expect(() => parsePairingPayload(link.replace("v=1", "v=2"), now)).toThrow("Invalid Relay route");
     expect(() => parsePairingPayload(link.replace("codewide://pair", "codewide://thread"), now)).toThrow("Unsupported");
+  });
+
+  it("round-trips a pinned Relay link with its route outside the URL", () => {
+    const now = Date.now();
+    const payload = {
+      type: "codewide-pairing",
+      version: 2,
+      endpoint: "wss://192.0.2.10:8780/v1/sync",
+      pairingToken: "x".repeat(43),
+      expiresAt: now + 60_000,
+      displayName: "Workstation",
+      emoji: "🖥️",
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+      relayRouteId: "a".repeat(64),
+      relayTlsPinSha256: `sha256/${"B".repeat(43)}=`,
+    } as const;
+    const link = encodePairingLink(payload);
+    expect(parsePairingPayload(link, now)).toEqual(payload);
+    expect(new URL(link).searchParams.get("e")).toBe(payload.endpoint);
+    expect(() => parsePairingPayload(JSON.stringify({ ...payload, relayRouteId: "bad" }), now)).toThrow("Relay route");
+    expect(() => parsePairingPayload(JSON.stringify({ ...payload, endpoint: "ws://192.0.2.10:8780/v1/sync" }), now)).toThrow("WSS");
   });
 
   it("accepts the legacy brand alias only when the payload remains securely pinned", () => {

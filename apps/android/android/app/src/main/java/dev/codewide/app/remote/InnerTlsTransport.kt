@@ -42,7 +42,7 @@ internal object InnerTlsTransport {
     purpose: String = "operation",
     telemetry: NativeTelemetryRecorder = NativeTelemetryRecorder.NONE,
   ): OkHttpClient {
-    val carrier = PinnedTls.client(base, saved.endpoint, null).newBuilder()
+    val carrier = PinnedTls.carrierClient(base, saved.endpoint, saved.relay).newBuilder()
       .dns(object : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
           val startedAt = SystemClock.elapsedRealtimeNanos()
@@ -66,7 +66,7 @@ internal object InnerTlsTransport {
       base,
       saved.endpoint,
       saved.innerTlsPinSha256,
-      TunnelSocketFactory(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH), purpose, telemetry),
+      TunnelSocketFactory(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH), saved.relay?.routeId, purpose, telemetry),
       DeviceKeyStore.clientKeyManager(saved.id),
     )
     if (telemetry === NativeTelemetryRecorder.NONE) return inner
@@ -75,13 +75,13 @@ internal object InnerTlsTransport {
       .build()
   }
 
-  fun bootstrapClient(base: OkHttpClient, endpoint: String, pin: String): OkHttpClient {
-    val carrier = PinnedTls.client(base, endpoint, null)
+  fun bootstrapClient(base: OkHttpClient, endpoint: String, pin: String, relay: PinnedRelayRoute? = null): OkHttpClient {
+    val carrier = PinnedTls.carrierClient(base, endpoint, relay)
     return PinnedTls.innerTlsClient(
       base,
       endpoint,
       pin,
-      TunnelSocketFactory(carrier, tunnelUrl(endpoint, BOOTSTRAP_TUNNEL_PATH)),
+      TunnelSocketFactory(carrier, tunnelUrl(endpoint, BOOTSTRAP_TUNNEL_PATH), relay?.routeId),
       null,
     )
   }
@@ -113,8 +113,8 @@ internal object InnerTlsTransport {
     timeoutMs: Int,
     onCarrierCreated: (Socket) -> Unit = {},
   ): Socket {
-    val carrier = PinnedTls.client(base, saved.endpoint, null)
-    val raw = TunnelSocket(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH))
+    val carrier = PinnedTls.carrierClient(base, saved.endpoint, saved.relay)
+    val raw = TunnelSocket(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH), saved.relay?.routeId)
     onCarrierCreated(raw)
     return try {
       raw.connect(InetSocketAddress(requireNotNull(URI(saved.endpoint).host), 443), timeoutMs)
@@ -144,10 +144,11 @@ internal object InnerTlsTransport {
 private class TunnelSocketFactory(
   private val carrier: OkHttpClient,
   private val tunnelUrl: String,
+  private val relayRouteId: String? = null,
   private val purpose: String = "operation",
   private val telemetry: NativeTelemetryRecorder = NativeTelemetryRecorder.NONE,
 ) : SocketFactory() {
-  override fun createSocket(): Socket = TunnelSocket(carrier, tunnelUrl, purpose, telemetry)
+  override fun createSocket(): Socket = TunnelSocket(carrier, tunnelUrl, relayRouteId, purpose, telemetry)
   override fun createSocket(host: String, port: Int): Socket = createSocket().apply { connect(InetSocketAddress(host, port)) }
   override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
     createSocket(host, port)
@@ -238,6 +239,7 @@ internal class TunnelInboundQueue(
 private class TunnelSocket(
   private val carrier: OkHttpClient,
   private val tunnelUrl: String,
+  private val relayRouteId: String? = null,
   private val purpose: String = "operation",
   private val telemetry: NativeTelemetryRecorder = NativeTelemetryRecorder.NONE,
 ) : Socket() {
@@ -261,7 +263,9 @@ private class TunnelSocket(
       "connection.outer_carrier",
       tags = mapOf("phase" to "started", "purpose" to purpose),
     ))
-    val request = Request.Builder().url(tunnelUrl).build()
+    val request = Request.Builder().url(tunnelUrl).apply {
+      relayRouteId?.let { header("x-codewide-relay-route", it) }
+    }.build()
     webSocket = carrier.newWebSocket(request, object : WebSocketListener() {
       override fun onOpen(webSocket: WebSocket, response: Response) {
         connected = true
