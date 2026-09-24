@@ -2,8 +2,8 @@
   "expo": {
     "name": "CodeWide",
     "slug": "codewide",
-    "version": "0.2.194",
-    "runtimeVersion": "0.2.194-native-207",
+    "version": "0.2.195",
+    "runtimeVersion": "0.2.195-native-208",
     "updates": {
       "enabled": true,
       "url": "https://updates.example.invalid/api/updates",
@@ -47,7 +47,7 @@
     ],
     "android": {
       "package": "dev.codexremote.app",
-      "versionCode": 207,
+      "versionCode": 208,
       "permissions": [
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.CHANGE_NETWORK_STATE",
