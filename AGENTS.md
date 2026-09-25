@@ -23,6 +23,12 @@
 - Keep raw gesture coordinates and animation progress that change each frame in Reanimated shared values on the UI thread. Publish semantic transitions such as armed, opened, cancelled, and settled to Legend State when React UI needs them; do not bridge every animation frame through JavaScript or Legend State.
 - Keep the gesture and its Legend State projection under the feature that owns the interaction. The context or props carry the stable owner, not a copied snapshot.
 
+## Asynchronous progress UI
+
+- Do not replace stable or optimistically updated user-facing text with progress words such as `Updating…`, `Refreshing…`, or `Saving…`. Keep the actual value and render that same text with the existing shimmer treatment while confirmation is pending, so its geometry does not change.
+- Text shimmer is the default progress treatment wherever meaningful text is available. Use a spinner only when shimmer cannot represent the pending state, and only after the user has explicitly approved that exception.
+- On failure, stop the shimmer, restore or reconcile the authoritative value, and expose the real error through the owning interaction instead of leaving a progress label behind.
+
 ## Android V1 feature boundary
 
 - The selected V1 ownership contract and implemented source tree are in [docs/android-v1-feature-architecture.md](docs/android-v1-feature-architecture.md); exact owner moves, lifetimes and migration gates are in [docs/android-v1-feature-migration.md](docs/android-v1-feature-migration.md). Read [apps/android/src/CONTEXT.md](apps/android/src/CONTEXT.md) and the nearest local ownership contract before a V1 source move. M0–M8 source migration is implemented; the migration ledger records completed automated checks and unverified device scenarios.

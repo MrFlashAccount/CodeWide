@@ -572,6 +572,11 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
     func appServerConnection()  -> FfiAppServerConnection
 
     /**
+     * Describes whether a compatible installed Codex can start the selected App Server.
+     */
+    func codexInstallation(homeDirectory: String)  -> FfiCodexInstallation
+
+    /**
      * Creates a time-bounded device pairing link.
      * # Errors
      * Returns an adapter error when Relay is unavailable or state cannot persist.
@@ -637,6 +642,15 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      * Returns an adapter error when Relay state cannot be changed durably.
      */
     func setRelayEnabled(enabled: Bool) throws  -> FfiRelayStatus
+
+    /**
+     * Starts the installed Codex daemon for a previously discovered local home.
+     *
+     * # Errors
+     * Returns when the home was not discovered, Codex is missing or too old,
+     * the daemon command fails, or the App Server does not answer its handshake.
+     */
+    func startAppServer(codexHome: String, homeDirectory: String) throws  -> FfiAppServerCandidate
 
 }
 open class CoreHost: CoreHostProtocol, @unchecked Sendable {
@@ -717,6 +731,19 @@ open func appServerConnection() -> FfiAppServerConnection  {
         uniffiCallStatus in
     uniffi_companion_swift_ffi_fn_method_corehost_app_server_connection(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Describes whether a compatible installed Codex can start the selected App Server.
+     */
+open func codexInstallation(homeDirectory: String) -> FfiCodexInstallation  {
+    return try!  FfiConverterTypeFfiCodexInstallation_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_codex_installation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(homeDirectory),uniffiCallStatus
     )
 })
 }
@@ -853,6 +880,24 @@ open func setRelayEnabled(enabled: Bool)throws  -> FfiRelayStatus  {
     uniffi_companion_swift_ffi_fn_method_corehost_set_relay_enabled(
             self.uniffiCloneHandle(),
         FfiConverterBool.lower(enabled),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Starts the installed Codex daemon for a previously discovered local home.
+     *
+     * # Errors
+     * Returns when the home was not discovered, Codex is missing or too old,
+     * the daemon command fails, or the App Server does not answer its handshake.
+     */
+open func startAppServer(codexHome: String, homeDirectory: String)throws  -> FfiAppServerCandidate  {
+    return try  FfiConverterTypeFfiAppServerCandidate_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_start_app_server(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(codexHome),
+        FfiConverterString.lower(homeDirectory),uniffiCallStatus
     )
 })
 }
@@ -1472,6 +1517,99 @@ public func FfiConverterTypeFfiAppServerConnection_lower(_ value: FfiAppServerCo
 }
 
 
+
+
+public enum FfiCodexInstallation: Equatable, Hashable {
+
+    case notFound(minimumVersion: String
+    )
+    case unverified(minimumVersion: String
+    )
+    case updateRequired(installedVersion: String, minimumVersion: String
+    )
+    case ready(installedVersion: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiCodexInstallation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCodexInstallation: FfiConverterRustBuffer {
+    typealias SwiftType = FfiCodexInstallation
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCodexInstallation {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .notFound(minimumVersion: try FfiConverterString.read(from: &buf)
+        )
+
+        case 2: return .unverified(minimumVersion: try FfiConverterString.read(from: &buf)
+        )
+
+        case 3: return .updateRequired(installedVersion: try FfiConverterString.read(from: &buf), minimumVersion: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .ready(installedVersion: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiCodexInstallation, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .notFound(minimumVersion):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(minimumVersion, into: &buf)
+
+
+        case let .unverified(minimumVersion):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(minimumVersion, into: &buf)
+
+
+        case let .updateRequired(installedVersion,minimumVersion):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(installedVersion, into: &buf)
+            FfiConverterString.write(minimumVersion, into: &buf)
+
+
+        case let .ready(installedVersion):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(installedVersion, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCodexInstallation_lift(_ buf: RustBuffer) throws -> FfiCodexInstallation {
+    return try FfiConverterTypeFfiCodexInstallation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCodexInstallation_lower(_ value: FfiCodexInstallation) -> RustBuffer {
+    return FfiConverterTypeFfiCodexInstallation.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1564,6 +1702,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_codex_installation() != 62835) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_create_pairing() != 24799) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1589,6 +1730,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_set_relay_enabled() != 8464) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_start_app_server() != 22333) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 64369) {

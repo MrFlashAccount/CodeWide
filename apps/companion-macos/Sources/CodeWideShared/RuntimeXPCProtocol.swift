@@ -23,6 +23,11 @@ import Foundation
         withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
     )
 
+    func startAppServer(
+        id: String,
+        withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
+    )
+
     func relayStatus(
         withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void
     )

@@ -1,6 +1,5 @@
 import AppKit
 import CodeWideShared
-import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 @main
@@ -9,6 +8,7 @@ struct CodeWideApp: App {
     @StateObject private var runtime: RuntimeConnection
     @StateObject private var updates: UpdateController
     @StateObject private var onboarding: OnboardingWindowController
+    @StateObject private var dialogs: CompanionDialogController
 
     init() {
         let runtime = RuntimeConnection()
@@ -16,6 +16,7 @@ struct CodeWideApp: App {
         _runtime = StateObject(wrappedValue: runtime)
         _updates = StateObject(wrappedValue: UpdateController(runtime: runtime))
         _onboarding = StateObject(wrappedValue: onboarding)
+        _dialogs = StateObject(wrappedValue: CompanionDialogController(runtime: runtime))
         runtime.start()
         DispatchQueue.main.async {
             onboarding.showIfNeeded()
@@ -24,7 +25,12 @@ struct CodeWideApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            CompanionPanel(runtime: runtime, updates: updates, onboarding: onboarding)
+            CompanionPanel(
+                runtime: runtime,
+                updates: updates,
+                onboarding: onboarding,
+                dialogs: dialogs
+            )
         } label: {
             Image(nsImage: Self.menuBarImage)
                 .opacity(runtime.health == nil ? 0.45 : 1)
@@ -53,13 +59,10 @@ private struct CompanionPanel: View {
     @ObservedObject var runtime: RuntimeConnection
     @ObservedObject var updates: UpdateController
     @ObservedObject var onboarding: OnboardingWindowController
+    @ObservedObject var dialogs: CompanionDialogController
 
-    @State private var showsRelaySetup = false
-    @State private var pairing: PairingPayload?
-    @State private var revokingDeviceID: String?
     @State private var actionError: String?
     @State private var actionInProgress = false
-    @State private var pairAfterRelaySetup = false
     @State private var dismissedError: String?
 
     var body: some View {
@@ -74,43 +77,6 @@ private struct CompanionPanel: View {
         .tint(CodeWideBrand.accent)
         .task {
             await runtime.discoverAppServers()
-        }
-        .sheet(isPresented: $showsRelaySetup) {
-            RelaySetupSheet { address, invitation in
-                try await runtime.pairRelay(address: address, invitationJSON: invitation)
-                if pairAfterRelaySetup {
-                    pairing = try await runtime.createPairing()
-                    pairAfterRelaySetup = false
-                }
-            }
-        }
-        .sheet(
-            isPresented: Binding(
-                get: { pairing != nil },
-                set: { if !$0 { pairing = nil } }
-            )
-        ) {
-            if let pairing {
-                PairingSheet(pairing: pairing)
-            }
-        }
-        .confirmationDialog(
-            "Revoke this client?",
-            isPresented: Binding(
-                get: { revokingDeviceID != nil },
-                set: { if !$0 { revokingDeviceID = nil } }
-            )
-        ) {
-            Button("Revoke Client", role: .destructive) {
-                guard let id = revokingDeviceID else { return }
-                revokingDeviceID = nil
-                runAction {
-                    try await runtime.revokeDevice(id: id)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("It will be disconnected immediately and must be added again.")
         }
     }
 
@@ -226,6 +192,7 @@ private struct CompanionPanel: View {
         .background(Color.primary.opacity(0.035))
         .overlay(alignment: .bottom) {
             Divider()
+                .allowsHitTesting(false)
         }
     }
 
@@ -259,6 +226,7 @@ private struct CompanionPanel: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(Color.red.opacity(0.16), lineWidth: 1)
+                    .allowsHitTesting(false)
             }
             .padding(.horizontal, 16)
             .padding(.top, 11)
@@ -318,7 +286,16 @@ private struct CompanionPanel: View {
             }
             Spacer()
             Button(role: .destructive) {
-                revokingDeviceID = device.id
+                guard CompanionNativeDialog.confirmDestructive(
+                    title: "Revoke \(device.name)?",
+                    message: "It will be disconnected immediately and must be added again.",
+                    actionTitle: "Revoke Client"
+                ) else {
+                    return
+                }
+                runAction {
+                    try await runtime.revokeDevice(id: device.id)
+                }
             } label: {
                 Image(systemName: "trash")
             }
@@ -345,8 +322,7 @@ private struct CompanionPanel: View {
                     }
                 }
                 Button(runtime.relay?.configured == true ? "Change Relay…" : "Add Relay…") {
-                    pairAfterRelaySetup = false
-                    showsRelaySetup = true
+                    dialogs.showRelaySetup(for: .configureRelay)
                 }
                 if runtime.relay?.configured == true {
                     Button(runtime.relay?.enabled == true ? "Disable Relay" : "Enable Relay") {
@@ -376,7 +352,10 @@ private struct CompanionPanel: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
-        .overlay(alignment: .top) { Divider() }
+        .overlay(alignment: .top) {
+            Divider()
+                .allowsHitTesting(false)
+        }
     }
 
     private var statusColor: Color {
@@ -471,13 +450,13 @@ private struct CompanionPanel: View {
             if runtime.relay?.configured == true {
                 actionError = "Relay is unavailable. Wait for it to reconnect before adding a client."
             } else {
-                pairAfterRelaySetup = true
-                showsRelaySetup = true
+                dialogs.showRelaySetup(for: .pairClient)
             }
             return
         }
         runAction {
-            pairing = try await runtime.createPairing()
+            let pairing = try await runtime.createPairing()
+            dialogs.showPairing(pairing)
         }
     }
 
@@ -494,137 +473,5 @@ private struct CompanionPanel: View {
                 actionError = error.localizedDescription
             }
         }
-    }
-}
-
-private struct RelaySetupSheet: View {
-    let submit: @MainActor (String, String) async throws -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var address = ""
-    @State private var invitation = ""
-    @State private var error: String?
-    @State private var isSubmitting = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Add Relay")
-                .font(.title2.weight(.semibold))
-            Text("Run `codewide-relay invite` on the Relay host, then paste its host:port and JSON bundle here.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            if let installURL = URL(
-                string: "https://github.com/MrFlashAccount/CodeWide/blob/main/docs/relay-rollout.md#start-relay"
-            ) {
-                Link("How to install Relay", destination: installURL)
-                    .font(.callout)
-            }
-            TextField("relay.example.com:8780", text: $address)
-                .textFieldStyle(.roundedBorder)
-            TextEditor(text: $invitation)
-                .font(.body.monospaced())
-                .frame(minHeight: 120)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: .separatorColor))
-                }
-            if let error {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Connect") {
-                    isSubmitting = true
-                    error = nil
-                    Task {
-                        do {
-                            try await submit(address.trimmingCharacters(in: .whitespaces), invitation)
-                            dismiss()
-                        } catch {
-                            self.error = error.localizedDescription
-                            isSubmitting = false
-                        }
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty || invitation.isEmpty || isSubmitting)
-            }
-        }
-        .padding(20)
-        .frame(width: 440)
-    }
-}
-
-private struct PairingSheet: View {
-    let pairing: PairingPayload
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 14) {
-            Text("Add a Client")
-                .font(.title2.weight(.semibold))
-            Text("Scan this code in CodeWide. It expires \(expiryText).")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            PairingQRCode(value: pairing.link)
-                .frame(width: 230, height: 230)
-            Text(pairing.link)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-                .frame(width: 280)
-                .padding(9)
-                .background(
-                    Color.primary.opacity(0.055),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
-            HStack {
-                Button("Copy Link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(pairing.link, forType: .string)
-                }
-                Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-            }
-            .frame(width: 280)
-        }
-        .padding(22)
-    }
-
-    private var expiryText: String {
-        let date = Date(timeIntervalSince1970: TimeInterval(pairing.expiresAtUnixMilliseconds) / 1_000)
-        return date.formatted(date: .omitted, time: .shortened)
-    }
-}
-
-struct PairingQRCode: View {
-    let value: String
-
-    var body: some View {
-        if let image = makeImage() {
-            Image(nsImage: image)
-                .interpolation(.none)
-                .resizable()
-        } else {
-            ContentUnavailableView("QR unavailable", systemImage: "qrcode")
-        }
-    }
-
-    private func makeImage() -> NSImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(value.utf8)
-        filter.correctionLevel = "M"
-        guard let output = filter.outputImage?.transformed(by: .init(scaleX: 8, y: 8)) else {
-            return nil
-        }
-        let representation = NSCIImageRep(ciImage: output)
-        let image = NSImage(size: representation.size)
-        image.addRepresentation(representation)
-        return image
     }
 }

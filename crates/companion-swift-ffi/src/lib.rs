@@ -3,6 +3,7 @@ use std::{
     os::unix::fs::FileTypeExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use companion_core::runtime_host::{
@@ -17,6 +18,11 @@ use companion_core::{
     secure_store::SecretStoragePolicy,
     upstream::probe_app_server_version,
 };
+
+mod codex_installation;
+
+pub use codex_installation::FfiCodexInstallation;
+use codex_installation::{inspect_codex_installation, start_codex_app_server};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum CompanionFfiError {
@@ -176,6 +182,65 @@ impl CoreHost {
             .collect())
     }
 
+    /// Describes whether a compatible installed Codex can start the selected App Server.
+    #[must_use]
+    pub fn codex_installation(&self, home_directory: String) -> FfiCodexInstallation {
+        let home_directory = PathBuf::from(home_directory);
+        let homes = candidate_codex_homes(&home_directory, &self.codex_home)
+            .unwrap_or_else(|_| vec![self.codex_home.clone()]);
+        self.executor
+            .block_on(inspect_codex_installation(&home_directory, &homes))
+    }
+
+    /// Starts the installed Codex daemon for a previously discovered local home.
+    ///
+    /// # Errors
+    /// Returns when the home was not discovered, Codex is missing or too old,
+    /// the daemon command fails, or the App Server does not answer its handshake.
+    pub fn start_app_server(
+        &self,
+        codex_home: String,
+        home_directory: String,
+    ) -> Result<FfiAppServerCandidate, CompanionFfiError> {
+        let home_directory = PathBuf::from(home_directory);
+        let codex_home = PathBuf::from(codex_home);
+        let homes = candidate_codex_homes(&home_directory, &self.codex_home)
+            .map_err(CompanionFfiError::runtime)?;
+        if !homes.contains(&codex_home) {
+            return Err(CompanionFfiError::runtime(
+                "The requested Codex home was not discovered",
+            ));
+        }
+        self.executor
+            .block_on(start_codex_app_server(&home_directory, &codex_home))
+            .map_err(CompanionFfiError::runtime)?;
+
+        let socket_path = app_server_socket_path(&codex_home);
+        let version = self
+            .executor
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    loop {
+                        if let Ok(version) = probe_app_server_version(&socket_path).await {
+                            return version;
+                        }
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                })
+                .await
+            })
+            .map_err(|_| {
+                CompanionFfiError::runtime(
+                    "Codex started, but its App Server did not answer the initialize handshake",
+                )
+            })?;
+        Ok(app_server_candidate(
+            &codex_home,
+            &self.codex_home,
+            Some(version),
+        ))
+    }
+
     /// Returns the current lifecycle and version proof.
     ///
     /// # Errors
@@ -281,27 +346,31 @@ impl CoreHost {
 
 impl CoreHost {
     fn app_server_candidate(&self, codex_home: &Path) -> FfiAppServerCandidate {
-        let socket_path = codex_home.join("app-server-control/app-server-control.sock");
-        let availability = socket_path
-            .symlink_metadata()
-            .ok()
-            .filter(|metadata| metadata.file_type().is_socket())
-            .and_then(|_| {
-                self.executor
-                    .block_on(probe_app_server_version(&socket_path))
-                    .ok()
-            })
-            .map_or(FfiAppServerAvailability::Unavailable, |version| {
-                FfiAppServerAvailability::Available { version }
-            });
-        let id = codex_home.to_string_lossy().into_owned();
-        FfiAppServerCandidate {
-            display_name: app_server_display_name(codex_home),
-            codex_home: id.clone(),
-            selected: codex_home == self.codex_home,
-            id,
-            availability,
-        }
+        let version = self
+            .executor
+            .block_on(probe_app_server_version(&app_server_socket_path(
+                codex_home,
+            )))
+            .ok();
+        app_server_candidate(codex_home, &self.codex_home, version)
+    }
+}
+
+fn app_server_candidate(
+    codex_home: &Path,
+    selected_codex_home: &Path,
+    version: Option<String>,
+) -> FfiAppServerCandidate {
+    let availability = version.map_or(FfiAppServerAvailability::Unavailable, |version| {
+        FfiAppServerAvailability::Available { version }
+    });
+    let id = codex_home.to_string_lossy().into_owned();
+    FfiAppServerCandidate {
+        display_name: app_server_display_name(codex_home),
+        codex_home: id.clone(),
+        selected: codex_home == selected_codex_home,
+        id,
+        availability,
     }
 }
 
@@ -334,10 +403,13 @@ fn candidate_codex_homes(home_directory: &Path, selected: &Path) -> std::io::Res
 }
 
 fn has_app_server_socket(codex_home: &Path) -> bool {
-    codex_home
-        .join("app-server-control/app-server-control.sock")
-        .symlink_metadata()
+    app_server_socket_path(codex_home)
+        .metadata()
         .is_ok_and(|metadata| metadata.file_type().is_socket())
+}
+
+fn app_server_socket_path(codex_home: &Path) -> PathBuf {
+    codex_home.join("app-server-control/app-server-control.sock")
 }
 
 fn push_candidate(homes: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, candidate: PathBuf) {
@@ -434,7 +506,7 @@ impl From<RuntimeHealth> for FfiRuntimeHealth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixListener;
+    use std::{os::unix::fs::symlink, os::unix::net::UnixListener};
 
     #[test]
     fn discovery_keeps_default_and_selected_but_ignores_inactive_profiles()
@@ -464,6 +536,26 @@ mod tests {
             app_server_display_name(Path::new("/Users/me/.codex-work")),
             "work"
         );
+    }
+
+    #[test]
+    fn discovery_accepts_the_stable_symlink_used_by_the_codex_daemon()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = tempfile::tempdir()?;
+        let codex_home = home.path().join(".codex");
+        let control = codex_home.join("app-server-control");
+        std::fs::create_dir_all(&control)?;
+        let socket_directory = tempfile::tempdir()?;
+        let socket_path = socket_directory.path().join("daemon.sock");
+        let _socket = UnixListener::bind(&socket_path)?;
+        symlink(&socket_path, control.join("app-server-control.sock"))?;
+
+        assert!(has_app_server_socket(&codex_home));
+        assert_eq!(
+            candidate_codex_homes(home.path(), &codex_home)?,
+            vec![codex_home]
+        );
+        Ok(())
     }
 }
 

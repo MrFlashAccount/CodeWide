@@ -23,6 +23,10 @@ if [ -z "$public_key" ]; then
   echo "CODEWIDE_SPARKLE_PUBLIC_KEY is required." >&2
   exit 1
 fi
+if ! printf '%s\n' "$build_number" | grep -Eq '^[1-9][0-9]*([.][0-9]+){0,2}$'; then
+  echo "CODEWIDE_BUILD_NUMBER must contain one to three numeric components." >&2
+  exit 1
+fi
 
 if [ -n "${CODEWIDE_FFI_ARCHIVE:-}" ]; then
   ffi_archive=$CODEWIDE_FFI_ARCHIVE

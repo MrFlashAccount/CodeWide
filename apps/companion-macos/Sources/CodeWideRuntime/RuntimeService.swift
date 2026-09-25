@@ -60,8 +60,12 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
     ) {
         do {
             let candidates = try core.discoverAppServers(homeDirectory: userHome.path)
+            let installation = core.codexInstallation(homeDirectory: userHome.path)
             reply(
-                AppServerListPayload(servers: candidates.map { appServerPayload(from: $0) }),
+                AppServerListPayload(
+                    servers: candidates.map { appServerPayload(from: $0) },
+                    codexInstallation: codexInstallationPayload(from: installation)
+                ),
                 nil
             )
         } catch {
@@ -88,6 +92,28 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
                 // exit is reserved for Sparkle's deliberate update shutdown.
                 exit(EXIT_FAILURE)
             }
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    func startAppServer(
+        id: String,
+        withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
+    ) {
+        do {
+            let candidates = try core.discoverAppServers(homeDirectory: userHome.path)
+            guard let candidate = candidates.first(where: { $0.id == id }) else {
+                throw RuntimeServiceError.appServerNotFound
+            }
+            guard candidate.selected else {
+                throw RuntimeServiceError.appServerNotSelected
+            }
+            let started = try core.startAppServer(
+                codexHome: candidate.codexHome,
+                homeDirectory: userHome.path
+            )
+            reply(appServerPayload(from: started), nil)
         } catch {
             reply(nil, error as NSError)
         }
@@ -201,6 +227,25 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         )
     }
 
+    private func codexInstallationPayload(
+        from installation: FfiCodexInstallation
+    ) -> CodexInstallationPayload {
+        let state: CodexInstallationState = switch installation {
+        case let .notFound(minimumVersion):
+            .notFound(minimumVersion: minimumVersion)
+        case let .unverified(minimumVersion):
+            .unverified(minimumVersion: minimumVersion)
+        case let .updateRequired(installedVersion, minimumVersion):
+            .updateRequired(
+                installedVersion: installedVersion,
+                minimumVersion: minimumVersion
+            )
+        case let .ready(installedVersion):
+            .ready(installedVersion: installedVersion)
+        }
+        return CodexInstallationPayload(state: state)
+    }
+
     private func currentAppServerPayload() -> AppServerPayload {
         let state: AppServerState = switch core.appServerConnection() {
         case let .live(version):
@@ -245,12 +290,15 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
 
 private enum RuntimeServiceError: LocalizedError {
     case appServerNotFound
+    case appServerNotSelected
     case appServerUnavailable
 
     var errorDescription: String? {
         switch self {
         case .appServerNotFound:
             "The selected Codex App Server is no longer available."
+        case .appServerNotSelected:
+            "CodeWide can only start the currently selected Codex App Server."
         case .appServerUnavailable:
             "The selected Codex App Server did not answer its initialize handshake."
         }

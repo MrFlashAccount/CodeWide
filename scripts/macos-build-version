@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+version=${1-}
+
+fail() {
+  printf 'macos-build-version: expected a stable semantic version, got %s\n' "$version" >&2
+  exit 2
+}
+
+[ "$#" -eq 1 ] || fail
+case "$version" in
+  ''|.*|*.|*..*|*[!0-9.]*) fail ;;
+esac
+
+old_ifs=$IFS
+IFS=.
+set -- $version
+IFS=$old_ifs
+
+[ "$#" -eq 3 ] || fail
+
+for component in "$@"; do
+  case "$component" in
+    ''|*[!0-9]*) fail ;;
+    0) ;;
+    0*) fail ;;
+    *) ;;
+  esac
+done
+
+major=$1
+minor=$2
+patch=$3
+
+# 200000 is a one-time migration epoch above every build published by the old
+# workflow-run-number scheme. The remaining components preserve SemVer order
+# regardless of whether the release is started directly or by release-set.yml.
+build_epoch=200000
+printf '%s.%s.%s\n' "$((build_epoch + major))" "$minor" "$patch"

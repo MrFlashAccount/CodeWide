@@ -126,15 +126,17 @@ jobs:
         run: |
           if [[ -n "$RAW_VERSION" ]]; then
             version="${RAW_VERSION#v}"
-            if [[ ! "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            if [[ ! "$version" =~ ^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$ ]]; then
               echo "Invalid version: $RAW_VERSION"
               exit 1
             fi
           else
             version=$(./scripts/next-macos-version "$VERSION_BUMP")
           fi
+          build_number=$(./scripts/macos-build-version "$version")
           echo "Releasing $version."
           echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "CODEWIDE_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
           echo "DMG_PATH=apps/companion-macos/dist/CodeWide-$version.dmg" >> "$GITHUB_ENV"
           echo "APPCAST_PATH=apps/companion-macos/dist/appcast.xml" >> "$GITHUB_ENV"
@@ -171,7 +173,6 @@ jobs:
           CODEWIDE_APP_OUTPUT="$RUNNER_TEMP/baseline/CodeWide.app" \
             apps/companion-macos/scripts/build-app.sh
           release_archive=$(CODEWIDE_CORE_VERSION="$CODEWIDE_VERSION" apps/companion-macos/scripts/build-rust-ffi.sh)
-          CODEWIDE_BUILD_NUMBER="$((100000 + GITHUB_RUN_NUMBER))" \
           CODEWIDE_FFI_ARCHIVE="$release_archive" \
             apps/companion-macos/scripts/build-app.sh
           apps/companion-macos/scripts/build-dmg.sh "$CODEWIDE_VERSION"
@@ -199,6 +200,7 @@ jobs:
             --maximum-versions 1 \
             apps/companion-macos/dist
           xmllint --noout "$APPCAST_PATH"
+          grep -q "<sparkle:version>$CODEWIDE_BUILD_NUMBER</sparkle:version>" "$APPCAST_PATH"
           grep -q 'sparkle:edSignature=' "$APPCAST_PATH"
           grep -q 'sparkle-signatures:' "$APPCAST_PATH"
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SPARKLE_BIN/sign_update" \

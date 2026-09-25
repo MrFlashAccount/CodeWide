@@ -33,3 +33,4 @@ else
   echo "XML plist validation skipped: xmllint and plutil are unavailable." >&2
 fi
 test "$(sed -n 's/.*macOS("\([0-9][0-9]*[.]0\)").*/\1/p' "$mac_root/Package.swift")" = 26.0
+sh "$repo_root/scripts/macos-build-version.test.sh"

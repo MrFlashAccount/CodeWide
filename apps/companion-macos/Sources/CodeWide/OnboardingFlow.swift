@@ -23,6 +23,7 @@ struct OnboardingFlow: View {
     let finish: @MainActor () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var glassNamespace
     @State private var step = OnboardingStep.appServer
     @State private var relayFormVisible = false
     @State private var relayAddress = ""
@@ -32,23 +33,34 @@ struct OnboardingFlow: View {
     @State private var pairing: PairingPayload?
     @State private var pairingError: String?
     @State private var selectionInProgress = false
+    @State private var appServerStartInProgress = false
     @State private var appServerError: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ZStack {
-                page
-                    .id(step)
-                    .transition(pageTransition)
+        ZStack {
+            OnboardingBackdrop()
+
+            GlassEffectContainer(spacing: 18) {
+                VStack(spacing: 14) {
+                    header
+                        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                        .glassEffectID("onboarding-header", in: glassNamespace)
+
+                    ZStack {
+                        page
+                            .id(step)
+                            .transition(pageTransition)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 28))
+                    .glassEffectID("onboarding-page", in: glassNamespace)
+
+                    footer
+                }
+                .padding(18)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
-            footer
         }
-        .frame(minWidth: 620, minHeight: 430)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 660, minHeight: 480)
         .tint(CodeWideBrand.accent)
         .task {
             await runtime.discoverAppServers()
@@ -90,8 +102,8 @@ struct OnboardingFlow: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 13)
     }
 
     @ViewBuilder
@@ -114,29 +126,32 @@ struct OnboardingFlow: View {
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 if runtime.isDiscoveringAppServers && runtime.appServers.isEmpty {
-                    HStack(spacing: 9) {
-                        ProgressView().controlSize(.small)
-                        Text("Looking for App Servers…")
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 84)
+                    ShimmerText("Looking for App Servers")
+                        .frame(maxWidth: .infinity, minHeight: 84)
                 } else {
                     ForEach(runtime.appServers, id: \.id) { server in
                         appServerRow(server)
                     }
                 }
 
+                if !hasAvailableAppServer && !runtime.isDiscoveringAppServers {
+                    appServerRecovery
+                }
+
                 HStack {
-                    if !hasAvailableAppServer {
-                        Text("No reachable App Server was found.")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
                     Spacer()
-                    Button("Scan Again") {
+                    Button {
                         Task { await runtime.discoverAppServers() }
+                    } label: {
+                        if runtime.isDiscoveringAppServers {
+                            ShimmerText("Scan Again")
+                        } else {
+                            Text("Scan Again")
+                        }
                     }
                     .controlSize(.small)
+                    .buttonStyle(.glass)
+                    .disabled(runtime.isDiscoveringAppServers || appServerStartInProgress)
                     if let installURL = URL(string: "https://developers.openai.com/codex/cli") {
                         Link("How to install", destination: installURL)
                             .font(.caption)
@@ -154,9 +169,58 @@ struct OnboardingFlow: View {
                         runtime.openLoginItemsSettings()
                     }
                     .controlSize(.small)
+                    .buttonStyle(.glass)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var appServerRecovery: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No reachable App Server was found.")
+                .font(.caption)
+                .foregroundStyle(.red)
+
+            switch runtime.codexInstallation {
+            case let .ready(installedVersion):
+                HStack(spacing: 10) {
+                    Text("Codex \(installedVersion) is ready. CodeWide can start its App Server.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        startSelectedAppServer()
+                    } label: {
+                        if appServerStartInProgress {
+                            ShimmerText("Start App Server")
+                        } else {
+                            Text("Start App Server")
+                        }
+                    }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.small)
+                    .disabled(selectedUnavailableAppServer == nil || appServerStartInProgress)
+                }
+            case let .updateRequired(installedVersion, minimumVersion):
+                Text(
+                    "Codex \(installedVersion) is installed. CodeWide requires \(minimumVersion) or newer."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            case let .notFound(minimumVersion):
+                Text("Install Codex \(minimumVersion) or newer, then scan again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case let .unverified(minimumVersion):
+                Text("CodeWide found Codex but could not verify version \(minimumVersion) or newer.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case nil:
+                EmptyView()
+            }
+        }
+        .padding(.horizontal, 2)
     }
 
     private func appServerRow(_ server: AppServerPayload) -> some View {
@@ -184,18 +248,9 @@ struct OnboardingFlow: View {
             .frame(height: 54)
             .contentShape(Rectangle())
             .background(
-                server.selected ? CodeWideBrand.accent.opacity(0.09) : Color.primary.opacity(0.035),
+                server.selected ? CodeWideBrand.accent.opacity(0.12) : Color.clear,
                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(
-                        server.selected
-                            ? CodeWideBrand.accent.opacity(0.30)
-                            : Color.primary.opacity(0.07),
-                        lineWidth: 1
-                    )
-            }
         }
         .buttonStyle(.plain)
         .disabled(!isAvailable(server) || server.selected || selectionInProgress)
@@ -254,12 +309,10 @@ struct OnboardingFlow: View {
                 relayFormVisible = true
             }
             .controlSize(.small)
+            .buttonStyle(.glass)
         }
-        .padding(14)
-        .background(
-            Color.primary.opacity(0.04),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
+        .padding(.horizontal, 4)
+        .padding(.vertical, 12)
     }
 
     private var relayForm: some View {
@@ -347,19 +400,25 @@ struct OnboardingFlow: View {
                                 copy(pairing.link)
                             }
                             .controlSize(.small)
+                            .buttonStyle(.glass)
                         }
                         .frame(width: 210, alignment: .leading)
                     }
                 } else {
                     VStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
-                        Text(pairingError ?? "Creating a secure pairing link…")
-                            .font(.callout)
-                            .foregroundStyle(pairingError == nil ? Color.secondary : Color.red)
+                        if let pairingError {
+                            Text(pairingError)
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                        } else {
+                            ShimmerText("Creating a secure pairing link")
+                                .font(.callout)
+                        }
                         if pairingError != nil {
                             Button("Try Again") {
                                 Task { await createPairing() }
                             }
+                            .buttonStyle(.glass)
                         }
                     }
                 }
@@ -375,6 +434,7 @@ struct OnboardingFlow: View {
                     guard let previous = OnboardingStep(rawValue: step.rawValue - 1) else { return }
                     move(to: previous)
                 }
+                .buttonStyle(.glass)
             }
 
             Spacer()
@@ -383,11 +443,13 @@ struct OnboardingFlow: View {
                 Button("Skip") {
                     move(to: .client)
                 }
+                .buttonStyle(.glass)
             }
             if step == .client && runtime.devices.isEmpty {
                 Button("Add Later") {
                     finish()
                 }
+                .buttonStyle(.glass)
             }
 
             Button(step == .client ? "Finish" : "Continue") {
@@ -396,14 +458,17 @@ struct OnboardingFlow: View {
             .buttonStyle(.glassProminent)
             .disabled(!canContinue)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 4)
+        .padding(.top, 2)
     }
 
     private var canContinue: Bool {
         switch step {
         case .appServer:
-            runtime.health != nil && isCurrentAppServerAvailable && !selectionInProgress
+            runtime.health != nil
+                && isCurrentAppServerAvailable
+                && !selectionInProgress
+                && !appServerStartInProgress
         case .relay:
             runtime.relay?.connection == "online"
         case .client:
@@ -419,6 +484,12 @@ struct OnboardingFlow: View {
     private var hasAvailableAppServer: Bool {
         runtime.appServers.contains { server in
             isAvailable(server)
+        }
+    }
+
+    private var selectedUnavailableAppServer: AppServerPayload? {
+        runtime.appServers.first { server in
+            server.selected && !isAvailable(server)
         }
     }
 
@@ -458,6 +529,20 @@ struct OnboardingFlow: View {
             defer { selectionInProgress = false }
             do {
                 try await runtime.selectAppServer(id: server.id)
+            } catch {
+                appServerError = error.localizedDescription
+            }
+        }
+    }
+
+    private func startSelectedAppServer() {
+        guard let server = selectedUnavailableAppServer, !appServerStartInProgress else { return }
+        appServerStartInProgress = true
+        appServerError = nil
+        Task {
+            defer { appServerStartInProgress = false }
+            do {
+                try await runtime.startAppServer(id: server.id)
             } catch {
                 appServerError = error.localizedDescription
             }
@@ -529,7 +614,6 @@ private struct OnboardingPage<Content: View>: View {
                     .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(CodeWideBrand.accent)
                     .frame(width: 42, height: 42)
-                    .background(CodeWideBrand.accent.opacity(0.10), in: Circle())
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title)
                         .font(.system(size: 24, weight: .semibold))
@@ -543,9 +627,34 @@ private struct OnboardingPage<Content: View>: View {
                 .padding(.top, 24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(.horizontal, 42)
-        .padding(.top, 30)
-        .padding(.bottom, 20)
+        .padding(.horizontal, 34)
+        .padding(.top, 26)
+        .padding(.bottom, 22)
+    }
+}
+
+private struct OnboardingBackdrop: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            colorScheme == .dark ? CodeWideBrand.graphite : CodeWideBrand.warmWhite
+            LinearGradient(
+                colors: [
+                    CodeWideBrand.accent.opacity(colorScheme == .dark ? 0.24 : 0.16),
+                    Color.clear,
+                    CodeWideBrand.accent.opacity(colorScheme == .dark ? 0.10 : 0.07),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Circle()
+                .fill(CodeWideBrand.accent.opacity(colorScheme == .dark ? 0.22 : 0.14))
+                .frame(width: 320, height: 320)
+                .blur(radius: 90)
+                .offset(x: 260, y: -190)
+        }
+        .ignoresSafeArea()
     }
 }
 
@@ -576,6 +685,40 @@ private struct AppServerStateLabel: View {
         switch state {
         case .available: .green
         case .unavailable: .secondary
+        }
+    }
+}
+
+struct ShimmerText: View {
+    private let text: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        if reduceMotion {
+            Text(text)
+                .foregroundStyle(.secondary)
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                let phase = context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 1.4) / 1.4
+                Text(text)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                Color.secondary,
+                                Color.primary.opacity(0.95),
+                                Color.secondary,
+                            ],
+                            startPoint: UnitPoint(x: phase * 2.0 - 1.0, y: 0.5),
+                            endPoint: UnitPoint(x: phase * 2.0, y: 0.5)
+                        )
+                    )
+            }
         }
     }
 }

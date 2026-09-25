@@ -56,6 +56,12 @@ requires the new app, LaunchAgent, and core versions to come up with preserved
 state. It then sends `SIGKILL` to the runtime and requires launchd to return a
 new PID and higher launch count before publishing.
 
+`CFBundleVersion` is derived from the stable semantic release version through a
+fixed migration epoch. It never depends on a GitHub workflow run number, so a
+release started by the product release-set workflow cannot sort below a release
+started directly from the macOS workflow. The generated appcast must contain
+that exact build version before publication.
+
 ## Menu workflows
 
 On first launch, the app presents one temporary native setup window with

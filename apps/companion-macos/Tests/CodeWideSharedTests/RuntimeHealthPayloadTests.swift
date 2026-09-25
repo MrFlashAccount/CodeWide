@@ -58,22 +58,27 @@ import Testing
 }
 
 @Test func appServerPayloadsPreserveAvailabilityAndSelection() throws {
-    let original = AppServerListPayload(servers: [
-        AppServerPayload(
-            id: "default",
-            displayName: "Default",
-            codexHome: "/Users/test/.codex",
-            state: .available(version: "0.156.1"),
-            selected: true
-        ),
-        AppServerPayload(
-            id: "work",
-            displayName: "work",
-            codexHome: "/Users/test/.codex-work",
-            state: .unavailable(lastKnownVersion: "0.155.0"),
-            selected: false
-        ),
-    ])
+    let original = AppServerListPayload(
+        servers: [
+            AppServerPayload(
+                id: "default",
+                displayName: "Default",
+                codexHome: "/Users/test/.codex",
+                state: .available(version: "0.156.1"),
+                selected: true
+            ),
+            AppServerPayload(
+                id: "work",
+                displayName: "work",
+                codexHome: "/Users/test/.codex-work",
+                state: .unavailable(lastKnownVersion: "0.155.0"),
+                selected: false
+            ),
+        ],
+        codexInstallation: CodexInstallationPayload(
+            state: .ready(installedVersion: "0.157.0")
+        )
+    )
     let data = try NSKeyedArchiver.archivedData(
         withRootObject: original,
         requiringSecureCoding: true
@@ -87,4 +92,30 @@ import Testing
     #expect(decoded.servers[0].selected)
     #expect(decoded.servers[0].state == .available(version: "0.156.1"))
     #expect(decoded.servers[1].state == .unavailable(lastKnownVersion: "0.155.0"))
+    #expect(decoded.codexInstallation.state == .ready(installedVersion: "0.157.0"))
+}
+
+@Test func codexInstallationPayloadPreservesUpdateRequirement() throws {
+    let original = CodexInstallationPayload(
+        state: .updateRequired(
+            installedVersion: "0.154.0",
+            minimumVersion: "0.155.1"
+        )
+    )
+    let data = try NSKeyedArchiver.archivedData(
+        withRootObject: original,
+        requiringSecureCoding: true
+    )
+    let unarchived = try NSKeyedUnarchiver.unarchivedObject(
+        ofClass: CodexInstallationPayload.self,
+        from: data
+    )
+    let decoded = try #require(unarchived)
+
+    #expect(
+        decoded.state == .updateRequired(
+            installedVersion: "0.154.0",
+            minimumVersion: "0.155.1"
+        )
+    )
 }

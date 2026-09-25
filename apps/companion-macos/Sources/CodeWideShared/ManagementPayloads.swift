@@ -5,6 +5,71 @@ public enum AppServerState: Equatable, Sendable {
     case unavailable(lastKnownVersion: String?)
 }
 
+public enum CodexInstallationState: Equatable, Sendable {
+    case notFound(minimumVersion: String)
+    case unverified(minimumVersion: String)
+    case updateRequired(installedVersion: String, minimumVersion: String)
+    case ready(installedVersion: String)
+}
+
+public final class CodexInstallationPayload: NSObject, NSSecureCoding, @unchecked Sendable {
+    public static let supportsSecureCoding = true
+
+    public let state: CodexInstallationState
+
+    public init(state: CodexInstallationState) {
+        self.state = state
+    }
+
+    public required init?(coder: NSCoder) {
+        let installedVersion = coder.decodeObject(
+            of: NSString.self,
+            forKey: "installedVersion"
+        ) as String?
+        let minimumVersion = coder.decodeObject(
+            of: NSString.self,
+            forKey: "minimumVersion"
+        ) as String?
+        switch coder.decodeInteger(forKey: "state") {
+        case 1:
+            guard let minimumVersion else { return nil }
+            state = .notFound(minimumVersion: minimumVersion)
+        case 2:
+            guard let minimumVersion else { return nil }
+            state = .unverified(minimumVersion: minimumVersion)
+        case 3:
+            guard let installedVersion, let minimumVersion else { return nil }
+            state = .updateRequired(
+                installedVersion: installedVersion,
+                minimumVersion: minimumVersion
+            )
+        case 4:
+            guard let installedVersion else { return nil }
+            state = .ready(installedVersion: installedVersion)
+        default:
+            return nil
+        }
+    }
+
+    public func encode(with coder: NSCoder) {
+        switch state {
+        case let .notFound(minimumVersion):
+            coder.encode(1, forKey: "state")
+            coder.encode(minimumVersion, forKey: "minimumVersion")
+        case let .unverified(minimumVersion):
+            coder.encode(2, forKey: "state")
+            coder.encode(minimumVersion, forKey: "minimumVersion")
+        case let .updateRequired(installedVersion, minimumVersion):
+            coder.encode(3, forKey: "state")
+            coder.encode(installedVersion, forKey: "installedVersion")
+            coder.encode(minimumVersion, forKey: "minimumVersion")
+        case let .ready(installedVersion):
+            coder.encode(4, forKey: "state")
+            coder.encode(installedVersion, forKey: "installedVersion")
+        }
+    }
+}
+
 public final class AppServerPayload: NSObject, NSSecureCoding, @unchecked Sendable {
     public static let supportsSecureCoding = true
 
@@ -74,23 +139,36 @@ public final class AppServerListPayload: NSObject, NSSecureCoding, @unchecked Se
     public static let supportsSecureCoding = true
 
     public let servers: [AppServerPayload]
+    public let codexInstallation: CodexInstallationPayload
 
-    public init(servers: [AppServerPayload]) {
+    public init(
+        servers: [AppServerPayload],
+        codexInstallation: CodexInstallationPayload
+    ) {
         self.servers = servers
+        self.codexInstallation = codexInstallation
     }
 
     public required init?(coder: NSCoder) {
-        guard let servers = coder.decodeObject(
-            of: [NSArray.self, AppServerPayload.self],
-            forKey: "servers"
-        ) as? [AppServerPayload] else {
+        guard
+            let servers = coder.decodeObject(
+                of: [NSArray.self, AppServerPayload.self],
+                forKey: "servers"
+            ) as? [AppServerPayload],
+            let codexInstallation = coder.decodeObject(
+                of: CodexInstallationPayload.self,
+                forKey: "codexInstallation"
+            )
+        else {
             return nil
         }
         self.servers = servers
+        self.codexInstallation = codexInstallation
     }
 
     public func encode(with coder: NSCoder) {
         coder.encode(servers, forKey: "servers")
+        coder.encode(codexInstallation, forKey: "codexInstallation")
     }
 }
 
