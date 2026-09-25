@@ -7,6 +7,7 @@ class Relay < Formula
   license "MIT"
 
   depends_on :linux
+  depends_on arch: :x86_64
 
   def install
     bin.install "codewide-relay-x86_64-unknown-linux-musl" => "codewide-relay"

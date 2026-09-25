@@ -19,6 +19,7 @@ grep -Fq 'class Codewide < Formula' "$tap_root/Formula/codewide.rb"
 grep -Fq '/v0.4.2/codewide-companion-0.4.2-x86_64-unknown-linux-musl.tar.gz' "$tap_root/Formula/codewide.rb"
 grep -Fq "sha256 \"$linux_sha\"" "$tap_root/Formula/codewide.rb"
 grep -Fq 'brew services start codewide' "$tap_root/Formula/codewide.rb"
+grep -Fq 'depends_on arch: :x86_64' "$tap_root/Formula/codewide.rb"
 test "$(cat "$tap_root/formula_renames.json")" = '{"codewide-companion":"codewide"}'
 
 "$repo_root/scripts/update-homebrew-tap" macos 0.4.2 "$macos_sha" "$tap_root" v0.4.2
@@ -29,6 +30,7 @@ grep -Fq 'class Relay < Formula' "$tap_root/Formula/relay.rb"
 grep -Fq '/v0.4.2/codewide-relay-x86_64-unknown-linux-musl' "$tap_root/Formula/relay.rb"
 grep -Fq "sha256 \"$relay_sha\"" "$tap_root/Formula/relay.rb"
 grep -Fq 'using: :nounzip' "$tap_root/Formula/relay.rb"
+grep -Fq 'depends_on arch: :x86_64' "$tap_root/Formula/relay.rb"
 
 "$repo_root/scripts/update-homebrew-tap" relay 0.4.0 "$relay_sha" "$tap_root"
 grep -Fq '/relay-v0.4.0/codewide-relay-x86_64-unknown-linux-musl' "$tap_root/Formula/relay.rb"
