@@ -2,7 +2,7 @@
 set -eu
 
 usage() {
-  printf 'Usage: %s <linux|macos> <version> <sha256> <tap-root> [release-tag]\n' "$0" >&2
+  printf 'Usage: %s <linux|macos|relay> <version> <sha256> <tap-root> [release-tag]\n' "$0" >&2
   exit 2
 }
 
@@ -19,6 +19,7 @@ if [ -z "$release_tag" ]; then
   case "$product" in
     linux) release_tag="companion-linux-v$version" ;;
     macos) release_tag="v$version" ;;
+    relay) release_tag="relay-v$version" ;;
     *) usage ;;
   esac
 fi
@@ -27,13 +28,15 @@ mkdir -p "$tap_root/Formula" "$tap_root/Casks"
 
 case "$product" in
   linux)
-    formula="$tap_root/Formula/codewide-companion.rb"
+    formula="$tap_root/Formula/codewide.rb"
     mkdir -p "$tap_root/versions"
     sed \
       -e "s/@VERSION@/$version/g" \
       -e "s/@SHA256@/$sha256/g" \
       -e "s/@RELEASE_TAG@/$release_tag/g" \
-      "$(dirname -- "$0")/../packaging/homebrew/codewide-companion.rb.in" >"$formula"
+      "$(dirname -- "$0")/../packaging/homebrew/codewide-linux.rb.in" >"$formula"
+    printf '{"codewide-companion":"codewide"}\n' >"$tap_root/formula_renames.json"
+    rm -f -- "$tap_root/Formula/codewide-companion.rb"
     printf '%s\n' "$version" >"$tap_root/versions/companion-linux"
     ;;
   macos)
@@ -42,6 +45,14 @@ case "$product" in
       -e "s/@VERSION@/$version/g" \
       -e "s/@SHA256@/$sha256/g" \
       "$(dirname -- "$0")/../packaging/homebrew/codewide.rb.in" >"$cask"
+    ;;
+  relay)
+    formula="$tap_root/Formula/relay.rb"
+    sed \
+      -e "s/@VERSION@/$version/g" \
+      -e "s/@SHA256@/$sha256/g" \
+      -e "s/@RELEASE_TAG@/$release_tag/g" \
+      "$(dirname -- "$0")/../packaging/homebrew/relay.rb.in" >"$formula"
     ;;
   *) usage ;;
 esac

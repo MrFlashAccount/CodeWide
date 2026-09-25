@@ -223,6 +223,9 @@ jobs:
             ${{ env.APPCAST_PATH }}
           if-no-files-found: error
 
+      - name: Validate Homebrew tap generation
+        run: sh scripts/update-homebrew-tap.test.sh
+
       - name: Create release tag
         if: ${{ inputs.dry_run != true }}
         run: |

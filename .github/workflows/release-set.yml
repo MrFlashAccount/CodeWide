@@ -133,6 +133,7 @@ jobs:
       dry_run: true
       force: true
       request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
+    secrets: inherit
 
   companion-linux:
     needs:
@@ -228,6 +229,9 @@ jobs:
             dist/release-set
           cat dist/release-set/release-notes.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Validate Homebrew tap generation
+        run: sh scripts/update-homebrew-tap.test.sh
+
       - name: Upload validation package
         if: ${{ inputs.dry_run == true }}
         uses: actions/upload-artifact@v7.0.1
@@ -304,13 +308,16 @@ jobs:
           git clone git@github.com:MrFlashAccount/homebrew-codewide.git "$tap_root"
           linux_asset="codewide-companion-$version-x86_64-unknown-linux-musl.tar.gz"
           macos_asset="CodeWide-$version.dmg"
+          relay_asset="codewide-relay-x86_64-unknown-linux-musl"
           linux_sha=$(sha256sum "$RUNNER_TEMP/release-assets/$linux_asset" | cut -d ' ' -f 1)
           macos_sha=$(sha256sum "$RUNNER_TEMP/release-assets/$macos_asset" | cut -d ' ' -f 1)
+          relay_sha=$(sha256sum "$RUNNER_TEMP/release-assets/$relay_asset" | cut -d ' ' -f 1)
           ./scripts/update-homebrew-tap linux "$version" "$linux_sha" "$tap_root" "$RELEASE_TAG"
           ./scripts/update-homebrew-tap macos "$version" "$macos_sha" "$tap_root" "$RELEASE_TAG"
+          ./scripts/update-homebrew-tap relay "$version" "$relay_sha" "$tap_root" "$RELEASE_TAG"
           git -C "$tap_root" config user.name "github-actions[bot]"
           git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tap_root" add Formula/codewide-companion.rb versions/companion-linux Casks/codewide.rb
+          git -C "$tap_root" add -A Formula Casks/codewide.rb formula_renames.json versions/companion-linux
           if git -C "$tap_root" diff --cached --quiet; then exit 0; fi
           git -C "$tap_root" commit -m "codewide $RELEASE_TAG"
           attempt=0

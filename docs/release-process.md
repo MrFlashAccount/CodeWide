@@ -73,13 +73,16 @@ failed upload may leave a draft, which the same commit can safely retry.
 workflow artifact. OTA remains a separate manual channel.
 
 GitHub Release publication is the atomic boundary. Homebrew tap updates run
-after publication in one commit for Linux and macOS; a tap failure needs a
-retry and does not roll back the public release. The standalone per-product
+after publication in one commit for Linux CodeWide, Relay, and macOS; a tap
+failure needs a retry and does not roll back the public release. The standalone per-product
 commands remain available for exceptional deliveries but do not provide the
 combined-release guarantee. For the first combined release, the existing
 `v0.4.0` tag is the common version base; the initial fallback is the checked-in
 macOS baseline. Android derives a monotonic `versionCode` from the shared
 semantic version and leaves the checked-in source version unchanged.
+
+Before publication, each release workflow runs `sh scripts/update-homebrew-tap.test.sh`
+to check tap generation, the Linux formula rename, and Relay's versioned URL.
 
 The Android release environment requires:
 

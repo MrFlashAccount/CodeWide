@@ -172,8 +172,14 @@ the portable Companion bundle and its user-systemd units:
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/companion | sh
 ```
 
-The same Linux release is also available from the tap as
-`brew install MrFlashAccount/codewide/codewide-companion`.
+On Linux, the Homebrew package is also named CodeWide:
+
+```sh
+brew install --formula MrFlashAccount/codewide/codewide
+```
+
+The executable and systemd service keep their `codewide-companion` names.
+The tap includes a Homebrew rename mapping for existing `codewide-companion` installations.
 
 The packaged service exposes an HTTP carrier. Put it behind any ordinary
 public-CA TLS ingress, Tailscale, ngrok, or another relay. Application traffic
@@ -193,6 +199,12 @@ verified portable `x86_64` Linux binary with:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
+```
+
+The same Relay binary is available from the CodeWide tap:
+
+```sh
+brew install --formula MrFlashAccount/codewide/relay
 ```
 
 Run `codewide-relay --port 8780`. Android and Companion

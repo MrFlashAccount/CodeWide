@@ -1,4 +1,4 @@
-class CodewideCompanion < Formula
+class Codewide < Formula
   desc "Headless Linux host for CodeWide"
   homepage "https://github.com/MrFlashAccount/CodeWide"
   url "https://github.com/MrFlashAccount/CodeWide/releases/download/@RELEASE_TAG@/codewide-companion-@VERSION@-x86_64-unknown-linux-musl.tar.gz"
@@ -29,7 +29,7 @@ class CodewideCompanion < Formula
 
       The service also requires the Codex app-server control socket documented by CodeWide.
       Then start it with:
-        brew services start codewide-companion
+        brew services start codewide
     EOS
   end
 

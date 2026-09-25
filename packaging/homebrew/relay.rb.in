@@ -1,0 +1,19 @@
+class Relay < Formula
+  desc "Blind WebSocket relay for CodeWide"
+  homepage "https://github.com/MrFlashAccount/CodeWide"
+  url "https://github.com/MrFlashAccount/CodeWide/releases/download/@RELEASE_TAG@/codewide-relay-x86_64-unknown-linux-musl", using: :nounzip
+  version "@VERSION@"
+  sha256 "@SHA256@"
+  license "MIT"
+
+  depends_on :linux
+
+  def install
+    bin.install "codewide-relay-x86_64-unknown-linux-musl" => "codewide-relay"
+    chmod 0755, bin/"codewide-relay"
+  end
+
+  test do
+    assert_match "codewide-relay #{version}", shell_output("#{bin}/codewide-relay --version")
+  end
+end
