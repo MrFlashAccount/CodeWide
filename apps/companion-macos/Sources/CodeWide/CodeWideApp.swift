@@ -387,8 +387,8 @@ private struct CompanionPanel: View {
         guard runtime.health != nil else { return .secondary }
         guard let appServer = runtime.appServer else { return .orange }
         switch appServer.state {
-        case .available: .green
-        case .unavailable: .orange
+        case .available: return .green
+        case .unavailable: return .orange
         }
     }
 
@@ -403,9 +403,9 @@ private struct CompanionPanel: View {
     private var relayMetricValue: String {
         guard let relay = runtime.relay, relay.configured else { return "Not set" }
         switch relay.connection {
-        case "online": "Online"
-        case "connecting", "reconnecting": "Connecting"
-        default: "Disabled"
+        case "online": return "Online"
+        case "connecting", "reconnecting": return "Connecting"
+        default: return "Disabled"
         }
     }
 
@@ -413,9 +413,9 @@ private struct CompanionPanel: View {
         guard let server = runtime.appServer else { return runtime.status }
         switch server.state {
         case let .available(version):
-            version.map { "App Server \($0)" } ?? "App Server connected"
+            return version.map { "App Server \($0)" } ?? "App Server connected"
         case let .unavailable(lastKnownVersion):
-            lastKnownVersion.map { "App Server \($0) unavailable" } ?? "App Server unavailable"
+            return lastKnownVersion.map { "App Server \($0) unavailable" } ?? "App Server unavailable"
         }
     }
 
