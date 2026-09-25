@@ -49,24 +49,37 @@ The planner never publishes by itself.
 ## Release affected products with one dispatch
 
 Run the `Release Affected Products` workflow and choose `patch`, `minor`, or
-`major`. Each product compares the selected revision with its own latest release
-tag, so a product skipped by an earlier release remains eligible later. The bump
-is applied independently to each selected product; it does not force Relay,
-Companion, macOS, and Android to share one version number.
+`major`. The latest stable `vX.Y.Z` tag is the common comparison base and
+version authority. If Nx finds no affected product, the workflow publishes
+nothing. Otherwise, it builds **all four products at the same version** from
+the same commit: Relay, Linux Companion, macOS, then Android. Building all four
+keeps the `releases/latest/download/appcast.xml` feed present on every release.
+The optional `base` changes the comparison range, but never the version base.
+The parent workflow overrides each product's affected-only guard so all four
+ship together; build, signing, installer, and update checks still run in full.
 
-The workflow publishes in dependency order: Relay, Linux Companion, macOS, then
-the Android APK. A failed delivery stops later selected deliveries. `dry_run`
-executes the same builds and release proofs without tags, GitHub Releases,
-Homebrew updates, or appcast publication. OTA is deliberately absent from this
-workflow.
+Each product workflow runs in validation mode and uploads its artifact to the
+parent run. The final job checks the available files, source checksums, and
+signed appcast URL, then generates a manifest, `SHA256SUMS`, and Markdown
+release notes from commit subjects between the common base and the release
+commit. It uploads the complete set into a **draft** GitHub Release, downloads
+it again to compare every byte, and only then publishes one `vX.Y.Z` release.
+Relay and Linux Companion keep individual `.sha256` files for their installers;
+the installers use the combined tag from `0.4.1` onward and keep older product
+tags for pinned historical versions.
+A failed build, missing file, or failed upload leaves no public release. A
+failed upload may leave a draft, which the same commit can safely retry.
+`dry_run` stops after assembling the validated package and attaches it as a
+workflow artifact. OTA remains a separate manual channel.
 
-When no product tag exists yet, release metadata uses these checked-in
-baselines: Relay and Linux Companion `0.1.0`, macOS `0.2.0`, and Android
-`0.2.176`.
-Afterward, the product tag is authoritative. The Android workflow derives a
-monotonic `versionCode` from the semantic version and leaves the checked-in
-source version unchanged; the signed APK contains the requested release
-version.
+GitHub Release publication is the atomic boundary. Homebrew tap updates run
+after publication in one commit for Linux and macOS; a tap failure needs a
+retry and does not roll back the public release. The standalone per-product
+commands remain available for exceptional deliveries but do not provide the
+combined-release guarantee. For the first combined release, the existing
+`v0.4.0` tag is the common version base; the initial fallback is the checked-in
+macOS baseline. Android derives a monotonic `versionCode` from the shared
+semantic version and leaves the checked-in source version unchanged.
 
 The Android release environment requires:
 
@@ -77,7 +90,7 @@ The Android release environment requires:
   `/api/updates` endpoint. When it is absent, the APK is built with Expo Updates
   disabled and does not perform update checks.
 
-The APK is published as a GitHub Release asset. The existing local
+The APK is published as an asset of the combined GitHub Release. The existing local
 `./scripts/release-apk` path still publishes to Build Shelf; the two channels do
 not silently impersonate one another.
 

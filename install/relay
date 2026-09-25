@@ -57,7 +57,12 @@ fi
 target=x86_64-unknown-linux-musl
 asset="codewide-relay-$target"
 if [ -z "$DOWNLOAD_BASE_URL" ]; then
-  DOWNLOAD_BASE_URL="https://github.com/MrFlashAccount/CodeWide/releases/download/relay-v$VERSION"
+  # Versions through 0.4.0 used product tags; 0.4.1 starts the combined release.
+  case "$VERSION" in
+    0.0.*|0.1.*|0.2.*|0.3.*|0.4.0) release_tag="relay-v$VERSION" ;;
+    *) release_tag="v$VERSION" ;;
+  esac
+  DOWNLOAD_BASE_URL="https://github.com/MrFlashAccount/CodeWide/releases/download/$release_tag"
 fi
 DOWNLOAD_BASE_URL=${DOWNLOAD_BASE_URL%/}
 

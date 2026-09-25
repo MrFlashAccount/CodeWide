@@ -79,7 +79,12 @@ target=x86_64-unknown-linux-musl
 asset="codewide-companion-$version-$target.tar.gz"
 bundle_name="codewide-companion-$target"
 if [ -z "$download_base_url" ]; then
-  download_base_url="https://github.com/MrFlashAccount/CodeWide/releases/download/companion-linux-v$version"
+  # Versions through 0.4.0 used product tags; 0.4.1 starts the combined release.
+  case "$version" in
+    0.0.*|0.1.*|0.2.*|0.3.*|0.4.0) release_tag="companion-linux-v$version" ;;
+    *) release_tag="v$version" ;;
+  esac
+  download_base_url="https://github.com/MrFlashAccount/CodeWide/releases/download/$release_tag"
 fi
 download_base_url=${download_base_url%/}
 

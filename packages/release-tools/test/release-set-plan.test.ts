@@ -12,20 +12,29 @@ type Target = {
   readonly version: string;
 };
 
-function targets(files: readonly string[], bump = "patch"): readonly Target[] {
+type Plan = {
+  readonly tag: string;
+  readonly affected: readonly string[];
+  readonly targets: readonly Target[];
+};
+
+function plan(files: readonly string[], bump = "patch"): Plan {
   const output = execFileSync(
     process.execPath,
     [planner.pathname, "--files", files.join(","), "--bump", bump, "--json"],
     { cwd: repoRoot, encoding: "utf8" },
   );
   const value: unknown = JSON.parse(output);
-  if (!isRecord(value) || !Array.isArray(value.targets)) throw new Error("release-set plan is invalid");
-  return value.targets.map((target) => {
+  if (!isRecord(value) || !Array.isArray(value.targets) || typeof value.tag !== "string" || !Array.isArray(value.affected)) {
+    throw new Error("release-set plan is invalid");
+  }
+  const targets = value.targets.map((target) => {
     if (!isRecord(target) || typeof target.id !== "string" || typeof target.version !== "string") {
       throw new Error("release-set target is invalid");
     }
     return { id: target.id, version: target.version };
   });
+  return { tag: value.tag, affected: value.affected, targets };
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -33,22 +42,37 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 describe("release-set planner", () => {
-  it("bumps semantic versions without coupling product release numbers", () => {
+  it("bumps the shared semantic release version", () => {
     expect(bumpVersion("1.2.3", "patch")).toBe("1.2.4");
     expect(bumpVersion("1.2.3", "minor")).toBe("1.3.0");
     expect(bumpVersion("1.2.3", "major")).toBe("2.0.0");
   });
 
-  it("plans shared core consumers from their own baselines", () => {
-    expect(targets(["crates/companion-core/src/runtime_host.rs"])).toEqual([
-      { id: "companion-linux", version: "0.1.1" },
-      { id: "macos", version: "0.2.1" },
+  it("includes the complete release set when shared core changes", () => {
+    const result = plan(["crates/companion-core/src/runtime_host.rs"]);
+    expect(result.affected).toEqual(["companion-linux", "macos"]);
+    expect(result.targets).toEqual([
+      { id: "relay", version: result.tag.slice(1) },
+      { id: "companion-linux", version: result.tag.slice(1) },
+      { id: "macos", version: result.tag.slice(1) },
+      { id: "android-apk", version: result.tag.slice(1) },
     ]);
   });
 
-  it("plans a native Android APK from the current Android baseline", () => {
-    expect(targets(["apps/android/src/ui/Button.tsx"])).toEqual([
-      { id: "android-apk", version: "0.2.177" },
-    ]);
+  it("includes all release assets when only Android changes", () => {
+    const result = plan(["apps/android/src/ui/Button.tsx"]);
+    expect(result.affected).toEqual(["android-apk"]);
+    expect(result.targets).toHaveLength(4);
+    expect(new Set(result.targets.map(({ version }) => version))).toEqual(new Set([result.tag.slice(1)]));
+  });
+
+  it("releases the new pipeline itself after a workflow change", () => {
+    const result = plan([".github/workflows/release-set.yml"]);
+    expect(result.affected).toEqual(["relay", "companion-linux", "macos", "android-apk"]);
+    expect(result.targets).toHaveLength(4);
+  });
+
+  it("does not publish documentation-only changes", () => {
+    expect(plan(["docs/release-process.md"]).targets).toEqual([]);
   });
 });

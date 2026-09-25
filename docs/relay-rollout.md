@@ -44,7 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/instal
 codewide-relay --port 8780
 ```
 
-The installer downloads from `relay-v<version>`, verifies the release SHA-256,
+The installer downloads versions through `0.4.0` from `relay-v<version>` and
+newer versions from the combined `v<version>` release, verifies the release SHA-256,
 checks the binary-reported version, and atomically installs it to
 `${CODEWIDE_RELAY_INSTALL_DIR:-$HOME/.local/bin}`. It accepts `--version` for a
 pinned older release. Publishing the GitHub Release remains a separate approved

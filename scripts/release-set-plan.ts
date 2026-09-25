@@ -27,6 +27,11 @@ type ReleaseSetTarget = ReleaseProject & {
 type ReleaseSetPlan = {
   readonly bump: Bump;
   readonly sourceRevision: string;
+  readonly base: string;
+  readonly previousVersion: string;
+  readonly version: string;
+  readonly tag: string;
+  readonly affected: readonly string[];
   readonly targets: readonly ReleaseSetTarget[];
 };
 
@@ -100,55 +105,59 @@ function readReleaseProject(project: string): ReleaseProject {
 function planReleaseSet(options: CliOptions): ReleaseSetPlan {
   const sourceRevision = runGit(["rev-parse", options.head]);
   const projects = readReleaseProjects();
-  const selected = options.files === undefined
-    ? selectSinceLastRelease(projects, options, sourceRevision)
-    : selectForFiles(projects, options.files);
-  const targets = selected.map(({ project, base, previousVersion }) => ({
+  const latestTag = latestStableTag("v", sourceRevision);
+  const macos = projects.find(({ id }) => id === "macos");
+  if (macos === undefined) throw new Error("macOS release metadata is required for the shared version baseline");
+  const firstCommit = runGit(["rev-list", "--max-parents=0", sourceRevision]).split("\n")[0];
+  if (firstCommit === undefined || firstCommit.length === 0) throw new Error("Could not resolve the first repository commit");
+  const base = options.base ?? latestTag ?? firstCommit;
+  const previousVersion = latestTag === undefined ? macos.baselineVersion : version(latestTag.slice(1), `tag ${latestTag}`);
+  const nextVersion = bumpVersion(previousVersion, options.bump);
+  for (const project of projects) {
+    const productTag = latestStableTag(project.tagPrefix, sourceRevision);
+    if (productTag === undefined) continue;
+    const productVersion = version(productTag.slice(project.tagPrefix.length), `tag ${productTag}`);
+    if (compareVersions(nextVersion, productVersion) <= 0) {
+      throw new Error(`Shared release v${nextVersion} must be newer than ${productTag}`);
+    }
+  }
+  const affected = readAffectedTargetIds(options.files === undefined
+    ? ["--base", base, "--head", sourceRevision]
+    : ["--files", options.files.join(",")]);
+  const changedFiles = options.files ?? runGit(["diff", "--name-only", `${base}...${sourceRevision}`]).split("\n");
+  if (changedFiles.some(isReleaseInfrastructureChange)) {
+    for (const project of projects) affected.add(project.id);
+  }
+  const targets = affected.size === 0 ? [] : projects.map((project) => ({
     ...project,
     base,
     previousVersion,
-    version: bumpVersion(previousVersion, options.bump),
+    version: nextVersion,
   }));
-  return { bump: options.bump, sourceRevision, targets };
+  return {
+    bump: options.bump,
+    sourceRevision,
+    base,
+    previousVersion,
+    version: nextVersion,
+    tag: `v${nextVersion}`,
+    affected: projects.filter(({ id }) => affected.has(id)).map(({ id }) => id),
+    targets,
+  };
 }
 
-function selectSinceLastRelease(
-  projects: readonly ReleaseProject[],
-  options: CliOptions,
-  sourceRevision: string,
-): readonly { readonly project: ReleaseProject; readonly base: string; readonly previousVersion: string }[] {
-  const firstCommit = runGit(["rev-list", "--max-parents=0", sourceRevision]).split("\n")[0];
-  if (firstCommit === undefined || firstCommit.length === 0) throw new Error("Could not resolve the first repository commit");
-  const plans = new Map<string, ReadonlySet<string>>();
-  const selected: { project: ReleaseProject; base: string; previousVersion: string }[] = [];
-  for (const project of projects) {
-    const latestTag = latestStableTag(project.tagPrefix, sourceRevision);
-    const base = options.base ?? latestTag ?? firstCommit;
-    let affected = plans.get(base);
-    if (affected === undefined) {
-      affected = readAffectedTargetIds(["--base", base, "--head", sourceRevision]);
-      plans.set(base, affected);
-    }
-    if (!affected.has(project.id)) continue;
-    const previousVersion = latestTag === undefined
-      ? project.baselineVersion
-      : version(latestTag.slice(project.tagPrefix.length), `tag ${latestTag}`);
-    selected.push({ project, base, previousVersion });
-  }
-  return selected;
+function isReleaseInfrastructureChange(path: string): boolean {
+  return path === ".github/workflows/release-set.yml"
+    || path === "scripts/release-set-plan.ts"
+    || path === "scripts/prepare-release-set.ts"
+    || path === "scripts/update-homebrew-tap"
+    || path === "install/relay"
+    || path === "install/companion"
+    || path.startsWith("packaging/homebrew/")
+    || /^\.github\/workflows\/(android|companion-linux|macos|relay)-release\.yml$/u.test(path);
 }
 
-function selectForFiles(
-  projects: readonly ReleaseProject[],
-  files: readonly string[],
-): readonly { readonly project: ReleaseProject; readonly base: string; readonly previousVersion: string }[] {
-  const affected = readAffectedTargetIds(["--files", files.join(",")]);
-  return projects
-    .filter(({ id }) => affected.has(id))
-    .map((project) => ({ project, base: "explicit-files", previousVersion: project.baselineVersion }));
-}
-
-function readAffectedTargetIds(args: readonly string[]): ReadonlySet<string> {
+function readAffectedTargetIds(args: readonly string[]): Set<string> {
   const value: unknown = JSON.parse(runCommand(process.execPath, [releasePlanner, ...args, "--json"]));
   if (!isRecord(value) || !Array.isArray(value.targets)) throw new Error("Release planner returned invalid JSON");
   const ids = new Set<string>();
@@ -176,6 +185,16 @@ export function bumpVersion(current: string, bump: Bump): string {
   if (bump === "major") return `${major + 1}.0.0`;
   if (bump === "minor") return `${major}.${minor + 1}.0`;
   return `${major}.${minor}.${patch + 1}`;
+}
+
+function compareVersions(left: string, right: string): number {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
 }
 
 function version(value: unknown, field: string): string {
@@ -214,7 +233,10 @@ function runCommand(command: string, args: readonly string[]): string {
 function formatPlan(plan: ReleaseSetPlan): string {
   const lines = [
     `Source: ${plan.sourceRevision}`,
+    `Base: ${plan.base}`,
     `Bump: ${plan.bump}`,
+    `Release: ${plan.tag}`,
+    `Affected: ${plan.affected.length === 0 ? "none" : plan.affected.join(", ")}`,
     `Release set: ${plan.targets.length === 0 ? "none" : plan.targets.map(({ id, version: next }) => `${id}@${next}`).join(", ")}`,
   ];
   for (const target of plan.targets) {

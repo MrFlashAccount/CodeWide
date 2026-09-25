@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Version increment applied independently to each affected product"
+        description: "Version increment for the complete CodeWide release"
         required: true
         default: patch
         type: choice
@@ -14,11 +14,11 @@ on:
           - minor
           - major
       base:
-        description: "Optional common Git base; by default each product uses its latest release tag"
+        description: "Optional Git base; defaults to the latest complete vX.Y.Z release"
         required: false
         type: string
       dry_run:
-        description: "Build and validate every selected product without publishing"
+        description: "Build all products and validate the release package without publishing"
         required: false
         default: false
         type: boolean
@@ -35,6 +35,9 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
+      tag: ${{ steps.outputs.outputs.tag }}
+      source_revision: ${{ steps.outputs.outputs.source_revision }}
+      has_targets: ${{ steps.outputs.outputs.has_targets }}
       relay: ${{ steps.outputs.outputs.relay }}
       relay_version: ${{ steps.outputs.outputs.relay_version }}
       relay_base: ${{ steps.outputs.outputs.relay_base }}
@@ -94,6 +97,9 @@ jobs:
       - name: Export release-set outputs
         id: outputs
         run: |
+          echo "tag=$(jq -r .tag release-set-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "source_revision=$(jq -r .sourceRevision release-set-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "has_targets=$(jq '(.targets | length) > 0' release-set-plan.json)" >> "$GITHUB_OUTPUT"
           for target in relay companion-linux macos android-apk; do
             output_name="${target//-/_}"
             selected=$(jq --arg target "$target" 'any(.targets[]; .id == $target)' release-set-plan.json)
@@ -124,7 +130,8 @@ jobs:
     with:
       version: ${{ needs.plan.outputs.relay_version }}
       base: ${{ needs.plan.outputs.relay_base }}
-      dry_run: ${{ inputs.dry_run }}
+      dry_run: true
+      force: true
       request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
 
   companion-linux:
@@ -139,7 +146,8 @@ jobs:
     with:
       version: ${{ needs.plan.outputs.companion_linux_version }}
       base: ${{ needs.plan.outputs.companion_linux_base }}
-      dry_run: ${{ inputs.dry_run }}
+      dry_run: true
+      force: true
       request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
     secrets: inherit
 
@@ -157,7 +165,8 @@ jobs:
     with:
       version: ${{ needs.plan.outputs.macos_version }}
       base: ${{ needs.plan.outputs.macos_base }}
-      dry_run: ${{ inputs.dry_run }}
+      dry_run: true
+      force: true
       request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
     secrets: inherit
 
@@ -177,6 +186,136 @@ jobs:
     with:
       version: ${{ needs.plan.outputs.android_apk_version }}
       base: ${{ needs.plan.outputs.android_apk_base }}
-      dry_run: ${{ inputs.dry_run }}
+      dry_run: true
+      force: true
       request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
     secrets: inherit
+
+  publish:
+    needs:
+      - plan
+      - relay
+      - companion-linux
+      - macos
+      - android-apk
+    if: >-
+      ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.has_targets == 'true' &&
+          needs.relay.result == 'success' && needs['companion-linux'].result == 'success' &&
+          needs.macos.result == 'success' && needs['android-apk'].result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+
+      - name: Download validated product artifacts
+        uses: actions/download-artifact@v8.0.0
+        with:
+          path: release-artifacts
+
+      - name: Assemble release and generate notes
+        run: |
+          node scripts/prepare-release-set.ts \
+            release-artifacts/release-set-plan/release-set-plan.json \
+            release-artifacts \
+            dist/release-set
+          cat dist/release-set/release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload validation package
+        if: ${{ inputs.dry_run == true }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: validated-release-${{ needs.plan.outputs.tag }}
+          path: dist/release-set
+          if-no-files-found: error
+
+      - name: Publish complete GitHub release
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          SOURCE_REVISION: ${{ needs.plan.outputs.source_revision }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft >/tmp/codewide-release-draft 2>/dev/null; then
+            test "$(cat /tmp/codewide-release-draft)" = true || {
+              echo "The release is already public; refusing to replace its assets."
+              exit 1
+            }
+            actual=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq .target_commitish)
+            test "$actual" = "$SOURCE_REVISION" || {
+              echo "Existing draft belongs to a different commit."
+              exit 1
+            }
+          else
+            if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+              git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+              test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$SOURCE_REVISION"
+            fi
+            gh release create "$RELEASE_TAG" \
+              --draft --target "$SOURCE_REVISION" \
+              --title "CodeWide $RELEASE_TAG" \
+              --notes-file dist/release-set/release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/release-set/assets/* --clobber
+          gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-verify"
+          diff --recursive --brief dist/release-set/assets "$RUNNER_TEMP/release-verify"
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+
+  update-homebrew:
+    needs:
+      - plan
+      - publish
+    if: ${{ inputs.dry_run != true && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-assets"
+
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          test -n "$TAP_DEPLOY_KEY"
+          version="${RELEASE_TAG#v}"
+          tap_root="$RUNNER_TEMP/homebrew-codewide"
+          ssh_root="$RUNNER_TEMP/homebrew-ssh"
+          mkdir -p "$ssh_root"
+          chmod 0700 "$ssh_root"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$ssh_root/id_ed25519"
+          chmod 0600 "$ssh_root/id_ed25519"
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' > "$ssh_root/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts"
+          git clone git@github.com:MrFlashAccount/homebrew-codewide.git "$tap_root"
+          linux_asset="codewide-companion-$version-x86_64-unknown-linux-musl.tar.gz"
+          macos_asset="CodeWide-$version.dmg"
+          linux_sha=$(sha256sum "$RUNNER_TEMP/release-assets/$linux_asset" | cut -d ' ' -f 1)
+          macos_sha=$(sha256sum "$RUNNER_TEMP/release-assets/$macos_asset" | cut -d ' ' -f 1)
+          ./scripts/update-homebrew-tap linux "$version" "$linux_sha" "$tap_root" "$RELEASE_TAG"
+          ./scripts/update-homebrew-tap macos "$version" "$macos_sha" "$tap_root" "$RELEASE_TAG"
+          git -C "$tap_root" config user.name "github-actions[bot]"
+          git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$tap_root" add Formula/codewide-companion.rb versions/companion-linux Casks/codewide.rb
+          if git -C "$tap_root" diff --cached --quiet; then exit 0; fi
+          git -C "$tap_root" commit -m "codewide $RELEASE_TAG"
+          attempt=0
+          until git -C "$tap_root" push origin HEAD:main; do
+            attempt=$((attempt + 1))
+            test "$attempt" -lt 3
+            git -C "$tap_root" pull --rebase origin main
+          done
