@@ -57,7 +57,7 @@ struct AppServerSelectionStore {
     }
 
     private func validatedCodexHome(_ path: String) -> URL? {
-        let candidate = URL(fileURLWithPath: path, directoryHint: .isDirectory).standardizedFileURL
+        let candidate = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
         let parent = candidate.deletingLastPathComponent()
         let name = candidate.lastPathComponent
         guard
