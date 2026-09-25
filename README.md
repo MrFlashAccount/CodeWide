@@ -179,7 +179,13 @@ brew install --formula MrFlashAccount/codewide/codewide
 ```
 
 The executable and systemd service keep their `codewide-companion` names.
-The tap includes a Homebrew rename mapping for existing `codewide-companion` installations.
+If you installed the old `codewide-companion` formula, migrate it once:
+
+```sh
+brew update
+brew trust --formula MrFlashAccount/codewide/codewide
+brew migrate --formula codewide
+```
 
 The packaged service exposes an HTTP carrier. Put it behind any ordinary
 public-CA TLS ingress, Tailscale, ngrok, or another relay. Application traffic
