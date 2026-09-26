@@ -19,7 +19,6 @@ export type MobileThreadsProps = {
   onFilterChange: (filter: ThreadListFilter) => void;
   onLoadMore: () => Promise<boolean>;
   onManageTerminals: () => void;
-  onMarkRead: (thread: ThreadListItem) => Promise<void>;
   onModeChange: (mode: ThreadListMode) => void;
   onNewThread: () => void;
   onOffsetChange: (offset: number) => void;
@@ -29,6 +28,7 @@ export type MobileThreadsProps = {
   onSelectServer: (scope: ServerScope) => void;
   onSettings: () => void;
   onTogglePin: (thread: ThreadListItem) => Promise<void>;
+  onToggleRead: (thread: ThreadListItem) => Promise<void>;
   onUnarchive: (thread: ThreadListItem) => Promise<void>;
   query: string;
   searchContent: ReactNode;

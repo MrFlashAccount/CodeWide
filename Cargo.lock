@@ -811,6 +811,7 @@ dependencies = [
  "libc",
  "memchr",
  "mime_guess",
+ "nix 0.28.0",
  "notify",
  "opus-pure",
  "p256",

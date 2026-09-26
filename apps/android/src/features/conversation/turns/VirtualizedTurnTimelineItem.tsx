@@ -22,10 +22,18 @@ import type { VirtualizedTurnPart, VirtualizedTurnPlacement } from "./virtualize
 
 type TurnPresentation = ReturnType<typeof projectTurnPresentation>;
 
+type VirtualizedTurnLeadItemProps = Pick<
+  TurnTimelineItemProps,
+  "getTransferAccess" | "onFixUnsupportedBlock" | "turn"
+> & {
+  presentation: TurnPresentation;
+};
+
 type VirtualizedTurnTimelineItemProps = {
   agentDateLabel?: string | null;
   animateLiveUpdates: boolean;
   compact: boolean;
+  followsLead: boolean;
   forceExpanded: boolean;
   getTransferAccess?: TurnTimelineItemProps["getTransferAccess"];
   latestAgentRef?: TurnTimelineItemProps["latestAgentRef"];
@@ -40,6 +48,34 @@ type VirtualizedTurnTimelineItemProps = {
   turn: TurnTimelineItemProps["turn"];
   usage?: TurnUsageProjection | null;
 };
+
+/** Renders user and pre-turn content as a stable row before the agent response. */
+export function VirtualizedTurnLeadItem(props: VirtualizedTurnLeadItemProps): ReactElement {
+  const user =
+    props.presentation.userBlocks.length === 0
+      ? null
+      : renderUserTurnBody(props.turn, props.presentation.userBlocks, props.getTransferAccess);
+  const compaction =
+    props.presentation.compactionBlocks.length === 0 ? null : (
+      <PreTurnLifecycleRows
+        blocks={props.presentation.compactionBlocks}
+        turnKey={props.turn.key}
+        turnStatus={props.presentation.rawTurn.status}
+        {...(props.getTransferAccess === undefined
+          ? {}
+          : { getTransferAccess: props.getTransferAccess })}
+        {...(props.onFixUnsupportedBlock === undefined
+          ? {}
+          : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
+      />
+    );
+  return (
+    <View style={styles.virtualizedTurnLead}>
+      {user}
+      {compaction}
+    </View>
+  );
+}
 
 /** Renders one physical LegendList slice of the unified V1 turn model. */
 export function VirtualizedTurnTimelineItem({
@@ -76,52 +112,21 @@ function VirtualizedTurnSlice({
 }): ReactElement {
   return (
     <View
-      style={isLeadingSlice(props.placement) ? styles.turnGroup : styles.virtualizedTurnSegment}
+      style={[
+        isLeadingSlice(props.placement) && !props.followsLead
+          ? styles.turnGroup
+          : styles.virtualizedTurnSegment,
+        isLeadingSlice(props.placement) && props.followsLead
+          ? styles.virtualizedTurnAfterLead
+          : null,
+      ]}
       testID="turn-group"
     >
-      {isLeadingSlice(props.placement) ? (
-        <VirtualizedTurnLead
-          {...props}
-          agentDateLabel={agentDateLabel}
-          presentation={presentation}
-        />
+      {isLeadingSlice(props.placement) && agentDateLabel !== null ? (
+        <TimelineDateSeparator label={agentDateLabel} />
       ) : null}
       <VirtualizedAgentMessage {...props} presentation={presentation} usage={usage} />
     </View>
-  );
-}
-
-function VirtualizedTurnLead({
-  agentDateLabel,
-  presentation,
-  ...props
-}: Omit<VirtualizedTurnTimelineItemProps, "agentDateLabel" | "usage"> & {
-  agentDateLabel: string | null;
-}): ReactElement {
-  const user =
-    presentation.userBlocks.length === 0
-      ? null
-      : renderUserTurnBody(props.turn, presentation.userBlocks, props.getTransferAccess);
-  const compaction =
-    presentation.compactionBlocks.length === 0 ? null : (
-      <PreTurnLifecycleRows
-        blocks={presentation.compactionBlocks}
-        turnKey={props.turn.key}
-        turnStatus={presentation.rawTurn.status}
-        {...(props.getTransferAccess === undefined
-          ? {}
-          : { getTransferAccess: props.getTransferAccess })}
-        {...(props.onFixUnsupportedBlock === undefined
-          ? {}
-          : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
-      />
-    );
-  return (
-    <>
-      {user}
-      {compaction}
-      {agentDateLabel === null ? null : <TimelineDateSeparator label={agentDateLabel} />}
-    </>
   );
 }
 

@@ -201,6 +201,12 @@ it("shows deterministic orb previews and switches only the visual preference", a
   ).toBeTruthy();
   expect(view.getByText("◉  Nebula")).toBeTruthy();
   expect(view.getByText("·••·  Particles")).toBeTruthy();
+  expect(
+    view
+      .getAllByRole("radio")
+      .map((row) => row.props.accessibilityLabel)
+      .filter((label) => label.endsWith(" Voice Assistant orb")),
+  ).toEqual(["Use Particles Voice Assistant orb", "Use Nebula Voice Assistant orb"]);
 
   fireEvent.press(view.getByRole("radio", { name: "Use Particles Voice Assistant orb" }));
 

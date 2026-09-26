@@ -69,6 +69,57 @@ const request: ThreadSummaryViewRequest = {
 beforeEach(() => sqlite.native.exec("DROP TABLE IF EXISTS codewide_thread_summaries"));
 
 describe("persisted project catalog", () => {
+  it("keeps a manual unread mark through refresh and replay until marked read", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    writer.write({
+      type: "insert",
+      value: summary("manual", { lastSeenCursor: 5, latestActivityCursor: 5 }),
+    });
+    await writer.commit({ durable: true });
+    await writer.close();
+
+    const database = createThreadSummaryDatabase();
+    await database.prepare();
+    await database.markUnread("server", "manual");
+    expect((await database.get("server", "manual"))?.unread).toBe(1);
+    expect(database.projectUnread.projects$.peek()).toEqual(["server\u0000/repo"]);
+    const persistedUnread = createThreadSummarySqlite();
+    expect((await persistedUnread.loadRow("server", "manual"))?.unread).toBe(1);
+    await persistedUnread.close();
+
+    await database.mergeSnapshots("server", [
+      { archived: false, thread: createV1TestThread("manual", null, 1, []) },
+    ]);
+    await database.applyEvents("server", [
+      {
+        cursor: 5,
+        payload: {
+          method: "turn/completed",
+          params: { threadId: "manual" },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: "manual",
+            operation: {
+              kind: "turnCompleted",
+              summary: { activity: true, finalAgentResponse: true },
+            },
+          },
+        },
+      },
+    ]);
+    expect((await database.get("server", "manual"))?.unread).toBe(1);
+
+    await database.markRead("server", "manual");
+    expect((await database.get("server", "manual"))?.unread).toBe(0);
+    expect(database.projectUnread.projects$.peek()).toEqual([]);
+    database.close();
+    const reopened = createThreadSummarySqlite();
+    expect((await reopened.loadRow("server", "manual"))?.unread).toBe(0);
+    await reopened.close();
+  });
+
   it("reopens a scoped page and unread membership independently of the global head", async () => {
     const writer = createThreadSummarySqlite();
     await writer.prepare();

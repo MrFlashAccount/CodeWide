@@ -9,6 +9,7 @@ import type {
 } from "../native/globalSupervisorWebRtcSessionContract";
 import {
   globalSupervisorQualifiedChatRef,
+  type GlobalSupervisorBinding,
   type GlobalSupervisorBindingOwner,
   type GlobalSupervisorQualifiedChatRef,
 } from "./globalSupervisorBinding";
@@ -37,6 +38,8 @@ import {
   globalSupervisorActivationGreetingPrompt,
   globalSupervisorRealtimeStartInstructions,
 } from "./globalSupervisorThreadProfile";
+import { GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE } from "./globalSupervisorThreadRemote";
+import { recordOperationalTelemetryEvent } from "./telemetry";
 import { unknownRecord } from "./unknownRecord";
 import type { VoiceAssistantPersonality } from "./voiceAssistantPersonality";
 import type { V1MicrophoneLeaseRegistry } from "./v1MicrophoneLease";
@@ -189,7 +192,6 @@ type LiveSessionState = {
 
 const MAX_VOICE_NAME_CHARACTERS = 32;
 const MAX_SUPPORTED_VOICES = 64;
-const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE = -32_061;
 
 function liveSessionOrNull(
   authority: GlobalSupervisorRuntimeAuthority,
@@ -542,6 +544,118 @@ function boundConnectionId(
     : binding?.priorHome?.connectionId;
 }
 
+function reconnectConnectionId(
+  authority: GlobalSupervisorRuntimeAuthority,
+  binding: GlobalSupervisorBinding | null,
+): string | undefined {
+  return binding?.status === "invalid" && binding.reason === "homeDeleted"
+    ? authority.enabledConnectionIds()[0]
+    : boundConnectionId(binding);
+}
+
+type GlobalSupervisorPreparationResult = Awaited<
+  ReturnType<GlobalSupervisorLowerRuntime["prepare"]>
+>;
+type CreatingBinding = Extract<GlobalSupervisorBinding, { readonly status: "creating" }>;
+type InvalidBinding = Extract<GlobalSupervisorBinding, { readonly status: "invalid" }>;
+
+function homeUnavailable(): GlobalSupervisorPreparationResult {
+  return { failure: "homeUnavailable", recovery: "reconnectHome", status: "failed" };
+}
+
+function bindingUnavailable(
+  recovery: "reconcileBinding" | "recreateBinding",
+): GlobalSupervisorPreparationResult {
+  return { failure: "bindingUnavailable", recovery, status: "failed" };
+}
+
+function selectedHomeConnectionId(authority: GlobalSupervisorRuntimeAuthority): string {
+  const connectionId = authority.enabledConnectionIds()[0];
+  if (connectionId === undefined) {
+    throw new Error("No enabled Global Voice home server is available");
+  }
+  return connectionId;
+}
+
+async function chooseHomeBinding(
+  authority: GlobalSupervisorRuntimeAuthority,
+  binding: GlobalSupervisorBindingOwner,
+): Promise<void> {
+  const connectionId = selectedHomeConnectionId(authority);
+  if (liveSessionOrNull(authority, connectionId) === null || (await binding.read()) !== null) {
+    return;
+  }
+  await binding.bind(connectionId);
+}
+
+async function recreateHomeBinding(
+  authority: GlobalSupervisorRuntimeAuthority,
+  binding: GlobalSupervisorBindingOwner,
+): Promise<void> {
+  const connectionId = selectedHomeConnectionId(authority);
+  if (liveSessionOrNull(authority, connectionId) === null) {
+    return;
+  }
+  await binding.reset();
+  await binding.bind(connectionId);
+}
+
+async function prepareCreatingBinding(
+  authority: GlobalSupervisorRuntimeAuthority,
+  current: CreatingBinding,
+  publish: (homeConnectionId: string) => void,
+): Promise<GlobalSupervisorPreparationResult> {
+  if (liveSessionOrNull(authority, current.homeConnectionId) === null) {
+    return homeUnavailable();
+  }
+  publish(current.homeConnectionId);
+  const reconciled = await authority.binding().reconcile();
+  return reconciled?.status === "ready"
+    ? prepareReadyHome(authority, reconciled.home)
+    : bindingUnavailable(
+        reconciled?.status === "creating" ? "reconcileBinding" : "recreateBinding",
+      );
+}
+
+async function prepareUnboundHome(
+  authority: GlobalSupervisorRuntimeAuthority,
+  binding: GlobalSupervisorBindingOwner,
+  publish: (homeConnectionId: string) => void,
+): Promise<GlobalSupervisorPreparationResult> {
+  const connectionId = authority.enabledConnectionIds()[0];
+  if (connectionId === undefined) {
+    return { recovery: "chooseHome", status: "unbound" };
+  }
+  if (liveSessionOrNull(authority, connectionId) === null) {
+    return homeUnavailable();
+  }
+  publish(connectionId);
+  return prepareReadyHome(authority, await binding.bind(connectionId));
+}
+
+async function prepareInvalidBinding(
+  authority: GlobalSupervisorRuntimeAuthority,
+  binding: GlobalSupervisorBindingOwner,
+  current: InvalidBinding,
+): Promise<GlobalSupervisorPreparationResult> {
+  if (current.reason !== "homeDeleted" || current.priorHome === null) {
+    return bindingUnavailable("recreateBinding");
+  }
+  const connectionId = authority.enabledConnectionIds()[0];
+  if (connectionId === undefined || liveSessionOrNull(authority, connectionId) === null) {
+    return homeUnavailable();
+  }
+  const restored = await binding.restoreDeletedHome(connectionId);
+  recordOperationalTelemetryEvent(connectionId, {
+    name: "global_voice.binding_restore",
+    tags: { outcome: restored === null ? "unresolved" : "restored" },
+    threadId: current.priorHome.threadId,
+  });
+  return restored === null
+    ? bindingUnavailable("recreateBinding")
+    : prepareReadyHome(authority, restored);
+}
+
 async function recoverRuntime(
   authority: GlobalSupervisorRuntimeAuthority,
   action: GlobalSupervisorRuntimeRecoveryAction,
@@ -549,7 +663,7 @@ async function recoverRuntime(
   const binding = authority.binding();
   switch (action) {
     case "reconnectHome": {
-      const connectionId = boundConnectionId(await binding.read());
+      const connectionId = reconnectConnectionId(authority, await binding.read());
       if (connectionId !== undefined) {
         await authority.getSupervisor()?.reattachRuntime(connectionId);
       }
@@ -559,19 +673,15 @@ async function recoverRuntime(
       await binding.reconcile();
       return;
     case "recreateBinding":
-      await binding.reset();
-      break;
+      await recreateHomeBinding(authority, binding);
+      return;
     case "chooseHome":
-      break;
+      await chooseHomeBinding(authority, binding);
+      return;
     case "retryCapabilityProbe":
     case "retryMicrophoneBusy":
       return;
   }
-  const connectionId = authority.enabledConnectionIds()[0];
-  if (connectionId === undefined) {
-    throw new Error("No enabled Global Voice home server is available");
-  }
-  await binding.bind(connectionId);
 }
 
 /** Composes the production binding, realtime, transient event, media and cleanup owners. */
@@ -584,20 +694,15 @@ export function createGlobalSupervisorRuntime(
     async prepare(publish) {
       await authority.ensureStarted();
       const binding = authority.binding();
-      let current = await binding.read();
-      if (current?.status === "creating") {
-        publish(current.homeConnectionId);
-        current = await binding.reconcile();
-      }
+      const current = await binding.read();
       if (current === null) {
-        return { recovery: "chooseHome", status: "unbound" };
+        return prepareUnboundHome(authority, binding, publish);
       }
-      if (current.status !== "ready") {
-        return {
-          failure: "bindingUnavailable",
-          recovery: current.status === "creating" ? "reconcileBinding" : "recreateBinding",
-          status: "failed",
-        };
+      if (current.status === "creating") {
+        return prepareCreatingBinding(authority, current, publish);
+      }
+      if (current.status === "invalid") {
+        return prepareInvalidBinding(authority, binding, current);
       }
       return prepareReadyHome(authority, current.home);
     },

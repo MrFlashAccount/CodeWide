@@ -13,3 +13,7 @@ export function RichMarkdown(props: RichMarkdownProps): React.JSX.Element {
   const { maxLines, source } = props;
   return <Text {...(maxLines === undefined ? {} : { numberOfLines: maxLines })}>{source}</Text>;
 }
+
+export function RichMarkdownDocumentBlockView(): React.JSX.Element {
+  return <Text>Rendered Markdown block</Text>;
+}

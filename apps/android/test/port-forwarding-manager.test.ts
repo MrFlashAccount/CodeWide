@@ -95,7 +95,7 @@ describe("port forwarding manager", () => {
     expect(manager).not.toContain("Saved ports");
     expect(ownerPortListProjection).toContain("const currentProfiles = props.profiles.filter");
     expect(nativeManager).toContain("profile.serviceKey != currentKey");
-    expect(nativeManager).toContain('if (response?.code == 502) "unavailable" else "error"');
+    expect(nativeManager).toContain('502 -> PortForwardFailure("unavailable"');
   });
 
   it("opens only live forwards and edits every non-live state", () => {

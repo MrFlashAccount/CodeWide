@@ -5,6 +5,7 @@ import {
   fetchScopedUpload,
   readPrivateAssetText,
   resolvePrivateAssetRequest,
+  UnsupportedPrivateTextFormatError,
 } from "../src/data/private-transfer";
 import { recoverPrivateAsset } from "../src/rendering/private-asset-recovery";
 
@@ -139,6 +140,19 @@ describe("private asset transport", () => {
     expect(String(request.mock.calls[0]?.[0])).toBe(
       "https://companion.example/v1/files/text?rootId=workspace&path=docs%2Freadme.md&offset=0&limit=2097152",
     );
+  });
+
+  it("exposes a typed unsupported-text result for companion 415 responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response('{"error":"valid_utf8_required"}', { status: 415 })),
+    );
+    await expect(
+      readPrivateAssetText({ kind: "path", path: "/repo/binary.txt" }, async () => ({
+        baseUrl: "https://companion.example",
+        authorization: "Bearer token",
+      })),
+    ).rejects.toBeInstanceOf(UnsupportedPrivateTextFormatError);
   });
 
   it("keeps direct text reads single-request and byte-ranged", async () => {

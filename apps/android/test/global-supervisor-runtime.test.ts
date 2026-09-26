@@ -66,6 +66,7 @@ describe("GlobalSupervisorRuntime", () => {
         read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
         reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
         reset: vi.fn(async () => undefined),
+        restoreDeletedHome: vi.fn(async () => null),
       }),
       enabledConnectionIds: () => ["home"],
       ensureStarted: async () => undefined,
@@ -96,6 +97,79 @@ describe("GlobalSupervisorRuntime", () => {
     });
     expect(runtime.isActive()).toBe(false);
     expect(rpcAfterAttach).not.toHaveBeenCalled();
+  });
+
+  it("reuses the prior supervisor thread after a server is re-paired", async () => {
+    const session = sessionFixture();
+    const bind = vi.fn(async () => globalSupervisorQualifiedChatRef("home", "new-thread"));
+    const reset = vi.fn(async () => undefined);
+    const restoreDeletedHome = vi.fn(async () => HOME);
+    const binding = {
+      bind,
+      invalidateDeletedConnections: vi.fn(async () => undefined),
+      read: vi.fn(async () => ({
+        priorHome: globalSupervisorQualifiedChatRef("old-profile", HOME.threadId),
+        reason: "homeDeleted" as const,
+        schemaVersion: 1 as const,
+        status: "invalid" as const,
+      })),
+      reconcile: vi.fn(async () => null),
+      reset,
+      restoreDeletedHome,
+    };
+    let connected = false;
+    const reattachRuntime = vi.fn(async () => undefined);
+    const runtime = createGlobalSupervisorRuntime({
+      attention: attentionFixture(),
+      acquireForegroundLease: async () => ({
+        release: vi.fn(async () => undefined),
+        setPlaybackLevel: vi.fn(),
+      }),
+      binding: () => binding,
+      enabledConnectionIds: () => ["home"],
+      ensureStarted: async () => undefined,
+      getSession: () => session,
+      getSupervisor: () => ({
+        reattachRuntime,
+        replaceConnections: vi.fn(),
+        session: () => undefined,
+        stop: vi.fn(),
+        subscribeLive: vi.fn(async () => undefined),
+        unsubscribeLive: vi.fn(async () => undefined),
+      }),
+      ingress: createGlobalSupervisorRuntimeIngress(),
+      isRpcAvailable: () => connected,
+      microphoneLeases: createV1MicrophoneLeaseRegistry(() => "native-token"),
+      now: () => 0,
+      personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
+      preferredVoice: async () => "cove",
+      randomUUID: () => "activation",
+      recordStartupStage: vi.fn(),
+      requestMicrophonePermission: vi.fn(async () => "granted"),
+      rpcAfterAttach: vi.fn(async () => REALTIME_VOICES),
+      startWebRtc: vi.fn(async () => ({
+        acceptAnswer: vi.fn(async () => undefined),
+        offerSdp: "v=0\r\no=offer",
+        setMicrophoneMuted: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+      })),
+    });
+
+    await runtime.recover("recreateBinding");
+    expect(reset).not.toHaveBeenCalled();
+    expect(bind).not.toHaveBeenCalled();
+
+    await runtime.recover("reconnectHome");
+    expect(reattachRuntime).toHaveBeenCalledWith("home");
+
+    connected = true;
+    await expect(runtime.prepare(() => undefined)).resolves.toEqual({
+      home: HOME,
+      status: "ready",
+    });
+    expect(restoreDeletedHome).toHaveBeenCalledWith("home");
+    expect(reset).not.toHaveBeenCalled();
+    expect(bind).not.toHaveBeenCalled();
   });
 
   it("negotiates WebRTC through app-server and performs ordered terminal cleanup", async () => {
@@ -185,6 +259,7 @@ describe("GlobalSupervisorRuntime", () => {
       read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
       reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
       reset: vi.fn(async () => undefined),
+      restoreDeletedHome: vi.fn(async () => null),
     };
     const microphoneLeases = createV1MicrophoneLeaseRegistry(() => "native-token");
     const recordStartupStage = vi.fn();
@@ -447,6 +522,7 @@ describe("GlobalSupervisorRuntime", () => {
         read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
         reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
         reset: vi.fn(async () => undefined),
+        restoreDeletedHome: vi.fn(async () => null),
       }),
       enabledConnectionIds: () => ["home"],
       ensureStarted: async () => undefined,
@@ -719,6 +795,7 @@ describe("GlobalSupervisorRuntime", () => {
       read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
       reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
       reset,
+      restoreDeletedHome: vi.fn(async () => null),
     };
     let activeChannel = "";
     let activeThread = "";
@@ -830,6 +907,7 @@ describe("GlobalSupervisorRuntime", () => {
       read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
       reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
       reset: vi.fn(async () => undefined),
+      restoreDeletedHome: vi.fn(async () => null),
     };
     let currentPersonality = {
       character: "Direct",

@@ -20,6 +20,7 @@ use crate::{
     dictation::DictationService,
     files::FileService,
     history_service::HistoryService,
+    host_identity::HostDisplayName,
     identity::{CompanionIdentity, TransportIdentity},
     image_previews::ImagePreviewService,
     media::MediaProxyService,
@@ -49,17 +50,23 @@ pub struct ManagedRuntimeConfig {
     pub app_server_socket: PathBuf,
     pub enable_mutations: bool,
     pub secret_storage_policy: SecretStoragePolicy,
+    pub host_display_name: HostDisplayName,
 }
 
 impl ManagedRuntimeConfig {
     #[must_use]
-    pub fn desktop(state_directory: PathBuf, codex_home: PathBuf) -> Self {
+    pub fn desktop(
+        state_directory: PathBuf,
+        codex_home: PathBuf,
+        host_display_name: HostDisplayName,
+    ) -> Self {
         Self {
             state_directory,
             app_server_socket: codex_home.join("app-server-control/app-server-control.sock"),
             codex_home,
             enable_mutations: true,
             secret_storage_policy: SecretStoragePolicy::PlatformPreferred,
+            host_display_name,
         }
     }
 
@@ -93,6 +100,7 @@ pub struct ManagedRuntime {
     inner_handle: axum_server::Handle<std::net::SocketAddr>,
     tasks: Vec<JoinHandle<()>>,
     task_failure: Arc<RwLock<Option<String>>>,
+    host_display_name: HostDisplayName,
 }
 
 impl ManagedRuntime {
@@ -293,6 +301,7 @@ impl ManagedRuntime {
             inner_handle,
             tasks: vec![bootstrap_task, inner_task],
             task_failure,
+            host_display_name: config.host_display_name,
         })
     }
 
@@ -329,7 +338,7 @@ impl ManagedRuntime {
             endpoint: &endpoint,
             pairing_token: &pairing.pairing_token,
             expires_at: pairing.expires_at,
-            display_name: "CodeWide host",
+            display_name: self.host_display_name.as_str(),
             emoji: "🖥️",
             tls_pin_sha256: &self.identity.tls_pin_sha256,
             identity_expires_at: Some(self.identity.expires_at),
@@ -508,8 +517,12 @@ mod tests {
         let state = directory.path().join("state");
         let codex_home = directory.path().join("codex");
         tokio::fs::create_dir_all(&codex_home).await?;
-        let runtime =
-            ManagedRuntime::start(ManagedRuntimeConfig::desktop(state, codex_home)).await?;
+        let runtime = ManagedRuntime::start(ManagedRuntimeConfig::desktop(
+            state,
+            codex_home,
+            HostDisplayName::new("Test computer")?,
+        ))
+        .await?;
 
         assert!(runtime.failure().is_none());
         assert!(!runtime.relay_status()?.configured);
@@ -538,8 +551,12 @@ mod tests {
         let state = directory.path().join("companion");
         let codex_home = directory.path().join("codex");
         tokio::fs::create_dir_all(&codex_home).await?;
-        let runtime =
-            ManagedRuntime::start(ManagedRuntimeConfig::desktop(state, codex_home)).await?;
+        let runtime = ManagedRuntime::start(ManagedRuntimeConfig::desktop(
+            state,
+            codex_home,
+            HostDisplayName::new("Sergey's MacBook Pro")?,
+        ))
+        .await?;
         let invitation = registry.create_invitation(None)?;
         runtime
             .pair_relay(
@@ -581,6 +598,10 @@ mod tests {
         assert!(query.get("r").is_some_and(|route| route.len() == 64));
         assert!(query.contains_key("t"));
         assert!(query.contains_key("p"));
+        assert_eq!(
+            query.get("n").map(AsRef::as_ref),
+            Some("Sergey's MacBook Pro")
+        );
 
         stop.cancel();
         server.await?;

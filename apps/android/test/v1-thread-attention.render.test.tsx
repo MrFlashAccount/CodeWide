@@ -12,10 +12,10 @@ it("shows the hand in the unread slot and restores the unread dot after resoluti
   const thread = { id: "thread", serverId: "server", title: "Thread", preview: "Preview", pinned: false, unread: 1 };
   const view = render(<ThreadRowContent selected={false} thread={{ ...thread, needsAttention: true }} />);
   expect(view.getByLabelText("Требуется твоё внимание")).toBeOnTheScreen();
-  expect(view.queryByLabelText("1 unread message")).toBeNull();
+  expect(view.queryByLabelText("Unread thread")).toBeNull();
   view.rerender(<ThreadRowContent selected={false} thread={{ ...thread, needsAttention: false }} />);
   expect(view.queryByLabelText("Требуется твоё внимание")).toBeNull();
-  expect(view.getByLabelText("1 unread message")).toBeOnTheScreen();
+  expect(view.getByLabelText("Unread thread")).toBeOnTheScreen();
   view.rerender(<ThreadRowContent selected={false} thread={{ ...thread, unread: 0, needsAttention: true }} />);
   expect(view.getByLabelText("Требуется твоё внимание")).toBeOnTheScreen();
 });
@@ -40,7 +40,7 @@ it("reacts to the published answer row while the turn stays active without remou
   const submitted = projectQuestionAnswerDelivery(row, questionAnswerDelivery());
   act(() => { model.publish([{ type: "update", value: submitted }]); });
   expect(view.queryByLabelText("Требуется твоё внимание")).toBeNull();
-  expect(view.getByLabelText("1 unread message")).toBeOnTheScreen();
+  expect(view.getByLabelText("Unread thread")).toBeOnTheScreen();
   expect(submitted.status.type).toBe("active");
   act(() => { model.publish([{ type: "update", value: projectQuestionAnswerDelivery(submitted, questionAnswerDelivery("failed")) }]); });
   expect(view.getByLabelText("Требуется твоё внимание")).toBeOnTheScreen();

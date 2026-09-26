@@ -5,7 +5,7 @@ internal class PortForwardInventoryReconciler(
   private val store: NativePortForwardStore,
   private val preference: (String, String, Int) -> String,
   private val upsert: (String, PortForwardInventoryEntry, CurrentPortForward?, String) -> CurrentPortForward,
-  private val isRunning: (String) -> Boolean,
+  private val isHealthy: (String) -> Boolean,
   private val start: (String) -> Unit,
   private val remove: (String) -> Unit,
 ) {
@@ -25,7 +25,7 @@ internal class PortForwardInventoryReconciler(
       val profile = if (existing == null || existing.remotePort != entry.port || existing.preference != selected || existing.label != entry.label) {
         upsert(connectionId, entry, existing, selected)
       } else existing
-      if (enabled && !isRunning(profile.id)) start(profile.id)
+      if (enabled && !isHealthy(profile.id)) start(profile.id)
     }
   }
 }

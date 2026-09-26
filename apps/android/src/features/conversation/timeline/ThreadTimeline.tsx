@@ -17,7 +17,10 @@ import { OptimisticTurn } from "../turns/OptimisticTurn";
 import { projectTurnPresentation } from "../turns/turnProjection";
 import { formatTurnMeta } from "../turns/turnPresentation";
 import { TurnTimelineItem } from "../turns/TurnTimelineItem";
-import { VirtualizedTurnTimelineItem } from "../turns/VirtualizedTurnTimelineItem";
+import {
+  VirtualizedTurnLeadItem,
+  VirtualizedTurnTimelineItem,
+} from "../turns/VirtualizedTurnTimelineItem";
 import type { UseThreadTimelineProps } from "./ThreadTimeline.types";
 import { timelineRowItem, type TimelineRow } from "./timelineRows";
 
@@ -25,7 +28,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
   const renderTimelineItem = ({ item: timelineRow }: LegendListRenderItemProps<TimelineRow>) => {
     const item = timelineRowItem(timelineRow);
     const boundaryKey =
-      timelineRow.kind === "turnSlice"
+      timelineRow.kind === "turnSlice" || timelineRow.kind === "turnLead"
         ? timelineRow.key
         : item.kind === "turn" || item.kind === "meta"
           ? item.key
@@ -36,12 +39,12 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
         : `Timeline item: ${boundaryKey}`;
     const usage = item.kind === "turn" ? (projectedTurnMetadata(item.turn)?.usage ?? null) : null;
     const dateLabels = props.timelineDateLabels.get(item);
-    const dateLabel =
-      timelineRow.kind === "turnSlice" &&
-      timelineRow.placement !== "start" &&
-      timelineRow.placement !== "single"
-        ? null
-        : (dateLabels?.before ?? null);
+    const startsTurn =
+      timelineRow.kind === "turnLead" ||
+      (timelineRow.kind === "turnSlice" &&
+        !timelineRow.followsLead &&
+        (timelineRow.placement === "start" || timelineRow.placement === "single"));
+    const dateLabel = startsTurn ? (dateLabels?.before ?? null) : null;
     const virtualizedSearchFocus =
       timelineRow.kind === "turnSlice" &&
       props.searchWindow !== null &&
@@ -49,7 +52,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
         ? { itemId: props.searchWindow.messageItemId }
         : null;
     const virtualizedPresentation =
-      timelineRow.kind === "turnSlice"
+      timelineRow.kind === "turnSlice" || timelineRow.kind === "turnLead"
         ? projectTurnPresentation(
             timelineRow.item,
             virtualizedSearchFocus,
@@ -57,6 +60,10 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
             timelineRow.item.turn.status === "inProgress" && props.requestPrompt !== null,
           )
         : null;
+    const ownsUnreadVisibility =
+      timelineRow.kind === "turnSlice" &&
+      timelineRow.item.id === props.latestUnreadAgentTurnId &&
+      (timelineRow.placement === "start" || timelineRow.placement === "single");
     const row = (
       // The virtualized row owns one stable document identity. Recycling is off,
       // so leaving the render window unmounts this subtree instead of rebinding
@@ -123,11 +130,24 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                         : {})}
                     />
                   )}
+                  {timelineRow.kind === "turnLead" && virtualizedPresentation !== null && (
+                    <VirtualizedTurnLeadItem
+                      presentation={virtualizedPresentation}
+                      turn={timelineRow.item}
+                      {...(props.getTransferAccess === undefined
+                        ? {}
+                        : { getTransferAccess: props.getStableTransferAccess })}
+                      {...(props.onFixUnsupportedBlock === undefined
+                        ? {}
+                        : { onFixUnsupportedBlock: props.fixUnsupportedBlock })}
+                    />
+                  )}
                   {timelineRow.kind === "turnSlice" && virtualizedPresentation !== null && (
                     <VirtualizedTurnTimelineItem
                       agentDateLabel={dateLabels?.agent ?? null}
                       animateLiveUpdates={props.animateLiveUpdates}
                       compact={props.timelineCompact}
+                      followsLead={timelineRow.followsLead}
                       forceExpanded={props.threadSearchActive}
                       parts={timelineRow.parts}
                       placement={timelineRow.placement}
@@ -149,7 +169,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                       {...(props.onLoadTurnItems === undefined
                         ? {}
                         : { onLoadItems: props.loadStableTurnItems })}
-                      {...(timelineRow.item.id === props.latestUnreadAgentTurnId
+                      {...(ownsUnreadVisibility
                         ? {
                             latestAgentRef: props.setLatestUnreadAgentNode,
                             onLatestAgentLayout: props.scheduleUnreadAgentVisibilityCheck,
@@ -201,10 +221,13 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
         </View>
       </SearchMessageFocus.Provider>
     );
-    return item.kind === "turn" &&
+    const ownsNavigationCommit =
+      item.kind === "turn" &&
       (timelineRow.kind === "item" ||
-        timelineRow.placement === "start" ||
-        timelineRow.placement === "single") ? (
+        timelineRow.kind === "turnLead" ||
+        (!timelineRow.followsLead &&
+          (timelineRow.placement === "start" || timelineRow.placement === "single")));
+    return ownsNavigationCommit ? (
       <ThreadNavigationRowCommitBoundary
         connectionId={item.connectionId}
         rowKey={item.key}

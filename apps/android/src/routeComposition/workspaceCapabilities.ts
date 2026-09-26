@@ -90,6 +90,11 @@ export const workspaceCapabilities = {
     ): ReturnType<typeof features.turnActions.markThreadRead> => {
       await features.turnActions.markThreadRead(...args);
     },
+    markThreadUnread: async (
+      ...args: Parameters<typeof features.turnActions.markThreadUnread>
+    ): ReturnType<typeof features.turnActions.markThreadUnread> => {
+      await features.turnActions.markThreadUnread(...args);
+    },
     setThreadPinned: async (
       ...args: Parameters<typeof features.turnActions.setThreadPinned>
     ): ReturnType<typeof features.turnActions.setThreadPinned> => {

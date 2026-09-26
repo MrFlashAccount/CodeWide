@@ -292,7 +292,7 @@ class VoiceCaptureForegroundService : Service() {
     private const val NOTIFICATION_ID = 42_012
     private val pending = ConcurrentHashMap<String, (Throwable?) -> Unit>()
     @Volatile private var instance: VoiceCaptureForegroundService? = null
-    @Volatile private var orbStyle = VoiceAssistantOrbStyle.NEBULA
+    @Volatile private var orbStyle = VoiceAssistantOrbStyle.PARTICLES
     @Volatile private var orbState = VoiceAssistantOrbState.IDLE
     @Volatile private var orbReducedMotion = false
     @Volatile private var orbLaunchOrigin: VoiceOverlayLaunchOrigin? = null

@@ -32,6 +32,8 @@ export function useHistoryAnchorState(
 
   const awayFromLatestRef = useConversationRef(composerScope, () => false);
 
+  const initialReadCommittedRef = useConversationRef(composerScope, () => false);
+
   const [awayFromLatest, setAwayFromLatest] = useConversationState(composerScope, () => false);
 
   const mountedConversationScopeRef = useConversationRef(composerScope, () => ({
@@ -45,6 +47,7 @@ export function useHistoryAnchorState(
     awayFromLatest,
     awayFromLatestRef,
     firstVisibleHistoryAnchorRef,
+    initialReadCommittedRef,
     mountedConversationScopeRef,
     scrollSaveTimerRef,
     setAwayFromLatest,
@@ -66,7 +69,9 @@ export function useHistoryAnchorActions({
   awayFromLatestRef,
   draftConnectionId,
   draftThreadId,
+  initialReadCommittedRef,
   latestUnreadReceiptKey,
+  markThreadReadOnOpen,
   saveScrollOffset,
   scrollOffsetRef,
   scrollSaveTimerRef,
@@ -77,7 +82,7 @@ export function useHistoryAnchorActions({
   timelineViewportHeightRef,
 }: Pick<
   ReturnType<typeof useHistoryAnchorState>,
-  "awayFromLatestRef" | "setAwayFromLatest" | "scrollSaveTimerRef"
+  "awayFromLatestRef" | "initialReadCommittedRef" | "setAwayFromLatest" | "scrollSaveTimerRef"
 > &
   Pick<
     ReturnType<typeof useTimelineViewportState>,
@@ -90,6 +95,7 @@ export function useHistoryAnchorActions({
     draftConnectionId: string | null;
     draftThreadId: string | null;
     latestUnreadReceiptKey: string | null;
+    markThreadReadOnOpen: (() => void) | undefined;
     saveScrollOffset: Parameters<typeof useHistoryAnchorState>[3];
     timeline: TimelineItem[];
   }) {
@@ -115,6 +121,10 @@ export function useHistoryAnchorActions({
       );
     }
     setTimelineDidLoad(true);
+    if (!initialReadCommittedRef.current) {
+      initialReadCommittedRef.current = true;
+      markThreadReadOnOpen?.();
+    }
   });
 
   const persistTimelineOffset = useEvent((offset: number) => {

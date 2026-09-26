@@ -20,7 +20,7 @@ export function ThreadRow(props: ThreadRowProps) {
   // A recycled row can retain POP_TO after Back. POP_TO from the catalog replaces its only route.
   const dismissTo = props.link.dismissTo && !catalogFocused;
   const showNotice = useAppNotice().show;
-  const { onMarkRead, onNavigate, onTogglePin, selected, server, thread } = props;
+  const { onNavigate, onTogglePin, onToggleRead, selected, server, thread } = props;
   const actions = useThreadRowActions(props);
   const {
     archiveAction,
@@ -28,6 +28,7 @@ export function ThreadRow(props: ThreadRowProps) {
     closeSwipe,
     dialog,
     menuActions,
+    readAction,
     runThreadAction,
     setWebContextVisible,
     swipeableRef,
@@ -52,7 +53,7 @@ export function ThreadRow(props: ThreadRowProps) {
     } else if (id === "pin") {
       runThreadAction(onTogglePin, thread.pinned ? "Unpin" : "Pin");
     } else if (id === "read") {
-      runThreadAction(onMarkRead, "Mark as read");
+      runThreadAction(onToggleRead, readAction.label);
     } else if (id === "archive") {
       runThreadAction(archiveAction, archiveLabel);
     }
@@ -108,14 +109,14 @@ export function ThreadRow(props: ThreadRowProps) {
                     })}
               />
               <ThreadSwipeAction
-                icon="checkmark-done-outline"
-                label="Read"
+                icon={readAction.icon}
+                label={readAction.swipeLabel}
                 tone="accent"
-                {...(onMarkRead === undefined
+                {...(onToggleRead === undefined
                   ? {}
                   : {
                       onPress: () => {
-                        runThreadAction(onMarkRead, "Mark as read", true);
+                        runThreadAction(onToggleRead, readAction.label, true);
                       },
                     })}
               />

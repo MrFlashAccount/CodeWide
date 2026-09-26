@@ -52,6 +52,10 @@ type GlobalSupervisorBindingRemote = {
     connectionId: GlobalSupervisorConnectionId,
     source: string,
   ) => Promise<readonly string[]>;
+  readonly readThreadSource: (
+    connectionId: GlobalSupervisorConnectionId,
+    threadId: GlobalSupervisorThreadId,
+  ) => Promise<string | null>;
   readonly startThread: (
     connectionId: GlobalSupervisorConnectionId,
     source: string,
@@ -64,6 +68,9 @@ export type GlobalSupervisorBindingOwner = {
   readonly read: () => Promise<GlobalSupervisorBinding | null>;
   readonly reconcile: () => Promise<GlobalSupervisorBinding | null>;
   readonly reset: () => Promise<void>;
+  readonly restoreDeletedHome: (
+    connectionId: string,
+  ) => Promise<GlobalSupervisorQualifiedChatRef | null>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -292,6 +299,22 @@ function boundConnectionId(binding: GlobalSupervisorBinding | null): string | nu
   return binding?.status === "creating" ? binding.homeConnectionId : null;
 }
 
+function deletedPriorHome(
+  binding: GlobalSupervisorBinding | null,
+): GlobalSupervisorQualifiedChatRef | null {
+  return binding?.status === "invalid" && binding.reason === "homeDeleted"
+    ? binding.priorHome
+    : null;
+}
+
+function isSupervisorThreadSource(source: string | null): boolean {
+  return (
+    source !== null &&
+    source.startsWith(GLOBAL_SUPERVISOR_THREAD_SOURCE_PREFIX) &&
+    source.length > GLOBAL_SUPERVISOR_THREAD_SOURCE_PREFIX.length
+  );
+}
+
 /** Owns crash-safe binding creation and exact-token reconciliation. */
 export function createGlobalSupervisorBindingOwner(
   options: GlobalSupervisorBindingOwnerOptions,
@@ -349,6 +372,30 @@ export function createGlobalSupervisorBindingOwner(
     },
     async reset() {
       await serialize(async () => options.database.clear());
+    },
+    async restoreDeletedHome(connectionId) {
+      return serialize(async () => {
+        await options.database.ready;
+        const validatedId = parseGlobalSupervisorConnectionId(connectionId);
+        if (validatedId === null) {
+          throw new Error("The supervisor home server id is invalid");
+        }
+        const priorHome = deletedPriorHome(await options.database.read());
+        if (priorHome === null) {
+          return null;
+        }
+        const source = await options.remote.readThreadSource(validatedId, priorHome.threadId);
+        if (!isSupervisorThreadSource(source)) {
+          return null;
+        }
+        const home = { connectionId: validatedId, threadId: priorHome.threadId };
+        await options.database.write({
+          home,
+          schemaVersion: GLOBAL_SUPERVISOR_BINDING_SCHEMA_VERSION,
+          status: "ready",
+        });
+        return home;
+      });
     },
   };
 }

@@ -23,6 +23,19 @@ function isDesktopSearchThreadRoute(
   return desktop && globalSearchSessionId !== null && pathname.startsWith("/threads/");
 }
 
+function activeSearchSessionId(
+  desktop: boolean,
+  desktopSearchSessionId: string | null | undefined,
+  routeSearchSessionId: string | null,
+): string | null {
+  // The mounted desktop sidebar owns Search visibility across thread route changes.
+  // Undefined preserves route-param entry before the workspace opens or closes Search.
+  if (desktop && desktopSearchSessionId !== undefined) {
+    return desktopSearchSessionId;
+  }
+  return routeSearchSessionId;
+}
+
 export type WorkspaceRouteModel = {
   readonly currentThread: V1ThreadRouteParams | null;
   readonly globalSearchSessionId: string | null;
@@ -59,7 +72,10 @@ export function ensureV1NewThreadRoute(
 }
 
 /** Adapts Expo Router state and commands to the V1 thread-navigation contract. */
-export function useWorkspaceRouteModel(desktop = false): WorkspaceRouteModel {
+export function useWorkspaceRouteModel(
+  desktop = false,
+  desktopSearchSessionId?: string | null,
+): WorkspaceRouteModel {
   const router = useRouter();
   const pathname = usePathname();
   const routeParams = useGlobalSearchParams<{
@@ -75,8 +91,13 @@ export function useWorkspaceRouteModel(desktop = false): WorkspaceRouteModel {
     : { status: "invalid" as const };
   const currentThread = parsedThread.status === "valid" ? parsedThread.value : null;
   const parsedSearchSessionId = routeSessionIdParam(routeParams.globalSearchSessionId);
-  const globalSearchSessionId =
+  const routeSearchSessionId =
     parsedSearchSessionId.status === "valid" ? parsedSearchSessionId.value.value : null;
+  const globalSearchSessionId = activeSearchSessionId(
+    desktop,
+    desktopSearchSessionId,
+    routeSearchSessionId,
+  );
   const projectListSessionId = useWorkspaceProjectSessionId();
   const searchWindow = routeSessionIdParam(routeParams.searchWindowId);
   const desktopSearchThreadRoute = isDesktopSearchThreadRoute(

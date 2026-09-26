@@ -6,6 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -63,6 +64,17 @@ class NativePortForwardManagerTest {
 
     assertTrue(projection.isNull("previewUrl"))
     assertEquals("unavailable", projection.getString("status"))
+  }
+
+  @Test
+  fun changedServiceAndMissingListenerAreRecoverableUnavailableStates() {
+    val changed = NativePortForwardManager.remoteFailure(409, 4_173, IOException("HTTP 409"))
+    val missing = NativePortForwardManager.remoteFailure(502, 4_173, IOException("HTTP 502"))
+    assertEquals("unavailable", changed.status)
+    assertEquals("The service listening on remote localhost:4173 has changed", changed.message)
+    assertEquals("unavailable", missing.status)
+    assertEquals("Nothing is listening on remote localhost:4173", missing.message)
+    assertEquals("error", NativePortForwardManager.remoteFailure(401, 4_173, IOException("HTTP 401")).status)
   }
 
   @Test

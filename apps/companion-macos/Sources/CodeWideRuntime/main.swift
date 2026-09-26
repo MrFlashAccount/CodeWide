@@ -9,11 +9,13 @@ do {
     let userHome = FileManager.default.homeDirectoryForCurrentUser
     let selectionStore = AppServerSelectionStore(userHome: userHome)
     let selectedCodexHome = selectionStore.load()
+    let computerName = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
     let core = try CoreHost(
         stateDirectory: RuntimeConstants.stateDirectory.path,
         codexHome: selectedCodexHome.path,
         appVersion: metadata.version,
-        hostVersion: metadata.version
+        hostVersion: metadata.version,
+        computerName: computerName
     )
     let service = RuntimeService(
         core: core,

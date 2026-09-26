@@ -63,7 +63,7 @@ function ThreadList({
       onLoadMore={list.loadMoreThreads}
       onLoadMoreProject={setProjectLimit}
       onManageTerminals={noop}
-      onMarkRead={done}
+      onToggleRead={done}
       onModeChange={noop}
       onNewThread={noop}
       onOffsetChange={noop}

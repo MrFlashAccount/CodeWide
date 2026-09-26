@@ -52,11 +52,7 @@ export function ThreadRowContent({
             ) : (
               thread.unread > 0 && (
                 <View style={styles.unreadSlot}>
-                  <View
-                    accessibilityLabel={`${String(thread.unread)} unread ${thread.unread === 1 ? "message" : "messages"}`}
-                    accessible
-                    style={styles.unreadDot}
-                  />
+                  <View accessibilityLabel="Unread thread" accessible style={styles.unreadDot} />
                 </View>
               )
             )}

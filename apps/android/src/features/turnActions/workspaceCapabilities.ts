@@ -11,6 +11,7 @@ export type TurnActionsWorkspaceCapabilities = {
   ) => Promise<string>;
   interruptTurn: (connectionId: string, threadId: string, turnId: string) => Promise<void>;
   markThreadRead: (connectionId: string, threadId: string) => Promise<void>;
+  markThreadUnread: (connectionId: string, threadId: string) => Promise<void>;
   renameThread: (connectionId: string, threadId: string, name: string) => Promise<void>;
   setThreadPinned: (connectionId: string, threadId: string, pinned: boolean) => Promise<void>;
   unarchiveThread: (connectionId: string, threadId: string) => Promise<void>;

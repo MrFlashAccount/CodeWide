@@ -51,6 +51,9 @@ export function parseThreadResourcesPatch(
         additions: Math.max(0, Math.trunc(item.additions)),
         availability: parseChangeAvailability(item.availability, item.kind),
         binary: item.binary === true,
+        ...(typeof item.createdInScope === "boolean"
+          ? { createdInScope: item.createdInScope }
+          : {}),
         deletions: Math.max(0, Math.trunc(item.deletions)),
         itemId: item.itemId,
         kind: item.kind,

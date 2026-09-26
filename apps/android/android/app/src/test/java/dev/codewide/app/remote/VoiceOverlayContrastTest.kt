@@ -4,10 +4,15 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import dev.codewide.app.rendering.ParticlesOrbView
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import dev.codewide.app.rendering.OrbBackdrop
-import dev.codewide.app.rendering.VoiceOverlayContrast
+import dev.codewide.app.rendering.MutableParticlesOrbProjection
+import dev.codewide.app.rendering.ParticlesOrbModel
+import dev.codewide.app.rendering.ParticlesOrbProjectionContext
+import dev.codewide.app.rendering.ParticlesOrbSimulation
 import dev.codewide.app.rendering.VoiceAssistantOrbState
+import dev.codewide.app.rendering.VoiceOverlayContrast
 import org.robolectric.RuntimeEnvironment
 import java.io.File
 import kotlin.math.pow
@@ -43,17 +48,12 @@ class VoiceOverlayContrastTest {
     assertEquals(0f, VoiceOverlayContrast.alphaAt(1f), 0f)
   }
 
-  @Test fun rendersBeforeAndAfterOnWhiteDarkAndBusyBackgrounds() {
+  @Test fun referenceVisualContractRendersBeforeAndAfterOnWhiteDarkAndBusyBackgrounds() {
     val sheet = Bitmap.createBitmap(720, 520, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(sheet)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     val context = RuntimeEnvironment.getApplication()
     val density = context.resources.displayMetrics.density
-    val view = ParticlesOrbView(context).apply {
-      setOrbState(VoiceAssistantOrbState.LISTENING)
-      setReducedMotion(true)
-      layout(0, 0, (66 * density).toInt(), (66 * density).toInt())
-    }
     for (row in 0..1) for (column in 0..2) {
       val saved = canvas.save()
       canvas.translate(column * 240f, row * 260f)
@@ -67,9 +67,8 @@ class VoiceOverlayContrastTest {
       }
       canvas.translate(6f, 20f)
       canvas.scale(3f / density, 3f / density)
-      view.setBackdropEnabled(row == 1)
       canvas.translate(5f * density, 5f * density)
-      view.draw(canvas)
+      drawReferenceParticles(canvas, density, row == 1)
       canvas.restoreToCount(saved)
     }
     // Keep the review artifact with the build reports instead of ephemeral temporary files.
@@ -79,6 +78,39 @@ class VoiceOverlayContrastTest {
     output.outputStream().use { sheet.compress(Bitmap.CompressFormat.PNG, 100, it) }
     assertTrue(output.length() > 0)
     sheet.recycle()
+  }
+
+  private fun drawReferenceParticles(canvas: Canvas, density: Float, backdropEnabled: Boolean) {
+    val size = 66f * density
+    val frame = ParticlesOrbSimulation(VoiceAssistantOrbState.LISTENING).advance(
+      state = VoiceAssistantOrbState.LISTENING,
+      inputLevel = null,
+      playbackLevel = null,
+      deltaSeconds = 0f,
+      isStatic = true,
+    )
+    val points = ParticlesOrbModel.buildSphere()
+    val projections = List(points.size) { MutableParticlesOrbProjection() }
+    val projectionContext = ParticlesOrbProjectionContext(frame, size, density)
+    var visualRadius = 0f
+    for (index in points.indices) {
+      val projection = projections[index]
+      ParticlesOrbModel.projectInto(points[index], index, projectionContext, projection)
+      visualRadius = maxOf(visualRadius, ParticlesOrbModel.visualExtent(projection, size))
+    }
+    if (backdropEnabled) {
+      OrbBackdrop().draw(canvas, size / 2f, size / 2f, visualRadius, 3f * density, 0f, true)
+    }
+    val layer = canvas.saveLayer(0f, 0f, size, size, null)
+    val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      xfermode = if (frame.additiveGlow) PorterDuffXfermode(PorterDuff.Mode.ADD) else null
+    }
+    for (projection in projections) {
+      particlePaint.color = projection.color
+      particlePaint.alpha = (projection.alpha * 255f).toInt().coerceIn(0, 255)
+      canvas.drawCircle(projection.x, projection.y, projection.dotRadius, particlePaint)
+    }
+    canvas.restoreToCount(layer)
   }
 
   private fun luminance(channels: List<Double>): Double {

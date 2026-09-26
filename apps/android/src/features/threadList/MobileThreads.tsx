@@ -42,11 +42,11 @@ export function MobileThreads(props: MobileThreadsProps) {
     onArchive,
     onLoadMore,
     onLoadMoreProject,
-    onMarkRead,
     onNewThread,
     onOffsetChange,
     onOpenProject,
     onTogglePin,
+    onToggleRead,
     onUnarchive,
     project,
     projectLimit,
@@ -160,11 +160,11 @@ export function MobileThreads(props: MobileThreadsProps) {
                       <ThreadRow
                         link={threadNavigation.getThreadLink(item.thread)}
                         onArchive={async () => onArchive(item.thread)}
-                        onMarkRead={async () => onMarkRead(item.thread)}
                         onNavigate={() => {
                           threadNavigation.prepareThreadLink(threadSelectionKey(item.thread));
                         }}
                         onTogglePin={async () => onTogglePin(item.thread)}
+                        onToggleRead={async () => onToggleRead(item.thread)}
                         onUnarchive={async () => onUnarchive(item.thread)}
                         selected={props.selectedThreadKey === threadSelectionKey(item.thread)}
                         server={

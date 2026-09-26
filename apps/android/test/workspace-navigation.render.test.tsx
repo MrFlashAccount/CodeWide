@@ -21,6 +21,7 @@ import { KeyboardController } from "react-native-keyboard-controller";
 import { useEvent } from "../src/react/useEvent";
 import {
   Animated,
+  BackHandler,
   Dimensions,
   Linking,
   Pressable,
@@ -359,6 +360,229 @@ it("keeps the selected route mounted while phone rotation opens the two-pane wor
   view.unmount();
 });
 
+it("shows a retained live Search beside its result chat after rotation", () => {
+  holdInitialDeepLink();
+  registerV1NavigationRoutes();
+  setWindowSize(400, 800);
+  const session = searchRouteSessions.open(workspaceRouteSessionOwner);
+  resetMockRouter({
+    params: {
+      connectionId: "server",
+      globalSearchSessionId: session.id,
+      threadId: "result",
+    },
+    pathname: "/threads/[connectionId]/[threadId]",
+  });
+  const view = render(<V1RouteTree />);
+
+  expect(view.queryByTestId("sidebar-search")).toBeNull();
+  setWindowSize(800, 360);
+
+  expect(view.getByTestId("sidebar-search")).toBeVisible();
+  expect(view.UNSAFE_getByType(GlobalSearchScreen).props.session).toBe(session.session);
+  expect(mockRouterHistory().at(-1)?.params.globalSearchSessionId).toBe(session.id);
+
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
+it("preserves mobile Search through result navigation, rotation, and Back", () => {
+  holdInitialDeepLink();
+  registerV1NavigationRoutes();
+  setWindowSize(400, 800);
+  resetMockRouter("/");
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  const sessionId = mockRouterHistory().at(-1)?.params.globalSearchSessionId;
+  if (sessionId === undefined) {
+    throw new Error("Expected Search session");
+  }
+  const session = searchRouteSessions.get(sessionId, workspaceRouteSessionOwner)?.session;
+  if (session === undefined) {
+    throw new Error("Expected live Search session");
+  }
+  act(() => {
+    router.push({
+      params: { connectionId: "server", globalSearchSessionId: sessionId, threadId: "result" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+
+  expect(view.queryByTestId("sidebar-search")).toBeNull();
+  setWindowSize(800, 360);
+
+  expect(view.getByTestId("sidebar-search")).toBeVisible();
+  expect(view.UNSAFE_getByType(GlobalSearchScreen).props.session).toBe(session);
+
+  setWindowSize(400, 800);
+  act(() => router.back());
+  expect(mockRouterHistory().at(-1)?.pathname).toBe("/search");
+  expect(view.UNSAFE_getByType(GlobalSearchScreen).props.session).toBe(session);
+  view.unmount();
+});
+
+it("does not restore explicitly closed Search from a stale result route on rotation", () => {
+  holdInitialDeepLink();
+  registerV1NavigationRoutes();
+  setWindowSize(400, 800);
+  resetMockRouter("/");
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  const sessionId = mockRouterHistory().at(-1)?.params.globalSearchSessionId;
+  if (sessionId === undefined) {
+    throw new Error("Expected Search session");
+  }
+  act(() => {
+    router.push({
+      params: { connectionId: "server", globalSearchSessionId: sessionId, threadId: "result" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+    router.back();
+  });
+  expect(view.getByTestId("sidebar-search")).toBeVisible();
+  fireEvent.press(view.getByLabelText("Back to threads"));
+  expect(searchRouteSessions.get(sessionId, workspaceRouteSessionOwner)).toBeNull();
+  view.unmount();
+
+  resetMockRouter({
+    params: { connectionId: "server", globalSearchSessionId: sessionId, threadId: "result" },
+    pathname: "/threads/[connectionId]/[threadId]",
+  });
+  const restored = render(<V1RouteTree />);
+  setWindowSize(800, 360);
+
+  expect(restored.getByText("Threads")).toBeVisible();
+  expect(restored.queryByTestId("sidebar-search")).toBeNull();
+  expect(restored.queryByText("Search expired")).toBeNull();
+
+  setWindowSize(400, 800);
+  restored.unmount();
+});
+
+it("keeps desktop sidebar Search through a result and Back, then keeps its close through rotation", () => {
+  holdInitialDeepLink();
+  registerV1NavigationRoutes();
+  setWindowSize(800, 360);
+  resetMockRouter("/");
+  act(() => {
+    router.push({
+      params: { connectionId: "server", threadId: "selected" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  const session = view.UNSAFE_getByType(GlobalSearchScreen).props.session;
+
+  act(() => {
+    view.UNSAFE_getByType(GlobalSearchScreen).props.onOpenThread(threadSearchTarget, "query");
+  });
+  expect(mockRouterHistory().at(-1)?.params.threadId).toBe("search-result");
+  expect(view.UNSAFE_getByType(GlobalSearchScreen).props.session).toBe(session);
+
+  act(() => router.back());
+  expect(mockRouterHistory().at(-1)?.params.threadId).toBe("selected");
+  expect(view.UNSAFE_getByType(GlobalSearchScreen).props.session).toBe(session);
+
+  fireEvent.press(view.getByLabelText("Back to threads"));
+  expect(searchRouteSessions.get(session.id, workspaceRouteSessionOwner)).toBeNull();
+  setWindowSize(400, 800);
+  setWindowSize(800, 360);
+  expect(view.getByText("Threads")).toBeVisible();
+  expect(view.queryByTestId("sidebar-search")).toBeNull();
+
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
+it("restores desktop Search after it folds and its mobile result opens", () => {
+  holdInitialDeepLink();
+  registerV1NavigationRoutes();
+  setWindowSize(1_400, 800);
+  resetMockRouter("/");
+  act(() => {
+    router.push({
+      params: { connectionId: "server", threadId: "selected" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  expect(view.getByTestId("sidebar-search")).toBeVisible();
+
+  setWindowSize(400, 800);
+  expect(mockRouterHistory().at(-1)?.pathname).toBe("/search");
+  act(() => {
+    view.UNSAFE_getByType(GlobalSearchScreen).props.onOpenThread(threadSearchTarget, "query");
+  });
+  expect(view.queryByTestId("sidebar-search")).toBeNull();
+
+  setWindowSize(800, 360);
+  expect(view.getByTestId("sidebar-search")).toBeVisible();
+
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
+it("keeps an explicitly open mobile Search visible after rotation", () => {
+  holdInitialDeepLink();
+  setWindowSize(400, 800);
+  resetMockRouter("/");
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  const session = view.UNSAFE_getByType(GlobalSearchScreen).props.session;
+
+  setWindowSize(800, 360);
+
+  expect(view.UNSAFE_getByType(GlobalSearchScreen).props.session).toBe(session);
+  expect(view.getByTestId("sidebar-search")).toBeVisible();
+
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
+it("does not restore mobile Search after system Back and rotation", () => {
+  holdInitialDeepLink();
+  setWindowSize(400, 800);
+  resetMockRouter("/");
+  const listeners: Array<() => boolean | null | undefined> = [];
+  jest.spyOn(BackHandler, "addEventListener").mockImplementation((_event, listener) => {
+    listeners.push(listener);
+    return {
+      remove: () => {
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+      },
+    };
+  });
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  const sessionId = mockRouterHistory().at(-1)?.params.globalSearchSessionId;
+  if (sessionId === undefined) {
+    throw new Error("Expected Search session");
+  }
+
+  let handled = false;
+  act(() => {
+    for (let index = listeners.length - 1; index >= 0; index -= 1) {
+      if (listeners[index]?.()) {
+        handled = true;
+        break;
+      }
+    }
+  });
+  expect(handled).toBe(true);
+  expect(mockRouterHistory().at(-1)?.pathname).toBe("/");
+  expect(searchRouteSessions.get(sessionId, workspaceRouteSessionOwner)).toBeNull();
+
+  setWindowSize(800, 360);
+  expect(view.getByText("Threads")).toBeVisible();
+  expect(view.queryByTestId("sidebar-search")).toBeNull();
+
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
 it("stretches the single-column workspace across compact phone landscape", () => {
   holdInitialDeepLink();
   registerV1NavigationRoutes();
@@ -683,6 +907,65 @@ it("retains desktop Search when result navigation commits route parameters separ
   });
   expect(view.UNSAFE_getByType(GlobalSearchScreen).props.session).toBe(session);
   expect(session.text$.peek()).toBe("selected result");
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
+it("keeps the desktop Search component mounted while the right chat changes", () => {
+  holdInitialDeepLink();
+  setWindowSize(1_400, 800);
+  registerMockRoute("/threads/[connectionId]/[threadId]", () => <Text>Selected conversation</Text>);
+  resetMockRouter({
+    params: { connectionId: "server", threadId: "first" },
+    pathname: "/threads/[connectionId]/[threadId]",
+  });
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  const search = view.UNSAFE_getByType(GlobalSearchScreen);
+  fireEvent.press(view.getByLabelText("Search filters"));
+  expect(view.getByLabelText("Search filters").props.accessibilityState.expanded).toBe(true);
+
+  act(() => router.setParams({ globalSearchSessionId: undefined }));
+  act(() => {
+    router.push({
+      params: { connectionId: "server", threadId: "second" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+
+  expect(view.UNSAFE_getByType(GlobalSearchScreen)).toBe(search);
+  expect(view.getByLabelText("Search filters").props.accessibilityState.expanded).toBe(true);
+  expect(view.queryByText("Search expired")).toBeNull();
+  setWindowSize(400, 800);
+  view.unmount();
+});
+
+it("does not resurrect a closed desktop Search after Back and a thread switch", () => {
+  holdInitialDeepLink();
+  setWindowSize(1_400, 800);
+  registerMockRoute("/threads/[connectionId]/[threadId]", () => <Text>Selected conversation</Text>);
+  resetMockRouter("/");
+  act(() => {
+    router.push({
+      params: { connectionId: "server", threadId: "first" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+  const view = render(<V1RouteTree />);
+  fireEvent.press(view.getByLabelText("Search threads and messages"));
+  const sessionId = view.UNSAFE_getByType(GlobalSearchScreen).props.session.id;
+  act(() => view.UNSAFE_getByType(GlobalSearchScreen).props.onClose());
+  expect(searchRouteSessions.get(sessionId, workspaceRouteSessionOwner)).toBeNull();
+  act(() => router.back());
+  act(() => {
+    router.push({
+      params: { connectionId: "server", globalSearchSessionId: sessionId, threadId: "second" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+
+  expect(view.queryByTestId("sidebar-search")).toBeNull();
+  expect(view.queryByText("Search expired")).toBeNull();
   setWindowSize(400, 800);
   view.unmount();
 });

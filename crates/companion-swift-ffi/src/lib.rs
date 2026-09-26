@@ -10,6 +10,7 @@ use companion_core::runtime_host::{
     RuntimeHealth, RuntimeHost, RuntimeHostError, RuntimePhase, UpdateStatus,
 };
 use companion_core::{
+    host_identity::HostDisplayName,
     managed_runtime::{
         AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
         relay_connection_label,
@@ -131,6 +132,7 @@ impl CoreHost {
         codex_home: String,
         app_version: String,
         host_version: String,
+        computer_name: String,
     ) -> Result<Arc<Self>, CompanionFfiError> {
         let lifecycle = RuntimeHost::open(&state_directory, app_version, host_version)?;
         let codex_home = PathBuf::from(codex_home);
@@ -139,8 +141,14 @@ impl CoreHost {
             .thread_name("codewide-core")
             .build()
             .map_err(CompanionFfiError::runtime)?;
-        let config = ManagedRuntimeConfig::desktop(state_directory.into(), codex_home.clone())
-            .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly);
+        let host_display_name =
+            HostDisplayName::new(computer_name).map_err(CompanionFfiError::runtime)?;
+        let config = ManagedRuntimeConfig::desktop(
+            state_directory.into(),
+            codex_home.clone(),
+            host_display_name,
+        )
+        .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly);
         let companion = executor
             .block_on(ManagedRuntime::start(config))
             .map_err(CompanionFfiError::runtime)?;

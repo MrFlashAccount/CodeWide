@@ -2,6 +2,7 @@
 export type ThreadListMutations = {
   archiveThread: (connectionId: string, threadId: string) => Promise<void>;
   markThreadRead: (connectionId: string, threadId: string) => Promise<void>;
+  markThreadUnread: (connectionId: string, threadId: string) => Promise<void>;
   setThreadPinned: (connectionId: string, threadId: string, pinned: boolean) => Promise<void>;
   unarchiveThread: (connectionId: string, threadId: string) => Promise<void>;
 };
@@ -19,7 +20,7 @@ export type ActiveThreadMutations = {
 };
 
 /** Shared mutation authority for header and catalog actions. */
-export type ThreadMutations = Omit<ThreadListMutations, "markThreadRead"> & {
+export type ThreadMutations = Omit<ThreadListMutations, "markThreadRead" | "markThreadUnread"> & {
   deleteThread: (connectionId: string, threadId: string) => Promise<void>;
   renameThread: (connectionId: string, threadId: string, name: string) => Promise<void>;
 };

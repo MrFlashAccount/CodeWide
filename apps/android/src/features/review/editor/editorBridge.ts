@@ -13,18 +13,38 @@ export type CodeReviewPatch = {
  * Immutable file snapshot. The WebView owns Pierre-specific materialization;
  * React never projects line rows or duplicates before/after documents.
  */
-export type CodeReviewDocument = {
-  displayState?: "deleted" | "empty";
-  /** Session and VCS scopes retain the complete file when patch reconstruction fails. */
-  fullFileDiff?: boolean;
-  patches: readonly CodeReviewPatch[];
-  path: string;
-  revision: string;
-  source: string;
-};
+export type CodeReviewDocument =
+  | {
+      displayState?: "deleted" | "empty";
+      /** Session and VCS scopes retain the complete file when patch reconstruction fails. */
+      fullFileDiff?: boolean;
+      patches: readonly CodeReviewPatch[];
+      path: string;
+      revision: string;
+      source: string;
+    }
+  | {
+      displayState: "image";
+      fullFileDiff?: never;
+      imageDataUrl: string;
+      patches: readonly [];
+      path: string;
+      revision: string;
+      source: "";
+    }
+  | {
+      displayState: "unsupported";
+      fullFileDiff?: never;
+      patches: readonly [];
+      path: string;
+      revision: string;
+      source: "";
+    };
 
 export type CodeReviewFileItem = {
   additions: number;
+  /** False when counts are sums of recorded steps rather than final diff counts. */
+  countsAreNet?: boolean;
   deletions: number;
   path: string;
   sourceOnly?: boolean;
@@ -108,7 +128,7 @@ export function codeReviewWorkspaceRevision(files: readonly CodeReviewFileItem[]
   return files
     .map(
       (file) =>
-        `${file.treePath}\u0000${file.status}\u0000${String(file.additions)}\u0000${String(file.deletions)}\u0000${String(file.sourceOnly === true ? 1 : 0)}`,
+        `${file.treePath}\u0000${file.status}\u0000${String(file.additions)}\u0000${String(file.deletions)}\u0000${String(file.countsAreNet === false ? 0 : 1)}\u0000${String(file.sourceOnly === true ? 1 : 0)}`,
     )
     .join("\u0001");
 }

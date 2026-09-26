@@ -52,6 +52,8 @@ internal data class PortForwardProjection(
   }
 }
 
+internal data class PortForwardFailure(val status: String, val message: String)
+
 internal class PortForwardStartGate {
   internal data class Permit(val profileId: String, val generation: Long)
 
@@ -125,7 +127,9 @@ internal class NativePortForwardManager(
       upsertCurrent(connectionId, existing?.id ?: "forward-${java.util.UUID.randomUUID()}",
         entry.label, entry.port, existing?.preferredLocalPort, entry.serviceKey, preference).profile
     },
-    runtimes::containsKey,
+    { profileId ->
+      runtimes.containsKey(profileId) && projections[profileId]?.status !in setOf("unavailable", "error")
+    },
     { startCurrent(it) },
     ::removeCurrent,
   )
@@ -271,12 +275,16 @@ internal class NativePortForwardManager(
       store.upsert(selected.copy(preference = "included"))
     }
     runtimes[profileId]?.let { runtime ->
-      return projections[profileId] ?: projection(
-        store.get(profileId) ?: error("Port forward not found"),
-        runtime.serverSocket.localPort,
-        "live",
-        null,
-      )
+      if (projections[profileId]?.status in setOf("unavailable", "error")) {
+        stopRuntime(profileId, persistDisabled = false)
+      } else {
+        return projections[profileId] ?: projection(
+          store.get(profileId) ?: error("Port forward not found"),
+          runtime.serverSocket.localPort,
+          "live",
+          null,
+        )
+      }
     }
     val stored = store.get(profileId) ?: error("Port forward not found")
     if (stored.preference == "excluded") {
@@ -499,14 +507,14 @@ internal class NativePortForwardManager(
 
         override fun onFailure(socket: WebSocket, error: Throwable, response: Response?) {
           if (response?.code == 401 || response?.code == 403) credentialCache.remove(profile.connectionId)
+          val failure = remoteFailure(response?.code, profile.remotePort, error)
           publishRuntimeIfCurrent(
             runtime,
             runtimeProjection(
               store.get(profile.id) ?: profile,
               runtime,
-              if (response?.code == 502) "unavailable" else "error",
-              if (response?.code == 502) unavailableMessage(profile.remotePort)
-              else diagnostic(error, "Port forward connection failed"),
+              failure.status,
+              failure.message,
             ),
           )
           close()
@@ -637,6 +645,12 @@ internal class NativePortForwardManager(
 
     private fun unavailableMessage(port: Int): String =
       "Nothing is listening on remote localhost:$port"
+
+    internal fun remoteFailure(code: Int?, port: Int, error: Throwable): PortForwardFailure = when (code) {
+      409 -> PortForwardFailure("unavailable", "The service listening on remote localhost:$port has changed")
+      502 -> PortForwardFailure("unavailable", unavailableMessage(port))
+      else -> PortForwardFailure("error", diagnostic(error, "Port forward connection failed"))
+    }
 
     internal fun portAvailabilityError(profile: CurrentPortForward, discovered: Map<Int, String>): String? {
       val currentKey = discovered[profile.remotePort] ?: return unavailableMessage(profile.remotePort)

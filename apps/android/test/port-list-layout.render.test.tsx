@@ -113,6 +113,19 @@ it("removes disappeared services from the visible list even when a stale profile
   expect(view.getByText("Active 0")).toBeVisible();
 });
 
+it("hides an unavailable forward until it recovers without listing it as available", () => {
+  const unavailable = { ...profile, status: "unavailable" as const, error: "Service changed" };
+  const view = render(<PortForwardingManager {...defaults} profiles={[unavailable]} />);
+  expect(view.queryByLabelText("Dev server, Unavailable")).toBeNull();
+  expect(view.queryByText("Service changed")).toBeNull();
+  expect(view.getByText("Active 0")).toBeVisible();
+  expect(view.getByText("Available 0")).toBeVisible();
+
+  view.rerender(<PortForwardingManager {...defaults} />);
+  expect(view.getByLabelText("Dev server, Live")).toBeVisible();
+  expect(view.getByText("Active 1")).toBeVisible();
+});
+
 it("keeps exclusion separate from forwarding and restores both actions after failure", async () => {
   const candidate = { ...discoveredPort(3000), defaultForwardingEnabled: false };
   let rejectExclusion = (_cause: Error): void => {};

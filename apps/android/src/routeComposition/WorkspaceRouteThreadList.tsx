@@ -40,7 +40,6 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       globalVoice={props.globalVoice}
       loadMoreProjectThreads={project.loadMoreProjectThreads}
       loadMoreThreads={list.loadMoreThreads}
-      markListThreadRead={listActions.markListThreadRead}
       mobileRemoteSearchResource={project.threadSearch.mobileRemoteSearchResource}
       mobileThreadOffset={list.listState.mobileThreadOffset}
       mobileThreadQuery={list.listState.mobileThreadQuery}
@@ -73,6 +72,7 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       threadListSources={props.threadListSources}
       threadNavigation={list}
       toggleListThreadPin={listActions.toggleListThreadPin}
+      toggleListThreadRead={listActions.toggleListThreadRead}
       unarchiveListThread={listActions.unarchiveListThread}
       viewportWidth={props.viewportWidth}
     />

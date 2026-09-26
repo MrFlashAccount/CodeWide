@@ -106,6 +106,7 @@ function projectFileChangeItem(
       {
         additions: stats.additions,
         availability: kind === "delete" ? "deleted" : "available",
+        createdInScope: kind === "add",
         deletions: stats.deletions,
         itemId,
         kind,
@@ -129,16 +130,25 @@ function projectFileChangeItem(
     if (existing === undefined) {
       continue;
     }
-    next[index] =
-      existing.turnId === turnId && existing.itemId === itemId
-        ? change
-        : {
-            ...change,
-            additions: existing.additions + change.additions,
-            deletions: existing.deletions + change.deletions,
-          };
+    next[index] = mergeProjectedChange(existing, change);
   }
   return next;
+}
+
+function mergeProjectedChange(
+  existing: ThreadChangeResource,
+  change: ThreadChangeResource,
+): ThreadChangeResource {
+  const createdInScope = existing.createdInScope ?? existing.kind === "add";
+  if (existing.turnId === change.turnId && existing.itemId === change.itemId) {
+    return { ...change, createdInScope };
+  }
+  return {
+    ...change,
+    additions: existing.additions + change.additions,
+    createdInScope,
+    deletions: existing.deletions + change.deletions,
+  };
 }
 
 function resolveRemotePath(value: string, cwd: string): string | null {

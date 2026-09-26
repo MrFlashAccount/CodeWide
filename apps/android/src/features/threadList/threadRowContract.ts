@@ -6,9 +6,9 @@ import type { ThreadListItem } from "./threadListTypes";
 export type ThreadRowProps = {
   link: ThreadLink;
   onArchive?: () => Promise<void>;
-  onMarkRead?: () => Promise<void>;
   onNavigate: () => void;
   onTogglePin?: () => Promise<void>;
+  onToggleRead?: () => Promise<void>;
   onUnarchive?: () => Promise<void>;
   selected: boolean;
   server: ThreadListServer | undefined;

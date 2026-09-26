@@ -22,6 +22,33 @@ describe("recorded code review diff", () => {
     );
   });
 
+  it("uses the empty session baseline when a new file was changed outside recorded patches", () => {
+    const creation = "one\nlong(\n value\n)\n";
+    const laterEdit = "@@ -2 +2 @@\n-long(value)\n+new(value)\n";
+    const changedFile: CodeReviewDocument = {
+      ...document("one\nnew(value)\n", []),
+      patches: [
+        { diff: creation, kind: "add" },
+        { diff: laterEdit, kind: "update" },
+      ],
+    };
+    expect(materializeBeforeSource(changedFile)).toBe("");
+    expect(materializeBeforeSource({ ...changedFile, fullFileDiff: false })).toBeNull();
+  });
+
+  it("keeps the empty baseline when a file is created and deleted in one session", () => {
+    const createdThenDeleted: CodeReviewDocument = {
+      ...document("", []),
+      displayState: "deleted",
+      patches: [
+        { diff: "old\n", kind: "add" },
+        { diff: "@@ -1 +1 @@\n-old\n+new\n", kind: "update" },
+        { diff: "new\n", kind: "delete" },
+      ],
+    };
+    expect(materializeBeforeSource(createdThenDeleted)).toBe("");
+  });
+
   it("locates an unchanged recorded hunk after later lines shift its position", () => {
     const diff = "@@ -2,3 +2,3 @@\n before\n-old\n+new\n after\n";
     expect(materializeBeforeSource(document("later\nheader\nbefore\nnew\nafter\n", [diff]))).toBe(

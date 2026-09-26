@@ -73,6 +73,24 @@ describe("V1 thread resource response boundary", () => {
     expect(next.changes).toHaveLength(1);
   });
 
+  it("validates the session origin used to distinguish a removed new file", () => {
+    const patch = parseThreadResourcesPatch(
+      {
+        threadId: "thread",
+        revision: "r2",
+        changeScope: "session",
+        changes: [
+          { ...change, kind: "delete", createdInScope: true },
+          { ...change, path: "src/other.ts", createdInScope: "true" },
+        ],
+      },
+      "thread",
+      "changes",
+    );
+    expect(patch.changes?.[0]?.createdInScope).toBe(true);
+    expect(patch.changes?.[1]?.createdInScope).toBeUndefined();
+  });
+
   it("bounds resource entries and diff patches at the retained protocol limits", () => {
     // These limits belong to the response adapter and protect bounded materialization.
     const raw = {

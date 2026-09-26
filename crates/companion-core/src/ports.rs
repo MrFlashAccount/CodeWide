@@ -42,6 +42,7 @@ struct Listener {
     port: u16,
     process: Option<String>,
     pid: Option<u32>,
+    inode: Option<u64>,
     user_id: Option<u32>,
 }
 
@@ -75,9 +76,17 @@ struct Inventory {
 
 #[derive(Debug, Default)]
 struct DiscoveryCache {
-    fingerprint: Vec<u16>,
+    fingerprint: Vec<(u16, Option<u64>, Option<u32>)>,
     ports: Vec<DiscoveredPort>,
     refreshed_at: Option<Instant>,
+}
+
+impl DiscoveryCache {
+    fn is_current(&self, fingerprint: &[(u16, Option<u64>, Option<u32>)]) -> bool {
+        self.refreshed_at
+            .is_some_and(|refreshed_at| refreshed_at.elapsed() < FULL_REFRESH_INTERVAL)
+            && self.fingerprint == fingerprint
+    }
 }
 
 #[derive(Debug)]
@@ -133,14 +142,11 @@ pub(crate) fn discover_blocking(excluded: &HashSet<u16>) -> Vec<DiscoveredPort> 
     let mut cache = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let fresh = cache
-        .refreshed_at
-        .is_some_and(|refreshed_at| refreshed_at.elapsed() < FULL_REFRESH_INTERVAL);
-    if fresh && cache.fingerprint == fingerprint {
+    if cache.is_current(&fingerprint) {
         return filter_discovered(&cache.ports, excluded);
     }
     let ports = discover_all();
-    cache.fingerprint = listener_ports(&ports);
+    cache.fingerprint = fingerprint;
     cache.ports = ports;
     cache.refreshed_at = Some(Instant::now());
     filter_discovered(&cache.ports, excluded)
@@ -169,31 +175,28 @@ fn filter_discovered(ports: &[DiscoveredPort], excluded: &HashSet<u16>) -> Vec<D
         .collect()
 }
 
-fn listener_fingerprint() -> Vec<u16> {
+fn listener_fingerprint() -> Vec<(u16, Option<u64>, Option<u32>)> {
     let listeners = Command::new("ss")
-        .args(["-H", "-4", "-ltn"])
+        .args(["-H", "-4", "-ltnpe"])
         .output()
         .ok()
         .filter(|output| output.status.success())
         .map_or_else(read_proc_listeners, |output| {
             parse_ss_listeners(&String::from_utf8_lossy(&output.stdout))
         });
-    let mut ports = listeners
-        .into_iter()
-        .filter(|listener| listener.port >= 1024)
-        .map(|listener| listener.port)
-        .collect::<Vec<_>>();
-    ports.sort_unstable();
-    ports.dedup();
-    ports.truncate(MAX_PORTS);
-    ports
+    listener_identity_fingerprint(&listeners)
 }
 
-fn listener_ports(ports: &[DiscoveredPort]) -> Vec<u16> {
-    let mut values = ports.iter().map(|service| service.port).collect::<Vec<_>>();
-    values.sort_unstable();
-    values.dedup();
-    values
+fn listener_identity_fingerprint(listeners: &[Listener]) -> Vec<(u16, Option<u64>, Option<u32>)> {
+    let mut identities = listeners
+        .iter()
+        .filter(|listener| listener.port >= 1024)
+        .map(|listener| (listener.port, listener.inode, listener.pid))
+        .collect::<Vec<_>>();
+    identities.sort_unstable();
+    identities.dedup();
+    identities.truncate(MAX_PORTS);
+    identities
 }
 
 fn inventory() -> Inventory {
@@ -232,12 +235,14 @@ fn parse_ss_listener(line: &str) -> Option<Listener> {
     let port = endpoint.rsplit(':').next()?.parse::<u16>().ok()?;
     let process = quoted_process(line);
     let pid = numeric_field(line, "pid=");
+    let inode = numeric_field_u64(line, "ino:");
     // iproute2 omits `uid:0`; a visible row without uid is root-owned.
     let user_id = Some(numeric_field(line, "uid:").unwrap_or(0));
     Some(Listener {
         port,
         process,
         pid,
+        inode,
         user_id,
     })
 }
@@ -249,6 +254,10 @@ fn quoted_process(line: &str) -> Option<String> {
 }
 
 fn numeric_field(line: &str, marker: &str) -> Option<u32> {
+    numeric_field_u64(line, marker).and_then(|value| u32::try_from(value).ok())
+}
+
+fn numeric_field_u64(line: &str, marker: &str) -> Option<u64> {
     line.find(marker)
         .and_then(|index| line.get(index + marker.len()..))
         .and_then(|tail| {
@@ -274,6 +283,7 @@ fn read_proc_listeners() -> Vec<Listener> {
                 port,
                 process: None,
                 pid: None,
+                inode: columns.get(9).and_then(|value| value.parse().ok()),
                 user_id: None,
             })
         })
@@ -1135,7 +1145,25 @@ mod tests {
         assert_eq!(parsed[0].port, 8765);
         assert_eq!(parsed[0].process.as_deref(), Some("node"));
         assert_eq!(parsed[0].pid, Some(123));
+        assert_eq!(parsed[0].inode, Some(1));
         assert_eq!(parsed[0].user_id, Some(501));
+    }
+
+    #[test]
+    fn replacement_listener_on_same_port_invalidates_discovery_cache() {
+        let first = parse_ss_listeners(
+            "LISTEN 0 511 127.0.0.1:4173 0.0.0.0:* users:((\"node\",pid=101,fd=20)) uid:501 ino:100\n",
+        );
+        let replacement = parse_ss_listeners(
+            "LISTEN 0 511 127.0.0.1:4173 0.0.0.0:* users:((\"node\",pid=101,fd=20)) uid:501 ino:200\n",
+        );
+        let cache = DiscoveryCache {
+            fingerprint: listener_identity_fingerprint(&first),
+            ports: Vec::new(),
+            refreshed_at: Some(Instant::now()),
+        };
+        assert!(cache.is_current(&listener_identity_fingerprint(&first)));
+        assert!(!cache.is_current(&listener_identity_fingerprint(&replacement)));
     }
 
     #[test]

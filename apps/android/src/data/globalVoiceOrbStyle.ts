@@ -3,19 +3,19 @@ import { unknownRecord } from "./unknownRecord";
 export const GLOBAL_VOICE_ORB_STYLE_PREFERENCE_ID = "voice-assistant-orb-style";
 
 /** Supported floating-overlay renderer identifiers. */
-export const globalVoiceOrbStyles = ["nebula", "particles"] as const;
+export const globalVoiceOrbStyles = ["particles", "nebula"] as const;
 
 /** One validated floating-overlay renderer identifier. */
 export type GlobalVoiceOrbStyle = (typeof globalVoiceOrbStyles)[number];
 
-/** Missing or invalid preferences preserve the production renderer. */
-export const DEFAULT_GLOBAL_VOICE_ORB_STYLE: GlobalVoiceOrbStyle = "nebula";
+/** Missing or invalid preferences use the default renderer. */
+export const DEFAULT_GLOBAL_VOICE_ORB_STYLE: GlobalVoiceOrbStyle = "particles";
 
 function isGlobalVoiceOrbStyle(value: unknown): value is GlobalVoiceOrbStyle {
   return globalVoiceOrbStyles.some((style) => style === value);
 }
 
-/** Decodes one independently versioned visual preference and preserves legacy Nebula behavior. */
+/** Decodes one independently versioned visual preference, preserving explicit saved styles. */
 export function decodeGlobalVoiceOrbStyle(value: string | null | undefined): GlobalVoiceOrbStyle {
   if (value === null || value === undefined) {
     return DEFAULT_GLOBAL_VOICE_ORB_STYLE;

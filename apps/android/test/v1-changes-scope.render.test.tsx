@@ -37,6 +37,16 @@ it("reloads and displays the selected Changes scope without remounting", async (
                 path: "/workspace/file.ts",
                 turnId: "turn-1",
               },
+              {
+                additions: 2,
+                availability: "deleted",
+                createdInScope: true,
+                deletions: 2,
+                itemId: "remove-1",
+                kind: "delete",
+                path: "/workspace/transient.ts",
+                turnId: "turn-2",
+              },
             ]
           : [],
       revision: `${scope ?? "branch"}-r1`,

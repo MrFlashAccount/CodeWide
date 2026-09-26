@@ -255,7 +255,7 @@ void uniffi_companion_swift_ffi_fn_free_corehost(uint64_t handle, RustCallStatus
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPANION_SWIFT_FFI_FN_CONSTRUCTOR_COREHOST_NEW
 #define UNIFFI_FFIDEF_UNIFFI_COMPANION_SWIFT_FFI_FN_CONSTRUCTOR_COREHOST_NEW
-uint64_t uniffi_companion_swift_ffi_fn_constructor_corehost_new(RustBuffer state_directory, RustBuffer codex_home, RustBuffer app_version, RustBuffer host_version, RustCallStatus *_Nonnull out_status
+uint64_t uniffi_companion_swift_ffi_fn_constructor_corehost_new(RustBuffer state_directory, RustBuffer codex_home, RustBuffer app_version, RustBuffer host_version, RustBuffer computer_name, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPANION_SWIFT_FFI_FN_METHOD_COREHOST_APP_SERVER_CONNECTION

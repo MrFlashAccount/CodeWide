@@ -700,7 +700,7 @@ open class CoreHost: CoreHostProtocol, @unchecked Sendable {
      * Returns an adapter error when the state directory cannot be opened,
      * migrated, exclusively locked, or durably checkpointed.
      */
-public convenience init(stateDirectory: String, codexHome: String, appVersion: String, hostVersion: String)throws  {
+public convenience init(stateDirectory: String, codexHome: String, appVersion: String, hostVersion: String, computerName: String)throws  {
     let handle =
         try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -708,7 +708,8 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
         FfiConverterString.lower(stateDirectory),
         FfiConverterString.lower(codexHome),
         FfiConverterString.lower(appVersion),
-        FfiConverterString.lower(hostVersion),uniffiCallStatus
+        FfiConverterString.lower(hostVersion),
+        FfiConverterString.lower(computerName),uniffiCallStatus
     )
 }
     self.init(unsafeFromHandle: handle)
@@ -1735,7 +1736,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_start_app_server() != 22333) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 64369) {
+    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 37983) {
         return InitializationResult.apiChecksumMismatch
     }
 

@@ -31,6 +31,15 @@ export type PrivateAssetTextResult = {
 type TransferRequest = { init?: RequestInit; uri: string };
 
 export const MAX_PRIVATE_ASSET_TEXT_PAGE_BYTES = Number("2097152");
+const UNSUPPORTED_MEDIA_STATUS = 415;
+
+/** The authenticated text endpoint rejected bytes that cannot be shown as text. */
+export class UnsupportedPrivateTextFormatError extends Error {
+  constructor() {
+    super("Unsupported text format");
+    this.name = "UnsupportedPrivateTextFormatError";
+  }
+}
 
 /**
  * The only authenticated HTTP boundary for private data. Callers describe a
@@ -140,6 +149,13 @@ export async function readPrivateAssetText(
   if (!response.ok) {
     if (response.status === 404 && source.kind === "path") {
       throw new Error("File was deleted");
+    }
+    if (
+      response.status === UNSUPPORTED_MEDIA_STATUS &&
+      resolved.kind !== "direct" &&
+      resolved.kind !== "media"
+    ) {
+      throw new UnsupportedPrivateTextFormatError();
     }
     const detail = (await response.text()).slice(0, 240).trim();
     throw new Error(

@@ -71,6 +71,9 @@ export function createTurnActionsWorkspaceAdapter({
   const markThreadRead = async (connectionId: string, threadId: string): Promise<void> => {
     await getSummaries()?.markRead(connectionId, threadId);
   };
+  const markThreadUnread = async (connectionId: string, threadId: string): Promise<void> => {
+    await getSummaries()?.markUnread(connectionId, threadId);
+  };
 
   const interruptTurn = async (connectionId: string, threadId: string, turnId: string) => {
     const session = getSession(connectionId);
@@ -115,6 +118,7 @@ export function createTurnActionsWorkspaceAdapter({
     forkThread,
     interruptTurn,
     markThreadRead,
+    markThreadUnread,
     renameThread,
     setThreadPinned,
     unarchiveThread,

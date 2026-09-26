@@ -20,6 +20,7 @@ use codewide_companion::{
     files::FileService,
     history::digest_turn,
     history_service::HistoryService,
+    host_identity::HostDisplayName,
     identity::{CompanionIdentity, rotate as rotate_identity},
     image_previews::ImagePreviewService,
     media::MediaProxyService,
@@ -732,8 +733,11 @@ fn print_pairing(
         .get("expiresAt")
         .and_then(serde_json::Value::as_u64)
         .ok_or("pairing response has no expiry")?;
-    let display_name =
-        std::env::var("CODEWIDE_SERVER_NAME").unwrap_or_else(|_| "CodeWide host".to_owned());
+    let display_name = match std::env::var("CODEWIDE_SERVER_NAME") {
+        Ok(configured_name) => HostDisplayName::new(configured_name)?,
+        Err(std::env::VarError::NotPresent) => HostDisplayName::system(),
+        Err(error) => return Err(error.into()),
+    };
     let emoji = std::env::var("CODEWIDE_SERVER_EMOJI").unwrap_or_else(|_| "🖥️".to_owned());
     let (pin, identity_expires_at) = pairing_transport_identity(&pairing, &endpoint)?;
     let active_relay = relay_transport
@@ -743,7 +747,7 @@ fn print_pairing(
         endpoint: &endpoint,
         pairing_token,
         expires_at,
-        display_name: &display_name,
+        display_name: display_name.as_str(),
         emoji: &emoji,
         tls_pin_sha256: &pin,
         identity_expires_at,
@@ -758,7 +762,7 @@ fn print_pairing(
         "endpoint": endpoint.as_str(),
         "pairingToken": pairing_token,
         "expiresAt": expires_at,
-        "displayName": display_name,
+        "displayName": display_name.as_str(),
         "emoji": emoji,
     });
     payload

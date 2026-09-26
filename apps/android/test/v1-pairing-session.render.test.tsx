@@ -68,7 +68,7 @@ it("passes both Relay and Companion pins from a WSS pairing link to secure pairi
       endpoint: "wss://192.0.2.10:8780/v1/sync",
       pairingToken: "t".repeat(43),
       expiresAt: now + 60_000,
-      displayName: "Host",
+      displayName: "Sergey's MacBook Pro",
       emoji: "🖥️",
       tlsPinSha256: `sha256/${"A".repeat(43)}=`,
       relayRouteId: "a".repeat(64),
@@ -79,6 +79,7 @@ it("passes both Relay and Companion pins from a WSS pairing link to secure pairi
   await act(async () => result.current.save());
   expect(props.onSave).toHaveBeenCalledWith(
     expect.objectContaining({
+      displayName: "Sergey's MacBook Pro",
       endpoint: "wss://192.0.2.10:8780/v1/sync",
       tlsPinSha256: `sha256/${"A".repeat(43)}=`,
       relay: { routeId: "a".repeat(64), tlsPinSha256: `sha256/${"B".repeat(43)}=` },

@@ -1,4 +1,8 @@
 import { privateAssetCacheKey } from "../../../data/private-transfer";
+import {
+  effectiveSessionKind,
+  effectiveThreadChanges,
+} from "../../../data/sessionChangeVisibility";
 import type {
   ThreadChangeScope,
   ThreadResourcesValue,
@@ -61,7 +65,7 @@ export function useCodeReviewResources(
     },
   );
   const loadedScope = scopeResource.value;
-  const changes: readonly CodeReviewFileResource[] =
+  const scopeChanges: readonly CodeReviewFileResource[] =
     loadedScope === null
       ? initialChanges
       : loadedScope.changes.map((change) =>
@@ -72,6 +76,7 @@ export function useCodeReviewResources(
             : change,
         );
   const changeScope = loadedScope?.changeScope ?? initialChangeScope;
+  const changes = effectiveThreadChanges(scopeChanges, changeScope);
   const changeScopes = loadedScope?.changeScopes ?? initialChangeScopes;
   const scopeLoading = scopeResource.status === "loading";
   const revealReference: CodeReviewLineReference | null =
@@ -120,33 +125,34 @@ export function useCodeReviewResources(
   const documentWarning = documentResource.value?.warning ?? null;
   const diffTruncated = documentResource.value?.diffTruncated ?? false;
   const loading = documentResource.status === "loading" || documentResource.status === "idle";
+  const selectedKind =
+    selectedChange === null ? null : effectiveSessionKind(selectedChange, changeScope);
   const documentStatus =
     selectedChange === null
       ? null
       : selectedChange.sourceOnly === true
         ? "Attached file"
-        : selectedChange.kind === "delete" || selectedChange.availability === "deleted"
+        : selectedKind === "delete"
           ? "Deleted file"
-          : selectedChange.kind === "add"
+          : selectedKind === "add"
             ? "New file"
             : diffTruncated
               ? "Diff truncated"
               : documentWarning !== null
                 ? "Current file"
                 : null;
-  const reviewFiles: CodeReviewFileItem[] = changes.map((change) => ({
-    additions: change.additions,
-    deletions: change.deletions,
-    path: change.path,
-    sourceOnly: change.sourceOnly === true,
-    status:
-      change.kind === "add"
-        ? ("added" as const)
-        : change.kind === "delete"
-          ? ("deleted" as const)
-          : ("modified" as const),
-    treePath: reviewTreePath(change.path, cwd),
-  }));
+  const reviewFiles: CodeReviewFileItem[] = changes.map((change) => {
+    const kind = effectiveSessionKind(change, changeScope);
+    return {
+      additions: change.additions,
+      countsAreNet: changeScope !== "session" && changeScope !== "lastTurn",
+      deletions: change.deletions,
+      path: change.path,
+      sourceOnly: change.sourceOnly === true,
+      status: kind === "add" ? "added" : kind === "delete" ? "deleted" : "modified",
+      treePath: reviewTreePath(change.path, cwd),
+    };
+  });
   const workspaceRevision = codeReviewWorkspaceRevision(reviewFiles);
   return {
     changes,

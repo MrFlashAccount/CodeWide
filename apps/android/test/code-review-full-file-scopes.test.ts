@@ -5,6 +5,11 @@ vi.mock("../src/rendering/DocumentPreviewHost", () => ({
     throw new Error("Private file request failed");
   },
 }));
+vi.mock("../src/features/review/resources/loadReviewImage", () => ({
+  loadReviewImage: async () => {
+    throw new Error("Image preview is outside this test");
+  },
+}));
 
 import { loadCodeReviewResource } from "../src/features/review/resources/reviewResource";
 import type { ThreadChangeScope } from "../src/data/workspace-resource-database";

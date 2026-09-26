@@ -43,11 +43,11 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     onArchive,
     onLoadMore,
     onLoadMoreProject,
-    onMarkRead,
     onNewThread,
     onOffsetChange,
     onOpenProject,
     onTogglePin,
+    onToggleRead,
     onUnarchive,
     project,
     projectLimit,
@@ -165,11 +165,11 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                       <SelectableThreadRow
                         link={threadNavigation.getThreadLink(item.thread)}
                         onArchive={async () => onArchive(item.thread)}
-                        onMarkRead={async () => onMarkRead(item.thread)}
                         onNavigate={() => {
                           threadNavigation.prepareThreadLink(threadSelectionKey(item.thread));
                         }}
                         onTogglePin={async () => onTogglePin(item.thread)}
+                        onToggleRead={async () => onToggleRead(item.thread)}
                         onUnarchive={async () => onUnarchive(item.thread)}
                         selectedThreadKey={selectedThreadKey}
                         server={

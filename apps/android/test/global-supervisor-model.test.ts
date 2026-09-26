@@ -81,8 +81,10 @@ describe("GlobalSupervisorFeature", () => {
     const first = Promise.withResolvers<void>();
     const second = Promise.withResolvers<void>();
     const third = Promise.withResolvers<void>();
-    owner.setMicrophoneMuted.mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => second.promise).mockImplementationOnce(() => third.promise);
+    owner.setMicrophoneMuted
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockImplementationOnce(() => third.promise);
     const a = feature.toggleMicrophone();
     const b = feature.toggleMicrophone();
     const c = feature.toggleMicrophone();
@@ -90,23 +92,25 @@ describe("GlobalSupervisorFeature", () => {
     third.resolve();
     await c;
     expect(feature.microphoneMuted$.peek()).toBe(true);
-    second.resolve(); first.resolve();
+    second.resolve();
+    first.resolve();
     await Promise.all([a, b]);
     expect(feature.microphoneMuted$.peek()).toBe(true);
-    await feature.pause(); await feature.resume();
+    await feature.pause();
+    await feature.resume();
     expect(feature.microphoneMuted$.peek()).toBe(true);
     await Promise.all([feature.stop(), feature.stop()]);
     await feature.stop();
     expect(owner.stop).toHaveBeenCalledOnce();
   });
 
-  it("shows startup progress until binding recovery and activation settle", async () => {
-    let finishRecovery: (() => void) | null = null;
+  it("shows startup progress until authoritative preparation and activation settle", async () => {
+    let finishPreparation: (() => void) | null = null;
     const owner = runtime();
-    vi.mocked(owner.value.recover).mockImplementationOnce(
+    vi.mocked(owner.value.prepare).mockImplementationOnce(
       () =>
-        new Promise<void>((resolve) => {
-          finishRecovery = resolve;
+        new Promise((resolve) => {
+          finishPreparation = () => resolve({ home: HOME, status: "ready" });
         }),
     );
     const feature = createGlobalSupervisorFeature(owner.value);
@@ -115,24 +119,21 @@ describe("GlobalSupervisorFeature", () => {
 
     expect(feature.render$.peek().phase).toBe("activating");
     expect(globalSupervisorToggleState(feature.render$.peek())).toBe("starting");
-    await vi.waitFor(() => expect(finishRecovery).not.toBeNull());
-    finishRecovery?.();
+    await vi.waitFor(() => expect(finishPreparation).not.toBeNull());
+    finishPreparation?.();
     await toggling;
     expect(globalSupervisorToggleState(feature.render$.peek())).toBe("active");
     await feature.toggle();
     expect(globalSupervisorToggleState(feature.render$.peek())).toBe("idle");
   });
 
-  it("uses one toggle to create the initial binding, start, and then stop", async () => {
+  it("uses one toggle to read the binding, start, and then stop", async () => {
     const owner = runtime();
     const feature = createGlobalSupervisorFeature(owner.value);
 
     await feature.toggle();
 
-    expect(owner.value.recover).toHaveBeenCalledWith({
-      action: "chooseHome",
-      label: "Choose home server",
-    });
+    expect(owner.value.recover).not.toHaveBeenCalled();
     expect(owner.value.prepare).toHaveBeenCalledOnce();
     expect(owner.value.start).toHaveBeenCalledOnce();
     expect(feature.render$.peek().phase).toBe("listening");
@@ -141,6 +142,33 @@ describe("GlobalSupervisorFeature", () => {
 
     expect(owner.stop).toHaveBeenCalledOnce();
     expect(feature.render$.peek().phase).toBe("ready");
+  });
+
+  it("shows the actual repair action on the first tap for an invalid saved binding", async () => {
+    const owner = runtime();
+    vi.mocked(owner.value.prepare)
+      .mockResolvedValueOnce({
+        failure: "bindingUnavailable",
+        recovery: { action: "recreateBinding", label: "Recreate supervisor" },
+        status: "failed",
+      })
+      .mockResolvedValueOnce({ home: HOME, status: "ready" });
+    const feature = createGlobalSupervisorFeature(owner.value);
+
+    await feature.toggle();
+    expect(feature.render$.peek()).toMatchObject({
+      failureSummary: "The supervisor binding needs repair.",
+      phase: "failed",
+      recovery: { action: "recreateBinding" },
+    });
+    expect(owner.value.recover).not.toHaveBeenCalled();
+
+    await feature.toggle();
+    expect(owner.value.recover).toHaveBeenCalledWith({
+      action: "recreateBinding",
+      label: "Recreate supervisor",
+    });
+    expect(feature.render$.peek().phase).toBe("listening");
   });
 
   it("runs one prepare-start sequence for duplicate explicit entry and stops it", async () => {

@@ -42,6 +42,7 @@ export type ThreadSummaryDatabase = {
   ) => Promise<void>;
   loadView: (request: ThreadSummaryViewRequest) => Promise<void>;
   markRead: (connectionId: string, threadId: string) => Promise<void>;
+  markUnread: (connectionId: string, threadId: string) => Promise<void>;
   mergeSnapshots: (
     connectionId: string,
     threads: SyncSnapshotThread[],

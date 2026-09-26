@@ -262,7 +262,7 @@ function projectThreadSummaryPatch(
       next.recencyAt = Math.max(next.recencyAt ?? 0, summary.recencyAt);
     }
     if (summary.finalAgentResponse === true) {
-      next.unread = next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;
+      next.unread = next.unread > 0 || next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;
     }
   }
   return { key, value: next };

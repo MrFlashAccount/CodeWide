@@ -53,7 +53,7 @@ export function createProjectsWorkspaceAdapter({
       throw new Error("Connection is not enabled");
     }
     return parseAddedRemoteProject(
-      await rpcAfterAttach(session, "companion/project/add", { path }),
+      await rpcAfterAttach(session, "companion/project/add", { path, pinned: true }),
     );
   };
 

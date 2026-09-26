@@ -5,10 +5,15 @@ import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import type { ThreadRowProps } from "./threadRowContract";
 
+const READ_ACTION = {
+  read: { icon: "mail-unread-outline", label: "Mark as unread", swipeLabel: "Unread" },
+  unread: { icon: "checkmark-done-outline", label: "Mark as read", swipeLabel: "Read" },
+} as const;
+
 export function useThreadRowActions({
   onArchive,
-  onMarkRead,
   onTogglePin,
+  onToggleRead,
   onUnarchive,
   thread,
 }: ThreadRowProps) {
@@ -17,8 +22,9 @@ export function useThreadRowActions({
   const [webContextVisible, setWebContextVisible] = useState(false);
   const archiveAction = thread.archived === true ? onUnarchive : onArchive;
   const archiveLabel = thread.archived === true ? "Unarchive" : "Archive";
+  const readAction = thread.unread > 0 ? READ_ACTION.unread : READ_ACTION.read;
   const swipeEnabled =
-    onTogglePin !== undefined || archiveAction !== undefined || onMarkRead !== undefined;
+    onTogglePin !== undefined || archiveAction !== undefined || onToggleRead !== undefined;
   const menuActions: ActionMenuItem[] = [
     { icon: "copy-outline", id: "copy-session-id", label: "Copy session ID" },
     {
@@ -29,10 +35,10 @@ export function useThreadRowActions({
       selected: thread.pinned,
     },
     {
-      disabled: onMarkRead === undefined,
-      icon: "checkmark-done-outline",
+      disabled: onToggleRead === undefined,
+      icon: readAction.icon,
       id: "read",
-      label: "Mark as read",
+      label: readAction.label,
     },
     {
       destructive: thread.archived !== true,
@@ -69,6 +75,7 @@ export function useThreadRowActions({
     closeSwipe,
     dialog,
     menuActions,
+    readAction,
     runThreadAction,
     setWebContextVisible,
     swipeableRef,

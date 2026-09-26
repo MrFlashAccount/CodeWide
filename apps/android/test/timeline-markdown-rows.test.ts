@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   projectTimelineRows,
   timelineRowKey,
+  timelineResponseStartRow,
 } from "../src/features/conversation/timeline/timelineRows";
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
 
@@ -69,7 +70,6 @@ function streamingTurnRow(id: string, items: readonly unknown[]): TurnRow {
 
 const enabled = {
   enabled: true,
-  latestUnreadAgentTurnId: null,
   searchMessageItemId: null,
   threadSearchActive: false,
 };
@@ -109,22 +109,41 @@ describe("feature-flagged conversation rows", () => {
     expect(new Set(rows.map((row) => row.timelineIndex))).toEqual(new Set([0]));
   });
 
-  it("uses the same model for search, unread and streaming turns", () => {
+  it("uses the same model for search and streaming turns", () => {
     const completed = turnRow("completed", LARGE_MARKDOWN);
     const streaming = turnRow("streaming", LARGE_MARKDOWN, "inProgress");
 
     expect(
       projectTimelineRows([completed], { ...enabled, threadSearchActive: true }),
     ).toMatchObject([{ kind: "turnSlice", placement: "single" }]);
-    expect(
-      projectTimelineRows([completed], {
-        ...enabled,
-        latestUnreadAgentTurnId: completed.id,
-      }),
-    ).toMatchObject([{ kind: "turnSlice", placement: "single" }]);
     expect(projectTimelineRows([streaming], enabled)).toMatchObject([
       { kind: "turnSlice", placement: "single" },
     ]);
+  });
+
+  it("makes the agent response a first-class anchor after the user row", () => {
+    const item = streamingTurnRow("anchored", [
+      {
+        clientId: null,
+        content: [{ text: "Explain the result", text_elements: [], type: "text" }],
+        id: "user-anchor",
+        type: "userMessage",
+      },
+      {
+        id: "agent-anchor",
+        memoryCitation: null,
+        phase: "commentary",
+        text: "The result starts here",
+        type: "agentMessage",
+      },
+    ]);
+    const rows = projectTimelineRows([item], enabled);
+
+    expect(rows).toMatchObject([
+      { item, kind: "turnLead" },
+      { followsLead: true, item, kind: "turnSlice", placement: "single" },
+    ]);
+    expect(timelineResponseStartRow(rows, item.id)).toEqual({ index: 1, key: rows[1]?.key });
   });
 
   it("preserves unchanged row identity across outer timeline snapshots", () => {
@@ -168,18 +187,18 @@ describe("feature-flagged conversation rows", () => {
       enabled,
     );
 
-    expect(before).toMatchObject([
+    expect(before.filter((row) => row.kind === "turnSlice")).toMatchObject([
       { kind: "turnSlice", parts: [{ kind: "markdownBlock" }], placement: "single" },
     ]);
-    expect(after).toMatchObject([
+    expect(after.filter((row) => row.kind === "turnSlice")).toMatchObject([
       {
         kind: "turnSlice",
         parts: [{ kind: "markdownBlock" }, { kind: "activity" }],
         placement: "single",
       },
     ]);
-    const beforeRow = before[0];
-    const afterRow = after[0];
+    const beforeRow = before.find((row) => row.kind === "turnSlice");
+    const afterRow = after.find((row) => row.kind === "turnSlice");
     if (beforeRow === undefined || afterRow === undefined) {
       throw new Error("Expected one projected row before and after the streaming update");
     }

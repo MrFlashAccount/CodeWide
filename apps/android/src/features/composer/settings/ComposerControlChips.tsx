@@ -152,10 +152,11 @@ export function ComposerControlChips({
     selectedControlModel?.label ??
     displayedModel ??
     (pending ? "Loading model…" : "Model not confirmed");
+  const modelPending = initialLoading;
+  const permissionsPending = initialLoading;
   const modelNameAndEffort =
     displayedEffort === null ? modelLabel : `${modelLabel} · ${displayedEffort}`;
-  const modelText =
-    pendingChoice === null ? modelNameAndEffort : `${modelNameAndEffort} · Updating…`;
+  const modelTextPending = modelPending || pendingChoice !== null;
   const effectiveServiceTier = newChat
     ? selectedServiceTier === undefined
       ? (controls.defaults.serviceTier ?? selectedControlModel?.defaultServiceTier ?? null)
@@ -170,17 +171,15 @@ export function ComposerControlChips({
     effectivePermissions === null
       ? executionPermissionsLabel(serverExecution, pending)
       : permissionProfileLabel(effectivePermissions);
-  const modelPending = initialLoading;
-  const permissionsPending = initialLoading;
   return (
     <>
       {readOnly ? (
         <View style={styles.composerContextChip} testID="readonly-model-chip">
           <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
           <ComposerContextLabel
-            loading={modelPending}
+            loading={modelTextPending}
             testID="composer-model-label"
-            text={modelPending ? "Loading model…" : modelText}
+            text={modelPending ? "Loading model…" : modelNameAndEffort}
           />
           {fastTier !== undefined && isFastServiceTier(effectiveServiceTier, fastTier) && (
             <Ionicons color={colors.text} name="flash" size={iconSize.inline} />
@@ -214,9 +213,9 @@ export function ComposerControlChips({
             <>
               <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
               <ComposerContextLabel
-                loading={modelPending}
+                loading={modelTextPending}
                 testID="composer-model-label"
-                text={modelPending ? "Loading model…" : modelText}
+                text={modelPending ? "Loading model…" : modelNameAndEffort}
               />
               {fastTier !== undefined && isFastServiceTier(effectiveServiceTier, fastTier) && (
                 <Ionicons color={colors.text} name="flash" size={iconSize.inline} />

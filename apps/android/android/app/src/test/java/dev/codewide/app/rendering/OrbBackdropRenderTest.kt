@@ -11,7 +11,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import kotlin.math.hypot
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], manifest = Config.NONE)
@@ -19,9 +18,9 @@ import kotlin.math.hypot
 class OrbBackdropRenderTest {
   @Test fun particlesBackdropContractsWithTheRenderedOrbWithoutResizingTheSlot() {
     val slot = slot(VoiceAssistantOrbStyle.PARTICLES)
-    val idle = paintedRadius(slot)
+    val idle = particlesBackdropRadius(VoiceAssistantOrbState.IDLE)
     slot.setOrbState(VoiceAssistantOrbState.THINKING)
-    val contracted = paintedRadius(slot)
+    val contracted = particlesBackdropRadius(VoiceAssistantOrbState.THINKING)
     assertTrue("thinking radius $contracted must contract from idle $idle", contracted < idle)
     assertEquals(66, slot.width)
     assertEquals(66, slot.height)
@@ -53,17 +52,15 @@ class OrbBackdropRenderTest {
     layout(0, 0, 66, 66)
   }
 
-  private fun paintedRadius(slot: VoiceAssistantOrbSlotView): Float {
-    val bitmap = Bitmap.createBitmap(76, 76, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    canvas.translate(5f, 5f)
-    slot.draw(canvas)
-    assertEquals(0, Color.alpha(bitmap.getPixel(0, 0)))
-    var radius = 0f
-    for (x in 0 until 76) for (y in 0 until 76) {
-      if (Color.alpha(bitmap.getPixel(x, y)) > 8) radius = maxOf(radius, hypot(x + 0.5f - 38, y + 0.5f - 38))
-    }
-    bitmap.recycle()
-    return radius
+  private fun particlesBackdropRadius(state: VoiceAssistantOrbState): Float {
+    val frame = ParticlesOrbSimulation(state).advance(
+      state = state,
+      inputLevel = null,
+      playbackLevel = null,
+      deltaSeconds = 0f,
+      isStatic = true,
+    )
+    val visualRadius = ParticlesOrbGlFrameBuilder(1f).write(frame, 66f)
+    return OrbBackdropRadius().update(visualRadius, 3f, 0f, true)
   }
 }

@@ -146,6 +146,7 @@ export function SidebarProjectsSheet(
         data={rows}
         dataVersion={dataVersion}
         drawDistance={320}
+        extraData={dataVersion}
         getFixedItemSize={projectManagerItemHeight}
         getItemType={(item) => item.kind}
         keyboardShouldPersistTaps="handled"

@@ -56,12 +56,49 @@ describe("code review empty states", () => {
     expect(codeReviewDocumentEmptyState(deleted, "unified")).toBeNull();
   });
 
+  it("shows no net change for a file created and removed within the session", () => {
+    const createdThenDeleted = document({
+      displayState: "deleted",
+      fullFileDiff: true,
+      source: "",
+      patches: [
+        { kind: "add", diff: "initial\n" },
+        { kind: "update", diff: "@@ -1 +1 @@\n-initial\n+later\n" },
+        { kind: "delete", diff: "later\n" },
+      ],
+    });
+    for (const mode of ["unified", "source"] as const) {
+      expect(codeReviewDocumentEmptyState(createdThenDeleted, mode)).toEqual({
+        title: "No net changes",
+        message: "This file was created and removed in the selected scope.",
+      });
+    }
+  });
+
   it("does not render a fake blank line for an empty document", () => {
     expect(
       codeReviewDocumentEmptyState(document({ displayState: "empty", source: "" }), "source"),
     ).toEqual({
       title: "Nothing to show",
       message: "This file has no content or renderable diff.",
+    });
+  });
+
+  it("identifies unsupported files without reporting a preview failure", () => {
+    expect(
+      codeReviewDocumentEmptyState(
+        {
+          displayState: "unsupported",
+          patches: [],
+          path: "/workspace/archive.zip",
+          revision: "unsupported",
+          source: "",
+        },
+        "source",
+      ),
+    ).toEqual({
+      message: "This file format cannot be previewed in Changes.",
+      title: "Unsupported format",
     });
   });
 

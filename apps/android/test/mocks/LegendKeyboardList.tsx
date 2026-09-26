@@ -5,6 +5,15 @@ import { View } from "react-native";
 export const legendListScrollToEnd = jest.fn(async () => undefined);
 export const legendListScrollToIndex = jest.fn(async () => undefined);
 export const legendListIsAtEnd = jest.fn(() => true);
+let withinEndThreshold = true;
+const endThresholdListeners = new Set<(withinThreshold: boolean) => void>();
+
+export function setLegendListWithinEndThreshold(withinThreshold: boolean): void {
+  withinEndThreshold = withinThreshold;
+  for (const listener of endThresholdListeners) {
+    listener(withinThreshold);
+  }
+}
 
 function KeyboardAwareLegendListInner<ItemT>(
   props: LegendListProps<ItemT>,
@@ -35,6 +44,11 @@ function KeyboardAwareLegendListInner<ItemT>(
             positionByKey: (key: string) =>
               data.findIndex((item, index) => props.keyExtractor?.(item, index) === key) * 480,
             isAtEnd: legendListIsAtEnd(),
+            isWithinMaintainScrollAtEndThreshold: withinEndThreshold,
+            listen: (_listenerType: string, listener: (withinThreshold: boolean) => void) => {
+              endThresholdListeners.add(listener);
+              return () => endThresholdListeners.delete(listener);
+            },
             scroll: 100,
           }) as ReturnType<LegendListRef["getState"]>,
         scrollToEnd: legendListScrollToEnd,

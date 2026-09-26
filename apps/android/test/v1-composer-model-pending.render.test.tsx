@@ -38,7 +38,7 @@ jest.mock("../src/ui/TurnControlMenus", () => ({
   PermissionsMenu: () => null,
 }));
 
-it("keeps a selected model visible until the thread confirms it", () => {
+it("optimistically shimmers the selected model without changing its text geometry", () => {
   const thread = createV1TestThread("thread", "project", 1, []);
   seedThreadExecutionSettings(thread, {
     effort: "medium",
@@ -71,7 +71,9 @@ it("keeps a selected model visible until the thread confirms it", () => {
 
   fireEvent.press(view.getByLabelText("Choose Astra"));
   expect(onApplySettings).toHaveBeenCalledTimes(1);
-  expect(view.getByTestId("composer-model-label")).toHaveTextContent("astra · high · Updating…");
+  expect(view.getByTestId("composer-model-label")).toHaveTextContent("astra · high");
+  expect(view.getByTestId("composer-model-label")).toHaveProp("accessibilityLabel", "astra · high");
+  expect(view.getByTestId("composer-model-label")).not.toHaveTextContent("Updating…");
 
   seedThreadExecutionSettings(thread, {
     effort: "high",
@@ -81,7 +83,7 @@ it("keeps a selected model visible until the thread confirms it", () => {
   });
   view.rerender(<ComposerControlChips {...props} />);
   expect(view.getByTestId("composer-model-label")).toHaveTextContent("astra · high");
-  expect(view.getByTestId("composer-model-label")).not.toHaveTextContent("Updating…");
+  expect(view.getByTestId("composer-model-label")).not.toHaveProp("accessibilityLabel");
 
   seedThreadExecutionSettings(thread, {
     effort: "medium",

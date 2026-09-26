@@ -14,6 +14,7 @@ export function createGlobalSupervisorFeature(
   const render = createGlobalSupervisorRenderModel();
   const activation = createGlobalSupervisorActivationOwner(runtime, render);
   const operations = createGlobalSupervisorOperationOwner();
+  let hasPrepared = false;
 
   const prepareAndStart = async (): Promise<void> => {
     try {
@@ -22,6 +23,7 @@ export function createGlobalSupervisorFeature(
           render.publishPreparationProgress(progress);
         }
       });
+      hasPrepared = true;
       if (!activation.hasActivation()) {
         render.publishPreparation(preparation);
         if (preparation.status === "ready") {
@@ -104,6 +106,10 @@ export function createGlobalSupervisorFeature(
     }
     if (activation.hasActivation()) {
       return stop();
+    }
+    if (!hasPrepared) {
+      render.publishActivating();
+      return enter();
     }
     const snapshot = render.render$.peek();
     const phase = snapshot.phase;

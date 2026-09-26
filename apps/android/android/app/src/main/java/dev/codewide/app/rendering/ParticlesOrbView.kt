@@ -2,12 +2,10 @@ package dev.codewide.app.rendering
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
+import android.view.ViewGroup
+import kotlin.math.abs
 import kotlin.math.PI
 import kotlin.math.hypot
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
@@ -76,6 +74,43 @@ internal class MutableParticlesOrbProjection {
   var color = 0
 }
 
+internal class ParticlesOrbProjectionContext(
+  val frame: ParticlesOrbFrame,
+  val size: Float,
+  val density: Float,
+) {
+  val center = size / 2f
+  val radius = center * 0.62f * frame.radiusScale
+  val cosY = cos(frame.angleY)
+  val sinY = sin(frame.angleY)
+  val cosX = cos(ParticlesOrbModel.ANGLE_X)
+  val sinX = sin(ParticlesOrbModel.ANGLE_X)
+  val rippleAmp = frame.ripple * (0.045f + frame.level * 0.24f)
+  val pulseAmp = frame.pulse * 0.16f
+  val idleAmp = frame.weights.idle * radius * 0.055f * frame.motionScale
+  val jitterAmp = (frame.flow + frame.weights.error * 0.7f) * radius *
+    (0.015f + frame.level * 0.085f) * frame.motionScale
+  val shakeX: Float
+  val shakeY: Float
+  val fromRed = 240f + (251f - 240f) * frame.weights.error
+  val fromGreen = 171f + (113f - 171f) * frame.weights.error
+  val fromBlue = 252f + (133f - 252f) * frame.weights.error
+  val toRed = 129f + (244f - 129f) * frame.weights.error
+  val toGreen = 140f + (63f - 140f) * frame.weights.error
+  val toBlue = 248f + (94f - 248f) * frame.weights.error
+
+  init {
+    val shakeAmp = frame.weights.error * radius * 0.05f * frame.motionScale
+    if (shakeAmp == 0f) {
+      shakeX = 0f
+      shakeY = 0f
+    } else {
+      shakeX = shakeAmp * (sin(frame.time * 26f) + 0.5f * sin(frame.time * 15.7f))
+      shakeY = shakeAmp * (cos(frame.time * 22.5f) + 0.5f * sin(frame.time * 13.1f))
+    }
+  }
+}
+
 /** Exact state mixing and particle geometry from VoiceOrbs' MIT Particles Orb. */
 internal object ParticlesOrbModel {
   const val PARTICLE_COUNT = 192
@@ -127,68 +162,52 @@ internal object ParticlesOrbModel {
     density: Float,
   ): ParticlesOrbProjection {
     val output = MutableParticlesOrbProjection()
-    projectInto(point, index, frame, size, density, output)
+    projectInto(point, index, ParticlesOrbProjectionContext(frame, size, density), output)
     return ParticlesOrbProjection(output.x, output.y, output.alpha, output.dotRadius, output.color)
   }
 
   fun projectInto(
     point: ParticlesOrbPoint,
     index: Int,
-    frame: ParticlesOrbFrame,
-    size: Float,
-    density: Float,
+    context: ParticlesOrbProjectionContext,
     output: MutableParticlesOrbProjection,
   ) {
-    val center = size / 2f
-    val baseRadius = center * 0.62f
-    val radius = baseRadius * frame.radiusScale
+    val frame = context.frame
     val weights = frame.weights
 
-    val cosY = cos(frame.angleY)
-    val sinY = sin(frame.angleY)
-    val cosX = cos(ANGLE_X)
-    val sinX = sin(ANGLE_X)
-    val x1 = point.x * cosY - point.z * sinY
-    val z1 = point.x * sinY + point.z * cosY
-    val y1 = point.y * cosX - z1 * sinX
-    val z2 = point.y * sinX + z1 * cosX
+    val x1 = point.x * context.cosY - point.z * context.sinY
+    val z1 = point.x * context.sinY + point.z * context.cosY
+    val y1 = point.y * context.cosX - z1 * context.sinX
+    val z2 = point.y * context.sinX + z1 * context.cosX
     val depth = (z2 + 1f) / 2f
     val perspective = 0.65f + depth * 0.45f
 
-    val rippleAmp = frame.ripple * (0.045f + frame.level * 0.24f)
-    val pulseAmp = frame.pulse * 0.16f
-    var pointRadius = radius
-    if (rippleAmp > 0.002f) {
-      pointRadius *= 1f + rippleAmp * sin(point.y * 4.5f - frame.time * 6.5f)
+    var pointRadius = context.radius
+    if (context.rippleAmp > 0.002f) {
+      pointRadius *= 1f + context.rippleAmp * sin(point.y * 4.5f - frame.time * 6.5f)
     }
-    if (pulseAmp > 0.002f) {
-      pointRadius *= 1f - pulseAmp *
+    if (context.pulseAmp > 0.002f) {
+      pointRadius *= 1f - context.pulseAmp *
         (0.5f + 0.5f * sin(point.ringFrac * TWO_PI + frame.time * 3.1f))
     }
 
-    val shakeAmp = weights.error * radius * 0.05f * frame.motionScale
-    var offsetX = shakeAmp *
-      (sin(frame.time * 26f) + 0.5f * sin(frame.time * 15.7f))
-    var offsetY = shakeAmp *
-      (cos(frame.time * 22.5f) + 0.5f * sin(frame.time * 13.1f))
-    val idleAmp = weights.idle * radius * 0.055f * frame.motionScale
-    if (idleAmp > 0.01f) {
-      offsetX += idleAmp *
+    var offsetX = context.shakeX
+    var offsetY = context.shakeY
+    if (context.idleAmp > 0.01f) {
+      offsetX += context.idleAmp *
         (sin(frame.time * 0.55f + point.seed * 3.7f) +
           0.5f * sin(frame.time * 1.3f + point.seed * 1.3f))
-      offsetY += idleAmp *
+      offsetY += context.idleAmp *
         (cos(frame.time * 0.62f + point.seed * 2.9f) +
           0.5f * sin(frame.time * 1.05f + point.seed * 5.1f))
     }
-    val jitterAmp = (frame.flow + weights.error * 0.7f) * radius *
-      (0.015f + frame.level * 0.085f) * frame.motionScale
-    if (jitterAmp > 0.01f) {
-      offsetX += jitterAmp * sin(frame.time * 14f + point.seed * 9.3f)
-      offsetY += jitterAmp * cos(frame.time * 17f + point.seed * 6.1f)
+    if (context.jitterAmp > 0.01f) {
+      offsetX += context.jitterAmp * sin(frame.time * 14f + point.seed * 9.3f)
+      offsetY += context.jitterAmp * cos(frame.time * 17f + point.seed * 6.1f)
     }
 
-    val sphereX = center + x1 * pointRadius * perspective + offsetX
-    val sphereY = center + y1 * pointRadius * perspective + offsetY
+    val sphereX = context.center + x1 * pointRadius * perspective + offsetX
+    val sphereY = context.center + y1 * pointRadius * perspective + offsetY
     val alphaScale = 1f - weights.disabled * 0.35f
     val disabledOpacity = 1f - weights.disabled * 0.5f
     val sphereAlpha = (0.12f + depth * depth * 0.78f) * alphaScale * disabledOpacity
@@ -202,10 +221,10 @@ internal object ParticlesOrbModel {
       val base = (index.toFloat() / PARTICLE_COUNT) * TWO_PI
       val jitter = 0.05f * sin(frame.time * 1.3f + point.seed)
       val ringAngle = base + frame.connectingPhase + jitter
-      val ringRadius = center * (0.58f + 0.13f * point.ringFrac) *
+      val ringRadius = context.center * (0.58f + 0.13f * point.ringFrac) *
         (1f + 0.05f * sin(frame.time + point.seed * 1.7f))
-      val circleX = center + cos(ringAngle) * ringRadius
-      val circleY = center + sin(ringAngle) * ringRadius
+      val circleX = context.center + cos(ringAngle) * ringRadius
+      val circleY = context.center + sin(ringAngle) * ringRadius
       val ringAlpha = (0.35f + point.tone * 0.5f) * disabledOpacity
       val ringDot = 0.75f + point.tone * 0.9f
       screenX += (circleX - sphereX) * weights.connecting
@@ -214,19 +233,13 @@ internal object ParticlesOrbModel {
       dot += (ringDot - sphereDot) * weights.connecting
     }
 
-    val fromRed = 240f + (251f - 240f) * weights.error
-    val fromGreen = 171f + (113f - 171f) * weights.error
-    val fromBlue = 252f + (133f - 252f) * weights.error
-    val toRed = 129f + (244f - 129f) * weights.error
-    val toGreen = 140f + (63f - 140f) * weights.error
-    val toBlue = 248f + (94f - 248f) * weights.error
     output.x = screenX
     output.y = screenY
     output.alpha = alpha
-    output.dotRadius = dot * density
-    val baseRed = fromRed + (toRed - fromRed) * point.tone
-    val baseGreen = fromGreen + (toGreen - fromGreen) * point.tone
-    val baseBlue = fromBlue + (toBlue - fromBlue) * point.tone
+    output.dotRadius = dot * context.density
+    val baseRed = context.fromRed + (context.toRed - context.fromRed) * point.tone
+    val baseGreen = context.fromGreen + (context.toGreen - context.fromGreen) * point.tone
+    val baseBlue = context.fromBlue + (context.toBlue - context.fromBlue) * point.tone
     val grayscale = baseRed * 0.2126f + baseGreen * 0.7152f + baseBlue * 0.0722f
     val grayscaleAmount = weights.disabled * 0.85f
     val red = (baseRed + (grayscale - baseRed) * grayscaleAmount).toInt()
@@ -340,81 +353,53 @@ internal class ParticlesOrbSimulation(initialState: VoiceAssistantOrbState = Voi
 }
 
 /**
- * Native Canvas port of VoiceOrbs' Particles Orb, scaled without changing its motion geometry.
+ * OpenGL ES port of VoiceOrbs' Particles Orb, scaled without changing its motion geometry.
  * Source: amunozdev/voiceorbs@339ab42d98f6c4ffa03709ffa71f9f6965a2171a (MIT).
  */
 internal class ParticlesOrbView(context: Context) : VoiceAssistantOrbView(context) {
-  private val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-  private val additiveXfermode = PorterDuffXfermode(PorterDuff.Mode.ADD)
-  private val points = ParticlesOrbModel.buildSphere()
-  private val projected = List(points.size) { MutableParticlesOrbProjection() }
-  private val density = resources.displayMetrics.density
-  private var simulation = ParticlesOrbSimulation()
   private var inputLevel: Float? = null
   private var playbackLevel: Float? = null
-  private var frame = simulation.advance(orbState, null, null, 0f)
-  private var hasAdvanced = false
+  private val glView = ParticlesOrbGlView(context)
+
+  override val usesMainThreadAnimationClock = false
 
   init {
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    addView(
+      glView,
+      LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+    )
   }
 
   override fun setAudioLevels(inputLevel: Double, playbackLevel: Double) {
     recordAudioInput(inputLevel, playbackLevel)
     this.inputLevel = inputLevel.normalizedLevel()
     this.playbackLevel = playbackLevel.normalizedLevel()
+    glView.setAudioLevels(this.inputLevel, this.playbackLevel)
   }
 
-  override fun advanceAnimation(deltaSeconds: Float) {
-    hasAdvanced = true
-    frame = simulation.advance(orbState, inputLevel, playbackLevel, deltaSeconds)
-  }
+  override fun advanceAnimation(deltaSeconds: Float) = Unit
 
   override fun onOrbStateChanged() {
-    if (!hasAdvanced) {
-      simulation = ParticlesOrbSimulation(orbState)
-      frame = simulation.advance(orbState, inputLevel, playbackLevel, 0f)
-    }
-    if (reducedMotion) frame = simulation.advance(orbState, null, null, 0f, isStatic = true)
+    glView.setOrbState(orbState)
   }
 
   override fun onReducedMotionChanged() {
-    frame = if (reducedMotion) {
-      simulation.advance(orbState, null, null, 0f, isStatic = true)
-    } else {
-      simulation.advance(orbState, inputLevel, playbackLevel, 0f)
-    }
+    glView.setReducedMotion(reducedMotion)
   }
 
-  override fun rendererDiagnostic(): String =
-    "style=particles input=$inputLevel playback=$playbackLevel level=${frame.level} " +
-      "listeningWeight=${frame.weights.listening} ripple=${frame.ripple} " +
-      "radiusScale=${frame.radiusScale} angleY=${frame.angleY} static=${frame.isStatic}"
+  override fun onBackdropChanged(enabled: Boolean) {
+    glView.setBackdropEnabled(enabled)
+  }
 
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
-    if (width <= 0 || height <= 0) return
-    val size = minOf(width, height).toFloat()
-    var visualRadius = 0f
-    for (index in points.indices) {
-      val point = projected[index]
-      ParticlesOrbModel.projectInto(points[index], index, frame, size, density, point)
-      visualRadius = maxOf(visualRadius, ParticlesOrbModel.visualExtent(point, size))
-    }
-    drawBackdrop(canvas, visualRadius)
-    // Keep upstream additive blending among particles, never against the overlay backplate.
-    val layer = canvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
-    particlePaint.xfermode = if (frame.additiveGlow) additiveXfermode else null
-    for (index in points.indices) {
-      val projection = projected[index]
-      particlePaint.color = projection.color
-      particlePaint.alpha = (projection.alpha * 255f).toInt().coerceIn(0, 255)
-      canvas.drawCircle(projection.x, projection.y, projection.dotRadius, particlePaint)
-    }
-    particlePaint.xfermode = null
-    canvas.restoreToCount(layer)
+    // Diagnostics are state-driven here; animated frames are owned by the GL thread.
     recordRendererFrame()
   }
+
+  override fun rendererDiagnostic(): String =
+    "style=particles input=$inputLevel playback=$playbackLevel renderer=opengl-es-3"
 
   private fun Double.normalizedLevel(): Float? =
     if (isFinite() && this >= 0.0) toFloat().coerceIn(0f, 1f) else null

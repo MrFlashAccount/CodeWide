@@ -17,7 +17,7 @@ class VoiceAssistantOrbSlotView(context: Context) : FrameLayout(context) {
     renderer.setBackdropEnabled(enabled)
   }
 
-  private var orbStyle = VoiceAssistantOrbStyle.NEBULA
+  private var orbStyle = VoiceAssistantOrbStyle.PARTICLES
   private var orbState = VoiceAssistantOrbState.IDLE
   private var reducedMotion = false
   private var inputLevel = 0.0

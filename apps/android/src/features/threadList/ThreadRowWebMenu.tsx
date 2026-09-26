@@ -16,11 +16,12 @@ export function ThreadRowWebMenu({
   props: ThreadRowProps;
 }) {
   const showNotice = useAppNotice().show;
-  const { onMarkRead, onTogglePin, thread } = props;
+  const { onTogglePin, onToggleRead, thread } = props;
   const {
     archiveAction,
     archiveLabel,
     dialog,
+    readAction,
     runThreadAction,
     setWebContextVisible,
     webContextVisible,
@@ -58,13 +59,13 @@ export function ThreadRowWebMenu({
             title={thread.pinned ? "Unpin" : "Pin"}
           />
           <MenuAction
-            icon="checkmark-done-outline"
+            icon={readAction.icon}
             onPress={() => {
               setWebContextVisible(false);
-              runThreadAction(onMarkRead, "Mark as read");
+              runThreadAction(onToggleRead, readAction.label);
             }}
             subtitle=""
-            title="Mark as read"
+            title={readAction.label}
           />
           <MenuAction
             danger={thread.archived !== true}

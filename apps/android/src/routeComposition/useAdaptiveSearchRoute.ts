@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import { useEvent } from "../react/useEvent";
 import { searchRouteSessions } from "../services/search/searchRouteSession";
@@ -13,24 +13,25 @@ import type { WorkspaceRouteModel } from "./WorkspaceRouteModel";
 export function useAdaptiveSearchRoute(
   desktop: boolean,
   route: WorkspaceRouteModel,
+  setDesktopSearchSessionId: Dispatch<SetStateAction<string | null | undefined>>,
 ): { readonly closeGlobalSearch: () => void; readonly openGlobalSearch: () => void } {
   const searchViaParam = useRef(false);
   const previousDesktop = useRef(desktop);
   useEffect(() => {
     const wasDesktop = previousDesktop.current;
     previousDesktop.current = desktop;
-    if (wasDesktop === desktop) {
-      return;
+    if (wasDesktop !== desktop) {
+      if (desktop) {
+        moveSearchToDesktopParam(route, searchViaParam, setDesktopSearchSessionId);
+      } else if (searchViaParam.current) {
+        moveSearchToMobileRoute(route, searchViaParam);
+      }
     }
-    if (desktop) {
-      moveSearchToDesktopParam(route, searchViaParam);
-    } else if (searchViaParam.current) {
-      moveSearchToMobileRoute(route, searchViaParam);
-    }
-  }, [desktop, route]);
+  }, [desktop, route, setDesktopSearchSessionId]);
 
   const openGlobalSearch = useEvent((): void => {
     const session = searchRouteSessions.open(workspaceRouteSessionOwner);
+    setDesktopSearchSessionId(session.id);
     if (desktop && route.currentThread !== null) {
       searchViaParam.current = true;
       route.router.setParams({ globalSearchSessionId: session.id });
@@ -55,6 +56,7 @@ export function useAdaptiveSearchRoute(
   });
 
   const closeGlobalSearch = useEvent((): void => {
+    setDesktopSearchSessionId(null);
     if (route.globalSearchSessionId !== null) {
       searchRouteSessions.close(route.globalSearchSessionId);
     }
@@ -66,7 +68,8 @@ export function useAdaptiveSearchRoute(
     closeSearchRoute(route);
   });
   useAndroidBackHandler(
-    desktop && route.pathname.startsWith("/threads/") && route.globalSearchSessionId !== null,
+    (desktop && route.pathname.startsWith("/threads/") && route.globalSearchSessionId !== null) ||
+      (!desktop && route.pathname === "/search"),
     closeGlobalSearch,
   );
   return { closeGlobalSearch, openGlobalSearch };
@@ -97,6 +100,7 @@ function moveSearchToMobileRoute(
 function moveSearchToDesktopParam(
   route: WorkspaceRouteModel,
   searchViaParam: { current: boolean },
+  setDesktopSearchSessionId: Dispatch<SetStateAction<string | null | undefined>>,
 ): void {
   if (
     route.pathname !== "/search" ||
@@ -106,6 +110,7 @@ function moveSearchToDesktopParam(
     return;
   }
   searchViaParam.current = true;
+  setDesktopSearchSessionId(route.globalSearchSessionId);
   const destination = v1ThreadDestination(route.currentThread);
   route.router.dismissTo({
     ...destination,

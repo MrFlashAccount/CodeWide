@@ -5,6 +5,9 @@ import { canonicalPatch } from "./canonicalPatch.web";
 
 /** Reconstructs the pre-edit file from ordered recorded patches and today's file. */
 export function materializeBeforeSource(payload: CodeReviewDocument): string | null {
+  if (hasEmptyScopeBaseline(payload)) {
+    return "";
+  }
   const lines = payload.source.split("\n");
   try {
     for (let patchIndex = payload.patches.length - 1; patchIndex >= 0; patchIndex -= 1) {
@@ -24,6 +27,12 @@ export function materializeBeforeSource(payload: CodeReviewDocument): string | n
   } catch {
     return null;
   }
+}
+
+function hasEmptyScopeBaseline(payload: CodeReviewDocument): boolean {
+  // The first recorded add establishes an empty baseline for a complete-file scope.
+  // Later file writes may be absent from recorded patches, but cannot change that baseline.
+  return payload.fullFileDiff === true && payload.patches[0]?.kind === "add";
 }
 
 function reversePatch(

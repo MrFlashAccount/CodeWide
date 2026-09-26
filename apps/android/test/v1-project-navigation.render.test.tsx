@@ -102,6 +102,29 @@ it("publishes an acknowledged project mutation without remounting the project ro
   expect(result.current.projectsByConnection[connectionId]).toEqual([updated]);
 });
 
+it("notifies another mounted project catalog consumer after an acknowledged mutation", () => {
+  const connectionId = "shared-mutation-publication-server";
+  const updated = {
+    addedAt: 1,
+    lastUsedAt: 2,
+    name: "Project",
+    path: "/workspace/project",
+    pinned: true,
+  };
+  const writer = renderHook(() => useRemoteProjectCatalog(false, [], async () => []));
+  let readerRenders = 0;
+  const reader = renderHook(() => {
+    readerRenders += 1;
+    return useRemoteProjectCatalog(false, [], async () => []);
+  });
+  const initialRenders = readerRenders;
+
+  act(() => writer.result.current.mergeProject(connectionId, updated));
+
+  expect(readerRenders).toBeGreaterThan(initialRenders);
+  expect(reader.result.current.projectsByConnection[connectionId]).toEqual([updated]);
+});
+
 it("replaces an already loaded project immediately after a pin acknowledgement", async () => {
   const connectionId = "loaded-mutation-publication-server";
   const initial = {
@@ -130,7 +153,9 @@ it("invalidates the recycled management list when a pin acknowledgement changes 
   const view = render(
     <SidebarProjectsSheet {...projectManagementProps} projects={[managedProject]} />,
   );
-  const initialVersion = view.UNSAFE_getByType(LegendList).props.dataVersion;
+  const initialList = view.UNSAFE_getByType(LegendList);
+  const initialVersion = initialList.props.dataVersion;
+  expect(initialList.props.extraData).toBe(initialVersion);
 
   view.rerender(
     <SidebarProjectsSheet
@@ -140,8 +165,10 @@ it("invalidates the recycled management list when a pin acknowledgement changes 
   );
 
   expect(view.getByText("Pinned")).toBeVisible();
-  const pinnedVersion = view.UNSAFE_getByType(LegendList).props.dataVersion;
+  const pinnedList = view.UNSAFE_getByType(LegendList);
+  const pinnedVersion = pinnedList.props.dataVersion;
   expect(pinnedVersion).not.toBe(initialVersion);
+  expect(pinnedList.props.extraData).toBe(pinnedVersion);
 
   view.rerender(
     <SidebarProjectsSheet
@@ -160,7 +187,9 @@ it("invalidates the recycled management list when a pin acknowledgement changes 
   );
 
   expect(view.getByText("Added")).toBeVisible();
-  expect(view.UNSAFE_getByType(LegendList).props.dataVersion).not.toBe(pinnedVersion);
+  const addedList = view.UNSAFE_getByType(LegendList);
+  expect(addedList.props.dataVersion).not.toBe(pinnedVersion);
+  expect(addedList.props.extraData).toBe(addedList.props.dataVersion);
 });
 
 it("publishes the qualified route before observer hydration settles and keeps stable intents", async () => {

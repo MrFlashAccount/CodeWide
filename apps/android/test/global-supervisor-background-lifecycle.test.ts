@@ -156,8 +156,18 @@ describe("Global Voice background lifecycle", () => {
     expect(orbViewSource).toContain("abstract class VoiceAssistantOrbView");
     expect(orbViewSource).toContain("override fun onDetachedFromWindow()");
     expect(orbViewSource).toContain("cancelFrame()");
-    expect(orbViewSource).toContain("if (framePosted || !attached || reducedMotion) return");
+    expect(orbViewSource).toContain(
+      "if (framePosted || !attached || reducedMotion || !usesMainThreadAnimationClock) return",
+    );
     expect(orbViewSource).toContain('DISABLED("disabled")');
+    const particlesSource = readFileSync(
+      new URL(
+        "../android/app/src/main/java/dev/codewide/app/rendering/ParticlesOrbView.kt",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(particlesSource).toContain("override val usesMainThreadAnimationClock = false");
     const nebulaSource = readFileSync(
       new URL(
         "../android/app/src/main/java/dev/codewide/app/rendering/NebulaOrbView.kt",

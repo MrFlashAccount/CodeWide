@@ -3,6 +3,8 @@ export type ThreadChangeResource = {
   additions: number;
   availability: "available" | "deleted" | "unavailable" | "unknown";
   binary?: boolean;
+  /** First recorded operation in this scope; VCS snapshots omit this flag. */
+  createdInScope?: boolean;
   deletions: number;
   itemId: string;
   kind: "add" | "delete" | "update";

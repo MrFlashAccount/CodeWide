@@ -18,6 +18,13 @@ export type TimelineRow =
   | {
       item: Extract<TimelineItem, { kind: "turn" }>;
       key: string;
+      kind: "turnLead";
+      timelineIndex: number;
+    }
+  | {
+      followsLead: boolean;
+      item: Extract<TimelineItem, { kind: "turn" }>;
+      key: string;
       kind: "turnSlice";
       parts: readonly VirtualizedTurnPart[];
       placement: VirtualizedTurnPlacement;
@@ -35,7 +42,6 @@ type TimelineItemRowsCacheEntry = TimelineRowsCacheEntry & {
 
 type TimelineRowsOptions = {
   enabled: boolean;
-  latestUnreadAgentTurnId: string | null;
   searchMessageItemId: string | null;
   threadSearchActive: boolean;
 };
@@ -91,21 +97,32 @@ function createTimelineItemRows(
     options.searchMessageItemId === null ? null : { itemId: options.searchMessageItemId };
   const presentation = projectTurnPresentation(item, searchFocus, false, false);
   const parts = projectTurnParts(presentation);
-  const split = shouldSplitTurn({ item, options, parts, presentation });
+  const split = shouldSplitTurn({ options, parts, presentation });
   const slices = split ? parts.map((part) => [part]) : [parts];
   const baseKey = timelineItemKey(item);
-  return slices.map((slice, index) => ({
-    item,
-    key: index === 0 ? baseKey : `${baseKey}\u0000slice:${virtualizedPartKey(slice[0])}`,
-    kind: "turnSlice",
-    parts: slice,
-    placement: slicePlacement(index, slices.length),
-    timelineIndex,
-  }));
+  const followsLead = hasTurnLead(presentation);
+  return [
+    ...(followsLead
+      ? [{ item, key: `${baseKey}\u0000lead`, kind: "turnLead" as const, timelineIndex }]
+      : []),
+    ...slices.map((slice, index) => ({
+      followsLead,
+      item,
+      key: index === 0 ? baseKey : `${baseKey}\u0000slice:${virtualizedPartKey(slice[0])}`,
+      kind: "turnSlice" as const,
+      parts: slice,
+      placement: slicePlacement(index, slices.length),
+      timelineIndex,
+    })),
+  ];
 }
 
 function timelineRowsOptionsKey(options: TimelineRowsOptions): string {
-  return `${String(options.enabled)}:${String(options.threadSearchActive)}:${options.latestUnreadAgentTurnId ?? ""}:${options.searchMessageItemId ?? ""}`;
+  return `${String(options.enabled)}:${String(options.threadSearchActive)}:${options.searchMessageItemId ?? ""}`;
+}
+
+function hasTurnLead(presentation: ReturnType<typeof projectTurnPresentation>): boolean {
+  return presentation.userBlocks.length > 0 || presentation.compactionBlocks.length > 0;
 }
 
 function projectTurnParts(
@@ -150,12 +167,10 @@ function markdownParts(
 }
 
 function shouldSplitTurn({
-  item,
   options,
   parts,
   presentation,
 }: {
-  item: Extract<TimelineItem, { kind: "turn" }>;
   options: TimelineRowsOptions;
   parts: readonly VirtualizedTurnPart[];
   presentation: ReturnType<typeof projectTurnPresentation>;
@@ -164,7 +179,6 @@ function shouldSplitTurn({
     presentation.rawTurn.status !== "inProgress" &&
     presentation.agentBubbleFill &&
     !options.threadSearchActive &&
-    item.id !== options.latestUnreadAgentTurnId &&
     parts.every((part) => part.kind === "markdownBlock")
   );
 }
@@ -195,6 +209,21 @@ export function timelineRowItem(row: TimelineRow): TimelineItem {
 
 export function timelineRowKey(row: TimelineRow): string {
   return row.key;
+}
+
+/** Resolves the first physical agent row for semantic unread/completion positioning. */
+export function timelineResponseStartRow(
+  rows: readonly TimelineRow[],
+  turnId: string,
+): { readonly index: number; readonly key: string } | null {
+  const index = rows.findIndex(
+    (row) =>
+      row.kind === "turnSlice" &&
+      row.item.id === turnId &&
+      (row.placement === "single" || row.placement === "start"),
+  );
+  const row = rows[index];
+  return index < 0 || row === undefined ? null : { index, key: row.key };
 }
 
 export function timelineRowSizeEstimate(rows: readonly TimelineRow[]): number {

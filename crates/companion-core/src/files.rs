@@ -588,23 +588,9 @@ impl FileService {
         if offset > total || limit == 0 || limit > MAX_TEXT_PAGE_BYTES {
             return Err(client(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range"));
         }
-        let content_type = content_type(&path);
-        if !textual_content_type(content_type) {
-            return Err(client(
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                "text_file_required",
-            ));
-        }
+        let declared_content_type = content_type(&path);
         let revision = FileRevisionCache::source_revision(&path, &metadata);
         let etag = format!("W/\"file-{revision}\"");
-        if header_matches(headers, header::IF_NONE_MATCH, &etag) {
-            return Response::builder()
-                .status(StatusCode::NOT_MODIFIED)
-                .header(header::ETAG, etag)
-                .header(header::CACHE_CONTROL, "private, no-store")
-                .body(Body::empty())
-                .map_err(|_| client(StatusCode::INTERNAL_SERVER_ERROR, "response_failed"));
-        }
         let read_limit = u64::try_from(limit)
             .unwrap_or(u64::MAX)
             .saturating_add(4)
@@ -615,12 +601,31 @@ impl FileService {
             Vec::with_capacity(usize::try_from(read_limit).unwrap_or(MAX_TEXT_PAGE_BYTES));
         file.take(read_limit).read_to_end(&mut bytes).await?;
         let (start_delta, end_delta) = utf8_page_bounds(&bytes, offset, limit)?;
+        if bytes[start_delta..end_delta].contains(&0) {
+            return Err(client(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "text_file_required",
+            ));
+        }
+        let response_content_type = if textual_content_type(declared_content_type) {
+            declared_content_type
+        } else {
+            "text/plain; charset=utf-8"
+        };
+        if header_matches(headers, header::IF_NONE_MATCH, &etag) {
+            return Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header(header::ETAG, etag)
+                .header(header::CACHE_CONTROL, "private, no-store")
+                .body(Body::empty())
+                .map_err(|_| client(StatusCode::INTERNAL_SERVER_ERROR, "response_failed"));
+        }
         let body = Bytes::from(bytes).slice(start_delta..end_delta);
         let start = offset.saturating_add(u64::try_from(start_delta).unwrap_or(u64::MAX));
         let next = offset.saturating_add(u64::try_from(end_delta).unwrap_or(u64::MAX));
         let mut response = Response::builder()
             .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type)
+            .header(header::CONTENT_TYPE, response_content_type)
             .header(header::CONTENT_LENGTH, body.len())
             .header(header::CACHE_CONTROL, "private, no-store")
             .header(header::ETAG, etag)

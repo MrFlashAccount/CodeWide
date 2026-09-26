@@ -2,7 +2,7 @@
 
 ## Decision
 
-V1 uses one shared Android renderer slot in the thread-list control and in a draggable system overlay owned by the existing microphone foreground service. Nebula remains the default `RuntimeShader` strategy based on the Reacticx Nebula Orb. The independently persisted Particles option is a native Canvas port of VoiceOrbs and can replace Nebula live without replacing the slot; the old renderer clock is cancelled before the new renderer is attached. Native ADM PCM energy drives listening even while the Activity is backgrounded, explicit thinking remains autonomous, and inbound WebRTC playback energy drives speaking.
+V1 uses one shared Android renderer slot in the thread-list control and in a draggable system overlay owned by the existing microphone foreground service. Particles is the default native Canvas renderer based on VoiceOrbs; Nebula remains an available `RuntimeShader` strategy based on the Reacticx Nebula Orb. Either explicitly saved style can replace the other live without replacing the slot; the old renderer clock is cancelled before the new renderer is attached. Native ADM PCM energy drives listening even while the Activity is backgrounded, explicit thinking remains autonomous, and inbound WebRTC playback energy drives speaking.
 
 ## Options and falsification
 

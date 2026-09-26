@@ -11,6 +11,7 @@ import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard"
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
 import { RichMarkdownDocumentBlockView } from "../../../rendering/RichMarkdown";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
+import { StreamingRevealSurface } from "../../../rendering/StreamingRevealSurface";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles as markdownStyles } from "../content/AgentResponseMarkdown.styles";
 import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
@@ -93,6 +94,7 @@ function VirtualizedTurnParts(props: VirtualizedAgentTurnBodyProps): ReactElemen
       {groupVirtualizedTurnParts(props.parts).map((group) =>
         group.kind === "markdown" ? (
           <VirtualizedMarkdownGroup
+            animateNew={props.animateLiveUpdates}
             key={`markdown:${group.responseKey}`}
             parts={group.parts}
             placement={props.placement}
@@ -136,10 +138,12 @@ function groupVirtualizedTurnParts(
 }
 
 function VirtualizedMarkdownGroup({
+  animateNew,
   parts,
   placement,
   presentation,
 }: {
+  animateNew: boolean;
   parts: readonly Extract<VirtualizedTurnPart, { kind: "markdownBlock" }>[];
   placement: VirtualizedTurnPlacement;
   presentation: ReturnType<typeof projectTurnPresentation>;
@@ -170,7 +174,14 @@ function VirtualizedMarkdownGroup({
     </View>
   );
   const itemId = first.response.raw.id;
-  return renderSearchMessage(itemId, content);
+  const message = renderSearchMessage(itemId, content);
+  return first.streaming ? (
+    <StreamingRevealSurface animateNew={animateNew} streamKey={first.response.key}>
+      {message}
+    </StreamingRevealSurface>
+  ) : (
+    message
+  );
 }
 
 function renderReviewComments(

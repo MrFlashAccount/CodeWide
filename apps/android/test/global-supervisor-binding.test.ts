@@ -57,7 +57,11 @@ describe("GlobalSupervisorBindingOwner", () => {
     const owner = createGlobalSupervisorBindingOwner({
       database: storage.database,
       randomUUID: () => "creation-token",
-      remote: { findThreadsBySource: vi.fn(async () => []), startThread },
+      remote: {
+        findThreadsBySource: vi.fn(async () => []),
+        readThreadSource: vi.fn(async () => null),
+        startThread,
+      },
     });
 
     await expect(owner.bind("server-a")).resolves.toEqual({
@@ -89,7 +93,7 @@ describe("GlobalSupervisorBindingOwner", () => {
     const owner = createGlobalSupervisorBindingOwner({
       database: storage.database,
       randomUUID: () => "new-token",
-      remote: { findThreadsBySource, startThread },
+      remote: { findThreadsBySource, readThreadSource: vi.fn(async () => null), startThread },
     });
 
     await expect(owner.reconcile()).resolves.toEqual({
@@ -117,6 +121,7 @@ describe("GlobalSupervisorBindingOwner", () => {
       randomUUID: () => "token",
       remote: {
         findThreadsBySource: vi.fn(async () => []),
+        readThreadSource: vi.fn(async () => null),
         startThread: vi.fn(async () => "thread"),
       },
     });
@@ -142,7 +147,11 @@ describe("GlobalSupervisorBindingOwner", () => {
     const owner = createGlobalSupervisorBindingOwner({
       database: storage.database,
       randomUUID: () => "token",
-      remote: { findThreadsBySource: vi.fn(async () => []), startThread },
+      remote: {
+        findThreadsBySource: vi.fn(async () => []),
+        readThreadSource: vi.fn(async () => null),
+        startThread,
+      },
     });
 
     await expect(owner.bind("server-b")).rejects.toThrow("already bound");
@@ -165,7 +174,11 @@ describe("GlobalSupervisorBindingOwner", () => {
     const owner = createGlobalSupervisorBindingOwner({
       database: storage.database,
       randomUUID: () => "new-token",
-      remote: { findThreadsBySource: vi.fn(async () => []), startThread },
+      remote: {
+        findThreadsBySource: vi.fn(async () => []),
+        readThreadSource: vi.fn(async () => null),
+        startThread,
+      },
     });
 
     await expect(owner.bind("server-a")).rejects.toThrow("explicit reconciliation");
@@ -173,5 +186,59 @@ describe("GlobalSupervisorBindingOwner", () => {
     await expect(owner.read()).resolves.toEqual(
       expect.objectContaining({ creationToken: "existing-token", status: "creating" }),
     );
+  });
+
+  it("restores the same hidden thread when a re-paired server proves its source", async () => {
+    const storage = database(
+      stored({
+        priorHome: { connectionId: "old-profile", threadId: "supervisor-thread" },
+        reason: "homeDeleted",
+        schemaVersion: 1,
+        status: "invalid",
+      }),
+    );
+    const readThreadSource = vi.fn(
+      async () => `${GLOBAL_SUPERVISOR_THREAD_SOURCE_PREFIX}original-token`,
+    );
+    const startThread = vi.fn(async () => "new-thread");
+    const owner = createGlobalSupervisorBindingOwner({
+      database: storage.database,
+      randomUUID: () => "new-token",
+      remote: { findThreadsBySource: vi.fn(async () => []), readThreadSource, startThread },
+    });
+
+    await expect(owner.restoreDeletedHome("new-profile")).resolves.toEqual({
+      connectionId: "new-profile",
+      threadId: "supervisor-thread",
+    });
+    expect(readThreadSource).toHaveBeenCalledWith("new-profile", "supervisor-thread");
+    expect(startThread).not.toHaveBeenCalled();
+    await expect(owner.read()).resolves.toMatchObject({
+      home: { connectionId: "new-profile", threadId: "supervisor-thread" },
+      status: "ready",
+    });
+  });
+
+  it("keeps an invalid binding when the new server cannot prove the prior thread", async () => {
+    const initial = stored({
+      priorHome: { connectionId: "old-profile", threadId: "supervisor-thread" },
+      reason: "homeDeleted",
+      schemaVersion: 1,
+      status: "invalid",
+    });
+    const storage = database(initial);
+    const owner = createGlobalSupervisorBindingOwner({
+      database: storage.database,
+      randomUUID: () => "new-token",
+      remote: {
+        findThreadsBySource: vi.fn(async () => []),
+        readThreadSource: vi.fn(async () => "ordinary-chat"),
+        startThread: vi.fn(async () => "new-thread"),
+      },
+    });
+
+    await expect(owner.restoreDeletedHome("new-profile")).resolves.toBeNull();
+    await expect(owner.read()).resolves.toEqual(initial);
+    expect(storage.writes).toHaveLength(0);
   });
 });

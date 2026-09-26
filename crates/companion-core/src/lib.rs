@@ -17,6 +17,7 @@ pub mod global_supervisor_limits;
 pub mod history;
 mod history_questions;
 pub mod history_service;
+pub mod host_identity;
 pub mod identity;
 pub mod image_previews;
 pub mod managed_runtime;

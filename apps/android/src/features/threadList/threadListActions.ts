@@ -29,8 +29,12 @@ export function useThreadListActions(
     }
   });
 
-  const markListThreadRead = useEvent(async (thread: ThreadListItem): Promise<void> => {
-    await remote.markThreadRead(thread.serverId, thread.id);
+  const toggleListThreadRead = useEvent(async (thread: ThreadListItem): Promise<void> => {
+    if (thread.unread > 0) {
+      await remote.markThreadRead(thread.serverId, thread.id);
+    } else {
+      await remote.markThreadUnread(thread.serverId, thread.id);
+    }
   });
-  return { archiveListThread, markListThreadRead, toggleListThreadPin, unarchiveListThread };
+  return { archiveListThread, toggleListThreadPin, toggleListThreadRead, unarchiveListThread };
 }

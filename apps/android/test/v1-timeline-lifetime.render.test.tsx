@@ -23,6 +23,7 @@ const loadNewer = jest.fn(async () => undefined);
 const loadOlder = jest.fn(async () => undefined);
 const trimAfterGesture = jest.fn(async () => undefined);
 const overlayOwnership = createFullscreenScrollOwnership(() => undefined);
+const markThreadReadOnOpen = jest.fn();
 const historyViewport = {
   ...COMPLETE_STATIC_THREAD_HISTORY,
   loadNewer,
@@ -46,6 +47,7 @@ function useTimelineSession(
     saveScrollOffset: saveOffset,
     timeline: [],
     latestUnreadReceiptKey: null,
+    markThreadReadOnOpen,
     acknowledgeUnreadReceipt: () => undefined,
   });
   const trim = usePaginationTrim({
@@ -191,4 +193,20 @@ it("publishes the LegendList initial load without overwriting a user scroll", ()
   expect(hook.result.current.viewport.timelineDidLoad).toBe(true);
   expect(hook.result.current.anchor.awayFromLatest).toBe(true);
   expect(hook.result.current.anchor.awayFromLatestRef.current).toBe(true);
+  expect(markThreadReadOnOpen).toHaveBeenCalledTimes(1);
+});
+
+it("marks each opened thread read once after its initial list draw", () => {
+  const hook = renderHook((scope: string) => useTimelineSession(scope), { initialProps: "first" });
+
+  expect(markThreadReadOnOpen).not.toHaveBeenCalled();
+  act(() => {
+    hook.result.current.actions.commitInitialTimelineLoad();
+    hook.result.current.actions.commitInitialTimelineLoad();
+  });
+  expect(markThreadReadOnOpen).toHaveBeenCalledTimes(1);
+
+  hook.rerender("second");
+  act(() => hook.result.current.actions.commitInitialTimelineLoad());
+  expect(markThreadReadOnOpen).toHaveBeenCalledTimes(2);
 });

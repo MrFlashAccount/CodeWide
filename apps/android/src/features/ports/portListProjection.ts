@@ -30,7 +30,9 @@ export function projectPortList(
       !configuredKeys.has(candidate.forwardingKey) &&
       !configuredPorts.has(candidate.port),
   );
-  const activeProfiles = currentProfiles.filter((profile) => profile.preference !== "excluded");
+  const activeProfiles = currentProfiles.filter(
+    (profile) => profile.preference !== "excluded" && profile.status !== "unavailable",
+  );
   const excludedProfiles = currentProfiles.filter((profile) => profile.preference === "excluded");
   const entries: ServiceEntry[] =
     segment === "available"

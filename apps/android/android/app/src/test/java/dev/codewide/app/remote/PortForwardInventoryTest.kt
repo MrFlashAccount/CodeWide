@@ -39,6 +39,23 @@ class PortForwardInventoryTest {
   }
 
   @Test
+  fun unchangedServiceRecoversAnUnavailableForwardWithoutChangingItsIdentity() {
+    val fixture = InventoryFixture()
+    val port = PortForwardInventoryEntry(3000, key, "Dev", true)
+    fixture.reconcile(listOf(port))
+    val first = fixture.store.list().single()
+    fixture.unavailable.add(first.id)
+
+    fixture.reconcile(listOf(port))
+
+    assertEquals(first.id, fixture.store.list().single().id)
+    assertEquals(first.serviceKey, fixture.store.list().single().serviceKey)
+    assertEquals(listOf("start:${first.id}", "restart:${first.id}"), fixture.events)
+    fixture.reconcile(listOf(port))
+    assertEquals(2, fixture.events.size)
+  }
+
+  @Test
   fun exclusionSurvivesAbsenceAndRestartButNeverCreatesAGhostRow() {
     val policies = PortForwardPolicies()
     policies.set("server", key, "excluded")
@@ -108,6 +125,7 @@ class PortForwardInventoryTest {
 private class InventoryFixture(val policies: PortForwardPolicies = PortForwardPolicies()) {
   val store = NativePortForwardStore()
   val running = mutableSetOf<String>()
+  val unavailable = mutableSetOf<String>()
   val events = mutableListOf<String>()
   private var sequence = 0
   private val reconciler = PortForwardInventoryReconciler(
@@ -117,8 +135,13 @@ private class InventoryFixture(val policies: PortForwardPolicies = PortForwardPo
       store.upsert(CurrentPortForward(id, connectionId, entry.label, entry.port, null,
         entry.serviceKey, preference, false, 1))
     },
-    running::contains,
-    { id -> running.add(id); events.add("start:$id"); store.setEnabled(id, true) },
+    { id -> id in running && id !in unavailable },
+    { id ->
+      events.add("${if (id in running) "restart" else "start"}:$id")
+      unavailable.remove(id)
+      running.add(id)
+      store.setEnabled(id, true)
+    },
     { id -> running.remove(id); events.add("close:$id"); store.remove(id) },
   )
   fun reconcile(inventory: List<PortForwardInventoryEntry>) = reconciler.reconcile("server", inventory)

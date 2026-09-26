@@ -24,6 +24,26 @@ export function codeReviewDocumentEmptyState(
   document: CodeReviewDocument,
   mode: CodeReviewViewMode,
 ): CodeReviewEmptyState | null {
+  if (document.displayState === "unsupported") {
+    return {
+      message: "This file format cannot be previewed in Changes.",
+      title: "Unsupported format",
+    };
+  }
+  if (document.displayState === "image") {
+    return null;
+  }
+  if (
+    document.fullFileDiff === true &&
+    document.displayState === "deleted" &&
+    document.source === "" &&
+    document.patches[0]?.kind === "add"
+  ) {
+    return {
+      message: "This file was created and removed in the selected scope.",
+      title: "No net changes",
+    };
+  }
   if (document.displayState === "deleted" && (mode === "source" || document.patches.length === 0)) {
     return {
       message:

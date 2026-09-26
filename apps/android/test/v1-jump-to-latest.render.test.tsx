@@ -4,13 +4,20 @@ import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/re
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
 import { TimelineViewport } from "../src/features/conversation/timeline/TimelineViewport";
 import type { TimelineViewportProps } from "../src/features/conversation/timeline/TimelineViewportContract";
+import { timelineItemKey } from "../src/features/conversation/timeline/timelineProjection";
+import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
 import { useHistoryAnchorActions } from "../src/features/conversation/timeline/historyAnchor";
 import {
   useTimelineJumpActions,
   useTimelineJumpState,
 } from "../src/features/conversation/timeline/timelineJump";
 import { createFullscreenScrollOwnership } from "../src/ui/fullscreen-scroll-ownership";
-import { legendListScrollToEnd, legendListScrollToIndex } from "./mocks/LegendKeyboardList";
+import { conversationTopContentInset } from "../src/ui/conversation-chrome-layout";
+import {
+  legendListScrollToEnd,
+  legendListScrollToIndex,
+  setLegendListWithinEndThreshold,
+} from "./mocks/LegendKeyboardList";
 
 const unreadRow = {
   completedAt: null,
@@ -19,6 +26,43 @@ const unreadRow = {
   kind: "meta",
   status: "completed",
 } as const;
+
+function responseTurn(status: "completed" | "inProgress"): Extract<TimelineItem, { kind: "turn" }> {
+  const turn: unknown = {
+    connectionId: "server",
+    id: "response-turn",
+    key: "server/thread/response-turn",
+    kind: "turn",
+    scope: "server/thread",
+    threadId: "thread",
+    turn: {
+      completedAt: status === "completed" ? 2 : null,
+      durationMs: status === "completed" ? 1 : null,
+      id: "response-turn",
+      items: [
+        {
+          clientId: null,
+          content: [{ text: "Question", text_elements: [], type: "text" }],
+          id: "user-response",
+          type: "userMessage",
+        },
+        {
+          id: "agent-response",
+          memoryCitation: null,
+          phase: status === "completed" ? "final_answer" : "commentary",
+          text: "A long response starts here",
+          type: "agentMessage",
+        },
+      ],
+      startedAt: 1,
+      status,
+    },
+  };
+  // WHY: The generated protocol union has no narrow test factory, while this fixture supplies
+  // every turn field consumed by the row projection and response-positioning owner.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return turn as Extract<TimelineItem, { kind: "turn" }>;
+}
 
 function measuredView(y: () => number, height: number): NativeView {
   const view = {
@@ -109,6 +153,7 @@ function timelineScrollEvent(offsetY: number) {
 beforeEach(() => {
   legendListScrollToEnd.mockClear();
   legendListScrollToIndex.mockClear();
+  setLegendListWithinEndThreshold(true);
 });
 
 it("does not overwrite a user scroll when the delayed initial load completes", () => {
@@ -121,7 +166,9 @@ it("does not overwrite a user scroll when the delayed initial load completes", (
       awayFromLatestRef,
       draftConnectionId: null,
       draftThreadId: null,
+      initialReadCommittedRef: { current: false },
       latestUnreadReceiptKey: null,
+      markThreadReadOnOpen: undefined,
       saveScrollOffset: undefined,
       scrollOffsetRef: { current: 400 },
       scrollSaveTimerRef: { current: null },
@@ -156,6 +203,76 @@ it("delegates tail maintenance to LegendList without retaining bootstrap positio
   expect(timeline.props.maintainScrollAtEndThreshold).toBe(0.02);
 });
 
+it("opens an unread response at its first agent row", async () => {
+  const props = timelineViewportProps(() => undefined);
+  props.displayedTimeline = [responseTurn("completed")];
+  props.latestUnreadAgentTurnId = "response-turn";
+  props.timelinePositioned = false;
+  const view = render(<TimelineViewport {...props} />);
+  const timeline = view.getByTestId("conversation-timeline");
+
+  expect(timeline.props.initialScrollAtEnd).toBe(false);
+  expect(timeline.props.initialScrollIndex).toBe(1);
+  expect(timeline.props.anchoredEndSpace.anchorIndex).toBe(1);
+  expect(timeline.props.anchoredEndSpace.anchorOffset).toBe(conversationTopContentInset(false));
+
+  await act(async () => {
+    timeline.props.anchoredEndSpace.onReady({
+      anchorIndex: 1,
+      anchorKey: timelineItemKey(responseTurn("completed")),
+      size: 0,
+    });
+    await Promise.resolve();
+  });
+
+  expect(legendListScrollToIndex).toHaveBeenCalledWith({
+    animated: false,
+    index: 1,
+    viewOffset: conversationTopContentInset(false),
+    viewPosition: 0,
+  });
+});
+
+it("moves a completed streamed response to its start only while tail-following", async () => {
+  const props = timelineViewportProps(() => undefined);
+  props.awayFromLatest = false;
+  props.awayFromLatestRef.current = false;
+  props.displayedTimeline = [responseTurn("inProgress")];
+  const view = render(<TimelineViewport {...props} />);
+
+  expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace).toBeUndefined();
+
+  view.rerender(
+    <TimelineViewport
+      {...props}
+      displayedTimeline={[responseTurn("completed")]}
+      latestUnreadAgentTurnId="response-turn"
+    />,
+  );
+
+  await waitFor(() => {
+    expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace.anchorIndex).toBe(1);
+  });
+});
+
+it("does not pull a completed response back after the user left the tail", () => {
+  const props = timelineViewportProps(() => undefined);
+  props.awayFromLatest = true;
+  props.awayFromLatestRef.current = true;
+  props.displayedTimeline = [responseTurn("inProgress")];
+  const view = render(<TimelineViewport {...props} />);
+
+  view.rerender(
+    <TimelineViewport
+      {...props}
+      displayedTimeline={[responseTurn("completed")]}
+      latestUnreadAgentTurnId="response-turn"
+    />,
+  );
+
+  expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace).toBeUndefined();
+});
+
 it("keeps new-chat content stationary while the keyboard opens", () => {
   const props = timelineViewportProps(() => undefined);
   props.newChat = true;
@@ -181,6 +298,50 @@ it("uses the same two-percent viewport boundary for the latest indicator", () =>
 
   fireEvent(timeline, "scroll", timelineScrollEvent(795));
   expect(setAwayFromLatest).toHaveBeenCalledWith(true);
+});
+
+it("clears the latest indicator when the final history range arrives without a scroll", () => {
+  const setAwayFromLatest = jest.fn();
+  const persistTimelineAtEnd = jest.fn();
+  const props = timelineViewportProps(() => undefined);
+  props.setAwayFromLatest = setAwayFromLatest;
+  props.persistTimelineAtEnd = persistTimelineAtEnd;
+  props.historyViewport = { ...COMPLETE_STATIC_THREAD_HISTORY, containsLatest: false };
+  const view = render(<TimelineViewport {...props} />);
+  fireEvent(view.getByTestId("conversation-timeline"), "load", { elapsedTimeInMs: 1 });
+
+  view.rerender(
+    <TimelineViewport
+      {...props}
+      historyViewport={{ ...COMPLETE_STATIC_THREAD_HISTORY, containsLatest: true }}
+    />,
+  );
+
+  expect(setAwayFromLatest).toHaveBeenLastCalledWith(false);
+  expect(props.awayFromLatestRef.current).toBe(false);
+  expect(persistTimelineAtEnd).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the indicator while genuinely away and clears it after list resize reaches the end", () => {
+  setLegendListWithinEndThreshold(false);
+  const setAwayFromLatest = jest.fn();
+  const props = timelineViewportProps(() => undefined);
+  props.awayFromLatest = false;
+  props.awayFromLatestRef.current = false;
+  props.setAwayFromLatest = setAwayFromLatest;
+  const view = render(<TimelineViewport {...props} />);
+  const timeline = view.getByTestId("conversation-timeline");
+  fireEvent(timeline, "scroll", timelineScrollEvent(700));
+  fireEvent(timeline, "load", { elapsedTimeInMs: 1 });
+
+  expect(props.awayFromLatestRef.current).toBe(true);
+  expect(setAwayFromLatest).toHaveBeenCalledTimes(1);
+  expect(setAwayFromLatest).toHaveBeenLastCalledWith(true);
+
+  act(() => setLegendListWithinEndThreshold(true));
+
+  expect(setAwayFromLatest).toHaveBeenCalledWith(false);
+  expect(props.awayFromLatestRef.current).toBe(false);
 });
 
 it("does not gate LegendList callbacks behind custom bootstrap state", () => {

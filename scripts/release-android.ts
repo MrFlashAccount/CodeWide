@@ -197,6 +197,7 @@ async function releaseApk(
 
 async function runReleaseChecks(includeOta: boolean): Promise<void> {
   await run("pnpm", ["validate:android:v1"]);
+  await run("pnpm", ["--filter", "@codewide/android", "compile:android"]);
   await run("pnpm", ["--filter", "@codewide/android", "typecheck"]);
   await run("pnpm", ["--filter", "@codewide/android", "lint"]);
   await run("pnpm", ["test"]);

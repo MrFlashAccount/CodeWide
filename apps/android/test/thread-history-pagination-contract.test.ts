@@ -139,7 +139,7 @@ describe("thread history pagination contract", () => {
     expect(historyController).not.toContain("maintainAtEnd");
     expect(screen).not.toContain("maintainAtEnd=");
     expect(historyController).toContain("containsLatest: options.isLatestRange");
-    expect(ownerTimelineViewport).toContain("initialScrollAtEnd={!props.timelinePositioned}");
+    expect(ownerTimelineViewport).toContain("initialScrollAtEnd={initialScrollAtEnd}");
     expect(ownerTimelineViewport).toContain("maintainScrollAtEnd");
     expect(ownerTimelineViewport).toContain(
       "maintainScrollAtEndThreshold={TIMELINE_TAIL_MODE_THRESHOLD_RATIO}",
@@ -481,16 +481,18 @@ describe("thread history pagination contract", () => {
     expect(screen).not.toContain("<Profiler");
   });
 
-  it("does not install a second initial-position owner around LegendList", () => {
-    expect(ownerTimelineViewport).toContain("initialScrollAtEnd={!props.timelinePositioned}");
+  it("keeps semantic response positioning at the LegendList viewport boundary", () => {
+    expect(ownerTimelineViewport).toContain("initialScrollAtEnd={initialScrollAtEnd}");
     expect(ownerTimelineViewport).not.toContain("bootstrapInitialPosition");
     expect(ownerTimelineViewport).not.toContain("timelineRowInitialIndex");
+    expect(ownerTimelineViewport).toContain("timelineResponseStartRow(");
+    expect(ownerTimelineViewport).toContain("anchoredEndSpace={");
     expect(screen).not.toContain(
       "contentHeight - timelineViewportHeightRef.current - pendingOffset",
     );
     expect(screen).not.toContain("scrollToIndex({ index: anchorIndex");
-    expect(timelineListSource).not.toContain("legendInitialPositionProps");
-    expect(timelineListSource).not.toContain("initialPosition");
+    expect(timelineListSource).toContain("legendInitialPositionProps");
+    expect(timelineListSource).toContain('"anchoredEndSpace"');
     expect(timelineListSource).toContain("positionByKey(itemKey)");
     expect(uiStateDatabase).toContain("historyAnchorOffsetPx");
   });

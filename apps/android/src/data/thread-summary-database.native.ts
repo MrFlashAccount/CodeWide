@@ -110,6 +110,40 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     });
   };
 
+  const setReadState = async (
+    connectionId: string,
+    threadId: string,
+    unread: boolean,
+  ): Promise<void> => {
+    await writes.run(async () => {
+      if (disposed) {
+        return;
+      }
+      const row = await loadRow(connectionId, threadId);
+      if (
+        row === undefined ||
+        (unread
+          ? row.unread > 0
+          : row.unread === 0 && row.lastSeenCursor === row.latestActivityCursor)
+      ) {
+        return;
+      }
+      const next = {
+        ...row,
+        lastSeenCursor: unread ? row.lastSeenCursor : row.latestActivityCursor,
+        unread: unread ? 1 : 0,
+      };
+      storage.begin();
+      storage.write({ type: "update", value: next });
+      const checkpoint = storage.commit({ durable: true });
+      publishModelChanges(
+        [{ type: "update", value: next }],
+        summaryViewMembershipChanged(row, next),
+      );
+      await checkpoint;
+    });
+  };
+
   const remove = async (key: string): Promise<void> => {
     await writes.run(async () => {
       if (disposed) {
@@ -474,10 +508,10 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     },
     loadView,
     async markRead(connectionId, threadId) {
-      const row = await loadRow(connectionId, threadId);
-      if (row !== undefined) {
-        await publish({ ...row, lastSeenCursor: row.latestActivityCursor, unread: 0 });
-      }
+      await setReadState(connectionId, threadId, false);
+    },
+    async markUnread(connectionId, threadId) {
+      await setReadState(connectionId, threadId, true);
     },
     async mergeSnapshots(connectionId, snapshots, throughCursor) {
       await writes.run(async () => {

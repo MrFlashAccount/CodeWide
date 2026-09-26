@@ -237,7 +237,7 @@ class ParticlesOrbModelTest {
     )
 
     assertEquals(expected, expected.map { VoiceAssistantOrbState.fromWireValue(it.wireValue) })
-    assertEquals(VoiceAssistantOrbStyle.NEBULA, VoiceAssistantOrbStyle.fromWireValue("corrupt"))
+    assertEquals(VoiceAssistantOrbStyle.PARTICLES, VoiceAssistantOrbStyle.fromWireValue("corrupt"))
     assertEquals(VoiceAssistantOrbState.IDLE, VoiceAssistantOrbState.fromWireValue("corrupt"))
   }
 

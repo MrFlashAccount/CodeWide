@@ -75,6 +75,10 @@ async fn file_reads_are_host_wide_while_uploads_remain_resumable()
     tokio::fs::create_dir(&root).await?;
     tokio::fs::write(root.join("source.txt"), b"abcdef").await?;
     tokio::fs::write(root.join("guide.md"), b"# Guide\n").await?;
+    tokio::fs::write(root.join(".gitignore"), b"target/\n").await?;
+    tokio::fs::write(root.join("extensionless"), b"plain text\n").await?;
+    tokio::fs::write(root.join("opaque.bin"), b"\0binary\n").await?;
+    tokio::fs::write(root.join("invalid.bin"), [0xff_u8, 0xfe_u8]).await?;
     let outside = directory.path().join("outside.txt");
     tokio::fs::write(&outside, b"private").await?;
     symlink(&outside, root.join("escape.txt"))?;
@@ -380,6 +384,84 @@ async fn pair_file_device(
 }
 
 async fn assert_downloads(
+    client: &reqwest::Client,
+    base: &str,
+    root: &std::path::Path,
+    reported_preview_root: &Path,
+    outside: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    assert_text_file_detection(client, base).await?;
+    assert_download_restrictions(client, base, root, reported_preview_root, outside).await
+}
+
+async fn assert_text_file_detection(
+    client: &reqwest::Client,
+    base: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let gitignore = client
+        .get(format!(
+            "{base}/v1/files/text?rootId=workspace&path=.gitignore"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(gitignore.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        gitignore.headers()["content-type"],
+        "text/plain; charset=utf-8"
+    );
+    assert_eq!(gitignore.text().await?, "target/\n");
+
+    let extensionless = client
+        .get(format!(
+            "{base}/v1/files/text?rootId=workspace&path=extensionless"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(extensionless.status(), reqwest::StatusCode::OK);
+    assert_eq!(extensionless.text().await?, "plain text\n");
+
+    let binary = client
+        .get(format!(
+            "{base}/v1/files/text?rootId=workspace&path=opaque.bin"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(binary.status(), reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert!(binary.text().await?.contains("text_file_required"));
+
+    let conditional_binary = client
+        .get(format!(
+            "{base}/v1/files/text?rootId=workspace&path=opaque.bin"
+        ))
+        .bearer_auth(TOKEN)
+        .header("if-none-match", "*")
+        .send()
+        .await?;
+    assert_eq!(
+        conditional_binary.status(),
+        reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+
+    let invalid = client
+        .get(format!(
+            "{base}/v1/files/text?rootId=workspace&path=invalid.bin"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(
+        invalid.status(),
+        reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    assert!(invalid.text().await?.contains("valid_utf8_required"));
+
+    Ok(())
+}
+
+async fn assert_download_restrictions(
     client: &reqwest::Client,
     base: &str,
     root: &std::path::Path,

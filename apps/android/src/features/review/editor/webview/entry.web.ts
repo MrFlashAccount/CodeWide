@@ -132,6 +132,8 @@ const treeHost = requiredElement("tree");
 const treeEmptyHost = requiredElement("tree-empty");
 const previewHost = requiredElement("preview");
 const previewEmptyHost = requiredElement("preview-empty");
+const imageHost = requiredElement("image-preview");
+const imageElement = requiredElement("review-image");
 const workspaceHost = requiredElement("workspace");
 const fileHost = document.createElement("div");
 const diffHost = document.createElement("div");
@@ -146,7 +148,7 @@ patchFallbackLabel.className = "review-patch-fallback-label";
 patchFallbackLabel.textContent = "Recorded edits could not be aligned with the current file";
 patchFallbackLabel.hidden = true;
 patchHost.append(patchFallbackLabel);
-previewHost.replaceChildren(fileHost, diffHost, patchHost);
+previewHost.replaceChildren(fileHost, diffHost, patchHost, imageHost);
 
 // Pierre reports selection changes, not activation of an already selected file.
 // Its row path attribute is the adapter seam for reopening that file on touch.
@@ -319,6 +321,9 @@ function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
       if (file.sourceOnly === true) {
         return { parts: [{ color: "#8b949e", text: "Attachment" }], text: "Attachment" };
       }
+      if (file.countsAreNet === false) {
+        return null;
+      }
       return {
         parts: [
           { color: "#3fb950", text: `+${String(file.additions)}` },
@@ -381,7 +386,11 @@ function selectTreeItem(instance: FileTree, path: string, scroll: boolean): void
 }
 
 function renderCurrentDocument(forceRender = false): void {
+  imageHost.hidden = true;
   const document = currentDocument;
+  if (document?.displayState !== "image") {
+    imageElement.removeAttribute("src");
+  }
   if (document === null) {
     renderMissingDocument();
     return;
@@ -404,6 +413,17 @@ function renderCurrentDocument(forceRender = false): void {
       type: "error",
     });
   }
+}
+
+function renderImageDocument(document: CodeReviewDocument & { displayState: "image" }): void {
+  fileHost.hidden = true;
+  diffHost.hidden = true;
+  patchHost.hidden = true;
+  activeFileRenderer = null;
+  activeDiffRenderer = null;
+  imageHost.hidden = false;
+  imageElement.setAttribute("src", document.imageDataUrl);
+  finishRender();
 }
 
 function renderMissingDocument(): void {
@@ -433,6 +453,13 @@ function renderEmptyDocument(emptyState: CodeReviewEmptyState): void {
 }
 
 function renderDocumentContent(document: CodeReviewDocument, forceRender: boolean): void {
+  if (document.displayState === "image") {
+    renderImageDocument(document);
+    return;
+  }
+  if (document.displayState === "unsupported") {
+    return;
+  }
   if (currentMode === "source") {
     renderSource(document, forceRender);
   } else {
@@ -488,6 +515,13 @@ function renderDiff(
 ): void {
   const before = materializeBeforeSource(payload);
   if (before === null) {
+    if (payload.fullFileDiff === true) {
+      renderEmptyDocument({
+        message: "Recorded edits cannot be aligned with the current file.",
+        title: "Diff unavailable",
+      });
+      return;
+    }
     renderRecordedPatches(payload, mode, forceRender);
     return;
   }

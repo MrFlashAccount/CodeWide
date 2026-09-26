@@ -11,6 +11,7 @@ use axum::{
     http::{HeaderMap, Uri},
     routing::{get, post},
 };
+use codewide_companion::host_identity::HostDisplayName;
 use serde_json::{Value, json};
 use tokio::{io::AsyncWriteExt, net::UnixListener, process::Command};
 
@@ -134,6 +135,7 @@ async fn native_cli_creates_a_pairing_through_local_control_only()
         .arg("--token-file")
         .arg(&token_file)
         .env("CODEWIDE_PUBLIC_ENDPOINT", "ws://127.0.0.1:8766/v1/sync")
+        .env_remove("CODEWIDE_SERVER_NAME")
         .output()
         .await?;
     server.abort();
@@ -161,6 +163,7 @@ async fn native_cli_creates_a_pairing_through_local_control_only()
             .ok_or("pairing payload missing")?,
     )?;
     assert_eq!(payload["type"], "codewide-pairing");
+    assert_eq!(payload["displayName"], HostDisplayName::system().as_str());
     assert_eq!(
         payload["tlsPinSha256"],
         format!("sha256/{}=", "A".repeat(43))

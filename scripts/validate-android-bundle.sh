@@ -31,7 +31,7 @@ pnpm exec expo export:embed \
   --assets-dest "$bundle_root/assets"
 
 test -s "$bundle_root/index.android.bundle"
-node --input-type=module - "$bundle_root/index.android.bundle.map" <<'NODE'
+node --input-type=module - "$bundle_root/index.android.bundle.map" "$bundle_root/index.android.bundle" <<'NODE'
 import { readFileSync } from "node:fs";
 
 const { sources } = JSON.parse(readFileSync(process.argv[2], "utf8"));
@@ -41,6 +41,12 @@ if (retired.length !== 0) {
 }
 if (!sources.some((source) => /(?:^|\/)app\/\(workspace\)\/_layout\.tsx$/u.test(source))) {
   throw new Error("Android bundle does not contain the workspace entry");
+}
+if (!sources.some((source) => /(?:^|\/)src\/ui\/registerAppNoticeOverlay\.android\.ts$/u.test(source))) {
+  throw new Error("Android bundle does not register the native notice surface");
+}
+if (!readFileSync(process.argv[3], "utf8").includes('CodeWideAppNotice')) {
+  throw new Error("Android bundle does not contain the native notice component name");
 }
 console.log("Android bundle verified: workspace present, no V2 frontend or sync-client modules.");
 NODE

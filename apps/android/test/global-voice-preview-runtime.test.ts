@@ -105,6 +105,7 @@ describe("GlobalVoicePreviewRuntime", () => {
       read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
       reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
       reset: vi.fn(async () => undefined),
+      restoreDeletedHome: vi.fn(async () => null),
     };
     const identifiers = ["preview", "channel"];
     const runtime = createGlobalVoicePreviewRuntime({
@@ -169,6 +170,7 @@ describe("GlobalVoicePreviewRuntime", () => {
         read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
         reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
         reset: vi.fn(async () => undefined),
+        restoreDeletedHome: vi.fn(async () => null),
       }),
       enabledConnectionIds: () => ["home"],
       ensureStarted: async () => undefined,
@@ -230,6 +232,7 @@ describe("GlobalVoicePreviewRuntime", () => {
         read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
         reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
         reset: vi.fn(async () => undefined),
+        restoreDeletedHome: vi.fn(async () => null),
       }),
       enabledConnectionIds: () => ["home"],
       ensureStarted: async () => undefined,

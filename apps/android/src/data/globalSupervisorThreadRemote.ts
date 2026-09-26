@@ -1,3 +1,5 @@
+import { RpcResponseError } from "@codewide/sync-client";
+
 import type { WorkspaceSyncSession } from "./workspace-session";
 import { globalSupervisorLimitsV1 } from "./globalSupervisorLimitsV1";
 import { globalSupervisorThreadStartParams } from "./globalSupervisorThreadProfile";
@@ -15,8 +17,23 @@ type GlobalSupervisorThreadRemote = {
     connectionId: string,
     source: string,
   ) => Promise<readonly string[]>;
+  readonly readThreadSource: (connectionId: string, threadId: string) => Promise<string | null>;
   readonly startThread: (connectionId: string, source: string) => Promise<string>;
 };
+
+export const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE = -32_061;
+
+function parseThreadReadSource(value: unknown, threadId: string): string | null {
+  const thread = unknownRecord(unknownRecord(value)?.thread);
+  if (
+    thread === null ||
+    thread.id !== threadId ||
+    (thread.threadSource !== null && typeof thread.threadSource !== "string")
+  ) {
+    throw new Error("Supervisor recovery received invalid thread metadata");
+  }
+  return thread.threadSource;
+}
 
 function parseBindingCatalogPage(value: unknown): {
   readonly data: readonly { readonly id: string; readonly threadSource: string | null }[];
@@ -105,6 +122,24 @@ export function createGlobalSupervisorThreadRemote(options: {
         }
       }
       return result;
+    },
+    async readThreadSource(connectionId: string, threadId: string): Promise<string | null> {
+      let response: unknown;
+      try {
+        response = await options.rpcAfterAttach<unknown>(session(connectionId), "thread/read", {
+          includeTurns: false,
+          threadId,
+        });
+      } catch (error) {
+        if (
+          error instanceof RpcResponseError &&
+          error.code === GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE
+        ) {
+          return null;
+        }
+        throw error;
+      }
+      return parseThreadReadSource(response, threadId);
     },
     async startThread(connectionId: string, source: string): Promise<string> {
       const personality = await options.personality();

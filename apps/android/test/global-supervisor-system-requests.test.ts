@@ -17,6 +17,7 @@ function binding(): GlobalSupervisorBindingOwner {
     })),
     reconcile: vi.fn(),
     reset: vi.fn(),
+    restoreDeletedHome: vi.fn(async () => null),
   };
 }
 

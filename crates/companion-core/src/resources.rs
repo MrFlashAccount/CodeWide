@@ -29,7 +29,7 @@ use crate::{
 mod full_change_output;
 
 const PROJECTIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_resources");
-const PROJECTION_VERSION: u8 = 9;
+const PROJECTION_VERSION: u8 = 10;
 const MAX_DIFF_CHARS_PER_PATH: usize = 4 * 1024 * 1024;
 const TAIL_CHECK_BYTES: u64 = 4_096;
 const COMPLETED_TURN_REFRESH_DELAYS: [Duration; 6] = [
@@ -79,6 +79,8 @@ struct ResourceStore {
 struct ChangeResource {
     path: String,
     kind: ChangeKind,
+    #[serde(default)]
+    created_in_scope: bool,
     additions: u64,
     deletions: u64,
     turn_id: String,
@@ -1447,6 +1449,7 @@ impl ResourceData {
         self.upsert_change(ChangeResource {
             path: resolved.clone(),
             kind,
+            created_in_scope: kind == ChangeKind::Add,
             additions,
             deletions,
             turn_id: turn_id.to_owned(),
@@ -2258,6 +2261,53 @@ mod tests {
         assert_eq!(bucket.patches.len(), 1);
         assert_eq!(bucket.patches[0].diff, "+second\n");
         assert_eq!(bucket.chars, "+second\n".len());
+    }
+
+    #[test]
+    fn session_summary_retains_the_first_change_kind_across_turns() {
+        let mut projection = PersistedProjection::empty(PathBuf::from("/tmp/session.jsonl"), 1, 2);
+        for (turn_id, item_id, kind) in [
+            ("turn-1", "item-1", "add"),
+            ("turn-2", "item-2", "update"),
+            ("turn-3", "item-3", "delete"),
+        ] {
+            let mut data = ResourceData::default();
+            data.apply_change(
+                turn_id,
+                item_id,
+                "/workspace/created.rs",
+                &json!({ "type": kind, "diff": "content\n" }),
+                None,
+            );
+            projection.turns.push(TurnResourceData {
+                turn_id: turn_id.into(),
+                data,
+            });
+        }
+        let summary = projection.materialized_summary();
+        let change = summary
+            .changes
+            .get("/workspace/created.rs")
+            .expect("session change");
+        assert!(change.created_in_scope);
+        assert_eq!(change.kind, ChangeKind::Delete);
+
+        let mut existing = ResourceData::default();
+        existing.apply_change(
+            "turn-1",
+            "item-1",
+            "/workspace/existing.rs",
+            &json!({ "type": "update", "diff": "-old\n+new\n" }),
+            None,
+        );
+        existing.apply_change(
+            "turn-2",
+            "item-2",
+            "/workspace/existing.rs",
+            &json!({ "type": "delete", "diff": "new\n" }),
+            None,
+        );
+        assert!(!existing.changes["/workspace/existing.rs"].created_in_scope);
     }
 
     #[test]

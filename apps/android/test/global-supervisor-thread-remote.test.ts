@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { RpcResponseError } from "@codewide/sync-client";
+
 import { createGlobalSupervisorThreadRemote } from "../src/data/globalSupervisorThreadRemote";
 import { unknownRecord } from "../src/data/unknownRecord";
 import type { WorkspaceSyncSession } from "../src/data/workspace-session";
@@ -78,4 +80,36 @@ it("reconciles through the server's exact-source catalog, including an empty con
   expect(
     rpcAfterAttach.mock.calls.every((call) => call[1] === "companion/supervisor/threadList"),
   ).toBe(true);
+});
+
+it("checks the old supervisor thread with a bounded metadata-only read", async () => {
+  const session = sessionFixture();
+  const rpcAfterAttach = vi.fn(async () => ({
+    thread: { id: "prior-home", threadSource: "codewide-global-supervisor:old-token" },
+  }));
+  const remote = createGlobalSupervisorThreadRemote({
+    getSession: () => session,
+    personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
+    rpcAfterAttach,
+  });
+
+  await expect(remote.readThreadSource("new-profile", "prior-home")).resolves.toBe(
+    "codewide-global-supervisor:old-token",
+  );
+  expect(rpcAfterAttach).toHaveBeenCalledWith(session, "thread/read", {
+    includeTurns: false,
+    threadId: "prior-home",
+  });
+});
+
+it("does not treat a missing prior thread as a recoverable supervisor", async () => {
+  const remote = createGlobalSupervisorThreadRemote({
+    getSession: sessionFixture,
+    personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
+    rpcAfterAttach: async () => {
+      throw new RpcResponseError(-32_061, "Thread unavailable");
+    },
+  });
+
+  await expect(remote.readThreadSource("new-profile", "prior-home")).resolves.toBeNull();
 });

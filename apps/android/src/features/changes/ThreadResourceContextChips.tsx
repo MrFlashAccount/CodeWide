@@ -2,6 +2,7 @@
 import { Pressable } from "react-native";
 import { useEvent } from "../../react/useEvent";
 import type { ThreadResourcesModel } from "../../data/thread-resources-model";
+import { effectiveThreadChanges } from "../../data/sessionChangeVisibility";
 import { useThreadResources } from "../../data/use-thread-resources";
 import type {
   ThreadChangeScope,
@@ -81,7 +82,10 @@ export function ThreadResourceContextChips({
     (resource?.readyKinds === undefined && resource?.status === "error" ? resource.error : null);
   const changesUnavailable = changesError !== null && !changesReady;
   const attachmentsUnavailable = attachmentsError !== null && !attachmentsReady;
-  const changeCount = presentation.resource?.changes.length ?? 0;
+  const changeCount =
+    presentation.resource === null
+      ? 0
+      : effectiveThreadChanges(presentation.resource.changes, presentation.scope).length;
   const attachmentCount = resource?.value?.attachments.length ?? 0;
   const changeScopes = presentation.scopes;
   const changeScope = presentation.scope;

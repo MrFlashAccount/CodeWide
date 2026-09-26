@@ -45,5 +45,7 @@ export const styles = StyleSheet.create({
     flexShrink: 0,
     width: controlSize.compact,
   },
+  virtualizedTurnAfterLead: { paddingTop: spacing.xxs },
+  virtualizedTurnLead: { gap: spacing.xxs },
   virtualizedTurnSegment: { gap: 0 },
 });

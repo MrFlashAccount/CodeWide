@@ -30,8 +30,10 @@ it("preserves conversation timeline integration contracts", () => {
   expect(ownerTimelineProjection).toContain(
     "status: normalizePendingDeliveryState(delivery.state)",
   );
-  expect(ownerTimelineViewport).toContain("initialScrollAtEnd={!props.timelinePositioned}");
-  expect(ownerTimelineViewport).toContain("projectTimelineRows(props.displayedTimeline, {\n    enabled: true,");
+  expect(ownerTimelineViewport).toContain("initialScrollAtEnd={initialScrollAtEnd}");
+  expect(ownerTimelineViewport).toContain(
+    "projectTimelineRows(props.displayedTimeline, {\n    enabled: true,",
+  );
   expect(ownerTimelineViewport).not.toContain("useV1FeatureFlag");
   expect(ownerTimelineViewport).toContain("maintainScrollAtEnd");
   expect(ownerTimelineViewport).toContain(
@@ -50,7 +52,8 @@ it("preserves conversation timeline integration contracts", () => {
     "KeyboardController.dismiss({ animated: true, keepFocus: false })",
   );
   // Keyboard lift and question-editing anchor behavior are exercised by v1-jump-to-latest.render.
-  expect(ownerTimelineViewport).toContain("onScrollBeginDrag={gestures.onScrollBeginDrag}");
+  expect(ownerTimelineViewport).toContain("onScrollBeginDrag={onScrollBeginDrag}");
+  expect(ownerTimelineViewport).toContain("anchoredEndSpace={");
   expect(ownerTimelineViewport).toContain("keyboardOffset={props.conversationInsets.bottom}");
   expect(ownerUnreadReceipt).toContain("claimUnreadReceipt(");
   expect(ownerUnreadReceipt).toContain("onViewedLatest?.();");

@@ -145,14 +145,16 @@ function sidebarSearchContent({
   route,
   searchEntry,
   searchVoiceRuntime,
+  visible,
 }: {
   readonly closeGlobalSearch: () => void;
   readonly resources: WorkspaceRouteResources;
   readonly route: ReturnType<typeof useWorkspaceRouteModel>;
   readonly searchEntry: ReturnType<typeof searchRouteSessions.get>;
   readonly searchVoiceRuntime: AppVoiceInputRuntime | null;
+  readonly visible: boolean;
 }): React.JSX.Element | null {
-  return route.globalSearchSessionId === null
+  return !visible || route.globalSearchSessionId === null
     ? null
     : searchEntry === null
       ? createElement(RouteUnavailable, {
@@ -187,11 +189,21 @@ function useSearchSessionRetention(sessionId: string | null): void {
 /** Composes the mounted V1 route resources, list chrome, and active destination slot. */
 export function WorkspaceRouteComposition(): React.JSX.Element {
   const [terminalsVisible, setTerminalsVisible] = useState(false);
+  const [desktopSearchSessionId, setDesktopSearchSessionId] = useState<string | null | undefined>(
+    undefined,
+  );
   const windowLayout = useWindowLayout();
-  const route = useWorkspaceRouteModel(windowLayout.desktop);
+  const route = useWorkspaceRouteModel(windowLayout.desktop, desktopSearchSessionId);
+  const searchEntry =
+    route.globalSearchSessionId === null
+      ? null
+      : searchRouteSessions.get(route.globalSearchSessionId, workspaceRouteSessionOwner);
+  const searchVisible =
+    route.pathname === "/search" || (windowLayout.desktop && searchEntry !== null);
   const { closeGlobalSearch, openGlobalSearch } = useAdaptiveSearchRoute(
     windowLayout.desktop,
     route,
+    setDesktopSearchSessionId,
   );
   const projectSelection = useWorkspaceProjectNavigation(route.projectListSessionId);
   const globalVoice = useGlobalVoiceControl();
@@ -214,7 +226,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     connections,
     list,
     runtime,
-    searchActive: route.globalSearchSessionId !== null,
+    searchActive: searchVisible,
   });
   const browserFeedback = useBrowserFeedbackSubmission(
     connections,
@@ -366,10 +378,6 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     threadListSources,
     viewportWidth: windowLayout.width,
   };
-  const searchEntry =
-    route.globalSearchSessionId === null
-      ? null
-      : searchRouteSessions.get(route.globalSearchSessionId, workspaceRouteSessionOwner);
   const searchVoiceConnectionId = resolveSearchVoiceConnectionId(list.serverScope, list.servers);
   const startSearchVoiceTranscription = useEvent<NonNullable<AppVoiceInputRuntime["startRemote"]>>(
     async (listener, options) => {
@@ -397,6 +405,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     route,
     searchEntry,
     searchVoiceRuntime,
+    visible: searchVisible,
   });
 
   const threadListProps = {

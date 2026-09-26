@@ -31,6 +31,24 @@ function binding() {
   return { adapter, rpcAfterAttach, imported, summarized, loadTurnControls };
 }
 describe("projects workspace command adapter", () => {
+  it("makes project addition an explicit pin command", async () => {
+    const test = binding();
+    const project = {
+      addedAt: 1,
+      lastUsedAt: 1,
+      name: "project",
+      path: "/project",
+      pinned: true,
+    };
+    test.rpcAfterAttach.mockResolvedValue({ project });
+
+    await expect(test.adapter.addProject("server", "/project")).resolves.toEqual(project);
+    expect(test.rpcAfterAttach).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      "companion/project/add",
+      { path: "/project", pinned: true },
+    );
+  });
   it("publishes the authoritative empty thread and settings before control catalogs finish", async () => {
     const test = binding();
     test.rpcAfterAttach.mockResolvedValue(started("/project"));

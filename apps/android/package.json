@@ -27,6 +27,7 @@
     "test:v1:render": "jest --config jest.v1.config.cjs --runInBand",
     "test:markup": "jest --config jest.markup.config.cjs --runInBand",
     "test:web-platform": "node --test test/web-platform.browser.test.mjs",
+    "test:legend-list-response-positioning": "node --test test/legend-list-response-positioning.browser.test.mjs",
     "test:legend-list-unread-jump": "node --test test/legend-list-unread-jump.browser.test.mjs",
     "test:markdown-virtualization": "node --test test/markdown-virtualization.browser.test.mjs",
     "test:diagram-preview": "node --test test/diagram-preview.browser.test.mjs",

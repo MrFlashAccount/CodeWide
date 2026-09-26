@@ -5,7 +5,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.graphics.Canvas
 import android.view.Choreographer
-import android.view.View
+import android.widget.FrameLayout
 
 /** Closed renderer selection stored by the TypeScript settings owner. */
 enum class VoiceAssistantOrbStyle(val wireValue: String) {
@@ -14,7 +14,7 @@ enum class VoiceAssistantOrbStyle(val wireValue: String) {
 
   companion object {
     fun fromWireValue(value: String): VoiceAssistantOrbStyle =
-      entries.firstOrNull { it.wireValue == value } ?: NEBULA
+      entries.firstOrNull { it.wireValue == value } ?: PARTICLES
   }
 }
 
@@ -38,7 +38,7 @@ enum class VoiceAssistantOrbState(val wireValue: String) {
  * Owns the sole Choreographer callback for one attached renderer.
  * Removing a renderer from its slot synchronously cancels its clock before the replacement starts.
  */
-abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreographer.FrameCallback {
+abstract class VoiceAssistantOrbView(context: Context) : FrameLayout(context), Choreographer.FrameCallback {
   protected var orbState = VoiceAssistantOrbState.IDLE
     private set
   protected var reducedMotion = false
@@ -48,6 +48,10 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
   private var animationFrames = 0L
   private var diagnosticInput = 0.0
   private var diagnosticPlayback = 0.0
+
+  init {
+    setWillNotDraw(false)
+  }
 
   protected fun recordAudioInput(input: Double, playback: Double) {
     diagnosticInput = if (input.isFinite()) input.coerceIn(0.0, 1.0) else 0.0
@@ -69,9 +73,13 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
 
   private var backdrop: OrbBackdrop? = null
   private var backdropDeltaSeconds = 0f
+  protected var isBackdropEnabled = false
+    private set
 
   fun setBackdropEnabled(enabled: Boolean) {
+    isBackdropEnabled = enabled
     backdrop = if (enabled) backdrop ?: OrbBackdrop() else null
+    onBackdropChanged(enabled)
     invalidate()
   }
 
@@ -113,12 +121,16 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
 
   protected open fun onReducedMotionChanged() = Unit
 
+  protected open fun onBackdropChanged(enabled: Boolean) = Unit
+
+  protected open val usesMainThreadAnimationClock = true
+
   protected abstract fun advanceAnimation(deltaSeconds: Float)
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
     attached = true
-    postFrame()
+    if (usesMainThreadAnimationClock) postFrame()
   }
 
   override fun onDetachedFromWindow() {
@@ -130,7 +142,7 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
 
   final override fun doFrame(frameTimeNanos: Long) {
     framePosted = false
-    if (!attached || reducedMotion) return
+    if (!attached || reducedMotion || !usesMainThreadAnimationClock) return
     val deltaSeconds = if (lastFrameNanos == 0L) {
       0f
     } else {
@@ -145,7 +157,7 @@ abstract class VoiceAssistantOrbView(context: Context) : View(context), Choreogr
   }
 
   private fun postFrame() {
-    if (framePosted || !attached || reducedMotion) return
+    if (framePosted || !attached || reducedMotion || !usesMainThreadAnimationClock) return
     framePosted = true
     Choreographer.getInstance().postFrameCallback(this)
   }

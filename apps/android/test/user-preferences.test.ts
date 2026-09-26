@@ -138,8 +138,10 @@ describe("user preferences", () => {
     });
   });
 
-  it("keeps existing users on Nebula and rejects corrupt or unknown orb styles", () => {
-    expect(decodeGlobalVoiceOrbStyle(null)).toBe(DEFAULT_GLOBAL_VOICE_ORB_STYLE);
+  it("defaults missing, obsolete and corrupt orb styles to Particles", () => {
+    expect(DEFAULT_GLOBAL_VOICE_ORB_STYLE).toBe("particles");
+    expect(decodeGlobalVoiceOrbStyle(null)).toBe("particles");
+    expect(decodeGlobalVoiceOrbStyle(undefined)).toBe("particles");
     expect(decodeGlobalVoiceOrbStyle(encodeGlobalVoicePreference("juniper"))).toBe(
       DEFAULT_GLOBAL_VOICE_ORB_STYLE,
     );
@@ -159,6 +161,15 @@ describe("user preferences", () => {
         database.collection.get(GLOBAL_VOICE_ORB_STYLE_PREFERENCE_ID)?.value,
       ),
     ).toBe(DEFAULT_GLOBAL_VOICE_ORB_STYLE);
+
+    await database.update(GLOBAL_VOICE_ORB_STYLE_PREFERENCE_ID, () =>
+      encodeGlobalVoiceOrbStyle("nebula"),
+    );
+    expect(
+      decodeGlobalVoiceOrbStyle(
+        database.collection.get(GLOBAL_VOICE_ORB_STYLE_PREFERENCE_ID)?.value,
+      ),
+    ).toBe("nebula");
 
     await database.update(GLOBAL_VOICE_ORB_STYLE_PREFERENCE_ID, () =>
       encodeGlobalVoiceOrbStyle("particles"),

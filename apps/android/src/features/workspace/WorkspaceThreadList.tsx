@@ -16,7 +16,6 @@ export function WorkspaceThreadList({
   globalVoice,
   loadMoreProjectThreads,
   loadMoreThreads,
-  markListThreadRead,
   mobileRemoteSearchResource,
   mobileThreadOffset,
   mobileThreadQuery,
@@ -46,6 +45,7 @@ export function WorkspaceThreadList({
   threadListSources,
   threadNavigation,
   toggleListThreadPin,
+  toggleListThreadRead,
   unarchiveListThread,
   viewportWidth,
 }: {
@@ -59,7 +59,6 @@ export function WorkspaceThreadList({
   globalVoice: ThreadSidebarProps["globalVoice"];
   loadMoreProjectThreads: ThreadSidebarProps["onLoadMoreProject"];
   loadMoreThreads: ThreadSidebarProps["onLoadMore"];
-  markListThreadRead: ThreadSidebarProps["onMarkRead"];
   mobileRemoteSearchResource: ReturnType<typeof useThreadSearch>["mobileRemoteSearchResource"];
   mobileThreadOffset: ReturnType<typeof useThreadListState>["mobileThreadOffset"];
   mobileThreadQuery: string;
@@ -89,6 +88,7 @@ export function WorkspaceThreadList({
   threadListSources: ThreadSidebarProps["remote"];
   threadNavigation: ThreadSidebarProps["threadNavigation"];
   toggleListThreadPin: ThreadSidebarProps["onTogglePin"];
+  toggleListThreadRead: ThreadSidebarProps["onToggleRead"];
   unarchiveListThread: ThreadSidebarProps["onUnarchive"];
   viewportWidth: number;
 }): React.JSX.Element {
@@ -122,7 +122,6 @@ export function WorkspaceThreadList({
                 onLoadMoreProject: loadMoreProjectThreads,
                 onManageProjects: openProjects,
                 onManageTerminals: openTerminals,
-                onMarkRead: markListThreadRead,
                 onModeChange: changeSidebarMode,
                 onNewThread: createSidebarThread,
                 onOffsetChange: (offset) => {
@@ -134,6 +133,7 @@ export function WorkspaceThreadList({
                 onSelectServer: selectServer,
                 onSettings: openSettings,
                 onTogglePin: toggleListThreadPin,
+                onToggleRead: toggleListThreadRead,
                 onUnarchive: unarchiveListThread,
                 project: sidebarProject,
                 projectLimit: projectLimit,
@@ -165,7 +165,6 @@ export function WorkspaceThreadList({
                 onLoadMoreProject: loadMoreProjectThreads,
                 onManageProjects: openProjects,
                 onManageTerminals: openTerminals,
-                onMarkRead: markListThreadRead,
                 onModeChange: changeSidebarMode,
                 onNewThread: createSidebarThread,
                 onOffsetChange: (offset) => {
@@ -178,6 +177,7 @@ export function WorkspaceThreadList({
                 onSelectServer: selectServer,
                 onSettings: openSettings,
                 onTogglePin: toggleListThreadPin,
+                onToggleRead: toggleListThreadRead,
                 onUnarchive: unarchiveListThread,
                 project: sidebarProject,
                 projectLimit: projectLimit,

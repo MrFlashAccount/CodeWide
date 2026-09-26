@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 
 import {
   colors,
@@ -134,6 +134,13 @@ export function CodeReviewEditor({
             </View>
           ) : documentEmptyState !== null ? (
             <ReviewEmptyState state={documentEmptyState} />
+          ) : document.displayState === "image" ? (
+            <Image
+              accessibilityLabel="Changed image"
+              resizeMode="contain"
+              source={{ uri: document.imageDataUrl }}
+              style={styles.imagePreview}
+            />
           ) : (
             <ScrollView contentContainerStyle={styles.codeContent} horizontal={!wrapLines}>
               <View style={styles.lines}>
@@ -360,6 +367,10 @@ const styles = StyleSheet.create({
     height: controlSize.regular,
     justifyContent: "center",
     width: controlSize.regular,
+  },
+  imagePreview: {
+    flex: 1,
+    margin: spacing.md,
   },
   input: {
     backgroundColor: colors.surfaceContainerHighest,

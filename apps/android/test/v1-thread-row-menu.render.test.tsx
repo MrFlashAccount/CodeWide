@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { View } from "react-native";
 import { State } from "react-native-gesture-handler";
 import { fireGestureHandler, getByGestureTestId } from "react-native-gesture-handler/jest-utils";
+import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { ThreadRow } from "../src/features/threadList/ThreadRow";
 import type { ThreadListItem } from "../src/features/threadList/threadListTypes";
@@ -97,7 +98,7 @@ function longPressRow() {
   fireGestureHandler(getByGestureTestId("thread-row-long-press"), [{ state: State.ACTIVE }]);
 }
 
-function row(item = thread, onPin = pin) {
+function row(item = thread, onPin = pin, onToggleRead?: () => Promise<void>) {
   return (
     <AppNoticeContext.Provider value={{ show: jest.fn() }}>
       <ThreadRow
@@ -110,6 +111,7 @@ function row(item = thread, onPin = pin) {
         }}
         onNavigate={press}
         onTogglePin={onPin}
+        onToggleRead={onToggleRead}
         selected={false}
         server={undefined}
         thread={item}
@@ -123,6 +125,28 @@ beforeEach(() => {
   jest.spyOn(View.prototype, "measureInWindow").mockImplementation(node.measureInWindow);
   pendingMeasure = undefined;
   deferMeasure = false;
+});
+
+it("offers mark as unread in the native menu and swipe for a read thread", () => {
+  const toggleRead = jest.fn(async () => undefined);
+  const view = render(row(thread, pin, toggleRead));
+  act(longPressRow);
+  fireEvent.press(view.getByRole("menuitem", { name: "Mark as unread" }));
+  expect(toggleRead).toHaveBeenCalledTimes(1);
+  const unreadSwipe = render(view.UNSAFE_getByType(Swipeable).props.renderRightActions());
+  fireEvent.press(unreadSwipe.getByRole("button", { name: "Unread thread" }));
+  expect(toggleRead).toHaveBeenCalledTimes(2);
+});
+
+it("offers mark as read in the native menu and swipe for an unread thread", () => {
+  const toggleRead = jest.fn(async () => undefined);
+  const view = render(row({ ...thread, unread: 1 }, pin, toggleRead));
+  act(longPressRow);
+  fireEvent.press(view.getByRole("menuitem", { name: "Mark as read" }));
+  expect(toggleRead).toHaveBeenCalledTimes(1);
+  const readSwipe = render(view.UNSAFE_getByType(Swipeable).props.renderRightActions());
+  fireEvent.press(readSwipe.getByRole("button", { name: "Read thread" }));
+  expect(toggleRead).toHaveBeenCalledTimes(2);
 });
 
 it("mounts no Compose hosts or popup items for idle rows, including overscan", () => {
@@ -171,7 +195,7 @@ it("opens from the real row, preserves its instance, selects and removes the pop
 it("honors disabled actions and native dismissal without dispatching", () => {
   const view = render(row());
   act(longPressRow);
-  fireEvent.press(view.getByRole("menuitem", { name: "Mark as read" }));
+  fireEvent.press(view.getByRole("menuitem", { name: "Mark as unread" }));
   expect(view.getByTestId("native-popup")).toBeTruthy();
   fireEvent(view.getByTestId("native-popup"), "touchCancel");
   expect(view.queryByTestId("compose-host")).toBeNull();

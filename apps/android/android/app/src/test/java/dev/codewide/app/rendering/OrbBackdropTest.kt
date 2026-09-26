@@ -30,9 +30,10 @@ class OrbBackdropTest {
     fun radius(state: VoiceAssistantOrbState, level: Float): Float {
       var frame = simulation.advance(state, level, level, 0f)
       repeat(120) { frame = simulation.advance(state, level, level, 1f / 60) }
+      val projectionContext = ParticlesOrbProjectionContext(frame, 66f, 1f)
       var extent = 0f
       for (index in points.indices) {
-        ParticlesOrbModel.projectInto(points[index], index, frame, 66f, 1f, projected)
+        ParticlesOrbModel.projectInto(points[index], index, projectionContext, projected)
         extent = maxOf(extent, ParticlesOrbModel.visualExtent(projected, 66f))
       }
       val backdrop = OrbBackdropRadius().update(extent, 3f, 0f, true)
