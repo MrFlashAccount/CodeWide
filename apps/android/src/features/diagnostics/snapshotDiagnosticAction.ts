@@ -2,8 +2,9 @@ import * as Clipboard from "expo-clipboard";
 import { useRef, useState } from "react";
 import { operationalMetricsSnapshot } from "../../data/operational-metrics";
 import { performanceExperimentSnapshot } from "../../data/performance-experiments";
+import { timelineScrollJournal } from "../../data/timelineScrollJournal";
 import type { usePerformanceMetrics } from "../../native/performance-metrics";
-import { getWindowFrameReport } from "../../native/performance-metrics";
+import { getTimelineScrollReport, getWindowFrameReport } from "../../native/performance-metrics";
 import { useEvent } from "../../react/useEvent";
 
 export function useSnapshotDiagnosticAction(
@@ -38,7 +39,9 @@ export function useSnapshotDiagnosticAction(
               sessionJankPercent: metrics.sessionJankPercent,
               totalDroppedFrameEstimate: metrics.totalDroppedFrameEstimate,
             },
+            nativeTimelineScroll: await getTimelineScrollReport(),
             streaming: operationalMetricsSnapshot(),
+            timelineScroll: timelineScrollJournal.snapshot(),
             version: 1,
           },
           null,

@@ -130,6 +130,7 @@ export function createConversationChromeContent({
     <JumpToLatest
       bottomChromeHeight={timelineState.timelineViewportStateBinding.bottomChromeHeight}
       jumpTimelineToLatest={timelineRead.timelineJumpActionsBinding.jumpTimelineToLatest}
+      jumpVisibility={timelineState.timelineViewportStateBinding.jumpVisibility}
       newItemCount={timelineRead.newItemCount}
     />
   );

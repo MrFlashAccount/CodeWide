@@ -9,7 +9,10 @@ import type { TimelineItem } from "./timelineTypes";
 import type { TimelineViewportProps } from "./TimelineViewportContract";
 
 /** Synchronizes existing viewport lifetime callbacks without owning history state. */
-export function useTimelineMeasurementBindings(props: TimelineViewportProps) {
+export function useTimelineMeasurementBindings(
+  props: TimelineViewportProps,
+  onGeometryChanged: () => void,
+) {
   const { timelineContentHeightRef, timelineViewportHeightRef } = props;
   const onLoad = useEvent<NonNullable<ThreadTimelineListProps<TimelineItem>["onLoad"]>>(
     ({ elapsedTimeInMs }) => {
@@ -47,6 +50,7 @@ export function useTimelineMeasurementBindings(props: TimelineViewportProps) {
   const onLayout = useEvent<NonNullable<ThreadTimelineListProps<TimelineItem>["onLayout"]>>(
     ({ nativeEvent }) => {
       timelineViewportHeightRef.current = nativeEvent.layout.height;
+      onGeometryChanged();
       props.reportHistoryViewport();
       props.scheduleUnreadAgentVisibilityCheck();
     },
@@ -55,6 +59,7 @@ export function useTimelineMeasurementBindings(props: TimelineViewportProps) {
     NonNullable<ThreadTimelineListProps<TimelineItem>["onContentSizeChange"]>
   >((_width, height) => {
     timelineContentHeightRef.current = height;
+    onGeometryChanged();
     props.reportHistoryViewport();
     if (props.draftConnectionId !== null && props.draftThreadId !== null) {
       recordThreadNavigationVisualEvent(

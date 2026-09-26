@@ -2,8 +2,10 @@ import { useRef, useState } from "react";
 import type { View } from "react-native";
 import type { ThreadTimelineListRef } from "../../../rendering/ThreadTimelineList";
 import { useConversationRef, useConversationState } from "../../../ui/use-conversation-scope";
+import { useTimelineJumpVisibility } from "./timelineJumpVisibility";
 
 export function useTimelineViewportState(composerScope: string) {
+  const jumpVisibility = useTimelineJumpVisibility(composerScope);
   const scrollOffsetRef = useConversationRef(composerScope, () => 0);
 
   const timelineViewportHeightRef = useConversationRef(composerScope, () => 0);
@@ -43,6 +45,7 @@ export function useTimelineViewportState(composerScope: string) {
   );
   return {
     bottomChromeHeight,
+    jumpVisibility,
     lastTimelineOffsetYRef,
     paginationEdgeLockRef,
     paginationTrimTimerRef,

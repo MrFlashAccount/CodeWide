@@ -77,7 +77,6 @@ export function createConversationFrame({
         >
           <LargeContentViewerHost>
             <ConversationLayout
-              awayFromLatest={timelineState.historyAnchorStateBinding.awayFromLatest}
               bottomChrome={chromeView.bottomChrome}
               compact={surfaceInputs.compact}
               conversationBackdropVisible={timelineRead.conversationBackdropVisible}

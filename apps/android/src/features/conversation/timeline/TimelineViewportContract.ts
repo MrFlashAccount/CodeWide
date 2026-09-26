@@ -6,6 +6,7 @@ import type { ThreadHistoryViewport } from "../../../data/use-thread-history-con
 import type { ThreadTimelineListRef } from "../../../rendering/ThreadTimelineList";
 import type { TimelineItem } from "./timelineTypes";
 import type { TimelineJumpRequest } from "./timelineJump";
+import type { TimelineJumpVisibility } from "./timelineJumpVisibility";
 import type { TimelineRow } from "./timelineRows";
 
 /** Content, measurements, and controls owned by the timeline viewport. */
@@ -32,6 +33,7 @@ export type TimelineViewportProps = {
   };
   historyViewport: ThreadHistoryViewport;
   inlineQueueExpanded: boolean;
+  jumpVisibility: TimelineJumpVisibility;
   lastTimelineOffsetYRef: { current: number | null };
   latestUnreadAgentRef: RefObject<View | null>;
   latestUnreadAgentTurnId: string | null;

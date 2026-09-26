@@ -179,13 +179,16 @@ export function useTimelineSearchActions({
           }
           focusedSearchMessageRef.current = window;
           Promise.resolve(
-            timelineRef.current?.scrollToOffset({
-              animated: false,
-              offset: Math.max(
-                0,
-                (lastTimelineOffsetYRef.current ?? 0) + nodeY - viewportY - spacing.md,
-              ),
-            }),
+            timelineRef.current?.scrollToOffset(
+              {
+                animated: false,
+                offset: Math.max(
+                  0,
+                  (lastTimelineOffsetYRef.current ?? 0) + nodeY - viewportY - spacing.md,
+                ),
+              },
+              "search-result",
+            ),
           ).catch(() => undefined);
         });
       });
@@ -210,13 +213,19 @@ export function useTimelineSearchActions({
     }
     positionedSearchWindowRef.current = searchWindow;
     Promise.resolve(
-      timelineRef.current.scrollToIndex({ animated: false, index, viewPosition: 0 }),
+      timelineRef.current.scrollToIndex(
+        { animated: false, index, viewPosition: 0 },
+        "search-result",
+      ),
     ).catch(() => undefined);
   });
 
   const scrollToThreadSearchIndex = useEvent((index: number) => {
     Promise.resolve(
-      timelineRef.current?.scrollToIndex({ animated: true, index, viewPosition: 0.3 }),
+      timelineRef.current?.scrollToIndex(
+        { animated: true, index, viewPosition: 0.3 },
+        "search-result",
+      ),
     ).catch(() => undefined);
   });
 
@@ -232,13 +241,16 @@ export function useTimelineSearchActions({
     timelineIndexRetryTimerRef.current = setTimeout(() => {
       timelineIndexRetryTimerRef.current = null;
       Promise.resolve(
-        timelineRef.current?.scrollToOffset({
-          animated: false,
-          offset: Math.max(
-            0,
-            timelineContentHeightRef.current - timelineViewportHeightRef.current - offset,
-          ),
-        }),
+        timelineRef.current?.scrollToOffset(
+          {
+            animated: false,
+            offset: Math.max(
+              0,
+              timelineContentHeightRef.current - timelineViewportHeightRef.current - offset,
+            ),
+          },
+          "search-restore",
+        ),
       ).catch(() => undefined);
     }, 96);
   });

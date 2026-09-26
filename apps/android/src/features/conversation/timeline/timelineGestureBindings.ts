@@ -76,6 +76,7 @@ export function useTimelineGestureBindings(props: TimelineViewportProps) {
           nativeEvent.contentOffset.y,
       );
       scrollOffsetRef.current = distance;
+      props.jumpVisibility.update(distance, props.historyViewport.containsLatest);
       const away =
         !props.historyViewport.containsLatest ||
         distance > timelineTailModeThreshold(nativeEvent.layoutMeasurement.height);

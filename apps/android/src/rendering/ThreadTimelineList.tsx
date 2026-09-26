@@ -11,22 +11,35 @@ import {
 } from "react";
 import type { SharedValue } from "react-native-reanimated";
 
+import type { TimelineScrollSource } from "../data/timelineScrollDiagnosticContract";
+import type { TimelineScrollDiagnostics } from "../data/timelineScrollDiagnostics";
 import { windowLayoutStore } from "../native/window-layout-store";
 import { useEvent } from "../react/useEvent";
+import {
+  observeTimelineScrollCommand,
+  useTimelineListDiagnostics,
+} from "./timelineListDiagnostics";
 
 export interface ThreadTimelineListRef {
+  getDistanceFromEnd: () => number | null;
   getItemViewportOffset: (itemKey: string) => number | null;
   indexForItemKey: (itemKey: string) => number | null;
   isWithinEndThreshold: () => boolean | null;
   reportContentInset: (inset?: Partial<Insets> | null) => void;
-  scrollToEnd: (options?: { animated?: boolean }) => Promise<void>;
-  scrollToIndex: (options: {
-    animated?: boolean;
-    index: number;
-    viewOffset?: number;
-    viewPosition?: number;
-  }) => Promise<void>;
-  scrollToOffset: (options: { animated?: boolean; offset: number }) => Promise<void>;
+  scrollToEnd: (options?: { animated?: boolean }, source?: TimelineScrollSource) => Promise<void>;
+  scrollToIndex: (
+    options: {
+      animated?: boolean;
+      index: number;
+      viewOffset?: number;
+      viewPosition?: number;
+    },
+    source?: TimelineScrollSource,
+  ) => Promise<void>;
+  scrollToOffset: (
+    options: { animated?: boolean; offset: number },
+    source?: TimelineScrollSource,
+  ) => Promise<void>;
   subscribeEndThreshold: (listener: (withinThreshold: boolean) => void) => () => void;
 }
 
@@ -43,6 +56,7 @@ export type ThreadTimelineListProps<ItemT> = Omit<
 > & {
   anchoredEndSpace?: LegendListProps<ItemT>["anchoredEndSpace"] | undefined;
   contentInsetEndAdjustment?: SharedValue<number>;
+  diagnostics?: TimelineScrollDiagnostics;
   initialScrollIndex?: number | undefined;
   itemSizeEstimate: number;
   keyboardLiftBehavior?: "always" | "whenAtEnd" | "persistent" | "never";
@@ -54,6 +68,7 @@ function ThreadTimelineListInner<ItemT>(
   {
     anchoredEndSpace,
     contentInsetEndAdjustment,
+    diagnostics,
     initialScrollIndex,
     itemsAreEqual,
     itemSizeEstimate,
@@ -65,7 +80,9 @@ function ThreadTimelineListInner<ItemT>(
   ref: ForwardedRef<ThreadTimelineListRef>,
 ): ReactElement {
   const internalRef = useRef<LegendListRef>(null);
+  const diagnosticHandlers = useTimelineListDiagnostics(diagnostics, internalRef, props);
   const invalidateMeasurements = useEvent(() => {
+    diagnostics?.record({ kind: "layout", sizePx: 0, source: "measurement-invalidation" });
     internalRef.current?.clearCaches({ mode: "sizes" });
   });
   useEffect(
@@ -84,6 +101,14 @@ function ThreadTimelineListInner<ItemT>(
     const offset = position - state.scroll;
     return Number.isFinite(offset) ? offset : null;
   });
+  const getDistanceFromEnd = useEvent((): number | null => {
+    const state = internalRef.current?.getState();
+    if (state === undefined) {
+      return null;
+    }
+    const distance = state.contentLength - state.scrollLength - state.scroll;
+    return Number.isFinite(distance) ? Math.max(0, distance) : null;
+  });
   const indexForItemKey = useEvent(
     (itemKey: string): number | null => internalRef.current?.getState().indexByKey(itemKey) ?? null,
   );
@@ -96,25 +121,68 @@ function ThreadTimelineListInner<ItemT>(
       internalRef.current?.getState().listen("isWithinMaintainScrollAtEndThreshold", listener) ??
       (() => undefined),
   );
-  const scrollToEnd = useEvent(async (options?: { animated?: boolean }): Promise<void> => {
-    await internalRef.current?.scrollToEnd(options);
-  });
+  const scrollToEnd = useEvent(
+    async (
+      options?: { animated?: boolean },
+      source: TimelineScrollSource = "unspecified",
+    ): Promise<void> => {
+      await observeTimelineScrollCommand(
+        { diagnostics, ref: internalRef, source, target: { kind: "end" } },
+        async () => {
+          await internalRef.current?.scrollToEnd(options);
+        },
+      );
+    },
+  );
   const scrollToIndex = useEvent(
-    async (options: Parameters<ThreadTimelineListRef["scrollToIndex"]>[0]): Promise<void> => {
-      await internalRef.current?.scrollToIndex(options);
+    async (
+      options: Parameters<ThreadTimelineListRef["scrollToIndex"]>[0],
+      source: TimelineScrollSource = "unspecified",
+    ): Promise<void> => {
+      await observeTimelineScrollCommand(
+        {
+          diagnostics,
+          ref: internalRef,
+          source,
+          target: {
+            index: options.index,
+            kind: "index",
+            viewOffset: options.viewOffset ?? 0,
+            viewPosition: options.viewPosition ?? 0,
+          },
+        },
+        async () => {
+          await internalRef.current?.scrollToIndex(options);
+        },
+      );
     },
   );
   const scrollToOffset = useEvent(
-    async (options: Parameters<ThreadTimelineListRef["scrollToOffset"]>[0]): Promise<void> => {
-      await internalRef.current?.scrollToOffset(options);
+    async (
+      options: Parameters<ThreadTimelineListRef["scrollToOffset"]>[0],
+      source: TimelineScrollSource = "unspecified",
+    ): Promise<void> => {
+      await observeTimelineScrollCommand(
+        {
+          diagnostics,
+          ref: internalRef,
+          source,
+          target: { kind: "offset", offset: options.offset },
+        },
+        async () => {
+          await internalRef.current?.scrollToOffset(options);
+        },
+      );
     },
   );
-  const reportContentInset = useEvent((inset?: Partial<Insets> | null) =>
-    internalRef.current?.reportContentInset(inset),
-  );
+  const reportContentInset = useEvent((inset?: Partial<Insets> | null) => {
+    diagnostics?.record({ kind: "layout", sizePx: inset?.bottom ?? 0, source: "content-inset" });
+    internalRef.current?.reportContentInset(inset);
+  });
   useImperativeHandle(
     ref,
     () => ({
+      getDistanceFromEnd,
       getItemViewportOffset,
       indexForItemKey,
       isWithinEndThreshold,
@@ -125,6 +193,7 @@ function ThreadTimelineListInner<ItemT>(
       subscribeEndThreshold,
     }),
     [
+      getDistanceFromEnd,
       getItemViewportOffset,
       indexForItemKey,
       isWithinEndThreshold,
@@ -148,16 +217,16 @@ function ThreadTimelineListInner<ItemT>(
       ref: ForwardedRef<LegendListRef>;
     },
   ) => ReactElement;
-  const initialPositionProps = legendInitialPositionProps(anchoredEndSpace, initialScrollIndex);
-
   return (
     <KeyboardAwareTimelineList
       keyboardLiftBehavior={keyboardLiftBehavior}
       keyboardOffset={keyboardOffset}
       ref={internalRef}
       {...(contentInsetEndAdjustment === undefined ? {} : { contentInsetEndAdjustment })}
-      {...initialPositionProps}
+      {...(anchoredEndSpace === undefined ? {} : { anchoredEndSpace })}
+      {...(initialScrollIndex === undefined ? {} : { initialScrollIndex })}
       {...props}
+      {...diagnosticHandlers}
       alignItemsAtEnd
       dataKey={renderRevision}
       drawDistance={250}
@@ -168,15 +237,6 @@ function ThreadTimelineListInner<ItemT>(
       showsVerticalScrollIndicator={false}
     />
   );
-}
-
-function legendInitialPositionProps<ItemT>(
-  anchoredEndSpace: LegendListProps<ItemT>["anchoredEndSpace"] | undefined,
-  initialScrollIndex: number | undefined,
-): Pick<LegendListProps<ItemT>, "anchoredEndSpace" | "initialScrollIndex"> | Record<string, never> {
-  return anchoredEndSpace === undefined || initialScrollIndex === undefined
-    ? {}
-    : { anchoredEndSpace, initialScrollIndex };
 }
 
 function referenceEqual<ItemT>(previous: ItemT, next: ItemT): boolean {

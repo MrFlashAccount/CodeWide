@@ -32,6 +32,8 @@ export type TimingMetric =
   | "thread_mutable_head_read_ms"
   | "thread_window_read_ms"
   | "timeline_first_draw_ms"
+  | "timeline_scroll_command_ms"
+  | "timeline_scroll_rebound_ms"
   | "thread_cached_visible_ms"
   | "thread_fresh_visible_ms"
   | "thread_detail_projection_ms"
@@ -71,6 +73,11 @@ export type CounterMetric =
   | "stream_repairs"
   | "thread_cursor_recovery_fallbacks"
   | "thread_row_commits"
+  | "timeline_scroll_commands"
+  | "timeline_scroll_command_failures"
+  | "timeline_scroll_anchor_reapplications"
+  | "timeline_scroll_gesture_returns"
+  | "timeline_scroll_rebounds"
   | "voice_failures";
 
 export type OperationalMetricsSnapshot = {

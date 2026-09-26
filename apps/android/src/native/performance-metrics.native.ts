@@ -4,6 +4,10 @@ import { useSyncExternalStore } from "react";
 import { resetPerformanceExperiments } from "../data/performance-experiments";
 import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
 import { parseWindowFrameReport, type WindowFrameReport } from "../data/window-frame-report";
+import {
+  parseNativeTimelineScrollReport,
+  type NativeTimelineScrollReport,
+} from "../data/nativeTimelineScrollReport";
 
 export type PerformanceMetricPoint = {
   cpuPercent: number;
@@ -118,6 +122,7 @@ type PerformanceBridge = {
   drainFrameIncidents?: () => Promise<unknown>;
   endNavigationTrace?: (traceId: string) => Promise<ThreadNavigationFrameProfile | null>;
   getPerformanceSnapshot: () => Promise<PerformanceMetricsSnapshot>;
+  getTimelineScrollReport?: () => Promise<unknown>;
   getWindowFrameReport?: () => Promise<unknown>;
   purgeNativeAllocator?: (exhaustive: boolean) => Promise<unknown>;
   removeListeners: (count: number) => void;
@@ -459,4 +464,12 @@ export async function getWindowFrameReport(): Promise<WindowFrameReport | null> 
     return null;
   }
   return parseWindowFrameReport(await bridge.getWindowFrameReport());
+}
+
+/** Exports bounded native scroll call sites on demand, independently of the performance HUD. */
+export async function getTimelineScrollReport(): Promise<NativeTimelineScrollReport | null> {
+  if (bridge?.getTimelineScrollReport === undefined) {
+    return null;
+  }
+  return parseNativeTimelineScrollReport(await bridge.getTimelineScrollReport());
 }

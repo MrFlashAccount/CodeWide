@@ -491,7 +491,8 @@ describe("thread history pagination contract", () => {
       "contentHeight - timelineViewportHeightRef.current - pendingOffset",
     );
     expect(screen).not.toContain("scrollToIndex({ index: anchorIndex");
-    expect(timelineListSource).toContain("legendInitialPositionProps");
+    // Bootstrap positioning and retained response runway are verified through the rendered
+    // LegendList boundary in v1-jump-to-latest.render, not a private adapter helper's name.
     expect(timelineListSource).toContain('"anchoredEndSpace"');
     expect(timelineListSource).toContain("positionByKey(itemKey)");
     expect(uiStateDatabase).toContain("historyAnchorOffsetPx");

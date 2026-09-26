@@ -63,6 +63,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       fullscreenScrollOwnership={props.overlayScrollStateBinding.fullscreenScrollOwnership}
       historyViewport={props.historyViewport}
       inlineQueueExpanded={props.queueVisibilityBinding.inlineQueueExpanded}
+      jumpVisibility={props.timelineState.timelineViewportStateBinding.jumpVisibility}
       lastTimelineOffsetYRef={
         props.timelineState.timelineViewportStateBinding.lastTimelineOffsetYRef
       }

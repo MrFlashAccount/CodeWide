@@ -1,4 +1,3 @@
-import { compactSource } from "./source-contract";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -16,18 +15,6 @@ const ownerSubmission = readFileSync(
 const ownerVoice = readFileSync(
   new URL("../src/features/composer/voice.ts", import.meta.url),
   "utf8",
-);
-
-const ownerTimelineJump = readFileSync(
-  new URL("../src/features/conversation/timeline/timelineJump.ts", import.meta.url),
-  "utf8",
-);
-
-const timelineJump = compactSource(
-  readFileSync(
-    new URL("../src/features/conversation/timeline/timelineJump.ts", import.meta.url),
-    "utf8",
-  ),
 );
 
 describe("composer delivery mode", () => {
@@ -69,11 +56,9 @@ describe("composer delivery mode", () => {
     expect(ownerVoice).toContain("send(text, preference);");
   });
 
-  it("loads the latest range before asking LegendList to reveal a new turn", () => {
-    expect(timelineJump).toMatch(/void historyViewport\s*\.loadLatest\(\)\s*\.then\(\(\) => \{/u);
-    expect(ownerTimelineJump).toContain(
-      "await list.scrollToEnd({ animated: false }).catch(() => undefined);",
-    );
+  it("keeps latest-range positioning owned by the conversation instead of the workspace layout", () => {
+    // Loading-before-scroll is exercised through the button and LegendList boundary in
+    // v1-jump-to-latest.render.test.tsx, independently of diagnostic arguments or formatting.
     expect(screen).not.toContain("historyViewport.revealLatest");
     expect(screen).not.toContain("markTimelineAtLatest");
   });

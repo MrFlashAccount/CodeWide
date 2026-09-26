@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useSelector } from "@legendapp/state/react";
 import { Pressable, View } from "react-native";
 import { colors, iconSize, spacing } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
@@ -8,8 +9,13 @@ import type { JumpToLatestProps } from "./JumpToLatestContract";
 export function JumpToLatest({
   bottomChromeHeight,
   jumpTimelineToLatest,
+  jumpVisibility,
   newItemCount,
 }: JumpToLatestProps) {
+  const visible = useSelector(jumpVisibility.visible$);
+  if (!visible) {
+    return null;
+  }
   return (
     <Pressable
       accessibilityLabel={

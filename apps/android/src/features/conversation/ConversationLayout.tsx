@@ -11,7 +11,6 @@ import type { ConversationLayoutProps } from "./ConversationLayoutContract";
 import { ThreadCwdContext } from "./turns/turnContexts";
 
 export function ConversationLayout({
-  awayFromLatest,
   bottomChrome,
   compact,
   conversationBackdropVisible,
@@ -88,7 +87,7 @@ export function ConversationLayout({
             {conversationBackdropVisible && (
               <ConversationPanelUnderlay style={StyleSheet.absoluteFill} />
             )}
-            {awayFromLatest && jumpContent}
+            {jumpContent}
 
             {bottomChrome}
           </KeyboardStickyView>

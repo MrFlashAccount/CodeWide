@@ -24,6 +24,8 @@ export const STAGE_METRICS: ReadonlyArray<{ id: TimingMetric; label: string }> =
   { id: "sqlite_subset_load_ms", label: "SQLite subset load" },
   { id: "sqlite_checkpoint_ms", label: "SQLite checkpoint" },
   { id: "markdown_parse_ms", label: "Markdown parse" },
+  { id: "timeline_scroll_command_ms", label: "Scroll command promise" },
+  { id: "timeline_scroll_rebound_ms", label: "Scroll return after reaching end" },
 ];
 
 export const EXPERIMENTS: ReadonlyArray<{

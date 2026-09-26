@@ -1,8 +1,10 @@
 import { createRef } from "react";
-import { View, type View as NativeView } from "react-native";
+import { Pressable, View, type View as NativeView } from "react-native";
 import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react-native";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
 import { TimelineViewport } from "../src/features/conversation/timeline/TimelineViewport";
+import { JumpToLatest } from "../src/features/conversation/timeline/JumpToLatest";
+import { TimelineJumpVisibility } from "../src/features/conversation/timeline/timelineJumpVisibility";
 import type { TimelineViewportProps } from "../src/features/conversation/timeline/TimelineViewportContract";
 import { timelineItemKey } from "../src/features/conversation/timeline/timelineProjection";
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
@@ -16,6 +18,7 @@ import { conversationTopContentInset } from "../src/ui/conversation-chrome-layou
 import {
   legendListScrollToEnd,
   legendListScrollToIndex,
+  setLegendListAnchorReadyDuringLayout,
   setLegendListWithinEndThreshold,
 } from "./mocks/LegendKeyboardList";
 
@@ -98,6 +101,7 @@ function timelineViewportProps(
     fullscreenScrollOwnership: createFullscreenScrollOwnership(() => undefined),
     historyViewport: COMPLETE_STATIC_THREAD_HISTORY,
     inlineQueueExpanded: false,
+    jumpVisibility: new TimelineJumpVisibility(),
     lastTimelineOffsetYRef: { current: null },
     latestUnreadAgentRef: { current: null },
     latestUnreadAgentTurnId: null,
@@ -154,7 +158,10 @@ beforeEach(() => {
   legendListScrollToEnd.mockClear();
   legendListScrollToIndex.mockClear();
   setLegendListWithinEndThreshold(true);
+  setLegendListAnchorReadyDuringLayout(false);
 });
+
+afterEach(() => setLegendListAnchorReadyDuringLayout(false));
 
 it("does not overwrite a user scroll when the delayed initial load completes", () => {
   const awayFromLatestRef = { current: true };
@@ -273,6 +280,87 @@ it("does not pull a completed response back after the user left the tail", () =>
   expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace).toBeUndefined();
 });
 
+it("accepts completion readiness from the child's layout before parent event handlers commit", () => {
+  const props = timelineViewportProps(() => undefined);
+  props.awayFromLatest = false;
+  props.awayFromLatestRef.current = false;
+  props.displayedTimeline = [responseTurn("inProgress")];
+  const view = render(<TimelineViewport {...props} />);
+  setLegendListAnchorReadyDuringLayout(true);
+
+  view.rerender(<TimelineViewport {...props} displayedTimeline={[responseTurn("completed")]} />);
+
+  expect(legendListScrollToIndex).toHaveBeenCalledTimes(1);
+  expect(legendListScrollToIndex).toHaveBeenCalledWith({
+    animated: false,
+    index: 1,
+    viewOffset: conversationTopContentInset(false),
+    viewPosition: 0,
+  });
+  expect(view.getByTestId("conversation-timeline").props.initialScrollIndex).toBeUndefined();
+});
+
+it("retains the response runway after bootstrap positioning is retired", () => {
+  const props = timelineViewportProps(() => undefined);
+  props.displayedTimeline = [responseTurn("completed")];
+  props.latestUnreadAgentTurnId = "response-turn";
+  props.timelinePositioned = false;
+  const view = render(<TimelineViewport {...props} />);
+  const initial = view.getByTestId("conversation-timeline");
+  const ready = {
+    anchorIndex: 1,
+    anchorKey: timelineItemKey(responseTurn("completed")),
+    size: 600,
+  };
+  expect(initial.props.initialScrollIndex).toBe(1);
+  act(() => initial.props.anchoredEndSpace.onReady(ready));
+
+  view.rerender(<TimelineViewport {...props} timelinePositioned />);
+
+  const positioned = view.getByTestId("conversation-timeline");
+  expect(positioned.props.initialScrollIndex).toBeUndefined();
+  expect(positioned.props.anchoredEndSpace).toMatchObject({
+    anchorIndex: 1,
+    anchorOffset: conversationTopContentInset(false),
+  });
+  act(() => positioned.props.anchoredEndSpace.onReady(ready));
+  expect(legendListScrollToIndex).toHaveBeenCalledTimes(1);
+});
+
+it("does not reapply the response anchor after another size measurement", () => {
+  const props = timelineViewportProps(() => undefined);
+  props.displayedTimeline = [responseTurn("completed")];
+  props.latestUnreadAgentTurnId = "response-turn";
+  const view = render(<TimelineViewport {...props} />);
+  const anchor = view.getByTestId("conversation-timeline").props.anchoredEndSpace;
+  const ready = {
+    anchorIndex: 1,
+    anchorKey: timelineItemKey(responseTurn("completed")),
+    size: 600,
+  };
+  act(() => {
+    anchor.onReady(ready);
+    anchor.onReady({ ...ready, size: 350 });
+    anchor.onReady({ ...ready, size: 0 });
+  });
+  expect(legendListScrollToIndex).toHaveBeenCalledTimes(1);
+});
+
+it("revokes a pending response jump when a manual gesture starts", () => {
+  const props = timelineViewportProps(() => undefined);
+  props.displayedTimeline = [responseTurn("completed")];
+  props.latestUnreadAgentTurnId = "response-turn";
+  const view = render(<TimelineViewport {...props} />);
+  const timeline = view.getByTestId("conversation-timeline");
+  const onReady = timeline.props.anchoredEndSpace.onReady;
+  fireEvent(timeline, "scrollBeginDrag", timelineScrollEvent(0));
+  act(() =>
+    onReady({ anchorIndex: 1, anchorKey: timelineItemKey(responseTurn("completed")), size: 0 }),
+  );
+  expect(legendListScrollToIndex).not.toHaveBeenCalled();
+  expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace).toBeUndefined();
+});
+
 it("keeps new-chat content stationary while the keyboard opens", () => {
   const props = timelineViewportProps(() => undefined);
   props.newChat = true;
@@ -284,7 +372,7 @@ it("keeps new-chat content stationary while the keyboard opens", () => {
   expect(view.getByTestId("conversation-timeline").props.keyboardLiftBehavior).toBe("always");
 });
 
-it("uses the same two-percent viewport boundary for the latest indicator", () => {
+it("preserves the two-percent viewport boundary for tail-follow state", () => {
   const setAwayFromLatest = jest.fn();
   const props = timelineViewportProps(() => undefined);
   props.awayFromLatest = false;
@@ -298,6 +386,68 @@ it("uses the same two-percent viewport boundary for the latest indicator", () =>
 
   fireEvent(timeline, "scroll", timelineScrollEvent(795));
   expect(setAwayFromLatest).toHaveBeenCalledWith(true);
+});
+
+describe("jump control visibility from viewport events", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("uses 12 dp and 200 ms even while the viewport remains inside the tail-follow threshold", () => {
+    const props = timelineViewportProps(() => undefined);
+    props.awayFromLatest = false;
+    props.awayFromLatestRef.current = false;
+    props.setAwayFromLatest = jest.fn();
+    const view = render(
+      <>
+        <TimelineViewport {...props} />
+        <JumpToLatest
+          bottomChromeHeight={0}
+          jumpTimelineToLatest={jest.fn()}
+          jumpVisibility={props.jumpVisibility}
+          newItemCount={0}
+        />
+      </>,
+    );
+    const timeline = view.getByTestId("conversation-timeline");
+    const atDistance = (distance: number) => ({
+      nativeEvent: {
+        contentOffset: { x: 0, y: 1_000 - distance },
+        contentSize: { width: 400, height: 2_000 },
+        layoutMeasurement: { width: 400, height: 1_000 },
+      },
+    });
+    fireEvent.scroll(timeline, atDistance(13));
+    act(() => jest.advanceTimersByTime(199));
+    expect(view.queryByTestId("jump-to-latest")).toBeNull();
+    act(() => jest.advanceTimersByTime(1));
+    expect(view.getByTestId("jump-to-latest")).toBeTruthy();
+    expect(props.setAwayFromLatest).not.toHaveBeenCalled();
+    fireEvent.scroll(timeline, atDistance(12));
+    expect(view.queryByTestId("jump-to-latest")).toBeNull();
+    expect(legendListScrollToEnd).not.toHaveBeenCalled();
+    expect(legendListScrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it("reconciles visibility when content or viewport size changes without another scroll", () => {
+    const props = timelineViewportProps(() => undefined);
+    const view = render(<TimelineViewport {...props} />);
+    const list = props.timelineRef.current;
+    if (list === null) {
+      throw new Error("Expected a mounted timeline ref");
+    }
+    const distance = jest.spyOn(list, "getDistanceFromEnd").mockReturnValue(40);
+    const timeline = view.getByTestId("conversation-timeline");
+    fireEvent(timeline, "load", { elapsedTimeInMs: 1 });
+    act(() => jest.advanceTimersByTime(200));
+    expect(props.jumpVisibility.visible$.get()).toBe(true);
+    distance.mockReturnValue(0);
+    fireEvent(timeline, "contentSizeChange", 400, 600);
+    expect(props.jumpVisibility.visible$.get()).toBe(false);
+    distance.mockReturnValue(40);
+    fireEvent(timeline, "layout", { nativeEvent: { layout: { height: 600 } } });
+    act(() => jest.advanceTimersByTime(200));
+    expect(props.jumpVisibility.visible$.get()).toBe(true);
+  });
 });
 
 it("clears the latest indicator when the final history range arrives without a scroll", () => {
@@ -473,14 +623,31 @@ it("continues to the tail when the unread response is already above the viewport
   expect(legendListScrollToIndex).not.toHaveBeenCalled();
 });
 
-it("loads the authoritative latest range once before publishing a jump request", async () => {
-  const loadLatest = jest.fn(async () => undefined);
+it("loads the authoritative latest range once before asking LegendList to reveal a new turn", async () => {
+  jest.useFakeTimers();
+  let finishLoading: () => void = () => undefined;
+  const latestRange = new Promise<void>((resolve) => {
+    finishLoading = () => resolve();
+  });
+  const events: string[] = [];
+  const loadLatest = jest.fn(async () => {
+    events.push("load-requested");
+    await latestRange;
+    events.push("range-ready");
+  });
+  legendListScrollToEnd.mockImplementationOnce(async () => {
+    events.push("scroll-to-end");
+    return undefined;
+  });
   const historyViewport = { ...COMPLETE_STATIC_THREAD_HISTORY, loadLatest };
-  const hook = renderHook(() => {
+  const props = timelineViewportProps(() => undefined);
+  function JumpProbe() {
     const state = useTimelineJumpState("server\u0000thread");
-    return useTimelineJumpActions({
+    const jump = useTimelineJumpActions({
       ...state,
       conversationOwner: { hasReplacement: () => false, isCurrent: () => true },
+      draftConnectionId: "server",
+      draftThreadId: "thread",
       fullscreenScrollOwnership: createFullscreenScrollOwnership(() => undefined),
       historyViewport,
       latestUnreadAgentTurnId: null,
@@ -488,19 +655,44 @@ it("loads the authoritative latest range once before publishing a jump request",
       timeline: [],
       timelineModelReady: true,
     });
-  });
+    return (
+      <View>
+        <Pressable onPress={jump.jumpTimelineToLatest} testID="jump-latest" />
+        <TimelineViewport
+          {...props}
+          completeTimelineJump={jump.completeTimelineJump}
+          historyViewport={historyViewport}
+          timelineJumpRequest={jump.timelineJumpRequest}
+        />
+      </View>
+    );
+  }
+  try {
+    const view = render(<JumpProbe />);
+    fireEvent.press(view.getByTestId("jump-latest"));
+    fireEvent.press(view.getByTestId("jump-latest"));
+    // Allow multiple layout frames to run while the requested range is still loading.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(200);
+    });
+    expect(loadLatest).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(["load-requested"]);
+    expect(legendListScrollToEnd).not.toHaveBeenCalled();
+    expect(legendListScrollToIndex).not.toHaveBeenCalled();
 
-  await act(async () => {
-    hook.result.current.jumpTimelineToLatest();
-    hook.result.current.jumpTimelineToLatest();
-    await Promise.resolve();
-  });
-
-  expect(loadLatest).toHaveBeenCalledTimes(1);
-  expect(hook.result.current.timelineJumpRequest).toEqual({
-    requestId: 1,
-    unreadItemKey: null,
-  });
+    await act(async () => {
+      finishLoading();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(200);
+    });
+    expect(events).toEqual(["load-requested", "range-ready", "scroll-to-end"]);
+    expect(legendListScrollToEnd).toHaveBeenCalledTimes(1);
+    expect(legendListScrollToEnd).toHaveBeenCalledWith({ animated: false });
+    view.unmount();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it("keeps timeline keyboard behavior independent of the docked question editor", () => {

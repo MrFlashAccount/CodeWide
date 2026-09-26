@@ -39,6 +39,15 @@ export function OperationalMetrics({ metrics }: { metrics: OperationalMetricsSna
       )}
       <View style={styles.counterWrap}>
         <Text style={styles.counterText}>
+          scroll commands {integer(metrics.counters.timeline_scroll_commands ?? 0)} / failures{" "}
+          {integer(metrics.counters.timeline_scroll_command_failures ?? 0)}
+        </Text>
+        <Text style={styles.counterText}>
+          scroll returns {integer(metrics.counters.timeline_scroll_rebounds ?? 0)} / anchor repeats{" "}
+          {integer(metrics.counters.timeline_scroll_anchor_reapplications ?? 0)} / gesture returns{" "}
+          {integer(metrics.counters.timeline_scroll_gesture_returns ?? 0)}
+        </Text>
+        <Text style={styles.counterText}>
           socket deltas {integer(metrics.counters.live_ingress_events ?? 0)} /{" "}
           {integer(metrics.counters.live_ingress_chars ?? 0)} chars
         </Text>

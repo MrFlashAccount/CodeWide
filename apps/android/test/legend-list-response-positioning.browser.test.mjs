@@ -22,6 +22,10 @@ import React, { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ScrollView, Text, View } from "react-native";
 import { LegendList } from "@legendapp/list/react-native";
+import { TimelineScrollDiagnostics } from "./src/data/timelineScrollDiagnostics";
+import { timelineScrollJournal } from "./src/data/timelineScrollJournal";
+import { observeTimelineScrollCommand, useTimelineListDiagnostics } from "./src/rendering/timelineListDiagnostics";
+import { TimelineResponseStart } from "./src/features/conversation/timeline/timelineResponseStart";
 
 const AGENT_KEY = "response-agent";
 const RESPONSE_START_OFFSET = 64;
@@ -56,13 +60,32 @@ function ProbeScrollView(props) {
 
 function Probe() {
   const initialUnread = window.initialUnread === true;
+  const singleLongRow = window.singleLongRow === true;
   const listRef = useRef(null);
-  const [agentHeight, setAgentHeight] = useState(initialUnread ? 1200 : 120);
+  const [diagnostics] = useState(() => new TimelineScrollDiagnostics("probe", "response"));
+  const diagnosticHandlers = useTimelineListDiagnostics(diagnostics, listRef, {});
+  const [agentHeight, setAgentHeight] = useState(singleLongRow ? 5200 : initialUnread ? 1200 : 120);
   const [anchor, setAnchor] = useState(initialUnread ? AGENT_KEY : null);
+  const [request, setRequest] = useState(() => initialUnread ? new TimelineResponseStart("initialUnread", AGENT_KEY) : null);
   const [completed, setCompleted] = useState(initialUnread);
   const [lateSliceGrowth, setLateSliceGrowth] = useState(0);
-  const rows = completed ? completedRows : streamingRows;
+  const rows = singleLongRow
+    ? [...historyRows.slice(0, 2), userRow, { height: 5400, id: AGENT_KEY, kind: completed ? "agent" : "streaming-agent" }]
+    : completed ? completedRows : streamingRows;
   const anchorIndex = rows.findIndex((row) => row.id === anchor);
+  const listAdapter = {
+    indexForItemKey: key => listRef.current?.getState().indexByKey(key) ?? null,
+    scrollToIndex: async options => observeTimelineScrollCommand({
+      diagnostics, ref: listRef, source: "response-start",
+      target: { kind: "index", index: options.index, viewOffset: options.viewOffset, viewPosition: options.viewPosition },
+    }, () => listRef.current.scrollToIndex(options)),
+  };
+  const anchorSpace = request?.anchorSpace({
+    anchor: { index: anchorIndex, key: AGENT_KEY },
+    diagnostics,
+    getList: () => listRef.current === null ? null : listAdapter,
+    offset: RESPONSE_START_OFFSET,
+  });
 
   function responseGeometry() {
     const response = document.querySelector('[data-testid="agent-response"]');
@@ -95,25 +118,56 @@ function Probe() {
     };
   }
 
-  async function applyAnchor(info) {
-    if (anchor === null || info.anchorKey !== anchor || info.anchorIndex !== anchorIndex) {
-      return;
-    }
-    await listRef.current.scrollToIndex({
+  async function forceAnchor() {
+    const options = {
       animated: false,
       index: anchorIndex,
       viewOffset: RESPONSE_START_OFFSET,
       viewPosition: 0,
-    });
+    };
+    await observeTimelineScrollCommand({
+      diagnostics, ref: listRef, source: "response-start",
+      target: { kind: "index", index: anchorIndex, viewOffset: RESPONSE_START_OFFSET, viewPosition: 0 },
+    }, () => listRef.current.scrollToIndex(options));
     await settleLayout();
   }
 
   window.probe = {
+    diagnosticReport: () => timelineScrollJournal.snapshot(),
+    async diagnosticJumpToEnd() {
+      await observeTimelineScrollCommand({
+        diagnostics, ref: listRef, source: "jump-end", target: { kind: "end" },
+      }, () => listRef.current.scrollToEnd({ animated: false }));
+      await settleLayout();
+      return snapshot();
+    },
+    // Fault injection: replay a competing anchor after a real bottom arrival. This tests
+    // diagnostic coverage, not whether the Android bug naturally follows this exact path.
+    async replayAnchor() {
+      await forceAnchor();
+      return snapshot();
+    },
+    async repeatReady() {
+      anchorSpace?.onReady({ anchorIndex, anchorKey: anchor, size: 0 });
+      await settleLayout();
+      return snapshot();
+    },
+    async manualEnd() {
+      request?.cancel();
+      setRequest(null);
+      setAnchor(null);
+      await settleLayout();
+      const element = document.querySelector('[data-testid="probe-scroll"]');
+      element.scrollTop = element.scrollHeight;
+      await settleLayout();
+      return snapshot();
+    },
     async complete() {
       const shouldAnchor = listRef.current.getState().isWithinMaintainScrollAtEndThreshold;
       setCompleted(true);
       if (shouldAnchor) {
         setAnchor(AGENT_KEY);
+        setRequest(new TimelineResponseStart("completedResponse", AGENT_KEY));
       }
       await settleLayout();
       await settleLayout();
@@ -146,16 +200,13 @@ function Probe() {
   return (
     <View style={{ height: VIEWPORT_HEIGHT, width: 420 }}>
       <LegendList
+        {...diagnosticHandlers}
         alignItemsAtEnd
         {...(anchor === null
           ? {}
           : {
-              anchoredEndSpace: {
-                anchorIndex,
-                anchorOffset: RESPONSE_START_OFFSET,
-                onReady: applyAnchor,
-              },
-              initialScrollIndex: anchorIndex,
+              anchoredEndSpace: anchorSpace,
+              ...(initialUnread ? { initialScrollIndex: anchorIndex } : {}),
             })}
         data={rows}
         drawDistance={250}
@@ -224,14 +275,18 @@ after(async () => {
   await browser?.close();
 });
 
-async function openProbe({ initialUnread = false } = {}) {
+async function openProbe({ initialUnread = false, singleLongRow = false } = {}) {
   const page = await browser.newPage({ viewport: { height: 720, width: 720 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.setContent('<div id="root"></div>');
-  await page.evaluate((unread) => {
-    window.initialUnread = unread;
-  }, initialUnread);
+  await page.evaluate(
+    (options) => {
+      window.initialUnread = options.initialUnread;
+      window.singleLongRow = options.singleLongRow;
+    },
+    { initialUnread, singleLongRow },
+  );
   await page.addScriptTag({ content: probeScript });
   await page.waitForFunction(() => window.probe !== undefined);
   return { errors, page };
@@ -246,6 +301,39 @@ test("an unread response opens at its first physical row", async () => {
     const snapshot = await page.evaluate(() => window.probe.snapshot());
     assert.ok((snapshot.agent?.top ?? 100) <= 96, JSON.stringify(snapshot));
     assert.equal(snapshot.physicalAtEnd, false);
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+});
+
+test("the production recorder captures a competing anchor after a real LegendList end scroll", async () => {
+  const { errors, page } = await openProbe({ initialUnread: true });
+  try {
+    await expect
+      .poll(() => page.evaluate(() => window.probe.snapshot().agent?.top))
+      .toBeGreaterThanOrEqual(-1);
+    await page.evaluate(() => window.probe.diagnosticJumpToEnd());
+    await expect.poll(() => page.evaluate(() => window.probe.snapshot().physicalAtEnd)).toBe(true);
+    await page.evaluate(() => window.probe.replayAnchor());
+    await expect
+      .poll(() => page.evaluate(() => window.probe.diagnosticReport().lastRebound.length))
+      .toBeGreaterThan(0);
+    const report = await page.evaluate(() => window.probe.diagnosticReport());
+    const rebound = report.lastRebound.at(-1);
+    assert.equal(rebound.name, "chat.scroll.rebound");
+    assert.equal(rebound.tags.source, "response-start");
+    assert.ok(rebound.values.fromOffsetY > rebound.values.offsetY + 360);
+    assert.ok(
+      report.lastRebound.some(
+        (event) => event.name === "chat.scroll.command" && event.tags.source === "jump-end",
+      ),
+    );
+    assert.ok(
+      report.lastRebound.some(
+        (event) => event.name === "chat.scroll.command" && event.tags.source === "response-start",
+      ),
+    );
     assert.deepEqual(errors, []);
   } finally {
     await page.close();
@@ -282,6 +370,34 @@ test("completion does not steal position after a manual scroll away", async () =
     const completed = await page.evaluate(() => window.probe.complete());
     assert.equal(completed.atEnd, false, JSON.stringify(completed));
     assert.ok(Math.abs(completed.scroll - away.scroll) < 2, JSON.stringify({ away, completed }));
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+});
+
+test("one long final row anchors once, then permits manual scrolling and the end button", async () => {
+  const { errors, page } = await openProbe({ singleLongRow: true });
+  try {
+    await expect.poll(() => page.evaluate(() => window.probe.snapshot().physicalAtEnd)).toBe(true);
+    await page.evaluate(() => window.probe.complete());
+    await expect.poll(() => page.evaluate(() => window.probe.snapshot().agent?.top)).toBe(64);
+    await page.evaluate(() => window.probe.diagnosticJumpToEnd());
+    await page.evaluate(() => window.probe.repeatReady());
+    await expect.poll(() => page.evaluate(() => window.probe.snapshot().physicalAtEnd)).toBe(true);
+    const report = await page.evaluate(() => window.probe.diagnosticReport());
+    assert.equal(
+      report.samples.filter(
+        (event) =>
+          event.name === "chat.scroll.command" &&
+          event.tags.source === "response-start" &&
+          event.tags.phase === "issued",
+      ).length,
+      1,
+    );
+    await page.evaluate(() => window.probe.scrollAway());
+    await page.evaluate(() => window.probe.manualEnd());
+    await expect.poll(() => page.evaluate(() => window.probe.snapshot().physicalAtEnd)).toBe(true);
     assert.deepEqual(errors, []);
   } finally {
     await page.close();

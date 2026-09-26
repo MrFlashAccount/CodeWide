@@ -33,7 +33,6 @@ export function renderReadConversationLayout({
         <SubagentNavigationContext.Provider value={props.onOpenSubagentThread}>
           <LargeContentViewerHost>
             <ConversationLayout
-              awayFromLatest={read.anchor.awayFromLatest}
               bottomChrome={
                 <ConversationBottomChrome
                   composerContent={props.footerContent}
@@ -55,6 +54,7 @@ export function renderReadConversationLayout({
                 <JumpToLatest
                   bottomChromeHeight={props.viewport.bottomChromeHeight}
                   jumpTimelineToLatest={read.jumpActions.jumpTimelineToLatest}
+                  jumpVisibility={props.viewport.jumpVisibility}
                   newItemCount={0}
                 />
               }

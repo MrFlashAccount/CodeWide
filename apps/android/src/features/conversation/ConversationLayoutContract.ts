@@ -7,7 +7,6 @@ import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 
 /** Visual regions and layout state consumed by the conversation shell. */
 export type ConversationLayoutProps = {
-  awayFromLatest: boolean;
   bottomChrome: ReactElement;
   compact: boolean;
   conversationBackdropVisible: boolean;

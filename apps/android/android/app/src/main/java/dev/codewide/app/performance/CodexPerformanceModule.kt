@@ -118,6 +118,7 @@ class CodexPerformanceModule(
   private val frameThread = HandlerThread("codex-frame-metrics").apply { start() }
   private val frameHandler = Handler(frameThread.looper)
   private val mainHandler = Handler(Looper.getMainLooper())
+  private val timelineScrollMonitor = NativeTimelineScrollMonitor()
   private val frameAccumulator = FrameWindowAccumulator()
   private val windowReports = WindowFrameReports()
   private val windowJournal = WindowFrameJournal(context.filesDir, windowReports)
@@ -158,10 +159,16 @@ class CodexPerformanceModule(
 
   init {
     context.addLifecycleEventListener(this)
+    mainHandler.post { timelineScrollMonitor.start() }
     if (enabled) startCollector()
   }
 
   override fun getName(): String = "CodexPerformanceNative"
+
+  @ReactMethod
+  fun getTimelineScrollReport(promise: Promise) {
+    mainHandler.post { promise.resolve(timelineScrollMonitor.report()) }
+  }
 
   @ReactMethod
   fun drainFrameIncidents(promise: Promise) {
@@ -450,6 +457,7 @@ class CodexPerformanceModule(
     context.removeLifecycleEventListener(this)
     stopCollector(clearLatest = false)
     mainHandler.post {
+      timelineScrollMonitor.stop()
       windowMonitor.stop()
       detachWindow()
       frameThread.quitSafely()

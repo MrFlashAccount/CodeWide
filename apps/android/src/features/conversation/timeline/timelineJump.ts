@@ -1,6 +1,8 @@
 import { useLayoutEffect, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { View } from "react-native";
 import type { ThreadHistoryViewport } from "../../../data/use-thread-history-controller";
+import { TimelineScrollDiagnostics } from "../../../data/timelineScrollDiagnostics";
+import type { TimelineScrollObservation } from "../../../data/timelineScrollDiagnosticContract";
 import { useEvent } from "../../../react/useEvent";
 import type { ThreadTimelineListRef } from "../../../rendering/ThreadTimelineList";
 import { visibleHeightWithinViewport } from "../../../rendering/unread-visibility";
@@ -65,6 +67,8 @@ export function useTimelineJumpState(composerScope: string): TimelineJumpStateBi
 
 export function useTimelineJumpActions({
   conversationOwner,
+  draftConnectionId,
+  draftThreadId,
   fullscreenScrollOwnership,
   historyViewport,
   latestUnreadAgentTurnId,
@@ -77,6 +81,8 @@ export function useTimelineJumpActions({
   timelineModelReady,
 }: TimelineJumpStateBinding & {
   conversationOwner: ConversationOwner;
+  draftConnectionId: string | null;
+  draftThreadId: string | null;
   fullscreenScrollOwnership: ReturnType<typeof createFullscreenScrollOwnership>;
   historyViewport: ThreadHistoryViewport;
   latestUnreadAgentTurnId: string | null;
@@ -94,25 +100,41 @@ export function useTimelineJumpActions({
   );
 
   const jumpTimelineToLatest = useEvent(() => {
+    // This request keeps its original diagnostic identity after an asynchronous range load,
+    // even if useEvent now points the button at another conversation.
+    const diagnostics = new TimelineScrollDiagnostics(draftConnectionId, draftThreadId);
+    const covered = fullscreenScrollOwnership.isCovered();
+    const inFlight = timelineJumpInFlightRef.current;
+    const pending = pendingTimelineJump !== null;
+    const recordJump = (
+      phase: Extract<TimelineScrollObservation, { kind: "jump" }>["phase"],
+      requestId: number,
+    ) => {
+      diagnostics.record({ covered, inFlight, kind: "jump", pending, phase, requestId });
+    };
     if (
       pendingTimelineJump !== null ||
       timelineJumpInFlightRef.current ||
       fullscreenScrollOwnership.isCovered()
     ) {
+      recordJump("blocked", timelineJumpRequestIdRef.current);
       return;
     }
     timelineJumpInFlightRef.current = true;
     timelineJumpRequestIdRef.current += 1;
     const requestId = timelineJumpRequestIdRef.current;
+    recordJump("requested", requestId);
     const sourceSearchWindow = searchWindow;
     setPendingTimelineJump({ requestId, status: "loading" });
     void historyViewport
       .loadLatest()
       .then(() => {
         if (!conversationOwner.isCurrent() || !mayFinishTimelineJump(sourceSearchWindow)) {
+          recordJump("cancelled", requestId);
           completeTimelineJump(requestId);
           return;
         }
+        recordJump("range-ready", requestId);
         setPendingTimelineJump((current) =>
           current?.requestId === requestId && current.status === "loading"
             ? { requestId, status: "ready" }
@@ -120,6 +142,7 @@ export function useTimelineJumpActions({
         );
       })
       .catch(() => {
+        recordJump("failed", requestId);
         completeTimelineJump(requestId);
       });
   });
@@ -170,6 +193,7 @@ function projectTimelineJumpRequest({
 
 export function useTimelineJumpExecution({
   completeTimelineJump,
+  diagnostics,
   fullscreenCovered,
   latestUnreadAgentRef,
   persistTimelineAtEnd,
@@ -179,6 +203,7 @@ export function useTimelineJumpExecution({
   timelineViewportRef,
 }: {
   completeTimelineJump: (requestId: number) => void;
+  diagnostics: TimelineScrollDiagnostics;
   fullscreenCovered: boolean;
   latestUnreadAgentRef: RefObject<View | null>;
   persistTimelineAtEnd: () => void;
@@ -196,6 +221,14 @@ export function useTimelineJumpExecution({
     let active = true;
     executeTimelineJump({
       complete: () => {
+        diagnostics.record({
+          covered: fullscreenCovered,
+          inFlight: true,
+          kind: "jump",
+          pending: true,
+          phase: "completed",
+          requestId,
+        });
         completeTimelineJump(requestId);
       },
       getAgent: () => latestUnreadAgentRef.current,
@@ -215,6 +248,7 @@ export function useTimelineJumpExecution({
     };
   }, [
     completeTimelineJump,
+    diagnostics,
     fullscreenCovered,
     latestUnreadAgentRef,
     persistTimelineAtEnd,
@@ -281,7 +315,7 @@ async function scrollToUnread(
     const unreadIndex = list.indexForItemKey(unreadItemKey);
     if (unreadIndex !== null) {
       await list
-        .scrollToIndex({ animated: false, index: unreadIndex, viewPosition: 1 })
+        .scrollToIndex({ animated: false, index: unreadIndex, viewPosition: 1 }, "jump-unread")
         .catch(() => undefined);
     }
     await settleTimelineLayout();
@@ -303,7 +337,7 @@ async function scrollToAbsoluteEnd(
     if (!execution.isActive()) {
       return;
     }
-    await list.scrollToEnd({ animated: false }).catch(() => undefined);
+    await list.scrollToEnd({ animated: false }, "jump-end").catch(() => undefined);
     await settleTimelineLayout();
     if (execution.getDistanceFromEnd() <= TIMELINE_END_SETTLEMENT_EPSILON_PX) {
       execution.reachedEnd();

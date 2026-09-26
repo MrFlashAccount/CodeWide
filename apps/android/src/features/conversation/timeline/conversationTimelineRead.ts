@@ -153,6 +153,8 @@ export function useConversationTimelineRead({
   });
   const timelineJumpActionsBinding = useTimelineJumpActions({
     conversationOwner,
+    draftConnectionId,
+    draftThreadId,
     fullscreenScrollOwnership: overlayScrollStateBinding.fullscreenScrollOwnership,
     historyViewport,
     latestUnreadAgentTurnId: unreadReceiptBinding.latestUnreadAgentTurnId,

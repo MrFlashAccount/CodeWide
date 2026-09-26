@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { WindowFrameReport } from "../data/window-frame-report";
+import type { NativeTimelineScrollReport } from "../data/nativeTimelineScrollReport";
 
 import type {
   HermesHeapSnapshot,
@@ -57,6 +58,12 @@ export async function setPerformanceMonitoringEnabled(_enabled: boolean): Promis
 }
 
 export async function getWindowFrameReport(): Promise<WindowFrameReport | null> {
+  await Promise.resolve();
+  return null;
+}
+
+/** Native call-site evidence is unavailable in the browser. */
+export async function getTimelineScrollReport(): Promise<NativeTimelineScrollReport | null> {
   await Promise.resolve();
   return null;
 }

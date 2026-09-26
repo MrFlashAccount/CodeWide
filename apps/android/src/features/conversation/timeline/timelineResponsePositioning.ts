@@ -1,12 +1,7 @@
-import { useLayoutEffect } from "react";
 import { useEvent } from "../../../react/useEvent";
-import { useConversationRef, useConversationState } from "../../../ui/use-conversation-scope";
+import { useConversationState } from "../../../ui/use-conversation-scope";
 import type { TimelineRow } from "./timelineRows";
-
-type TimelineResponseStartRequest = {
-  readonly reason: "completedResponse" | "initialUnread";
-  readonly turnId: string;
-};
+import { TimelineResponseStart } from "./timelineResponseStart";
 
 type TimelineResponseLifecycle = {
   readonly phase: "settled" | "streaming";
@@ -15,94 +10,94 @@ type TimelineResponseLifecycle = {
 
 type TimelineResponsePositioning = {
   readonly clearResponseStartRequest: () => void;
-  readonly request: TimelineResponseStartRequest | null;
+  readonly request: TimelineResponseStart | null;
+};
+
+type ResponseObservation = {
+  readonly enabled: boolean;
+  readonly lifecycle: TimelineResponseLifecycle | null;
+  readonly request: TimelineResponseStart | null;
+  readonly unreadTurnId: string | null;
 };
 
 /** Owns the one-shot semantic request to reveal the start of a completed agent response. */
 export function useTimelineResponsePositioning({
-  awayFromLatestRef,
+  awayFromLatest,
   composerScope,
   enabled,
   latestUnreadAgentTurnId,
   rows,
   timelinePositioned,
 }: {
-  awayFromLatestRef: { current: boolean };
+  awayFromLatest: boolean;
   composerScope: string;
   enabled: boolean;
   latestUnreadAgentTurnId: string | null;
   rows: readonly TimelineRow[];
   timelinePositioned: boolean;
 }): TimelineResponsePositioning {
-  const [request, setRequest] = useConversationState<TimelineResponseStartRequest | null>(
-    composerScope,
-    () =>
-      enabled && latestUnreadAgentTurnId !== null
-        ? { reason: "initialUnread", turnId: latestUnreadAgentTurnId }
-        : null,
-  );
-  const previousLifecycleRef = useConversationRef<TimelineResponseLifecycle | null>(
-    composerScope,
-    () => latestResponseLifecycle(rows),
-  );
-  const previousUnreadTurnIdRef = useConversationRef<string | null>(
-    composerScope,
-    () => latestUnreadAgentTurnId,
-  );
+  const lifecycle = latestResponseLifecycle(rows);
+  const [observed, setObserved] = useConversationState<ResponseObservation>(composerScope, () => ({
+    enabled,
+    lifecycle,
+    request: initialUnreadRequest(enabled, lifecycle, latestUnreadAgentTurnId),
+    unreadTurnId: latestUnreadAgentTurnId,
+  }));
   const clearResponseStartRequest = useEvent(() => {
-    setRequest(null);
+    observed.request?.cancel();
+    setObserved((previous) => ({ ...previous, request: null }));
   });
-
-  useLayoutEffect(() => {
-    const previousLifecycle = previousLifecycleRef.current;
-    const currentLifecycle = latestResponseLifecycle(rows);
+  let request = observed.request;
+  if (
+    observed.enabled !== enabled ||
+    !sameResponseLifecycle(observed.lifecycle, lifecycle) ||
+    observed.unreadTurnId !== latestUnreadAgentTurnId
+  ) {
     const completedTurnId = responseCompletedWhileFollowing({
-      awayFromLatest: awayFromLatestRef.current,
-      current: currentLifecycle,
-      previous: previousLifecycle,
+      awayFromLatest,
+      current: lifecycle,
+      previous: observed.lifecycle,
     });
     const unreadTurnId = unreadResponseBecameAvailable({
-      awayFromLatest: awayFromLatestRef.current,
-      previousUnreadTurnId: previousUnreadTurnIdRef.current,
+      awayFromLatest,
+      previousUnreadTurnId: observed.unreadTurnId,
       timelinePositioned,
       unreadTurnId: latestUnreadAgentTurnId,
     });
-
-    previousLifecycleRef.current = currentLifecycle;
-    previousUnreadTurnIdRef.current = latestUnreadAgentTurnId;
-
-    if (!enabled) {
-      if (request !== null) {
-        setRequest(null);
-      }
-      return;
+    if (!enabled || isStreamingResponse(lifecycle)) {
+      request = null;
+    } else if (completedTurnId !== null) {
+      request = new TimelineResponseStart("completedResponse", completedTurnId);
+    } else if (unreadTurnId !== null) {
+      request = new TimelineResponseStart("initialUnread", unreadTurnId);
     }
-    if (currentLifecycle?.phase === "streaming") {
-      if (request !== null) {
-        setRequest(null);
-      }
-      return;
-    }
-    if (completedTurnId !== null) {
-      setRequest({ reason: "completedResponse", turnId: completedTurnId });
-      return;
-    }
-    if (unreadTurnId !== null) {
-      setRequest({ reason: "initialUnread", turnId: unreadTurnId });
-    }
-  }, [
-    awayFromLatestRef,
-    enabled,
-    latestUnreadAgentTurnId,
-    previousLifecycleRef,
-    previousUnreadTurnIdRef,
-    request,
-    rows,
-    setRequest,
-    timelinePositioned,
-  ]);
+    // Adjust only this component's state before its children commit. No scroll or mutable
+    // external owner is updated during render; readiness performs the one imperative action.
+    setObserved({ enabled, lifecycle, request, unreadTurnId: latestUnreadAgentTurnId });
+  }
 
   return { clearResponseStartRequest, request };
+}
+
+function initialUnreadRequest(
+  enabled: boolean,
+  lifecycle: TimelineResponseLifecycle | null,
+  unreadTurnId: string | null,
+): TimelineResponseStart | null {
+  return enabled && !isStreamingResponse(lifecycle) && unreadTurnId !== null
+    ? new TimelineResponseStart("initialUnread", unreadTurnId)
+    : null;
+}
+
+function isStreamingResponse(lifecycle: TimelineResponseLifecycle | null): boolean {
+  return lifecycle?.phase === "streaming";
+}
+
+function sameResponseLifecycle(
+  previous: TimelineResponseLifecycle | null,
+  current: TimelineResponseLifecycle | null,
+): boolean {
+  return previous?.phase === current?.phase && previous?.turnId === current?.turnId;
 }
 
 function responseCompletedWhileFollowing({

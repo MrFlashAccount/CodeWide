@@ -20,7 +20,6 @@ it("keeps one mounted conversation layout while timeline and composer become rea
   function Screen({ loading }: { loading: boolean }) {
     return (
       <ConversationLayout
-        awayFromLatest={false}
         bottomChrome={
           <ConversationComposerSlot
             state={

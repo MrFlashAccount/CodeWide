@@ -74,7 +74,7 @@ it("preserves conversation timeline integration contracts", () => {
   expect(ownerTimelineJump).toContain("historyViewport");
   expect(ownerTimelineJump).toContain(".loadLatest()");
   expect(ownerTimelineJump).toContain(".scrollToIndex({ animated: false");
-  expect(ownerTimelineJump).toContain("list.scrollToEnd({ animated: false })");
+  expect(ownerTimelineJump).toContain('list.scrollToEnd({ animated: false }, "jump-end")');
   expect(ownerTimelineViewport).toContain("onEndReached={props.loadNewerAtTimelineEnd}");
   expect(ownerTimelineViewportState).toMatch(
     /const \[timelineDidLoad, setTimelineDidLoad\] =\s*useConversationState\(composerScope, \(\) => \(?false\)?\)/,
