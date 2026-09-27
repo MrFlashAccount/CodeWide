@@ -1,8 +1,15 @@
 import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
-import { projectedTurnMetadata, reconcileActiveTurnItems } from "@codewide/sync-client";
+import {
+  projectedTurnMetadata,
+  reconcileActiveTurnItems,
+  seedThreadExecutionSettings,
+} from "@codewide/sync-client";
 
 import { isThreadHistorySourceWitness } from "./thread-history-source-witness";
+
+const HISTORY_READ_MODEL_VERSION = 3;
+const EXECUTION_SETTINGS_READ_MODEL_VERSION = 4;
 
 type ThreadSyncHistory = {
   hasMore: boolean;
@@ -13,13 +20,33 @@ type ThreadSyncHistory = {
   turns: Turn[];
 };
 
-export type ThreadSyncResponse = {
+type ThreadExecutionSettingsSnapshot = {
+  readonly approvalPolicy: string;
+  readonly effort: string | null;
+  readonly model: string;
+  readonly permissions: string | null;
+  readonly sandboxPolicy: string;
+  readonly serviceTier: string | null;
+};
+
+type ThreadExecutionSettingsStringField = "approvalPolicy" | "model" | "sandboxPolicy";
+type ThreadExecutionSettingsNullableStringField = "effort" | "permissions" | "serviceTier";
+
+type ThreadSyncContent = {
   activeTurn: Turn | null;
   history: ThreadSyncHistory;
-  readModelVersion: 3;
   thread: Thread;
   throughCursor: number;
 };
+
+export type ThreadSyncResponse = ThreadSyncContent &
+  (
+    | { executionSettings: null; readModelVersion: typeof HISTORY_READ_MODEL_VERSION }
+    | {
+        executionSettings: ThreadExecutionSettingsSnapshot | null;
+        readModelVersion: typeof EXECUTION_SETTINGS_READ_MODEL_VERSION;
+      }
+  );
 
 export type MaterializedThreadSync = {
   historyCursor: string | null | undefined;
@@ -83,7 +110,8 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
   const turns = parseHistoryTurns(history.turns);
   const activeTurn = parseActiveTurn(response.activeTurn);
   if (
-    response.readModelVersion !== 3 ||
+    (response.readModelVersion !== HISTORY_READ_MODEL_VERSION &&
+      response.readModelVersion !== EXECUTION_SETTINGS_READ_MODEL_VERSION) ||
     typeof response.throughCursor !== "number" ||
     !Number.isSafeInteger(response.throughCursor) ||
     response.throughCursor < 0 ||
@@ -98,7 +126,7 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
   ) {
     throw new Error("Companion thread sync returned an invalid response");
   }
-  return {
+  const content: ThreadSyncContent = {
     activeTurn,
     history: {
       hasMore: history.hasMore,
@@ -108,10 +136,18 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
       turns,
       ...(history.sourceWitness === undefined ? {} : { sourceWitness: history.sourceWitness }),
     },
-    readModelVersion: 3,
     thread,
     throughCursor: response.throughCursor,
   };
+  // v4 adds execution settings; APK and Companion upgrades are independent.
+  // v3 has the same cursor/history semantics, but cannot establish Fast state.
+  return response.readModelVersion === HISTORY_READ_MODEL_VERSION
+    ? { ...content, executionSettings: null, readModelVersion: HISTORY_READ_MODEL_VERSION }
+    : {
+        ...content,
+        executionSettings: parseThreadExecutionSettings(response.executionSettings),
+        readModelVersion: EXECUTION_SETTINGS_READ_MODEL_VERSION,
+      };
 }
 
 type ThreadSyncLaneState<Result> = {
@@ -181,11 +217,59 @@ export function materializeThreadSync(
   if (activeTurn !== null) {
     turns.push(activeTurn);
   }
+  const thread = { ...response.thread, turns };
+  if (response.executionSettings !== null) {
+    seedThreadExecutionSettings(thread, response.executionSettings);
+  }
   return {
     historyCursor:
       response.history.kind === "reset" ? response.history.olderCursor : currentHistoryCursor,
-    thread: { ...response.thread, turns },
+    thread,
   };
+}
+
+function parseThreadExecutionSettings(value: unknown): ThreadExecutionSettingsSnapshot | null {
+  if (value === null) {
+    return null;
+  }
+  const settings = requireThreadExecutionSettingsRecord(value);
+  return {
+    approvalPolicy: requireThreadExecutionSettingsString(settings, "approvalPolicy"),
+    effort: readThreadExecutionSettingsNullableString(settings, "effort"),
+    model: requireThreadExecutionSettingsString(settings, "model"),
+    permissions: readThreadExecutionSettingsNullableString(settings, "permissions"),
+    sandboxPolicy: requireThreadExecutionSettingsString(settings, "sandboxPolicy"),
+    serviceTier: readThreadExecutionSettingsNullableString(settings, "serviceTier"),
+  };
+}
+
+function requireThreadExecutionSettingsRecord(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error("Companion thread sync returned an invalid response");
+  }
+  return value;
+}
+
+function requireThreadExecutionSettingsString(
+  settings: Record<string, unknown>,
+  field: ThreadExecutionSettingsStringField,
+): string {
+  const value = settings[field];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("Companion thread sync returned an invalid response");
+  }
+  return value;
+}
+
+function readThreadExecutionSettingsNullableString(
+  settings: Record<string, unknown>,
+  field: ThreadExecutionSettingsNullableStringField,
+): string | null {
+  const value = settings[field];
+  if (value === null || typeof value === "string") {
+    return value;
+  }
+  throw new Error("Companion thread sync returned an invalid response");
 }
 
 /** Resolves only the active agent text externalized by the bounded wire view. */

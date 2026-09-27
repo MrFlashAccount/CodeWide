@@ -24,6 +24,11 @@ describe("Global Supervisor thread RPC boundary", () => {
     }));
     const rpcAfterAttach = vi.fn(async () => ({ thread: { id: "supervisor" } }));
     const remote = createGlobalSupervisorThreadRemote({
+      backgroundSettings: async () => ({
+        effort: "high",
+        model: "gpt-background",
+        status: "selected" as const,
+      }),
       getSession: () => session,
       personality,
       rpcAfterAttach,
@@ -39,9 +44,11 @@ describe("Global Supervisor thread RPC boundary", () => {
       session,
       "thread/start",
       expect.objectContaining({
+        allowProviderModelFallback: true,
         developerInstructions: expect.stringMatching(
           /every standard Codex capability[\s\S]*Rules:\nAlways answer in Russian/u,
         ),
+        model: "gpt-background",
         threadSource: "codewide-global-supervisor:token",
       }),
     );
@@ -65,6 +72,7 @@ it("reconciles through the server's exact-source catalog, including an empty con
           },
   );
   const remote = createGlobalSupervisorThreadRemote({
+    backgroundSettings: async () => ({ status: "serverDefault" as const }),
     getSession: () => session,
     personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
     rpcAfterAttach,
@@ -88,6 +96,7 @@ it("checks the old supervisor thread with a bounded metadata-only read", async (
     thread: { id: "prior-home", threadSource: "codewide-global-supervisor:old-token" },
   }));
   const remote = createGlobalSupervisorThreadRemote({
+    backgroundSettings: async () => ({ status: "serverDefault" as const }),
     getSession: () => session,
     personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
     rpcAfterAttach,
@@ -104,6 +113,7 @@ it("checks the old supervisor thread with a bounded metadata-only read", async (
 
 it("does not treat a missing prior thread as a recoverable supervisor", async () => {
   const remote = createGlobalSupervisorThreadRemote({
+    backgroundSettings: async () => ({ status: "serverDefault" as const }),
     getSession: sessionFixture,
     personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
     rpcAfterAttach: async () => {

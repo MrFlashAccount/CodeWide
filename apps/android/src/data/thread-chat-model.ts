@@ -55,6 +55,7 @@ export type ThreadChatModel = {
     generation: number,
     loaded: LoadedThreadChatWindow,
   ) => boolean;
+  confirmBackendRefresh: (connectionId: string, threadId: string) => void;
   failWindow: (request: ThreadChatWindowRequest, generation: number, cause: unknown) => void;
   forgetConnection: (connectionId: string) => void;
   publishChanges: (
@@ -418,15 +419,10 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const nextSnapshot = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
         ...previous,
         ...next,
-        error: null,
+        error: previous.error,
         layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
         revision: previous.revision + (publishedContentChanged || rowsChanged ? 1 : 0),
-        status:
-          previous.status === "initial-loading" ||
-          previous.status === "initial-error" ||
-          previous.status === "background-retrying"
-            ? "ready"
-            : previous.status,
+        status: previous.status === "initial-loading" ? "ready" : previous.status,
       });
       if (nextSnapshot !== previous) {
         node.set(nextSnapshot);
@@ -632,6 +628,23 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         return false;
       }
       return commitWindowNow(request, generation, loaded);
+    },
+    confirmBackendRefresh(connectionId, threadId) {
+      if (closed) {
+        return;
+      }
+      const node = window$(connectionId, threadId);
+      const previous = node.peek();
+      if (previous.error !== null) {
+        node.set({
+          ...previous,
+          error: null,
+          status:
+            previous.status === "background-retrying" || previous.status === "initial-error"
+              ? "ready"
+              : previous.status,
+        });
+      }
     },
     failWindow(request, generation, cause) {
       const scope = threadChatScope(request.connectionId, request.threadId);

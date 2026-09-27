@@ -26,14 +26,15 @@ internal class TimelineScrollIncidents(private val capacity: Int = 12) {
   var evicted = 0
     private set
 
-  fun record(point: TimelineScrollPoint, captureStack: () -> Array<StackTraceElement>) {
-    val previous = previousByView.put(point.viewTag, point) ?: return trimViews()
+  fun record(point: TimelineScrollPoint, captureStack: () -> Array<StackTraceElement>): Boolean {
+    val previous = previousByView.put(point.viewTag, point)
+    if (previous == null) { trimViews(); return false }
     val elapsed = point.uptimeMs - previous.uptimeMs
     if (elapsed !in 0..300 || point.viewportHeightPx <= 0 ||
       abs(point.contentHeightPx - previous.contentHeightPx) > 1 ||
       abs(point.viewportHeightPx - previous.viewportHeightPx) > 1 ||
       previous.offsetPx - point.offsetPx < point.viewportHeightPx / 2
-    ) return
+    ) return false
     val frames = captureStack()
     val source = scrollSource(frames)
     val stack = frames.asSequence().filter { allowedScrollFrame(it.className) }
@@ -43,6 +44,7 @@ internal class TimelineScrollIncidents(private val capacity: Int = 12) {
       evicted += 1
     }
     incidents.addLast(TimelineScrollIncident(previous, point, source, stack))
+    return true
   }
 
   fun snapshot(): List<TimelineScrollIncident> = incidents.toList()

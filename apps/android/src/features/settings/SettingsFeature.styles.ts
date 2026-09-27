@@ -1,7 +1,36 @@
 import { StyleSheet } from "react-native";
 import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import { listRowHeight } from "../../ui/AppListRow.types";
 
 export const styles = StyleSheet.create({
+  agentModelRow: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceContainerLow,
+    borderRadius: radii.medium,
+    flexDirection: "row",
+    gap: spacing.md,
+    justifyContent: "space-between",
+    minHeight: listRowHeight.single,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  agentModelTitle: {
+    color: colors.text,
+    ...typeScale.body,
+  },
+  agentModelValue: {
+    color: colors.textMuted,
+    flexShrink: 1,
+    ...typeScale.body,
+  },
+  agentModelValueGroup: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.xs,
+    justifyContent: "flex-end",
+    minWidth: 0,
+  },
   errorText: {
     color: colors.red,
     ...typeScale.body,

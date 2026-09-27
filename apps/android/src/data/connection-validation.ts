@@ -1,7 +1,9 @@
+import { isServerIconId, type ServerIconId } from "./serverIcons";
+
 export type ConnectionInput = {
   displayName: string;
-  emoji: string;
   endpoint: string;
+  iconId: ServerIconId;
   relay?: { routeId: string; tlsPinSha256: string };
   tlsPinSha256?: string;
   token: string;
@@ -11,10 +13,9 @@ export type ConnectionUpdateInput = Omit<ConnectionInput, "token"> & { token?: s
 
 export function validateConnectionProfile(
   displayNameInput: string,
-  emojiInput: string,
-): { displayName: string; emoji: string } {
+  iconIdInput: unknown,
+): { displayName: string; iconId: ServerIconId } {
   const displayName = displayNameInput.trim();
-  const emoji = emojiInput.trim();
   if (
     displayName.length < 1 ||
     displayName.length > 80 ||
@@ -22,16 +23,16 @@ export function validateConnectionProfile(
   ) {
     throw new Error("Server name must be 1–80 visible characters");
   }
-  if (emoji.length < 1 || emoji.length > 32 || !isSingleEmojiGrapheme(emoji)) {
-    throw new Error("Server icon must be one emoji");
+  if (!isServerIconId(iconIdInput)) {
+    throw new Error("Server icon is not supported");
   }
-  return { displayName, emoji };
+  return { displayName, iconId: iconIdInput };
 }
 
 export function validateConnectionInput(
   input: ConnectionInput,
 ): ConnectionInput & { tlsPinSha256: string } {
-  const { displayName, emoji } = validateConnectionProfile(input.displayName, input.emoji);
+  const { displayName, iconId } = validateConnectionProfile(input.displayName, input.iconId);
   const endpoint = input.endpoint.trim();
   const token = input.token.trim();
   const tlsPinSha256 = input.tlsPinSha256?.trim();
@@ -78,8 +79,8 @@ export function validateConnectionInput(
   }
   return {
     displayName,
-    emoji,
     endpoint: (pathname === url.pathname ? url : new URL(pathname, url)).toString(),
+    iconId,
     tlsPinSha256,
     token,
     ...(relay === undefined ? {} : { relay }),
@@ -107,8 +108,8 @@ export function validateConnectionRuntimeUpdate(
   });
   return {
     displayName: validated.displayName,
-    emoji: validated.emoji,
     endpoint: validated.endpoint,
+    iconId: validated.iconId,
     ...(replacement === undefined || replacement === "" ? {} : { token: validated.token }),
     tlsPinSha256: validated.tlsPinSha256,
   };
@@ -125,29 +126,5 @@ export function isProfileOnlyConnectionUpdate(
     (replacementToken === undefined || replacementToken === "") &&
     input.endpoint.trim() === current.endpoint &&
     nextPin === current.tlsPinSha256
-  );
-}
-
-function isSingleEmojiGrapheme(value: string): boolean {
-  const singleEmojiSequence =
-    /^(?:\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*|\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3)$/u;
-  if (!singleEmojiSequence.test(value)) {
-    return false;
-  }
-  const runtimeIntl: unknown = Intl;
-  // WHY: Hermes provides Intl.Segmenter, but the React Native TypeScript library set does not declare it.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const runtimeIntlWithSegmenter = runtimeIntl as {
-    Segmenter?: new (
-      locale?: string,
-      options?: { granularity: "grapheme" },
-    ) => {
-      segment: (input: string) => Iterable<unknown>;
-    };
-  };
-  const { Segmenter } = runtimeIntlWithSegmenter;
-  return (
-    Segmenter === undefined ||
-    [...new Segmenter(undefined, { granularity: "grapheme" }).segment(value)].length === 1
   );
 }

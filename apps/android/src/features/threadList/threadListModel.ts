@@ -58,7 +58,7 @@ export function useProjectSidebarThreads(
       ? (view?.archived ?? [])
       : deduplicateThreadSummaries([...(view?.pinned ?? []), ...(view?.recent ?? [])]);
   const threads = items.project(projection.project(summaries, remote.pendingRequests));
-  return { loadMore, state: sidebarListState(view?.phase, view?.error ?? null, false), threads };
+  return { loadMore, state: sidebarListState(view?.phase, view?.error ?? null), threads };
 }
 
 export function sidebarRowKey(row: ThreadListRow): string {

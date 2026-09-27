@@ -32,7 +32,7 @@ export type TimelineScrollTarget =
 /** Only policy switches and opaque turn identity cross the observation boundary. */
 export type TimelineScrollPolicy = {
   readonly anchorIndex: number | null;
-  readonly anchorReason: "completedResponse" | "initialUnread" | "none";
+  readonly anchorReason: "completedResponse" | "initialUnread" | "lateUnread" | "none";
   readonly anchorTurnId: string | null;
   readonly awayFromLatest: boolean;
   readonly containsBeginning: boolean;
@@ -81,3 +81,32 @@ export type TimelineScrollObservation =
 
 /** Gesture phases are discrete, while per-frame coordinates stay on the existing scroll path. */
 export type TimelineScrollGesture = "drag-start" | "drag-end" | "momentum-start" | "momentum-end";
+
+/** Validated dispatch evidence from the pinned LegendList native adapter; no list data crosses. */
+export type TimelineLibraryScrollCommand = {
+  readonly animated: boolean;
+  readonly contentHeightPx: number;
+  readonly initial: boolean;
+  readonly initialPending: boolean;
+  readonly logicalOffsetPx: number;
+  readonly maintainingEnd: boolean;
+  readonly nativeCorrectionPending: boolean;
+  readonly offsetPx: number;
+  readonly phase: "dispatch" | "retry";
+  readonly rowCount: number;
+  readonly viewportHeightPx: number;
+};
+
+/** React-committed MVCP projection, not evidence that native mounting has already applied it. */
+export type TimelineLibraryScrollAdjustment = {
+  readonly clampCompensationPx: number;
+  readonly contentHeightPx: number;
+  readonly lastNativeOffsetPx: number | null;
+  readonly logicalOffsetPx: number;
+  readonly pendingDataAppliedPx: number | null;
+  readonly phase: "adjustment";
+  readonly requestedDeltaPx: number;
+  readonly rowCount: number;
+  readonly sentinelDeltaPx: number;
+  readonly viewportHeightPx: number;
+};

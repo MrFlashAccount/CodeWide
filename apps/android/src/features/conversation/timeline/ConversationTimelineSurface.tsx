@@ -3,7 +3,15 @@ import { recordThreadNavigationVisualEvent } from "../../../data/thread-navigati
 import { TimelineMotionContext } from "../../../rendering/FluidLayoutFrame";
 import { spacing } from "../../../theme";
 import { CommitOnChangeProbe, EveryCommitProbe } from "../../../ui/CommitProbe";
-import { MessageListBoundary } from "../../../ui/MessageListBoundary";
+import {
+  conversationBottomContentInset,
+  conversationTopContentInset,
+} from "../../../ui/conversation-chrome-layout";
+import {
+  MessageListBoundary,
+  type MessageListPresentationState,
+  type MessageListState,
+} from "../../../ui/MessageListBoundary";
 import { LiveTurnPlanMenu } from "../../goal/LiveTurnPlanMenu";
 import { ThreadHistoryLoadingIndicator } from "../ConversationHistoryStatus";
 import { styles } from "./ConversationTimelineSurface.styles";
@@ -31,6 +39,7 @@ export function ConversationTimelineSurface({
   readOnly,
   remoteThread,
   threadSearchActive,
+  threadSearchVisible,
   timeline,
   timelineContent,
   timelineDidLoad,
@@ -39,6 +48,11 @@ export function ConversationTimelineSurface({
   timelinePositioned,
   timelineViewportRef,
 }: ConversationTimelineSurfaceProps) {
+  const presentationState = messageListPresentationState(
+    messageListState,
+    timelineModelReady,
+    timelinePositioned,
+  );
   return (
     <View ref={timelineViewportRef} style={styles.timelineShell}>
       {draftConnectionId !== null && draftThreadId !== null && (
@@ -76,7 +90,14 @@ export function ConversationTimelineSurface({
         revision={latestUnreadReceiptKey}
         scope={composerScope}
       />
-      <MessageListBoundary state={messageListState}>
+      <MessageListBoundary
+        contentInsets={{
+          bottom: conversationBottomContentInset(bottomChromeHeight, liveStatusVisible),
+          top: conversationTopContentInset(threadSearchVisible),
+        }}
+        loadingKey={composerScope}
+        state={presentationState}
+      >
         <EveryCommitProbe onCommit={positionSearchTurn} />
         <ThreadTimelineNavigationCommit
           connectionId={draftConnectionId}
@@ -125,4 +146,21 @@ export function ConversationTimelineSurface({
       )}
     </View>
   );
+}
+
+function messageListPresentationState(
+  model: MessageListState,
+  modelReadyForPlacement: boolean,
+  positioned: boolean,
+): MessageListPresentationState {
+  if (model.status === "error") {
+    return model;
+  }
+  if (positioned) {
+    return { status: "ready" };
+  }
+  if (!modelReadyForPlacement) {
+    return { status: "loading" };
+  }
+  return { status: "positioning" };
 }

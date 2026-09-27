@@ -14,10 +14,17 @@ export const legendListScrollToOffset = jest.fn(async () => undefined);
 export const legendListIsAtEnd = jest.fn(() => true);
 let withinEndThreshold = true;
 let anchorReadyDuringLayout = false;
+let itemViewportTop: number | null = -100;
+let viewportHeight = 600;
 const endThresholdListeners = new Set<(withinThreshold: boolean) => void>();
 
 export function setLegendListAnchorReadyDuringLayout(enabled: boolean): void {
   anchorReadyDuringLayout = enabled;
+}
+
+export function setLegendListItemViewport(top: number | null, height = 600): void {
+  itemViewportTop = top;
+  viewportHeight = height;
 }
 
 export function setLegendListWithinEndThreshold(withinThreshold: boolean): void {
@@ -45,10 +52,23 @@ function KeyboardAwareLegendListInner<ItemT>(
     () =>
       ({
         clearCaches: () => undefined,
+        getNativeScrollRef: () => ({
+          measureInWindow: (
+            callback: (x: number, y: number, width: number, height: number) => void,
+          ) => callback(0, 100, 400, viewportHeight),
+        }),
         getState: () =>
           ({
             contentLength: data.length * 480,
             end: Math.max(0, data.length - 1),
+            elementAtIndex: () =>
+              itemViewportTop === null
+                ? undefined
+                : {
+                    measureInWindow: (
+                      callback: (x: number, y: number, width: number, height: number) => void,
+                    ) => callback(0, 100 + (itemViewportTop ?? 0), 400, 1200),
+                  },
             indexByKey: (key: string) => {
               const index = data.findIndex(
                 (item, itemIndex) => props.keyExtractor?.(item, itemIndex) === key,

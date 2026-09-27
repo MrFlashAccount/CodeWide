@@ -8,6 +8,7 @@ import type {
 import { NativeEventEmitter, NativeModules } from "react-native";
 
 import { globalSupervisorLimitsV1 } from "../data/globalSupervisorLimitsV1";
+import { assertVoiceStartActive } from "../data/globalVoiceCancellation";
 import { appLogger } from "../observability/logger";
 import {
   globalVoiceWebRtcPlaybackLevel,
@@ -49,17 +50,20 @@ type WebRtcOwner = {
   lastOutboundAudioBytes: number;
   lastOutboundAudioPackets: number;
   localStream: MediaStream | null;
+  mediaConnected: boolean;
   readonly mediaDevices: typeof mediaDevices;
   microphoneAppliedVersion: number;
   microphoneIntentVersion: number;
   microphoneMuted: boolean;
   microphoneTransition: Promise<void>;
-  onTerminal: () => void;
+  readonly onMediaConnection: (connected: boolean) => void;
+  onTerminal: (source?: WebRtcTerminalSource) => void;
   readonly peer: RTCPeerConnection;
   personalVoiceFilter: PersonalVoiceFilterLease | null;
   readonly personalVoiceFilterEnabled: boolean;
   playbackLevelTimer: ReturnType<typeof setInterval> | null;
   requestedMicrophoneMuted: boolean;
+  stopAbortObservation: (() => void) | null;
   stopNativeObservation: (() => void) | null;
   stopped: boolean;
   stopping: boolean;
@@ -78,21 +82,33 @@ const AUDIO_LEVEL_POLL_INTERVAL_MS = 100;
 const CAPTURE_INTERRUPTED_EVENT_NAME = "CodeWideGlobalVoiceCaptureInterrupted";
 const DISCONNECTED_GRACE_MS = 3000;
 
-async function waitForIceGatheringComplete(peer: RTCPeerConnection): Promise<void> {
+async function waitForIceGatheringComplete(
+  peer: RTCPeerConnection,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  assertVoiceStartActive(signal);
   if (peer.iceGatheringState === "complete") {
     return;
   }
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       peer.onicegatheringstatechange = null;
+      signal?.removeEventListener("abort", abort);
       reject(new Error("Global Voice WebRTC ICE gathering timed out"));
     }, globalSupervisorLimitsV1.realtimeStartupTimeoutMs);
+    const abort = (): void => {
+      clearTimeout(timer);
+      peer.onicegatheringstatechange = null;
+      reject(new Error("Global Voice WebRTC startup cancelled"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
     peer.onicegatheringstatechange = () => {
       if (peer.iceGatheringState !== "complete") {
         return;
       }
       peer.onicegatheringstatechange = null;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       resolve();
     };
   });
@@ -130,6 +146,8 @@ class CleanupFailures {
 
 function stopOwnedMedia(owner: WebRtcOwner): void {
   const failures = new CleanupFailures();
+  owner.stopAbortObservation?.();
+  owner.stopAbortObservation = null;
   const stopObservation = owner.stopNativeObservation;
   owner.stopNativeObservation = null;
   failures.capture(() => {
@@ -202,23 +220,13 @@ function disableLocalCapture(owner: WebRtcOwner): void {
   }
 }
 
-function ignoreCleanupFailure(action: () => void): void {
-  try {
-    action();
-  } catch {
-    // Startup keeps its original failure authoritative after best-effort cleanup.
-  }
-}
-
 async function cleanupFailedStartup(owner: WebRtcOwner | null): Promise<void> {
   if (owner === null) {
     return;
   }
-  owner.stopped = true;
-  ignoreCleanupFailure(() => {
-    stopOwnedMedia(owner);
-  });
-  await owner.audioRoute?.release().catch(() => undefined);
+  owner.stopPromise ??= stopSession(owner);
+  // Startup keeps its original rejection while using the same idempotent media teardown.
+  await owner.stopPromise.catch(() => undefined);
 }
 
 function publishTerminal(
@@ -234,6 +242,7 @@ function publishTerminal(
     owner.disconnectTimer = null;
   }
   owner.terminalPublished = true;
+  updateMediaConnection(owner, false);
   appLogger.warn({
     event: "global_voice.webrtc.terminal",
     fields: {
@@ -259,6 +268,9 @@ function acceptConnectionChange(owner: WebRtcOwner, onTerminal: () => void): voi
         owner.disconnectTimer = null;
       }
       owner.connected.resolve(undefined);
+      if (owner.answerAccepted) {
+        updateMediaConnection(owner, true);
+      }
       return;
     case "closed":
       publishTerminal(owner, onTerminal, "connectionClosed");
@@ -267,6 +279,7 @@ function acceptConnectionChange(owner: WebRtcOwner, onTerminal: () => void): voi
       publishTerminal(owner, onTerminal, "connectionFailed");
       return;
     case "disconnected":
+      updateMediaConnection(owner, false);
       owner.disconnectTimer ??= setTimeout(() => {
         owner.disconnectTimer = null;
         publishTerminal(owner, onTerminal, "disconnectedTimeout");
@@ -307,7 +320,9 @@ async function captureMicrophone(owner: WebRtcOwner): Promise<{
     releaseStream(stream);
     throw new Error("Global Voice WebRTC microphone track is unavailable");
   }
-  audioTrack.onended = owner.onTerminal;
+  audioTrack.onended = () => {
+    owner.onTerminal("trackEnded");
+  };
   audioTrack.enabled = false;
   try {
     if (owner.personalVoiceFilterEnabled) {
@@ -322,6 +337,7 @@ async function captureMicrophone(owner: WebRtcOwner): Promise<{
           owner.stopping ||
           owner.requestedMicrophoneMuted ||
           owner.microphoneMuted ||
+          !owner.mediaConnected ||
           owner.localStream?.getAudioTracks()[0] !== audioTrack
         ) {
           return;
@@ -358,7 +374,7 @@ async function replaceAudioTrack(
 }
 
 function microphoneSessionIsLive(owner: WebRtcOwner): boolean {
-  return !owner.stopped && !owner.stopping;
+  return !owner.stopped && !owner.stopping && !owner.terminalPublished;
 }
 
 function microphoneRequestIsCurrent(owner: WebRtcOwner, version: number): boolean {
@@ -417,13 +433,63 @@ async function applyRequestedMicrophoneState(owner: WebRtcOwner): Promise<void> 
     owner.microphoneAppliedVersion !== owner.microphoneIntentVersion
   ) {
     const version = owner.microphoneIntentVersion;
-    if (owner.requestedMicrophoneMuted) {
+    if (owner.requestedMicrophoneMuted || !owner.mediaConnected) {
       await replaceAudioTrack(owner, null);
       releaseLocalStream(owner);
       owner.microphoneMuted = true;
       owner.microphoneAppliedVersion = version;
     } else {
       await resumeMicrophone(owner, version);
+    }
+  }
+}
+
+async function queueMicrophoneState(owner: WebRtcOwner): Promise<void> {
+  owner.microphoneIntentVersion += 1;
+  const muted = owner.requestedMicrophoneMuted || !owner.mediaConnected;
+  const captureGate = muted ? owner.audioRoute?.setMuted(true) : Promise.resolve();
+  const failures = new CleanupFailures();
+  if (muted) {
+    failures.capture(() => {
+      disableLocalCapture(owner);
+    });
+    // No offline PCM buffer: release AudioRecord immediately, even before replaceTrack settles.
+    failures.capture(() => {
+      releaseLocalStream(owner);
+    });
+  }
+  const transition = Promise.all([
+    owner.microphoneTransition.catch(() => undefined),
+    captureGate,
+  ]).then(async () => {
+    failures.throwIfFailed();
+    await applyRequestedMicrophoneState(owner);
+  });
+  owner.microphoneTransition = transition;
+  return transition;
+}
+
+function updateMediaConnection(owner: WebRtcOwner, connected: boolean): void {
+  if (connected && owner.terminalPublished) {
+    return;
+  }
+  if (owner.stopped || owner.stopping || owner.mediaConnected === connected) {
+    return;
+  }
+  owner.mediaConnected = connected;
+  updateRemoteTracks(owner.peer, connected);
+  owner.onMediaConnection(connected);
+  if (owner.audioSender !== null) {
+    void queueMicrophoneState(owner).catch(() => {
+      owner.onTerminal("captureInterrupted");
+    });
+  }
+}
+
+function updateRemoteTracks(peer: RTCPeerConnection, enabled: boolean): void {
+  for (const receiver of peer.getReceivers()) {
+    if (receiver.track !== null) {
+      receiver.track.enabled = enabled;
     }
   }
 }
@@ -453,22 +519,11 @@ async function configureInteractiveAudio(options: ConfigureAudioOptions): Promis
   if (options.options.mode !== "interactive") {
     return;
   }
-  options.owner.audioRoute = await acquireGlobalVoiceAudioRoute(options.options.initiallyMuted);
-  options.owner.stopNativeObservation = await observeGlobalVoiceNativePeer(
-    options.owner.peer._pcId,
-  );
-  if (options.options.initiallyMuted) {
-    options.owner.audioSender = options.owner.peer.addTransceiver("audio", {
-      direction: "sendrecv",
-    }).sender;
-  } else {
-    const capture = await captureMicrophone(options.owner);
-    options.owner.localStream = capture.stream;
-    options.owner.audioSender = options.owner.peer.addTrack(capture.track, capture.stream);
-    if (!options.owner.personalVoiceFilterEnabled) {
-      capture.track.enabled = true;
-    }
-  }
+  await acquireInteractiveOwnership(options.owner);
+  // SDP negotiation needs a sender, not an open microphone. Capture starts only after answer/ICE.
+  options.owner.audioSender = options.owner.peer.addTransceiver("audio", {
+    direction: "sendrecv",
+  }).sender;
   const publishPlaybackLevel = async (): Promise<void> => {
     if (options.owner.stopped || options.options.mode !== "interactive") {
       return;
@@ -478,7 +533,9 @@ async function configureInteractiveAudio(options: ConfigureAudioOptions): Promis
       if (!acceptsMediaEvents(options.owner)) {
         return;
       }
-      options.options.onPlaybackLevel(globalVoiceWebRtcPlaybackLevel(report));
+      options.options.onPlaybackLevel(
+        options.owner.mediaConnected ? globalVoiceWebRtcPlaybackLevel(report) : 0,
+      );
       const transport = globalVoiceWebRtcTransportSnapshot(report);
       options.owner.lastOutboundAudioBytes = transport.outboundAudioBytes;
       options.owner.lastOutboundAudioPackets = transport.outboundAudioPackets;
@@ -490,7 +547,7 @@ async function configureInteractiveAudio(options: ConfigureAudioOptions): Promis
     }
   };
   options.owner.dataChannel.onmessage = (event: { readonly data: unknown }) => {
-    if (!acceptsMediaEvents(options.owner)) {
+    if (!acceptsMediaEvents(options.owner) || !options.owner.mediaConnected) {
       return;
     }
     const speaking = globalVoiceWebRtcUserSpeaking(event.data);
@@ -516,6 +573,21 @@ async function configureAudio(options: ConfigureAudioOptions): Promise<void> {
   options.owner.peer.addTransceiver("audio", { direction: "recvonly" });
 }
 
+async function acquireInteractiveOwnership(owner: WebRtcOwner): Promise<void> {
+  const route = await acquireGlobalVoiceAudioRoute(true);
+  if (!microphoneSessionIsLive(owner)) {
+    await route.release();
+    throw new Error("Global Voice startup cancelled before audio route acquisition");
+  }
+  owner.audioRoute = route;
+  const stopObservation = await observeGlobalVoiceNativePeer(owner.peer._pcId);
+  if (!microphoneSessionIsLive(owner)) {
+    stopObservation();
+    throw new Error("Global Voice startup cancelled before peer observation");
+  }
+  owner.stopNativeObservation = stopObservation;
+}
+
 function createPublicSession(owner: WebRtcOwner, offerSdp: string): GlobalSupervisorWebRtcSession {
   return {
     async acceptAnswer(sdp) {
@@ -529,8 +601,10 @@ function createPublicSession(owner: WebRtcOwner, offerSdp: string): GlobalSuperv
       await owner.peer.setRemoteDescription({ sdp, type: "answer" });
       if (owner.peer.connectionState === "connected") {
         owner.connected.resolve(undefined);
+        updateMediaConnection(owner, true);
       }
       await owner.connected.promise;
+      await owner.microphoneTransition;
     },
     offerSdp,
     async setMicrophoneMuted(muted) {
@@ -542,17 +616,7 @@ function createPublicSession(owner: WebRtcOwner, offerSdp: string): GlobalSuperv
         return;
       }
       owner.requestedMicrophoneMuted = muted;
-      owner.microphoneIntentVersion += 1;
-      if (muted) {
-        disableLocalCapture(owner);
-      }
-      const captureGate = muted ? owner.audioRoute?.setMuted(true) : Promise.resolve();
-      const transition = Promise.all([
-        owner.microphoneTransition.catch(() => undefined),
-        captureGate,
-      ]).then(async () => applyRequestedMicrophoneState(owner));
-      owner.microphoneTransition = transition;
-      await transition;
+      await queueMicrophoneState(owner);
     },
     async stop() {
       owner.stopPromise ??= stopSession(owner);
@@ -567,51 +631,36 @@ export const createGlobalSupervisorWebRtcSession: GlobalSupervisorWebRtcSessionF
   options,
 ) => {
   let owner: WebRtcOwner | null = null;
+  const signal = options.mode === "interactive" ? options.signal : undefined;
 
   try {
+    assertVoiceStartActive(signal);
     const { mediaDevices, RTCPeerConnection } = await import("react-native-webrtc");
+    assertVoiceStartActive(signal);
     const peer = new RTCPeerConnection();
-    const activeOwner: WebRtcOwner = {
-      answerAccepted: false,
-      audioRoute: null,
-      audioSender: null,
-      captureHealthSubscription: null,
-      connected: Promise.withResolvers<undefined>(),
-      dataChannel: peer.createDataChannel("oai-events"),
-      disconnectTimer: null,
-      lastOutboundAudioBytes: 0,
-      lastOutboundAudioPackets: 0,
-      localStream: null,
-      mediaDevices,
-      microphoneAppliedVersion: 0,
-      microphoneIntentVersion: 0,
-      microphoneMuted: options.mode === "interactive" && options.initiallyMuted,
-      microphoneTransition: Promise.resolve(),
-      onTerminal: () => undefined,
-      peer,
-      personalVoiceFilter: null,
-      personalVoiceFilterEnabled:
-        options.mode === "interactive" && options.personalVoiceFilterEnabled === true,
-      playbackLevelTimer: null,
-      requestedMicrophoneMuted: options.mode === "interactive" && options.initiallyMuted,
-      stopNativeObservation: null,
-      stopped: false,
-      stopping: false,
-      stopPromise: null,
-      terminalPublished: false,
-    };
+    const activeOwner = createWebRtcOwner(peer, mediaDevices, options);
     owner = activeOwner;
+    const abort = (): void => {
+      activeOwner.stopPromise ??= stopSession(activeOwner);
+      void activeOwner.stopPromise.catch(() => undefined);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    activeOwner.stopAbortObservation = () => signal?.removeEventListener("abort", abort);
     void activeOwner.connected.promise.catch(() => undefined);
-    const onTerminal = (): void => {
-      publishTerminal(activeOwner, options.onTerminal, "trackEnded");
+    const onTerminal = (source: WebRtcTerminalSource = "trackEnded"): void => {
+      publishTerminal(activeOwner, options.onTerminal, source);
     };
     activeOwner.onTerminal = onTerminal;
     peer.onconnectionstatechange = () => {
       acceptConnectionChange(activeOwner, options.onTerminal);
     };
+    peer.ontrack = (event: { readonly track: MediaStreamTrack }) => {
+      event.track.enabled = activeOwner.mediaConnected && !activeOwner.stopped;
+    };
     await configureAudio({ mediaDevices, options, owner: activeOwner });
+    assertVoiceStartActive(signal);
     await peer.setLocalDescription();
-    await waitForIceGatheringComplete(peer);
+    await waitForIceGatheringComplete(peer, signal);
     const offerSdp = peer.localDescription?.sdp;
     if (offerSdp === undefined || !validSdp(offerSdp)) {
       throw new Error("Global Voice WebRTC produced an invalid SDP offer");
@@ -622,3 +671,45 @@ export const createGlobalSupervisorWebRtcSession: GlobalSupervisorWebRtcSessionF
     throw error;
   }
 };
+
+function createWebRtcOwner(
+  peer: RTCPeerConnection,
+  mediaDevices: WebRtcOwner["mediaDevices"],
+  options: GlobalSupervisorWebRtcSessionOptions,
+): WebRtcOwner {
+  return {
+    answerAccepted: false,
+    audioRoute: null,
+    audioSender: null,
+    captureHealthSubscription: null,
+    connected: Promise.withResolvers<undefined>(),
+    dataChannel: peer.createDataChannel("oai-events"),
+    disconnectTimer: null,
+    lastOutboundAudioBytes: 0,
+    lastOutboundAudioPackets: 0,
+    localStream: null,
+    mediaConnected: false,
+    mediaDevices,
+    microphoneAppliedVersion: 0,
+    microphoneIntentVersion: 0,
+    microphoneMuted: true,
+    microphoneTransition: Promise.resolve(),
+    onMediaConnection:
+      options.mode === "interactive"
+        ? (options.onMediaConnection ?? (() => undefined))
+        : () => undefined,
+    onTerminal: () => undefined,
+    peer,
+    personalVoiceFilter: null,
+    personalVoiceFilterEnabled:
+      options.mode === "interactive" && options.personalVoiceFilterEnabled === true,
+    playbackLevelTimer: null,
+    requestedMicrophoneMuted: options.mode === "interactive" && options.initiallyMuted,
+    stopAbortObservation: null,
+    stopNativeObservation: null,
+    stopped: false,
+    stopping: false,
+    stopPromise: null,
+    terminalPublished: false,
+  };
+}

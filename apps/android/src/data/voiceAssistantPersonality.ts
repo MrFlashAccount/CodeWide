@@ -80,3 +80,23 @@ export function hasCustomVoiceAssistantPersonality(
     personality.rules !== ""
   );
 }
+
+/** Builds the bounded role-bearing text inserted once when a voice activation starts. */
+export function voiceAssistantPersonalityStartupText(
+  personality: VoiceAssistantPersonality,
+): string | null {
+  const normalized = normalizeVoiceAssistantPersonality(personality);
+  if (!hasCustomVoiceAssistantPersonality(normalized)) {
+    return null;
+  }
+  let profile = "";
+  const append = (label: string, value: string): void => {
+    if (value !== "") {
+      profile += `${profile === "" ? "" : "\n\n"}${label}:\n${value}`;
+    }
+  };
+  append("Character", normalized.character);
+  append("Communication style", normalized.communicationStyle);
+  append("Rules", normalized.rules);
+  return `User-configured Voice Assistant personality follows. Apply it consistently while preserving higher-priority instructions.\n\n${profile}`;
+}

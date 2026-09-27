@@ -13,6 +13,10 @@ import {
   validateConnectionRuntimeUpdate,
 } from "./connection-validation";
 import type { ConnectionProfileRow, StoredConnection } from "./connection-profile-types";
+import {
+  connectionProfileRowFromUnknown,
+  decodeConnectionProfileRow,
+} from "./connectionProfilePersistence";
 import { readLegacyPersistedRows } from "./legacy-persistence-migration.native";
 import { createPersistentCollectionModel } from "./persistent-collection.native";
 import { getSettingsSqliteDatabase } from "./settings-persistence.native";
@@ -31,6 +35,7 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       },
     ],
     database: getSettingsSqliteDatabase(),
+    deserialize: decodeConnectionProfileRow,
     getKey: (row) => row.id,
     id: "connection-profiles-v1",
     indexes: [["sortOrder"]],
@@ -61,9 +66,9 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       const sortOrder = Math.max(-1, ...collection.toArray.map((row) => row.sortOrder)) + 1;
       const transaction = collection.insert({
         displayName: input.displayName,
-        emoji: input.emoji,
         enabled: true,
         endpoint: input.endpoint,
+        iconId: input.iconId,
         id,
         sortOrder,
         tlsPinSha256: input.tlsPinSha256,
@@ -72,9 +77,9 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       await transaction.isPersisted.promise;
       return {
         displayName: input.displayName,
-        emoji: input.emoji,
         enabled: true,
         endpoint: input.endpoint,
+        iconId: input.iconId,
         id,
         lastError: null,
         lastErrorAt: null,
@@ -110,14 +115,24 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       }
       const legacy = openLegacyUiCacheSqliteDatabase();
       try {
-        const rows = await readLegacyPersistedRows<ConnectionProfileRow>(
+        const rows = await readLegacyPersistedRows<Record<string, unknown>>(
           legacy.database,
           "connection-profiles-v1",
         );
         if (rows.length === 0) {
           return;
         }
-        const transaction = collection.insert(rows.map((row) => ({ ...row })));
+        const migrated = rows.flatMap((row) => {
+          try {
+            return [connectionProfileRowFromUnknown(row)];
+          } catch {
+            return [];
+          }
+        });
+        if (migrated.length === 0) {
+          return;
+        }
+        const transaction = collection.insert(migrated);
         await transaction.isPersisted.promise;
       } finally {
         legacy.close();
@@ -176,9 +191,9 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
             const hostname = new URL(config.endpoint).hostname;
             return {
               displayName: hostname === "" ? "Remote Codex" : hostname,
-              emoji: "🖥️",
               enabled: config.enabled,
               endpoint: config.endpoint,
+              iconId: "desktop",
               id: config.connectionId,
               sortOrder: sortOrder++,
               tlsPinSha256: config.tlsPinSha256,
@@ -218,7 +233,7 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       const input = validateConnectionRuntimeUpdate(rawInput);
       const transaction = collection.update(connectionId, (draft) => {
         draft.displayName = input.displayName;
-        draft.emoji = input.emoji;
+        draft.iconId = input.iconId;
         draft.endpoint = input.endpoint;
         draft.tlsPinSha256 = input.tlsPinSha256 ?? null;
         draft.updatedAt = Date.now();
@@ -226,11 +241,11 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       await transaction.isPersisted.promise;
       return input;
     },
-    async updateProfile(connectionId, displayName, emoji) {
-      const profile = validateConnectionProfile(displayName, emoji);
+    async updateProfile(connectionId, displayName, iconId) {
+      const profile = validateConnectionProfile(displayName, iconId);
       const transaction = collection.update(connectionId, (draft) => {
         draft.displayName = profile.displayName;
-        draft.emoji = profile.emoji;
+        draft.iconId = profile.iconId;
         draft.updatedAt = Date.now();
       });
       await transaction.isPersisted.promise;
@@ -241,9 +256,9 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
 function profileFromStoredConnection(connection: StoredConnection): ConnectionProfileRow {
   return {
     displayName: connection.displayName,
-    emoji: connection.emoji,
     enabled: connection.enabled,
     endpoint: connection.endpoint,
+    iconId: connection.iconId,
     id: connection.id,
     sortOrder: connection.sortOrder,
     tlsPinSha256: connection.tlsPinSha256 ?? null,
@@ -254,8 +269,8 @@ function profileFromStoredConnection(connection: StoredConnection): ConnectionPr
 function toStoredConnection(row: ConnectionProfileRow, token: string): StoredConnection {
   return {
     displayName: row.displayName,
-    emoji: row.emoji,
     endpoint: row.endpoint,
+    iconId: row.iconId,
     id: row.id,
     ...(row.tlsPinSha256 === null ? {} : { tlsPinSha256: row.tlsPinSha256 }),
     enabled: row.enabled,

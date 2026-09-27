@@ -22,8 +22,15 @@ jest.mock("@expo/ui/jetpack-compose", () => {
     SupportingContent: Slot,
     TrailingContent: Slot,
   });
+  const DropdownMenu = Object.assign(
+    ({ children, expanded }: { readonly children?: ReactNode; readonly expanded: boolean }) => (
+      <NativeView testID="agent-model-menu">{children}</NativeView>
+    ),
+    { Items: Slot, Trigger: Slot },
+  );
   return {
     CircularProgressIndicator: Slot,
+    DropdownMenu,
     Host: Slot,
     Icon: Slot,
     ListItem,
@@ -33,6 +40,34 @@ jest.mock("@expo/ui/jetpack-compose", () => {
     Button: NativePressable,
   };
 });
+
+const BACKGROUND_MODEL_PROPS = {
+  backgroundModelCatalog: {
+    models: [
+      {
+        defaultEffort: "high",
+        efforts: ["high"],
+        id: "gpt-default",
+        isDefault: true,
+        label: "GPT Default",
+        supportsPersonality: false,
+      },
+      {
+        defaultEffort: "high",
+        efforts: ["high"],
+        id: "gpt-background",
+        isDefault: false,
+        label: "GPT Background",
+        supportsPersonality: false,
+      },
+    ],
+    status: "ready" as const,
+  },
+  onRefreshBackgroundModels: async () => undefined,
+  onSelectBackgroundModel: async () => undefined,
+  selectedBackgroundEffort: "high",
+  selectedBackgroundModel: null,
+};
 
 it("selects a ChatGPT voice and previews the selected GPT Live voice once", async () => {
   const select = jest.fn(async () => undefined);
@@ -106,6 +141,7 @@ it("saves one unlabeled personality without changing the synthesized voice", asy
   const savePersonality = jest.fn(async () => undefined);
   const view = render(
     <VoiceAssistantSettings
+      {...BACKGROUND_MODEL_PROPS}
       onEnrollPersonalVoice={async () => undefined}
       onPreviewVoice={previewVoice}
       onSavePersonality={savePersonality}
@@ -145,9 +181,50 @@ it("saves one unlabeled personality without changing the synthesized voice", asy
   ).toBeTruthy();
 });
 
+it("opens the ordinary model and thinking picker from one compact Agent model row", async () => {
+  const selectBackgroundModel = jest.fn(async () => undefined);
+  const refresh = jest.fn(async () => undefined);
+  const view = render(
+    <VoiceAssistantSettings
+      {...BACKGROUND_MODEL_PROPS}
+      onEnrollPersonalVoice={async () => undefined}
+      onPreviewVoice={async () => undefined}
+      onRefreshBackgroundModels={refresh}
+      onSavePersonality={async () => undefined}
+      onSelectBackgroundModel={selectBackgroundModel}
+      onSelectOrbStyle={async () => undefined}
+      onSelectVoice={async () => undefined}
+      onSetPersonalVoiceFilterEnabled={async () => undefined}
+      personality={{ character: "", communicationStyle: "", rules: "" }}
+      personalVoiceFilterEnabled={false}
+      personalVoiceProfileAvailable={false}
+      selectedBackgroundModel="gpt-default"
+      selectedOrbStyle="nebula"
+      selectedVoice="cove"
+    />,
+  );
+
+  expect(view.getByText("Agent model")).toBeTruthy();
+  expect(view.getByText("GPT Default · High")).toBeTruthy();
+  expect(view.queryByText("Refresh available models")).toBeNull();
+  fireEvent.press(view.getByRole("button", { name: "Agent model: GPT Default · High" }));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  fireEvent.press(view.getByRole("button", { name: "Choose model, GPT Default" }));
+  fireEvent.press(view.getByRole("button", { name: "GPT Background" }));
+  fireEvent.press(view.getByRole("button", { name: "Apply model settings" }));
+
+  await waitFor(() =>
+    expect(selectBackgroundModel).toHaveBeenCalledWith({
+      effort: "high",
+      model: "gpt-background",
+    }),
+  );
+});
+
 it("keeps an unsaved personality draft visible when persistence fails", async () => {
   const view = render(
     <VoiceAssistantSettings
+      {...BACKGROUND_MODEL_PROPS}
       onEnrollPersonalVoice={async () => undefined}
       onPreviewVoice={async () => undefined}
       onSavePersonality={async () => {
@@ -182,6 +259,7 @@ it("shows deterministic orb previews and switches only the visual preference", a
   const savePersonality = jest.fn(async () => undefined);
   const view = render(
     <VoiceAssistantSettings
+      {...BACKGROUND_MODEL_PROPS}
       onEnrollPersonalVoice={async () => undefined}
       onPreviewVoice={async () => undefined}
       onSavePersonality={savePersonality}
@@ -218,6 +296,7 @@ it("shows deterministic orb previews and switches only the visual preference", a
 it("omits audio input and labels microphone filtering as experimental", () => {
   const view = render(
     <VoiceAssistantSettings
+      {...BACKGROUND_MODEL_PROPS}
       onEnrollPersonalVoice={async () => undefined}
       onPreviewVoice={async () => undefined}
       onSavePersonality={async () => undefined}
@@ -240,6 +319,7 @@ it("records and enables the experimental personal voice filter explicitly", asyn
   const enroll = jest.fn(async () => undefined);
   const setEnabled = jest.fn(async () => undefined);
   const baseProps = {
+    ...BACKGROUND_MODEL_PROPS,
     onEnrollPersonalVoice: enroll,
     onPreviewVoice: async () => undefined,
     onSavePersonality: async () => undefined,

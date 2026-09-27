@@ -97,6 +97,115 @@ it("forwards original command options once and records each semantic source with
   view.unmount();
 });
 
+it("links native tags and records library dispatches without issuing a scroll or retaining arbitrary payload", () => {
+  const journal = new TimelineScrollJournal();
+  const diagnostics = new TimelineScrollDiagnostics("server", "thread", journal);
+  const view = render(<ThreadTimelineList {...listProps} diagnostics={diagnostics} />);
+  const target = view.getByTestId("timeline");
+  fireEvent(target, "scroll", { ...scrollEvent(400), target: 42 });
+  fireEvent(target, "scrollDiagnostic", {
+    animated: false,
+    contentHeightPx: 5000,
+    initial: true,
+    initialPending: true,
+    logicalOffsetPx: 400,
+    maintainingEnd: false,
+    nativeCorrectionPending: false,
+    offsetPx: 4400,
+    phase: "dispatch",
+    rowCount: 26,
+    viewportHeightPx: 600,
+    text: "PRIVATE",
+    data: listProps.data,
+  });
+  fireEvent(target, "scrollDiagnostic", { phase: "PRIVATE" });
+  expect(journal.snapshot().samples).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ name: "chat.scroll.native-view", values: { viewTag: 42 } }),
+      expect.objectContaining({
+        name: "chat.scroll.library-command",
+        tags: { phase: "dispatch", source: "legend-list" },
+        values: expect.objectContaining({ initial: 1, offsetPx: 4400 }),
+      }),
+    ]),
+  );
+  expect(
+    journal.snapshot().samples.filter((event) => event.name === "chat.scroll.library-command"),
+  ).toHaveLength(1);
+  expect(JSON.stringify(journal.snapshot())).not.toContain("PRIVATE");
+  expect(legendListScrollToEnd).not.toHaveBeenCalled();
+  expect(legendListScrollToIndex).not.toHaveBeenCalled();
+  expect(legendListScrollToOffset).not.toHaveBeenCalled();
+  view.unmount();
+});
+
+it("records MVCP commit calculations separately and rejects invalid or private fields", () => {
+  const journal = new TimelineScrollJournal();
+  const diagnostics = new TimelineScrollDiagnostics("server", "thread", journal);
+  const view = render(<ThreadTimelineList {...listProps} diagnostics={diagnostics} />);
+  const target = view.getByTestId("timeline");
+  const adjustment = {
+    phase: "adjustment",
+    clampCompensationPx: 300,
+    contentHeightPx: 4400,
+    lastNativeOffsetPx: 4100,
+    logicalOffsetPx: 3500,
+    pendingDataAppliedPx: null,
+    requestedDeltaPx: -600,
+    rowCount: 97,
+    sentinelDeltaPx: -300,
+    viewportHeightPx: 600,
+    text: "PRIVATE",
+    data: listProps.data,
+  };
+  fireEvent(target, "scrollDiagnostic", adjustment);
+  for (const invalid of [
+    { requestedDeltaPx: Number.NaN },
+    { rowCount: 1.5 },
+    { lastNativeOffsetPx: "PRIVATE" },
+    { pendingDataAppliedPx: Number.POSITIVE_INFINITY },
+    { phase: "PRIVATE" },
+  ]) {
+    fireEvent(target, "scrollDiagnostic", { ...adjustment, ...invalid });
+  }
+  fireEvent(target, "scrollDiagnostic", {
+    ...adjustment,
+    lastNativeOffsetPx: null,
+    pendingDataAppliedPx: 0,
+  });
+  const adjustments = journal
+    .snapshot()
+    .samples.filter((event) => event.name === "chat.scroll.library-adjustment");
+  expect(adjustments).toEqual([
+    expect.objectContaining({
+      name: "chat.scroll.library-adjustment",
+      tags: { phase: "react-commit", source: "legend-list" },
+      values: expect.objectContaining({
+        clampCompensationPx: 300,
+        lastNativeKnown: 1,
+        lastNativeOffsetPx: 4100,
+        logicalOffsetPx: 3500,
+        nativeCorrectionPending: 0,
+        requestedDeltaPx: -600,
+        rowCount: 97,
+        sentinelDeltaPx: -300,
+      }),
+    }),
+    expect.objectContaining({
+      values: expect.objectContaining({
+        lastNativeKnown: 0,
+        nativeCorrectionPending: 1,
+        pendingDataAppliedPx: 0,
+      }),
+    }),
+  ]);
+  expect(JSON.stringify(journal.snapshot())).not.toContain("PRIVATE");
+  expect(legendListScrollToEnd).not.toHaveBeenCalled();
+  expect(legendListScrollToIndex).not.toHaveBeenCalled();
+  expect(legendListScrollToOffset).not.toHaveBeenCalled();
+  view.unmount();
+});
+
 it("records failed commands while preserving the original rejection, without logging error content", async () => {
   const journal = new TimelineScrollJournal();
   const diagnostics = new TimelineScrollDiagnostics("server", "thread", journal);
@@ -207,7 +316,8 @@ it("keeps a pending command attributed to its original conversation when the lis
 
 it("exports the retained timeline and metrics through Copy scroll report after leaving the chat with HUD off", async () => {
   const nativeReport = { evicted: 0, incidents: [], version: 1 } as const;
-  const readNativeScroll = jest.spyOn(performanceMetrics, "getTimelineScrollReport")
+  const readNativeScroll = jest
+    .spyOn(performanceMetrics, "getTimelineScrollReport")
     .mockResolvedValue(nativeReport);
   const diagnostics = new TimelineScrollDiagnostics("copy-server", "copy-thread");
   const ref = createRef<ThreadTimelineListRef>();
@@ -220,7 +330,9 @@ it("exports the retained timeline and metrics through Copy scroll report after l
   fireEvent.scroll(view.getByTestId("timeline"), scrollEvent(0));
   view.unmount();
   const setError = jest.fn();
-  const hook = renderHook(() => useSnapshotDiagnosticAction(performanceMetrics.usePerformanceMetrics(), setError));
+  const hook = renderHook(() =>
+    useSnapshotDiagnosticAction(performanceMetrics.usePerformanceMetrics(), setError),
+  );
   await act(async () => {
     await hook.result.current.copySnapshot();
   });

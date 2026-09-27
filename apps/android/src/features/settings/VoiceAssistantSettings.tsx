@@ -1,8 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useReducer, useRef, useState } from "react";
 import { ActivityIndicator, Switch, View } from "react-native";
 
 import type { GlobalVoiceName } from "../../data/globalVoicePreferences";
 import type { GlobalVoiceOrbStyle } from "../../data/globalVoiceOrbStyle";
+import type { VoiceAssistantModelCatalogSnapshot } from "../../data/voiceAssistantModelCatalog";
 import {
   normalizeVoiceAssistantPersonality,
   VOICE_ASSISTANT_PERSONALITY_FIELD_MAX_LENGTH,
@@ -10,9 +12,12 @@ import {
 } from "../../data/voiceAssistantPersonality";
 import { useEvent } from "../../react/useEvent";
 import { AppButton } from "../../presentation/controls/AppButton";
-import { colors } from "../../theme";
+import { colors, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
+import { modelEffortLabel } from "../../ui/modelEffortPresentation";
+import { ModelThinkingMenu } from "../../ui/TurnControlMenus";
+import type { ModelSettingsChoice } from "../../ui/TurnControlMenus.types";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { styles } from "./SettingsFeature.styles";
 import { OrbStyleSettings } from "./OrbStyleSettings";
@@ -195,6 +200,93 @@ type PersonalVoiceFilterSaveState =
   | { readonly operation: "enroll" | "toggle"; readonly status: "saving" }
   | { readonly message: string; readonly status: "error" };
 
+function AgentModelSetting({
+  catalog,
+  onRefresh,
+  onSelect,
+  selectedEffort,
+  selectedModel,
+}: {
+  readonly catalog: VoiceAssistantModelCatalogSnapshot;
+  readonly onRefresh: () => Promise<void>;
+  readonly onSelect: (settings: {
+    readonly effort: string;
+    readonly model: string;
+  }) => Promise<void>;
+  readonly selectedEffort: string | null;
+  readonly selectedModel: string | null;
+}): React.JSX.Element {
+  const [error, setError] = useState<string | null>(null);
+  const refresh = useEvent(() => {
+    setError(null);
+    onRefresh().catch(() => undefined);
+  });
+  const close = useEvent(() => undefined);
+  const select = useEvent((choice: ModelSettingsChoice) => {
+    setError(null);
+    onSelect({ effort: choice.effort, model: choice.model }).catch((selectionError: unknown) => {
+      setError(
+        selectionError instanceof Error
+          ? selectionError.message
+          : "Could not save the agent model.",
+      );
+    });
+  });
+  const model = catalog.models.find((candidate) => candidate.id === selectedModel);
+  const modelLabel = model?.label ?? selectedModel ?? "Choose model";
+  const value =
+    selectedEffort === null ? modelLabel : `${modelLabel} · ${modelEffortLabel(selectedEffort)}`;
+  const catalogError = catalog.status === "error" ? catalog.error : null;
+
+  return (
+    <View style={styles.personalityForm}>
+      <ModelThinkingMenu
+        accessibilityLabel={`Agent model: ${value}`}
+        error={catalogError}
+        loading={catalog.status === "idle" || catalog.status === "loading"}
+        models={catalog.models}
+        onApplySettings={select}
+        onClose={close}
+        onFallbackPress={refresh}
+        onOpen={refresh}
+        selectedEffort={selectedEffort}
+        selectedModel={selectedModel}
+        selectedPersonality={null}
+        selectedServiceTier={null}
+        showPersonalityControls={false}
+        showServiceTierControls={false}
+        triggerChildren={<AgentModelTrigger value={value} />}
+        triggerStyle={styles.agentModelRow}
+      />
+      {error !== null && (
+        <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+          {error}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function AgentModelTrigger({ value }: { readonly value: string }): React.JSX.Element {
+  return (
+    <>
+      <Text style={styles.agentModelTitle}>Agent model</Text>
+      <AgentModelValue value={value} />
+    </>
+  );
+}
+
+function AgentModelValue({ value }: { readonly value: string }): React.JSX.Element {
+  return (
+    <View style={styles.agentModelValueGroup}>
+      <Text numberOfLines={1} style={styles.agentModelValue}>
+        {value}
+      </Text>
+      <Ionicons color={colors.textMuted} name="chevron-down" size={iconSize.inline} />
+    </View>
+  );
+}
+
 const PERSONAL_VOICE_FILTER_ICON_SIZE = 20;
 const PERSONAL_VOICE_FILTER_ICON = {
   color: colors.textMuted,
@@ -338,8 +430,6 @@ function PersonalVoiceFilterSettings({
         fixedHeight={listRowHeight.double}
         leadingIcon={PERSONAL_VOICE_FILTER_ICON}
         title="Personal voice filter"
-        // WHY: AppListRow's declared custom accessory contract requires this independently interactive Switch as a ReactNode prop.
-        // oxlint-disable-next-line react-doctor/jsx-no-jsx-as-prop
         trailing={toggle}
       />
       <AppButton
@@ -359,27 +449,40 @@ function PersonalVoiceFilterSettings({
 
 /** Keeps synthesized voice, behavioral personality, and visual style visibly separate. */
 export function VoiceAssistantSettings({
+  backgroundModelCatalog,
   onEnrollPersonalVoice,
   onPreviewVoice,
+  onRefreshBackgroundModels,
   onSavePersonality,
+  onSelectBackgroundModel,
   onSelectOrbStyle,
   onSelectVoice,
   onSetPersonalVoiceFilterEnabled,
   personality,
   personalVoiceFilterEnabled,
   personalVoiceProfileAvailable,
+  selectedBackgroundEffort,
+  selectedBackgroundModel,
   selectedOrbStyle,
   selectedVoice,
 }: {
+  readonly backgroundModelCatalog: VoiceAssistantModelCatalogSnapshot;
   readonly onEnrollPersonalVoice: () => Promise<void>;
   readonly onPreviewVoice: (voice: GlobalVoiceName) => Promise<void>;
+  readonly onRefreshBackgroundModels: () => Promise<void>;
   readonly onSavePersonality: (personality: VoiceAssistantPersonality) => Promise<void>;
+  readonly onSelectBackgroundModel: (settings: {
+    readonly effort: string;
+    readonly model: string;
+  }) => Promise<void>;
   readonly onSelectOrbStyle: (style: GlobalVoiceOrbStyle) => Promise<void>;
   readonly onSelectVoice: (voice: GlobalVoiceName) => Promise<void>;
   readonly onSetPersonalVoiceFilterEnabled: (enabled: boolean) => Promise<void>;
   readonly personality: VoiceAssistantPersonality;
   readonly personalVoiceFilterEnabled: boolean;
   readonly personalVoiceProfileAvailable: boolean;
+  readonly selectedBackgroundEffort: string | null;
+  readonly selectedBackgroundModel: string | null;
   readonly selectedOrbStyle: GlobalVoiceOrbStyle;
   readonly selectedVoice: GlobalVoiceName;
 }): React.JSX.Element {
@@ -395,6 +498,13 @@ export function VoiceAssistantSettings({
       <SettingsSection title="Orb style">
         <OrbStyleSettings onSelect={onSelectOrbStyle} selectedStyle={selectedOrbStyle} />
       </SettingsSection>
+      <AgentModelSetting
+        catalog={backgroundModelCatalog}
+        onRefresh={onRefreshBackgroundModels}
+        onSelect={onSelectBackgroundModel}
+        selectedEffort={selectedBackgroundEffort}
+        selectedModel={selectedBackgroundModel}
+      />
       <SettingsSection title="Personality">
         <PersonalitySettings onSave={onSavePersonality} personality={personality} />
       </SettingsSection>

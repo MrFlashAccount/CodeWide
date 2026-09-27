@@ -147,11 +147,7 @@ function SubagentDetailBoundary({
       resetKey={`${connectionId}:${summary.remoteThreadId}`}
       scope="surface"
     >
-      <Suspense
-        // WHY: Suspense requires its pending UI through the fallback element prop.
-        // oxlint-disable-next-line react-doctor/jsx-no-jsx-as-prop
-        fallback={fallback}
-      >
+      <Suspense fallback={fallback}>
         <SubagentConversationDetail
           compact={compact}
           connectionId={connectionId}

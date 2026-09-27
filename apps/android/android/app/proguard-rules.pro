@@ -12,3 +12,13 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# Scroll Report classifies these synchronous native adjustment paths. Preserve only
+# this small diagnostic seam so release R8 names/inlining cannot hide its origin.
+-keep,allowshrinking class com.facebook.react.views.scroll.MaintainVisibleScrollPositionHelper { *; }
+-keep,allowshrinking class com.facebook.react.views.scroll.ReactScrollView {
+    public void setContentOffset(...);
+    public void scrollTo(...);
+    protected void onLayout(...);
+    public void onLayoutChange(...);
+}

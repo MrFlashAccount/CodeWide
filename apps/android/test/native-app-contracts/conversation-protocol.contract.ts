@@ -5,8 +5,6 @@ import {
   ownerImageProtocolBlock,
   ownerFileChangeProtocolBlock,
   ownerToolContent,
-  ownerProtocolBlock,
-  ownerProtocolBlockStyles,
   ownerToolImages,
   toolContentStyles,
 } from "./conversation-protocol-sources";
@@ -58,16 +56,8 @@ it("preserves conversation protocol integration contracts", () => {
   expect(ownerToolContent).toContain("const TOOL_RESULT_MAX_HEIGHT = 400");
   expect(ownerToolContent).toContain("expandedMaxHeight={TOOL_RESULT_MAX_HEIGHT}");
   expect(protocolView).toContain("nestedScrollEnabled");
-  expect(ownerProtocolBlock).toContain('testID="thinking-status"');
-  expect(ownerProtocolBlock).toContain("insideTurnActivity && styles.thinkingStatusInActivity");
-  const thinkingStatus = sourceObjectDeclaration(ownerProtocolBlockStyles, "thinkingStatus");
-  expect(thinkingStatus).toContain('alignItems: "center"');
-  expect(thinkingStatus).toContain('flexDirection: "row"');
-  expect(thinkingStatus).toContain("gap: spacing.compact");
-  expect(thinkingStatus).toContain("minHeight: controlSize.compact");
-  expect(thinkingStatus).toContain("minWidth: 0");
-  expect(thinkingStatus).toContain("paddingHorizontal: 0");
-  expect(ownerProtocolBlockStyles).toContain("thinkingStatusInActivity: { paddingLeft: 0 }");
+  // Thinking geometry is exercised through real pending/reasoning renders in
+  // v1-thinking-placeholder.render.test.tsx, independent of the component split.
   expect(ownerImageProtocolBlock).toContain("usePrivateAssetUri(props.source, {");
   expect(ownerImageProtocolBlock).toContain("access: props.getTransferAccess");
   expect(ownerImageProtocolBlock).toContain("revision: attempt");

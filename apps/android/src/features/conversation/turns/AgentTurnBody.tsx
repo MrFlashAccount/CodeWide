@@ -9,8 +9,8 @@ import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard"
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
 import { richMarkdownLayout } from "../../../rendering/rich-markdown-layout";
 import { AppText as Text } from "../../../ui/Typography";
-import { WaveText } from "../../../ui/WaveText";
 import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
+import { ThinkingStatus } from "../protocol/ThinkingStatus";
 import { CollapsedTurnActivity, CompletedTurnHistory } from "./CompletedTurnHistory";
 import { LiveAgentResponse } from "./LiveAgentResponse";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
@@ -162,11 +162,7 @@ export function renderAgentTurnBody(
           </Text>
         )}
         {!presentation.hasAgentContent && presentation.rawTurn.status === "inProgress" && (
-          <WaveText
-            style={styles.agentPlaceholder}
-            testID="turn-thinking-placeholder"
-            text="Thinking"
-          />
+          <ThinkingStatus running testID="turn-thinking-placeholder" text="Thinking" />
         )}
       </BubbleContent>
     </ArtifactImageReferences.Provider>

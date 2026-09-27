@@ -13,7 +13,11 @@ import type { WorkspaceResourceDatabase } from "../../../data/workspace-resource
 import { useAsyncResource } from "../../../rendering/async-resource-store";
 import { colors, iconSize } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
-import { fastServiceTier, isFastServiceTier } from "../../../ui/modelServiceTier";
+import {
+  fastServiceTier,
+  isFastServiceTier,
+  serviceTiersMatch,
+} from "../../../ui/modelServiceTier";
 import { ComposerContextLabel } from "../../../ui/ResourceContextChip";
 import { ModelThinkingMenu, PermissionsMenu } from "../../../ui/TurnControlMenus";
 import type { ModelSettingsChoice } from "../../../ui/TurnControlMenus.types";
@@ -119,7 +123,7 @@ export function ComposerControlChips({
     remoteThread?.id === pendingModel.threadId &&
     serverExecution?.model === pendingModel.choice.model &&
     serverExecution.effort === pendingModel.choice.effort &&
-    (serverExecution.serviceTier ?? null) === pendingModel.choice.serviceTier;
+    serviceTiersMatch(pendingModel.choice.serviceTier, serverExecution.serviceTier);
   useEffect(() => {
     if (pendingConfirmed) {
       pendingModel$.set(null);

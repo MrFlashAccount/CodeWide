@@ -2,11 +2,12 @@ import { useState } from "react";
 import { View } from "react-native";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
 import type { AccountUsageServer } from "../../data/thread-list-account-usage";
+import { serverIconOption } from "../../data/serverIcons";
 import { ThreadListHeaderAction } from "../../presentation/navigation/ThreadListHeader";
 import type { ServerScope } from "../../services/servers/serverScope";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { WorkspaceAccountUsageMenu } from "../accounts/WorkspaceAccountUsageMenu";
-import { serverGlyph, type ThreadListServer } from "../connections/connectionPresentation";
+import type { ThreadListServer } from "../connections/connectionPresentation";
 import { threadFilterLabel, threadFilterOptions, type ThreadListFilter } from "./threadListFilters";
 import { styles } from "./ThreadListMenus.styles";
 import type { ThreadListMode } from "./threadListModel";
@@ -112,9 +113,10 @@ export function ThreadFilterMenu({
             selected: serverScope.kind === "all",
           },
           ...servers.map((server) => ({
+            icon: serverIconOption(server.iconId).name,
             id: `server:${server.id}`,
             keepOpen: true,
-            label: `${serverGlyph(server)} ${server.name}`,
+            label: server.name,
             section: "Server",
             selected: serverScope.kind === "connection" && serverScope.connectionId === server.id,
           })),

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { createElement, useState } from "react";
 import { View } from "react-native";
 import { listRowPosition } from "../../ui/AppListRow.types";
 import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
 import { ControlOption } from "../../ui/ControlOption";
 import { AppText as Text } from "../../ui/Typography";
 import { connectionStateLabel, type ThreadListServer } from "../connections/connectionPresentation";
+import { ServerIcon } from "../connections/ServerIcon";
 import { styles } from "./NewThreadServerSheet.styles";
 
 export function NewThreadServerSheet({
@@ -54,14 +55,18 @@ export function NewThreadServerSheet({
       >
         {servers.map((server, index) => (
           <ControlOption
+            accessibilityLabel={`Create thread on ${server.name}`}
             key={server.id}
+            leading={createElement(ServerIcon, { iconId: server.iconId, metric: "body" })}
             onPress={() => void select(server.id)}
             position={listRowPosition(index, servers.length)}
             selected={false}
             subtitle={
-              busyServerId === server.id ? "Creating…" : connectionStateLabel(server.status)
+              busyServerId === server.id
+                ? "Creating…"
+                : connectionStateLabel(server.status, true, server.health)
             }
-            title={`${server.emoji} ${server.name}`}
+            title={server.name}
           />
         ))}
         {error !== null && <Text style={styles.errorText}>{error}</Text>}

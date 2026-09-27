@@ -18,6 +18,20 @@ export function isFastServiceTier(
   return selection === tier.id || selection === "fast";
 }
 
+/** App Server reports the legacy `priority` id for a requested Fast tier. */
+export function serviceTiersMatch(
+  expected: string | null | undefined,
+  authoritative: string | null | undefined,
+): boolean {
+  const normalizedExpected = expected ?? null;
+  const normalizedAuthoritative = authoritative ?? null;
+  return (
+    normalizedExpected === normalizedAuthoritative ||
+    (normalizedExpected === "fast" && normalizedAuthoritative === "priority") ||
+    (normalizedExpected === "priority" && normalizedAuthoritative === "fast")
+  );
+}
+
 /** Keeps only a tier supported by the next model; standard routing is model independent. */
 export function retainedServiceTier(
   selection: string | null | undefined,

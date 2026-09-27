@@ -39,7 +39,7 @@ Binding target rules, including type imports:
 
 ## Preserved lifetime and interaction contracts
 
-Main-chat selection publishes immediately, revealing cached content or a local skeleton with progressive transcript hydration; header/composer do not wait for complete history. Restore composer state before editing. Subagent selection preserves its existing Transition. These are the V1-specific interpretation of navigation loading; do not convert main-chat selection to an atomic full-transcript transition.
+Main-chat selection publishes immediately, while the transcript prepares cached rows behind its local blank/skeleton overlay and becomes visible only after LegendList finishes initial positioning. Initial unread placement waits for an in-flight activation refresh because the cached tail cannot authoritatively identify the unread response; read chats do not wait for that refresh. An unresolved transcript stays blank for 200 ms before showing its local skeleton. Header/composer do not wait for complete history. Restore composer state before editing. Subagent selection preserves its existing Transition. These are the V1-specific interpretation of navigation loading; do not convert main-chat selection to an atomic full-transcript transition.
 
 Keep the native conversation shell mounted across chat switches. Existing activation guards reset local state before commit and reject stale completions, including unmount/remount of the same scope. `useEvent` serves escaping latest-value callbacks; captured activation capabilities retain their distinct semantics. Queue-edit upload scope remains distinct from the ordinary draft. Feature hide/unmount is not automatic native controller/terminal/tunnel disposal.
 

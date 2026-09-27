@@ -17,7 +17,7 @@ export function createGlobalSupervisorAttentionProjection(
     },
     async applySnapshot(connectionId, snapshots, cursor) {
       await projection.applySnapshot(connectionId, snapshots, cursor);
-      await attention.ingestSnapshot(connectionId, snapshots);
+      await attention.ingestSnapshot(connectionId, snapshots, cursor);
     },
   };
 }

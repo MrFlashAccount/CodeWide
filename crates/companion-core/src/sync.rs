@@ -2428,17 +2428,14 @@ async fn forward_rpc(
         let Some(source) = request
             .pointer("/params/threadSource")
             .and_then(Value::as_str)
-            .filter(|source| {
-                source.starts_with(crate::catalog_visibility::SUPERVISOR_SOURCE_PREFIX)
-                    && source.len() > crate::catalog_visibility::SUPERVISOR_SOURCE_PREFIX.len()
-            })
+            .filter(|source| crate::catalog_visibility::is_supervisor_owned_source(source))
             .map(ToOwned::to_owned)
         else {
             return send_rpc_error(
                 socket,
                 id,
                 -32602,
-                "A supervisor creation source is required",
+                "A supervisor-owned creation source is required",
             )
             .await;
         };

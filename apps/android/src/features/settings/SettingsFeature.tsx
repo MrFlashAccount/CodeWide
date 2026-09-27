@@ -1,5 +1,6 @@
 import { connectionSettingsSections } from "../connections/ConnectionFeature";
 /** V1 SettingsFeature owner, extracted without changing interaction or resource lifetime. */
+import { useSelector } from "@legendapp/state/react";
 import { useLiveQuery } from "@tanstack/react-db";
 import Constants from "expo-constants";
 import { useState } from "react";
@@ -10,6 +11,7 @@ import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-d
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { ConnectionUpdateInput } from "../../data/connection-validation";
 import type { GlobalVoiceName } from "../../data/globalVoicePreferences";
+import type { VoiceAssistantModelCatalog } from "../../data/voiceAssistantModelCatalog";
 import { hasCustomVoiceAssistantPersonality } from "../../data/voiceAssistantPersonality";
 import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
@@ -27,6 +29,7 @@ import { useGlobalVoicePreference } from "./useGlobalVoicePreference";
 import { useGlobalVoiceOrbStyle } from "./useGlobalVoiceOrbStyle";
 import { usePersonalVoiceFilter } from "./usePersonalVoiceFilter";
 import { useVoiceAssistantPersonality } from "./useVoiceAssistantPersonality";
+import { useVoiceAssistantBackgroundModel } from "./useVoiceAssistantBackgroundModel";
 
 export function SubscribedConnectionSettings({
   accountRateLimitsDatabase,
@@ -61,6 +64,7 @@ export function ConnectionSettings({
   onUpdate,
   onUpdateAccountProfile,
   visible,
+  voiceAssistantModelCatalog,
 }: {
   accountRateLimits: AccountRateLimitsRow[];
   connections: StoredConnection[];
@@ -97,6 +101,7 @@ export function ConnectionSettings({
     update: { enabled?: boolean; priority?: number },
   ) => Promise<AccountPoolSnapshot>;
   visible: boolean;
+  voiceAssistantModelCatalog: VoiceAssistantModelCatalog;
 }) {
   const appLock = useAppLockSettings();
   const [appLockSaving, setAppLockSaving] = useState(false);
@@ -104,7 +109,12 @@ export function ConnectionSettings({
   const voicePreference = useGlobalVoicePreference();
   const voiceOrbStyle = useGlobalVoiceOrbStyle();
   const voiceAssistantPersonality = useVoiceAssistantPersonality();
+  const voiceAssistantModels = useSelector(() => voiceAssistantModelCatalog.snapshot$.value.get());
+  const voiceAssistantBackgroundModel = useVoiceAssistantBackgroundModel(voiceAssistantModels);
   const personalVoiceFilter = usePersonalVoiceFilter();
+  const openVoiceAssistantSettings = useEvent(() => {
+    voiceAssistantModelCatalog.refresh().catch(() => undefined);
+  });
   const changeAppLock = useEvent(async (enabled: boolean) => {
     if (appLockSaving) {
       return;
@@ -177,15 +187,20 @@ export function ConnectionSettings({
       voiceAssistant={{
         content: (
           <VoiceAssistantSettings
+            backgroundModelCatalog={voiceAssistantModels}
             onEnrollPersonalVoice={personalVoiceFilter.enroll}
             onPreviewVoice={onPreviewGlobalVoice}
+            onRefreshBackgroundModels={voiceAssistantModelCatalog.refresh}
             onSavePersonality={voiceAssistantPersonality.savePersonality}
+            onSelectBackgroundModel={voiceAssistantBackgroundModel.selectModelSettings}
             onSelectOrbStyle={voiceOrbStyle.selectStyle}
             onSelectVoice={voicePreference.selectVoice}
             onSetPersonalVoiceFilterEnabled={personalVoiceFilter.setEnabled}
             personality={voiceAssistantPersonality.personality}
             personalVoiceFilterEnabled={personalVoiceFilter.enabled}
             personalVoiceProfileAvailable={personalVoiceFilter.hasProfile}
+            selectedBackgroundEffort={voiceAssistantBackgroundModel.selectedEffort}
+            selectedBackgroundModel={voiceAssistantBackgroundModel.selectedModel}
             selectedOrbStyle={voiceOrbStyle.selectedStyle}
             selectedVoice={voicePreference.selectedVoice}
           />
@@ -197,6 +212,7 @@ export function ConnectionSettings({
             ? "Custom personality"
             : "Default personality"
         }`,
+        onOpen: openVoiceAssistantSettings,
       }}
     />
   );

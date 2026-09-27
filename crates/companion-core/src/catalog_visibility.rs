@@ -6,9 +6,16 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::Value;
 
 pub(crate) const SUPERVISOR_SOURCE_PREFIX: &str = "codewide-global-supervisor:";
+pub(crate) const SUPERVISOR_WORKER_SOURCE_PREFIX: &str = "codewide-global-supervisor-worker:";
 pub(crate) const EXCLUDED_FIELD: &str = "codewideCatalogExcluded";
 pub(crate) const ORDINARY_SOURCE_SQL: &str =
     "(thread_source IS NULL OR thread_source NOT GLOB 'codewide-global-supervisor:*')";
+
+pub(crate) fn is_supervisor_owned_source(source: &str) -> bool {
+    [SUPERVISOR_SOURCE_PREFIX, SUPERVISOR_WORKER_SOURCE_PREFIX]
+        .into_iter()
+        .any(|prefix| source.starts_with(prefix) && source.len() > prefix.len())
+}
 
 pub(crate) fn excludes_thread(thread: &Value) -> bool {
     thread.get("ephemeral").and_then(Value::as_bool) == Some(true)
@@ -150,6 +157,21 @@ fn filter_page(result: &mut Value, supervisor_source: Option<&str>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn exact_source_recovery_accepts_hidden_supervisors_and_visible_workers_only() {
+        assert!(is_supervisor_owned_source(
+            "codewide-global-supervisor:home"
+        ));
+        assert!(is_supervisor_owned_source(
+            "codewide-global-supervisor-worker:task"
+        ));
+        assert!(!is_supervisor_owned_source("codewide-global-supervisor:"));
+        assert!(!is_supervisor_owned_source(
+            "codewide-global-supervisor-worker:"
+        ));
+        assert!(!is_supervisor_owned_source("ordinary-source"));
+    }
 
     #[test]
     fn omitted_list_sources_use_canonical_membership_and_keep_private_reconciliation()

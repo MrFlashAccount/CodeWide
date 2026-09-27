@@ -12,6 +12,7 @@ import { chronologicalTurnSequence } from "../../../rendering/turn-sequence";
 import { AppText as Text } from "../../../ui/Typography";
 import { ProtocolBlock } from "../protocol/ProtocolBlock";
 import { usePersistentExpansion } from "./Card";
+import { hasCompletedTurnHistory } from "./completedHistoryVisibility";
 import { styles } from "./CompletedTurnHistory.styles";
 import { TurnActivity, TurnActivitySegment } from "./TurnActivity";
 import { ExpansionItemKeyContext } from "./turnContexts";
@@ -95,12 +96,11 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   const [error, setError] = useRecyclingState<string | null>(null);
   const requestedTurnRef = useRef<string | null>(null);
   const isExpanded = props.forceExpanded || expanded;
-  const activityItems = selectTurnRenderWindow(rawTurn).collapsedActivityIndexes.flatMap(
-    (index) => {
-      const rawItem = rawTurn.items[index];
-      return rawItem === undefined ? [] : [{ index, rawItem }];
-    },
-  );
+  const historyIndexes = selectTurnRenderWindow(rawTurn).collapsedActivityIndexes;
+  const activityItems = historyIndexes.flatMap((index) => {
+    const rawItem = rawTurn.items[index];
+    return rawItem === undefined ? [] : [{ index, rawItem }];
+  });
   const activitySummary = projectedActivityMetrics(rawTurn)?.total;
   const activityKinds = activitySummary?.kinds ?? [];
   const activityCount = activitySummary?.count;
@@ -134,7 +134,7 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
         setLoading(false);
       });
   };
-  if (activityCount === 0) {
+  if (!hasCompletedTurnHistory(rawTurn, historyIndexes)) {
     return null;
   }
   return (

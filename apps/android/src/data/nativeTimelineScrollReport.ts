@@ -1,3 +1,12 @@
+import {
+  type NativeTimelineScrollTrace,
+  parseNativeTimelineScrollTrace,
+} from "./nativeTimelineScrollTrace";
+
+const DETAILED_REPORT_VERSION = 2;
+const MAX_BUILD_VERSION_LENGTH = 80;
+const MAX_TRACKED_VIEWS = 4;
+
 type NativeScrollSource =
   | "content-offset-prop"
   | "visible-content-adjustment"
@@ -24,11 +33,21 @@ interface NativeScrollIncident extends NativeScrollGeometry {
 }
 
 /** Bounded native call-site evidence; an observed jump is not automatically a bug. */
-export interface NativeTimelineScrollReport {
+export type NativeTimelineScrollReport = {
   readonly evicted: number;
   readonly incidents: readonly NativeScrollIncident[];
-  readonly version: 1;
-}
+} & (
+  | { readonly version: 1 }
+  | {
+      readonly appBuild: number;
+      readonly appVersion: string;
+      readonly density: number;
+      readonly listening: boolean;
+      readonly trace: NativeTimelineScrollTrace;
+      readonly trackedViews: number;
+      readonly version: typeof DETAILED_REPORT_VERSION;
+    }
+);
 
 const MAX_INCIDENTS = 12;
 const MAX_STACK_FRAMES = 32;
@@ -120,24 +139,81 @@ function parseIncident(input: unknown): NativeScrollIncident | null {
 export function parseNativeTimelineScrollReport(input: unknown): NativeTimelineScrollReport | null {
   if (
     !record(input) ||
-    input.version !== 1 ||
+    !supportedVersion(input.version) ||
     !nonnegativeInteger(input.evicted) ||
-    !Array.isArray(input.incidents) ||
-    input.incidents.length > MAX_INCIDENTS
+    !Array.isArray(input.incidents)
   ) {
     return null;
   }
+  const incidents = parseIncidents(input.incidents);
+  if (incidents === null) {
+    return null;
+  }
+  if (input.version === DETAILED_REPORT_VERSION) {
+    return parseDetailedReport(input, incidents, input.evicted);
+  }
+  return {
+    evicted: input.evicted,
+    incidents,
+    version: 1,
+  };
+}
+
+function supportedVersion(value: unknown): boolean {
+  return value === 1 || value === DETAILED_REPORT_VERSION;
+}
+
+function parseIncidents(input: readonly unknown[]): readonly NativeScrollIncident[] | null {
+  if (input.length > MAX_INCIDENTS) {
+    return null;
+  }
   const incidents: NativeScrollIncident[] = [];
-  for (const value of input.incidents) {
+  for (const value of input) {
     const incident = parseIncident(value);
     if (incident === null) {
       return null;
     }
     incidents.push(incident);
   }
+  return incidents;
+}
+
+function buildVersion(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= MAX_BUILD_VERSION_LENGTH &&
+    /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(value)
+  );
+}
+
+function parseDetailedReport(
+  input: Record<string, unknown>,
+  incidents: readonly NativeScrollIncident[],
+  evicted: number,
+): NativeTimelineScrollReport | null {
+  if (
+    !nonnegativeInteger(input.appBuild) ||
+    !buildVersion(input.appVersion) ||
+    !nonnegative(input.density) ||
+    typeof input.listening !== "boolean" ||
+    !nonnegativeInteger(input.trackedViews) ||
+    input.trackedViews > MAX_TRACKED_VIEWS
+  ) {
+    return null;
+  }
+  const trace = parseNativeTimelineScrollTrace(input.trace);
+  if (trace === null) {
+    return null;
+  }
   return {
-    evicted: input.evicted,
+    appBuild: input.appBuild,
+    appVersion: input.appVersion,
+    density: input.density,
+    evicted,
     incidents,
-    version: 1,
+    listening: input.listening,
+    trace,
+    trackedViews: input.trackedViews,
+    version: DETAILED_REPORT_VERSION,
   };
 }

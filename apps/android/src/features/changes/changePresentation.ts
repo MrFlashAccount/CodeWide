@@ -69,6 +69,30 @@ export function recordedTurnChangeResources(
   return resources;
 }
 
+/** Prefer full recorded item patches; the turn-wide diff may be a bounded preview. */
+export async function loadRecordedTurnChanges(request: {
+  readonly knownFiles: readonly TurnChangedFile[];
+  readonly loadTurnChanges?: (target: TurnChangesTarget) => Promise<readonly TurnChangedFile[]>;
+  readonly target: TurnChangesTarget;
+}): Promise<readonly TurnChangedFile[]> {
+  if (request.loadTurnChanges !== undefined) {
+    try {
+      const files = await request.loadTurnChanges(request.target);
+      if (files.length > 0) {
+        return files;
+      }
+    } catch (error) {
+      if (request.knownFiles.length === 0) {
+        throw error;
+      }
+    }
+  }
+  if (request.knownFiles.length > 0) {
+    return request.knownFiles;
+  }
+  throw new Error("This turn has no recorded file patches.");
+}
+
 export function recordedTurnChangeDiff(
   target: TurnChangesTarget,
   files: readonly TurnChangedFile[],

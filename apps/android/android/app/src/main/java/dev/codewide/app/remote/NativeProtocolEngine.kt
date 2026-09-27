@@ -25,6 +25,7 @@ internal class NativeProtocolEngine(
   private val onLive: () -> Unit,
   private val onPortInventory: (String) -> Unit,
   private val telemetry: NativeTelemetryRecorder,
+  private val onRpcHealth: (Boolean) -> Unit = {},
 ) {
   private data class PendingRpc(
     val method: String,
@@ -48,6 +49,9 @@ internal class NativeProtocolEngine(
     var subscribed: Boolean,
   )
 
+  /** Identity, not head cursor: a replacement can request the same snapshot. */
+  private class SnapshotLoad(val head: Long)
+
   private val requestIds = AtomicLong(System.currentTimeMillis())
   private val pendingRpcs = linkedMapOf<String, PendingRpc>()
   private val pendingServerResponses = linkedMapOf<String, PendingRpc>()
@@ -55,9 +59,13 @@ internal class NativeProtocolEngine(
   private var upstreamLive = false
   private var snapshotHead: Long? = null
   private var catchUpHead: Long? = null
-  private var snapshotLoading = false
+  private var snapshotLoad: SnapshotLoad? = null
   private var state = "connecting"
   private var diagnostic: String? = null
+  private var networkAvailability = NetworkAvailability.UNKNOWN
+  private var networkEpoch = 0L
+  private var companionTransport = "connecting"
+  private var appServer = "unknown"
   private var maximumObservedCursor = 0L
   private var lastAckCursor = 0L
   private val journalFrames = mutableListOf<IncomingJournalFrame>()
@@ -78,10 +86,12 @@ internal class NativeProtocolEngine(
 
   @Synchronized
   fun onSocketOpen() {
+    companionTransport = "connected"
+    appServer = "unknown"
     upstreamLive = false
     snapshotHead = null
     catchUpHead = null
-    snapshotLoading = false
+    snapshotLoad = null
     maximumObservedCursor = frameStore.syncCursor(connectionId) ?: 0L
     lastAckCursor = maximumObservedCursor
     emitState("connecting")
@@ -107,12 +117,14 @@ internal class NativeProtocolEngine(
 
   @Synchronized
   fun onSocketClosed(message: String = "Connection interrupted") {
+    companionTransport = "backoff"
+    appServer = "unknown"
     stopKeepalive()
     flushIngressTelemetry()
     flushJournalFrames()
     upstreamLive = false
     terminateLiveSubscription("socketClosed")
-    snapshotLoading = false
+    snapshotLoad = null
     snapshotHead = null
     catchUpHead = null
     rejectInFlight(message)
@@ -124,6 +136,7 @@ internal class NativeProtocolEngine(
     stopKeepalive()
     flushJournalFrames()
     upstreamLive = false
+    snapshotLoad = null
     terminateLiveSubscription("sessionClosed")
     rejectInFlight(message)
     rejectDeferred(message)
@@ -136,6 +149,14 @@ internal class NativeProtocolEngine(
   fun onTransportState(next: String, message: String? = null) {
     if (next == "live") return
     upstreamLive = false
+    snapshotLoad = null
+    companionTransport = when (next) {
+      "offline" -> "waitingForNetwork"
+      "degraded" -> "backoff"
+      "authRequired" -> "authRequired"
+      else -> "connecting"
+    }
+    appServer = "unknown"
     when (next) {
       "reconnecting", "connecting" -> emitState("connecting", message)
       "offline", "degraded" -> emitState(next, message)
@@ -144,6 +165,13 @@ internal class NativeProtocolEngine(
         emitState(next, message)
       }
     }
+  }
+
+  @Synchronized
+  fun onNetworkObservation(availability: NetworkAvailability, epoch: Long) {
+    networkAvailability = availability
+    networkEpoch = epoch
+    emitState(state, diagnostic)
   }
 
   @Synchronized
@@ -319,7 +347,11 @@ internal class NativeProtocolEngine(
       handler.removeCallbacks(timeout)
       pendingRpcs.remove(id)
       upstreamLive = false
-      deferRpc(method, params, timeoutMs, completion)
+      if (EPHEMERAL_CONTROL_METHODS.contains(method)) {
+        completion(Result.failure(IllegalStateException("Live control transport interrupted")))
+      } else {
+        deferRpc(method, params, timeoutMs, completion)
+      }
       resetTransport("rpc_send_failed")
     }
   }
@@ -411,6 +443,7 @@ internal class NativeProtocolEngine(
   private fun handleStatus(envelope: JSONObject, frameBytes: Int) {
     val next = envelope.optString("status")
     val error = envelope.optString("error").takeIf { it.isNotBlank() }?.take(1_000)
+    appServer = if (next == "live") "live" else "reconnecting"
     telemetry.record(NativeTelemetryMetric(
       "sync.status_received",
       values = mapOf("responseBytes" to frameBytes),
@@ -425,6 +458,9 @@ internal class NativeProtocolEngine(
       return
     }
     upstreamLive = false
+    // A rejected snapshot RPC belongs to the interrupted upstream attempt. It
+    // must not turn an App Server outage into a reset of the healthy socket.
+    snapshotLoad = null
     rejectInFlight("Connection unavailable")
     when (next) {
       "reconnecting", "connecting" -> emitState("connecting", error)
@@ -447,6 +483,7 @@ internal class NativeProtocolEngine(
       resetTransport("invalid_head_cursor")
       return
     }
+    snapshotLoad = null
     maximumObservedCursor = head
     val pending = envelope.optJSONArray("pendingRequests") ?: JSONArray()
     val storedCursor = frameStore.syncCursor(connectionId) ?: 0L
@@ -530,8 +567,9 @@ internal class NativeProtocolEngine(
   }
 
   private fun loadSnapshot(head: Long) {
-    if (!upstreamLive || snapshotHead != head || snapshotLoading) return
-    snapshotLoading = true
+    if (!upstreamLive || snapshotHead != head || snapshotLoad != null) return
+    val load = SnapshotLoad(head)
+    snapshotLoad = load
     val snapshotStartedAtNanos = SystemClock.elapsedRealtimeNanos()
     telemetry.record(NativeTelemetryMetric(
       "sync.snapshot_started",
@@ -541,39 +579,33 @@ internal class NativeProtocolEngine(
     val archived = JSONArray()
     var activeDone = false
     var archivedDone = false
-    var failed = false
     fun finishIfReady() {
-      if (failed || !activeDone || !archivedDone) return
+      if (!isCurrentSnapshot(load) || !activeDone || !archivedDone) return
       val collected = JSONArray()
       for (index in 0 until active.length()) collected.put(active.get(index))
       for (index in 0 until archived.length()) collected.put(archived.get(index))
-      finishSnapshot(head, collected, snapshotStartedAtNanos)
+      finishSnapshot(load, collected, snapshotStartedAtNanos)
     }
     fun fail(error: Throwable) {
-      if (failed) return
-      failed = true
-      snapshotFailed(error)
+      snapshotFailed(load, error)
     }
-    loadSnapshotPage(head, false, null, mutableSetOf(), active) { result ->
+    loadSnapshotPage(load, false, null, mutableSetOf(), active) { result ->
       result.fold(onSuccess = { activeDone = true; finishIfReady() }, onFailure = ::fail)
     }
-    loadSnapshotPage(head, true, null, mutableSetOf(), archived) { result ->
+    loadSnapshotPage(load, true, null, mutableSetOf(), archived) { result ->
       result.fold(onSuccess = { archivedDone = true; finishIfReady() }, onFailure = ::fail)
     }
   }
 
   private fun loadSnapshotPage(
-    head: Long,
+    load: SnapshotLoad,
     archived: Boolean,
     cursor: String?,
     seen: MutableSet<String>,
     collected: JSONArray,
     completion: (Result<Unit>) -> Unit,
   ) {
-    if (!upstreamLive || snapshotHead != head) {
-      completion(Result.failure(IllegalStateException("Snapshot superseded")))
-      return
-    }
+    if (!isCurrentSnapshot(load)) return
     val params = JSONObject()
       .put("cursor", cursor ?: JSONObject.NULL)
       .put("limit", 100)
@@ -585,6 +617,7 @@ internal class NativeProtocolEngine(
       // JSONL scan-and-repair is maintenance work and must not block recovery.
       .put("useStateDbOnly", true)
     rpc("thread/list", params, SNAPSHOT_RPC_TIMEOUT_MS) { result ->
+      if (!isCurrentSnapshot(load)) return@rpc
       result.fold(
         onSuccess = { raw ->
           val page = raw as? JSONObject
@@ -611,15 +644,19 @@ internal class NativeProtocolEngine(
           ))
           if (next == null) completion(Result.success(Unit))
           else if (!seen.add(next)) completion(Result.failure(IllegalStateException("thread/list returned a repeated cursor")))
-          else loadSnapshotPage(head, archived, next, seen, collected, completion)
+          else loadSnapshotPage(load, archived, next, seen, collected, completion)
         },
         onFailure = { completion(Result.failure(it)) },
       )
     }
   }
 
-  private fun finishSnapshot(head: Long, collected: JSONArray, startedAtNanos: Long) {
-    if (!upstreamLive || snapshotHead != head) return
+  private fun isCurrentSnapshot(load: SnapshotLoad): Boolean =
+    upstreamLive && snapshotLoad === load && snapshotHead == load.head
+
+  private fun finishSnapshot(load: SnapshotLoad, collected: JSONArray, startedAtNanos: Long) {
+    if (!isCurrentSnapshot(load)) return
+    val head = load.head
     try {
       val snapshotJson = collected.toString()
       frameStore.storeSnapshot(connectionId, head, snapshotJson)
@@ -630,7 +667,6 @@ internal class NativeProtocolEngine(
         null,
         head,
       )
-      snapshotLoading = false
       telemetry.record(NativeTelemetryMetric(
         "sync.snapshot_completed",
         values = mapOf(
@@ -641,13 +677,15 @@ internal class NativeProtocolEngine(
         ),
       ))
       sendFrame(JSONObject().put("type", "snapshotApplied").put("cursor", head).toString())
+      snapshotLoad = null
     } catch (error: Throwable) {
-      snapshotFailed(error)
+      snapshotFailed(load, error)
     }
   }
 
-  private fun snapshotFailed(error: Throwable) {
-    snapshotLoading = false
+  private fun snapshotFailed(load: SnapshotLoad, error: Throwable) {
+    if (!isCurrentSnapshot(load)) return
+    snapshotLoad = null
     upstreamLive = false
     telemetry.record(NativeTelemetryMetric(
       "sync.snapshot_failed",
@@ -788,9 +826,14 @@ internal class NativeProtocolEngine(
   private fun emitState(next: String, error: String? = null) {
     state = next
     diagnostic = error
+    onRpcHealth(next == "live" && upstreamLive)
     val payload = JSONObject()
       .put("state", next)
       .put("rpcAvailable", upstreamLive)
+      .put("path", JSONObject()
+        .put("network", JSONObject().put("status", networkAvailability.wireValue).put("epoch", networkEpoch))
+        .put("companion", companionTransport)
+        .put("appServer", appServer))
     if (!error.isNullOrBlank()) payload.put("error", error.take(1_000))
     CodeWideModule.emitEngineEvent(connectionId, "state", payload.toString(), null)
   }
@@ -892,7 +935,10 @@ internal class NativeProtocolEngine(
     private const val MAX_JOURNAL_BATCH = 128
     private const val MAX_JOURNAL_BYTES = 512 * 1024
     private const val INGRESS_TELEMETRY_INTERVAL_MS = 1_000.0
-    private val EPHEMERAL_CONTROL_METHODS = setOf("turn/interrupt")
+    // A delayed stop/start/append belongs to the old media generation, not its replacement.
+    private val EPHEMERAL_CONTROL_METHODS = setOf(
+      "turn/interrupt", "thread/realtime/start", "thread/realtime/stop", "thread/realtime/appendText",
+    )
     private val LIVE_REALTIME_METHODS = setOf(
       "thread/realtime/started",
       "thread/realtime/itemAdded",

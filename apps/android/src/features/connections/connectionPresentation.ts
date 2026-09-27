@@ -1,6 +1,7 @@
 /** V1 connectionPresentation owner, extracted without changing interaction or resource lifetime. */
-import { Platform } from "react-native";
 import type { StoredConnection } from "../../data/connection-profile-types";
+import type { ConnectionHealthStatus } from "../../data/connectionHealth";
+import type { ServerIconId } from "../../data/serverIcons";
 import { colors } from "../../theme";
 
 export type ServerStatus =
@@ -12,8 +13,9 @@ export type ServerStatus =
   | "authRequired";
 
 export type ThreadListServer = {
-  emoji: string;
   endpoint?: string;
+  health?: ConnectionHealthStatus | undefined;
+  iconId: ServerIconId;
   id: string;
   name: string;
   status: ServerStatus;
@@ -26,9 +28,10 @@ export class ThreadServerProjection {
 
   project(connections: readonly StoredConnection[]): ThreadListServer[] {
     const next = connections.map((server) => ({
-      emoji: server.emoji,
+      iconId: server.iconId,
       id: server.id,
       name: server.displayName,
+      ...(server.health === undefined ? {} : { health: server.health }),
       status: server.enabled ? server.state : ("offline" as const),
     }));
     if (
@@ -39,8 +42,9 @@ export class ThreadServerProjection {
           current !== undefined &&
           current.id === server.id &&
           current.name === server.name &&
-          current.emoji === server.emoji &&
-          current.status === server.status
+          current.iconId === server.iconId &&
+          current.status === server.status &&
+          current.health === server.health
         );
       })
     ) {
@@ -53,7 +57,16 @@ export class ThreadServerProjection {
 
 export type ConnectionActivity = "connecting" | "updating";
 
-export function connectionActivity(status: ServerStatus): ConnectionActivity | null {
+export function connectionActivity(
+  status: ServerStatus,
+  health?: ConnectionHealthStatus,
+): ConnectionActivity | null {
+  if (health !== undefined) {
+    if (health === "reconnecting") {
+      return "connecting";
+    }
+    return null;
+  }
   if (status === "connecting") {
     return "connecting";
   }
@@ -67,39 +80,56 @@ export function connectionActivityColor(activity: ConnectionActivity): string {
   return activity === "connecting" ? colors.textDim : colors.amber;
 }
 
-export function connectionStateLabel(status: ServerStatus, enabled = true): string {
+const healthLabels: Record<ConnectionHealthStatus, string> = {
+  authRequired: "Access required",
+  connectionError: "Connection error",
+  disabled: "Disabled",
+  noConnection: "Нет подключения",
+  online: "Live",
+  reconnecting: "Reconnecting…",
+  serviceUnavailable: "Server unavailable",
+};
+
+const legacyLabels: Record<ServerStatus, string> = {
+  authRequired: "Access required",
+  connecting: "Connecting…",
+  degraded: "Connection error",
+  live: "Live",
+  offline: "Offline",
+  syncing: "Updating…",
+};
+const legacyColors: Record<ServerStatus, string> = {
+  authRequired: colors.red,
+  connecting: colors.amber,
+  degraded: colors.red,
+  live: colors.green,
+  offline: colors.textDim,
+  syncing: colors.amber,
+};
+const healthColors: Partial<Record<ConnectionHealthStatus, string>> = {
+  authRequired: colors.red,
+  connectionError: colors.red,
+  disabled: colors.textDim,
+  noConnection: colors.textDim,
+  online: colors.green,
+};
+
+export function connectionStateLabel(
+  status: ServerStatus,
+  enabled = true,
+  health?: ConnectionHealthStatus,
+): string {
   if (!enabled) {
     return "Disabled";
   }
-  if (status === "live") {
-    return "Live";
-  }
-  if (status === "syncing") {
-    return "Updating…";
-  }
-  if (status === "connecting") {
-    return "Connecting…";
-  }
-  if (status === "authRequired") {
-    return "Access required";
-  }
-  if (status === "degraded") {
-    return "Connection error";
-  }
-  return "Offline";
+  return health === undefined ? legacyLabels[status] : healthLabels[health];
 }
 
-export function connectionStateColor(status: ServerStatus): string {
-  if (status === "live") {
-    return colors.green;
-  }
-  if (status === "syncing" || status === "connecting") {
-    return colors.amber;
-  }
-  if (status === "offline") {
-    return colors.textDim;
-  }
-  return colors.red;
+export function connectionStateColor(
+  status: ServerStatus,
+  health?: ConnectionHealthStatus,
+): string {
+  return health === undefined ? legacyColors[status] : (healthColors[health] ?? colors.amber);
 }
 
 // WHY: This presenter owns the priority order of mutually competing connection diagnostics;
@@ -131,12 +161,4 @@ export function connectionDiagnosticTime(timestamp: number | null): string | nul
     minute: "2-digit",
     second: "2-digit",
   });
-}
-
-export function serverGlyph(server: Pick<ThreadListServer, "emoji" | "name">): string {
-  if (Platform.OS !== "web") {
-    return server.emoji;
-  }
-  const initial = server.name.trim().slice(0, 1).toLocaleUpperCase();
-  return initial === "" ? "C" : initial;
 }

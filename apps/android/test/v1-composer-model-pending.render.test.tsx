@@ -13,26 +13,41 @@ jest.mock("../src/ui/TurnControlMenus", () => ({
       executionChanged: true;
       model: string;
       personality: null;
-      serviceTier: null;
+      serviceTier: string | null;
     }) => void;
     triggerChildren: React.ReactNode;
   }) => {
     const React = require("react");
     const Native = require("react-native");
     return React.createElement(
-      Native.Pressable,
-      {
-        accessibilityLabel: "Choose Astra",
+      Native.View,
+      null,
+      React.createElement(
+        Native.Pressable,
+        {
+          accessibilityLabel: "Choose Astra",
+          onPress: () =>
+            props.onApplySettings({
+              effort: "high",
+              executionChanged: true,
+              model: "astra",
+              personality: null,
+              serviceTier: null,
+            }),
+        },
+        props.triggerChildren,
+      ),
+      React.createElement(Native.Pressable, {
+        accessibilityLabel: "Enable Fast",
         onPress: () =>
           props.onApplySettings({
-            effort: "high",
+            effort: "medium",
             executionChanged: true,
-            model: "astra",
+            model: "sol",
             personality: null,
-            serviceTier: null,
+            serviceTier: "fast",
           }),
-      },
-      props.triggerChildren,
+      }),
     );
   },
   PermissionsMenu: () => null,
@@ -93,4 +108,47 @@ it("optimistically shimmers the selected model without changing its text geometr
   });
   view.rerender(<ComposerControlChips {...props} />);
   expect(view.getByTestId("composer-model-label")).toHaveTextContent("sol · medium");
+});
+
+it("stops the local pending shimmer when App Server confirms Fast as priority", () => {
+  const thread = createV1TestThread("thread", "project", 1, []);
+  seedThreadExecutionSettings(thread, {
+    effort: "medium",
+    model: "sol",
+    permissions: null,
+    serviceTier: "default",
+  });
+  const props = {
+    cwd: "/workspace",
+    error: null,
+    newChat: false,
+    onApplySettings: jest.fn(),
+    onClose: jest.fn(),
+    onFallback: jest.fn(),
+    onQuickOpen: jest.fn(),
+    onSelectPermissions: jest.fn(),
+    readOnly: false,
+    remoteThread: thread,
+    resourceId: null,
+    resources: null,
+    selectedEffort: null,
+    selectedModel: null,
+    selectedPermissions: null,
+    selectedPersonality: null,
+    selectedServiceTier: undefined,
+  };
+  const view = render(<ComposerControlChips {...props} />);
+
+  fireEvent.press(view.getByLabelText("Enable Fast"));
+  expect(view.getByTestId("composer-model-label")).toHaveProp("accessibilityLabel", "sol · medium");
+
+  seedThreadExecutionSettings(thread, {
+    effort: "medium",
+    model: "sol",
+    permissions: null,
+    serviceTier: "priority",
+  });
+  view.rerender(<ComposerControlChips {...props} />);
+
+  expect(view.getByTestId("composer-model-label")).not.toHaveProp("accessibilityLabel");
 });

@@ -13,7 +13,15 @@ import {
   DEFAULT_GLOBAL_VOICE,
   decodeGlobalVoicePreference,
   encodeGlobalVoicePreference,
+  resolveAvailableGlobalVoice,
 } from "../src/data/globalVoicePreferences";
+import {
+  decodeVoiceAssistantBackgroundModelPreference,
+  encodeVoiceAssistantBackgroundModelPreference,
+  parseVoiceAssistantBackgroundEffort,
+  parseVoiceAssistantBackgroundModelId,
+  resolveVoiceAssistantBackgroundModel,
+} from "../src/data/voiceAssistantBackgroundModel";
 import {
   DEFAULT_GLOBAL_VOICE_ORB_STYLE,
   decodeGlobalVoiceOrbStyle,
@@ -95,6 +103,80 @@ describe("user preferences", () => {
       DEFAULT_GLOBAL_VOICE,
     );
     expect(decodeGlobalVoicePreference("not json")).toBe(DEFAULT_GLOBAL_VOICE);
+  });
+
+  it("uses the selected voice only while the server still exposes it", () => {
+    const availability = {
+      voices: { defaultV1: "cove", v1: ["cove", "juniper"] },
+    };
+    expect(resolveAvailableGlobalVoice(availability, "juniper")).toBe("juniper");
+    expect(resolveAvailableGlobalVoice(availability, "spruce")).toBe("cove");
+    expect(() =>
+      resolveAvailableGlobalVoice({ voices: { defaultV1: "missing", v1: ["cove"] } }, "cove"),
+    ).toThrow("no compatible voice");
+  });
+
+  it("keeps the background model independent and falls back after catalog removal", () => {
+    const selectedModel = parseVoiceAssistantBackgroundModelId("gpt-selected");
+    if (selectedModel === null) {
+      throw new Error("Invalid background-model fixture");
+    }
+    const selectedEffort = parseVoiceAssistantBackgroundEffort("high");
+    if (selectedEffort === null) {
+      throw new Error("Invalid background-effort fixture");
+    }
+    const stored = encodeVoiceAssistantBackgroundModelPreference({
+      effort: selectedEffort,
+      model: selectedModel,
+      status: "selected",
+    });
+    const restored = decodeVoiceAssistantBackgroundModelPreference(stored);
+    const available = [
+      { defaultEffort: "medium", efforts: ["medium", "high"], id: "gpt-default", isDefault: true },
+      { defaultEffort: "high", efforts: ["high", "max"], id: "gpt-selected", isDefault: false },
+    ];
+
+    expect(resolveVoiceAssistantBackgroundModel(restored, available)).toEqual({
+      effort: "high",
+      model: "gpt-selected",
+      status: "selected",
+    });
+    expect(resolveVoiceAssistantBackgroundModel(restored, available.slice(0, 1))).toEqual({
+      effort: "medium",
+      model: "gpt-default",
+      status: "fallback",
+    });
+    const legacy = decodeVoiceAssistantBackgroundModelPreference(
+      '{"schemaVersion":1,"status":"selected","model":"gpt-selected"}',
+    );
+    expect(legacy).toEqual({ model: "gpt-selected", status: "legacySelected" });
+    expect(resolveVoiceAssistantBackgroundModel(legacy, available)).toEqual({
+      effort: "high",
+      model: "gpt-selected",
+      status: "selected",
+    });
+    expect(
+      resolveVoiceAssistantBackgroundModel(
+        decodeVoiceAssistantBackgroundModelPreference(
+          '{"schemaVersion":2,"status":"selected","model":"gpt-selected","effort":"ultra"}',
+        ),
+        available,
+      ),
+    ).toEqual({ effort: "high", model: "gpt-selected", status: "fallback" });
+    expect(JSON.parse(stored)).toEqual({
+      effort: "high",
+      model: "gpt-selected",
+      schemaVersion: 2,
+      status: "selected",
+    });
+    expect(decodeVoiceAssistantBackgroundModelPreference("not json")).toEqual({
+      status: "serverDefault",
+    });
+    expect(
+      decodeVoiceAssistantBackgroundModelPreference(
+        '{"schemaVersion":2,"status":"selected","model":" bad ","effort":"high"}',
+      ),
+    ).toEqual({ status: "serverDefault" });
   });
 
   it("keeps the experimental personal voice filter opt-in and fail-disabled", () => {

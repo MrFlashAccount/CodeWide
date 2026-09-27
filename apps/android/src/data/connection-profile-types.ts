@@ -1,8 +1,12 @@
 import type { RemoteConnection, RemoteConnectionState } from "@codewide/sync-client";
+import type { ServerIconId } from "./serverIcons";
+import type { ConnectionHealthStatus } from "./connectionHealth";
 
 export type StoredConnection = RemoteConnection & {
   displayName: string;
-  emoji: string;
+  /** Process-local presentation; never persisted with the connection profile. */
+  health?: ConnectionHealthStatus | undefined;
+  iconId: ServerIconId;
   lastError: string | null;
   lastErrorAt: number | null;
   sortOrder: number;
@@ -11,9 +15,9 @@ export type StoredConnection = RemoteConnection & {
 
 export type ConnectionProfileRow = {
   displayName: string;
-  emoji: string;
   enabled: boolean;
   endpoint: string;
+  iconId: ServerIconId;
   id: string;
   sortOrder: number;
   tlsPinSha256: string | null;

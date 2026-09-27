@@ -67,7 +67,7 @@ export function Bubble({
             {children}
           </FluidLayoutFrame>
           {footer !== null && footer !== undefined && (
-            <FluidLayoutFrame animate={animateLayout}>{footer}</FluidLayoutFrame>
+            <FluidLayoutFrame animate={false}>{footer}</FluidLayoutFrame>
           )}
         </View>
       ) : (

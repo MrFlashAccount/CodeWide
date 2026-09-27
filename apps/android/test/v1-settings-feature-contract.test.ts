@@ -29,6 +29,29 @@ describe("M1 feature integration contracts", () => {
     expect(source).not.toContain("ConversationLayoutFeatureFlag");
     expect(source).not.toContain('<SettingsSection title="Experiments">');
   });
+  it("ordinary chat and Voice Assistant share the model and thinking picker", () => {
+    const composer = readFileSync(
+      new URL("../src/features/composer/settings/ComposerControlChips.tsx", import.meta.url),
+      "utf8",
+    );
+    const voiceAssistant = readFileSync(
+      new URL("../src/features/settings/VoiceAssistantSettings.tsx", import.meta.url),
+      "utf8",
+    );
+    const runtime = readFileSync(
+      new URL("../src/data/workspace-runtime.ts", import.meta.url),
+      "utf8",
+    );
+    expect(composer).toContain('from "../../../ui/TurnControlMenus"');
+    expect(voiceAssistant).toContain(
+      'import { ModelThinkingMenu } from "../../ui/TurnControlMenus"',
+    );
+    expect(composer).toContain("<ModelThinkingMenu");
+    expect(voiceAssistant).toContain("<ModelThinkingMenu");
+    expect(voiceAssistant).not.toContain("Refresh available models");
+    expect(runtime).toContain("workspaceRuntime.snapshot.resources?.turnControls.toArray");
+    expect(runtime).toContain("createVoiceAssistantModelCatalog");
+  });
   it("connections/ConnectionSheet.tsx retains its migrated UI contract", () => {
     const source = readFileSync(
       new URL("../src/features/connections/ConnectionSheet.tsx", import.meta.url),
@@ -93,7 +116,9 @@ describe("M1 feature integration contracts", () => {
         "size={iconSize.indicator}",
       ]),
     ).toBe(true);
-    expect(source).toContain("connectionStateLabel(connection.state, connection.enabled)");
+    expect(source).toContain(
+      "connectionStateLabel(connection.state, connection.enabled, connection.health)",
+    );
     expect(source).toContain("title: connection.displayName");
   });
   it("connections/connectionActions.ts retains its migrated UI contract", () => {
@@ -103,7 +128,7 @@ describe("M1 feature integration contracts", () => {
     );
     expect(source).toContain("isProfileOnlyConnectionUpdate(input, current)");
     expect(source).toContain(
-      "await actions.updateConnectionProfile(connectionId, profile.displayName, profile.emoji)",
+      "await actions.updateConnectionProfile(connectionId, profile.displayName, profile.iconId)",
     );
   });
   it("connections/ConnectionRowEditor.tsx retains its migrated UI contract", () => {

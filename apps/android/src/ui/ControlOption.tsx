@@ -9,6 +9,7 @@ export function ControlOption({
   accessibilityLabel,
   attention = false,
   disabled = false,
+  leading,
   onPress,
   position = "only",
   selected,
@@ -19,6 +20,7 @@ export function ControlOption({
   accessibilityLabel?: string;
   attention?: boolean;
   disabled?: boolean;
+  leading?: ReactNode;
   onPress: () => void;
   position?: "only" | "first" | "middle" | "last";
   selected: boolean;
@@ -33,6 +35,7 @@ export function ControlOption({
       accessibilityLabel={`${accessibilityLabel ?? title}${selected ? ", selected" : ""}`}
       disabled={disabled}
       fixedHeight={subtitle === undefined ? listRowHeight.single : listRowHeight.double}
+      leading={leading}
       onPress={onPress}
       position={position}
       selected={selected}

@@ -67,7 +67,10 @@ internal object GlobalVoiceAudioRouteRuntime {
     if (token != lease) return
     token = null
     main.removeCallbacks(verify)
-    try { owner.stop() } finally { onChanged?.invoke() }
+    try { owner.stop() } finally {
+      VoiceCaptureForegroundService.updateCaptureAdmission(false)
+      onChanged?.invoke()
+    }
   }
 
   fun select(kind: String, deviceId: Int?) {
@@ -83,6 +86,7 @@ internal object GlobalVoiceAudioRouteRuntime {
 
   private fun changed() {
     owner.devicesChanged()
+    VoiceCaptureForegroundService.updateCaptureAdmission(owner.active && !owner.muted)
     main.removeCallbacks(verify)
     if (owner.active && recording && !owner.muted && owner.selected != null) main.postDelayed(verify, 2000)
     onChanged?.invoke()

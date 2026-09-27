@@ -30,7 +30,14 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
     timelineIndexRetryTimerRef: read.search.timelineIndexRetryTimerRef,
     unreadVisibilityFrameRef: read.unread.unreadVisibilityFrameRef,
   });
-  useConversationAndroidBack(false, () => undefined, props.compact, props.onBack);
+  useConversationAndroidBack({
+    closeInlineQueueOverlay: () => undefined,
+    closeThreadSearch: read.searchActions.closeThreadSearch,
+    compact: props.compact,
+    inlineQueueExpanded: false,
+    onBack: props.onBack,
+    threadSearchVisible: read.search.threadSearchVisible,
+  });
   const rowActions = useThreadTimelineActions(props.onFixUnsupportedBlock, undefined, undefined);
   const rows = useThreadTimeline({
     animateLiveUpdates: props.server?.status === "live",
@@ -147,6 +154,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       positionSearchTurn={read.searchActions.positionSearchTurn}
       readOnly
       remoteThread={props.remoteThread}
+      threadSearchVisible={read.search.threadSearchVisible}
       timeline={read.timeline}
       timelineContent={timelineContent}
       timelineModelReady

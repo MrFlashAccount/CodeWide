@@ -3,6 +3,7 @@ import { useCameraPermissions } from "expo-camera";
 import * as Clipboard from "expo-clipboard";
 import { useState } from "react";
 import type { ConnectionInput } from "../../data/connection-validation";
+import { serverIconIdFromLegacy } from "../../data/serverIcons";
 import { useAppFullscreenOverlay } from "../../ui/AppFullscreenOverlay";
 import { pairingEndpointLabel, pairingParseResult } from "./pairing";
 import { humanPairingError } from "./pairingError";
@@ -32,7 +33,9 @@ export function usePairingSession({
   );
   const [navigationDirection, setNavigationDirection] = useState<"back" | "forward" | null>(null);
   const [displayName, setDisplayName] = useState(initialValue?.displayName ?? "");
-  const [emoji, setEmoji] = useState(initialValue?.emoji ?? "🖥️");
+  const [iconId, setIconId] = useState(() =>
+    serverIconIdFromLegacy(undefined, initialValue?.emoji),
+  );
   const [endpoint, setEndpoint] = useState(initialValue?.endpoint ?? "");
   const [token, setToken] = useState(initialValue?.pairingToken ?? "");
   const [tlsPinSha256, setTlsPinSha256] = useState(initialValue?.tlsPinSha256 ?? "");
@@ -64,7 +67,7 @@ export function usePairingSession({
     setNavigationDirection(null);
     setMode(initialValue === null ? "choose" : "review");
     setDisplayName(initialValue?.displayName ?? "");
-    setEmoji(initialValue?.emoji ?? "🖥️");
+    setIconId(serverIconIdFromLegacy(undefined, initialValue?.emoji));
     setEndpoint(initialValue?.endpoint ?? "");
     setToken(initialValue?.pairingToken ?? "");
     setTlsPinSha256(initialValue?.tlsPinSha256 ?? "");
@@ -89,7 +92,7 @@ export function usePairingSession({
     if (result.value !== null) {
       const pairing = result.value;
       setDisplayName(pairing.displayName);
-      setEmoji(pairing.emoji);
+      setIconId(serverIconIdFromLegacy(undefined, pairing.emoji));
       setEndpoint(pairing.endpoint);
       setToken(pairing.pairingToken);
       setTlsPinSha256(pairing.tlsPinSha256);
@@ -148,8 +151,8 @@ export function usePairingSession({
     setError(null);
     const input: ConnectionInput = {
       displayName,
-      emoji,
       endpoint,
+      iconId,
       token,
       ...(tlsPinSha256.trim() === "" ? {} : { tlsPinSha256 }),
       ...(relay === undefined ? {} : { relay }),
@@ -175,10 +178,10 @@ export function usePairingSession({
       : Math.max(0, Math.ceil((expiresAt - pairingParsedAt) / 60_000));
   return {
     displayName,
-    emoji,
     endpoint,
     endpointLabel,
     error,
+    iconId,
     minutesLeft,
     mode,
     navigationDirection,
@@ -186,9 +189,9 @@ export function usePairingSession({
     pasteCode,
     save,
     setDisplayName,
-    setEmoji,
     setEndpoint,
     setError,
+    setIconId,
     setMode: navigateMode,
     setTlsPinSha256,
     setToken,

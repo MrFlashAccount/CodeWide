@@ -1,5 +1,7 @@
 import { incrementMetric, recordTiming } from "./operational-metrics";
 import type {
+  TimelineLibraryScrollAdjustment,
+  TimelineLibraryScrollCommand,
   TimelineListGeometry,
   TimelineScrollGesture,
   TimelineScrollObservation,
@@ -64,6 +66,7 @@ export class TimelineScrollDiagnostics {
   #gestureReturnRecorded = false;
   #policy: TimelineScrollPolicy | null = null;
   #anchorApplications = 0;
+  #nativeViewTag: number | null = null;
 
   constructor(
     connectionId: string | null,
@@ -89,6 +92,67 @@ export class TimelineScrollDiagnostics {
     incrementMetric("timeline_scroll_commands");
     this.#recordCommand(command, "issued", geometry);
     return command;
+  }
+
+  /** Correlates the JS recorder session with the native view, without using a thread ID as a view tag. */
+  nativeViewTag(target: number | null): void {
+    if (
+      target === null ||
+      !Number.isSafeInteger(target) ||
+      target < 0 ||
+      target === this.#nativeViewTag
+    ) {
+      return;
+    }
+    this.#nativeViewTag = target;
+    this.#emit("native-view", { tags: {}, values: { viewTag: target } }, false);
+  }
+
+  /** Records internal bootstrap, correction and retry dispatches before they cross the native bridge. */
+  libraryCommand(command: TimelineLibraryScrollCommand): void {
+    this.#emit(
+      "library-command",
+      {
+        tags: { phase: command.phase, source: "legend-list" },
+        values: {
+          animated: Number(command.animated),
+          contentHeightPx: command.contentHeightPx,
+          initial: Number(command.initial),
+          initialPending: Number(command.initialPending),
+          logicalOffsetPx: command.logicalOffsetPx,
+          maintainingEnd: Number(command.maintainingEnd),
+          nativeCorrectionPending: Number(command.nativeCorrectionPending),
+          offsetPx: command.offsetPx,
+          rowCount: command.rowCount,
+          viewportHeightPx: command.viewportHeightPx,
+        },
+      },
+      false,
+    );
+  }
+
+  /** Records committed anchor deltas locally, separately from imperative native dispatches. */
+  libraryAdjustment(adjustment: TimelineLibraryScrollAdjustment): void {
+    this.#emit(
+      "library-adjustment",
+      {
+        tags: { phase: "react-commit", source: "legend-list" },
+        values: {
+          clampCompensationPx: adjustment.clampCompensationPx,
+          contentHeightPx: adjustment.contentHeightPx,
+          lastNativeKnown: Number(adjustment.lastNativeOffsetPx !== null),
+          lastNativeOffsetPx: adjustment.lastNativeOffsetPx ?? 0,
+          logicalOffsetPx: adjustment.logicalOffsetPx,
+          nativeCorrectionPending: Number(adjustment.pendingDataAppliedPx !== null),
+          pendingDataAppliedPx: adjustment.pendingDataAppliedPx ?? 0,
+          requestedDeltaPx: adjustment.requestedDeltaPx,
+          rowCount: adjustment.rowCount,
+          sentinelDeltaPx: adjustment.sentinelDeltaPx,
+          viewportHeightPx: adjustment.viewportHeightPx,
+        },
+      },
+      false,
+    );
   }
 
   /** Promise completion is recorded separately from evidence that the physical target was reached. */

@@ -67,10 +67,10 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
   const { localError, localReady, onRetryStartup, saving } = props;
   const {
     displayName,
-    emoji,
     endpoint,
     endpointLabel,
     error,
+    iconId,
     minutesLeft,
     mode,
     navigationDirection,
@@ -78,9 +78,9 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
     pasteCode,
     save,
     setDisplayName,
-    setEmoji,
     setEndpoint,
     setError,
+    setIconId,
     setMode,
     setTlsPinSha256,
     setToken,
@@ -135,9 +135,9 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
         {mode === "review" && (
           <PairingReview
             displayName={displayName}
-            emoji={emoji}
             endpointLabel={endpointLabel}
             error={error}
+            iconId={iconId}
             localError={localError}
             localReady={localReady}
             minutesLeft={minutesLeft}
@@ -145,7 +145,7 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
             save={save}
             saving={saving}
             setDisplayName={setDisplayName}
-            setEmoji={setEmoji}
+            setIconId={setIconId}
             setMode={setMode}
           />
         )}
@@ -153,17 +153,17 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
         {mode === "manual" && (
           <PairingManual
             displayName={displayName}
-            emoji={emoji}
             endpoint={endpoint}
             error={error}
+            iconId={iconId}
             localError={localError}
             localReady={localReady}
             onRetryStartup={onRetryStartup}
             save={save}
             saving={saving}
             setDisplayName={setDisplayName}
-            setEmoji={setEmoji}
             setEndpoint={setEndpoint}
+            setIconId={setIconId}
             setTlsPinSha256={setTlsPinSha256}
             setToken={setToken}
             tlsPinSha256={tlsPinSha256}
@@ -171,7 +171,7 @@ export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
           />
         )}
 
-        {mode === "success" && <PairingSuccess displayName={displayName} emoji={emoji} />}
+        {mode === "success" && <PairingSuccess displayName={displayName} iconId={iconId} />}
       </AppSheetScrollView>
     </SheetPageTransition>
   );

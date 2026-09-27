@@ -14,6 +14,7 @@ const server = { model: "gpt-6-astra", effort: "high", permissions: null, approv
 const ownerSettings = readFileSync(new URL("../src/features/composer/settings.ts", import.meta.url), "utf8");
 const ownerSubmission = readFileSync(new URL("../src/features/composer/submission.ts", import.meta.url), "utf8");
 const ownerComposerControlOptions = readFileSync(new URL("../src/features/composer/settings/ComposerControlOptions.tsx", import.meta.url), "utf8");
+const ownerModelPickerOptions = readFileSync(new URL("../src/ui/ModelPickerOptions.tsx", import.meta.url), "utf8");
 
 describe("composer model authority", () => {
   it("shows the server model even when the local selection and catalog say Sol", () => {
@@ -44,7 +45,8 @@ describe("composer model authority", () => {
     expect(ownerSubmission).toContain("...(selectedEffort === null ? {} : { effort: selectedEffort })");
     expect(screen).not.toContain("latestProjectedThreadExecutionSettings");
     expect(screen).not.toContain("?? controls.models[0]");
-    expect(ownerComposerControlOptions).toContain("selected={candidate.id === selectedModel}");
+    expect(ownerComposerControlOptions).toContain("selectedModel={selectedModel}");
+    expect(ownerModelPickerOptions).toContain("selected={candidate.id === selectedModel}");
     const nativeMenu = readFileSync(new URL("../src/ui/TurnControlMenus.native.tsx", import.meta.url), "utf8");
     expect(nativeMenu).not.toContain("?? models[0]");
     expect(nativeMenu).toContain("ModelThinkingSheet as ModelThinkingMenu");

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { fastServiceTier, isFastServiceTier, retainedServiceTier, STANDARD_SERVICE_TIER } from "../src/ui/modelServiceTier";
+import {
+  fastServiceTier,
+  isFastServiceTier,
+  retainedServiceTier,
+  serviceTiersMatch,
+  STANDARD_SERVICE_TIER,
+} from "../src/ui/modelServiceTier";
 
 describe("Fast service tier catalog", () => {
   const tier = { id: "priority", name: "Fast" };
@@ -13,5 +19,9 @@ describe("Fast service tier catalog", () => {
     expect(retainedServiceTier("fast", [tier])).toBe("priority");
     expect(retainedServiceTier(STANDARD_SERVICE_TIER, [])).toBe(STANDARD_SERVICE_TIER);
     expect(retainedServiceTier("priority", [])).toBeUndefined();
+    expect(serviceTiersMatch("fast", "priority")).toBe(true);
+    expect(serviceTiersMatch("priority", "fast")).toBe(true);
+    expect(serviceTiersMatch("default", "priority")).toBe(false);
+    expect(serviceTiersMatch(null, undefined)).toBe(true);
   });
 });

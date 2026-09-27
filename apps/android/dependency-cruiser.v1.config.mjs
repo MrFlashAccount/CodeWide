@@ -29,6 +29,7 @@ const featurePublicModules = {
     "connectionActions",
     "connectionPresentation",
     "connectionSettingsContract",
+    "ServerIcon",
   ],
   accounts: [
     "AccountPoolFeature",

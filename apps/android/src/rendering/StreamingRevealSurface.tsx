@@ -18,7 +18,7 @@ const NativeSurface =
     ? requireNativeComponent<StreamingRevealProps>("CodeWideStreamingReveal")
     : null;
 
-/** Animation changes native glyph paint, never the published Markdown or its layout. */
+/** Animation changes native glyph paint; toggling it must retain the mounted text and layout. */
 export function StreamingRevealSurface({
   animateNew = true,
   children,
@@ -29,18 +29,17 @@ export function StreamingRevealSurface({
   streamKey: string;
 }) {
   const reduceMotion = useReducedMotionPreference();
-  const shouldAnimate = NativeSurface !== null && animateNew && !reduceMotion;
   return (
-    <StreamingRevealContext.Provider value={streamKey}>
-      {!shouldAnimate ? (
+    <StreamingRevealContext.Provider value={animateNew && !reduceMotion ? streamKey : null}>
+      {NativeSurface === null ? (
         <View pointerEvents="box-none" testID="streaming-reveal-fallback">
           {children}
         </View>
       ) : (
         <NativeSurface
-          animateNew
+          animateNew={animateNew}
           pointerEvents="box-none"
-          reduceMotion={false}
+          reduceMotion={reduceMotion}
           streamKey={streamKey}
         >
           {children}

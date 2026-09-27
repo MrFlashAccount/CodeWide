@@ -29,6 +29,7 @@ export type ConversationTimelineSurfaceProps = {
   readOnly: boolean;
   remoteThread: Thread | null | undefined;
   threadSearchActive: boolean;
+  threadSearchVisible: boolean;
   timeline: TimelineItem[];
   timelineContent: ReactElement;
   timelineDidLoad: boolean;

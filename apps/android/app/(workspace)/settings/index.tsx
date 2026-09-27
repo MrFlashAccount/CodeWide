@@ -1,7 +1,11 @@
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 
 import { recoverUnavailableRoute } from "../../../src/components/navigation/routeRecovery";
-import { globalVoicePreviewRuntime, workspaceRuntime } from "../../../src/data/workspace-runtime";
+import {
+  globalVoiceModelCatalog,
+  globalVoicePreviewRuntime,
+  workspaceRuntime,
+} from "../../../src/data/workspace-runtime";
 import { SubscribedConnectionSettings } from "../../../src/features/settings/SettingsFeature";
 import { workspaceFeatures as features } from "../../../src/features/workspace/createWorkspaceFeatures";
 import { useWorkspaceRouteResources } from "../../../src/services/workspace/workspaceRouteResources";
@@ -42,6 +46,7 @@ export default function V1SettingsRoute(): React.JSX.Element {
       onUpdate={resources.connectionActions.updateSavedConnection}
       {...(workspaceRuntime.native ? ACCOUNT_ACTIONS : NO_ACCOUNT_ACTIONS)}
       visible={visible}
+      voiceAssistantModelCatalog={globalVoiceModelCatalog}
     />
   );
 }

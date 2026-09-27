@@ -1,3 +1,4 @@
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
     upstream::{UpstreamError, UpstreamFence, UpstreamHandle},
 };
 
-pub const READ_MODEL_VERSION: u64 = 3;
+pub const READ_MODEL_VERSION: u64 = 4;
 
 // Match App Server's explicit instruction to inspect this unloaded child.
 // A generic RPC error code is insufficient: unrelated failures must stay visible.
@@ -20,6 +21,18 @@ pub enum ThreadActivity {
     Idle,
     /// App Server cannot establish a safe lifecycle state.
     Unavailable,
+}
+
+/// App Server-owned settings that apply to subsequent turns in one thread.
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadExecutionSettingsSnapshot {
+    model: String,
+    effort: Option<String>,
+    service_tier: Option<String>,
+    permissions: Option<String>,
+    approval_policy: String,
+    sandbox_policy: String,
 }
 
 #[derive(Clone)]
@@ -42,6 +55,8 @@ pub enum ThreadViewError {
     InvalidStatus,
     #[error("thread/sync returned an invalid active turn")]
     InvalidActiveTurn,
+    #[error("thread/resume returned invalid execution settings")]
+    InvalidExecutionSettings,
 }
 
 impl ThreadViewService {
@@ -97,7 +112,7 @@ impl ThreadViewService {
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(36);
 
-        let (result, shell_fence) = self.read_thread_shell(thread_id).await?;
+        let (result, execution_settings, shell_fence) = self.read_thread_shell(thread_id).await?;
         let mut thread = result
             .get("thread")
             .cloned()
@@ -163,6 +178,7 @@ impl ThreadViewService {
             "readModelVersion": READ_MODEL_VERSION,
             "throughCursor": through_cursor,
             "thread": thread,
+            "executionSettings": execution_settings,
             "history": history,
             "activeTurn": active_turn,
         }))
@@ -171,7 +187,14 @@ impl ThreadViewService {
     async fn read_thread_shell(
         &self,
         thread_id: &str,
-    ) -> Result<(Value, UpstreamFence), ThreadViewError> {
+    ) -> Result<
+        (
+            Value,
+            Option<ThreadExecutionSettingsSnapshot>,
+            UpstreamFence,
+        ),
+        ThreadViewError,
+    > {
         let (response, fence) = self
             .upstream
             .request_fenced(json!({
@@ -195,9 +218,13 @@ impl ThreadViewService {
                         "params": {"threadId": thread_id, "includeTurns": false},
                     }))
                     .await?;
-                Ok((rpc_result(&stored)?, stored_fence))
+                Ok((rpc_result(&stored)?, None, stored_fence))
             }
-            result => Ok((result?, fence)),
+            result => {
+                let result = result?;
+                let execution_settings = thread_execution_settings(&result)?;
+                Ok((result, Some(execution_settings), fence))
+            }
         }
     }
 
@@ -230,6 +257,55 @@ impl ThreadViewService {
             .cloned()
             .ok_or(ThreadViewError::InvalidActiveTurn)?;
         Ok((turn, fence))
+    }
+}
+
+fn thread_execution_settings(
+    result: &Value,
+) -> Result<ThreadExecutionSettingsSnapshot, ThreadViewError> {
+    let model = required_string(result, "model")?;
+    if model.is_empty() {
+        return Err(ThreadViewError::InvalidExecutionSettings);
+    }
+    let active_permission_profile = result
+        .get("activePermissionProfile")
+        .ok_or(ThreadViewError::InvalidExecutionSettings)?;
+    let permissions = if active_permission_profile.is_null() {
+        None
+    } else {
+        Some(required_string(active_permission_profile, "id")?)
+    };
+    let approval_policy = match result.get("approvalPolicy") {
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Object(value)) if value.contains_key("granular") => "granular".to_owned(),
+        _ => return Err(ThreadViewError::InvalidExecutionSettings),
+    };
+    let sandbox = result
+        .get("sandbox")
+        .ok_or(ThreadViewError::InvalidExecutionSettings)?;
+    Ok(ThreadExecutionSettingsSnapshot {
+        model,
+        effort: nullable_string(result, "reasoningEffort")?,
+        service_tier: nullable_string(result, "serviceTier")?,
+        permissions,
+        approval_policy,
+        sandbox_policy: required_string(sandbox, "type")?,
+    })
+}
+
+fn required_string(value: &Value, field: &str) -> Result<String, ThreadViewError> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or(ThreadViewError::InvalidExecutionSettings)
+}
+
+fn nullable_string(value: &Value, field: &str) -> Result<Option<String>, ThreadViewError> {
+    match value.get(field) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err(ThreadViewError::InvalidExecutionSettings),
     }
 }
 
@@ -272,7 +348,7 @@ fn rpc_result(response: &Value) -> Result<Value, ThreadViewError> {
 }
 
 #[cfg(test)]
-mod queue_activity_tests {
+mod tests {
     use super::*;
 
     #[test]
@@ -323,5 +399,65 @@ mod queue_activity_tests {
             Err(ThreadViewError::InvalidStatus)
         ));
         Ok(())
+    }
+
+    #[test]
+    fn resume_settings_are_projected_as_one_authoritative_snapshot() -> Result<(), ThreadViewError>
+    {
+        let settings = thread_execution_settings(&json!({
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "high",
+            "serviceTier": "priority",
+            "activePermissionProfile": {"id": ":workspace"},
+            "approvalPolicy": {"granular": {"rules": true}},
+            "sandbox": {"type": "workspaceWrite"}
+        }))?;
+
+        assert_eq!(
+            settings,
+            ThreadExecutionSettingsSnapshot {
+                model: "gpt-5.6-sol".to_owned(),
+                effort: Some("high".to_owned()),
+                service_tier: Some("priority".to_owned()),
+                permissions: Some(":workspace".to_owned()),
+                approval_policy: "granular".to_owned(),
+                sandbox_policy: "workspaceWrite".to_owned(),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn resume_settings_preserve_explicit_default_and_nullable_values() -> Result<(), ThreadViewError>
+    {
+        let settings = thread_execution_settings(&json!({
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": null,
+            "serviceTier": "default",
+            "activePermissionProfile": null,
+            "approvalPolicy": "never",
+            "sandbox": {"type": "dangerFullAccess"}
+        }))?;
+
+        assert_eq!(settings.service_tier.as_deref(), Some("default"));
+        assert_eq!(settings.effort, None);
+        assert_eq!(settings.permissions, None);
+        assert_eq!(settings.approval_policy, "never");
+        assert_eq!(settings.sandbox_policy, "dangerFullAccess");
+        Ok(())
+    }
+
+    #[test]
+    fn resume_settings_reject_an_incomplete_security_snapshot() {
+        assert!(matches!(
+            thread_execution_settings(&json!({
+                "model": "gpt-5.6-sol",
+                "reasoningEffort": "high",
+                "serviceTier": "priority",
+                "activePermissionProfile": null,
+                "approvalPolicy": "never"
+            })),
+            Err(ThreadViewError::InvalidExecutionSettings)
+        ));
     }
 }

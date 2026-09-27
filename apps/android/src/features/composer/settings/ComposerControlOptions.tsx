@@ -2,6 +2,7 @@
 import { listRowPosition } from "../../../ui/AppListRow.types";
 import { AppSheetScrollView } from "../../../ui/AppSheet";
 import { ControlOption } from "../../../ui/ControlOption";
+import { ModelPickerOptions } from "../../../ui/ModelPickerOptions";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "../ComposerMenu.styles";
 import { permissionProfileLabel } from "../settings";
@@ -37,25 +38,18 @@ export function ComposerControlOptions({
           {controls.models.length === 0 ? (
             <Text style={styles.menuNotice}>No models returned by the server</Text>
           ) : (
-            controls.models.map((candidate, index) => {
-              const currentEffort =
-                selectedEffort ?? model?.defaultEffort ?? candidate.defaultEffort;
-              const nextEffort = candidate.efforts.includes(currentEffort)
-                ? currentEffort
-                : candidate.defaultEffort;
-              return (
-                <ControlOption
-                  key={candidate.id}
-                  onPress={() => {
-                    onSelectModel(candidate.id, nextEffort);
-                  }}
-                  position={listRowPosition(index, controls.models.length)}
-                  selected={candidate.id === selectedModel}
-                  subtitle={candidate.id}
-                  title={candidate.label}
-                />
-              );
-            })
+            <ModelPickerOptions
+              models={controls.models}
+              onSelect={(candidate) => {
+                const currentEffort =
+                  selectedEffort ?? model?.defaultEffort ?? candidate.defaultEffort;
+                const nextEffort = candidate.efforts.includes(currentEffort)
+                  ? currentEffort
+                  : candidate.defaultEffort;
+                onSelectModel(candidate.id, nextEffort);
+              }}
+              selectedModel={selectedModel}
+            />
           )}
           {model !== undefined && (
             <>

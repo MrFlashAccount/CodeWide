@@ -34,7 +34,7 @@ import {
   createPendingRequestDatabase,
   type PendingRequestDatabase,
 } from "./pending-request-database";
-import { createPrivateTransferAccess } from "./private-transfer";
+import { createPrivateTransferAccess, readPrivateAssetText } from "./private-transfer";
 import { deleteConnectionQuestionDrafts } from "./questionDraftStorage";
 import {
   configureTelemetryAppVersion,
@@ -61,7 +61,11 @@ import {
   createGlobalSupervisorWorkspaceBinding,
   createGlobalSupervisorWorkspaceSystemRequests,
 } from "./globalSupervisorWorkspaceRuntime";
-import { deliverServerRequestResponse } from "./serverRequestDelivery";
+import {
+  deliverServerRequestResponse,
+  respondToPendingServerRequest,
+} from "./serverRequestDelivery";
+import { readGlobalSupervisorWorkCatalog } from "./globalSupervisorWorkCatalog";
 import { createThreadSyncProjection } from "./thread-sync-projection";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
@@ -71,6 +75,7 @@ import {
   type ThreadUiStateDatabase,
 } from "./thread-ui-state-database";
 import { createTurnControlsLoader } from "./turn-controls-loader";
+import type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
 import { VoiceInputController } from "./voice-input-controller";
 import { createV1MicrophoneLeaseRegistry } from "./v1MicrophoneLease";
 import { getUserPreferencesDatabase } from "./user-preferences-database";
@@ -79,6 +84,13 @@ import {
   VOICE_ASSISTANT_PERSONALITY_PREFERENCE_ID,
 } from "./voiceAssistantPersonality";
 import { createVoiceTransport } from "./voice-transport";
+import { globalSupervisorConnectionReadiness } from "./globalSupervisorConnectionReadiness";
+import {
+  decodeVoiceAssistantBackgroundModelPreference,
+  resolveVoiceAssistantBackgroundModel,
+  VOICE_ASSISTANT_BACKGROUND_MODEL_PREFERENCE_ID,
+} from "./voiceAssistantBackgroundModel";
+import { createVoiceAssistantModelCatalog } from "./voiceAssistantModelCatalog";
 import {
   createWorkspaceResourceDatabase,
   type WorkspaceResourceDatabase,
@@ -180,6 +192,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     const profiles = createConnectionProfileDatabase();
     const connectionState = createConnectionStateModel();
     const globalSupervisor = await createGlobalSupervisorWorkspaceBinding({
+      backgroundSettings: readVoiceAssistantBackgroundModel,
       getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
       personality: readVoiceAssistantPersonality,
       randomUUID,
@@ -237,18 +250,35 @@ async function startWorkspaceRuntime(): Promise<void> {
       attention: globalSupervisorAttention,
       binding: globalSupervisor.binding,
       currentConnections: () => currentConnections(),
+      currentPendingRequests: () => pendingRequests.collection.toArray,
       getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
       isRpcAvailable: (connectionId) =>
         connectionState.rows$.peek().find((candidate) => candidate.connectionId === connectionId)
           ?.rpcAvailable === true,
       isSupervisorActive: () => globalSupervisorRuntime.isActive(),
+      now: () => Date.now(),
+      readAttachmentText: async ({ connectionId, limit, offset, path }) =>
+        readPrivateAssetText(
+          { kind: "path", path },
+          async (forceRefresh = false) => transferAccess(connectionId, forceRefresh),
+          {
+            accept:
+              "text/markdown, text/plain;q=0.9, application/json;q=0.8, application/xml;q=0.7, */*;q=0.1",
+            limit,
+            offset,
+          },
+        ),
+      readWorkCatalog: async () => readGlobalSupervisorWorkCatalog(summaries),
       respond: async (request) => deliverServerRequestResponse(request),
+      respondToPendingRequest: async (request, result) =>
+        respondToPendingServerRequest({ database: pendingRequests, pending: request, result }),
       rpcAfterAttach,
       sendSystemText: async (request) => commandDelivery.sendSystemTextWithCommandId(request),
       targetPolicy: globalSupervisor.targetPolicy,
     });
     const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
+        setConnectionPath: connectionState.setPath,
         setConnectionState(connectionId, state, diagnostic, rpcAvailable) {
           connectionState.setState(connectionId, state, diagnostic, rpcAvailable);
         },
@@ -331,16 +361,23 @@ async function startWorkspaceRuntime(): Promise<void> {
       supervisor.replaceConnections(currentProfiles);
     });
     workspaceRuntime.connectionStateSubscription?.unsubscribe();
-    workspaceRuntime.connectionStateSubscription = connectionState.subscribeChanges(
-      createThreadSyncReconnect({
-        accountRateLimits,
-        catalog: workspaceCatalog,
-        details,
-        refreshAccountRateLimits,
-        sync: workspaceThreadSync,
-      }),
-      { includeInitialState: true },
-    );
+    const reconnect = createThreadSyncReconnect({
+      catalog: workspaceCatalog,
+      details,
+      readConnection: (connectionId) =>
+        connectionState.rows$.peek().find((row) => row.connectionId === connectionId),
+      refreshAccountRateLimits,
+      sync: workspaceThreadSync,
+    });
+    const connectionChanges = connectionState.subscribeChanges(reconnect.accept, {
+      includeInitialState: true,
+    });
+    workspaceRuntime.connectionStateSubscription = {
+      unsubscribe() {
+        connectionChanges.unsubscribe();
+        reconnect.close();
+      },
+    };
     workspaceRuntime.update({
       accountRateLimits,
       connectionProfiles: profiles,
@@ -422,6 +459,19 @@ async function readVoiceAssistantPersonality() {
   );
 }
 
+async function readVoiceAssistantBackgroundModel(connectionId: string) {
+  await userPreferences.ready;
+  const preference = decodeVoiceAssistantBackgroundModelPreference(
+    userPreferences.collection.get(VOICE_ASSISTANT_BACKGROUND_MODEL_PREFERENCE_ID)?.value,
+  );
+  const controls = await loadTurnControls(connectionId, "", {
+    mode: "refresh",
+    sections: ["models"],
+  });
+  const resolved = resolveVoiceAssistantBackgroundModel(preference, controls.models);
+  return resolved;
+}
+
 const startConfiguredGlobalVoiceWebRtc: GlobalSupervisorWebRtcSessionFactory = async (options) => {
   if (options.mode === "preview") {
     return createGlobalSupervisorWebRtcSession(options);
@@ -442,6 +492,7 @@ const startConfiguredGlobalVoiceWebRtc: GlobalSupervisorWebRtcSessionFactory = a
 export const globalSupervisorRuntime = createGlobalSupervisorRuntime({
   acquireForegroundLease: acquireGlobalVoiceForegroundLease,
   attention: globalSupervisorAttention,
+  backgroundSettings: readVoiceAssistantBackgroundModel,
   binding() {
     const binding = workspaceRuntime.globalSupervisorBinding;
     if (binding === null) {
@@ -449,6 +500,8 @@ export const globalSupervisorRuntime = createGlobalSupervisorRuntime({
     }
     return binding;
   },
+  connectionReadiness: (connectionId) =>
+    globalSupervisorConnectionReadiness(workspaceRuntime.snapshot.connectionState, connectionId),
   enabledConnectionIds: () => workspaceRuntime.enabledConnectionIds(),
   ensureStarted: ensureWorkspaceRuntimeStarted,
   getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
@@ -576,6 +629,71 @@ const loadTurnControls = createTurnControlsLoader({
   getResources: () => workspaceRuntime.snapshot.resources,
   getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
   rpcAfterAttach,
+});
+
+async function voiceAssistantModelConnectionId(): Promise<string> {
+  await ensureWorkspaceRuntimeStarted();
+  const binding = await workspaceRuntime.globalSupervisorBinding?.read();
+  if (binding?.status === "ready") {
+    return binding.home.connectionId;
+  }
+  if (binding?.status === "creating") {
+    return binding.homeConnectionId;
+  }
+  const connectionId = workspaceRuntime.enabledConnectionIds()[0];
+  if (connectionId === undefined) {
+    throw new Error("Connect a server before choosing a Voice Assistant model");
+  }
+  return connectionId;
+}
+
+function latestVoiceAssistantModels(
+  rows: readonly TurnControlsRow[] | undefined,
+  connectionId: string,
+): readonly TurnControlsValue["models"][number][] | null {
+  if (rows === undefined) {
+    return null;
+  }
+  let latest: (typeof rows)[number] | null = null;
+  for (const row of rows) {
+    if (isUsableVoiceAssistantModelRow(row, connectionId) && isNewerRow(row, latest)) {
+      latest = row;
+    }
+  }
+  return modelListFromRow(latest);
+}
+
+function isUsableVoiceAssistantModelRow(row: TurnControlsRow, connectionId: string): boolean {
+  return row.connectionId === connectionId && row.value !== null && row.value.models.length > 0;
+}
+
+function isNewerRow(candidate: TurnControlsRow, current: TurnControlsRow | null): boolean {
+  return current === null || candidate.updatedAt > current.updatedAt;
+}
+
+function modelListFromRow(
+  row: TurnControlsRow | null,
+): readonly TurnControlsValue["models"][number][] | null {
+  if (row === null || row.value === null) {
+    return null;
+  }
+  return row.value.models;
+}
+
+export const globalVoiceModelCatalog = createVoiceAssistantModelCatalog(async () => {
+  const connectionId = await voiceAssistantModelConnectionId();
+  const cached = latestVoiceAssistantModels(
+    workspaceRuntime.snapshot.resources?.turnControls.toArray,
+    connectionId,
+  );
+  if (cached !== null) {
+    return cached;
+  }
+  const controls = await loadTurnControls(connectionId, "", {
+    mode: "refresh",
+    sections: ["models"],
+  });
+  return controls.models;
 });
 
 const refreshAccountRateLimits = createAccountRateLimitsLoader({

@@ -34,7 +34,7 @@ it("shows welcome only after the saved server collection has hydrated empty", ()
   expect(isNoServerWorkspace({ ...runtime, ready: true })).toBe(true);
   profiles.collection.insert({
     displayName: "Home",
-    emoji: "🖥️",
+    iconId: "desktop",
     enabled: true,
     endpoint: "https://example.com",
     id: "home",

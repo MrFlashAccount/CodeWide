@@ -317,6 +317,28 @@ it("reveals complete table rows without replaying existing row identities on app
   ).toBe(true);
 });
 
+it.each([true, false])(
+  "keeps completed HTML table rows static inside a retained reveal host (previously live: %s)",
+  (animateNew) => {
+    const table = "<table><tr><td>Completed table</td></tr></table>";
+    const result = render(
+      <StreamingRevealSurface animateNew={animateNew} streamKey="completed-table">
+        {view(table)}
+      </StreamingRevealSurface>,
+    );
+    result.rerender(
+      <StreamingRevealSurface animateNew={false} streamKey="completed-table">
+        {view(table)}
+      </StreamingRevealSurface>,
+    );
+
+    const row = result.UNSAFE_getByType(NativeRevealSurface);
+    expect(row.props.animate).toBe(false);
+    expect(row.props.ready).toBe(true);
+    expect(result.getByText("Completed table")).toBeVisible();
+  },
+);
+
 it("ignores hidden and executable subtrees and document CSS", () => {
   const result = render(
     view(

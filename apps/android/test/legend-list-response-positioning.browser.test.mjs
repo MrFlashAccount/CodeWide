@@ -26,9 +26,11 @@ import { TimelineScrollDiagnostics } from "./src/data/timelineScrollDiagnostics"
 import { timelineScrollJournal } from "./src/data/timelineScrollJournal";
 import { observeTimelineScrollCommand, useTimelineListDiagnostics } from "./src/rendering/timelineListDiagnostics";
 import { TimelineResponseStart } from "./src/features/conversation/timeline/timelineResponseStart";
+import { measureTimelineItemViewport } from "./src/rendering/timelineItemViewport";
 
 const AGENT_KEY = "response-agent";
 const RESPONSE_START_OFFSET = 64;
+const BOTTOM_INSET = 48;
 const VIEWPORT_HEIGHT = 360;
 const historyRows = Array.from({ length: 12 }, (_, index) => ({
   height: 80,
@@ -61,20 +63,26 @@ function ProbeScrollView(props) {
 function Probe() {
   const initialUnread = window.initialUnread === true;
   const singleLongRow = window.singleLongRow === true;
+  const singleShortRow = window.singleShortRow === true;
+  const shortHistoryCount = window.shortHistoryCount ?? 2;
   const listRef = useRef(null);
   const [diagnostics] = useState(() => new TimelineScrollDiagnostics("probe", "response"));
-  const diagnosticHandlers = useTimelineListDiagnostics(diagnostics, listRef, {});
+  const [positioned, setPositioned] = useState(false);
+  const diagnosticHandlers = useTimelineListDiagnostics(diagnostics, listRef, {
+    onLoad: () => setPositioned(true),
+  });
   const [agentHeight, setAgentHeight] = useState(singleLongRow ? 5200 : initialUnread ? 1200 : 120);
   const [anchor, setAnchor] = useState(initialUnread ? AGENT_KEY : null);
   const [request, setRequest] = useState(() => initialUnread ? new TimelineResponseStart("initialUnread", AGENT_KEY) : null);
   const [completed, setCompleted] = useState(initialUnread);
   const [lateSliceGrowth, setLateSliceGrowth] = useState(0);
-  const rows = singleLongRow
-    ? [...historyRows.slice(0, 2), userRow, { height: 5400, id: AGENT_KEY, kind: completed ? "agent" : "streaming-agent" }]
+  const rows = singleLongRow || singleShortRow
+    ? [...historyRows.slice(0, shortHistoryCount), userRow, { height: singleLongRow ? 5400 : 120, id: AGENT_KEY, kind: completed ? "agent" : "streaming-agent" }]
     : completed ? completedRows : streamingRows;
   const anchorIndex = rows.findIndex((row) => row.id === anchor);
   const listAdapter = {
     indexForItemKey: key => listRef.current?.getState().indexByKey(key) ?? null,
+    measureItemViewport: key => measureTimelineItemViewport(listRef.current, key),
     scrollToIndex: async options => observeTimelineScrollCommand({
       diagnostics, ref: listRef, source: "response-start",
       target: { kind: "index", index: options.index, viewOffset: options.viewOffset, viewPosition: options.viewPosition },
@@ -82,9 +90,12 @@ function Probe() {
   };
   const anchorSpace = request?.anchorSpace({
     anchor: { index: anchorIndex, key: AGENT_KEY },
+    bottomInset: BOTTOM_INSET,
     diagnostics,
     getList: () => listRef.current === null ? null : listAdapter,
+    maxViewportHeight: VIEWPORT_HEIGHT,
     offset: RESPONSE_START_OFFSET,
+    topInset: RESPONSE_START_OFFSET - 8,
   });
 
   function responseGeometry() {
@@ -202,17 +213,18 @@ function Probe() {
       <LegendList
         {...diagnosticHandlers}
         alignItemsAtEnd
+        contentContainerStyle={{ paddingTop: RESPONSE_START_OFFSET, paddingBottom: BOTTOM_INSET }}
         {...(anchor === null
           ? {}
           : {
               anchoredEndSpace: anchorSpace,
-              ...(initialUnread ? { initialScrollIndex: anchorIndex } : {}),
+              ...(!positioned ? { initialScrollIndex: request?.initialPosition({ index: anchorIndex, key: AGENT_KEY }, RESPONSE_START_OFFSET) } : {}),
             })}
         data={rows}
         drawDistance={250}
         estimatedItemSize={80}
         extraData={String(completed) + ":" + String(agentHeight) + ":" + String(lateSliceGrowth)}
-        initialScrollAtEnd={anchor === null}
+        initialScrollAtEnd={anchor === null && !positioned}
         keyExtractor={(item) => item.id}
         maintainScrollAtEnd={{
           animated: false,
@@ -246,6 +258,19 @@ function Probe() {
   );
 }
 
+window.visibleFrames = [];
+function sampleVisibleFrame() {
+  const viewport = document.querySelector('[data-testid="probe-scroll"]');
+  const row = viewport?.querySelector('[data-testid]');
+  let visible = row !== null && row !== undefined;
+  for (let node = row; visible && node && node !== viewport; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    visible = style.opacity !== "0" && style.visibility !== "hidden" && style.display !== "none";
+  }
+  if (visible && window.probe) window.visibleFrames.push(window.probe.snapshot());
+  if (window.visibleFrames.length < 20) requestAnimationFrame(sampleVisibleFrame);
+}
+requestAnimationFrame(sampleVisibleFrame);
 createRoot(document.getElementById("root")).render(<Probe />);
 `,
       loader: "tsx",
@@ -275,7 +300,12 @@ after(async () => {
   await browser?.close();
 });
 
-async function openProbe({ initialUnread = false, singleLongRow = false } = {}) {
+async function openProbe({
+  initialUnread = false,
+  singleLongRow = false,
+  singleShortRow = false,
+  shortHistoryCount = 2,
+} = {}) {
   const page = await browser.newPage({ viewport: { height: 720, width: 720 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -284,8 +314,10 @@ async function openProbe({ initialUnread = false, singleLongRow = false } = {}) 
     (options) => {
       window.initialUnread = options.initialUnread;
       window.singleLongRow = options.singleLongRow;
+      window.singleShortRow = options.singleShortRow;
+      window.shortHistoryCount = options.shortHistoryCount;
     },
-    { initialUnread, singleLongRow },
+    { initialUnread, singleLongRow, singleShortRow, shortHistoryCount },
   );
   await page.addScriptTag({ content: probeScript });
   await page.waitForFunction(() => window.probe !== undefined);
@@ -306,6 +338,85 @@ test("an unread response opens at its first physical row", async () => {
     await page.close();
   }
 });
+
+for (const shape of ["long-last-row", "sliced-response"]) {
+  test(`unread ${shape} is top-aligned in every initially visible frame`, async () => {
+    const { errors, page } = await openProbe({
+      initialUnread: true,
+      singleLongRow: shape === "long-last-row",
+      singleShortRow: shape === "short-last-row",
+    });
+    try {
+      await page.waitForFunction(() => window.visibleFrames.length >= 20);
+      const frames = await page.evaluate(() => window.visibleFrames);
+      // Include the first actually visible list frame, not just an eventual settled snapshot.
+      for (const frame of frames) {
+        assert.ok(frame.agent !== null, JSON.stringify({ shape, frames }));
+        assert.ok(Math.abs(frame.agent.top - 64) <= 1, JSON.stringify({ shape, frames }));
+      }
+      const report = await page.evaluate(() => window.probe.diagnosticReport());
+      assert.equal(
+        report.samples.filter(
+          (event) => event.name === "chat.scroll.command" && event.tags.source === "response-start",
+        ).length,
+        0,
+      );
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
+for (const shortHistoryCount of [0, 2]) {
+  test(`a short unread response stays at the natural tail with ${shortHistoryCount} history rows`, async () => {
+    const { errors, page } = await openProbe({
+      initialUnread: true,
+      singleShortRow: true,
+      shortHistoryCount,
+    });
+    try {
+      await page.waitForFunction(() => window.visibleFrames.length >= 20);
+      const frames = await page.evaluate(() => window.visibleFrames);
+      for (const frame of frames) {
+        assert.equal(frame.physicalAtEnd, true, JSON.stringify(frames));
+        assert.ok(Math.abs(frame.agent.top - (360 - 48 - 120)) <= 1, JSON.stringify(frames));
+      }
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test(`completing a visible short response does not move it with ${shortHistoryCount} history rows`, async () => {
+    const { errors, page } = await openProbe({ singleShortRow: true, shortHistoryCount });
+    try {
+      await expect
+        .poll(() => page.evaluate(() => window.probe.snapshot().physicalAtEnd))
+        .toBe(true);
+      const before = await page.evaluate(() => window.probe.snapshot());
+      await page.evaluate(() => window.probe.complete());
+      await page.evaluate(() => window.probe.repeatReady());
+      const after = await page.evaluate(() => window.probe.snapshot());
+      assert.ok(Math.abs(after.scroll - before.scroll) <= 1, JSON.stringify({ before, after }));
+      assert.ok(
+        Math.abs(after.agent.top - before.agent.top) <= 1,
+        JSON.stringify({ before, after }),
+      );
+      assert.equal(after.physicalAtEnd, true);
+      const report = await page.evaluate(() => window.probe.diagnosticReport());
+      assert.equal(
+        report.samples.filter(
+          (event) => event.name === "chat.scroll.command" && event.tags.source === "response-start",
+        ).length,
+        0,
+      );
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  });
+}
 
 test("the production recorder captures a competing anchor after a real LegendList end scroll", async () => {
   const { errors, page } = await openProbe({ initialUnread: true });

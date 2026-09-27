@@ -7,29 +7,30 @@ import { styles } from "./ConnectionSheet.styles";
 
 import type { ConnectionSheetSessionProps } from "./connectionSheetContract";
 import type { PairingSession } from "./pairingSession";
+import { ServerIconPicker } from "./ServerIconPicker";
 
 export function PairingManual({
   displayName,
-  emoji,
   endpoint,
   error,
+  iconId,
   localError,
   localReady,
   onRetryStartup,
   save,
   saving,
   setDisplayName,
-  setEmoji,
   setEndpoint,
+  setIconId,
   setTlsPinSha256,
   setToken,
   tlsPinSha256,
   token,
 }: Pick<
   PairingSession,
-  | "emoji"
+  | "iconId"
   | "displayName"
-  | "setEmoji"
+  | "setIconId"
   | "setDisplayName"
   | "endpoint"
   | "setEndpoint"
@@ -47,12 +48,10 @@ export function PairingManual({
         Use this only when QR and connection links are unavailable.
       </Text>
       <View style={styles.pairingIdentityFields}>
-        <TextInput
-          accessibilityLabel="Server emoji"
-          onChangeText={setEmoji}
-          style={styles.pairingEmojiInput}
-          value={emoji}
-          voiceInput={false}
+        <ServerIconPicker
+          accessibilityLabel="Choose server icon"
+          iconId={iconId}
+          onSelect={setIconId}
         />
         <TextInput
           accessibilityLabel="Server name"

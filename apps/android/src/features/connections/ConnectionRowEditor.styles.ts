@@ -57,17 +57,6 @@ export const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingVertical: spacing.sm,
   },
-  connectionEmojiInput: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radii.medium,
-    borderWidth: 1,
-    color: colors.text,
-    minHeight: controlSize.touch,
-    paddingHorizontal: spacing.xs,
-    width: 52,
-    ...typeScale.emoji,
-  },
   connectionIdentityFields: {
     alignItems: "center",
     flexDirection: "row",

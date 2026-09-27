@@ -759,6 +759,10 @@ describe("Legend thread chat model", () => {
     expect(snapshot.turnRowIds).toEqual(["turn-1", "turn-2"]);
 
     model.refreshThread(request.connectionId, request.threadId, rows);
+    expect(model.window$(request.connectionId, request.threadId).peek()).toMatchObject({
+      error: "transient read failure", status: "background-retrying",
+    });
+    model.confirmBackendRefresh(request.connectionId, request.threadId);
     expect(model.window$(request.connectionId, request.threadId).peek()).toEqual(
       expect.objectContaining({ error: null, status: "ready" }),
     );
@@ -801,6 +805,7 @@ describe("Legend thread chat model", () => {
     model.failWindow(request, generation, new Error("transient read failure"));
 
     model.refreshThread(request.connectionId, request.threadId, [row("turn-1", 1)]);
+    model.confirmBackendRefresh(request.connectionId, request.threadId);
     const snapshot = model.window$(request.connectionId, request.threadId).peek();
 
     expect(snapshot.status).toBe("ready");

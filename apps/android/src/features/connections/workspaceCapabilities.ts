@@ -1,5 +1,6 @@
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { ConnectionInput, ConnectionUpdateInput } from "../../data/connection-validation";
+import type { ServerIconId } from "../../data/serverIcons";
 /** Qualified connections operations; transport and persisted state stay with their existing lower owners. */
 export type ConnectionsWorkspaceCapabilities = {
   addConnection: (input: ConnectionInput) => Promise<StoredConnection>;
@@ -11,6 +12,6 @@ export type ConnectionsWorkspaceCapabilities = {
   updateConnectionProfile: (
     connectionId: string,
     displayName: string,
-    emoji: string,
+    iconId: ServerIconId,
   ) => Promise<void>;
 };

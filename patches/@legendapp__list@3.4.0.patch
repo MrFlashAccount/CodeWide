@@ -1,0 +1,598 @@
+diff --git a/react-native.js b/react-native.js
+index eeeb142c2d3f27452722784df89e1e2c81401008..9558a82e688db43b3e807bb6834b7155191b72a9 100644
+--- a/react-native.js
++++ b/react-native.js
+@@ -1704,24 +1704,19 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+         const targetIndex = indexByKey.get(targetId);
+         const newPosition = targetIndex !== void 0 ? positions[targetIndex] : void 0;
+         if (newPosition !== void 0) {
+-          const totalSize = getContentSize(ctx);
+-          let diff = newPosition - prevPosition;
+-          if (diff !== 0 && isEndAnchoredScrollTarget && state.scroll + state.scrollLength > totalSize) {
+-            if (diff > 0) {
+-              diff = Math.max(0, totalSize - state.scroll - state.scrollLength);
+-            } else {
+-              const maxScroll = Math.max(0, totalSize - state.scrollLength);
+-              state.scroll = maxScroll;
+-              state.scrollPending = maxScroll;
+-              diff = 0;
+-            }
+-          }
+-          positionDiff = diff;
++          positionDiff = newPosition - prevPosition;
+           anchorIdForLock = targetId;
+           anchorPositionForLock = newPosition;
+         }
+       }
+-      if (scrollingToViewPosition && scrollingToViewPosition > 0) {
++      // A removed target has no item size. In particular, null is reserved by
++      // addTotalSize for replacing the entire list size, not an absent item key.
++      if (dataChanged && scrollingTo?.isScrollToEnd) {
++        // The end belongs to the content range, not to the former last row.
++        // Hydration may replace that row with a differently sized one. Rebasing
++        // the index cannot carry its old height into the new target's resize.
++        positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - Math.max(0, prevTotalSize - state.scrollLength);
++      } else if (scrollingToViewPosition && scrollingToViewPosition > 0 && targetId != null && scrollTarget >= 0 && scrollTarget < data.length) {
+         const newSize = getItemSize(ctx, targetId, scrollTarget, state.props.data[scrollTarget]);
+         const prevSize = scrollingTo == null ? void 0 : scrollingTo.itemSize;
+         if (newSize !== void 0 && prevSize !== void 0 && newSize !== prevSize) {
+@@ -1732,6 +1727,20 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+           }
+         }
+       }
++      // Native scrolling already clamps to a shorter end. Include the target's
++      // own size delta before deciding whether an additional MVCP shift is needed.
++      // Applying that delta after the clamp would pull the viewport off the end.
++      const totalSize = getContentSize(ctx);
++      if (positionDiff !== 0 && isEndAnchoredScrollTarget && state.scroll + state.scrollLength > totalSize) {
++        if (positionDiff > 0) {
++          positionDiff = Math.max(0, totalSize - state.scroll - state.scrollLength);
++        } else {
++          const maxScroll = Math.max(0, totalSize - state.scrollLength);
++          state.scroll = maxScroll;
++          state.scrollPending = maxScroll;
++          positionDiff = 0;
++        }
++      }
+       updateAnchorLock(state, {
+         anchorId: anchorIdForLock,
+         anchorPosition: anchorPositionForLock,
+@@ -2167,6 +2176,7 @@ function checkFinishedScrollFrame(ctx) {
+ }
+ function scrollToFallbackOffset(ctx, offset) {
+   var _a3;
++  reportScrollDiagnostic(ctx, "retry", offset, false, !!ctx.state.scrollingTo?.isInitialScroll);
+   (_a3 = ctx.state.refScroller.current) == null ? void 0 : _a3.scrollTo({
+     animated: false,
+     x: ctx.state.props.horizontal ? offset : 0,
+@@ -2234,6 +2244,29 @@ function checkFinishedScrollFallback(ctx) {
+ }
+ 
+ // src/core/doScrollTo.native.ts
++// Optional, content-free dispatch observer. It must never change scroll ownership or propagation.
++function reportScrollDiagnostic(ctx, phase, offset, animated, initial) {
++  const state = ctx.state;
++  const observer = state.props.onScrollDiagnostic;
++  if (!observer) return;
++  try {
++    observer({
++      phase,
++      animated: !!animated,
++      initial: !!initial,
++      offsetPx: offset,
++      logicalOffsetPx: state.scroll,
++      contentHeightPx: getContentSize(ctx),
++      viewportHeightPx: state.scrollLength,
++      rowCount: state.props.data.length,
++      initialPending: !state.didFinishInitialScroll,
++      maintainingEnd: !!(state.maintainingScrollAtEnd || state.pendingMaintainScrollAtEnd),
++      nativeCorrectionPending: !!state.pendingNativeMVCPAdjust
++    });
++  } catch {
++    // WHY: diagnostic failure cannot suppress, repeat, or reject an actual scroll command.
++  }
++}
+ function doScrollTo(ctx, params) {
+   const state = ctx.state;
+   const { animated, horizontal, isInitialScroll, offset } = params;
+@@ -2246,6 +2279,7 @@ function doScrollTo(ctx, params) {
+   const isHorizontal = !!horizontal;
+   const contentSize = isHorizontal ? getContentSize(ctx) : void 0;
+   const nativeOffset = toNativeHorizontalOffset(state, offset, contentSize);
++  reportScrollDiagnostic(ctx, "dispatch", offset, isAnimated, isInitialScroll);
+   scroller.scrollTo({
+     animated: isAnimated,
+     x: isHorizontal ? nativeOffset : 0,
+@@ -2405,6 +2439,7 @@ function scrollTo(ctx, params) {
+     const averageSizeSnapshot = getAverageSizeSnapshot(state);
+     state.scrollingTo = {
+       ...scrollTarget,
++      itemKey: scrollTarget.index !== void 0 ? getId(state, scrollTarget.index) : void 0,
+       ...averageSizeSnapshot ? { averageSizeSnapshot } : {},
+       targetOffset,
+       waitForInitialScrollCompletionFrame
+@@ -2949,12 +2984,26 @@ function startBootstrapInitialScrollOnMount(ctx, options) {
+   }
+ }
+ function handleBootstrapInitialScrollDataChange(ctx, options) {
+-  const { dataLength, didDataChange, initialScrollAtEnd, previousDataLength, stylePaddingEnd } = options;
++  const { dataLength, didDataChange, initialScrollAtEnd, latestInitialScroll, previousDataLength, stylePaddingEnd } = options;
+   const state = ctx.state;
+   const initialScroll = state.initialScroll;
+   if (isOffsetInitialScrollSession(state) || !initialScroll) {
+     return;
+   }
++  // During bootstrap an updated index belongs to the new data, not the mount snapshot.
++  // Keeping the old index can resolve to a different row or to zero after rows are removed.
++  // Completed initial positioning and user-owned scrolling must never be replayed here.
++  if (didDataChange && dataLength > 0 && !initialScrollAtEnd && !state.didFinishInitialScroll && latestInitialScroll && latestInitialScroll.index !== initialScroll.index && (!state.scrollingTo || state.scrollingTo.isInitialScroll)) {
++    if (state.scrollingTo) {
++      cancelImperativeScroll(state);
++    }
++    setInitialScrollTarget(ctx, latestInitialScroll);
++    rearmBootstrapInitialScroll(ctx, {
++      scroll: resolveInitialScrollOffset(ctx, latestInitialScroll),
++      targetIndexSeed: latestInitialScroll.index
++    });
++    return;
++  }
+   const shouldResetDidFinish = !!(state.didFinishInitialScroll && previousDataLength === 0 && dataLength > 0 && initialScroll.index !== void 0);
+   const bootstrapInitialScroll = getBootstrapInitialScrollSession(state);
+   const shouldClearFinishedResizePreservation = !initialScrollAtEnd && didDataChange && dataLength > 0 && state.didFinishInitialScroll && !bootstrapInitialScroll && !shouldResetDidFinish;
+@@ -3302,6 +3351,7 @@ function handleInitialScrollDataChange(ctx, options) {
+       dataLength,
+       didDataChange,
+       initialScrollAtEnd,
++      latestInitialScroll,
+       previousDataLength: previousInitialScrollDataLength,
+       stylePaddingEnd
+     });
+@@ -4404,6 +4454,41 @@ function updateViewabilityForCachedRange(ctx, viewabilityConfigCallbackPairs, sc
+     );
+   }
+ }
++// Active commands own a semantic item (or the end), not an index from an older
++// data snapshot. Bootstrap has its own retargeting owner and is not replayed here.
++function rebaseActiveScrollTarget(ctx) {
++  const state = ctx.state;
++  const target = state.scrollingTo;
++  if (!target || target.isInitialScroll || target.index === void 0) {
++    return;
++  }
++  const { data, keyExtractor } = state.props;
++  const currentItem = data[target.index];
++  if (!target.isScrollToEnd && currentItem !== void 0 && (keyExtractor ? keyExtractor(currentItem, target.index) : target.index) === target.itemKey) {
++    return;
++  }
++  const index = target.isScrollToEnd ? data.length - 1 : data.findIndex((item, index) =>
++    (keyExtractor ? keyExtractor(item, index) : index) === target.itemKey
++  );
++  if (index < 0) {
++    cancelImperativeScroll(state);
++    return;
++  }
++  target.index = index;
++  target.itemKey = getId(state, index);
++}
++function refreshActiveScrollTarget(ctx) {
++  const state = ctx.state;
++  const target = state.scrollingTo;
++  if (!target || target.isInitialScroll || target.index === void 0) {
++    return;
++  }
++  target.offset = calculateOffsetForIndex(ctx, target.index);
++  target.itemSize = getItemSizeAtIndex(ctx, target.index);
++  target.targetOffset = clampScrollOffset(ctx, calculateOffsetWithOffsetPosition(ctx, target.offset, target), target);
++  pinScrollTargetRenderRange(ctx, target.targetOffset, target.index);
++  checkFinishedScroll(ctx);
++}
+ function calculateItemsInView(ctx, params = {}) {
+   const state = ctx.state;
+   batchedUpdates(() => {
+@@ -4528,6 +4613,9 @@ function calculateItemsInView(ctx, params = {}) {
+         }
+       }
+     }
++    if (dataChanged) {
++      rebaseActiveScrollTarget(ctx);
++    }
+     const checkMVCP = doMVCP && !suppressInitialScrollSideEffects ? prepareMVCP(ctx, dataChanged, mvcpAdjustmentSource) : void 0;
+     if (dataChanged) {
+       resetLayoutCachesForDataChange(state);
+@@ -4562,6 +4650,9 @@ function calculateItemsInView(ctx, params = {}) {
+     const scrollBeforeMVCP = state.scroll;
+     const scrollAdjustPendingBeforeMVCP = (_f = peek$(ctx, "scrollAdjustPending")) != null ? _f : 0;
+     checkMVCP == null ? void 0 : checkMVCP();
++    if (dataChanged) {
++      refreshActiveScrollTarget(ctx);
++    }
+     const didMVCPAdjustScroll = !!checkMVCP && (state.scroll !== scrollBeforeMVCP || ((_g = peek$(ctx, "scrollAdjustPending")) != null ? _g : 0) !== scrollAdjustPendingBeforeMVCP);
+     if (didMVCPAdjustScroll) {
+       updateScroll2(state.scroll);
+@@ -6116,7 +6207,49 @@ function ScrollAdjust() {
+   const ctx = useStateContext();
+   const bias = 1e7;
+   const [scrollAdjust, scrollAdjustUserOffset] = useArr$(["scrollAdjust", "scrollAdjustUserOffset"]);
+-  const scrollOffset = (scrollAdjust || 0) + (scrollAdjustUserOffset || 0) + bias;
++  const userOffset = scrollAdjustUserOffset || 0;
++  const committed = React2.useRef({ adjust: scrollAdjust || 0, compensation: 0, userOffset });
++  const adjust = scrollAdjust || 0;
++  const delta = adjust - committed.current.adjust;
++  // requestAdjust has already advanced logical scroll by the full anchor delta.
++  // Android clamps to the shorter content range before native MVCP applies this
++  // sentinel's frame delta. Subtract that clamp once per committed render, not
++  // once per measurement: several size updates can share one native mount.
++  // The pending data-change owner already accounts for its clamp separately.
++  const previousScroll = ctx.state.scroll - delta;
++  const clamp = Platform.OS === "android" && IsNewArchitecture && !ctx.state.pendingNativeMVCPAdjust && delta < 0
++    ? Math.max(0, previousScroll - Math.max(0, getContentSize(ctx) - ctx.state.scrollLength))
++    : 0;
++  const compensation = committed.current.compensation + clamp;
++  const sentinelDelta = delta + clamp + userOffset - committed.current.userOffset;
++  const observer = ctx.state.props.onScrollDiagnostic;
++  // Capture the calculation that this render commits, not mutable state read
++  // later by a native callback. No data, item keys or user text leave the owner.
++  const observation = observer && (delta !== 0 || sentinelDelta !== 0) ? {
++    phase: "adjustment",
++    clampCompensationPx: clamp,
++    contentHeightPx: getContentSize(ctx),
++    lastNativeOffsetPx: ctx.state.lastNativeScroll ?? null,
++    logicalOffsetPx: ctx.state.scroll,
++    pendingDataAppliedPx: ctx.state.pendingNativeMVCPAdjust?.manualApplied ?? null,
++    requestedDeltaPx: delta,
++    rowCount: ctx.state.props.data.length,
++    sentinelDeltaPx: sentinelDelta,
++    viewportHeightPx: ctx.state.scrollLength
++  } : void 0;
++  // Only acknowledge the committed sentinel here; never scroll, schedule work,
++  // or retain an item target. A cancelled render must not consume compensation.
++  React2.useLayoutEffect(() => {
++    committed.current = { adjust, compensation, userOffset };
++    if (observation) {
++      try {
++        observer(observation);
++      } catch {
++        // WHY: an observer must not abort layout or consume scroll ownership.
++      }
++    }
++  });
++  const scrollOffset = adjust + (scrollAdjustUserOffset || 0) + compensation + bias;
+   const horizontal = !!((_a3 = ctx.state) == null ? void 0 : _a3.props.horizontal);
+   return /* @__PURE__ */ React2__namespace.createElement(
+     ReactNative.View,
+@@ -7447,6 +7580,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onMomentumScrollEnd,
+     onRefresh,
+     onScroll: onScrollProp,
++    onScrollDiagnostic,
+     onScrollBeginDrag,
+     onScrollEndDrag,
+     onStartReached,
+@@ -7714,6 +7848,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onMomentumScrollEnd,
+     onReady,
+     onScroll: throttleScrollFn,
++    onScrollDiagnostic,
+     onScrollBeginDrag,
+     onScrollEndDrag,
+     onStartReached,
+@@ -7772,7 +7907,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       true
+     );
+   }
+-  const initialContentOffset = React2.useMemo(() => {
++  // Native contentOffset is a mount seed, not a projection of bootstrap ownership.
++  // Recomputing it after an imperative scroll clears initialScroll can remove the prop:
++  // Android treats contentOffset=null as scrollTo(0, 0), including replayed Fabric commits.
++  const [initialContentOffset] = React2.useState(() => {
+     var _a4, _b2;
+     const initialScroll = state.initialScroll;
+     if (!initialScroll) {
+@@ -7780,7 +7918,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     }
+     const resolvedOffset = (_a4 = initialScroll.contentOffset) != null ? _a4 : resolveInitialScrollOffset(ctx, initialScroll);
+     return usesBootstrapInitialScroll && ((_b2 = state.initialScrollSession) == null ? void 0 : _b2.kind) === "bootstrap" && Platform.OS === "web" ? void 0 : resolvedOffset;
+-  }, [usesBootstrapInitialScroll]);
++  });
+   React2.useLayoutEffect(() => {
+     initializeInitialScrollOnMount(ctx, {
+       alwaysDispatchInitialScroll: shouldInitializeHorizontalRTL,
+diff --git a/react-native.mjs b/react-native.mjs
+index f39ea15c3b8e88c87bc58bce4734f440a8d08aa8..57fe0b7ff781653a9b923feca7b98f500c9c653e 100644
+--- a/react-native.mjs
++++ b/react-native.mjs
+@@ -1683,24 +1683,19 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+         const targetIndex = indexByKey.get(targetId);
+         const newPosition = targetIndex !== void 0 ? positions[targetIndex] : void 0;
+         if (newPosition !== void 0) {
+-          const totalSize = getContentSize(ctx);
+-          let diff = newPosition - prevPosition;
+-          if (diff !== 0 && isEndAnchoredScrollTarget && state.scroll + state.scrollLength > totalSize) {
+-            if (diff > 0) {
+-              diff = Math.max(0, totalSize - state.scroll - state.scrollLength);
+-            } else {
+-              const maxScroll = Math.max(0, totalSize - state.scrollLength);
+-              state.scroll = maxScroll;
+-              state.scrollPending = maxScroll;
+-              diff = 0;
+-            }
+-          }
+-          positionDiff = diff;
++          positionDiff = newPosition - prevPosition;
+           anchorIdForLock = targetId;
+           anchorPositionForLock = newPosition;
+         }
+       }
+-      if (scrollingToViewPosition && scrollingToViewPosition > 0) {
++      // A removed target has no item size. In particular, null is reserved by
++      // addTotalSize for replacing the entire list size, not an absent item key.
++      if (dataChanged && scrollingTo?.isScrollToEnd) {
++        // The end belongs to the content range, not to the former last row.
++        // Hydration may replace that row with a differently sized one. Rebasing
++        // the index cannot carry its old height into the new target's resize.
++        positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - Math.max(0, prevTotalSize - state.scrollLength);
++      } else if (scrollingToViewPosition && scrollingToViewPosition > 0 && targetId != null && scrollTarget >= 0 && scrollTarget < data.length) {
+         const newSize = getItemSize(ctx, targetId, scrollTarget, state.props.data[scrollTarget]);
+         const prevSize = scrollingTo == null ? void 0 : scrollingTo.itemSize;
+         if (newSize !== void 0 && prevSize !== void 0 && newSize !== prevSize) {
+@@ -1711,6 +1706,20 @@ function prepareMVCP(ctx, dataChanged, adjustmentSource) {
+           }
+         }
+       }
++      // Native scrolling already clamps to a shorter end. Include the target's
++      // own size delta before deciding whether an additional MVCP shift is needed.
++      // Applying that delta after the clamp would pull the viewport off the end.
++      const totalSize = getContentSize(ctx);
++      if (positionDiff !== 0 && isEndAnchoredScrollTarget && state.scroll + state.scrollLength > totalSize) {
++        if (positionDiff > 0) {
++          positionDiff = Math.max(0, totalSize - state.scroll - state.scrollLength);
++        } else {
++          const maxScroll = Math.max(0, totalSize - state.scrollLength);
++          state.scroll = maxScroll;
++          state.scrollPending = maxScroll;
++          positionDiff = 0;
++        }
++      }
+       updateAnchorLock(state, {
+         anchorId: anchorIdForLock,
+         anchorPosition: anchorPositionForLock,
+@@ -2146,6 +2155,7 @@ function checkFinishedScrollFrame(ctx) {
+ }
+ function scrollToFallbackOffset(ctx, offset) {
+   var _a3;
++  reportScrollDiagnostic(ctx, "retry", offset, false, !!ctx.state.scrollingTo?.isInitialScroll);
+   (_a3 = ctx.state.refScroller.current) == null ? void 0 : _a3.scrollTo({
+     animated: false,
+     x: ctx.state.props.horizontal ? offset : 0,
+@@ -2213,6 +2223,29 @@ function checkFinishedScrollFallback(ctx) {
+ }
+ 
+ // src/core/doScrollTo.native.ts
++// Optional, content-free dispatch observer. It must never change scroll ownership or propagation.
++function reportScrollDiagnostic(ctx, phase, offset, animated, initial) {
++  const state = ctx.state;
++  const observer = state.props.onScrollDiagnostic;
++  if (!observer) return;
++  try {
++    observer({
++      phase,
++      animated: !!animated,
++      initial: !!initial,
++      offsetPx: offset,
++      logicalOffsetPx: state.scroll,
++      contentHeightPx: getContentSize(ctx),
++      viewportHeightPx: state.scrollLength,
++      rowCount: state.props.data.length,
++      initialPending: !state.didFinishInitialScroll,
++      maintainingEnd: !!(state.maintainingScrollAtEnd || state.pendingMaintainScrollAtEnd),
++      nativeCorrectionPending: !!state.pendingNativeMVCPAdjust
++    });
++  } catch {
++    // WHY: diagnostic failure cannot suppress, repeat, or reject an actual scroll command.
++  }
++}
+ function doScrollTo(ctx, params) {
+   const state = ctx.state;
+   const { animated, horizontal, isInitialScroll, offset } = params;
+@@ -2225,6 +2258,7 @@ function doScrollTo(ctx, params) {
+   const isHorizontal = !!horizontal;
+   const contentSize = isHorizontal ? getContentSize(ctx) : void 0;
+   const nativeOffset = toNativeHorizontalOffset(state, offset, contentSize);
++  reportScrollDiagnostic(ctx, "dispatch", offset, isAnimated, isInitialScroll);
+   scroller.scrollTo({
+     animated: isAnimated,
+     x: isHorizontal ? nativeOffset : 0,
+@@ -2384,6 +2418,7 @@ function scrollTo(ctx, params) {
+     const averageSizeSnapshot = getAverageSizeSnapshot(state);
+     state.scrollingTo = {
+       ...scrollTarget,
++      itemKey: scrollTarget.index !== void 0 ? getId(state, scrollTarget.index) : void 0,
+       ...averageSizeSnapshot ? { averageSizeSnapshot } : {},
+       targetOffset,
+       waitForInitialScrollCompletionFrame
+@@ -2928,12 +2963,26 @@ function startBootstrapInitialScrollOnMount(ctx, options) {
+   }
+ }
+ function handleBootstrapInitialScrollDataChange(ctx, options) {
+-  const { dataLength, didDataChange, initialScrollAtEnd, previousDataLength, stylePaddingEnd } = options;
++  const { dataLength, didDataChange, initialScrollAtEnd, latestInitialScroll, previousDataLength, stylePaddingEnd } = options;
+   const state = ctx.state;
+   const initialScroll = state.initialScroll;
+   if (isOffsetInitialScrollSession(state) || !initialScroll) {
+     return;
+   }
++  // During bootstrap an updated index belongs to the new data, not the mount snapshot.
++  // Keeping the old index can resolve to a different row or to zero after rows are removed.
++  // Completed initial positioning and user-owned scrolling must never be replayed here.
++  if (didDataChange && dataLength > 0 && !initialScrollAtEnd && !state.didFinishInitialScroll && latestInitialScroll && latestInitialScroll.index !== initialScroll.index && (!state.scrollingTo || state.scrollingTo.isInitialScroll)) {
++    if (state.scrollingTo) {
++      cancelImperativeScroll(state);
++    }
++    setInitialScrollTarget(ctx, latestInitialScroll);
++    rearmBootstrapInitialScroll(ctx, {
++      scroll: resolveInitialScrollOffset(ctx, latestInitialScroll),
++      targetIndexSeed: latestInitialScroll.index
++    });
++    return;
++  }
+   const shouldResetDidFinish = !!(state.didFinishInitialScroll && previousDataLength === 0 && dataLength > 0 && initialScroll.index !== void 0);
+   const bootstrapInitialScroll = getBootstrapInitialScrollSession(state);
+   const shouldClearFinishedResizePreservation = !initialScrollAtEnd && didDataChange && dataLength > 0 && state.didFinishInitialScroll && !bootstrapInitialScroll && !shouldResetDidFinish;
+@@ -3281,6 +3330,7 @@ function handleInitialScrollDataChange(ctx, options) {
+       dataLength,
+       didDataChange,
+       initialScrollAtEnd,
++      latestInitialScroll,
+       previousDataLength: previousInitialScrollDataLength,
+       stylePaddingEnd
+     });
+@@ -4383,6 +4433,41 @@ function updateViewabilityForCachedRange(ctx, viewabilityConfigCallbackPairs, sc
+     );
+   }
+ }
++// Active commands own a semantic item (or the end), not an index from an older
++// data snapshot. Bootstrap has its own retargeting owner and is not replayed here.
++function rebaseActiveScrollTarget(ctx) {
++  const state = ctx.state;
++  const target = state.scrollingTo;
++  if (!target || target.isInitialScroll || target.index === void 0) {
++    return;
++  }
++  const { data, keyExtractor } = state.props;
++  const currentItem = data[target.index];
++  if (!target.isScrollToEnd && currentItem !== void 0 && (keyExtractor ? keyExtractor(currentItem, target.index) : target.index) === target.itemKey) {
++    return;
++  }
++  const index = target.isScrollToEnd ? data.length - 1 : data.findIndex((item, index) =>
++    (keyExtractor ? keyExtractor(item, index) : index) === target.itemKey
++  );
++  if (index < 0) {
++    cancelImperativeScroll(state);
++    return;
++  }
++  target.index = index;
++  target.itemKey = getId(state, index);
++}
++function refreshActiveScrollTarget(ctx) {
++  const state = ctx.state;
++  const target = state.scrollingTo;
++  if (!target || target.isInitialScroll || target.index === void 0) {
++    return;
++  }
++  target.offset = calculateOffsetForIndex(ctx, target.index);
++  target.itemSize = getItemSizeAtIndex(ctx, target.index);
++  target.targetOffset = clampScrollOffset(ctx, calculateOffsetWithOffsetPosition(ctx, target.offset, target), target);
++  pinScrollTargetRenderRange(ctx, target.targetOffset, target.index);
++  checkFinishedScroll(ctx);
++}
+ function calculateItemsInView(ctx, params = {}) {
+   const state = ctx.state;
+   batchedUpdates(() => {
+@@ -4507,6 +4592,9 @@ function calculateItemsInView(ctx, params = {}) {
+         }
+       }
+     }
++    if (dataChanged) {
++      rebaseActiveScrollTarget(ctx);
++    }
+     const checkMVCP = doMVCP && !suppressInitialScrollSideEffects ? prepareMVCP(ctx, dataChanged, mvcpAdjustmentSource) : void 0;
+     if (dataChanged) {
+       resetLayoutCachesForDataChange(state);
+@@ -4541,6 +4629,9 @@ function calculateItemsInView(ctx, params = {}) {
+     const scrollBeforeMVCP = state.scroll;
+     const scrollAdjustPendingBeforeMVCP = (_f = peek$(ctx, "scrollAdjustPending")) != null ? _f : 0;
+     checkMVCP == null ? void 0 : checkMVCP();
++    if (dataChanged) {
++      refreshActiveScrollTarget(ctx);
++    }
+     const didMVCPAdjustScroll = !!checkMVCP && (state.scroll !== scrollBeforeMVCP || ((_g = peek$(ctx, "scrollAdjustPending")) != null ? _g : 0) !== scrollAdjustPendingBeforeMVCP);
+     if (didMVCPAdjustScroll) {
+       updateScroll2(state.scroll);
+@@ -6095,7 +6186,49 @@ function ScrollAdjust() {
+   const ctx = useStateContext();
+   const bias = 1e7;
+   const [scrollAdjust, scrollAdjustUserOffset] = useArr$(["scrollAdjust", "scrollAdjustUserOffset"]);
+-  const scrollOffset = (scrollAdjust || 0) + (scrollAdjustUserOffset || 0) + bias;
++  const userOffset = scrollAdjustUserOffset || 0;
++  const committed = React2.useRef({ adjust: scrollAdjust || 0, compensation: 0, userOffset });
++  const adjust = scrollAdjust || 0;
++  const delta = adjust - committed.current.adjust;
++  // requestAdjust has already advanced logical scroll by the full anchor delta.
++  // Android clamps to the shorter content range before native MVCP applies this
++  // sentinel's frame delta. Subtract that clamp once per committed render, not
++  // once per measurement: several size updates can share one native mount.
++  // The pending data-change owner already accounts for its clamp separately.
++  const previousScroll = ctx.state.scroll - delta;
++  const clamp = Platform.OS === "android" && IsNewArchitecture && !ctx.state.pendingNativeMVCPAdjust && delta < 0
++    ? Math.max(0, previousScroll - Math.max(0, getContentSize(ctx) - ctx.state.scrollLength))
++    : 0;
++  const compensation = committed.current.compensation + clamp;
++  const sentinelDelta = delta + clamp + userOffset - committed.current.userOffset;
++  const observer = ctx.state.props.onScrollDiagnostic;
++  // Capture the calculation that this render commits, not mutable state read
++  // later by a native callback. No data, item keys or user text leave the owner.
++  const observation = observer && (delta !== 0 || sentinelDelta !== 0) ? {
++    phase: "adjustment",
++    clampCompensationPx: clamp,
++    contentHeightPx: getContentSize(ctx),
++    lastNativeOffsetPx: ctx.state.lastNativeScroll ?? null,
++    logicalOffsetPx: ctx.state.scroll,
++    pendingDataAppliedPx: ctx.state.pendingNativeMVCPAdjust?.manualApplied ?? null,
++    requestedDeltaPx: delta,
++    rowCount: ctx.state.props.data.length,
++    sentinelDeltaPx: sentinelDelta,
++    viewportHeightPx: ctx.state.scrollLength
++  } : void 0;
++  // Only acknowledge the committed sentinel here; never scroll, schedule work,
++  // or retain an item target. A cancelled render must not consume compensation.
++  React2.useLayoutEffect(() => {
++    committed.current = { adjust, compensation, userOffset };
++    if (observation) {
++      try {
++        observer(observation);
++      } catch {
++        // WHY: an observer must not abort layout or consume scroll ownership.
++      }
++    }
++  });
++  const scrollOffset = adjust + (scrollAdjustUserOffset || 0) + compensation + bias;
+   const horizontal = !!((_a3 = ctx.state) == null ? void 0 : _a3.props.horizontal);
+   return /* @__PURE__ */ React2.createElement(
+     View$1,
+@@ -7426,6 +7559,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onMomentumScrollEnd,
+     onRefresh,
+     onScroll: onScrollProp,
++    onScrollDiagnostic,
+     onScrollBeginDrag,
+     onScrollEndDrag,
+     onStartReached,
+@@ -7693,6 +7827,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onMomentumScrollEnd,
+     onReady,
+     onScroll: throttleScrollFn,
++    onScrollDiagnostic,
+     onScrollBeginDrag,
+     onScrollEndDrag,
+     onStartReached,
+@@ -7751,7 +7886,10 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       true
+     );
+   }
+-  const initialContentOffset = useMemo(() => {
++  // Native contentOffset is a mount seed, not a projection of bootstrap ownership.
++  // Recomputing it after an imperative scroll clears initialScroll can remove the prop:
++  // Android treats contentOffset=null as scrollTo(0, 0), including replayed Fabric commits.
++  const [initialContentOffset] = useState(() => {
+     var _a4, _b2;
+     const initialScroll = state.initialScroll;
+     if (!initialScroll) {
+@@ -7759,7 +7897,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     }
+     const resolvedOffset = (_a4 = initialScroll.contentOffset) != null ? _a4 : resolveInitialScrollOffset(ctx, initialScroll);
+     return usesBootstrapInitialScroll && ((_b2 = state.initialScrollSession) == null ? void 0 : _b2.kind) === "bootstrap" && Platform.OS === "web" ? void 0 : resolvedOffset;
+-  }, [usesBootstrapInitialScroll]);
++  });
+   useLayoutEffect(() => {
+     initializeInitialScrollOnMount(ctx, {
+       alwaysDispatchInitialScroll: shouldInitializeHorizontalRTL,

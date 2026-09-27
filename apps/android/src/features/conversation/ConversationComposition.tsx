@@ -60,12 +60,14 @@ export function ConversationComposition(
     props.read.onLoadTurnItems,
   );
 
-  useConversationAndroidBack(
-    scoped.queueVisibilityBinding.inlineQueueExpanded,
-    scoped.queueVisibilityBinding.closeInlineQueueOverlay,
-    props.surface.compact,
-    props.surface.onBack,
-  );
+  useConversationAndroidBack({
+    closeInlineQueueOverlay: scoped.queueVisibilityBinding.closeInlineQueueOverlay,
+    closeThreadSearch: timelineRead.timelineSearchActionsBinding.closeThreadSearch,
+    compact: props.surface.compact,
+    inlineQueueExpanded: scoped.queueVisibilityBinding.inlineQueueExpanded,
+    onBack: props.surface.onBack,
+    threadSearchVisible: scoped.timelineState.timelineSearchStateBinding.threadSearchVisible,
+  });
   const { composerCommands, getStableTransferAccess } = useConversationComposerCommands({
     props,
     scoped,

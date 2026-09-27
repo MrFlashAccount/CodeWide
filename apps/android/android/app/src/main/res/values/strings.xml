@@ -4,4 +4,6 @@
   <string name="voice_capture_notification_channel">Voice input</string>
   <string name="voice_capture_notification_title">Voice session is active</string>
   <string name="voice_capture_notification_text">CodeWide is using the microphone</string>
+  <string name="voice_capture_notification_paused">Connecting voice. Microphone paused; offline speech is not sent.</string>
+  <string name="voice_capture_notification_muted">Voice session active. Microphone off.</string>
 </resources>

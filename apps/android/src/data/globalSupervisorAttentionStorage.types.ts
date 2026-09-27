@@ -18,7 +18,7 @@ export type GlobalSupervisorAttentionEvent = {
 type AttentionStorageCommon = {
   readonly id: string;
   readonly observedAt: number;
-  readonly rowKind: "attention" | "relation";
+  readonly rowKind: "attention" | "relation" | "speechPolicy";
   readonly supervisorConnectionId: string;
   readonly supervisorThreadId: string;
   readonly workerConnectionId: string;
@@ -45,9 +45,18 @@ export type GlobalSupervisorAttentionStorageRow = AttentionStorageCommon & {
   readonly state: "acknowledged" | "pending";
 };
 
+export type GlobalSupervisorSpeechPolicyStorageRow = AttentionStorageCommon & {
+  readonly policy:
+    | { readonly mode: "muted" }
+    | { readonly mode: "snoozed"; readonly until: number };
+  readonly rowKind: "speechPolicy";
+  readonly workerThreadId: string;
+};
+
 export type GlobalSupervisorAttentionStoredRow =
   | GlobalSupervisorAttentionStorageRow
-  | GlobalSupervisorRelationStorageRow;
+  | GlobalSupervisorRelationStorageRow
+  | GlobalSupervisorSpeechPolicyStorageRow;
 
 export type GlobalSupervisorAttentionStorageChange =
   | { readonly row: GlobalSupervisorAttentionStoredRow; readonly type: "put" }

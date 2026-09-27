@@ -108,7 +108,6 @@ export function WorkspaceThreadList({
                     : sidebarListState(
                         mobileRemoteSearchResource.status,
                         mobileRemoteSearchResource.error,
-                        false,
                       ),
                 filter: sidebarFilter,
                 globalVoice,

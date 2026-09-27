@@ -11,6 +11,7 @@ export function useConnectionProjection(
   connectionState: ConnectionStateModel | null,
 ) {
   const connectionStateRows = useSelector(() => connectionState?.rows$.get() ?? []);
+  const health = useSelector(() => connectionState?.health$.get() ?? {});
   const connectionProfileQuery = useLiveQuery(() => profiles?.collection, [profiles]);
   const connectionProfiles =
     profiles?.project(
@@ -23,6 +24,7 @@ export function useConnectionProjection(
       return state === undefined
         ? {
             ...profile,
+            health: health[profile.id],
             lastError: null,
             lastErrorAt: null,
             state: profile.enabled ? ("connecting" as const) : ("offline" as const),
@@ -32,6 +34,7 @@ export function useConnectionProjection(
             // `live` is a user-visible claim that foreground RPC is available. The
             // native engine publishes both axes; never promote a stale or partial
             // transport state to Live when it cannot serve a request.
+            health: health[profile.id],
             lastError: state.lastError,
             lastErrorAt: state.lastErrorAt,
             state: connectionDisplayState(state),

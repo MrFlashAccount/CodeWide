@@ -57,9 +57,8 @@ it("preserves conversation composition integration contracts", () => {
   expect(ownerConversationHistoryStatus).toContain(
     "const activity = useThreadHistoryActivity(model, resourceId)",
   );
-  expect(ownerConversationHistoryStatus).toContain(
-    'const connecting = server?.status === "connecting"',
-  );
+  // Stable subtitle content through connection transitions is covered by
+  // v1-connection-health.render.test.tsx rather than this presenter's local variables.
   expect(ownerConversationHistoryStatus).toContain('activity.status !== "loading-history"');
   expect(ownerConversationHistoryStatus).toContain('activity.status === "background-retrying"');
   expect(ownerConversationHistoryStatus).toContain('testID="history-loading-indicator"');

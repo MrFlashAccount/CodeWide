@@ -16,6 +16,7 @@ import {
 import { NativeEventEmitter, NativeModules } from "react-native";
 import { shouldFlushLiveEventsImmediately } from "../data/live-event-priority";
 import { unknownRecord } from "../data/unknownRecord";
+import { parseConnectionPath } from "../data/connectionPath";
 import {
   incrementDiagnosticMetric,
   liveStreamMetricKey,
@@ -61,6 +62,7 @@ type NativeLiveEventType = Extract<
 
 type NativeEngineState = {
   error?: string;
+  path?: unknown;
   rpcAvailable: boolean;
   state: RemoteConnectionState;
 };
@@ -227,6 +229,10 @@ export class NativeEngineSession implements RpcClient {
         if (typeof state.rpcAvailable !== "boolean") {
           throw new Error("Native engine state omitted RPC availability");
         }
+        this.#connectionState.setConnectionPath?.(
+          this.connectionId,
+          parseConnectionPath(state.path),
+        );
         const generation = ++this.#stateGeneration;
         if (state.state === "live") {
           // The transport can announce caught-up after it emitted the final

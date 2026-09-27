@@ -5,25 +5,51 @@ import {
   type GlobalSupervisorToolCapabilities,
 } from "../src/data/globalSupervisorToolRouter";
 import { globalSupervisorQualifiedChatRef } from "../src/data/globalSupervisorBinding";
+import { globalSupervisorAttachmentLimits } from "../src/data/globalSupervisorChatAttachments";
 
 const SUPERVISOR = globalSupervisorQualifiedChatRef("home-server", "supervisor-thread");
 
 function capabilities(): GlobalSupervisorToolCapabilities {
   return {
     assertLiveTarget: vi.fn(),
-    createChat: vi.fn(async ({ connectionId }) =>
-      globalSupervisorQualifiedChatRef(connectionId, "created-thread"),
-    ),
+    startTask: vi.fn(async ({ commandId, connectionId }) => ({
+      chat: globalSupervisorQualifiedChatRef(connectionId, "created-thread"),
+      commandId,
+      delivery: "durablyQueued" as const,
+    })),
     deriveTargetSendCommandId: vi.fn(
       async ({ connectionId, requestId }) => `opaque:${connectionId}:${String(requestId)}`,
     ),
     deriveWorkerCreationSource: vi.fn(async () => "worker-source"),
     followChat: vi.fn(async () => undefined),
+    findChat: vi.fn(async () => ({ status: "notFound" as const })),
+    inspectChat: vi.fn(async (target) => ({ target, turn: null })),
+    interruptChat: vi.fn(async (target) => ({
+      status: "alreadyIdle" as const,
+      target,
+      turnId: null,
+    })),
+    listActiveWork: vi.fn(async () => ({ items: [], truncated: false })),
+    listChatAttachments: vi.fn(async (target) => ({ items: [], target, truncated: false })),
     listChats: vi.fn(async () => ({ cursor: null, items: [] })),
     readChat: vi.fn(async () => ({ cursor: null, items: [] })),
+    readChatAttachment: vi.fn(async ({ attachmentId, offset, target }) => ({
+      attachmentId,
+      contentType: "text/markdown",
+      limitReached: false,
+      name: "report.md",
+      nextOffset: null,
+      offset,
+      target,
+      text: "report",
+      totalBytes: 6,
+      truncated: false,
+    })),
     respond: vi.fn(async () => undefined),
+    respondToRequest: vi.fn(async ({ eventId }) => ({ eventId, responded: true as const })),
     sendText: vi.fn(async ({ commandId }) => commandId),
     unfollowChat: vi.fn(async () => undefined),
+    setSpokenAttention: vi.fn(async () => ({ mode: "active" as const })),
   };
 }
 
@@ -52,6 +78,109 @@ describe("GlobalSupervisorToolRouter", () => {
       target: { connectionId: "target-server", threadId: "target-thread" },
     });
     expect(lower.respond).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes current-state inspection by qualified identity", async () => {
+    const lower = capabilities();
+    const router = createGlobalSupervisorToolRouter(lower);
+    await router.handle({
+      connectionId: "home-server",
+      params: {
+        arguments: { connectionId: "target-server", threadId: "target-thread" },
+        callId: "call-inspect",
+        namespace: null,
+        threadId: "supervisor-thread",
+        tool: "inspectChat",
+        turnId: "turn-inspect",
+      },
+      requestId: "inspect-request",
+      supervisor: SUPERVISOR,
+    });
+
+    expect(lower.inspectChat).toHaveBeenCalledWith({
+      connectionId: "target-server",
+      threadId: "target-thread",
+    });
+    expect(lower.respond).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes attachment listing and bounded text reads by qualified identity", async () => {
+    const lower = capabilities();
+    const router = createGlobalSupervisorToolRouter(lower);
+    const attachmentId = `attachment-v1-${"a".repeat(32)}`;
+    const envelope = (tool: "listChatAttachments" | "readChatAttachment", args: unknown) => ({
+      arguments: args,
+      callId: `call-${tool}`,
+      namespace: null,
+      threadId: SUPERVISOR.threadId,
+      tool,
+      turnId: `turn-${tool}`,
+    });
+
+    await router.handle({
+      connectionId: SUPERVISOR.connectionId,
+      params: envelope("listChatAttachments", {
+        connectionId: "target-server",
+        threadId: "target-thread",
+      }),
+      requestId: "list-attachments",
+      supervisor: SUPERVISOR,
+    });
+    await router.handle({
+      connectionId: SUPERVISOR.connectionId,
+      params: envelope("readChatAttachment", {
+        attachmentId,
+        connectionId: "target-server",
+        offset: 65_536,
+        threadId: "target-thread",
+      }),
+      requestId: "read-attachment",
+      supervisor: SUPERVISOR,
+    });
+
+    expect(lower.listChatAttachments).toHaveBeenCalledWith({
+      connectionId: "target-server",
+      threadId: "target-thread",
+    });
+    expect(lower.readChatAttachment).toHaveBeenCalledWith({
+      attachmentId,
+      offset: 65_536,
+      target: { connectionId: "target-server", threadId: "target-thread" },
+    });
+    expect(lower.respond).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects forged attachment identities and out-of-range offsets before execution", async () => {
+    const lower = capabilities();
+    const router = createGlobalSupervisorToolRouter(lower);
+    const call = async (attachmentId: string, offset: number): Promise<void> =>
+      router.handle({
+        connectionId: SUPERVISOR.connectionId,
+        params: {
+          arguments: {
+            attachmentId,
+            connectionId: "target-server",
+            offset,
+            threadId: "target-thread",
+          },
+          callId: "call-invalid-attachment",
+          namespace: null,
+          threadId: SUPERVISOR.threadId,
+          tool: "readChatAttachment",
+          turnId: "turn-invalid-attachment",
+        },
+        requestId: `invalid-${attachmentId}-${String(offset)}`,
+        supervisor: SUPERVISOR,
+      });
+
+    await call("/private/report.md", 0);
+    await call(
+      `attachment-v1-${"a".repeat(32)}`,
+      globalSupervisorAttachmentLimits.textTotalMaxBytes,
+    );
+
+    expect(lower.readChatAttachment).not.toHaveBeenCalled();
+    expect(lower.respond).toHaveBeenCalledTimes(2);
   });
 
   it("uses one request-derived command identity for one explicit send", async () => {
@@ -83,11 +212,11 @@ describe("GlobalSupervisorToolRouter", () => {
     expect(lower.sendText).toHaveBeenNthCalledWith(2, expected);
   });
 
-  it("routes create, follow and unfollow through the exact supervisor relation", async () => {
+  it("routes atomic start, follow and unfollow through the exact supervisor relation", async () => {
     const lower = capabilities();
     const router = createGlobalSupervisorToolRouter(lower);
     const envelope = (
-      tool: "createChat" | "followChat" | "unfollowChat",
+      tool: "startTask" | "followChat" | "unfollowChat",
       argumentsValue: unknown,
     ) => ({
       arguments: argumentsValue,
@@ -100,7 +229,11 @@ describe("GlobalSupervisorToolRouter", () => {
 
     await router.handle({
       connectionId: SUPERVISOR.connectionId,
-      params: envelope("createChat", { connectionId: "target-server", cwd: null }),
+      params: envelope("startTask", {
+        connectionId: "target-server",
+        cwd: null,
+        objective: "Implement the objective",
+      }),
       requestId: "create-request",
       supervisor: SUPERVISOR,
     });
@@ -123,9 +256,11 @@ describe("GlobalSupervisorToolRouter", () => {
       supervisor: SUPERVISOR,
     });
 
-    expect(lower.createChat).toHaveBeenCalledWith({
+    expect(lower.startTask).toHaveBeenCalledWith({
+      commandId: "opaque:home-server:create-request",
       connectionId: "target-server",
       cwd: null,
+      objective: "Implement the objective",
       source: "worker-source",
       supervisor: SUPERVISOR,
     });
@@ -137,6 +272,87 @@ describe("GlobalSupervisorToolRouter", () => {
       connectionId: "target-server",
       threadId: "target-thread",
     });
+  });
+
+  it("admits only an explicit typed answer tied to the exact request event", async () => {
+    const lower = capabilities();
+    const router = createGlobalSupervisorToolRouter(lower);
+    const envelope = (decision: string) => ({
+      arguments: {
+        answer: { decision, kind: "approval" },
+        connectionId: "target-server",
+        eventId: "request:exact-event",
+        threadId: "target-thread",
+      },
+      callId: `call-${decision}`,
+      namespace: null,
+      threadId: SUPERVISOR.threadId,
+      tool: "respondToRequest",
+      turnId: `turn-${decision}`,
+    });
+
+    await router.handle({
+      connectionId: SUPERVISOR.connectionId,
+      params: envelope("accept"),
+      requestId: "valid-response",
+      supervisor: SUPERVISOR,
+    });
+    await router.handle({
+      connectionId: SUPERVISOR.connectionId,
+      params: envelope("approveWhatever"),
+      requestId: "invalid-response",
+      supervisor: SUPERVISOR,
+    });
+
+    expect(lower.respondToRequest).toHaveBeenCalledExactlyOnceWith({
+      answer: { decision: "accept", kind: "approval" },
+      eventId: "request:exact-event",
+      target: { connectionId: "target-server", threadId: "target-thread" },
+    });
+    expect(lower.respond).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestId: "invalid-response" }),
+    );
+  });
+
+  it("routes a bounded per-chat snooze and rejects an unbounded duration", async () => {
+    const lower = capabilities();
+    const router = createGlobalSupervisorToolRouter(lower);
+    const envelope = (durationMinutes: number) => ({
+      arguments: {
+        connectionId: "target-server",
+        durationMinutes,
+        mode: "snoozed",
+        threadId: "target-thread",
+      },
+      callId: `call-${durationMinutes}`,
+      namespace: null,
+      threadId: SUPERVISOR.threadId,
+      tool: "setSpokenAttention",
+      turnId: `turn-${durationMinutes}`,
+    });
+
+    await router.handle({
+      connectionId: SUPERVISOR.connectionId,
+      params: envelope(30),
+      requestId: "valid-snooze",
+      supervisor: SUPERVISOR,
+    });
+    await router.handle({
+      connectionId: SUPERVISOR.connectionId,
+      params: envelope(10_081),
+      requestId: "invalid-snooze",
+      supervisor: SUPERVISOR,
+    });
+
+    expect(lower.setSpokenAttention).toHaveBeenCalledExactlyOnceWith({
+      durationMinutes: 30,
+      mode: "snoozed",
+      supervisor: SUPERVISOR,
+      target: { connectionId: "target-server", threadId: "target-thread" },
+    });
+    expect(lower.respond).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestId: "invalid-snooze" }),
+    );
   });
 
   it("derives distinct target ids from distinct request identities even with one call id", async () => {
@@ -192,6 +408,7 @@ describe("GlobalSupervisorToolRouter", () => {
     });
 
     expect(lower.listChats).not.toHaveBeenCalled();
+    expect(lower.inspectChat).not.toHaveBeenCalled();
     expect(lower.readChat).not.toHaveBeenCalled();
     expect(lower.sendText).not.toHaveBeenCalled();
     expect(lower.respond).toHaveBeenCalledWith({

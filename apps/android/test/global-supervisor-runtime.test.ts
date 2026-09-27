@@ -42,10 +42,13 @@ function attentionFixture(): GlobalSupervisorAttentionOwner {
     ingestPendingRequests: vi.fn(async () => undefined),
     ingestSnapshot: vi.fn(async () => undefined),
     pending: vi.fn(async () => []),
+    pendingForSpeech: vi.fn(async () => []),
     pendingCount: vi.fn(async () => 0),
     ready: Promise.resolve(),
     subscribe: vi.fn(() => ({ unsubscribe: vi.fn() })),
     subscribeAll: vi.fn(() => ({ unsubscribe: vi.fn() })),
+    spokenAttention: vi.fn(async () => ({ mode: "active" as const })),
+    setSpokenAttention: vi.fn(async () => undefined),
     unfollow: vi.fn(async () => undefined),
   };
 }
@@ -56,6 +59,7 @@ describe("GlobalSupervisorRuntime", () => {
     const rpcAfterAttach = vi.fn(async () => REALTIME_VOICES);
     const runtime = createGlobalSupervisorRuntime({
       attention: attentionFixture(),
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
         setPlaybackLevel: vi.fn(),
@@ -73,6 +77,7 @@ describe("GlobalSupervisorRuntime", () => {
       getSession: () => session,
       getSupervisor: () => null,
       ingress: createGlobalSupervisorRuntimeIngress(),
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => false,
       microphoneLeases: createV1MicrophoneLeaseRegistry(() => "native-token"),
       now: () => 0,
@@ -121,6 +126,7 @@ describe("GlobalSupervisorRuntime", () => {
     const reattachRuntime = vi.fn(async () => undefined);
     const runtime = createGlobalSupervisorRuntime({
       attention: attentionFixture(),
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
         setPlaybackLevel: vi.fn(),
@@ -138,6 +144,7 @@ describe("GlobalSupervisorRuntime", () => {
         unsubscribeLive: vi.fn(async () => undefined),
       }),
       ingress: createGlobalSupervisorRuntimeIngress(),
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => connected,
       microphoneLeases: createV1MicrophoneLeaseRegistry(() => "native-token"),
       now: () => 0,
@@ -202,6 +209,12 @@ describe("GlobalSupervisorRuntime", () => {
       if (method === "thread/realtime/start") {
         expect(params).toMatchObject({
           includeStartupContext: false,
+          initialItems: [
+            {
+              role: "developer",
+              text: expect.stringMatching(/Character:\nCalm and candid/u),
+            },
+          ],
           outputModality: "audio",
           realtimeStartInstructions: expect.stringMatching(
             /every standard Codex capability[\s\S]*Calm and candid/,
@@ -228,6 +241,13 @@ describe("GlobalSupervisorRuntime", () => {
             params: { sdp: "v=0\r\no=answer", threadId: "supervisor" },
           },
           sequence: 2,
+          threadId: "supervisor",
+        });
+      }
+      if (method === "thread/settings/update") {
+        expect(params).toEqual({
+          effort: "high",
+          model: "gpt-background",
           threadId: "supervisor",
         });
       }
@@ -274,6 +294,11 @@ describe("GlobalSupervisorRuntime", () => {
     let uuidIndex = 0;
     const runtime = createGlobalSupervisorRuntime({
       attention,
+      backgroundSettings: async () => ({
+        effort: "high",
+        model: "gpt-background",
+        status: "selected" as const,
+      }),
       acquireForegroundLease: async () => ({
         release: foregroundRelease,
         setPlaybackLevel,
@@ -291,6 +316,7 @@ describe("GlobalSupervisorRuntime", () => {
         unsubscribeLive,
       }),
       ingress,
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => true,
       microphoneLeases,
       now: () => now,
@@ -396,7 +422,8 @@ describe("GlobalSupervisorRuntime", () => {
 
     await activation.setMicrophoneMuted(true);
     await activation.setMicrophoneMuted(false);
-    expect(setMicrophoneMuted.mock.calls).toEqual([[true], [false]]);
+    // Capture is first enabled only after the realtime handshake, then follows explicit intent.
+    expect(setMicrophoneMuted.mock.calls).toEqual([[false], [true], [false]]);
     expect(stopWebRtc).not.toHaveBeenCalled();
     expect(runtime.isActive()).toBe(true);
 
@@ -429,6 +456,7 @@ describe("GlobalSupervisorRuntime", () => {
       "thread/realtime/listVoices",
       "attention-on",
       "thread/realtime/listVoices",
+      "thread/settings/update",
       "webrtc",
       "subscribe",
       "thread/realtime/start",
@@ -447,6 +475,7 @@ describe("GlobalSupervisorRuntime", () => {
     const foregroundRelease = vi.fn(async () => undefined);
     const published: Array<{ readonly activationId: string; readonly event: string }> = [];
     const terminalCallbacks: Array<() => void> = [];
+    const mediaStateCallbacks: Array<(connected: boolean) => void> = [];
     const realtimeStarts: unknown[] = [];
     const realtimeAppends: unknown[] = [];
     let pendingAttention: readonly GlobalSupervisorAttentionEvent[] = [];
@@ -504,7 +533,7 @@ describe("GlobalSupervisorRuntime", () => {
     });
     const identifiers = ["logical-activation", "channel-before-vpn", "channel-after-vpn"];
     const attention = attentionFixture();
-    vi.mocked(attention.pending).mockImplementation(async (_home, limit = 32) =>
+    vi.mocked(attention.pendingForSpeech).mockImplementation(async (_home, limit = 32) =>
       pendingAttention.slice(0, limit),
     );
     vi.mocked(attention.acknowledge).mockImplementation(async (_home, eventId) => {
@@ -512,6 +541,7 @@ describe("GlobalSupervisorRuntime", () => {
     });
     const runtime = createGlobalSupervisorRuntime({
       attention,
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
       acquireForegroundLease: async () => ({
         release: foregroundRelease,
         setPlaybackLevel: vi.fn(),
@@ -536,18 +566,22 @@ describe("GlobalSupervisorRuntime", () => {
         unsubscribeLive,
       }),
       ingress,
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => true,
       microphoneLeases: createV1MicrophoneLeaseRegistry(() => "microphone-lease"),
       now: () => 0,
       personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
       preferredVoice: async () => "cove",
       randomUUID: () => identifiers.shift() ?? "unexpected-id",
-      reconnectPolicy: { retryDelaysMs: [0] },
+      reconnectPolicy: { stableConnectionMs: 10_000, retryBaseMs: 0, maxRetryMs: 30_000 },
       recordStartupStage: vi.fn(),
       requestMicrophonePermission: vi.fn(async () => "granted"),
       rpcAfterAttach,
-      startWebRtc: vi.fn(async ({ onTerminal }) => {
-        terminalCallbacks.push(onTerminal);
+      startWebRtc: vi.fn(async (options) => {
+        terminalCallbacks.push(options.onTerminal);
+        if (options.mode === "interactive" && options.onMediaConnection !== undefined) {
+          mediaStateCallbacks.push(options.onMediaConnection);
+        }
         return {
           acceptAnswer: vi.fn(async () => undefined),
           offerSdp: "v=0\r\no=offer",
@@ -623,10 +657,27 @@ describe("GlobalSupervisorRuntime", () => {
     });
     expect(realtimeAppends[1]).toMatchObject({
       role: "developer",
+      text: expect.stringContaining("session has recovered"),
+      threadId: "supervisor",
+    });
+    // Worker attention waits for the existing assistant-transcript completion signal.
+    ingress.publishLive("home", {
+      channelId: activeChannel,
+      event: "payload",
+      payload: {
+        method: "thread/realtime/transcript/done",
+        params: { role: "assistant", text: "I'm back", threadId: HOME.threadId },
+      },
+      sequence: nextSequence++,
+      threadId: HOME.threadId,
+    });
+    await vi.waitFor(() => expect(realtimeAppends).toHaveLength(3));
+    expect(realtimeAppends[2]).toMatchObject({
+      role: "developer",
       text: expect.stringMatching(/already present in startup context[\s\S]*worker-completed/),
       threadId: "supervisor",
     });
-    expect(JSON.stringify(realtimeAppends[1])).not.toContain(
+    expect(JSON.stringify(realtimeAppends[2])).not.toContain(
       "Worker completed while the route changed.",
     );
     expect(
@@ -636,7 +687,19 @@ describe("GlobalSupervisorRuntime", () => {
     ).toHaveLength(1);
     expect(foregroundRelease).not.toHaveBeenCalled();
 
+    mediaStateCallbacks[1]?.(false);
+    mediaStateCallbacks[1]?.(true);
+    mediaStateCallbacks[1]?.(true);
+    await vi.waitFor(() => expect(realtimeAppends).toHaveLength(4));
+    expect(realtimeAppends[3]).toMatchObject({
+      text: expect.stringContaining("session has recovered"),
+    });
+    expect(realtimeStarts).toHaveLength(2);
+
     await activation.stop();
+    mediaStateCallbacks[1]?.(false);
+    mediaStateCallbacks[1]?.(true);
+    expect(realtimeAppends).toHaveLength(4);
     expect(foregroundRelease).toHaveBeenCalledOnce();
   });
 
@@ -711,6 +774,7 @@ describe("GlobalSupervisorRuntime", () => {
     ];
     const runtime = createGlobalSupervisorRuntime({
       attention: attentionFixture(),
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
       acquireForegroundLease: async () => ({
         release: foregroundRelease,
         setPlaybackLevel: vi.fn(),
@@ -730,6 +794,7 @@ describe("GlobalSupervisorRuntime", () => {
         unsubscribeLive,
       }),
       ingress,
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => true,
       microphoneLeases: leases,
       now: () => 0,
@@ -777,6 +842,13 @@ describe("GlobalSupervisorRuntime", () => {
       assistant: { activationId: "logical-activation", kind: "globalSupervisor" },
       phase: "assistantOwned",
     });
+    expect(
+      rpcAfterAttach.mock.calls.filter(
+        (call) =>
+          call[1] === "thread/realtime/appendText" &&
+          JSON.stringify(call[2]).includes("session has recovered"),
+      ),
+    ).toHaveLength(0);
 
     await activation.stop();
     expect(activeTransports).toBe(0);
@@ -856,6 +928,7 @@ describe("GlobalSupervisorRuntime", () => {
     const identifiers = ["activation-old", "channel-old", "activation-new", "channel-new"];
     const runtime = createGlobalSupervisorRuntime({
       attention: attentionFixture(),
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
         setPlaybackLevel: vi.fn(),
@@ -873,6 +946,7 @@ describe("GlobalSupervisorRuntime", () => {
         unsubscribeLive,
       }),
       ingress,
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => true,
       microphoneLeases: createV1MicrophoneLeaseRegistry(() => "native-token"),
       now: () => 0,
@@ -976,6 +1050,7 @@ describe("GlobalSupervisorRuntime", () => {
     const identifiers = ["activation-1", "channel-1", "activation-2", "channel-2"];
     const runtime = createGlobalSupervisorRuntime({
       attention: attentionFixture(),
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
         setPlaybackLevel: vi.fn(),
@@ -993,6 +1068,7 @@ describe("GlobalSupervisorRuntime", () => {
         unsubscribeLive,
       }),
       ingress,
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => true,
       microphoneLeases: createV1MicrophoneLeaseRegistry(() => "native-token"),
       now: () => 0,
@@ -1039,11 +1115,23 @@ describe("GlobalSupervisorRuntime", () => {
     expect(binding.bind).not.toHaveBeenCalled();
     expect(realtimeStartPayloads).toHaveLength(2);
     expect(realtimeStartPayloads[0]).toMatchObject({
+      initialItems: [
+        {
+          role: "developer",
+          text: expect.stringContaining("Rules:\nAlways answer in English"),
+        },
+      ],
       realtimeStartInstructions: expect.stringContaining("Rules:\nAlways answer in English"),
       threadId: "supervisor",
       voice: "cove",
     });
     expect(realtimeStartPayloads[1]).toMatchObject({
+      initialItems: [
+        {
+          role: "developer",
+          text: expect.stringContaining("Rules:\nAlways answer in Russian"),
+        },
+      ],
       realtimeStartInstructions: expect.stringContaining("Rules:\nAlways answer in Russian"),
       threadId: "supervisor",
       voice: "cove",
@@ -1079,6 +1167,7 @@ describe("GlobalSupervisorRuntime", () => {
     const session = sessionFixture();
     const runtime = createGlobalSupervisorRuntime({
       attention: attentionFixture(),
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
         setPlaybackLevel: vi.fn(),
@@ -1098,6 +1187,7 @@ describe("GlobalSupervisorRuntime", () => {
         unsubscribeLive: vi.fn(async () => undefined),
       }),
       ingress: createGlobalSupervisorRuntimeIngress(),
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => true,
       microphoneLeases: leases,
       now: () => 0,
@@ -1129,6 +1219,7 @@ describe("GlobalSupervisorRuntime", () => {
     const attention = attentionFixture();
     const runtime = createGlobalSupervisorRuntime({
       attention,
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
       acquireForegroundLease: async () => ({
         release: vi.fn(async () => undefined),
         setPlaybackLevel: vi.fn(),
@@ -1141,6 +1232,7 @@ describe("GlobalSupervisorRuntime", () => {
       getSession: () => session,
       getSupervisor: () => null,
       ingress: createGlobalSupervisorRuntimeIngress(),
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
       isRpcAvailable: () => true,
       microphoneLeases: leases,
       now: () => 0,

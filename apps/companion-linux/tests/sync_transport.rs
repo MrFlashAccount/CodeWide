@@ -40,6 +40,18 @@ const TOKEN: &str = "test-token-that-is-long-enough-for-production-shape";
 const EXTERNAL_THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
 type ClientSocket = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+fn resumed_thread(thread: &Value) -> Value {
+    json!({
+        "thread": thread,
+        "model": "gpt-test",
+        "reasoningEffort": "high",
+        "serviceTier": "priority",
+        "activePermissionProfile": {"id": ":workspace", "extends": null},
+        "approvalPolicy": "never",
+        "sandbox": {"type": "dangerFullAccess"}
+    })
+}
+
 #[tokio::test]
 async fn opted_in_inventory_arrives_before_chat_snapshot_acknowledgement()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -512,7 +524,11 @@ async fn unified_sync_uses_the_observer_attachment_as_the_thread_shell()
 
     let response = receive_type(&mut client, "rpc").await?;
     assert_eq!(response["response"]["id"], "sync-thread");
-    assert_eq!(response["response"]["result"]["readModelVersion"], 3);
+    assert_eq!(response["response"]["result"]["readModelVersion"], 4);
+    assert_eq!(
+        response["response"]["result"]["executionSettings"]["serviceTier"],
+        "priority"
+    );
     assert_eq!(observed_rx.recv().await.as_deref(), Some("thread/resume"));
     assert!(
         timeout(Duration::from_millis(100), observed_rx.recv())
@@ -842,7 +858,7 @@ async fn thread_sync_attaches_observer_and_returns_indexed_history()
     )
     .await?;
     let response = receive_type(&mut client, "rpc").await?;
-    assert_eq!(response["response"]["result"]["readModelVersion"], 3);
+    assert_eq!(response["response"]["result"]["readModelVersion"], 4);
     assert_eq!(response["response"]["result"]["history"]["kind"], "reset");
     assert_eq!(
         response["response"]["result"]["history"]["turns"][0]["id"],
@@ -1215,7 +1231,7 @@ async fn user_messages_from_an_active_turn_and_another_desktop_thread_survive_re
     let observed_response = receive_type(&mut phone, "rpc").await?;
     assert_eq!(
         observed_response["response"]["result"]["readModelVersion"],
-        3
+        4
     );
     assert_eq!(observed_rx.recv().await.as_deref(), Some("thread/resume"));
 
@@ -2414,19 +2430,13 @@ async fn run_external_thread_app_server(
                     "turns": []
                 }
             }),
-            "thread/resume" => json!({
-                "thread": {
-                    "id": EXTERNAL_THREAD_ID,
-                    "name": "External thread",
-                    "recencyAt": 10,
-                    "status": {"type": "active", "activeFlags": []},
-                    "turns": []
-                },
-                "model": "gpt-test",
-                "reasoningEffort": "high",
-                "approvalPolicy": "never",
-                "sandbox": {"type": "dangerFullAccess"}
-            }),
+            "thread/resume" => resumed_thread(&json!({
+                "id": EXTERNAL_THREAD_ID,
+                "name": "External thread",
+                "recencyAt": 10,
+                "status": {"type": "active", "activeFlags": []},
+                "turns": []
+            })),
             "thread/turns/list"
                 if request.pointer("/params/itemsView").and_then(Value::as_str) == Some("full") =>
             {
@@ -2514,15 +2524,18 @@ async fn run_thread_shell_app_server(
             assert_eq!(request["params"]["threadId"], EXTERNAL_THREAD_ID);
             assert_eq!(request["params"]["includeTurns"], false);
         }
-        let result = if matches!(method, "thread/read" | "thread/resume") {
+        let thread = json!({
+            "id": EXTERNAL_THREAD_ID,
+            "name": "Indexed thread",
+            "recencyAt": 10,
+            "status": {"type": if resume_error.is_some() { "notLoaded" } else { "idle" }},
+            "turns": []
+        });
+        let result = if method == "thread/resume" {
+            resumed_thread(&thread)
+        } else if method == "thread/read" {
             json!({
-                "thread": {
-                    "id": EXTERNAL_THREAD_ID,
-                    "name": "Indexed thread",
-                    "recencyAt": 10,
-                    "status": {"type": if resume_error.is_some() { "notLoaded" } else { "idle" }},
-                    "turns": []
-                }
+                "thread": thread
             })
         } else {
             json!({})
@@ -2700,13 +2713,11 @@ async fn run_fake_app_server(
                         }
                     })
                 } else if method == Some("thread/resume") {
-                    json!({
-                        "thread": {
+                    resumed_thread(&json!({
                             "id": request.pointer("/params/threadId").and_then(Value::as_str).unwrap_or("current-thread"),
                             "status": {"type": "active", "activeFlags": []},
                             "turns": []
-                        }
-                    })
+                        }))
                 } else if method == Some("turn/start") {
                     json!({"turn": {"id": "turn-1", "status": "inProgress", "items": []}})
                 } else {
@@ -3157,7 +3168,10 @@ async fn catalog_visibility_and_reconciliation_are_server_owned_over_rpc()
     for archived in [false, true] {
         send_json(&mut client, &json!({"type":"rpc","request":{"id":"head","method":"thread/list","params":{"archived":archived,"cursor":null,"limit":36,"cwd":"/project"}}})).await?;
         let head = receive_type(&mut client, "rpc").await?;
-        assert_eq!(head["response"]["result"]["data"], json!([]));
+        assert_eq!(
+            head["response"]["result"]["data"],
+            json!([{"id":"worker","threadSource":"codewide-global-supervisor-worker:task"}])
+        );
         let cursor = &head["response"]["result"]["nextCursor"];
         assert_eq!(cursor, "older");
         send_json(&mut client, &json!({"type":"rpc","request":{"id":"tail","method":"thread/list","params":{"archived":archived,"cursor":cursor,"limit":36,"cwd":"/project"}}})).await?;
@@ -3170,6 +3184,12 @@ async fn catalog_visibility_and_reconciliation_are_server_owned_over_rpc()
     assert_eq!(
         supervisor["response"]["result"]["data"],
         json!([{"id":"home","threadSource":"codewide-global-supervisor:mine"}])
+    );
+    send_json(&mut client, &json!({"type":"rpc","request":{"id":"worker-reconcile","method":"companion/supervisor/threadList","params":{"threadSource":"codewide-global-supervisor-worker:task","cursor":null}}})).await?;
+    let worker = receive_type(&mut client, "rpc").await?;
+    assert_eq!(
+        worker["response"]["result"]["data"],
+        json!([{"id":"worker","threadSource":"codewide-global-supervisor-worker:task"}])
     );
     send_json(&mut client, &json!({"type":"rpc","request":{"id":"direct-chat","method":"companion/thread/sync","params":{"threadId":"home","afterTurnId":null,"limit":36}}})).await?;
     let direct = receive_type(&mut client, "rpc").await?;
@@ -3203,14 +3223,16 @@ async fn run_catalog_visibility_app_server(
         }
         let result = if request["method"] == "thread/resume" {
             assert_eq!(request["params"]["threadId"], "home");
-            json!({"thread":{"id":"home","threadSource":"codewide-global-supervisor:mine","status":{"type":"idle"},"turns":[]}})
+            resumed_thread(
+                &json!({"id":"home","threadSource":"codewide-global-supervisor:mine","status":{"type":"idle"},"turns":[]}),
+            )
         } else {
             assert_eq!(request["method"], "thread/list");
             assert!(request["params"].get("threadSource").is_none());
             if request["params"]["cursor"] == "older" {
                 json!({"data":[{"id":"ordinary","threadSource":null,"name":"Global Voice"}],"nextCursor":null})
             } else {
-                json!({"data":[{"id":"home","threadSource":"codewide-global-supervisor:mine"},{"id":"other-home","threadSource":"codewide-global-supervisor:other"}],"nextCursor":"older"})
+                json!({"data":[{"id":"home","threadSource":"codewide-global-supervisor:mine"},{"id":"other-home","threadSource":"codewide-global-supervisor:other"},{"id":"worker","threadSource":"codewide-global-supervisor-worker:task"}],"nextCursor":"older"})
             }
         };
         send_value(&mut socket, &json!({"id":request["id"],"result":result})).await?;

@@ -165,7 +165,7 @@ function VirtualizedAgentMessage({
       <Bubble
         animateLayout={presentation.rawTurn.status === "inProgress" && props.animateLiveUpdates}
         errorContext={`Thread: ${props.turn.threadId}\nTurn: ${props.turn.id}`}
-        errorResetKey={`${props.turn.key}:agent:${props.placement}`}
+        errorResetKey={`${props.turn.key}:agent`}
         fill={presentation.agentBubbleFill}
         footer={renderFooterForPlacement({
           placement: props.placement,
@@ -202,9 +202,8 @@ function LatestAgentVisibilityBoundary({
   latestAgentRef: TurnTimelineItemProps["latestAgentRef"];
   onLatestAgentLayout: TurnTimelineItemProps["onLatestAgentLayout"];
 }): ReactElement {
-  if (latestAgentRef === undefined && onLatestAgentLayout === undefined) {
-    return children;
-  }
+  // Receipt observation may attach after completion and detach after acknowledgement.
+  // Keep the same native parent so neither transition replaces already displayed text.
   return (
     <View
       collapsable={false}
@@ -217,10 +216,12 @@ function LatestAgentVisibilityBoundary({
 }
 
 function renderAgentBoundary(
-  props: Pick<VirtualizedTurnTimelineItemProps, "placement" | "turn">,
+  props: Pick<VirtualizedTurnTimelineItemProps, "turn">,
   content: ReactElement,
 ): ReactElement {
-  const key = `${props.turn.key}:agent:${props.placement}`;
+  // LegendList's row key owns slice identity. Placement only changes corners/footer;
+  // single -> start must not reset either this boundary or Bubble's inner boundary.
+  const key = `${props.turn.key}:agent`;
   return (
     <RecoverableRenderBoundary
       context={`Thread: ${props.turn.threadId}\nTurn: ${props.turn.id}`}

@@ -198,7 +198,8 @@ describe("Yoga-owned bubble layout", () => {
     expect(ownerTurnProjection).toContain(
       "const hasDisclosedBubbleActivity = preTurnBlocks.some(preTurnBlockUsesDisclosure)",
     );
-    expect(ownerTurnProjection).toContain("|| completedActivityCount > 0");
+    // Completed-history visibility and its bubble width are exercised through
+    // full/sparse turn transitions in v1-completed-activity.render.test.tsx.
     expect(ownerTurnProjection).toContain('part.kind === "collapsedActivity"');
     expect(ownerTurnProjection).toContain(
       'part.kind === "activity" && activitySegmentUsesDisclosure(part)',

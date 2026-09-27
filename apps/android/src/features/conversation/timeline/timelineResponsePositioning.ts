@@ -40,7 +40,12 @@ export function useTimelineResponsePositioning({
   const [observed, setObserved] = useConversationState<ResponseObservation>(composerScope, () => ({
     enabled,
     lifecycle,
-    request: initialUnreadRequest(enabled, lifecycle, latestUnreadAgentTurnId),
+    request: initialUnreadRequest({
+      enabled,
+      lifecycle,
+      timelinePositioned,
+      unreadTurnId: latestUnreadAgentTurnId,
+    }),
     unreadTurnId: latestUnreadAgentTurnId,
   }));
   const clearResponseStartRequest = useEvent(() => {
@@ -69,24 +74,35 @@ export function useTimelineResponsePositioning({
     } else if (completedTurnId !== null) {
       request = new TimelineResponseStart("completedResponse", completedTurnId);
     } else if (unreadTurnId !== null) {
-      request = new TimelineResponseStart("initialUnread", unreadTurnId);
+      request = unreadResponseStart(unreadTurnId, timelinePositioned);
     }
     // Adjust only this component's state before its children commit. No scroll or mutable
-    // external owner is updated during render; readiness performs the one imperative action.
+    // external owner is updated during render. Bootstrap owns initial unread positioning;
+    // readiness performs the one imperative action only for responses arriving later.
     setObserved({ enabled, lifecycle, request, unreadTurnId: latestUnreadAgentTurnId });
   }
 
   return { clearResponseStartRequest, request };
 }
 
-function initialUnreadRequest(
-  enabled: boolean,
-  lifecycle: TimelineResponseLifecycle | null,
-  unreadTurnId: string | null,
-): TimelineResponseStart | null {
+function initialUnreadRequest({
+  enabled,
+  lifecycle,
+  timelinePositioned,
+  unreadTurnId,
+}: {
+  readonly enabled: boolean;
+  readonly lifecycle: TimelineResponseLifecycle | null;
+  readonly timelinePositioned: boolean;
+  readonly unreadTurnId: string | null;
+}): TimelineResponseStart | null {
   return enabled && !isStreamingResponse(lifecycle) && unreadTurnId !== null
-    ? new TimelineResponseStart("initialUnread", unreadTurnId)
+    ? unreadResponseStart(unreadTurnId, timelinePositioned)
     : null;
+}
+
+function unreadResponseStart(turnId: string, timelinePositioned: boolean): TimelineResponseStart {
+  return new TimelineResponseStart(timelinePositioned ? "lateUnread" : "initialUnread", turnId);
 }
 
 function isStreamingResponse(lifecycle: TimelineResponseLifecycle | null): boolean {

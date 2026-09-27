@@ -1,0 +1,295 @@
+{
+  "diagnostic_only": true,
+  "fast_vs_reference_max_absolute_logit_difference": 0.000035762786865234375,
+  "fast_vs_reference_same_predictions": 18,
+  "checks": [
+    {
+      "example": "official_billing",
+      "order": [
+        0,
+        1,
+        2
+      ],
+      "expected_original_index": 0,
+      "selected_original_index": 0,
+      "correct": true,
+      "probabilities_in_option_order": [
+        0.8544676822189144,
+        0.14276809942800284,
+        0.0027642183530828084
+      ]
+    },
+    {
+      "example": "official_billing",
+      "order": [
+        0,
+        2,
+        1
+      ],
+      "expected_original_index": 0,
+      "selected_original_index": 0,
+      "correct": true,
+      "probabilities_in_option_order": [
+        0.8961824335006602,
+        0.009010380213666395,
+        0.09480718628567349
+      ]
+    },
+    {
+      "example": "official_billing",
+      "order": [
+        1,
+        0,
+        2
+      ],
+      "expected_original_index": 0,
+      "selected_original_index": 0,
+      "correct": true,
+      "probabilities_in_option_order": [
+        0.47479814540706383,
+        0.5080276032905426,
+        0.017174251302393584
+      ]
+    },
+    {
+      "example": "official_billing",
+      "order": [
+        1,
+        2,
+        0
+      ],
+      "expected_original_index": 0,
+      "selected_original_index": 1,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.8409287513124764,
+        0.019488631979358306,
+        0.13958261670816538
+      ]
+    },
+    {
+      "example": "official_billing",
+      "order": [
+        2,
+        0,
+        1
+      ],
+      "expected_original_index": 0,
+      "selected_original_index": 0,
+      "correct": true,
+      "probabilities_in_option_order": [
+        0.014501905417261086,
+        0.805896601792829,
+        0.17960149278991006
+      ]
+    },
+    {
+      "example": "official_billing",
+      "order": [
+        2,
+        1,
+        0
+      ],
+      "expected_original_index": 0,
+      "selected_original_index": 1,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.024955868122967375,
+        0.7850713526515734,
+        0.18997277922545933
+      ]
+    },
+    {
+      "example": "explicit_negation",
+      "order": [
+        0,
+        1,
+        2
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 2,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.003372143203889992,
+        0.055789607286498635,
+        0.9408382495096113
+      ]
+    },
+    {
+      "example": "explicit_negation",
+      "order": [
+        0,
+        2,
+        1
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 2,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.0026305828217677903,
+        0.9971510284725865,
+        0.00021838870564573295
+      ]
+    },
+    {
+      "example": "explicit_negation",
+      "order": [
+        1,
+        0,
+        2
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 2,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.35843660539336847,
+        0.0008002550607366868,
+        0.6407631395458947
+      ]
+    },
+    {
+      "example": "explicit_negation",
+      "order": [
+        1,
+        2,
+        0
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 2,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.40609128287749663,
+        0.5931457254559619,
+        0.0007629916665413816
+      ]
+    },
+    {
+      "example": "explicit_negation",
+      "order": [
+        2,
+        0,
+        1
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 2,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.9230940088276078,
+        0.06113339481317096,
+        0.015772596359221205
+      ]
+    },
+    {
+      "example": "explicit_negation",
+      "order": [
+        2,
+        1,
+        0
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 1,
+      "correct": true,
+      "probabilities_in_option_order": [
+        0.03930022194017576,
+        0.9194589447149556,
+        0.04124083334486867
+      ]
+    },
+    {
+      "example": "unrelated_to_search",
+      "order": [
+        0,
+        1,
+        2
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 0,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.99999853709225,
+        1.2745844601921654e-7,
+        0.0000013354493040431899
+      ]
+    },
+    {
+      "example": "unrelated_to_search",
+      "order": [
+        0,
+        2,
+        1
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 0,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.9996984630962406,
+        1.140351152947019e-7,
+        0.0003014228686442364
+      ]
+    },
+    {
+      "example": "unrelated_to_search",
+      "order": [
+        1,
+        0,
+        2
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 0,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.023419626976697246,
+        0.5679627078435961,
+        0.4086176651797066
+      ]
+    },
+    {
+      "example": "unrelated_to_search",
+      "order": [
+        1,
+        2,
+        0
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 0,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.30426485658416713,
+        0.13963212546774087,
+        0.556103017948092
+      ]
+    },
+    {
+      "example": "unrelated_to_search",
+      "order": [
+        2,
+        0,
+        1
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 0,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.00013436810256379095,
+        0.9987582456381792,
+        0.0011073862592571526
+      ]
+    },
+    {
+      "example": "unrelated_to_search",
+      "order": [
+        2,
+        1,
+        0
+      ],
+      "expected_original_index": 1,
+      "selected_original_index": 0,
+      "correct": false,
+      "probabilities_in_option_order": [
+        0.01113675662824781,
+        0.17256325993947458,
+        0.8162999834322775
+      ]
+    }
+  ]
+}

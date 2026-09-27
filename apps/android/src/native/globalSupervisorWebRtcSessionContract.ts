@@ -14,10 +14,12 @@ export type GlobalSupervisorWebRtcSessionFactory = (
     | {
         readonly initiallyMuted: boolean;
         readonly mode: Extract<GlobalSupervisorWebRtcMode, "interactive">;
+        readonly onMediaConnection?: (connected: boolean) => void;
         readonly onPlaybackLevel: (level: number) => void;
         readonly onTerminal: () => void;
         readonly onUserSpeaking?: (speaking: boolean) => void;
         readonly personalVoiceFilterEnabled?: boolean;
+        readonly signal?: AbortSignal;
       }
     | {
         readonly mode: Extract<GlobalSupervisorWebRtcMode, "preview">;

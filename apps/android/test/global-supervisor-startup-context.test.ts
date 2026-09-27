@@ -6,6 +6,7 @@ import { createGlobalSupervisorStartupContextOwner } from "../src/data/globalSup
 
 const HOME = globalSupervisorQualifiedChatRef("home", "supervisor");
 const WORKER = globalSupervisorQualifiedChatRef("worker-server", "worker-thread");
+const DEFAULT_PERSONALITY = { character: "", communicationStyle: "", rules: "" } as const;
 
 function attention(eventId: string): GlobalSupervisorAttentionEvent {
   return {
@@ -22,7 +23,7 @@ function attention(eventId: string): GlobalSupervisorAttentionEvent {
 
 describe("Global Voice startup context", () => {
   it("keeps only bounded conversation text and pending attention events", () => {
-    const owner = createGlobalSupervisorStartupContextOwner();
+    const owner = createGlobalSupervisorStartupContextOwner(DEFAULT_PERSONALITY);
     owner.acceptTranscript("user", "Earlier question");
     owner.acceptTranscript("assistant", "Earlier answer");
     for (let index = 0; index < 9; index += 1) {
@@ -49,12 +50,37 @@ describe("Global Voice startup context", () => {
   });
 
   it("does not replay acknowledged attention absent from the pending snapshot", () => {
-    const owner = createGlobalSupervisorStartupContextOwner();
+    const owner = createGlobalSupervisorStartupContextOwner(DEFAULT_PERSONALITY);
     owner.acceptTranscript("user", "Continue our conversation");
 
     const snapshot = owner.snapshot([]);
 
     expect(snapshot.initialItems).toEqual([{ role: "user", text: "Continue our conversation" }]);
     expect(snapshot.seededAttentionEventIds.size).toBe(0);
+  });
+
+  it("places personality once in the role-bearing startup context before the first turn", () => {
+    const owner = createGlobalSupervisorStartupContextOwner({
+      character: "Calm and candid",
+      communicationStyle: "Keep spoken answers concise",
+      rules: "State uncertainty explicitly",
+    });
+
+    const first = owner.snapshot([]);
+    owner.acceptTranscript("user", "First spoken turn");
+    const restored = owner.snapshot([]);
+
+    expect(first.initialItems).toEqual([
+      {
+        role: "developer",
+        text: expect.stringMatching(
+          /Character:\nCalm and candid[\s\S]*Rules:\nState uncertainty explicitly/u,
+        ),
+      },
+    ]);
+    expect(restored.initialItems).toEqual([
+      first.initialItems[0],
+      { role: "user", text: "First spoken turn" },
+    ]);
   });
 });

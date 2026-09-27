@@ -7,6 +7,7 @@ import { selectTurnRenderWindow } from "../../../rendering/thread-render-window"
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
 import { isToolActivityKind } from "../protocol/protocolKind";
 import type { TimelineItem } from "../timeline/timelineTypes";
+import { hasCompletedTurnHistory } from "./completedHistoryVisibility";
 
 export type CachedTurnProjection = {
   compactionBlocks: RenderBlock[];
@@ -172,13 +173,6 @@ export function projectThreadItem(
   const value = toRenderBlock(normalized);
   renderBlockCache.set(rawItem, { key: normalized.key, value });
   return value;
-}
-
-export function completedActivityItemCount(turn: Thread["turns"][number]): number {
-  return Math.max(
-    selectTurnRenderWindow(turn).collapsedActivityIndexes.length,
-    projectedTurnMetadata(turn)?.activity?.count ?? 0,
-  );
 }
 
 export function turnActivityLabel(
@@ -406,11 +400,12 @@ function prepareTurnPresentation(turn: TurnRow) {
     rawTurn.status !== "inProgress" &&
     !hasGeneratedAgentResponse &&
     artifacts.length === 0;
-  const completedActivityCount =
-    rawTurn.status === "inProgress" ? 0 : completedActivityItemCount(rawTurn);
+  const hasCompletedHistory =
+    rawTurn.status !== "inProgress" &&
+    hasCompletedTurnHistory(rawTurn, renderWindow.collapsedActivityIndexes);
   const hasDisclosedBubbleActivity =
     preTurnBlocks.some(preTurnBlockUsesDisclosure) ||
-    completedActivityCount > 0 ||
+    hasCompletedHistory ||
     visibleLiveActivitySequence.some(
       (part) =>
         part.kind === "collapsedActivity" ||
@@ -426,7 +421,7 @@ function prepareTurnPresentation(turn: TurnRow) {
     hasQuestions ||
     (rawTurn.status !== "inProgress"
       ? rawTurn.itemsView !== "full" ||
-        completedActivityCount > 0 ||
+        hasCompletedHistory ||
         preTurnBlocks.length > 0 ||
         hasGeneratedAgentResponse
       : visibleLiveActivitySequence.length > 0 ||

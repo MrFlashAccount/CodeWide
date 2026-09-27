@@ -3,6 +3,7 @@ import { PermissionsAndroid, Platform } from "react-native";
 import { composerUploads } from "../../data/composer-uploads";
 import type { ConnectionProfileDatabase } from "../../data/connection-profile-database";
 import type { StoredConnection } from "../../data/connection-profile-types";
+import type { ServerIconId } from "../../data/serverIcons";
 import type { ConnectionStateModel } from "../../data/connection-state-model";
 import {
   validateConnectionInput,
@@ -154,12 +155,12 @@ export function createConnectionsWorkspaceAdapter({
   const updateConnectionProfile = async (
     connectionId: string,
     displayName: string,
-    emoji: string,
+    iconId: ServerIconId,
   ) => {
     await requireConnectionProfileDatabase(getProfiles()).updateProfile(
       connectionId,
       displayName,
-      emoji,
+      iconId,
     );
     await refreshConnectionProfiles();
   };

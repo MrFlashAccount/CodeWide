@@ -2766,13 +2766,28 @@ describe("thread detail ownership races", () => {
   it("repairs sealed messages in the same turn after a projection reset", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
-    await details.importThreadSnapshot("server", authoritativeThread("prompt-client"), "initial", null);
+    await details.importThreadSnapshot(
+      "server",
+      authoritativeThread("prompt-client"),
+      "initial",
+      null,
+    );
     const correctedTurn: Turn = {
       ...completedTurn("remote-turn", "prompt-client"),
       itemsView: "summary",
       items: [
-        { type: "userMessage", id: "prompt", clientId: "prompt-client", content: [{ type: "text", text: "Original question", text_elements: [] }] },
-        { type: "userMessage", id: "reply", clientId: "reply-client", content: [{ type: "text", text: "Reply with logs", text_elements: [] }] },
+        {
+          type: "userMessage",
+          id: "prompt",
+          clientId: "prompt-client",
+          content: [{ type: "text", text: "Original question", text_elements: [] }],
+        },
+        {
+          type: "userMessage",
+          id: "reply",
+          clientId: "reply-client",
+          content: [{ type: "text", text: "Reply with logs", text_elements: [] }],
+        },
       ],
     };
     await details.synchronizeThread({

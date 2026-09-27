@@ -1,19 +1,30 @@
 import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
-import { projectedThreadExecutionSettings, projectedTurnMetadata } from "@codewide/sync-client";
+import { preserveProjectedTurnMetadata, projectedThreadExecutionSettings, projectedTurnMetadata, seedThreadExecutionSettings } from "@codewide/sync-client";
 
 import { ThreadSyncCatchUp, ThreadSyncLane, assertThreadSyncReachedHead, hydrateThreadSyncActiveText, latestSealedTurnId, materializeThreadSync, parseThreadSyncResponse } from "../src/data/thread-cursor-sync";
 
 describe("thread cursor sync", () => {
+  it("accepts the deployed v3 history contract without inventing Fast settings", () => {
+    const response = parseThreadSyncResponse({
+      readModelVersion: 3, throughCursor: 17, thread: thread([]), activeTurn: null,
+      history: { kind: "reset", headTurnId: "received", turns: [turn("received")],
+        hasMore: false, olderCursor: null },
+    });
+    const result = materializeThreadSync(null, response, null);
+    expect(result.thread.turns.map(({ id }) => id)).toEqual(["received"]);
+    expect(projectedThreadExecutionSettings(result.thread)).toBeNull();
+  });
+
   it("preserves reset and its cursor through subsequent catch-up pages", () => {
     const catchUp = new ThreadSyncCatchUp(thread([turn("obsolete")]), "old-cursor", "old-source");
     catchUp.accept({
-      readModelVersion: 3, throughCursor: 1, thread: thread([]), activeTurn: null,
+      readModelVersion: 4, executionSettings: null, throughCursor: 1, thread: thread([]), activeTurn: null,
       history: { kind: "reset", headTurnId: "b", turns: [turn("a")], hasMore: true,
         olderCursor: "new-cursor", sourceWitness: "new-source" },
     });
     const result = catchUp.accept({
-      readModelVersion: 3, throughCursor: 2, thread: thread([]), activeTurn: null,
+      readModelVersion: 4, executionSettings: null, throughCursor: 2, thread: thread([]), activeTurn: null,
       history: { kind: "delta", headTurnId: "b", turns: [turn("b")], hasMore: false,
         olderCursor: null, sourceWitness: "new-checkpoint" },
     });
@@ -30,14 +41,14 @@ describe("thread cursor sync", () => {
     next.items = [{ delivery: null, questions: null, type: "agentMessage", id: "answer", text: "new", phase: null, memoryCitation: null }];
     next.itemsView = "summary";
     const result = materializeThreadSync(thread([prior]), {
-      readModelVersion: 3, throughCursor: 2, thread: thread([]), activeTurn: next,
+      readModelVersion: 4, executionSettings: null, throughCursor: 2, thread: thread([]), activeTurn: next,
       history: { kind: "reset", headTurnId: null, turns: [], hasMore: false, olderCursor: null },
     }, undefined);
     expect(result.thread.turns[0]?.items).toEqual(next.items);
   });
   it("rejects oversized source checkpoints on authoritative sync", () => {
     expect(() => parseThreadSyncResponse({
-      readModelVersion: 3, throughCursor: 0, thread: thread([]), activeTurn: null,
+      readModelVersion: 4, executionSettings: null, throughCursor: 0, thread: thread([]), activeTurn: null,
       history: { kind: "current", headTurnId: null, turns: [], hasMore: false,
         olderCursor: null, sourceWitness: "x".repeat(8192) },
     })).toThrow("invalid response");
@@ -46,7 +57,10 @@ describe("thread cursor sync", () => {
   it("keeps current server model through parsing and sync even when history and local settings are older", () => {
     const cached = Object.assign(thread([turn("a")]), { model: "gpt-5.6-sol", reasoningEffort: "medium" });
     const response = parseThreadSyncResponse({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: {
+        approvalPolicy: "never", effort: "high", model: "gpt-6-astra", permissions: null,
+        sandboxPolicy: "dangerFullAccess", serviceTier: "priority",
+      },
       throughCursor: 0,
       thread: { ...thread([]), model: "gpt-6-astra", reasoningEffort: "high" },
       history: { kind: "current", headTurnId: "a", turns: [], hasMore: false, olderCursor: null },
@@ -54,13 +68,55 @@ describe("thread cursor sync", () => {
     });
     const result = materializeThreadSync(cached, response, null);
     expect(result.thread.turns.map((item) => item.id)).toEqual(["a"]);
-    expect(projectedThreadExecutionSettings(result.thread)).toMatchObject({ model: "gpt-6-astra", effort: "high" });
+    expect(projectedThreadExecutionSettings(result.thread)).toMatchObject({
+      model: "gpt-6-astra", effort: "high", serviceTier: "priority",
+    });
+  });
+
+  it("keeps a matching Fast snapshot authoritative when its settings event arrived first", () => {
+    const cached = seedThreadExecutionSettings(thread([]), executionSettings("priority"));
+    const response = parseThreadSyncResponse({
+      readModelVersion: 4, executionSettings: executionSettings("priority"), throughCursor: 1,
+      thread: thread([]),
+      history: { kind: "current", headTurnId: null, turns: [], hasMore: false, olderCursor: null },
+      activeTurn: null,
+    });
+    const synchronized = materializeThreadSync(cached, response, null).thread;
+    const merged = preserveProjectedTurnMetadata(synchronized, cached);
+    expect(projectedThreadExecutionSettings(merged)).toEqual(executionSettings("priority"));
+  });
+
+  it("lets a later settings event replace an explicit default snapshot", () => {
+    const response = parseThreadSyncResponse({
+      readModelVersion: 4, executionSettings: executionSettings("default"), throughCursor: 1,
+      thread: thread([]),
+      history: { kind: "current", headTurnId: null, turns: [], hasMore: false, olderCursor: null },
+      activeTurn: null,
+    });
+    const synchronized = materializeThreadSync(null, response, null).thread;
+    seedThreadExecutionSettings(synchronized, executionSettings("priority"));
+    expect(projectedThreadExecutionSettings(synchronized)).toEqual(executionSettings("priority"));
+  });
+
+  it("materializes execution settings for idle and active thread snapshots", () => {
+    for (const activeTurn of [null, turn("active", "inProgress")]) {
+      const shell = thread(activeTurn === null ? [] : [activeTurn]);
+      shell.turns = [];
+      const response = parseThreadSyncResponse({
+        readModelVersion: 4, executionSettings: executionSettings("priority"), throughCursor: 1,
+        thread: shell,
+        history: { kind: "current", headTurnId: null, turns: [], hasMore: false, olderCursor: null },
+        activeTurn,
+      });
+      expect(projectedThreadExecutionSettings(materializeThreadSync(null, response, null).thread))
+        .toEqual(executionSettings("priority"));
+    }
   });
 
   it("keeps immutable cache rows and appends only the server delta", () => {
     const cached = thread([turn("a"), turn("b"), turn("stale-active", "inProgress")]);
     const result = materializeThreadSync(cached, {
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: {
@@ -80,7 +136,7 @@ describe("thread cursor sync", () => {
   it("does not turn an unknown older-history cursor into an exhausted cursor", () => {
     const cached = thread([turn("a")]);
     const result = materializeThreadSync(cached, {
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: {
@@ -98,7 +154,7 @@ describe("thread cursor sync", () => {
 
   it("replaces a disconnected cache with the bounded server reset", () => {
     const result = materializeThreadSync(thread([turn("wrong")]), {
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: {
@@ -223,7 +279,7 @@ describe("thread cursor sync", () => {
       }],
     };
     const result = materializeThreadSync(thread([unphased]), {
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: {
@@ -241,7 +297,7 @@ describe("thread cursor sync", () => {
 
   it("rejects a malformed transport response before it reaches projection code", () => {
     expect(() => parseThreadSyncResponse({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: { id: "thread", cwd: "/workspace", status: { type: "idle" } },
       history: { kind: "current", headTurnId: null, turns: [], hasMore: false, olderCursor: null },
@@ -249,9 +305,17 @@ describe("thread cursor sync", () => {
     })).toThrow("invalid response");
   });
 
+  it("rejects a version-four snapshot without explicit execution settings availability", () => {
+    expect(() => parseThreadSyncResponse({
+      readModelVersion: 4, throughCursor: 0, thread: thread([]),
+      history: { kind: "current", headTurnId: null, turns: [], hasMore: false, olderCursor: null },
+      activeTurn: null,
+    })).toThrow("invalid response");
+  });
+
   it("materializes metadata-only recovery turns at the Conversation boundary", () => {
     const response = parseThreadSyncResponse({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: {
@@ -294,7 +358,7 @@ describe("thread cursor sync", () => {
       },
     };
     const response = parseThreadSyncResponse({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: {
@@ -338,7 +402,7 @@ describe("thread cursor sync", () => {
       contentType: "text/markdown; charset=utf-8",
     };
     const response = parseThreadSyncResponse({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: { kind: "current", headTurnId: null, turns: [], hasMore: false, olderCursor: null },
@@ -372,7 +436,7 @@ describe("thread cursor sync", () => {
     const live = turn("active", "inProgress");
     live.itemsView = "full";
     const response = parseThreadSyncResponse({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: { kind: "current", headTurnId: "sealed", turns: [], hasMore: false, olderCursor: null },
@@ -422,7 +486,7 @@ describe("thread cursor sync", () => {
     };
 
     const result = materializeThreadSync(thread([sealed, cachedWithMetadata]), {
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: { kind: "current", headTurnId: "sealed", turns: [], hasMore: false, olderCursor: null },
@@ -469,7 +533,7 @@ describe("thread cursor sync", () => {
     };
 
     const result = materializeThreadSync(thread([sealed, cachedActive]), {
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: { kind: "current", headTurnId: "sealed", turns: [], hasMore: false, olderCursor: null },
@@ -494,7 +558,7 @@ describe("thread cursor sync", () => {
     const partial = turn("active", "inProgress");
     const completed = turn("active", "completed");
     const result = materializeThreadSync(thread([partial]), {
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: { kind: "reset", headTurnId: "active", turns: [completed], hasMore: false, olderCursor: null },
@@ -507,7 +571,7 @@ describe("thread cursor sync", () => {
 
   it("keeps an unreferenced malformed active turn as a Conversation sync failure", () => {
     expect(() => parseThreadSyncResponse({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: {
@@ -523,7 +587,7 @@ describe("thread cursor sync", () => {
 
   it("rejects a terminal delta that did not reach the server head", () => {
     expect(() => assertThreadSyncReachedHead({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: {
@@ -539,21 +603,21 @@ describe("thread cursor sync", () => {
 
   it("accepts current, delta, and reset responses only after reaching their head", () => {
     expect(() => assertThreadSyncReachedHead({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: { kind: "current", headTurnId: "cached", turns: [], hasMore: false, olderCursor: null },
       activeTurn: null,
     }, "cached")).not.toThrow();
     expect(() => assertThreadSyncReachedHead({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: { kind: "delta", headTurnId: "new", turns: [turn("new")], hasMore: false, olderCursor: null },
       activeTurn: null,
     }, "cached")).not.toThrow();
     expect(() => assertThreadSyncReachedHead({
-      readModelVersion: 3,
+      readModelVersion: 4, executionSettings: null,
       throughCursor: 0,
       thread: thread([]),
       history: { kind: "reset", headTurnId: "tail", turns: [turn("tail")], hasMore: false, olderCursor: "older" },
@@ -637,4 +701,11 @@ function thread(turns: Turn[]): import("@codewide/codex-protocol/v0.155.1/v2").T
     name: null,
     turns,
   };
+}
+
+function executionSettings(serviceTier: "default" | "priority") {
+  return {
+    approvalPolicy: "on-request", effort: "high", model: "gpt-5.6-sol",
+    permissions: ":workspace", sandboxPolicy: "workspaceWrite", serviceTier,
+  } as const;
 }

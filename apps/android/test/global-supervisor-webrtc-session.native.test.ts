@@ -42,6 +42,8 @@ const platform = vi.hoisted(() => {
     close = vi.fn();
     channel = { close: vi.fn(), onmessage: null as ((event: { readonly data: unknown }) => void) | null };
     createDataChannel = vi.fn(() => this.channel);
+    receivers = [{ track: { enabled: true } }];
+    getReceivers = vi.fn(() => this.receivers);
     getStats = vi.fn(
       async () =>
         new Map([
@@ -194,6 +196,12 @@ import {
   stageGlobalVoiceOrbLaunchOrigin,
 } from "../src/native/globalVoiceOverlayPermission.native";
 
+async function connectSession(session: Awaited<ReturnType<typeof createGlobalSupervisorWebRtcSession>>, peer: InstanceType<typeof platform.PeerConnection>): Promise<void> {
+  const accepted = session.acceptAnswer("v=0\r\nanswer");
+  peer.transitionConnection("connected");
+  await accepted;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   platform.audioRouting.reset();
@@ -224,16 +232,18 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected WebRTC peer");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     expect(platform.foregroundBridge.observeWebRtc).toHaveBeenCalledWith(peer._pcId);
     const receive = peer.channel.onmessage;
     receive?.({ data: '{"type":"input_audio_buffer.speech_started"}' });
     receive?.({ data: '{"type":"response.done"}' });
     receive?.({ data: '{"type":"input_audio_buffer.speech_stopped"}' });
     expect(onUserSpeaking.mock.calls).toEqual([[true], [false]]);
-    expect(onPlaybackLevel).toHaveBeenCalledWith(0.73);
+    await vi.waitFor(() => expect(onPlaybackLevel).toHaveBeenCalledWith(0.73));
     const pending = Promise.withResolvers<Map<string, { audioLevel: number; kind: string; type: string }>>();
+    const statsBefore = peer.getStats.mock.calls.length;
     peer.getStats.mockImplementationOnce(() => pending.promise);
-    await vi.waitFor(() => expect(peer.getStats).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(peer.getStats).toHaveBeenCalledTimes(statsBefore + 1));
     await session.stop();
     expect(platform.foregroundBridge.stopObservingWebRtc).toHaveBeenCalledExactlyOnceWith(peer._pcId);
     const callsAtStop = onPlaybackLevel.mock.calls.length;
@@ -258,6 +268,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected the WebRTC peer to be created");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     const stream = platform.streams[0];
     if (stream === undefined) throw new Error("Expected microphone capture");
 
@@ -284,6 +295,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected the WebRTC peer to be created");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     const sender = peer.senders[0];
     const firstCapture = platform.streams[0];
     if (sender === undefined || firstCapture === undefined) {
@@ -326,6 +338,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected peer");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     await Promise.all([session.setMicrophoneMuted(true), session.setMicrophoneMuted(false)]);
     const capture = platform.streams.at(-1);
     capture?.emitFrame(7);
@@ -343,6 +356,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected peer");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     const capture = platform.captureStream();
     const pending = Promise.withResolvers<typeof capture>();
     platform.mediaDevices.getUserMedia.mockImplementationOnce(() => pending.promise);
@@ -375,6 +389,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected peer");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     const capture = platform.captureStream();
     const pending = Promise.withResolvers<typeof capture>();
     platform.mediaDevices.getUserMedia.mockImplementationOnce(() => pending.promise);
@@ -400,6 +415,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected peer");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     const sender = peer.senders[0];
     const capture = platform.streams[0];
     if (sender === undefined || capture === undefined) throw new Error("Expected sender and capture");
@@ -432,6 +448,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected the WebRTC peer to be created");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
 
     expect(platform.mediaDevices.getUserMedia).not.toHaveBeenCalled();
     expect(peer.addTransceiver).toHaveBeenCalledWith("audio", { direction: "sendrecv" });
@@ -464,6 +481,7 @@ describe("Global Voice native WebRTC offer", () => {
 
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     expect(session.offerSdp).toBe("v=0\r\nwith-complete-candidates");
     expect(platform.operationOrder).toEqual(["peer.open"]);
     expect(peer.onicegatheringstatechange).toBeNull();
@@ -472,7 +490,7 @@ describe("Global Voice native WebRTC offer", () => {
     expect(platform.communicationAudioBridge.acquire).not.toHaveBeenCalled();
     expect(platform.communicationAudioBridge.release).not.toHaveBeenCalled();
     expect(peer.getStats).toHaveBeenCalledWith();
-    expect(onPlaybackLevel).toHaveBeenCalledWith(0.73);
+    expect(onPlaybackLevel).toHaveBeenCalledWith(0);
   });
 
   it("preserves media headphones selected before interactive voice starts and stops", async () => {
@@ -491,6 +509,7 @@ describe("Global Voice native WebRTC offer", () => {
     peer.completeIce();
 
     const session = await creation;
+    await connectSession(session, peer);
 
     expect(platform.audioRouting.output()).toBe("a2dp");
     expect(platform.communicationAudioBridge.acquire).not.toHaveBeenCalled();
@@ -513,6 +532,7 @@ describe("Global Voice native WebRTC offer", () => {
     }
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
 
     platform.audioRouting.selectSystemMediaRoute("a2dp");
 
@@ -533,6 +553,7 @@ describe("Global Voice native WebRTC offer", () => {
     peer.completeIce();
 
     const session = await creation;
+    await connectSession(session, peer);
 
     expect(platform.foregroundBridge.observeWebRtc).not.toHaveBeenCalled();
     expect(platform.foregroundBridge.acquire).not.toHaveBeenCalled();
@@ -547,14 +568,14 @@ describe("Global Voice native WebRTC offer", () => {
     platform.audioRouting.selectSystemMediaRoute("a2dp");
     platform.mediaDevices.getUserMedia.mockRejectedValueOnce(new Error("microphone failed"));
 
-    await expect(
-      createGlobalSupervisorWebRtcSession({
-        initiallyMuted: false,
-        mode: "interactive",
-        onPlaybackLevel: vi.fn(),
-        onTerminal: vi.fn(),
-      }),
-    ).rejects.toThrow("microphone failed");
+    const creation = createGlobalSupervisorWebRtcSession({ initiallyMuted: false, mode: "interactive", onPlaybackLevel: vi.fn(), onTerminal: vi.fn() });
+    await vi.waitFor(() => expect(platform.peerConnections).toHaveLength(1));
+    const peer = platform.peerConnections[0];
+    if (peer === undefined) throw new Error("Expected peer");
+    peer.completeIce();
+    const session = await creation;
+    await expect(connectSession(session, peer)).rejects.toThrow("microphone failed");
+    await session.stop();
     expect(platform.foregroundBridge.stopObservingWebRtc).toHaveBeenCalledWith(17);
 
     expect(platform.audioRouting.output()).toBe("a2dp");
@@ -574,6 +595,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected the WebRTC peer");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     platform.foregroundBridge.stopObservingWebRtc.mockImplementationOnce(() => {
       throw new Error("Observation cleanup failed");
     });
@@ -600,6 +622,7 @@ describe("Global Voice native WebRTC offer", () => {
     }
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
     peer.close.mockImplementationOnce(() => {
       throw new Error("native close failed");
     });
@@ -625,6 +648,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected the WebRTC peer to be created");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
 
     peer.transitionConnection("disconnected");
     await vi.advanceTimersByTimeAsync(2_999);
@@ -652,6 +676,7 @@ describe("Global Voice native WebRTC offer", () => {
     if (peer === undefined) throw new Error("Expected the WebRTC peer to be created");
     peer.completeIce();
     const session = await creation;
+    await connectSession(session, peer);
 
     platform.emitNative("CodeWideGlobalVoiceCaptureInterrupted");
     platform.emitNative("CodeWideGlobalVoiceCaptureInterrupted");
@@ -659,6 +684,102 @@ describe("Global Voice native WebRTC offer", () => {
     expect(onTerminal).toHaveBeenCalledOnce();
     await session.stop();
     expect(platform.nativeListeners.get("CodeWideGlobalVoiceCaptureInterrupted")?.size).toBe(0);
+  });
+});
+
+describe("Global Voice offline capture contract", () => {
+  it("does not open the microphone until answer and connected state both exist", async () => {
+    const creation = createGlobalSupervisorWebRtcSession({ initiallyMuted: false, mode: "interactive", onPlaybackLevel: vi.fn(), onTerminal: vi.fn() });
+    await vi.waitFor(() => expect(platform.peerConnections).toHaveLength(1));
+    const peer = platform.peerConnections[0];
+    if (peer === undefined) throw new Error("Expected peer");
+    peer.completeIce();
+    const session = await creation;
+    peer.transitionConnection("connected");
+    await session.setMicrophoneMuted(false);
+    expect(platform.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    await session.acceptAnswer("v=0\r\nanswer");
+    expect(platform.streams[0]?.track.enabled).toBe(true);
+    await session.stop();
+  });
+
+  it("closes capture and playback immediately during ICE grace, dropping offline speech", async () => {
+    vi.useFakeTimers();
+    const onTerminal = vi.fn();
+    const onMediaConnection = vi.fn();
+    const creation = createGlobalSupervisorWebRtcSession({ initiallyMuted: false, mode: "interactive", onMediaConnection, onPlaybackLevel: vi.fn(), onTerminal });
+    await vi.waitFor(() => expect(platform.peerConnections).toHaveLength(1));
+    const peer = platform.peerConnections[0];
+    if (peer === undefined) throw new Error("Expected peer");
+    peer.completeIce();
+    const session = await creation;
+    await connectSession(session, peer);
+    const before = platform.streams[0];
+    before?.emitFrame(1);
+    peer.transitionConnection("disconnected");
+    expect(before?.track.stop).toHaveBeenCalledOnce();
+    expect(peer.receivers[0]?.track.enabled).toBe(false);
+    before?.emitFrame(2);
+    await session.setMicrophoneMuted(false);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(platform.streams).toHaveLength(1);
+    expect(onTerminal).not.toHaveBeenCalled();
+    peer.transitionConnection("connected");
+    await vi.advanceTimersByTimeAsync(0);
+    platform.streams[1]?.emitFrame(3);
+    expect(peer.receivedFrames).toEqual([1, 3]);
+    expect(peer.receivers[0]?.track.enabled).toBe(true);
+    expect(onMediaConnection.mock.calls).toEqual([[true], [false], [true]]);
+    expect(platform.peerConnections).toHaveLength(1);
+    await session.stop();
+  });
+
+  it("retains a mute selected offline and rejects late connected callbacks after failure", async () => {
+    const creation = createGlobalSupervisorWebRtcSession({ initiallyMuted: false, mode: "interactive", onPlaybackLevel: vi.fn(), onTerminal: vi.fn() });
+    await vi.waitFor(() => expect(platform.peerConnections).toHaveLength(1));
+    const peer = platform.peerConnections[0];
+    if (peer === undefined) throw new Error("Expected peer");
+    peer.completeIce();
+    const session = await creation;
+    await connectSession(session, peer);
+    peer.transitionConnection("disconnected");
+    await session.setMicrophoneMuted(true);
+    peer.transitionConnection("connected");
+    await session.setMicrophoneMuted(true);
+    expect(platform.mediaDevices.getUserMedia).toHaveBeenCalledOnce();
+    peer.transitionConnection("failed");
+    peer.transitionConnection("connected");
+    expect(peer.receivers[0]?.track.enabled).toBe(false);
+    expect(platform.mediaDevices.getUserMedia).toHaveBeenCalledOnce();
+    await session.stop();
+  });
+
+  it("cancels pending ICE gathering and closes local media when Stop aborts startup", async () => {
+    const abort = new AbortController();
+    const creation = createGlobalSupervisorWebRtcSession({ initiallyMuted: false, mode: "interactive", onPlaybackLevel: vi.fn(), onTerminal: vi.fn(), signal: abort.signal });
+    const rejected = expect(creation).rejects.toThrow("cancelled");
+    await vi.waitFor(() => expect(platform.peerConnections[0]?.onicegatheringstatechange).toBeTypeOf("function"));
+    abort.abort();
+    await rejected;
+    expect(platform.peerConnections[0]?.close).toHaveBeenCalledOnce();
+    expect(platform.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    expect(platform.audioRouteBridge.release).toHaveBeenCalledOnce();
+  });
+
+  it("releases a route lease that arrives after startup was cancelled", async () => {
+    const route = Promise.withResolvers<string>();
+    platform.audioRouteBridge.acquire.mockImplementationOnce(() => route.promise);
+    const abort = new AbortController();
+    const creation = createGlobalSupervisorWebRtcSession({ initiallyMuted: false, mode: "interactive", onPlaybackLevel: vi.fn(), onTerminal: vi.fn(), signal: abort.signal });
+    const rejected = expect(creation).rejects.toThrow("cancelled");
+    await vi.waitFor(() => expect(platform.audioRouteBridge.acquire).toHaveBeenCalledOnce());
+    abort.abort();
+    route.resolve("late-route");
+    await rejected;
+    expect(platform.audioRouteBridge.release).toHaveBeenCalledExactlyOnceWith("late-route");
+    expect(platform.peerConnections[0]?.close).toHaveBeenCalledOnce();
+    expect(platform.foregroundBridge.observeWebRtc).not.toHaveBeenCalled();
+    expect(platform.mediaDevices.getUserMedia).not.toHaveBeenCalled();
   });
 });
 

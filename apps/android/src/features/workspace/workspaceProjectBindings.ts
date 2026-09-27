@@ -65,9 +65,6 @@ export function useWorkspaceProjectBindings({
   const sidebarCatalogState = sidebarListState(
     !workspaceRuntime.native || list.servers.length === 0 ? "ready" : list.threadSummaryView?.phase,
     list.threadSummaryView?.error ?? null,
-    projectWorkspace.sidebarServers.some(
-      (server) => server.status === "connecting" || server.status === "syncing",
-    ),
   );
   const scopeKey =
     list.serverScope.kind === "all" ? "all" : `connection:${list.serverScope.connectionId}`;

@@ -1,6 +1,7 @@
 import { fireEvent, render, within } from "@testing-library/react-native";
 import { Text, View } from "react-native";
 import { Bubble, BubbleContent, useInsideBubbleSurface } from "../src/rendering/Bubble";
+import { FluidLayoutFrame } from "../src/rendering/FluidLayoutFrame";
 import { MessageFooterRow, MessageFooterStatus } from "../src/rendering/MessageFooterRow";
 import { spacing, typeScale } from "../src/theme";
 
@@ -37,6 +38,19 @@ it("keeps the footer closer to its own bubble than to the following message", ()
 
   result.rerender(<View><Bubble variant="agent" testID="answer"><Text>No footer</Text></Bubble></View>);
   expect(result.getByTestId("agent-bubble-frame")).not.toHaveStyle({ marginBottom: spacing.xs });
+});
+
+it("keeps the footer fixed while the live bubble animates size changes", () => {
+  const result = render(
+    <Bubble animateLayout footer={<Text>Running</Text>} variant="agent">
+      <Text>Growing answer</Text>
+    </Bubble>,
+  );
+  const frames = result.UNSAFE_getAllByType(FluidLayoutFrame);
+
+  expect(frames).toHaveLength(2);
+  expect(frames[0]?.props.animate).toBe(true);
+  expect(frames[1]?.props.animate).toBe(false);
 });
 
 it("keeps metadata and the running status on one line", () => {

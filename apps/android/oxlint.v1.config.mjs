@@ -101,6 +101,7 @@ export default {
         "react-doctor/jsx-no-new-array-as-prop": "off",
         "react-doctor/jsx-no-new-function-as-prop": "off",
         "react-doctor/jsx-no-new-object-as-prop": "off",
+        "react-doctor/jsx-no-jsx-as-prop": "off",
       },
     },
   ],

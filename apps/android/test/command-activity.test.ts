@@ -90,13 +90,6 @@ const bubbleNestedSurfaceStyles = compactSource(
   ),
 );
 
-const thinkingStatusStyles = compactSource(
-  readFileSync(
-    new URL("../src/features/conversation/protocol/ProtocolBlock.styles.ts", import.meta.url),
-    "utf8",
-  ),
-);
-
 const codeBlockStyles = compactSource(
   readFileSync(new URL("../src/rendering/NativeCodeBlock.tsx", import.meta.url), "utf8"),
 );
@@ -190,9 +183,7 @@ describe("command activity presentation", () => {
     }
     expect(cardStyle).toContain("backgroundColor: colors.surfaceContainerLow");
     expect(nestedStyle).toContain('backgroundColor: "transparent"');
-    expect(sourceObjectDeclaration(thinkingStatusStyles, "thinkingStatus")).not.toContain(
-      "backgroundColor",
-    );
+    // The thinking row's transparent surface is covered by the pending-to-reasoning render test.
     expect(sourceObjectDeclaration(codeBlockStyles, "fallbackViewport")).toContain(
       "backgroundColor: colors.code",
     );

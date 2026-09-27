@@ -5,19 +5,20 @@ import { styles } from "./ConnectionRowEditor.styles";
 
 import type { ConnectionEditor } from "./connectionEditor";
 import type { ConnectionEditorProps } from "./connectionEditorContract";
+import { ServerIconPicker } from "./ServerIconPicker";
 
 export function ConnectionEditFields({
   cancelEditing,
   connection,
-  emoji,
   endpoint,
   error,
+  iconId,
   name,
   replacementToken,
   save,
   saving,
-  setEmoji,
   setEndpoint,
+  setIconId,
   setName,
   setReplacementToken,
   setTlsPinSha256,
@@ -26,12 +27,10 @@ export function ConnectionEditFields({
   return (
     <View style={styles.connectionEditorForm}>
       <View style={styles.connectionIdentityFields}>
-        <TextInput
-          accessibilityLabel={`Emoji for ${connection.displayName}`}
-          onChangeText={setEmoji}
-          style={styles.connectionEmojiInput}
-          value={emoji}
-          voiceInput={false}
+        <ServerIconPicker
+          accessibilityLabel={`Choose icon for ${connection.displayName}`}
+          iconId={iconId}
+          onSelect={setIconId}
         />
         <TextInput
           accessibilityLabel={`Name for ${connection.displayName}`}

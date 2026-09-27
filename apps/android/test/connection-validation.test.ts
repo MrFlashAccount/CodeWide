@@ -1,41 +1,35 @@
 import { describe, expect, it } from "vitest";
 
-import { isProfileOnlyConnectionUpdate, validateConnectionInput, validateConnectionProfile, validateConnectionUpdateInput } from "../src/data/connection-validation.js";
+import {
+  isProfileOnlyConnectionUpdate,
+  validateConnectionInput,
+  validateConnectionProfile,
+  validateConnectionUpdateInput,
+} from "../src/data/connection-validation.js";
 
 describe("connection input validation", () => {
-  it("accepts exactly one extended emoji grapheme", () => {
-    expect(validateConnectionProfile("Desktop", "🖥️").emoji).toBe("🖥️");
-    expect(validateConnectionProfile(" Fold ", "👨🏽‍💻")).toEqual({ displayName: "Fold", emoji: "👨🏽‍💻" });
-    expect(validateConnectionProfile("Flag", "🇫🇮").emoji).toBe("🇫🇮");
-    expect(validateConnectionProfile("Keycap", "1️⃣").emoji).toBe("1️⃣");
-    expect(() => validateConnectionProfile("Server", "🚀🧪")).toThrow("one emoji");
-    expect(() => validateConnectionProfile("Server", "A")).toThrow("one emoji");
-    expect(() => validateConnectionProfile("bad\nname", "🚀")).toThrow("visible characters");
-  });
-
-  it("validates one emoji when Hermes does not expose Intl.Segmenter", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(Intl, "Segmenter");
-    Object.defineProperty(Intl, "Segmenter", { configurable: true, value: undefined });
-    try {
-      expect(validateConnectionProfile("Desktop", "🖥️").emoji).toBe("🖥️");
-      expect(validateConnectionProfile("Engineer", "👨🏽‍💻").emoji).toBe("👨🏽‍💻");
-      expect(() => validateConnectionProfile("Too many", "🚀🧪")).toThrow("one emoji");
-    } finally {
-      if (descriptor === undefined) delete (Intl as { Segmenter?: unknown }).Segmenter;
-      else Object.defineProperty(Intl, "Segmenter", descriptor);
-    }
+  it("accepts only known server icon ids", () => {
+    expect(validateConnectionProfile(" Desktop ", "desktop")).toEqual({
+      displayName: "Desktop",
+      iconId: "desktop",
+    });
+    expect(() => validateConnectionProfile("Server", "unknown-icon")).toThrow("not supported");
+    expect(() => validateConnectionProfile("Server", "🖥️")).toThrow("not supported");
+    expect(() => validateConnectionProfile("bad\nname", "server")).toThrow("visible characters");
   });
 
   it("normalizes a host endpoint to the versioned sync path", () => {
-    expect(validateConnectionInput({
-      displayName: " Home ",
-      emoji: " 🏠 ",
-      endpoint: "wss://codex.example.test",
-      token: "a".repeat(43),
-      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
-    })).toEqual({
+    expect(
+      validateConnectionInput({
+        displayName: " Home ",
+        iconId: "office",
+        endpoint: "wss://codex.example.test",
+        token: "a".repeat(43),
+        tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+      }),
+    ).toEqual({
       displayName: "Home",
-      emoji: "🏠",
+      iconId: "office",
       endpoint: "wss://codex.example.test/v1/sync",
       token: "a".repeat(43),
       tlsPinSha256: `sha256/${"A".repeat(43)}=`,
@@ -46,24 +40,32 @@ describe("connection input validation", () => {
     const route = "a".repeat(64);
     const input = {
       displayName: "Relay",
-      emoji: "🖥️",
+      iconId: "desktop" as const,
       endpoint: `ws://45.142.36.65:8780/c/${route}/v1/sync`,
       token: "a".repeat(43),
       tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     };
     expect(validateConnectionInput(input).endpoint).toBe(input.endpoint);
-    expect(() => validateConnectionInput({ ...input, endpoint: "ws://45.142.36.65:8780/v1/sync" })).toThrow("wss://");
-    expect(() => validateConnectionInput({ ...input, endpoint: "ws://45.142.36.65:8780/c/short/v1/sync" })).toThrow("wss://");
-    expect(() => validateConnectionInput({ ...input, endpoint: `ws://45.142.36.65:8780/c/${route}/v1/other` })).toThrow("wss://");
+    expect(() =>
+      validateConnectionInput({ ...input, endpoint: "ws://45.142.36.65:8780/v1/sync" }),
+    ).toThrow("wss://");
+    expect(() =>
+      validateConnectionInput({ ...input, endpoint: "ws://45.142.36.65:8780/c/short/v1/sync" }),
+    ).toThrow("wss://");
+    expect(() =>
+      validateConnectionInput({ ...input, endpoint: `ws://45.142.36.65:8780/c/${route}/v1/other` }),
+    ).toThrow("wss://");
   });
 
   it("rejects every profile without a companion identity pin", () => {
-    expect(() => validateConnectionInput({
-      displayName: "Unpinned ingress",
-      emoji: "🔒",
-      endpoint: "wss://legacy.example.test",
-      token: "a".repeat(43),
-    })).toThrow("TLS pin");
+    expect(() =>
+      validateConnectionInput({
+        displayName: "Unpinned ingress",
+        iconId: "managed",
+        endpoint: "wss://legacy.example.test",
+        token: "a".repeat(43),
+      }),
+    ).toThrow("TLS pin");
   });
 
   it.each([
@@ -73,13 +75,15 @@ describe("connection input validation", () => {
     "wss://codex.example.test/v1/app-server",
     "wss://codex.example.test/v1/sync?token=leak",
   ])("rejects unsafe or incompatible endpoint %s", (endpoint) => {
-    expect(() => validateConnectionInput({
-      displayName: "Home",
-      emoji: "🏠",
-      endpoint,
-      token: "a".repeat(43),
-      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
-    })).toThrow();
+    expect(() =>
+      validateConnectionInput({
+        displayName: "Home",
+        iconId: "office",
+        endpoint,
+        token: "a".repeat(43),
+        tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+      }),
+    ).toThrow();
   });
 
   it.each([
@@ -88,26 +92,33 @@ describe("connection input validation", () => {
     "ws://[::1]/v1/sync",
     "ws://10.0.2.2/v1/sync",
   ])("permits cleartext only for local development: %s", (endpoint) => {
-    expect(validateConnectionInput({
-      displayName: "Local",
-      emoji: "🧪",
-      endpoint,
-      token: "a".repeat(43),
-      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
-    }).endpoint).toBe(endpoint);
+    expect(
+      validateConnectionInput({
+        displayName: "Local",
+        iconId: "terminal",
+        endpoint,
+        token: "a".repeat(43),
+        tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+      }).endpoint,
+    ).toBe(endpoint);
   });
 
   it("keeps the current capability when an edit leaves the replacement blank", () => {
     const currentToken = "a".repeat(43);
-    expect(validateConnectionUpdateInput({
+    expect(
+      validateConnectionUpdateInput(
+        {
+          displayName: "Renamed",
+          iconId: "terminal",
+          endpoint: "wss://new.example.test/v1/sync",
+          token: "   ",
+          tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+        },
+        currentToken,
+      ),
+    ).toEqual({
       displayName: "Renamed",
-      emoji: "🧪",
-      endpoint: "wss://new.example.test/v1/sync",
-      token: "   ",
-      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
-    }, currentToken)).toEqual({
-      displayName: "Renamed",
-      emoji: "🧪",
+      iconId: "terminal",
       endpoint: "wss://new.example.test/v1/sync",
       token: currentToken,
       tlsPinSha256: `sha256/${"A".repeat(43)}=`,
@@ -119,19 +130,44 @@ describe("connection input validation", () => {
       endpoint: "wss://codex.example.test/v1/sync",
       tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     };
-    expect(isProfileOnlyConnectionUpdate({
-      displayName: "Renamed",
-      emoji: "🚀",
-      endpoint: current.endpoint,
-      token: "   ",
-      tlsPinSha256: current.tlsPinSha256,
-    }, current)).toBe(true);
+    expect(
+      isProfileOnlyConnectionUpdate(
+        {
+          displayName: "Renamed",
+          iconId: "cloud",
+          endpoint: current.endpoint,
+          token: "   ",
+          tlsPinSha256: current.tlsPinSha256,
+        },
+        current,
+      ),
+    ).toBe(true);
   });
 
   it("keeps endpoint, capability and pin edits on the full connection-update path", () => {
     const current = { endpoint: "wss://codex.example.test/v1/sync" };
-    expect(isProfileOnlyConnectionUpdate({ displayName: "Name", emoji: "🚀", endpoint: "wss://other.example.test/v1/sync" }, current)).toBe(false);
-    expect(isProfileOnlyConnectionUpdate({ displayName: "Name", emoji: "🚀", endpoint: current.endpoint, token: "replacement" }, current)).toBe(false);
-    expect(isProfileOnlyConnectionUpdate({ displayName: "Name", emoji: "🚀", endpoint: current.endpoint, tlsPinSha256: `sha256/${"A".repeat(43)}=` }, current)).toBe(false);
+    expect(
+      isProfileOnlyConnectionUpdate(
+        { displayName: "Name", iconId: "cloud", endpoint: "wss://other.example.test/v1/sync" },
+        current,
+      ),
+    ).toBe(false);
+    expect(
+      isProfileOnlyConnectionUpdate(
+        { displayName: "Name", iconId: "cloud", endpoint: current.endpoint, token: "replacement" },
+        current,
+      ),
+    ).toBe(false);
+    expect(
+      isProfileOnlyConnectionUpdate(
+        {
+          displayName: "Name",
+          iconId: "cloud",
+          endpoint: current.endpoint,
+          tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+        },
+        current,
+      ),
+    ).toBe(false);
   });
 });

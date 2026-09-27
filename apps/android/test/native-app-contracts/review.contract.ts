@@ -247,9 +247,8 @@ it("keeps async data ownership in resources and event-driven preview controllers
   expect(nativeEngine).toContain("async reattachRuntime(): Promise<void>");
   expect(nativeEngine).toContain("await session.reattachRuntime()");
   expect(ownerThreadSyncForeground).toContain("await supervisor.reattachRuntime(connectionId)");
-  expect(reconnectOwner).toMatch(
-    /sync\s*\.readThread\(row.connectionId, desiredThreadId, undefined, true\)/u,
-  );
+  // Forced reconnect reads and their timing are exercised through the real owner
+  // in v1-network-delivery.render.test.tsx, not by the spelling of local variables.
   expect(ownerCatalogLifecycle).toContain(
     'AppState.addEventListener("change", repairForegroundRuntime)',
   );

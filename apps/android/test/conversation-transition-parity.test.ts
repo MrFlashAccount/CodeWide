@@ -34,15 +34,6 @@ const ownerThreadResourceContextChips = compactSource(
   ),
 );
 
-const ownerConversationTimelineSurface = compactSource(
-  readFileSync(
-    new URL(
-      "../src/features/conversation/timeline/ConversationTimelineSurface.tsx",
-      import.meta.url,
-    ),
-    "utf8",
-  ),
-);
 const ownerConversationDetail = compactSource(
   readFileSync(
     new URL("../src/features/conversation/ConversationDetail.tsx", import.meta.url),
@@ -181,9 +172,8 @@ describe("conversation transition parity", () => {
     );
     expect(mainDetail).toContain("useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
     expect(publication).toContain("searchState === null ? history.messageListState");
-    expect(ownerConversationTimelineSurface).toContain(
-      "<MessageListBoundary state={messageListState}>",
-    );
+    // Transcript-only loading and immediate ready content are exercised through the real surface
+    // in v1-conversation-loading-layout.render.test.tsx, including its delayed loading feedback.
     expect(subagentDetail).toContain("useThreadChatWindow(threadDetails, {");
     expect(publication).toContain("conversation.renderContent({");
     expect(ownerConversationWorkspaceContent).toContain("<ConversationComposition");

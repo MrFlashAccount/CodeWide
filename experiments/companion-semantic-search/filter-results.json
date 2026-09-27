@@ -1,0 +1,1708 @@
+{
+  "filter_probe": {
+    "threshold": 0.3,
+    "models": {
+      "embedding": {
+        "repository": "intfloat/multilingual-e5-small",
+        "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+      },
+      "julia": {
+        "repository": "SupersonicLabs/Julia-1",
+        "revision": "a85b127321d580d65176c89ced8273f305745d85"
+      },
+      "reranker": {
+        "repository": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+        "revision": "1427fd652930e4ba29e8149678df786c240d8825"
+      }
+    },
+    "prompt_sha256": "3618f33c6a7de540eeeb5ae927ee1edd03a37b3aaa759587a51fb0e3886f5998",
+    "protocol_sha256": "b5debec50faaaa2f275eb42ea43dccd38a73e5de4715220a2a87aa18de13d593",
+    "threads": 4,
+    "dtype": "float32",
+    "weights": {
+      "embedding": {
+        "bytes": 470641600,
+        "mib": 448.83880615234375,
+        "floating_point_elements": 117653760
+      },
+      "julia": {
+        "bytes": 577189056,
+        "mib": 550.4503784179688,
+        "floating_point_elements": 144292870
+      }
+    },
+    "datasets": {
+      "fresh_synthetic": {
+        "dataset_sha256": "bd2d8cbfe6b75ac007f017bd04dd8dda02d73655d1ebad6ff91259200eda0bcb",
+        "documents": 32,
+        "queries": 16,
+        "answerable_queries": 12,
+        "variants": {
+          "original_choice": {
+            "counts": {
+              "relevant_kept": 11,
+              "relevant_dropped": 1,
+              "irrelevant_kept": 294,
+              "irrelevant_dropped": 14
+            },
+            "relevant_retention": 0.9166666666666666,
+            "irrelevant_removal": 0.045454545454545456,
+            "rejection_precision": 0.9333333333333333,
+            "ranking_quality": {
+              "unfiltered": {
+                "hit_at_1": 0.5,
+                "hit_at_5": 1,
+                "mrr_at_10": 0.7222222222222222,
+                "ndcg_at_5": 0.7936432511904858,
+                "recall_at_20": 1
+              },
+              "filter_only": {
+                "hit_at_1": 0.5,
+                "hit_at_5": 0.9166666666666666,
+                "mrr_at_10": 0.6805555555555556,
+                "ndcg_at_5": 0.7410657717261977,
+                "recall_at_20": 0.9166666666666666
+              },
+              "filter_and_rerank": {
+                "hit_at_1": 0.3333333333333333,
+                "hit_at_5": 0.5,
+                "mrr_at_10": 0.4078703703703704,
+                "ndcg_at_5": 0.4072377339362118,
+                "recall_at_20": 0.9166666666666666
+              }
+            },
+            "unanswerable_queries": 4,
+            "unanswerable_queries_still_nonempty": 4,
+            "lost_relevant": [
+              {
+                "query_id": "f05",
+                "document_id": "search_fresh",
+                "positive_probability": 0.02813096063233592
+              }
+            ],
+            "warm_filter_timing": {
+              "count": 16,
+              "median_ms": 1181.7850529914722,
+              "p95_observed_ms": 1336.6203079931438,
+              "min_ms": 1108.0478569492698,
+              "max_ms": 1336.6203079931438
+            },
+            "per_query": [
+              {
+                "query_id": "f01",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f02",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f03",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f04",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f05",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f06",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f07",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f08",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f09",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f10",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f11",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f12",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f13",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f14",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f15",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f16",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              }
+            ]
+          },
+          "english_noul": {
+            "counts": {
+              "relevant_kept": 8,
+              "relevant_dropped": 4,
+              "irrelevant_kept": 184,
+              "irrelevant_dropped": 124
+            },
+            "relevant_retention": 0.6666666666666666,
+            "irrelevant_removal": 0.4025974025974026,
+            "rejection_precision": 0.96875,
+            "ranking_quality": {
+              "unfiltered": {
+                "hit_at_1": 0.5,
+                "hit_at_5": 1,
+                "mrr_at_10": 0.7222222222222222,
+                "ndcg_at_5": 0.7936432511904858,
+                "recall_at_20": 1
+              },
+              "filter_only": {
+                "hit_at_1": 0.4166666666666667,
+                "hit_at_5": 0.6666666666666666,
+                "mrr_at_10": 0.5416666666666666,
+                "ndcg_at_5": 0.5743991050595311,
+                "recall_at_20": 0.6666666666666666
+              },
+              "filter_and_rerank": {
+                "hit_at_1": 0.08333333333333333,
+                "hit_at_5": 0.25,
+                "mrr_at_10": 0.16967592592592592,
+                "ndcg_at_5": 0.1572377339362118,
+                "recall_at_20": 0.6666666666666666
+              }
+            },
+            "unanswerable_queries": 4,
+            "unanswerable_queries_still_nonempty": 4,
+            "lost_relevant": [
+              {
+                "query_id": "f01",
+                "document_id": "access_read",
+                "positive_probability": 0.0001155840192258966
+              },
+              {
+                "query_id": "f03",
+                "document_id": "checkout_preserve",
+                "positive_probability": 0.2689080938837013
+              },
+              {
+                "query_id": "f05",
+                "document_id": "search_fresh",
+                "positive_probability": 0.0008643674672132616
+              },
+              {
+                "query_id": "f12",
+                "document_id": "backup_written",
+                "positive_probability": 0.0075862234288557135
+              }
+            ],
+            "warm_filter_timing": {
+              "count": 16,
+              "median_ms": 1171.1442205123603,
+              "p95_observed_ms": 1311.4960140082985,
+              "min_ms": 1030.3703758399934,
+              "max_ms": 1311.4960140082985
+            },
+            "per_query": [
+              {
+                "query_id": "f01",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f02",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f03",
+                "candidate_count": 20,
+                "kept_count": 9,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f04",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f05",
+                "candidate_count": 20,
+                "kept_count": 10,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f06",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f07",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f08",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f09",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f10",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f11",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f12",
+                "candidate_count": 20,
+                "kept_count": 7,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f13",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f14",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f15",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f16",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              }
+            ]
+          },
+          "russian_noul": {
+            "counts": {
+              "relevant_kept": 10,
+              "relevant_dropped": 2,
+              "irrelevant_kept": 192,
+              "irrelevant_dropped": 116
+            },
+            "relevant_retention": 0.8333333333333334,
+            "irrelevant_removal": 0.37662337662337664,
+            "rejection_precision": 0.9830508474576272,
+            "ranking_quality": {
+              "unfiltered": {
+                "hit_at_1": 0.5,
+                "hit_at_5": 1,
+                "mrr_at_10": 0.7222222222222222,
+                "ndcg_at_5": 0.7936432511904858,
+                "recall_at_20": 1
+              },
+              "filter_only": {
+                "hit_at_1": 0.5833333333333334,
+                "hit_at_5": 0.8333333333333334,
+                "mrr_at_10": 0.6944444444444444,
+                "ndcg_at_5": 0.7301549589285763,
+                "recall_at_20": 0.8333333333333334
+              },
+              "filter_and_rerank": {
+                "hit_at_1": 0.08333333333333333,
+                "hit_at_5": 0.3333333333333333,
+                "mrr_at_10": 0.22103174603174602,
+                "ndcg_at_5": 0.20981521340049994,
+                "recall_at_20": 0.8333333333333334
+              }
+            },
+            "unanswerable_queries": 4,
+            "unanswerable_queries_still_nonempty": 4,
+            "lost_relevant": [
+              {
+                "query_id": "f06",
+                "document_id": "archive_hidden",
+                "positive_probability": 0.19716680926239838
+              },
+              {
+                "query_id": "f12",
+                "document_id": "backup_written",
+                "positive_probability": 0.11063454038739008
+              }
+            ],
+            "warm_filter_timing": {
+              "count": 16,
+              "median_ms": 1380.5133785353974,
+              "p95_observed_ms": 1479.8481280449778,
+              "min_ms": 1304.498370969668,
+              "max_ms": 1479.8481280449778
+            },
+            "per_query": [
+              {
+                "query_id": "f01",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f02",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f03",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f04",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f05",
+                "candidate_count": 20,
+                "kept_count": 7,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f06",
+                "candidate_count": 20,
+                "kept_count": 9,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f07",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f08",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f09",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f10",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f11",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "f12",
+                "candidate_count": 20,
+                "kept_count": 5,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f13",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f14",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f15",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "f16",
+                "candidate_count": 20,
+                "kept_count": 9,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              }
+            ]
+          }
+        }
+      },
+      "original_seen": {
+        "dataset_sha256": "cd7ee72e0270c316bb4fb2fcf1f6d759d33050869f84bc87265e8cc927fb9513",
+        "documents": 57,
+        "queries": 40,
+        "answerable_queries": 36,
+        "variants": {
+          "original_choice": {
+            "counts": {
+              "relevant_kept": 31,
+              "relevant_dropped": 4,
+              "irrelevant_kept": 738,
+              "irrelevant_dropped": 27
+            },
+            "relevant_retention": 0.8857142857142857,
+            "irrelevant_removal": 0.03529411764705882,
+            "rejection_precision": 0.8709677419354839,
+            "ranking_quality": {
+              "unfiltered": {
+                "hit_at_1": 0.5833333333333334,
+                "hit_at_5": 0.9166666666666666,
+                "mrr_at_10": 0.7243055555555555,
+                "ndcg_at_5": 0.7665386321237478,
+                "recall_at_20": 0.9722222222222222
+              },
+              "filter_only": {
+                "hit_at_1": 0.5277777777777778,
+                "hit_at_5": 0.8055555555555556,
+                "mrr_at_10": 0.6539351851851852,
+                "ndcg_at_5": 0.6863482763672328,
+                "recall_at_20": 0.8611111111111112
+              },
+              "filter_and_rerank": {
+                "hit_at_1": 0.027777777777777776,
+                "hit_at_5": 0.16666666666666666,
+                "mrr_at_10": 0.12043650793650794,
+                "ndcg_at_5": 0.0945732046677928,
+                "recall_at_20": 0.8611111111111112
+              }
+            },
+            "unanswerable_queries": 4,
+            "unanswerable_queries_still_nonempty": 4,
+            "lost_relevant": [
+              {
+                "query_id": "q09",
+                "document_id": "diff_full",
+                "positive_probability": 0.17648655885965003
+              },
+              {
+                "query_id": "q11",
+                "document_id": "memory_unknown",
+                "positive_probability": 0.24465256389185586
+              },
+              {
+                "query_id": "q32",
+                "document_id": "relay_logs",
+                "positive_probability": 0.07422487541773318
+              },
+              {
+                "query_id": "q34",
+                "document_id": "queue_other",
+                "positive_probability": 0.000009339164674881045
+              }
+            ],
+            "warm_filter_timing": {
+              "count": 40,
+              "median_ms": 1269.3384990561754,
+              "p95_observed_ms": 1342.5896801054478,
+              "min_ms": 1151.0288638528436,
+              "max_ms": 1370.143961161375
+            },
+            "per_query": [
+              {
+                "query_id": "q01",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q02",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q03",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q04",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q05",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q06",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q07",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q08",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q09",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q10",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q11",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q12",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q13",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q14",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q15",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q16",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q17",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q18",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q19",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q20",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q21",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q22",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q23",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q24",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q25",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q26",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q27",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q28",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q29",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q30",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q31",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q32",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q33",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q34",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q35",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q36",
+                "candidate_count": 20,
+                "kept_count": 19,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q37",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q38",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q39",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q40",
+                "candidate_count": 20,
+                "kept_count": 20,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              }
+            ]
+          },
+          "english_noul": {
+            "counts": {
+              "relevant_kept": 23,
+              "relevant_dropped": 12,
+              "irrelevant_kept": 548,
+              "irrelevant_dropped": 217
+            },
+            "relevant_retention": 0.6571428571428571,
+            "irrelevant_removal": 0.28366013071895424,
+            "rejection_precision": 0.9475982532751092,
+            "ranking_quality": {
+              "unfiltered": {
+                "hit_at_1": 0.5833333333333334,
+                "hit_at_5": 0.9166666666666666,
+                "mrr_at_10": 0.7243055555555555,
+                "ndcg_at_5": 0.7665386321237478,
+                "recall_at_20": 0.9722222222222222
+              },
+              "filter_only": {
+                "hit_at_1": 0.3611111111111111,
+                "hit_at_5": 0.6111111111111112,
+                "mrr_at_10": 0.4791666666666667,
+                "ndcg_at_5": 0.5096440231409333,
+                "recall_at_20": 0.6388888888888888
+              },
+              "filter_and_rerank": {
+                "hit_at_1": 0.027777777777777776,
+                "hit_at_5": 0.3055555555555556,
+                "mrr_at_10": 0.1297067901234568,
+                "ndcg_at_5": 0.16238663487731314,
+                "recall_at_20": 0.6388888888888888
+              }
+            },
+            "unanswerable_queries": 4,
+            "unanswerable_queries_still_nonempty": 4,
+            "lost_relevant": [
+              {
+                "query_id": "q11",
+                "document_id": "memory_unknown",
+                "positive_probability": 0.0005938925922355584
+              },
+              {
+                "query_id": "q12",
+                "document_id": "perf_no_gain",
+                "positive_probability": 0.03259952175307708
+              },
+              {
+                "query_id": "q20",
+                "document_id": "storage_idea",
+                "positive_probability": 0.00019127221092211382
+              },
+              {
+                "query_id": "q21",
+                "document_id": "scroll_pending",
+                "positive_probability": 0.006950503567965667
+              },
+              {
+                "query_id": "q22",
+                "document_id": "release_local",
+                "positive_probability": 0.055007543849862686
+              },
+              {
+                "query_id": "q23",
+                "document_id": "voice_permission",
+                "positive_probability": 0.00018766091071527875
+              },
+              {
+                "query_id": "q25",
+                "document_id": "cancel_ui",
+                "positive_probability": 0.15191477305229817
+              },
+              {
+                "query_id": "q30",
+                "document_id": "context_network",
+                "positive_probability": 0.004593150157742977
+              },
+              {
+                "query_id": "q32",
+                "document_id": "relay_logs",
+                "positive_probability": 0.000013919018643935024
+              },
+              {
+                "query_id": "q33",
+                "document_id": "release_published",
+                "positive_probability": 0.23645101774261149
+              },
+              {
+                "query_id": "q34",
+                "document_id": "queue_other",
+                "positive_probability": 0.000019520271792723388
+              },
+              {
+                "query_id": "q35",
+                "document_id": "diff_full",
+                "positive_probability": 0.188205782420162
+              }
+            ],
+            "warm_filter_timing": {
+              "count": 40,
+              "median_ms": 1257.5080414535478,
+              "p95_observed_ms": 1327.8200598433614,
+              "min_ms": 1122.5423351861537,
+              "max_ms": 1348.9254789892584
+            },
+            "per_query": [
+              {
+                "query_id": "q01",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q02",
+                "candidate_count": 20,
+                "kept_count": 10,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q03",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q04",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q05",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q06",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q07",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q08",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q09",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q10",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q11",
+                "candidate_count": 20,
+                "kept_count": 10,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q12",
+                "candidate_count": 20,
+                "kept_count": 8,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q13",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q14",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q15",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q16",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q17",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q18",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q19",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q20",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q21",
+                "candidate_count": 20,
+                "kept_count": 9,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q22",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q23",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q24",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q25",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q26",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q27",
+                "candidate_count": 20,
+                "kept_count": 7,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q28",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q29",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q30",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q31",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q32",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q33",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q34",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q35",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q36",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q37",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q38",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q39",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q40",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              }
+            ]
+          },
+          "russian_noul": {
+            "counts": {
+              "relevant_kept": 23,
+              "relevant_dropped": 12,
+              "irrelevant_kept": 431,
+              "irrelevant_dropped": 334
+            },
+            "relevant_retention": 0.6571428571428571,
+            "irrelevant_removal": 0.4366013071895425,
+            "rejection_precision": 0.9653179190751445,
+            "ranking_quality": {
+              "unfiltered": {
+                "hit_at_1": 0.5833333333333334,
+                "hit_at_5": 0.9166666666666666,
+                "mrr_at_10": 0.7243055555555555,
+                "ndcg_at_5": 0.7665386321237478,
+                "recall_at_20": 0.9722222222222222
+              },
+              "filter_only": {
+                "hit_at_1": 0.5,
+                "hit_at_5": 0.6388888888888888,
+                "mrr_at_10": 0.5611111111111111,
+                "ndcg_at_5": 0.5808492172644548,
+                "recall_at_20": 0.6388888888888888
+              },
+              "filter_and_rerank": {
+                "hit_at_1": 0.1388888888888889,
+                "hit_at_5": 0.3333333333333333,
+                "mrr_at_10": 0.22768959435626102,
+                "ndcg_at_5": 0.23104248236966485,
+                "recall_at_20": 0.6388888888888888
+              }
+            },
+            "unanswerable_queries": 4,
+            "unanswerable_queries_still_nonempty": 4,
+            "lost_relevant": [
+              {
+                "query_id": "q04",
+                "document_id": "queue_fixed",
+                "positive_probability": 0.2478209290511018
+              },
+              {
+                "query_id": "q05",
+                "document_id": "voice_screen",
+                "positive_probability": 0.030972908490038906
+              },
+              {
+                "query_id": "q09",
+                "document_id": "diff_full",
+                "positive_probability": 0.24596062736160812
+              },
+              {
+                "query_id": "q11",
+                "document_id": "memory_unknown",
+                "positive_probability": 0.10962762570810945
+              },
+              {
+                "query_id": "q12",
+                "document_id": "perf_no_gain",
+                "positive_probability": 0.0018425654980210055
+              },
+              {
+                "query_id": "q20",
+                "document_id": "storage_idea",
+                "positive_probability": 0.0010312181438566748
+              },
+              {
+                "query_id": "q22",
+                "document_id": "release_local",
+                "positive_probability": 0.0024466816770645286
+              },
+              {
+                "query_id": "q25",
+                "document_id": "cancel_ui",
+                "positive_probability": 0.1416615649708202
+              },
+              {
+                "query_id": "q26",
+                "document_id": "tests_weak",
+                "positive_probability": 0.023947315912870814
+              },
+              {
+                "query_id": "q30",
+                "document_id": "context_network",
+                "positive_probability": 0.00008388359724501245
+              },
+              {
+                "query_id": "q32",
+                "document_id": "relay_logs",
+                "positive_probability": 0.16724494520490638
+              },
+              {
+                "query_id": "q34",
+                "document_id": "queue_other",
+                "positive_probability": 0.007135077223316822
+              }
+            ],
+            "warm_filter_timing": {
+              "count": 40,
+              "median_ms": 1362.1528405928984,
+              "p95_observed_ms": 1485.3521010372788,
+              "min_ms": 1296.8076581601053,
+              "max_ms": 1496.316462988034
+            },
+            "per_query": [
+              {
+                "query_id": "q01",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q02",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q03",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q04",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q05",
+                "candidate_count": 20,
+                "kept_count": 8,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q06",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q07",
+                "candidate_count": 20,
+                "kept_count": 18,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q08",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q09",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q10",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q11",
+                "candidate_count": 20,
+                "kept_count": 1,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q12",
+                "candidate_count": 20,
+                "kept_count": 8,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q13",
+                "candidate_count": 20,
+                "kept_count": 9,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q14",
+                "candidate_count": 20,
+                "kept_count": 10,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q15",
+                "candidate_count": 20,
+                "kept_count": 10,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q16",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q17",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q18",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q19",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q20",
+                "candidate_count": 20,
+                "kept_count": 4,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q21",
+                "candidate_count": 20,
+                "kept_count": 3,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q22",
+                "candidate_count": 20,
+                "kept_count": 8,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q23",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q24",
+                "candidate_count": 20,
+                "kept_count": 8,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q25",
+                "candidate_count": 20,
+                "kept_count": 15,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q26",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q27",
+                "candidate_count": 20,
+                "kept_count": 10,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q28",
+                "candidate_count": 20,
+                "kept_count": 16,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q29",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q30",
+                "candidate_count": 20,
+                "kept_count": 7,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q31",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q32",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q33",
+                "candidate_count": 20,
+                "kept_count": 11,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q34",
+                "candidate_count": 20,
+                "kept_count": 13,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q35",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q36",
+                "candidate_count": 20,
+                "kept_count": 12,
+                "relevant_in_candidates": 1,
+                "relevant_kept": 1
+              },
+              {
+                "query_id": "q37",
+                "candidate_count": 20,
+                "kept_count": 10,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q38",
+                "candidate_count": 20,
+                "kept_count": 14,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q39",
+                "candidate_count": 20,
+                "kept_count": 17,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              },
+              {
+                "query_id": "q40",
+                "candidate_count": 20,
+                "kept_count": 3,
+                "relevant_in_candidates": 0,
+                "relevant_kept": 0
+              }
+            ]
+          }
+        }
+      }
+    },
+    "julia_model_construction_seconds": 4.035940819885582,
+    "peak_rss_mib": 1073.2578125
+  },
+  "e5_resident_profile": {
+    "threads": 4,
+    "dtype": "float32",
+    "rss_after_imports_mib": 324.07421875,
+    "construction_seconds": 1.709263700991869,
+    "rss_after_construction_mib": 898.50390625,
+    "rss_after_warmup_mib": 983.6015625,
+    "query_encoding_timing": {
+      "count": 16,
+      "median_ms": 15.556567930616438,
+      "p95_observed_ms": 17.419469077140093,
+      "min_ms": 12.935586040839553,
+      "max_ms": 17.419469077140093
+    },
+    "rss_after_queries_mib": 996.93359375,
+    "peak_rss_mib": 996.93359375,
+    "query_count": 16,
+    "embedding_dimensions": 384,
+    "one_fp32_vector_bytes": 1536
+  }
+}

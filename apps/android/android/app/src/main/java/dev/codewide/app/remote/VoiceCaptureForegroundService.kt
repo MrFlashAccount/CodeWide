@@ -40,6 +40,7 @@ class VoiceCaptureForegroundService : Service() {
   private var presentation: GlobalVoicePresentationOwner? = null
   @Volatile private var ingressDiagnostics: GlobalVoiceIngressDiagnostics? = null
   private var lastDiagnosticMs = Long.MIN_VALUE
+  private var lastNotificationText = 0
 
   private fun logVoiceDiagnostic(force: Boolean = false) {
     val owner = presentation
@@ -65,9 +66,15 @@ class VoiceCaptureForegroundService : Service() {
   }
 
   private fun publishPresentation() {
-    val state = presentation?.state() ?: orbState
+    val observed = presentation?.state() ?: orbState
+    val state = if (!captureAdmitted && !microphoneMuted && observed.expectsMicrophoneCapture())
+      VoiceAssistantOrbState.CONNECTING else observed
     globalVoiceOverlay.updateOrbState(state)
-    captureHealth.setExpectedCapture(state.expectsMicrophoneCapture())
+    captureHealth.setExpectedCapture(captureAdmitted && state.expectsMicrophoneCapture())
+    audioLevels.setMicrophoneMuted(microphoneMuted || !captureAdmitted)
+    if (!lifetime.isEmpty() && lastNotificationText != notificationText()) {
+      getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+    }
     logVoiceDiagnostic()
   }
 
@@ -125,7 +132,7 @@ class VoiceCaptureForegroundService : Service() {
     )
     audioLevels.setMicrophoneMuted(microphoneMuted)
     captureHealth.setMicrophoneMuted(microphoneMuted)
-    captureHealth.setExpectedCapture(orbState.expectsMicrophoneCapture())
+    captureHealth.setExpectedCapture(captureAdmitted && orbState.expectsMicrophoneCapture())
     val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
     wakeLockOwner = GlobalVoiceWakeLockOwner.create(powerManager)
     captureHealth.setScreenInteractive(powerManager.isInteractive)
@@ -264,7 +271,16 @@ class VoiceCaptureForegroundService : Service() {
     stopSelf()
   }
 
+  private fun notificationText(): Int {
+    if (!lifetime.hasOverlay()) return R.string.voice_capture_notification_text
+    if (microphoneMuted) return R.string.voice_capture_notification_muted
+    val state = presentation?.state() ?: orbState
+    return if (!captureAdmitted || !state.expectsMicrophoneCapture())
+      R.string.voice_capture_notification_paused else R.string.voice_capture_notification_text
+  }
+
   private fun notification(): Notification {
+    lastNotificationText = notificationText()
     val openApp = PendingIntent.getActivity(
       this,
       0,
@@ -274,7 +290,7 @@ class VoiceCaptureForegroundService : Service() {
     return NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_stat_codewide)
       .setContentTitle(getString(R.string.voice_capture_notification_title))
-      .setContentText(getString(R.string.voice_capture_notification_text))
+      .setContentText(getString(lastNotificationText))
       .setContentIntent(openApp)
       .setOngoing(true)
       .setSilent(true)
@@ -292,6 +308,7 @@ class VoiceCaptureForegroundService : Service() {
     private const val NOTIFICATION_ID = 42_012
     private val pending = ConcurrentHashMap<String, (Throwable?) -> Unit>()
     @Volatile private var instance: VoiceCaptureForegroundService? = null
+    @Volatile private var captureAdmitted = false
     @Volatile private var orbStyle = VoiceAssistantOrbStyle.PARTICLES
     @Volatile private var orbState = VoiceAssistantOrbState.IDLE
     @Volatile private var orbReducedMotion = false
@@ -376,6 +393,12 @@ class VoiceCaptureForegroundService : Service() {
       Log.w(LOG_TAG, "audioRecordFailure=${kind.diagnosticValue}")
     }
 
+    internal fun updateCaptureAdmission(open: Boolean) {
+      captureAdmitted = open
+      val active = instance ?: return
+      active.mainExecutor.execute { active.publishPresentation() }
+    }
+
     fun updateMicrophoneMuted(muted: Boolean) {
       microphoneMuted = muted
       val active = instance ?: return
@@ -383,7 +406,7 @@ class VoiceCaptureForegroundService : Service() {
         active.presentation?.setMuted(muted)
         active.publishPresentation()
         active.captureHealth.setMicrophoneMuted(muted)
-        active.audioLevels.setMicrophoneMuted(muted)
+        active.audioLevels.setMicrophoneMuted(muted || !captureAdmitted)
         active.globalVoiceOverlay.updateMicrophoneMuted(muted)
       }
     }

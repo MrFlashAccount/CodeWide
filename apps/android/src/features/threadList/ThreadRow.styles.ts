@@ -81,7 +81,6 @@ export const styles = StyleSheet.create({
     marginHorizontal: 0,
     marginVertical: 0,
   },
-  threadServerEmoji: { ...typeScale.emoji },
   threadStatusIcon: {
     alignItems: "center",
     flexShrink: 0,

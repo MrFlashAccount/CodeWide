@@ -11,15 +11,11 @@ export type SidebarListState =
 export function sidebarListState(
   phase: "idle" | "loading" | "ready" | "error" | undefined,
   error: string | null,
-  connecting: boolean,
 ): SidebarListState {
-  if (connecting || phase === undefined || phase === "idle" || phase === "loading") {
-    return { status: "loading" };
-  }
   if (phase === "error") {
     return { message: error ?? "Could not load chats", status: "error" };
   }
-  return { status: "empty" };
+  return { status: phase === "ready" ? "empty" : "loading" };
 }
 
 /** Mount only without rows. Fast reads remain blank; loading never masquerades as an empty result. */

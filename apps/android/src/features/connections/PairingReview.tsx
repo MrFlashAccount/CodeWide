@@ -8,12 +8,13 @@ import { styles } from "./ConnectionSheet.styles";
 
 import type { ConnectionSheetSessionProps } from "./connectionSheetContract";
 import type { PairingSession } from "./pairingSession";
+import { ServerIconPicker } from "./ServerIconPicker";
 
 export function PairingReview({
   displayName,
-  emoji,
   endpointLabel,
   error,
+  iconId,
   localError,
   localReady,
   minutesLeft,
@@ -21,13 +22,13 @@ export function PairingReview({
   save,
   saving,
   setDisplayName,
-  setEmoji,
+  setIconId,
   setMode,
 }: Pick<
   PairingSession,
-  | "emoji"
+  | "iconId"
   | "displayName"
-  | "setEmoji"
+  | "setIconId"
   | "setDisplayName"
   | "endpointLabel"
   | "minutesLeft"
@@ -40,12 +41,10 @@ export function PairingReview({
     <View style={styles.pairingBody}>
       <View style={styles.pairingReviewCard}>
         <View style={styles.pairingIdentityRow}>
-          <TextInput
-            accessibilityLabel="Server emoji"
-            onChangeText={setEmoji}
-            style={styles.pairingEmojiInput}
-            value={emoji}
-            voiceInput={false}
+          <ServerIconPicker
+            accessibilityLabel="Choose server icon"
+            iconId={iconId}
+            onSelect={setIconId}
           />
           <TextInput
             accessibilityLabel="Server name"

@@ -2,7 +2,7 @@ import type { createCommandDelivery } from "../../data/command-delivery";
 import { listNativeCommands } from "../../native/native-transport";
 import type { PendingRequestDatabase } from "../../data/pending-request-database";
 import type { PendingServerRequest } from "../../data/pending-request-types";
-import { deliverServerRequestResponse } from "../../data/serverRequestDelivery";
+import { respondToPendingServerRequest } from "../../data/serverRequestDelivery";
 
 import type { RequestsWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts requests intents using retained lower authorities. */
@@ -20,23 +20,10 @@ export function createRequestsWorkspaceAdapter({
     result: unknown,
   ): Promise<void> => {
     const pending = getPendingRequests();
-    if (pending === null || !pending.claim(request.connectionId, request.requestKey)) {
+    if (pending === null) {
       throw new Error("Request is no longer available for a response");
     }
-    try {
-      await deliverServerRequestResponse({
-        connectionId: request.connectionId,
-        requestId: request.requestId,
-        responseKey:
-          request.method === "item/tool/requestUserInput"
-            ? JSON.stringify([request.requestKey, request.createdAt])
-            : request.requestKey,
-        result,
-      });
-    } catch (error) {
-      pending.release(request.connectionId, request.requestKey);
-      throw error;
-    }
+    await respondToPendingServerRequest({ database: pending, pending: request, result });
   };
   const sendQuestionAnswer: RequestsWorkspaceCapabilities["sendQuestionAnswer"] = async (
     request,

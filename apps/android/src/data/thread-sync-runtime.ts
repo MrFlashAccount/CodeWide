@@ -199,6 +199,9 @@ export function createThreadSyncRuntime({
             values: { turnCount: synchronizedThread.turns.length },
           });
           void loadTurnControls(connectionId, synchronizedThread.cwd).catch(() => undefined);
+          if (isCurrent()) {
+            details.chat.confirmBackendRefresh(connectionId, threadId);
+          }
           return {
             nextCursor: details.historyCursor(connectionId, threadId),
             thread: residentThreadWindow(synchronizedThread),

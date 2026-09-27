@@ -28,11 +28,11 @@ it("does not flash an empty archive before the grace period or retain timers aft
 });
 
 it("distinguishes a failed read, an unresolved search and a confirmed empty result", () => {
-  expect(sidebarListState("loading", null, false)).toEqual({ status: "loading" });
-  expect(sidebarListState(undefined, null, false)).toEqual({ status: "loading" });
-  expect(sidebarListState("ready", null, true)).toEqual({ status: "loading" });
-  expect(sidebarListState("ready", null, false)).toEqual({ status: "empty" });
-  const state = sidebarListState("error", "Server unavailable", false);
+  expect(sidebarListState("loading", null)).toEqual({ status: "loading" });
+  expect(sidebarListState(undefined, null)).toEqual({ status: "loading" });
+  // A completed local view stays visible independently of transport reconnects.
+  expect(sidebarListState("ready", null)).toEqual({ status: "empty" });
+  const state = sidebarListState("error", "Server unavailable");
   const view = render(<SidebarListFeedback state={state} archived={false} />);
   act(() => jest.advanceTimersByTime(300));
   expect(view.getByRole("alert")).toHaveTextContent("Server unavailable");

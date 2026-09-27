@@ -1,6 +1,8 @@
 import type { SyncServerRequest } from "@codewide/sync-client";
 import type { StoredConnection } from "./connection-profile-types";
+import type { PendingServerRequest } from "./pending-request-types";
 import type { GlobalSupervisorAttentionOwner } from "./globalSupervisorAttention";
+import type { GlobalSupervisorAttachmentTextReader } from "./globalSupervisorChatAttachments";
 import {
   createGlobalSupervisorBindingOwner,
   type GlobalSupervisorBindingDatabase,
@@ -16,8 +18,10 @@ import {
   createGlobalSupervisorToolTargetPolicy,
   type GlobalSupervisorToolTargetPolicy,
 } from "./globalSupervisorToolTarget";
+import type { VoiceAssistantBackgroundModelResolution } from "./voiceAssistantBackgroundModel";
 import type { VoiceAssistantPersonality } from "./voiceAssistantPersonality";
 import type { WorkspaceSyncSession } from "./workspace-session";
+import type { StoredThreadSummary } from "./thread-summary-types";
 
 type GlobalSupervisorRpc = <Result>(
   session: WorkspaceSyncSession,
@@ -36,6 +40,9 @@ type GlobalSupervisorWorkspaceSystemRequests = {
 
 /** Creates the supervisor binding and tool-target guard independently of catalog hydration. */
 export async function createGlobalSupervisorWorkspaceBinding(options: {
+  readonly backgroundSettings: (
+    connectionId: string,
+  ) => Promise<VoiceAssistantBackgroundModelResolution>;
   readonly getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   readonly personality: () => Promise<VoiceAssistantPersonality>;
   readonly randomUUID: () => string;
@@ -75,14 +82,22 @@ export function createGlobalSupervisorWorkspaceSystemRequests(options: {
   readonly attention: GlobalSupervisorAttentionOwner;
   readonly binding: Awaited<ReturnType<typeof createGlobalSupervisorWorkspaceBinding>>["binding"];
   readonly currentConnections: () => StoredConnection[];
+  readonly currentPendingRequests: () => readonly PendingServerRequest[];
   readonly getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   readonly isRpcAvailable: (connectionId: string) => boolean;
   readonly isSupervisorActive: () => boolean;
+  readonly now: () => number;
+  readonly readAttachmentText: GlobalSupervisorAttachmentTextReader;
+  readonly readWorkCatalog: () => Promise<readonly StoredThreadSummary[]>;
   readonly respond: (request: {
     readonly connectionId: string;
     readonly requestId: string | number;
     readonly result: unknown;
   }) => Promise<void>;
+  readonly respondToPendingRequest: (
+    request: PendingServerRequest,
+    result: unknown,
+  ) => Promise<void>;
   readonly rpcAfterAttach: GlobalSupervisorRpc;
   readonly sendSystemText: (request: {
     readonly commandId: string;
@@ -100,13 +115,18 @@ export function createGlobalSupervisorWorkspaceSystemRequests(options: {
       createGlobalSupervisorToolCapabilities({
         attention: options.attention,
         currentConnections: options.currentConnections,
+        currentPendingRequests: options.currentPendingRequests,
         deriveTargetSendCommandId: async (request) =>
           globalSupervisorRequestCommandId("targetSend", request),
         deriveWorkerCreationSource: async (request) =>
           globalSupervisorRequestCommandId("workerCreate", request),
         getSession: options.getSession,
         isRpcAvailable: options.isRpcAvailable,
+        now: options.now,
+        readAttachmentText: options.readAttachmentText,
+        readWorkCatalog: options.readWorkCatalog,
         respond: options.respond,
+        respondToPendingRequest: options.respondToPendingRequest,
         rpcAfterAttach: options.rpcAfterAttach,
         sendSystemText: options.sendSystemText,
         targetPolicy: options.targetPolicy,

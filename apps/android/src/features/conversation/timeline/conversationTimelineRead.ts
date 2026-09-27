@@ -83,9 +83,8 @@ export function useConversationTimelineRead({
   });
   const timelineModelReady = messageListState.status === "ready";
   const timelinePositioned =
-    timelineModelReady &&
-    (conversationTimelineBinding.timeline.length === 0 ||
-      timelineState.timelineViewportStateBinding.timelineDidLoad);
+    timelineState.timelineViewportStateBinding.timelineDidLoad ||
+    (timelineModelReady && conversationTimelineBinding.timeline.length === 0);
   const conversationBackdropVisible =
     timelinePositioned && conversationTimelineBinding.timeline.length > 0;
   const timelineSearchProjectionBinding = useTimelineSearchProjection(

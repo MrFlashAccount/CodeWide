@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import { radii, typeScale } from "../../theme";
+import { radii } from "../../theme";
 
 export const styles = StyleSheet.create({
   connectionStateDot: {
@@ -7,5 +7,4 @@ export const styles = StyleSheet.create({
     height: 7,
     width: 7,
   },
-  serverEmoji: { ...typeScale.emoji },
 });

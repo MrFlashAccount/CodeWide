@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 
 import {
   createGlobalSupervisorAttentionOwner,
@@ -8,6 +9,7 @@ import { createGlobalSupervisorAttentionDeliverySession } from "../src/data/glob
 import { createGlobalSupervisorAttentionProjection } from "../src/data/globalSupervisorAttentionProjection";
 import { createGlobalSupervisorAttentionStorage } from "../src/data/globalSupervisorAttentionStorage.web";
 import { globalSupervisorQualifiedChatRef } from "../src/data/globalSupervisorBinding";
+import { createV1TestThread } from "./fixtures/v1Thread";
 
 const SUPERVISOR = globalSupervisorQualifiedChatRef("home", "supervisor");
 const SUPERVISOR_B = globalSupervisorQualifiedChatRef("other-home", "supervisor-b");
@@ -16,6 +18,7 @@ const WORKER_B = globalSupervisorQualifiedChatRef("server-b", "worker-b");
 
 function completed(options: {
   readonly cursor: number;
+  readonly excluded?: boolean;
   readonly observedAt: number;
   readonly status?: "completed" | "failed" | "interrupted";
   readonly summary?: string;
@@ -26,6 +29,7 @@ function completed(options: {
   return {
     cursor: options.cursor,
     payload: {
+      codewideCatalogExcluded: options.excluded ?? false,
       codewideThreadPatch: {
         operation: {
           kind: "turnCompleted",
@@ -90,7 +94,7 @@ describe("Global Supervisor attention", () => {
     const first = completed({
       cursor: 8,
       observedAt: 12_000,
-      summary: "a".repeat(800),
+      summary: `token sk-secretvalue123456 https://service.test/private?secret=yes ${"a".repeat(800)}`,
       worker: WORKER_A.threadId,
     });
     const second = completed({
@@ -112,7 +116,105 @@ describe("Global Supervisor attention", () => {
       WORKER_A.threadId,
     ]);
     expect([...pending[1]!.summary]).toHaveLength(480);
+    expect(JSON.stringify(pending)).not.toContain("secretvalue");
     expect(pending[0]!.eventId).not.toBe(pending[1]!.eventId);
+  });
+
+  it("observes an ordinary user chat without an explicit follow relation", async () => {
+    const attention = owner();
+    await attention.enableDelivery(SUPERVISOR);
+
+    await attention.ingestEvents(WORKER_A.connectionId, [
+      completed({ cursor: 1, observedAt: 11_000, worker: WORKER_A.threadId }),
+    ]);
+
+    await expect(attention.pending(SUPERVISOR)).resolves.toMatchObject([
+      { kind: "completed", sourceCursor: 1, worker: WORKER_A },
+    ]);
+  });
+
+  it("baselines a newly available connection and observes chats created after its snapshot", async () => {
+    const attention = owner();
+    await attention.enableDelivery(SUPERVISOR);
+    await attention.ingestSnapshot(WORKER_B.connectionId, [], 40);
+    await attention.ingestEvents(WORKER_B.connectionId, [
+      {
+        cursor: 41,
+        payload: {
+          codewideCatalogExcluded: false,
+          method: "thread/started",
+          params: { thread: { id: WORKER_B.threadId, threadSource: null } },
+        },
+      },
+      completed({ cursor: 42, observedAt: 11_000, worker: WORKER_B.threadId }),
+    ]);
+
+    await expect(attention.pending(SUPERVISOR)).resolves.toMatchObject([
+      { sourceCursor: 42, worker: WORKER_B },
+    ]);
+  });
+
+  it("starts from the current snapshot cursor without replaying old completions", async () => {
+    const attention = owner();
+    const oldTurn: Turn = {
+      completedAt: 9,
+      id: "old-turn",
+      items: [],
+      itemsView: "summary",
+      status: "completed",
+    };
+    await attention.ingestSnapshot(
+      WORKER_A.connectionId,
+      [{ archived: false, thread: createV1TestThread(WORKER_A.threadId, null, 1, [oldTurn]) }],
+      50,
+    );
+    await attention.enableDelivery(SUPERVISOR);
+    await attention.follow(SUPERVISOR, WORKER_A);
+    await attention.ingestEvents(WORKER_A.connectionId, [
+      completed({ cursor: 49, observedAt: 9_000, worker: WORKER_A.threadId }),
+    ]);
+
+    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(0);
+
+    await attention.ingestEvents(WORKER_A.connectionId, [
+      completed({ cursor: 51, observedAt: 11_000, worker: WORKER_A.threadId }),
+    ]);
+    await expect(attention.pending(SUPERVISOR)).resolves.toMatchObject([
+      { sourceCursor: 51, worker: WORKER_A },
+    ]);
+  });
+
+  it("excludes the supervisor itself and catalog-hidden supervisor threads", async () => {
+    const attention = owner();
+    await attention.enableDelivery(SUPERVISOR);
+    const self = completed({
+      cursor: 1,
+      observedAt: 11_000,
+      worker: SUPERVISOR.threadId,
+    });
+    const hidden = completed({
+      cursor: 2,
+      excluded: true,
+      observedAt: 12_000,
+      worker: "other-supervisor",
+    });
+
+    const child = "subagent-thread";
+    await attention.ingestEvents(SUPERVISOR.connectionId, [
+      self,
+      hidden,
+      {
+        cursor: 3,
+        payload: {
+          codewideCatalogExcluded: false,
+          method: "thread/started",
+          params: { thread: { id: child, parentThreadId: "ordinary-parent", threadSource: null } },
+        },
+      },
+      completed({ cursor: 4, observedAt: 13_000, worker: child }),
+    ]);
+
+    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(0);
   });
 
   it("retains acknowledgement tombstones across restart and replay", async () => {
@@ -132,6 +234,40 @@ describe("Global Supervisor attention", () => {
     await restarted.ingestEvents(WORKER_A.connectionId, [event]);
 
     await expect(restarted.pendingCount(SUPERVISOR)).resolves.toBe(0);
+  });
+
+  it("bounds acknowledged tombstones without dropping an undelivered backlog", async () => {
+    const storage = createGlobalSupervisorAttentionStorage();
+    const attention = owner(storage);
+    await attention.follow(SUPERVISOR, WORKER_A);
+    await attention.ingestEvents(
+      WORKER_A.connectionId,
+      Array.from({ length: 300 }, (_, index) =>
+        completed({
+          cursor: index + 1,
+          observedAt: 11_000 + index,
+          worker: WORKER_A.threadId,
+        }),
+      ),
+    );
+
+    expect(
+      storage.rows().filter((row) => row.rowKind === "attention" && row.state === "acknowledged"),
+    ).toHaveLength(256);
+
+    await attention.enableDelivery(SUPERVISOR);
+    await attention.ingestEvents(
+      WORKER_A.connectionId,
+      Array.from({ length: 260 }, (_, index) =>
+        completed({
+          cursor: 301 + index,
+          observedAt: 12_000 + index,
+          worker: WORKER_A.threadId,
+        }),
+      ),
+    );
+
+    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(260);
   });
 
   it("turns pending user interaction into content-free scoped attention", async () => {
@@ -154,15 +290,25 @@ describe("Global Supervisor attention", () => {
     ]);
 
     const pending = await attention.pending(SUPERVISOR);
-    expect(pending).toHaveLength(1);
-    expect(pending[0]).toMatchObject({
-      kind: "needsInput",
-      summary: "Worker chat is waiting for user approval.",
-      worker: WORKER_A,
-    });
+    expect(pending).toHaveLength(2);
+    expect(pending).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "needsInput",
+          summary: "Worker chat is waiting for user approval.",
+          worker: WORKER_A,
+        }),
+        expect.objectContaining({
+          kind: "needsInput",
+          worker: { connectionId: "other-server", threadId: WORKER_A.threadId },
+        }),
+      ]),
+    );
     expect(JSON.stringify(pending)).not.toContain("secret command");
 
     await attention.ingestPendingRequests(WORKER_A.connectionId, []);
+    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(1);
+    await attention.ingestPendingRequests("other-server", []);
     await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(0);
   });
 
@@ -197,7 +343,7 @@ describe("Global Supervisor attention", () => {
     await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(1);
   });
 
-  it("keeps follow across runtime unload and removes it only when the worker is deleted", async () => {
+  it("keeps automatic observation after a legacy explicit relation is removed", async () => {
     const attention = owner();
     await attention.enableDelivery(SUPERVISOR);
     await attention.enableDelivery(SUPERVISOR_B);
@@ -212,7 +358,7 @@ describe("Global Supervisor attention", () => {
       completed({ cursor: 2, observedAt: 12_000, worker: WORKER_A.threadId }),
     ]);
 
-    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(0);
+    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(1);
     await expect(attention.pendingCount(SUPERVISOR_B)).resolves.toBe(2);
 
     await attention.ingestEvents(WORKER_A.connectionId, [
@@ -306,9 +452,40 @@ describe("Global Supervisor attention", () => {
     await delivery.stop();
   });
 
+  it("keeps observation pending while durable mute and snooze suppress only speech", async () => {
+    let now = 10_000;
+    const storage = createGlobalSupervisorAttentionStorage();
+    const attention = createGlobalSupervisorAttentionOwner({ now: () => now, storage });
+    await attention.enableDelivery(SUPERVISOR);
+    await attention.follow(SUPERVISOR, WORKER_A);
+    await attention.ingestEvents(WORKER_A.connectionId, [
+      completed({ cursor: 1, observedAt: 11_000, worker: WORKER_A.threadId }),
+    ]);
+
+    await attention.setSpokenAttention(SUPERVISOR, WORKER_A, { mode: "muted" });
+    await expect(attention.pending(SUPERVISOR)).resolves.toHaveLength(1);
+    await expect(attention.pendingForSpeech(SUPERVISOR)).resolves.toHaveLength(0);
+
+    const restarted = createGlobalSupervisorAttentionOwner({ now: () => now, storage });
+    await expect(restarted.spokenAttention(SUPERVISOR, WORKER_A)).resolves.toEqual({
+      mode: "muted",
+    });
+
+    await attention.setSpokenAttention(SUPERVISOR, WORKER_A, {
+      mode: "snoozed",
+      until: 70_000,
+    });
+    await expect(attention.pendingForSpeech(SUPERVISOR)).resolves.toHaveLength(0);
+    now = 70_001;
+    await expect(attention.pendingForSpeech(SUPERVISOR)).resolves.toHaveLength(1);
+
+    restarted.close();
+    attention.close();
+  });
+
   it("waits for a subscription signal instead of polling an empty attention queue", async () => {
     const attention = owner();
-    const pending = vi.spyOn(attention, "pending");
+    const pending = vi.spyOn(attention, "pendingForSpeech");
     const appendText = vi.fn(async () => undefined);
     const delivery = createGlobalSupervisorAttentionDeliverySession({
       appendText,

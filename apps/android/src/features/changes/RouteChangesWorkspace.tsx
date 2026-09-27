@@ -6,6 +6,7 @@ import {
   recordedTurnChangeDiff,
   recordedTurnChangeResources,
   recordedTurnResourcesValue,
+  loadRecordedTurnChanges,
   selectChangePresentation,
 } from "./changePresentation";
 import { CodeReviewWorkspace } from "../review/workspace/CodeReviewWorkspace";
@@ -14,6 +15,7 @@ import type {
   TurnChangesRouteRequest,
 } from "../../services/changes/changesRouteSession";
 import type { ThreadChangeResource } from "../../data/thread-resource-types";
+import { useEvent } from "../../react/useEvent";
 
 const EMPTY_CHANGES: ThreadChangeResource[] = [];
 const LAST_TURN_CHANGE_SCOPES: ThreadChangeScope[] = [];
@@ -96,20 +98,19 @@ export function TurnChangesRoute({
   readonly onClose: () => void;
   readonly request: TurnChangesRouteRequest;
 }): React.JSX.Element {
-  const loadFiles = async () => {
-    if (request.knownFiles.length > 0) {
-      return request.knownFiles;
-    }
-    if (request.loadTurnChanges === undefined) {
-      throw new Error("This turn has no recorded file patches.");
-    }
-    const files = await request.loadTurnChanges(request.target);
-    if (files.length === 0) {
-      throw new Error("This turn has no recorded file patches.");
-    }
-    return files;
-  };
-  const changes = recordedTurnChangeResources(request.target, request.knownFiles);
+  const loadFiles = useEvent(async () => loadRecordedTurnChanges(request));
+  const loadDiff = useEvent(async (path: string) =>
+    recordedTurnChangeDiff(request.target, await loadFiles(), path),
+  );
+  const loadInitial = useEvent(async () =>
+    recordedTurnResourcesValue(request.target, await loadFiles()),
+  );
+  // The turn footer carries a bounded diff preview. Its hunk may be cut in
+  // half, so wait for full recorded fileChange items before selecting a file.
+  const changes = recordedTurnChangeResources(
+    request.target,
+    request.loadTurnChanges === undefined ? request.knownFiles : [],
+  );
   return (
     <CodeReviewWorkspace
       changes={changes}
@@ -121,15 +122,14 @@ export function TurnChangesRoute({
       initialWrapLines={request.wrapLines}
       onAttach={request.attachCodeReview}
       onClose={onClose}
-      onLoadDiff={async (path) => recordedTurnChangeDiff(request.target, await loadFiles(), path)}
+      onLoadDiff={loadDiff}
       scopeLabel="This turn"
       thread={request.thread}
       voiceRuntime={request.voiceRuntime}
-      {...(request.knownFiles.length > 0
+      {...(request.loadTurnChanges === undefined
         ? {}
         : {
-            onInitialLoad: async () =>
-              recordedTurnResourcesValue(request.target, await loadFiles()),
+            onInitialLoad: loadInitial,
           })}
     />
   );

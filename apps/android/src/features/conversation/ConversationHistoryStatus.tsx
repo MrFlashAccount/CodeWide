@@ -8,11 +8,24 @@ import { threadContextLabel } from "../../data/thread-projects";
 import { useThreadHistoryActivity } from "../../data/use-thread-history";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
+import { WaveText } from "../../ui/WaveText";
 import {
-  connectionActivityColor,
+  connectionActivity,
+  connectionStateLabel,
   type ThreadListServer,
 } from "../connections/connectionPresentation";
 import { styles } from "./ConversationHistoryStatus.styles";
+
+function connectionWarning(server: ThreadListServer | undefined): string | null {
+  if (server?.health === undefined || server.health === "online") {
+    return null;
+  }
+  return connectionStateLabel(server.status, true, server.health);
+}
+
+function pendingConnection(server: ThreadListServer | undefined): boolean {
+  return server !== undefined && connectionActivity(server.status, server.health) !== null;
+}
 
 export function ConversationHistorySubtitle({
   cwd,
@@ -26,17 +39,20 @@ export function ConversationHistorySubtitle({
   server: ThreadListServer | undefined;
 }) {
   const activity = useThreadHistoryActivity(model, resourceId);
-  const connecting = server?.status === "connecting";
-  const text = connecting
-    ? "connecting…"
-    : activity.status === "background-retrying"
-      ? "update delayed"
-      : threadContextLabel(server?.name ?? "", cwd);
-  const color = connecting
-    ? connectionActivityColor("connecting")
-    : activity.status === "background-retrying"
-      ? colors.amber
-      : colors.textMuted;
+  const text = threadContextLabel(server?.name ?? "", cwd);
+  const pending = pendingConnection(server);
+  const delayed = activity.status === "background-retrying";
+  const color = delayed ? colors.amber : colors.textMuted;
+  if (pending) {
+    return (
+      <WaveText
+        style={[styles.conversationSubtitle, { color }]}
+        testID="conversation-subtitle"
+        text={text}
+      />
+    );
+  }
+  const warning = connectionWarning(server) ?? (delayed ? "update delayed" : null);
   return (
     <Text
       ellipsizeMode="middle"
@@ -44,7 +60,7 @@ export function ConversationHistorySubtitle({
       style={[styles.conversationSubtitle, { color }]}
       testID="conversation-subtitle"
     >
-      {text}
+      {warning === null ? text : `${text} · ${warning}`}
     </Text>
   );
 }

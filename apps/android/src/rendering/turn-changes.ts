@@ -34,7 +34,13 @@ export function turnItemChanges(items: readonly ThreadItem[]): readonly TurnChan
 
 /** Only the recorded turn diff is accepted: no worktree/current-file fallback. */
 export function turnChangedFiles(diff: string): readonly TurnChangedFile[] {
-  if (diff.trim() === "") {
+  // Companion and the live reducer can truncate a turn-wide diff in the
+  // middle of a hunk. Its preview is only a navigation hint, not a patch.
+  if (
+    diff.trim() === "" ||
+    /\n… \[\d+ bytes; full content available\]/u.test(diff) ||
+    diff.includes("… [earlier live output omitted] …")
+  ) {
     return [];
   }
   const sections = diff.split(/(?=^diff --git )/mu).filter((section) => section.trim() !== "");

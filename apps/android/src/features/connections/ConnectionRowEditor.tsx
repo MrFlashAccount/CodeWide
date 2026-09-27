@@ -6,7 +6,7 @@ import { ConnectionStatus } from "./ConnectionStatus";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
-import { useState } from "react";
+import { createElement, useState } from "react";
 import { Platform, Pressable, Switch, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
@@ -15,6 +15,7 @@ import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
 import { AccountPoolEditor } from "../accounts/AccountPoolFeature";
 import { connectionDiagnosticReport } from "./connectionDiagnosticReport";
+import { ServerIcon } from "./ServerIcon";
 import { styles } from "./ConnectionRowEditor.styles";
 
 export function ConnectionRowEditor({
@@ -35,16 +36,16 @@ export function ConnectionRowEditor({
   const {
     cancelEditing,
     editing,
-    emoji,
     endpoint,
     error,
+    iconId,
     name,
     replacementToken,
     save,
     saving,
     setEditing,
-    setEmoji,
     setEndpoint,
+    setIconId,
     setName,
     setReplacementToken,
     setTlsPinSha256,
@@ -84,7 +85,11 @@ export function ConnectionRowEditor({
       label: "Delete server",
     },
   ];
-  const secureLive = connection.enabled && connection.state === "live";
+  const secureLive =
+    connection.enabled &&
+    (connection.health === undefined
+      ? connection.state === "live"
+      : connection.health === "online");
   const copyDiagnostic = async () => {
     if (connection.lastError === null) {
       return;
@@ -134,15 +139,15 @@ export function ConnectionRowEditor({
         <ConnectionEditFields
           cancelEditing={cancelEditing}
           connection={connection}
-          emoji={emoji}
           endpoint={endpoint}
           error={error}
+          iconId={iconId}
           name={name}
           replacementToken={replacementToken}
           save={save}
           saving={saving}
-          setEmoji={setEmoji}
           setEndpoint={setEndpoint}
+          setIconId={setIconId}
           setName={setName}
           setReplacementToken={setReplacementToken}
           setTlsPinSha256={setTlsPinSha256}
@@ -163,7 +168,7 @@ export function ConnectionRowEditor({
               ) : undefined
             }
             fixedHeight={listRowHeight.double}
-            leadingIcon={{ color: colors.textMuted, name: "server-outline", size: iconSize.action }}
+            leading={createElement(ServerIcon, { iconId: connection.iconId, metric: "body" })}
             title="Connection"
             trailing={
               <>

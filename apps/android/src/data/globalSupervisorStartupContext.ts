@@ -2,6 +2,10 @@ import type { ThreadRealtimeInitialItem } from "@codewide/codex-protocol/v0.155.
 
 import type { GlobalSupervisorAttentionEvent } from "./globalSupervisorAttention";
 import { globalSupervisorAttentionText } from "./globalSupervisorAttentionDelivery";
+import {
+  voiceAssistantPersonalityStartupText,
+  type VoiceAssistantPersonality,
+} from "./voiceAssistantPersonality";
 
 const MAX_CONVERSATION_ITEMS = 8;
 const MAX_ITEM_CHARACTERS = 512;
@@ -33,8 +37,11 @@ function boundedText(text: string): string {
 }
 
 /** Owns bounded authoritative conversation history for one logical voice activation. */
-export function createGlobalSupervisorStartupContextOwner(): GlobalSupervisorStartupContextOwner {
+export function createGlobalSupervisorStartupContextOwner(
+  personality: VoiceAssistantPersonality,
+): GlobalSupervisorStartupContextOwner {
   const conversation: ConversationItem[] = [];
+  const personalityText = voiceAssistantPersonalityStartupText(personality);
   return {
     acceptTranscript(role, text) {
       conversation.push({ role, text: boundedText(text) });
@@ -55,6 +62,9 @@ export function createGlobalSupervisorStartupContextOwner(): GlobalSupervisorSta
         remainingCharacters -= size;
         return true;
       };
+      if (personalityText !== null) {
+        append({ role: "developer", text: personalityText });
+      }
       for (const item of conversation) {
         append(item);
       }

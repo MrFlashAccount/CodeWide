@@ -19,6 +19,13 @@ activity do not inflate the completed history total. Full item hydration carries
 ready range metadata on the first item of each group. Selection uses both endpoints,
 so a partial or unrelated range cannot inherit a whole-turn total.
 
+Completed history visibility is separate from numeric attribution. Once full items
+are loaded, show the disclosure only for renderable history or plan/diff metadata;
+hidden reasoning and empty agent placeholders do not keep it visible. Before full
+hydration, a known zero/only-reasoning summary hides the disclosure, while unknown
+or mixed activity retains explicit lazy loading. This decision also controls the
+bubble's disclosure width and does not replace server-provided counts or costs.
+
 Live ingestion observes raw command output before private-content externalization.
 The durable activity state stores IDs, kinds, byte counts and presentation flags,
 never command output or conversation text. Sparse turn completion preserves earlier

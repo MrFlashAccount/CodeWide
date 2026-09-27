@@ -43,6 +43,8 @@ export type ModelThinkingMenuProps = TriggerProps & {
   selectedModel: string | null;
   selectedPersonality: Personality | null;
   selectedServiceTier: string | null;
+  showPersonalityControls?: boolean;
+  showServiceTierControls?: boolean;
 };
 
 export type PermissionsMenuProps = TriggerProps & {

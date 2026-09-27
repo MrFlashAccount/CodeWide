@@ -2,6 +2,9 @@ import type { LegendListProps, LegendListRef } from "@legendapp/list/react-nativ
 import { forwardRef, useImperativeHandle, type ForwardedRef, type ReactElement } from "react";
 import { View } from "react-native";
 
+// These mounted test rows never recycle into another item, so their state has React's lifetime.
+export { useState as useRecyclingState } from "react";
+
 function LegendListInner<ItemT>(
   props: LegendListProps<ItemT>,
   ref: ForwardedRef<LegendListRef>,

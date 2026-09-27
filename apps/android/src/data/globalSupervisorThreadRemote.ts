@@ -4,6 +4,7 @@ import type { WorkspaceSyncSession } from "./workspace-session";
 import { globalSupervisorLimitsV1 } from "./globalSupervisorLimitsV1";
 import { globalSupervisorThreadStartParams } from "./globalSupervisorThreadProfile";
 import { unknownRecord } from "./unknownRecord";
+import type { VoiceAssistantBackgroundModelResolution } from "./voiceAssistantBackgroundModel";
 import type { VoiceAssistantPersonality } from "./voiceAssistantPersonality";
 
 type GlobalSupervisorThreadRpc = <Result>(
@@ -64,6 +65,9 @@ function parseBindingCatalogPage(value: unknown): {
 
 /** Owns the app-server RPC payloads used to find or create the hidden supervisor thread. */
 export function createGlobalSupervisorThreadRemote(options: {
+  readonly backgroundSettings: (
+    connectionId: string,
+  ) => Promise<VoiceAssistantBackgroundModelResolution>;
   readonly getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   readonly personality: () => Promise<VoiceAssistantPersonality>;
   readonly rpcAfterAttach: GlobalSupervisorThreadRpc;
@@ -142,12 +146,19 @@ export function createGlobalSupervisorThreadRemote(options: {
       return parseThreadReadSource(response, threadId);
     },
     async startThread(connectionId: string, source: string): Promise<string> {
-      const personality = await options.personality();
+      const [backgroundSettings, personality] = await Promise.all([
+        options.backgroundSettings(connectionId),
+        options.personality(),
+      ]);
       const response = unknownRecord(
         await options.rpcAfterAttach<unknown>(
           session(connectionId),
           "thread/start",
-          globalSupervisorThreadStartParams(source, personality),
+          globalSupervisorThreadStartParams(source, {
+            backgroundModel:
+              backgroundSettings.status === "serverDefault" ? null : backgroundSettings.model,
+            personality,
+          }),
         ),
       );
       const thread = unknownRecord(response?.thread);

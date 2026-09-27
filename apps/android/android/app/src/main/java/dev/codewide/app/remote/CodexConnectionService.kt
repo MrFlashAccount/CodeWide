@@ -10,6 +10,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -48,23 +49,38 @@ class CodexConnectionService : Service() {
   private lateinit var journalHandler: Handler
   private val sessions = ConcurrentHashMap<String, Session>()
   @Volatile private var destroyed = false
-  @Volatile private var activeDefaultNetwork: Network? = null
+  private val networkState = DefaultNetworkState<Network>()
   private var processExitTelemetryCollectionStarted = false
   private val networkCallback = object : ConnectivityManager.NetworkCallback() {
     override fun onAvailable(network: Network) {
       synchronized(this@CodexConnectionService) {
-        activeDefaultNetwork = network
-        sessions.values.forEach { it.reconnectNow() }
+        if (destroyed) return
+        if (networkState.available(network)) publishNetworkObservation(true)
       }
     }
 
     override fun onLost(network: Network) {
       synchronized(this@CodexConnectionService) {
-        // During Wi-Fi/cellular handoff Android may report onAvailable(new)
-        // before onLost(old). The stale loss must not tear down the new socket.
-        if (activeDefaultNetwork != network) return
-        activeDefaultNetwork = null
-        sessions.values.forEach { it.networkLost() }
+        if (destroyed) return
+        if (networkState.lost(network)) publishNetworkObservation(false)
+      }
+    }
+
+    override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+      synchronized(this@CodexConnectionService) {
+        if (destroyed) return
+        if (networkState.capabilities(network,
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL))) {
+          publishNetworkObservation(false)
+        }
+      }
+    }
+
+    override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+      synchronized(this@CodexConnectionService) {
+        if (destroyed) return
+        if (networkState.blocked(network, blocked)) publishNetworkObservation(!blocked)
       }
     }
   }
@@ -95,11 +111,12 @@ class CodexConnectionService : Service() {
     terminalSessionManager = NativeTerminalSessionManager(credentialsStore, credentialHttpClient, httpClient, cacheDir)
     companionHttpProxy = NativeCompanionHttpProxy(credentialsStore)
     connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    activeDefaultNetwork = connectivityManager.activeNetwork
+    val initialNetwork = connectivityManager.activeNetwork
+    if (initialNetwork == null) networkState.absent() else networkState.available(initialNetwork)
     createNotificationChannel()
     createActivityNotificationChannel()
     startForeground(NOTIFICATION_ID, notification())
-    connectivityManager.registerDefaultNetworkCallback(networkCallback)
+    connectivityManager.registerDefaultNetworkCallback(networkCallback, handler)
     processNativeAuthorityLifecycle.access {
       portForwardManager.restore()
       // Publish only a fully initialized service. Credential replacement uses
@@ -144,7 +161,6 @@ class CodexConnectionService : Service() {
         terminalSessionManager.destroy()
         companionHttpProxy.close()
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
-        activeDefaultNetwork = null
         httpClient.dispatcher.executorService.shutdown()
         if (instance === this) instance = null
         commandStore.close()
@@ -155,6 +171,14 @@ class CodexConnectionService : Service() {
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
+
+  private fun publishNetworkObservation(routeAvailable: Boolean) {
+    sessions.values.forEach { session ->
+      session.publishNetworkObservation()
+      if (!networkState.canAttempt) session.networkLost()
+      else if (routeAvailable) session.networkAvailable()
+    }
+  }
 
   @Synchronized
   internal fun open(id: String, endpoint: String, token: String, tlsPinSha256: String, relay: PinnedRelayRoute? = null) {
@@ -169,6 +193,7 @@ class CodexConnectionService : Service() {
     existing?.close("connection_replaced")
     val session = Session(id, endpoint, token, tlsPinSha256, relay)
     sessions[id] = session
+    session.publishNetworkObservation()
     session.replayBuffered()
     handler.post { if (!destroyed) session.connect() }
     portForwardManager.resumeConnection(id)
@@ -627,14 +652,15 @@ class CodexConnectionService : Service() {
     val tlsPinSha256: String,
     val relay: PinnedRelayRoute?,
   ) {
-    private var socket: WebSocket? = null
-    private var closed = false
+    @Volatile private var socket: WebSocket? = null
+    @Volatile private var closed = false
     private var authBlocked = false
     private var connecting = false
-    private var reconnectAttempt = 0
+    private val retryPolicy = TransportRetryPolicy()
     private var reconnectRunnable: Runnable? = null
     private var connectWatchdogRunnable: Runnable? = null
-    private var transportGeneration = 0L
+    @Volatile private var transportGeneration = 0L
+    private val routeRecovery = TransportRouteRecovery()
     private var connectStartedAt = 0L
     private var outboxDrainRunning = false
     private var outboxWakeRunnable: Runnable? = null
@@ -648,21 +674,32 @@ class CodexConnectionService : Service() {
       handler,
       journalHandler,
       sendFrame = { payload -> socket?.send(payload) == true },
-      resetTransport = { reason -> resetTransport("protocol:$reason") },
+      resetTransport = { reason ->
+        // Never acquire the Session monitor while holding the protocol monitor.
+        // A reset queued by an old socket must not tear down a newer generation.
+        val generation = transportGeneration
+        handler.post { if (generation == transportGeneration) resetTransport("protocol:$reason") }
+      },
       onLive = { handler.post { drainOutbox() } },
       onPortInventory = { payload -> portForwardManager.receiveInventory(id, payload) },
       telemetry = NativeTelemetryRecorder(::emitTelemetry),
+      onRpcHealth = { available -> retryPolicy.observeRpc(available, SystemClock.elapsedRealtime()) },
     )
 
-    fun connect() {
+    @Synchronized fun connect() {
       if (closed || authBlocked || connecting || socket != null) return
+      if (!networkState.canAttempt) {
+        emitTransportStatus("offline")
+        return
+      }
       connecting = true
+      routeRecovery.attemptStarted(networkState.epoch)
       connectStartedAt = SystemClock.elapsedRealtime()
       val generation = ++transportGeneration
       publishStartupTiming(NativeStartupTrace.snapshot())
       emitTelemetry(NativeTelemetryMetric(
         "connection.attempt_started",
-        values = mapOf("attempt" to generation, "reconnectAttempt" to reconnectAttempt),
+        values = mapOf("attempt" to generation, "reconnectAttempt" to retryPolicy.attempts),
       ))
       emitTransportStatus("connecting")
       scheduleConnectWatchdog(generation)
@@ -689,7 +726,7 @@ class CodexConnectionService : Service() {
       }
     }
 
-    private fun failConnect(error: Throwable) {
+    @Synchronized private fun failConnect(error: Throwable) {
       connecting = false
       cancelConnectWatchdog()
       if (error is SessionAuthorizationException) {
@@ -714,7 +751,7 @@ class CodexConnectionService : Service() {
       )
     }
 
-    private fun openSocket(sessionClient: OkHttpClient, generation: Long) {
+    @Synchronized private fun openSocket(sessionClient: OkHttpClient, generation: Long) {
       if (closed || generation != transportGeneration) return
       authBlocked = false
       val request = Request.Builder()
@@ -730,14 +767,13 @@ class CodexConnectionService : Service() {
       ))
       var openedAtMs: Long? = null
       val listener = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
+        override fun onOpen(webSocket: WebSocket, response: Response): Unit = synchronized(this@Session) {
           if (socket !== webSocket || closed || generation != transportGeneration) {
             webSocket.close(1000, "superseded")
             return
           }
           connecting = false
           cancelConnectWatchdog()
-          reconnectAttempt = 0
           openedAtMs = SystemClock.elapsedRealtime()
           emitTelemetry(NativeTelemetryMetric(
             "connection.websocket",
@@ -758,24 +794,24 @@ class CodexConnectionService : Service() {
           protocolEngine.onSocketOpen()
         }
 
-        override fun onMessage(webSocket: WebSocket, text: String) {
+        override fun onMessage(webSocket: WebSocket, text: String): Unit = synchronized(this@Session) {
           if (closed) return
           if (socket !== webSocket) return
           observeNotificationState(text)
           protocolEngine.onFrame(text)
         }
 
-        override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+        override fun onMessage(webSocket: WebSocket, bytes: ByteString): Unit = synchronized(this@Session) {
           if (socket !== webSocket || closed) return
           webSocket.close(1003, "text_frames_only")
         }
 
-        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String): Unit = synchronized(this@Session) {
           if (socket !== webSocket) return
           webSocket.close(code, reason)
         }
 
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String): Unit = synchronized(this@Session) {
           if (socket !== webSocket) return
           socket = null
           connecting = false
@@ -797,7 +833,7 @@ class CodexConnectionService : Service() {
           }
         }
 
-        override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
+        override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?): Unit = synchronized(this@Session) {
           if (socket !== webSocket) return
           socket = null
           connecting = false
@@ -1140,7 +1176,7 @@ class CodexConnectionService : Service() {
       handler.postDelayed(runnable, maxOf(0L, wakeAt - System.currentTimeMillis()))
     }
 
-    fun reconnectNow() {
+    @Synchronized fun reconnectNow() {
       if (closed || authBlocked) return
       if (connecting) {
         if (SystemClock.elapsedRealtime() - connectStartedAt >= STALE_CONNECT_WAKE_MS) {
@@ -1153,12 +1189,31 @@ class CodexConnectionService : Service() {
       // or reconnecting its own App Server upstream: that status is delivered
       // over this same socket and will recover without a second handshake.
       if (socket != null) return
+      // UI wake/reattach is not a route change and cannot defeat a pending backoff.
+      if (reconnectRunnable != null) return
+      connect()
+    }
+
+    @Synchronized fun publishNetworkObservation() {
+      protocolEngine.onNetworkObservation(networkState.availability, networkState.epoch)
+    }
+
+    @Synchronized fun networkAvailable() {
+      if (closed || authBlocked) return
+      when (routeRecovery.available(networkState.epoch, connecting || socket != null)) {
+        TransportRouteRecovery.Action.KEEP -> return
+        TransportRouteRecovery.Action.REPLACE -> {
+          resetTransport("route_changed")
+          return
+        }
+        TransportRouteRecovery.Action.CONNECT -> Unit
+      }
       reconnectRunnable?.let(handler::removeCallbacks)
       reconnectRunnable = null
       connect()
     }
 
-    fun networkLost() {
+    @Synchronized fun networkLost() {
       if (closed) return
       transportGeneration += 1
       reconnectRunnable?.let(handler::removeCallbacks)
@@ -1173,10 +1228,10 @@ class CodexConnectionService : Service() {
         "connection.network_lost",
         values = mapOf("attempt" to transportGeneration),
       ))
-      emitTransportStatus("offline")
+      emitTransportStatus(if (authBlocked) "authRequired" else "offline")
     }
 
-    fun resetTransport(reason: String) {
+    @Synchronized fun resetTransport(reason: String) {
       if (closed) return
       Log.w(LOG_TAG, "reset transport reason=${reason.take(120)} id=${safeConnectionId(id)}")
       emitTelemetry(NativeTelemetryMetric(
@@ -1195,19 +1250,21 @@ class CodexConnectionService : Service() {
       socket = null
       connecting = false
       active?.cancel()
-      if (reason == "user_reconnect" || reason == "stale_connect_wake") {
-        reconnectAttempt = 0
+      protocolEngine.onSocketClosed("Connection interrupted")
+      if (reason == "user_reconnect" || reason == "route_changed") {
+        if (reason == "user_reconnect") retryPolicy.reset()
         reconnectNow()
       } else if (reason == "connect_watchdog") {
         protocolEngine.onSocketClosed("Connection attempt timed out")
         emitTransportStatus("degraded", "Connection attempt timed out")
         scheduleReconnect()
       } else {
+        emitTransportStatus("degraded", "Connection interrupted")
         scheduleReconnect()
       }
     }
 
-    fun close(reason: String) {
+    @Synchronized fun close(reason: String) {
       closed = true
       transportGeneration += 1
       reconnectRunnable?.let(handler::removeCallbacks)
@@ -1306,13 +1363,16 @@ class CodexConnectionService : Service() {
       }
     }
 
-    private fun scheduleReconnect() {
-      if (closed || reconnectRunnable != null) return
-      val delay = minOf(MAX_RECONNECT_DELAY_MS, 500L * (1L shl minOf(reconnectAttempt, 1)))
-      reconnectAttempt += 1
+    @Synchronized private fun scheduleReconnect() {
+      if (closed || authBlocked || reconnectRunnable != null) return
+      if (!networkState.canAttempt) {
+        emitTransportStatus("offline")
+        return
+      }
+      val delay = retryPolicy.nextDelayMs(SystemClock.elapsedRealtime())
       emitTelemetry(NativeTelemetryMetric(
         "connection.retry_scheduled",
-        values = mapOf("delayMs" to delay, "reconnectAttempt" to reconnectAttempt),
+        values = mapOf("delayMs" to delay, "reconnectAttempt" to retryPolicy.attempts),
       ))
       val runnable = Runnable {
         reconnectRunnable = null
@@ -1402,7 +1462,6 @@ class CodexConnectionService : Service() {
     private const val ACTIVITY_CHANNEL_ID = "codewide_turn_updates"
     private const val NOTIFICATION_ID = 4107
     private const val CREDENTIAL_HTTP_TIMEOUT_MS = 12_000L
-    private const val MAX_RECONNECT_DELAY_MS = 1_000L
     private const val STALE_CONNECT_WAKE_MS = 8_000L
     private const val CONNECT_WATCHDOG_MS = 20_000L
     private const val OUTBOX_RECONCILE_DELAY_MS = 2_000L

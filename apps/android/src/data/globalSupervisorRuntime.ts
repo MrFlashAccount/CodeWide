@@ -26,13 +26,19 @@ import {
   type GlobalSupervisorStartupContextOwner,
 } from "./globalSupervisorStartupContext";
 import { createGlobalSupervisorMediaOwner } from "./globalSupervisorMediaOwner";
+import { createGlobalSupervisorRecoveryNotice } from "./globalSupervisorRecoveryNotice";
+import { assertVoiceStartActive } from "./globalVoiceCancellation";
 import {
   createGlobalSupervisorReconnectOwner,
-  GLOBAL_SUPERVISOR_RECONNECT_POLICY,
   type GlobalSupervisorReconnectController,
-  type GlobalSupervisorReconnectPolicy,
+  type GlobalSupervisorTransportStart,
 } from "./globalSupervisorReconnectOwner";
-import type { GlobalVoiceName } from "./globalVoicePreferences";
+import {
+  GLOBAL_SUPERVISOR_RECONNECT_POLICY,
+  type GlobalSupervisorReadiness,
+  type GlobalSupervisorReconnectPolicy,
+} from "./globalSupervisorRecoveryPolicy";
+import { resolveAvailableGlobalVoice, type GlobalVoiceName } from "./globalVoicePreferences";
 import type { GlobalSupervisorRuntimeIngress } from "./globalSupervisorRuntimeIngress";
 import {
   globalSupervisorActivationGreetingPrompt,
@@ -41,6 +47,7 @@ import {
 import { GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE } from "./globalSupervisorThreadRemote";
 import { recordOperationalTelemetryEvent } from "./telemetry";
 import { unknownRecord } from "./unknownRecord";
+import type { VoiceAssistantBackgroundModelResolution } from "./voiceAssistantBackgroundModel";
 import type { VoiceAssistantPersonality } from "./voiceAssistantPersonality";
 import type { V1MicrophoneLeaseRegistry } from "./v1MicrophoneLease";
 import type { WorkspaceSyncSession, WorkspaceSyncSupervisor } from "./workspace-session";
@@ -61,6 +68,12 @@ export type GlobalSupervisorRuntimeRecoveryAction =
   | "retryMicrophoneBusy"
   | "reconcileBinding"
   | "recreateBinding";
+
+function recoveryFailure(
+  reason: "accessRequired" | "transportFailed",
+): GlobalSupervisorRuntimeFailureKind {
+  return reason === "accessRequired" ? "homeUnavailable" : "realtimeFailed";
+}
 
 /** Fixed, content-free startup rejection that preserves an actionable failure class. */
 export class GlobalSupervisorLowerRuntimeStartError extends Error {
@@ -130,7 +143,11 @@ type GlobalSupervisorRuntimeAuthority = {
     readonly setPlaybackLevel: (level: number) => void;
   }>;
   readonly attention: GlobalSupervisorAttentionOwner;
+  readonly backgroundSettings: (
+    connectionId: string,
+  ) => Promise<VoiceAssistantBackgroundModelResolution>;
   readonly binding: () => GlobalSupervisorBindingOwner;
+  readonly connectionReadiness: (connectionId: string) => GlobalSupervisorReadiness;
   readonly enabledConnectionIds: () => readonly string[];
   readonly ensureStarted: () => Promise<void>;
   readonly getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
@@ -190,9 +207,6 @@ type LiveSessionState = {
   readonly webRtc: GlobalSupervisorWebRtcSession;
 };
 
-const MAX_VOICE_NAME_CHARACTERS = 32;
-const MAX_SUPPORTED_VOICES = 64;
-
 function liveSessionOrNull(
   authority: GlobalSupervisorRuntimeAuthority,
   connectionId: string,
@@ -234,7 +248,7 @@ async function prepareReadyHome(
       status: "failed",
     };
   }
-  parseRealtimeV3Voice(
+  resolveAvailableGlobalVoice(
     await authority.rpcAfterAttach<unknown>(session, "thread/realtime/listVoices", {}),
     await authority.preferredVoice(),
   );
@@ -257,31 +271,6 @@ async function withTimeout<Result>(operation: Promise<Result>, timeoutMs: number
       },
     );
   });
-}
-
-function validVoice(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= MAX_VOICE_NAME_CHARACTERS;
-}
-
-function validVoiceList(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.length <= MAX_SUPPORTED_VOICES &&
-    value.every(validVoice)
-  );
-}
-
-function parseRealtimeV3Voice(value: unknown, preferred: GlobalVoiceName): string {
-  const response = unknownRecord(value);
-  const voices = unknownRecord(response?.voices);
-  // Codex Realtime V3 uses the GPT Live voice family exposed by listVoices as V1.
-  const selected = voices?.defaultV1;
-  const supported = voices?.v1;
-  if (!validVoice(selected) || !validVoiceList(supported) || !supported.includes(selected)) {
-    throw new Error("The Global Voice server returned no compatible voice");
-  }
-  return supported.includes(preferred) ? preferred : selected;
 }
 
 function failLiveState(state: LiveSessionState, failure: GlobalSupervisorRuntimeFailureKind): void {
@@ -720,13 +709,21 @@ export function createGlobalSupervisorRuntime(
           );
         }
         const session = requireLiveSession(authority, home.connectionId);
-        const voice = parseRealtimeV3Voice(
-          await authority.rpcAfterAttach<unknown>(session, "thread/realtime/listVoices", {}),
-          await authority.preferredVoice(),
-        );
-        const personality = await authority.personality();
+        const [backgroundSettings, personality, preferredVoice, voices] = await Promise.all([
+          authority.backgroundSettings(home.connectionId),
+          authority.personality(),
+          authority.preferredVoice(),
+          authority.rpcAfterAttach<unknown>(session, "thread/realtime/listVoices", {}),
+        ]);
+        // Codex Realtime V3 uses the GPT Live voice family exposed by listVoices as V1.
+        const voice = resolveAvailableGlobalVoice(voices, preferredVoice);
+        await authority.rpcAfterAttach(session, "thread/settings/update", {
+          effort: backgroundSettings.status === "serverDefault" ? null : backgroundSettings.effort,
+          model: backgroundSettings.status === "serverDefault" ? null : backgroundSettings.model,
+          threadId: home.threadId,
+        });
         const realtimeInstructions = globalSupervisorRealtimeStartInstructions(personality);
-        const startupContext = createGlobalSupervisorStartupContextOwner();
+        const startupContext = createGlobalSupervisorStartupContextOwner(personality);
         let activationGreetingAccepted = false;
         const activationId = authority.randomUUID();
         const recordStartupStage = (stage: GlobalSupervisorStartupStage): void => {
@@ -768,7 +765,15 @@ export function createGlobalSupervisorRuntime(
           });
           throw error;
         }
-        const startTransport = async (onTerminal: () => void, microphoneMuted: boolean) => {
+        const startTransport = async ({
+          microphoneMuted,
+          onConnected,
+          onSuspended,
+          onTerminal,
+          reason,
+          signal,
+        }: GlobalSupervisorTransportStart) => {
+          assertVoiceStartActive(signal);
           const attemptSession = requireLiveSession(authority, home.connectionId);
           const supervisor = authority.getSupervisor();
           if (supervisor === null) {
@@ -776,11 +781,20 @@ export function createGlobalSupervisorRuntime(
           }
           let state: LiveSessionState | null = null;
           let control: StartupControl | null = null;
+          let mediaSuspended = false;
           let terminatedBeforeState = false;
           const didTerminateBeforeState = (): boolean => terminatedBeforeState;
           const webRtc = await media.start({
-            initiallyMuted: microphoneMuted,
+            initiallyMuted: true,
             mode: "interactive",
+            onMediaConnection: (connected) => {
+              mediaSuspended = !connected;
+              if (connected) {
+                onConnected();
+              } else {
+                onSuspended();
+              }
+            },
             onPlaybackLevel(level) {
               if (state === null || state.stopping || state.failurePublished) {
                 return;
@@ -798,7 +812,12 @@ export function createGlobalSupervisorRuntime(
             onUserSpeaking(speaking) {
               state?.speech.setUserSpeaking(speaking);
             },
+            signal,
           });
+          if (signal.aborted) {
+            await webRtc.stop();
+            assertVoiceStartActive(signal);
+          }
           recordStartupStage("offerReady");
           const channelId = authority.randomUUID();
           state = {
@@ -834,7 +853,9 @@ export function createGlobalSupervisorRuntime(
               home,
               now: authority.now,
               publish: (phase) => {
-                publish({ activationId, event: phase });
+                if (!mediaSuspended && !signal.aborted) {
+                  publish({ activationId, event: phase });
+                }
               },
             }),
             startupContext,
@@ -848,6 +869,7 @@ export function createGlobalSupervisorRuntime(
           }
           let subscribed = false;
           const startup = Promise.withResolvers<undefined>();
+          void startup.promise.catch(() => undefined);
           control = {
             acknowledged: false,
             reject(error) {
@@ -864,6 +886,11 @@ export function createGlobalSupervisorRuntime(
             },
             settled: false,
           };
+          const abortStartup = (): void => {
+            control.reject(new Error("Global Voice replacement cancelled"));
+            void webRtc.stop().catch(() => undefined);
+          };
+          signal.addEventListener("abort", abortStartup, { once: true });
           const liveSubscription = authority.ingress.subscribeLive(
             createLiveReceiver({ control, home, recordStartupStage, state }),
           );
@@ -873,12 +900,14 @@ export function createGlobalSupervisorRuntime(
           let startupContextSnapshot = startupContext.snapshot([]);
           try {
             await supervisor.subscribeLive(home.connectionId, channelId, home.threadId);
+            assertVoiceStartActive(signal);
             recordStartupStage("subscriptionReady");
             subscribed = true;
             state.realtimeStartRequested = true;
             startupContextSnapshot = startupContext.snapshot(
-              await authority.attention.pending(home),
+              await authority.attention.pendingForSpeech(home),
             );
+            assertVoiceStartActive(signal);
             appLogger.info({
               event: "global_voice.realtime.startup_context_built",
               fields: {
@@ -901,7 +930,10 @@ export function createGlobalSupervisorRuntime(
             });
             recordStartupStage("startAccepted");
             await withTimeout(startup.promise, globalSupervisorLimitsV1.realtimeStartupTimeoutMs);
+            assertVoiceStartActive(signal);
+            await webRtc.setMicrophoneMuted(microphoneMuted);
           } catch (error) {
+            signal.removeEventListener("abort", abortStartup);
             state.speech.stop();
             activitySubscription.unsubscribe();
             await webRtc.stop().catch(() => undefined);
@@ -945,8 +977,39 @@ export function createGlobalSupervisorRuntime(
             seededEventIds: startupContextSnapshot.seededAttentionEventIds,
           });
           state.attentionDelivery = attentionDelivery;
+          const canStopRealtime = (): boolean =>
+            !state.realtimeClosed && authority.isRpcAvailable(home.connectionId);
           let stopped = false;
           const transport = {
+            announceRecovery: createGlobalSupervisorRecoveryNotice({
+              appendText: async (text) => {
+                attentionDelivery.setSpeechBusy(true);
+                await authority.rpcAfterAttach(attemptSession, "thread/realtime/appendText", {
+                  role: "developer",
+                  text,
+                  threadId: home.threadId,
+                });
+              },
+              isReady: () =>
+                !state.stopping &&
+                !state.failurePublished &&
+                !mediaSuspended &&
+                authority.isRpcAvailable(home.connectionId),
+              onAccepted() {
+                appLogger.info({
+                  event: "global_voice.recovery_notice.append_accepted",
+                  fields: {
+                    activationId,
+                    connectionId: home.connectionId,
+                    threadId: home.threadId,
+                  },
+                });
+              },
+              onFailure() {
+                failLiveState(state, "realtimeFailed");
+              },
+              signal,
+            }),
             async setMicrophoneMuted(muted: boolean): Promise<void> {
               await state.webRtc.setMicrophoneMuted(muted);
             },
@@ -955,6 +1018,7 @@ export function createGlobalSupervisorRuntime(
                 return;
               }
               stopped = true;
+              signal.removeEventListener("abort", abortStartup);
               state.stopping = true;
               state.speech.stop();
               activitySubscription.unsubscribe();
@@ -968,7 +1032,7 @@ export function createGlobalSupervisorRuntime(
               await state.webRtc.stop().catch(recordFailure);
               await attentionDelivery.stop().catch(recordFailure);
               await eventSignals.stop().catch(recordFailure);
-              if (!state.realtimeClosed) {
+              if (canStopRealtime()) {
                 await withTimeout(
                   authority.rpcAfterAttach(attemptSession, "thread/realtime/stop", {
                     threadId: home.threadId,
@@ -976,7 +1040,7 @@ export function createGlobalSupervisorRuntime(
                   globalSupervisorLimitsV1.realtimeStopCloseTimeoutMs,
                 ).catch(recordFailure);
               }
-              if (!state.realtimeClosed) {
+              if (canStopRealtime()) {
                 const closed = new Promise<void>((resolve) => {
                   state.closedWaiters.add(resolve);
                 });
@@ -985,7 +1049,7 @@ export function createGlobalSupervisorRuntime(
                   globalSupervisorLimitsV1.realtimeStopCloseTimeoutMs,
                 ).catch(recordFailure);
               }
-              if (!state.channelTerminal) {
+              if (!state.channelTerminal && authority.isRpcAvailable(home.connectionId)) {
                 const terminal = new Promise<void>((resolve) => {
                   state.closedWaiters.add(resolve);
                 });
@@ -1004,11 +1068,15 @@ export function createGlobalSupervisorRuntime(
               }
             },
           };
-          if (activationGreetingAccepted) {
-            attentionDelivery.setSpeechBusy(false);
-            return transport;
-          }
-          try {
+          const prepareStartupSpeech = async (): Promise<void> => {
+            if (activationGreetingAccepted) {
+              if (reason === "recovery") {
+                await transport.announceRecovery();
+              } else {
+                attentionDelivery.setSpeechBusy(false);
+              }
+              return;
+            }
             await authority.rpcAfterAttach(attemptSession, "thread/realtime/appendText", {
               role: "developer",
               text: globalSupervisorActivationGreetingPrompt(),
@@ -1023,6 +1091,9 @@ export function createGlobalSupervisorRuntime(
                 threadId: home.threadId,
               },
             });
+          };
+          try {
+            await prepareStartupSpeech();
           } catch (error) {
             await transport.stop().catch(() => undefined);
             throw error;
@@ -1030,18 +1101,24 @@ export function createGlobalSupervisorRuntime(
           return transport;
         };
         const reconnect = createGlobalSupervisorReconnectOwner({
-          onExhausted() {
+          onFatalFailure(reason) {
             publish({
               activationId,
               event: "failed",
-              failure: "realtimeFailed",
+              failure: recoveryFailure(reason),
               recovery: "reconnectHome",
             });
           },
           onReconnecting() {
             publish({ activationId, event: "reconnecting" });
           },
+          onRecovered(transport) {
+            publish({ activationId, event: "listening" });
+            // The transport owns failure handling and live-only delivery of this acknowledgement.
+            void transport.announceRecovery().catch(() => undefined);
+          },
           policy: authority.reconnectPolicy ?? GLOBAL_SUPERVISOR_RECONNECT_POLICY,
+          readiness: authority.connectionReadiness(home.connectionId),
           startTransport,
         });
         reconnectReady.resolve(reconnect);

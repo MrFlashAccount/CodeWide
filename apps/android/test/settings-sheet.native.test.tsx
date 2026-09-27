@@ -107,6 +107,7 @@ function setup() {
     voiceAssistant: {
       content: <Text>Voice Assistant choices</Text>,
       description: "Cove · Default personality",
+      onOpen: jest.fn(),
     },
   };
 }
@@ -196,9 +197,11 @@ it("keeps advanced controls off the overview and offers a return path", () => {
 });
 
 it("opens Voice Assistant settings from the unified settings list", () => {
-  const view = render(<SettingsSheet {...setup()} />);
+  const props = setup();
+  const view = render(<SettingsSheet {...props} />);
   expect(view.getByText("Cove · Default personality")).toBeTruthy();
   fireEvent.press(view.getByLabelText("Voice Assistant"));
+  expect(props.voiceAssistant.onOpen).toHaveBeenCalledTimes(1);
   expect(view.getByText("Voice Assistant choices")).toBeTruthy();
   expect(view.getByRole("header", { name: "Voice Assistant" })).toBeTruthy();
   expect(view.queryByLabelText("Settings for Buddy")).toBeNull();

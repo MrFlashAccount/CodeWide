@@ -6,6 +6,7 @@ import type {
 } from "@codewide/sync-client";
 import type { ThreadEventProjection } from "../data/thread-projection-store";
 import type { NativeCommandDelivery } from "./native-transport-contract";
+import type { ConnectionPath } from "../data/connectionPath";
 
 /** Durable projection operations required by the native engine supervisor. */
 export type NativeDomainProjection = {
@@ -19,6 +20,7 @@ export type NativeDomainProjection = {
 
 /** Publishes native connection state into the application model. */
 export type NativeConnectionStateProjection = {
+  setConnectionPath?: (connectionId: string, path: ConnectionPath | null) => void;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
   // oxlint-disable-next-line eslint/max-params
   setConnectionState: (

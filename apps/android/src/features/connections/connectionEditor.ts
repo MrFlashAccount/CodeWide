@@ -12,7 +12,7 @@ export function useConnectionEditor({
 }: Pick<ConnectionEditorProps, "connection" | "onUpdate">) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(connection.displayName);
-  const [emoji, setEmoji] = useState(connection.emoji);
+  const [iconId, setIconId] = useState(connection.iconId);
   const [endpoint, setEndpoint] = useState(connection.endpoint);
   const [replacementToken, setReplacementToken] = useState("");
   const [tlsPinSha256, setTlsPinSha256] = useState(connection.tlsPinSha256 ?? "");
@@ -20,7 +20,7 @@ export function useConnectionEditor({
   const [error, setError] = useState<string | null>(null);
   const cancelEditing = useEvent(() => {
     setName(connection.displayName);
-    setEmoji(connection.emoji);
+    setIconId(connection.iconId);
     setEndpoint(connection.endpoint);
     setReplacementToken("");
     setTlsPinSha256(connection.tlsPinSha256 ?? "");
@@ -32,8 +32,8 @@ export function useConnectionEditor({
     setError(null);
     const input: ConnectionUpdateInput = {
       displayName: name,
-      emoji,
       endpoint,
+      iconId,
       ...(replacementToken.trim() === "" ? {} : { token: replacementToken }),
       ...(tlsPinSha256.trim() === "" ? {} : { tlsPinSha256 }),
     };
@@ -49,16 +49,16 @@ export function useConnectionEditor({
   return {
     cancelEditing,
     editing,
-    emoji,
     endpoint,
     error,
+    iconId,
     name,
     replacementToken,
     save,
     saving,
     setEditing,
-    setEmoji,
     setEndpoint,
+    setIconId,
     setName,
     setReplacementToken,
     setTlsPinSha256,

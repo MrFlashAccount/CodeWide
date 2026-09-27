@@ -89,16 +89,12 @@ it("marks completed text as static rather than replaying its streaming animation
   const screen = compactSource(
     readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
   );
-  const surface = readFileSync(
-    new URL("../src/rendering/StreamingRevealSurface.tsx", import.meta.url),
-    "utf8",
-  );
   expect(ownerProtocolBlock).toContain("reviewTarget={reviewTarget}");
   expect(ownerProtocolBlock).toContain("streamKey={block.key}");
   expect(completeMarkdown).toContain("animateNew={false}");
   expect(completedTurn).toContain("animateNew={false}");
-  expect(surface).toContain("NativeSurface !== null && animateNew && !reduceMotion");
-  expect(surface).toContain('testID="streaming-reveal-fallback"');
+  // Surface behavior is covered by streaming-reveal{,-native}.render.test.tsx:
+  // static/reduced-motion paint must not replace the mounted native text host.
 });
 
 it("settles recovered live text before enabling animation for new deltas", () => {

@@ -26,8 +26,7 @@ it("preserves native integration contracts — 1", () => {
   expect(manifest).toContain('android:foregroundServiceType="remoteMessaging"');
   expect(manifest).toContain('android:stopWithTask="false"');
   expect(connectionService).toContain("return START_STICKY");
-  expect(connectionService).toContain("if (activeDefaultNetwork != network) return");
-  expect(connectionService).toContain("activeDefaultNetwork = network");
+  // Route handoff and backoff behavior are exercised by DefaultNetworkStateTest / TransportRetryPolicyTest.
   expect(connectionService).toContain("existing.attachRuntime()");
   expect(connectionService).toContain("fun wake(connectionId: String)");
   expect(connectionService).toContain("session.endpoint != saved.endpoint");
@@ -36,8 +35,6 @@ it("preserves native integration contracts — 1", () => {
   expect(connectionService).toContain("session.reconnectNow()");
   expect(connectionService).toContain("credentialHttpClient");
   expect(connectionService).toContain("CREDENTIAL_HTTP_TIMEOUT_MS = 12_000L");
-  expect(connectionService).toContain("MAX_RECONNECT_DELAY_MS = 1_000L");
-  expect(connectionService).toContain("minOf(reconnectAttempt, 1)");
   expect(connectionService).toContain("scheduleConnectWatchdog(generation)");
   expect(connectionService).toContain('resetTransport("connect_watchdog")');
   expect(connectionService).toContain(

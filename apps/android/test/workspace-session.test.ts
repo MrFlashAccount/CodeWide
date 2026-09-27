@@ -9,7 +9,7 @@ function connection(endpoint: string): StoredConnection {
     token: "test-profile-token",
     enabled: true,
     displayName: "Test",
-    emoji: "",
+    iconId: "desktop",
     sortOrder: 0,
     state: "live",
     lastError: null,

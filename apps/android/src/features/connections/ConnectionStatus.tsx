@@ -32,15 +32,20 @@ export function ConnectionStatus({
       {!secureLive && (
         <View style={styles.connectionStateRow}>
           <View style={styles.connectionStateIcon}>
-            {connection.enabled && connectionActivity(connection.state) !== null ? (
-              <ConnectionActivityIndicator size={iconSize.indicator} status={connection.state} />
+            {connection.enabled &&
+            connectionActivity(connection.state, connection.health) !== null ? (
+              <ConnectionActivityIndicator
+                health={connection.health}
+                size={iconSize.indicator}
+                status={connection.state}
+              />
             ) : (
               <View
                 style={[
                   styles.connectionStateDot,
                   {
                     backgroundColor: connection.enabled
-                      ? connectionStateColor(connection.state)
+                      ? connectionStateColor(connection.state, connection.health)
                       : colors.textDim,
                   },
                 ]}
@@ -52,52 +57,57 @@ export function ConnectionStatus({
             style={[
               styles.connectionStateText,
               {
-                color: connection.enabled ? connectionStateColor(connection.state) : colors.textDim,
+                color: connection.enabled
+                  ? connectionStateColor(connection.state, connection.health)
+                  : colors.textDim,
               },
             ]}
           >
-            {connectionStateLabel(connection.state, connection.enabled)}
+            {connectionStateLabel(connection.state, connection.enabled, connection.health)}
           </Text>
         </View>
       )}
-      {connection.lastError !== null && connection.state !== "live" && (
-        <View style={styles.connectionDiagnostic}>
-          <View style={styles.connectionDiagnosticHeader}>
-            <Ionicons color={colors.red} name="warning-outline" size={iconSize.inline} />
-            <Text selectable style={styles.connectionDiagnosticSummary}>
-              {connectionDiagnosticSummary(connection.lastError)}
-            </Text>
-          </View>
-          <View style={styles.connectionDiagnosticMeta}>
-            {connection.lastErrorAt !== null && (
-              <Text style={styles.connectionDiagnosticTime}>
-                {connectionDiagnosticTime(connection.lastErrorAt)}
+      {connection.lastError !== null &&
+        connection.state !== "live" &&
+        connection.health !== "online" &&
+        connection.health !== "reconnecting" && (
+          <View style={styles.connectionDiagnostic}>
+            <View style={styles.connectionDiagnosticHeader}>
+              <Ionicons color={colors.red} name="warning-outline" size={iconSize.inline} />
+              <Text selectable style={styles.connectionDiagnosticSummary}>
+                {connectionDiagnosticSummary(connection.lastError)}
+              </Text>
+            </View>
+            <View style={styles.connectionDiagnosticMeta}>
+              {connection.lastErrorAt !== null && (
+                <Text style={styles.connectionDiagnosticTime}>
+                  {connectionDiagnosticTime(connection.lastErrorAt)}
+                </Text>
+              )}
+              <Pressable
+                accessibilityLabel={`${diagnosticExpanded ? "Hide" : "Show"} error details for ${connection.displayName}`}
+                onPress={() => {
+                  setDiagnosticExpanded((value) => !value);
+                }}
+              >
+                <Text style={styles.rawLink}>
+                  {diagnosticExpanded ? "Hide details" : "Error details"}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel={`Copy error for ${connection.displayName}`}
+                onPress={() => void copyDiagnostic()}
+              >
+                <Text style={styles.rawLink}>Copy</Text>
+              </Pressable>
+            </View>
+            {diagnosticExpanded && (
+              <Text selectable style={styles.connectionDiagnosticRaw}>
+                {connection.lastError}
               </Text>
             )}
-            <Pressable
-              accessibilityLabel={`${diagnosticExpanded ? "Hide" : "Show"} error details for ${connection.displayName}`}
-              onPress={() => {
-                setDiagnosticExpanded((value) => !value);
-              }}
-            >
-              <Text style={styles.rawLink}>
-                {diagnosticExpanded ? "Hide details" : "Error details"}
-              </Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel={`Copy error for ${connection.displayName}`}
-              onPress={() => void copyDiagnostic()}
-            >
-              <Text style={styles.rawLink}>Copy</Text>
-            </Pressable>
           </View>
-          {diagnosticExpanded && (
-            <Text selectable style={styles.connectionDiagnosticRaw}>
-              {connection.lastError}
-            </Text>
-          )}
-        </View>
-      )}
+        )}
     </>
   );
 }

@@ -140,6 +140,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       readOnly={props.readOnly}
       remoteThread={props.readInputs.remoteThread}
       threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
+      threadSearchVisible={props.timelineState.timelineSearchStateBinding.threadSearchVisible}
       timeline={props.timelineRead.conversationTimelineBinding.timeline}
       timelineContent={timelineContent}
       timelineDidLoad={props.timelineState.timelineViewportStateBinding.timelineDidLoad}

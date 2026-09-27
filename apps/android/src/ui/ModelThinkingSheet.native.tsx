@@ -22,6 +22,7 @@ import {
   retainedServiceTier,
   STANDARD_SERVICE_TIER,
 } from "./modelServiceTier";
+import { modelEffortLabel } from "./modelEffortPresentation";
 import { AppText as Text } from "./Typography";
 import type { ModelThinkingMenuProps, ModelSettingsChoice } from "./TurnControlMenus.types";
 
@@ -232,6 +233,7 @@ function ModelMenuContent({
         onSelectServiceTier={onSelectServiceTier}
         onToggleModels={onToggleModels}
         selectedServiceTier={draft.serviceTier}
+        showServiceTierControls={props.showServiceTierControls !== false}
       />
       {modelsExpanded && (
         <ModelChoices
@@ -241,13 +243,16 @@ function ModelMenuContent({
           selectedModel={draft.model}
         />
       )}
-      {model?.supportsPersonality === true && (
-        <PersonalityChoices onSelect={onSelectPersonality} selected={draft.personality} />
-      )}
+      <OptionalPersonalityChoices
+        model={model}
+        onSelect={onSelectPersonality}
+        selected={draft.personality}
+        visible={props.showPersonalityControls !== false}
+      />
       {model !== undefined && (
         <CodeWideSlider
           accessibilityLabel="Thinking level"
-          formatValue={effortLabel}
+          formatValue={modelEffortLabel}
           key={model.id}
           onSelect={onSelectEffort}
           selected={draft.effort}
@@ -258,6 +263,23 @@ function ModelMenuContent({
       <ApplyButton disabled={!canApply} onPress={apply} />
     </View>
   );
+}
+
+function OptionalPersonalityChoices({
+  model,
+  onSelect,
+  selected,
+  visible,
+}: {
+  readonly model: ModelControl | undefined;
+  readonly onSelect: (personality: ModelDraft["personality"]) => void;
+  readonly selected: ModelDraft["personality"];
+  readonly visible: boolean;
+}): ReactNode {
+  if (!visible || model?.supportsPersonality !== true) {
+    return null;
+  }
+  return <PersonalityChoices onSelect={onSelect} selected={selected} />;
 }
 
 function MenuNotices({ error, loading }: { error: string | null; loading: boolean }): ReactNode {
@@ -275,21 +297,25 @@ function ModelControls({
   onSelectServiceTier,
   onToggleModels,
   selectedServiceTier,
+  showServiceTierControls,
 }: {
   model: ModelControl | undefined;
   modelsExpanded: boolean;
   onSelectServiceTier: (serviceTier: string) => void;
   onToggleModels: () => void;
   selectedServiceTier: string | null;
+  showServiceTierControls: boolean;
 }): ReactNode {
   return (
     <View style={styles.modelControls}>
       <ModelDisclosure expanded={modelsExpanded} model={model} onPress={onToggleModels} />
-      <FastToggle
-        model={model}
-        onSelectServiceTier={onSelectServiceTier}
-        selectedServiceTier={selectedServiceTier}
-      />
+      {showServiceTierControls && (
+        <FastToggle
+          model={model}
+          onSelectServiceTier={onSelectServiceTier}
+          selectedServiceTier={selectedServiceTier}
+        />
+      )}
     </View>
   );
 }
@@ -474,13 +500,6 @@ function ApplyButton({ disabled, onPress }: { disabled: boolean; onPress: () => 
       <Text style={styles.applyText}>Apply</Text>
     </Pressable>
   );
-}
-
-function effortLabel(value: string): string {
-  if (value === "xhigh") {
-    return "Extra high";
-  }
-  return value.length === 0 ? value : `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
 const styles = StyleSheet.create({

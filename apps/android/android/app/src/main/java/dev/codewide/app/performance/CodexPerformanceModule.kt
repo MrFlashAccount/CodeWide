@@ -150,7 +150,8 @@ class CodexPerformanceModule(
   @Volatile private var latest: PerformanceSample? = null
   @Volatile private var activeNavigationTrace: ActiveNavigationTrace? = null
 
-  private val frameListener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+  private val frameListener = Window.OnFrameMetricsAvailableListener { _, metrics, dropped ->
+    if (foreground) timelineScrollMonitor.recordFrame(metrics, dropped, displayIntervalNanos)
     val totalDuration = metrics.getMetric(FrameMetrics.TOTAL_DURATION)
     val deadline = metrics.getMetric(FrameMetrics.DEADLINE)
     if (enabled) frameAccumulator.record(totalDuration, deadline, displayIntervalNanos)

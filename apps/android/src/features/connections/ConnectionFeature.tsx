@@ -1,7 +1,6 @@
 /** V1 SettingsFeature owner, extracted without changing interaction or resource lifetime. */
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { colors, iconSize } from "../../theme";
-import { AppText as Text } from "../../ui/Typography";
 import { ConnectionActivityIndicator } from "./ConnectionActivityIndicator";
 import { styles } from "./ConnectionFeature.styles";
 import {
@@ -10,6 +9,7 @@ import {
   connectionStateLabel,
 } from "./connectionPresentation";
 import { ConnectionRowEditor } from "./ConnectionRowEditor";
+import { ServerIcon } from "./ServerIcon";
 
 import type { ConnectionSettingsProps } from "./connectionSettingsContract";
 
@@ -49,25 +49,23 @@ export function connectionSettingsSections({
         {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}
       />
     ),
-    description: connectionStateLabel(connection.state, connection.enabled),
+    description: connectionStateLabel(connection.state, connection.enabled, connection.health),
     id: connection.id,
-    leading: (
-      <Text style={styles.serverEmoji}>
-        {Platform.OS === "web"
-          ? connection.displayName.slice(0, 1).toLocaleUpperCase()
-          : connection.emoji}
-      </Text>
-    ),
+    leading: <ServerIcon color={colors.text} iconId={connection.iconId} metric="title" />,
     statusIcon:
-      connection.enabled && connectionActivity(connection.state) !== null ? (
-        <ConnectionActivityIndicator size={iconSize.indicator} status={connection.state} />
+      connection.enabled && connectionActivity(connection.state, connection.health) !== null ? (
+        <ConnectionActivityIndicator
+          size={iconSize.indicator}
+          status={connection.state}
+          {...(connection.health === undefined ? {} : { health: connection.health })}
+        />
       ) : (
         <View
           style={[
             styles.connectionStateDot,
             {
               backgroundColor: connection.enabled
-                ? connectionStateColor(connection.state)
+                ? connectionStateColor(connection.state, connection.health)
                 : colors.textDim,
             },
           ]}

@@ -11,10 +11,12 @@ import {
 } from "react";
 import type { SharedValue } from "react-native-reanimated";
 
+import { parseLegendScrollDiagnostic } from "../data/legendScrollDiagnostic";
 import type { TimelineScrollSource } from "../data/timelineScrollDiagnosticContract";
 import type { TimelineScrollDiagnostics } from "../data/timelineScrollDiagnostics";
 import { windowLayoutStore } from "../native/window-layout-store";
 import { useEvent } from "../react/useEvent";
+import { measureTimelineItemViewport } from "./timelineItemViewport";
 import {
   observeTimelineScrollCommand,
   useTimelineListDiagnostics,
@@ -25,6 +27,7 @@ export interface ThreadTimelineListRef {
   getItemViewportOffset: (itemKey: string) => number | null;
   indexForItemKey: (itemKey: string) => number | null;
   isWithinEndThreshold: () => boolean | null;
+  measureItemViewport: (itemKey: string) => ReturnType<typeof measureTimelineItemViewport>;
   reportContentInset: (inset?: Partial<Insets> | null) => void;
   scrollToEnd: (options?: { animated?: boolean }, source?: TimelineScrollSource) => Promise<void>;
   scrollToIndex: (
@@ -57,7 +60,7 @@ export type ThreadTimelineListProps<ItemT> = Omit<
   anchoredEndSpace?: LegendListProps<ItemT>["anchoredEndSpace"] | undefined;
   contentInsetEndAdjustment?: SharedValue<number>;
   diagnostics?: TimelineScrollDiagnostics;
-  initialScrollIndex?: number | undefined;
+  initialScrollIndex?: LegendListProps<ItemT>["initialScrollIndex"];
   itemSizeEstimate: number;
   keyboardLiftBehavior?: "always" | "whenAtEnd" | "persistent" | "never";
   keyboardOffset?: number;
@@ -81,6 +84,14 @@ function ThreadTimelineListInner<ItemT>(
 ): ReactElement {
   const internalRef = useRef<LegendListRef>(null);
   const diagnosticHandlers = useTimelineListDiagnostics(diagnostics, internalRef, props);
+  const onScrollDiagnostic = useEvent((input: unknown) => {
+    const command = parseLegendScrollDiagnostic(input);
+    if (command?.phase === "adjustment") {
+      diagnostics?.libraryAdjustment(command);
+    } else if (command !== null) {
+      diagnostics?.libraryCommand(command);
+    }
+  });
   const invalidateMeasurements = useEvent(() => {
     diagnostics?.record({ kind: "layout", sizePx: 0, source: "measurement-invalidation" });
     internalRef.current?.clearCaches({ mode: "sizes" });
@@ -109,6 +120,9 @@ function ThreadTimelineListInner<ItemT>(
     const distance = state.contentLength - state.scrollLength - state.scroll;
     return Number.isFinite(distance) ? Math.max(0, distance) : null;
   });
+  const measureItemViewport = useEvent(async (itemKey: string) =>
+    measureTimelineItemViewport(internalRef.current, itemKey),
+  );
   const indexForItemKey = useEvent(
     (itemKey: string): number | null => internalRef.current?.getState().indexByKey(itemKey) ?? null,
   );
@@ -186,6 +200,7 @@ function ThreadTimelineListInner<ItemT>(
       getItemViewportOffset,
       indexForItemKey,
       isWithinEndThreshold,
+      measureItemViewport,
       reportContentInset,
       scrollToEnd,
       scrollToIndex,
@@ -197,6 +212,7 @@ function ThreadTimelineListInner<ItemT>(
       getItemViewportOffset,
       indexForItemKey,
       isWithinEndThreshold,
+      measureItemViewport,
       reportContentInset,
       scrollToEnd,
       scrollToIndex,
@@ -207,13 +223,14 @@ function ThreadTimelineListInner<ItemT>(
 
   const keyboardAwareLegendList: unknown = KeyboardAwareLegendList;
   // WHY: LegendList's forwardRef declaration erases the generic item parameter. This local adapter
-  // restores the same public props while adding the keyboard wrapper's documented native props.
+  // restores the same public props, keyboard wrapper props and our pinned patch's validated observer.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const KeyboardAwareTimelineList = keyboardAwareLegendList as (
     props: LegendListProps<ItemT> & {
       contentInsetEndAdjustment?: SharedValue<number>;
       keyboardLiftBehavior: "always" | "whenAtEnd" | "persistent" | "never";
       keyboardOffset: number;
+      onScrollDiagnostic?: (input: unknown) => void;
       ref: ForwardedRef<LegendListRef>;
     },
   ) => ReactElement;
@@ -221,6 +238,7 @@ function ThreadTimelineListInner<ItemT>(
     <KeyboardAwareTimelineList
       keyboardLiftBehavior={keyboardLiftBehavior}
       keyboardOffset={keyboardOffset}
+      {...(diagnostics === undefined ? {} : { onScrollDiagnostic })}
       ref={internalRef}
       {...(contentInsetEndAdjustment === undefined ? {} : { contentInsetEndAdjustment })}
       {...(anchoredEndSpace === undefined ? {} : { anchoredEndSpace })}

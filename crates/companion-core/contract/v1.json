@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "threadReadModelVersion": 3,
+  "threadReadModelVersion": 4,
   "globalSupervisorLimitsV1": {
     "version": 1,
     "liveChannelMaxEnvelopes": 256,

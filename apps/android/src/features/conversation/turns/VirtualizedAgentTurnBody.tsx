@@ -15,6 +15,7 @@ import { StreamingRevealSurface } from "../../../rendering/StreamingRevealSurfac
 import { AppText as Text } from "../../../ui/Typography";
 import { styles as markdownStyles } from "../content/AgentResponseMarkdown.styles";
 import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
+import { ThinkingStatus } from "../protocol/ThinkingStatus";
 import { CollapsedTurnActivity, CompletedTurnHistory } from "./CompletedTurnHistory";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
 import { TurnActivitySegment } from "./TurnActivity";
@@ -164,7 +165,7 @@ function VirtualizedMarkdownGroup({
     >
       {parts.map((part) => (
         <RichMarkdownDocumentBlockView
-          animateStreaming={part.streaming}
+          animateStreaming={part.streaming && animateNew}
           block={part.block}
           key={part.block.key}
           {...(reviewTarget === null ? {} : { reviewTarget })}
@@ -175,12 +176,13 @@ function VirtualizedMarkdownGroup({
   );
   const itemId = first.response.raw.id;
   const message = renderSearchMessage(itemId, content);
-  return first.streaming ? (
-    <StreamingRevealSurface animateNew={animateNew} streamKey={first.response.key}>
+  return (
+    <StreamingRevealSurface
+      animateNew={first.streaming && animateNew}
+      streamKey={first.response.key}
+    >
       {message}
     </StreamingRevealSurface>
-  ) : (
-    message
   );
 }
 
@@ -278,7 +280,7 @@ function VirtualizedTurnTail(props: VirtualizedAgentTurnBodyProps): ReactElement
   ) : null;
   const thinking =
     !props.presentation.hasAgentContent && props.presentation.rawTurn.status === "inProgress" ? (
-      <Text style={styles.agentPlaceholder}>Thinking</Text>
+      <ThinkingStatus running testID="turn-thinking-placeholder" text="Thinking" />
     ) : null;
   return (
     <>

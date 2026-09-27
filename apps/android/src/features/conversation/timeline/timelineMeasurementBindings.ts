@@ -44,9 +44,11 @@ export function useTimelineMeasurementBindings(
           },
         );
       }
-      props.commitInitialTimelineLoad();
     },
   );
+  const onReady = useEvent<NonNullable<ThreadTimelineListProps<TimelineItem>["onReady"]>>(() => {
+    props.commitInitialTimelineLoad();
+  });
   const onLayout = useEvent<NonNullable<ThreadTimelineListProps<TimelineItem>["onLayout"]>>(
     ({ nativeEvent }) => {
       timelineViewportHeightRef.current = nativeEvent.layout.height;
@@ -81,5 +83,5 @@ export function useTimelineMeasurementBindings(
     }
     props.scheduleUnreadAgentVisibilityCheck();
   });
-  return { onContentSizeChange, onLayout, onLoad };
+  return { onContentSizeChange, onLayout, onLoad, onReady };
 }

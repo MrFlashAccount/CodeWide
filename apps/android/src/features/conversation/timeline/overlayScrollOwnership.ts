@@ -54,21 +54,30 @@ export function useOverlayScrollOwnership(
 import { Platform } from "react-native";
 import { useAndroidBackHandler } from "../../../ui/use-android-back-handler";
 
-export function useConversationAndroidBack(
-  inlineQueueExpanded: boolean,
-  closeInlineQueueOverlay: () => void,
-  compact: boolean,
-  onBack: (() => void) | undefined,
-) {
+export function useConversationAndroidBack(input: {
+  readonly closeInlineQueueOverlay: () => void;
+  readonly closeThreadSearch: () => void;
+  readonly compact: boolean;
+  readonly inlineQueueExpanded: boolean;
+  readonly onBack: (() => void) | undefined;
+  readonly threadSearchVisible: boolean;
+}) {
   const handleAndroidBack = useEvent(() => {
-    if (inlineQueueExpanded) {
-      closeInlineQueueOverlay();
+    if (input.inlineQueueExpanded) {
+      input.closeInlineQueueOverlay();
       return;
     }
-    onBack?.();
+    if (input.threadSearchVisible) {
+      input.closeThreadSearch();
+      return;
+    }
+    input.onBack?.();
   });
 
   const androidBackEnabled =
-    Platform.OS === "android" && (inlineQueueExpanded || (compact && onBack !== undefined));
+    Platform.OS === "android" &&
+    (input.inlineQueueExpanded ||
+      input.threadSearchVisible ||
+      (input.compact && input.onBack !== undefined));
   useAndroidBackHandler(androidBackEnabled, handleAndroidBack);
 }

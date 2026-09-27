@@ -33,6 +33,7 @@ interface SettingsSheetProps {
   readonly voiceAssistant: {
     readonly content: ReactNode;
     readonly description: string;
+    readonly onOpen: () => void;
   };
 }
 
@@ -86,6 +87,7 @@ export function SettingsSheet(props: SettingsSheetProps) {
     setNavigation({ direction: "forward", page: { kind: "security" } });
   });
   const openVoiceAssistant = useEvent(() => {
+    props.voiceAssistant.onOpen();
     setNavigation({ direction: "forward", page: { kind: "voiceAssistant" } });
   });
   const changeOpen = useEvent((open: boolean) => {

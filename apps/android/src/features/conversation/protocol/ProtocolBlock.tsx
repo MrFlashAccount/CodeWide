@@ -6,13 +6,9 @@ import { View } from "react-native";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
 import { reasoningActivityTitle } from "../../../rendering/reasoning-title";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
-import { colors } from "../../../theme";
-import { InlineIcon } from "../../../ui/InlineIcon";
-import { AppText as Text } from "../../../ui/Typography";
-import { WaveText } from "../../../ui/WaveText";
 import { CompleteAgentMarkdown } from "../content/AgentResponseMarkdown";
 import { LargeContentControls } from "../content/FullContentViewer";
-import { ActiveToolCallContext, TurnActivityContentContext } from "../turns/turnContexts";
+import { ActiveToolCallContext } from "../turns/turnContexts";
 import { UserMessageContent } from "../turns/UserMessageContent";
 import { AgentActivityProtocolBlock } from "./AgentActivityProtocolBlock";
 import { CommandExecutionProtocolBlock } from "./CommandOutput";
@@ -20,6 +16,7 @@ import { FileChangeProtocolBlock } from "./FileChangeProtocolBlock";
 import { ImageProtocolBlock } from "./ImageProtocolBlock";
 import { MemoryCitationList } from "./MemoryCitationList";
 import { styles } from "./ProtocolBlock.styles";
+import { ThinkingStatus } from "./ThinkingStatus";
 import { TokenUsageProtocolBlock } from "./TokenUsageProtocolBlock";
 import { ToolCallProtocolBlock } from "./ToolContent";
 import { UnknownProtocolBlock } from "./UnknownProtocolBlock";
@@ -35,7 +32,6 @@ export function ProtocolBlock({
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 }) {
   const activeToolCall = useContext(ActiveToolCallContext);
-  const insideTurnActivity = useContext(TurnActivityContentContext);
   if (block.kind === "userMessage") {
     const content = Array.isArray(block.raw.content) ? block.raw.content : [];
     return (
@@ -167,27 +163,7 @@ export function ProtocolBlock({
       : block.title;
   if (block.kind === "reasoning") {
     const running = activeToolCall || block.status === "inProgress" || block.status === "running";
-    return (
-      <View
-        style={[styles.thinkingStatus, insideTurnActivity && styles.thinkingStatusInActivity]}
-        testID="thinking-status"
-      >
-        <View style={styles.cardIconSlot}>
-          <InlineIcon color={colors.textMuted} name="bulb-outline" role="label" />
-        </View>
-        {running ? (
-          <WaveText
-            containerStyle={styles.cardTitleWave}
-            style={styles.cardTitle}
-            text={displayTitle}
-          />
-        ) : (
-          <Text numberOfLines={1} style={styles.cardTitle}>
-            {displayTitle}
-          </Text>
-        )}
-      </View>
-    );
+    return <ThinkingStatus running={running} text={displayTitle} />;
   }
   return renderProtocolFallback(block, displayTitle, getTransferAccess);
 }

@@ -88,6 +88,8 @@ class NativeStreamingRevealView(context: Context) : ReactViewGroup(context), Vie
   }
 
   override fun onPreDraw(): Boolean {
+    // Static content keeps its native host, but must not be walked on every frame.
+    if (!animateNew || reduceMotion) return true
     if (!isShown || windowVisibility != View.VISIBLE) return true
     frameTime = SystemClock.uptimeMillis()
     seen.clear()

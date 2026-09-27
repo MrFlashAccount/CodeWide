@@ -1,5 +1,13 @@
 export const GLOBAL_SUPERVISOR_BINDING_SCHEMA_VERSION = 1;
 export const GLOBAL_SUPERVISOR_THREAD_SOURCE_PREFIX = "codewide-global-supervisor:";
+const legacyGlobalSupervisorToolProfileVersion2 = 2;
+const legacyGlobalSupervisorToolProfileVersion3 = 3;
+const GLOBAL_SUPERVISOR_TOOL_PROFILE_VERSION = 4;
+
+type GlobalSupervisorToolProfileVersion =
+  | typeof legacyGlobalSupervisorToolProfileVersion2
+  | typeof legacyGlobalSupervisorToolProfileVersion3
+  | typeof GLOBAL_SUPERVISOR_TOOL_PROFILE_VERSION;
 
 declare const globalSupervisorConnectionIdBrand: unique symbol;
 declare const globalSupervisorThreadIdBrand: unique symbol;
@@ -27,11 +35,13 @@ export type GlobalSupervisorBinding =
       readonly homeConnectionId: GlobalSupervisorConnectionId;
       readonly schemaVersion: 1;
       readonly status: "creating";
+      readonly toolProfileVersion?: GlobalSupervisorToolProfileVersion;
     }
   | {
       readonly home: GlobalSupervisorQualifiedChatRef;
       readonly schemaVersion: 1;
       readonly status: "ready";
+      readonly toolProfileVersion?: GlobalSupervisorToolProfileVersion;
     }
   | {
       readonly priorHome: GlobalSupervisorQualifiedChatRef | null;
@@ -75,6 +85,14 @@ export type GlobalSupervisorBindingOwner = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isToolProfileVersion(value: unknown): value is GlobalSupervisorToolProfileVersion {
+  return (
+    value === legacyGlobalSupervisorToolProfileVersion2 ||
+    value === legacyGlobalSupervisorToolProfileVersion3 ||
+    value === GLOBAL_SUPERVISOR_TOOL_PROFILE_VERSION
+  );
 }
 
 function parseGlobalSupervisorConnectionId(value: unknown): GlobalSupervisorConnectionId | null {
@@ -125,7 +143,8 @@ function parseCreatingBinding(
   if (
     typeof value.creationToken !== "string" ||
     value.creationToken.length === 0 ||
-    homeConnectionId === null
+    homeConnectionId === null ||
+    (value.toolProfileVersion !== undefined && !isToolProfileVersion(value.toolProfileVersion))
   ) {
     return null;
   }
@@ -134,6 +153,9 @@ function parseCreatingBinding(
     homeConnectionId,
     schemaVersion: GLOBAL_SUPERVISOR_BINDING_SCHEMA_VERSION,
     status: "creating",
+    ...(isToolProfileVersion(value.toolProfileVersion)
+      ? { toolProfileVersion: value.toolProfileVersion }
+      : {}),
   };
 }
 
@@ -141,9 +163,17 @@ function parseReadyBinding(
   value: Readonly<Record<string, unknown>>,
 ): Extract<GlobalSupervisorBinding, { readonly status: "ready" }> | null {
   const home = parseGlobalSupervisorQualifiedChatRef(value.home);
-  return home === null
+  return home === null ||
+    (value.toolProfileVersion !== undefined && !isToolProfileVersion(value.toolProfileVersion))
     ? null
-    : { home, schemaVersion: GLOBAL_SUPERVISOR_BINDING_SCHEMA_VERSION, status: "ready" };
+    : {
+        home,
+        schemaVersion: GLOBAL_SUPERVISOR_BINDING_SCHEMA_VERSION,
+        status: "ready",
+        ...(isToolProfileVersion(value.toolProfileVersion)
+          ? { toolProfileVersion: value.toolProfileVersion }
+          : {}),
+      };
 }
 
 function isInvalidReason(
@@ -200,6 +230,14 @@ type ExistingBindingResolution =
 
 type CreatingBinding = Extract<GlobalSupervisorBinding, { readonly status: "creating" }>;
 
+function resolveToolProfile(
+  binding: Extract<GlobalSupervisorBinding, { readonly status: "ready" }>,
+): ExistingBindingResolution {
+  return binding.toolProfileVersion === GLOBAL_SUPERVISOR_TOOL_PROFILE_VERSION
+    ? { home: binding.home, status: "ready" }
+    : { status: "create" };
+}
+
 async function reconcileCreatingBinding(
   options: GlobalSupervisorBindingOwnerOptions,
   binding: CreatingBinding,
@@ -227,6 +265,9 @@ async function reconcileCreatingBinding(
     home: { connectionId: binding.homeConnectionId, threadId },
     schemaVersion: GLOBAL_SUPERVISOR_BINDING_SCHEMA_VERSION,
     status: "ready",
+    ...(binding.toolProfileVersion === undefined
+      ? {}
+      : { toolProfileVersion: binding.toolProfileVersion }),
   };
   await options.database.write(ready);
   return ready;
@@ -244,7 +285,7 @@ async function resolveExistingBinding(
     if (current.home.connectionId !== connectionId) {
       throw new Error("The supervisor is already bound to another home server");
     }
-    return { home: current.home, status: "ready" };
+    return resolveToolProfile(current);
   }
   if (current.status === "invalid") {
     throw new Error("The supervisor binding requires an explicit recovery action");
@@ -254,7 +295,7 @@ async function resolveExistingBinding(
   }
   const reconciled = await reconcileCreatingBinding(options, current);
   if (reconciled.status === "ready") {
-    return { home: reconciled.home, status: "ready" };
+    return resolveToolProfile(reconciled);
   }
   if (reconciled.status === "invalid") {
     throw new Error("Supervisor binding is ambiguous and requires an explicit reset");
@@ -272,6 +313,7 @@ async function createBinding(
     homeConnectionId: connectionId,
     schemaVersion: GLOBAL_SUPERVISOR_BINDING_SCHEMA_VERSION,
     status: "creating",
+    toolProfileVersion: GLOBAL_SUPERVISOR_TOOL_PROFILE_VERSION,
   };
   await options.database.write(creating);
   const threadId = parseGlobalSupervisorThreadId(
@@ -287,6 +329,7 @@ async function createBinding(
     home: { connectionId, threadId },
     schemaVersion: GLOBAL_SUPERVISOR_BINDING_SCHEMA_VERSION,
     status: "ready",
+    toolProfileVersion: GLOBAL_SUPERVISOR_TOOL_PROFILE_VERSION,
   };
   await options.database.write(ready);
   return ready.home;

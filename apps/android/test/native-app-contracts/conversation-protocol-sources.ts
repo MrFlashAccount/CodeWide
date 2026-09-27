@@ -16,10 +16,6 @@ export const ownerProtocolBlock = readFileSync(
   new URL("../../src/features/conversation/protocol/ProtocolBlock.tsx", import.meta.url),
   "utf8",
 );
-export const ownerProtocolBlockStyles = readFileSync(
-  new URL("../../src/features/conversation/protocol/ProtocolBlock.styles.ts", import.meta.url),
-  "utf8",
-);
 export const ownerToolImages = readFileSync(
   new URL("../../src/features/conversation/protocol/toolImages.tsx", import.meta.url),
   "utf8",

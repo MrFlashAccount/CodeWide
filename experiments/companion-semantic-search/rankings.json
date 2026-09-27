@@ -1,0 +1,2855 @@
+{
+  "fixture_sha256": "cd7ee72e0270c316bb4fb2fcf1f6d759d33050869f84bc87265e8cc927fb9513",
+  "julia_candidate_confusion_argmax": {
+    "true_positive": 30,
+    "false_positive": 715,
+    "true_negative": 50,
+    "false_negative": 5
+  },
+  "queries": [
+    {
+      "id": "q01",
+      "relevant": [
+        "storage_keep"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "storage_keep": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "storage_move",
+            "tests_weak",
+            "models_default",
+            "relay_proposal",
+            "storage_keep"
+          ],
+          "relevant_ranks": {
+            "storage_keep": 5
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "storage_keep",
+            "storage_idea",
+            "storage_move",
+            "projects_pending",
+            "tests_weak"
+          ],
+          "relevant_ranks": {
+            "storage_keep": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "storage_move",
+            "storage_keep",
+            "tests_weak",
+            "relay_proposal",
+            "composer_restored"
+          ],
+          "relevant_ranks": {
+            "storage_keep": 2
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "models_default",
+            "context_compact",
+            "storage_move",
+            "composer_restored",
+            "composer_late"
+          ],
+          "relevant_ranks": {
+            "storage_keep": 6
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "storage_keep",
+            "storage_move",
+            "storage_idea",
+            "composer_late",
+            "relay_proposal"
+          ],
+          "relevant_ranks": {
+            "storage_keep": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q02",
+      "relevant": [
+        "scroll_measured"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "scroll_measured": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "diff_full",
+            "release_plan",
+            "release_local",
+            "queue_other",
+            "release_published"
+          ],
+          "relevant_ranks": {
+            "scroll_measured": 6
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "scroll_pending",
+            "scroll_measured",
+            "scroll_claim",
+            "markdown_idea",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "scroll_measured": 2
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "scroll_measured",
+            "diff_full",
+            "release_published",
+            "scroll_pending",
+            "release_plan"
+          ],
+          "relevant_ranks": {
+            "scroll_measured": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "tests_weak",
+            "voice_idea",
+            "markdown_keep",
+            "release_plan",
+            "release_published"
+          ],
+          "relevant_ranks": {
+            "scroll_measured": 7
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "scroll_measured",
+            "scroll_pending",
+            "tests_weak",
+            "diff_full",
+            "models_cache"
+          ],
+          "relevant_ranks": {
+            "scroll_measured": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q03",
+      "relevant": [
+        "release_published"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "release_published": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "question_pending",
+            "composer_late",
+            "cancel_released",
+            "cancel_wait",
+            "release_plan"
+          ],
+          "relevant_ranks": {
+            "release_published": 7
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "release_local",
+            "release_published",
+            "release_plan",
+            "question_pending",
+            "scroll_claim"
+          ],
+          "relevant_ranks": {
+            "release_published": 2
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "question_pending",
+            "release_local",
+            "release_plan",
+            "release_published",
+            "scroll_claim"
+          ],
+          "relevant_ranks": {
+            "release_published": 4
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "storage_move",
+            "scroll_claim",
+            "models_cache",
+            "question_idea",
+            "composer_late"
+          ],
+          "relevant_ranks": {
+            "release_published": 10
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "release_local",
+            "release_plan",
+            "release_published",
+            "composer_late",
+            "projects_pin"
+          ],
+          "relevant_ranks": {
+            "release_published": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "q04",
+      "relevant": [
+        "queue_fixed"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "queue_fixed": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "tests_behavior",
+            "queue_fixed",
+            "queue_guess",
+            "projects_sort",
+            "question_answered"
+          ],
+          "relevant_ranks": {
+            "queue_fixed": 2
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "queue_guess",
+            "queue_other",
+            "queue_fixed",
+            "offline_duplicate",
+            "offline_reject"
+          ],
+          "relevant_ranks": {
+            "queue_fixed": 3
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "queue_guess",
+            "queue_fixed",
+            "tests_behavior",
+            "question_answered",
+            "offline_resume"
+          ],
+          "relevant_ranks": {
+            "queue_fixed": 2
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "question_answered",
+            "perf_no_gain",
+            "markdown_keep",
+            "offline_duplicate",
+            "offline_reject"
+          ],
+          "relevant_ranks": {
+            "queue_fixed": 17
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "queue_fixed",
+            "queue_other",
+            "queue_guess",
+            "projects_pin",
+            "tests_behavior"
+          ],
+          "relevant_ranks": {
+            "queue_fixed": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q05",
+      "relevant": [
+        "voice_screen"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "voice_screen": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [],
+          "relevant_ranks": {
+            "voice_screen": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "voice_idea",
+            "voice_screen",
+            "relay_blind",
+            "composer_late",
+            "storage_keep"
+          ],
+          "relevant_ranks": {
+            "voice_screen": 2
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "voice_idea",
+            "voice_screen",
+            "relay_blind",
+            "composer_late",
+            "storage_keep"
+          ],
+          "relevant_ranks": {
+            "voice_screen": 2
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "voice_idea",
+            "context_compact",
+            "markdown_keep",
+            "composer_late",
+            "relay_blind"
+          ],
+          "relevant_ranks": {
+            "voice_screen": 9
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "offline_resume",
+            "markdown_keep",
+            "context_compact",
+            "queue_guess",
+            "voice_screen"
+          ],
+          "relevant_ranks": {
+            "voice_screen": 5
+          }
+        }
+      }
+    },
+    {
+      "id": "q06",
+      "relevant": [
+        "markdown_keep"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "markdown_keep": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "markdown_idea",
+            "markdown_keep",
+            "composer_effect",
+            "relay_logs",
+            "offline_reject"
+          ],
+          "relevant_ranks": {
+            "markdown_keep": 2
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "markdown_keep",
+            "tests_weak",
+            "queue_guess",
+            "diff_full",
+            "queue_other"
+          ],
+          "relevant_ranks": {
+            "markdown_keep": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "markdown_keep",
+            "offline_reject",
+            "markdown_plain",
+            "markdown_idea",
+            "voice_permission"
+          ],
+          "relevant_ranks": {
+            "markdown_keep": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "perf_no_gain",
+            "composer_late",
+            "diff_color",
+            "markdown_idea",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "markdown_keep": 5
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "markdown_keep",
+            "markdown_idea",
+            "markdown_plain",
+            "queue_guess",
+            "projects_pin"
+          ],
+          "relevant_ranks": {
+            "markdown_keep": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q07",
+      "relevant": [
+        "models_live"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "models_live": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "models_default",
+            "offline_duplicate",
+            "storage_keep",
+            "release_local",
+            "models_live"
+          ],
+          "relevant_ranks": {
+            "models_live": 5
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "models_live",
+            "models_cache",
+            "models_default",
+            "scroll_pending",
+            "question_pending"
+          ],
+          "relevant_ranks": {
+            "models_live": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "models_default",
+            "models_live",
+            "scroll_pending",
+            "offline_duplicate",
+            "projects_pending"
+          ],
+          "relevant_ranks": {
+            "models_live": 2
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "models_live",
+            "relay_blind",
+            "models_default",
+            "question_pending",
+            "release_local"
+          ],
+          "relevant_ranks": {
+            "models_live": 1
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "models_live",
+            "models_cache",
+            "models_default",
+            "queue_fixed",
+            "offline_duplicate"
+          ],
+          "relevant_ranks": {
+            "models_live": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q08",
+      "relevant": [
+        "projects_pin"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "projects_pin": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "scroll_measured"
+          ],
+          "relevant_ranks": {
+            "projects_pin": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "projects_pin",
+            "cancel_ui",
+            "memory_guess",
+            "cancel_released",
+            "context_compact"
+          ],
+          "relevant_ranks": {
+            "projects_pin": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "projects_pin",
+            "scroll_measured",
+            "cancel_ui",
+            "memory_guess",
+            "cancel_released"
+          ],
+          "relevant_ranks": {
+            "projects_pin": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "context_compact",
+            "question_answered",
+            "question_pending",
+            "projects_pending",
+            "tests_weak"
+          ],
+          "relevant_ranks": {
+            "projects_pin": 19
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "projects_pin",
+            "cancel_released",
+            "context_compact",
+            "projects_pending",
+            "scroll_measured"
+          ],
+          "relevant_ranks": {
+            "projects_pin": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q09",
+      "relevant": [
+        "diff_full"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "diff_full": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "diff_color",
+            "diff_guess",
+            "context_network",
+            "queue_guess",
+            "context_compact"
+          ],
+          "relevant_ranks": {
+            "diff_full": 6
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "diff_full",
+            "diff_guess",
+            "diff_color",
+            "voice_screen",
+            "memory_oom"
+          ],
+          "relevant_ranks": {
+            "diff_full": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "diff_color",
+            "diff_guess",
+            "diff_full",
+            "context_network",
+            "context_compact"
+          ],
+          "relevant_ranks": {
+            "diff_full": 3
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "question_answered",
+            "memory_oom",
+            "perf_plan",
+            "context_compact",
+            "voice_screen"
+          ],
+          "relevant_ranks": {
+            "diff_full": 19
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "diff_full",
+            "diff_guess",
+            "diff_color",
+            "memory_oom",
+            "voice_screen"
+          ],
+          "relevant_ranks": {
+            "diff_full": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q10",
+      "relevant": [
+        "relay_blind"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "relay_blind": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "relay_blind",
+            "relay_logs",
+            "relay_proposal"
+          ],
+          "relevant_ranks": {
+            "relay_blind": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "relay_blind",
+            "relay_proposal",
+            "relay_logs",
+            "voice_idea",
+            "context_network"
+          ],
+          "relevant_ranks": {
+            "relay_blind": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "relay_blind",
+            "relay_logs",
+            "relay_proposal",
+            "voice_idea",
+            "context_network"
+          ],
+          "relevant_ranks": {
+            "relay_blind": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "context_compact",
+            "composer_restored",
+            "question_answered",
+            "composer_late",
+            "release_plan"
+          ],
+          "relevant_ranks": {
+            "relay_blind": 8
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "relay_blind",
+            "relay_proposal",
+            "relay_logs",
+            "context_network",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "relay_blind": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q11",
+      "relevant": [
+        "memory_unknown"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "memory_unknown": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "memory_unknown",
+            "memory_guess",
+            "memory_oom",
+            "context_network",
+            "search_deferred"
+          ],
+          "relevant_ranks": {
+            "memory_unknown": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "memory_unknown",
+            "tests_weak",
+            "markdown_keep",
+            "memory_guess",
+            "tests_bytes"
+          ],
+          "relevant_ranks": {
+            "memory_unknown": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "memory_unknown",
+            "memory_guess",
+            "context_network",
+            "voice_permission",
+            "cancel_wait"
+          ],
+          "relevant_ranks": {
+            "memory_unknown": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "memory_oom",
+            "tests_weak",
+            "memory_guess",
+            "perf_no_gain",
+            "models_cache"
+          ],
+          "relevant_ranks": {
+            "memory_unknown": 20
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "memory_unknown",
+            "memory_guess",
+            "memory_oom",
+            "queue_fixed",
+            "tests_weak"
+          ],
+          "relevant_ranks": {
+            "memory_unknown": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q12",
+      "relevant": [
+        "perf_no_gain"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "perf_no_gain": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [],
+          "relevant_ranks": {
+            "perf_no_gain": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "perf_no_gain",
+            "perf_gain",
+            "perf_plan",
+            "markdown_keep",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "perf_no_gain": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "perf_no_gain",
+            "perf_gain",
+            "perf_plan",
+            "markdown_keep",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "perf_no_gain": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "perf_plan",
+            "tests_weak",
+            "context_compact",
+            "scroll_claim",
+            "diff_color"
+          ],
+          "relevant_ranks": {
+            "perf_no_gain": 11
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "perf_plan",
+            "perf_no_gain",
+            "diff_color",
+            "perf_gain",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "perf_no_gain": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "q13",
+      "relevant": [
+        "cancel_released"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "cancel_released": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "cancel_released",
+            "cancel_wait"
+          ],
+          "relevant_ranks": {
+            "cancel_released": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "cancel_released",
+            "cancel_ui",
+            "cancel_wait",
+            "queue_other",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "cancel_released": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "cancel_released",
+            "cancel_wait",
+            "cancel_ui",
+            "queue_other",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "cancel_released": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "storage_move",
+            "diff_color",
+            "cancel_released",
+            "storage_keep",
+            "context_compact"
+          ],
+          "relevant_ranks": {
+            "cancel_released": 3
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "cancel_released",
+            "cancel_ui",
+            "cancel_wait",
+            "diff_guess",
+            "projects_pending"
+          ],
+          "relevant_ranks": {
+            "cancel_released": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q14",
+      "relevant": [
+        "tests_behavior"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "tests_behavior": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "storage_idea",
+            "tests_weak",
+            "tests_bytes",
+            "tests_behavior"
+          ],
+          "relevant_ranks": {
+            "tests_behavior": 4
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "tests_behavior",
+            "tests_bytes",
+            "tests_weak",
+            "markdown_keep",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "tests_behavior": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "tests_behavior",
+            "tests_bytes",
+            "tests_weak",
+            "storage_idea",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "tests_behavior": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "question_pending",
+            "perf_plan",
+            "tests_behavior",
+            "storage_idea",
+            "tests_weak"
+          ],
+          "relevant_ranks": {
+            "tests_behavior": 3
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "tests_behavior",
+            "tests_bytes",
+            "tests_weak",
+            "composer_restored",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "tests_behavior": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q15",
+      "relevant": [
+        "search_semantic"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "search_semantic": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [],
+          "relevant_ranks": {
+            "search_semantic": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "markdown_keep",
+            "voice_idea",
+            "markdown_idea",
+            "search_deferred",
+            "markdown_plain"
+          ],
+          "relevant_ranks": {
+            "search_semantic": 8
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "markdown_keep",
+            "voice_idea",
+            "markdown_idea",
+            "search_deferred",
+            "markdown_plain"
+          ],
+          "relevant_ranks": {
+            "search_semantic": 8
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "scroll_claim",
+            "storage_move",
+            "markdown_keep",
+            "composer_effect",
+            "question_pending"
+          ],
+          "relevant_ranks": {
+            "search_semantic": 14
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "search_semantic",
+            "search_deferred",
+            "markdown_keep",
+            "diff_guess",
+            "scroll_claim"
+          ],
+          "relevant_ranks": {
+            "search_semantic": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q16",
+      "relevant": [
+        "composer_restored"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "composer_restored": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "composer_effect",
+            "scroll_pending",
+            "cancel_released",
+            "projects_pending",
+            "queue_guess"
+          ],
+          "relevant_ranks": {
+            "composer_restored": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "memory_guess",
+            "voice_idea",
+            "queue_guess",
+            "composer_late",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "composer_restored": 17
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "queue_guess",
+            "memory_guess",
+            "projects_pending",
+            "question_idea",
+            "voice_idea"
+          ],
+          "relevant_ranks": {
+            "composer_restored": null
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "question_pending",
+            "question_idea",
+            "perf_no_gain",
+            "release_local",
+            "composer_effect"
+          ],
+          "relevant_ranks": {
+            "composer_restored": null
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "composer_effect",
+            "voice_permission",
+            "composer_late",
+            "question_idea",
+            "queue_guess"
+          ],
+          "relevant_ranks": {
+            "composer_restored": null
+          }
+        }
+      }
+    },
+    {
+      "id": "q17",
+      "relevant": [
+        "offline_resume"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "offline_resume": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [],
+          "relevant_ranks": {
+            "offline_resume": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "queue_guess",
+            "queue_fixed",
+            "offline_duplicate",
+            "offline_resume",
+            "context_compact"
+          ],
+          "relevant_ranks": {
+            "offline_resume": 4
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "queue_guess",
+            "queue_fixed",
+            "offline_duplicate",
+            "offline_resume",
+            "context_compact"
+          ],
+          "relevant_ranks": {
+            "offline_resume": 4
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "context_compact",
+            "tests_weak",
+            "memory_oom",
+            "storage_keep",
+            "voice_idea"
+          ],
+          "relevant_ranks": {
+            "offline_resume": 12
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "offline_resume",
+            "offline_reject",
+            "queue_fixed",
+            "queue_guess",
+            "offline_duplicate"
+          ],
+          "relevant_ranks": {
+            "offline_resume": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q18",
+      "relevant": [
+        "context_compact"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "context_compact": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "context_compact",
+            "context_guess",
+            "question_idea",
+            "question_pending",
+            "projects_sort"
+          ],
+          "relevant_ranks": {
+            "context_compact": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "context_compact",
+            "context_guess",
+            "question_idea",
+            "queue_guess",
+            "voice_permission"
+          ],
+          "relevant_ranks": {
+            "context_compact": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "context_compact",
+            "context_guess",
+            "question_idea",
+            "question_pending",
+            "cancel_released"
+          ],
+          "relevant_ranks": {
+            "context_compact": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "composer_effect",
+            "tests_behavior",
+            "scroll_measured",
+            "question_answered",
+            "offline_duplicate"
+          ],
+          "relevant_ranks": {
+            "context_compact": 6
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "context_compact",
+            "context_guess",
+            "voice_permission",
+            "question_pending",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "context_compact": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q19",
+      "relevant": [
+        "question_pending"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "question_pending": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "question_pending",
+            "question_idea",
+            "question_answered",
+            "offline_reject",
+            "cancel_released"
+          ],
+          "relevant_ranks": {
+            "question_pending": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "question_pending",
+            "question_idea",
+            "question_answered",
+            "context_network",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "question_pending": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "question_pending",
+            "question_idea",
+            "question_answered",
+            "context_network",
+            "cancel_released"
+          ],
+          "relevant_ranks": {
+            "question_pending": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "perf_no_gain",
+            "question_answered",
+            "question_idea",
+            "markdown_keep",
+            "offline_reject"
+          ],
+          "relevant_ranks": {
+            "question_pending": 6
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "question_pending",
+            "question_idea",
+            "question_answered",
+            "markdown_keep",
+            "offline_reject"
+          ],
+          "relevant_ranks": {
+            "question_pending": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q20",
+      "relevant": [
+        "storage_idea"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "storage_idea": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "storage_idea",
+            "storage_keep",
+            "voice_idea",
+            "composer_late",
+            "storage_move"
+          ],
+          "relevant_ranks": {
+            "storage_idea": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "storage_idea",
+            "storage_keep",
+            "storage_move",
+            "voice_idea",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "storage_idea": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "storage_idea",
+            "storage_keep",
+            "voice_idea",
+            "storage_move",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "storage_idea": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "scroll_pending",
+            "markdown_plain",
+            "question_pending",
+            "question_idea",
+            "question_answered"
+          ],
+          "relevant_ranks": {
+            "storage_idea": 20
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "storage_idea",
+            "storage_keep",
+            "storage_move",
+            "projects_pending",
+            "cancel_released"
+          ],
+          "relevant_ranks": {
+            "storage_idea": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q21",
+      "relevant": [
+        "scroll_pending"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "scroll_pending": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [],
+          "relevant_ranks": {
+            "scroll_pending": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "scroll_pending",
+            "question_pending",
+            "memory_guess",
+            "question_idea",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "scroll_pending": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "scroll_pending",
+            "question_pending",
+            "memory_guess",
+            "question_idea",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "scroll_pending": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "question_pending",
+            "scroll_claim",
+            "voice_idea",
+            "tests_weak",
+            "scroll_measured"
+          ],
+          "relevant_ranks": {
+            "scroll_pending": 20
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "scroll_pending",
+            "scroll_measured",
+            "tests_weak",
+            "scroll_claim",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "scroll_pending": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q22",
+      "relevant": [
+        "release_local"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "release_local": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "release_local",
+            "storage_keep",
+            "release_plan",
+            "release_published",
+            "offline_duplicate"
+          ],
+          "relevant_ranks": {
+            "release_local": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "release_local",
+            "release_plan",
+            "release_published",
+            "memory_guess",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "release_local": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "release_local",
+            "release_plan",
+            "release_published",
+            "storage_keep",
+            "question_pending"
+          ],
+          "relevant_ranks": {
+            "release_local": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "models_default",
+            "question_idea",
+            "question_answered",
+            "offline_duplicate",
+            "scroll_claim"
+          ],
+          "relevant_ranks": {
+            "release_local": 7
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "release_local",
+            "release_plan",
+            "release_published",
+            "question_pending",
+            "memory_guess"
+          ],
+          "relevant_ranks": {
+            "release_local": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q23",
+      "relevant": [
+        "voice_permission"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "voice_permission": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "voice_permission",
+            "context_network",
+            "voice_screen",
+            "context_guess",
+            "context_compact"
+          ],
+          "relevant_ranks": {
+            "voice_permission": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "voice_permission",
+            "voice_screen",
+            "voice_idea",
+            "context_network",
+            "memory_guess"
+          ],
+          "relevant_ranks": {
+            "voice_permission": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "voice_permission",
+            "voice_screen",
+            "context_network",
+            "voice_idea",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "voice_permission": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "storage_move",
+            "models_default",
+            "scroll_claim",
+            "context_compact",
+            "scroll_measured"
+          ],
+          "relevant_ranks": {
+            "voice_permission": 14
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "voice_permission",
+            "voice_screen",
+            "voice_idea",
+            "context_network",
+            "scroll_measured"
+          ],
+          "relevant_ranks": {
+            "voice_permission": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q24",
+      "relevant": [
+        "memory_oom"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "memory_oom": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "release_plan",
+            "release_local",
+            "queue_other",
+            "release_published",
+            "scroll_measured"
+          ],
+          "relevant_ranks": {
+            "memory_oom": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "question_pending",
+            "memory_guess",
+            "memory_oom",
+            "memory_unknown",
+            "markdown_idea"
+          ],
+          "relevant_ranks": {
+            "memory_oom": 3
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "queue_other",
+            "question_pending",
+            "release_plan",
+            "memory_guess",
+            "release_local"
+          ],
+          "relevant_ranks": {
+            "memory_oom": 6
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "question_pending",
+            "voice_idea",
+            "markdown_keep",
+            "storage_idea",
+            "question_answered"
+          ],
+          "relevant_ranks": {
+            "memory_oom": 12
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "memory_unknown",
+            "tests_weak",
+            "memory_oom",
+            "memory_guess",
+            "queue_other"
+          ],
+          "relevant_ranks": {
+            "memory_oom": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "q25",
+      "relevant": [
+        "cancel_ui"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "cancel_ui": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "cancel_released",
+            "search_deferred",
+            "context_compact",
+            "cancel_ui",
+            "offline_resume"
+          ],
+          "relevant_ranks": {
+            "cancel_ui": 4
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "cancel_ui",
+            "cancel_released",
+            "memory_guess",
+            "question_idea",
+            "projects_pending"
+          ],
+          "relevant_ranks": {
+            "cancel_ui": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "cancel_released",
+            "cancel_ui",
+            "context_compact",
+            "cancel_wait",
+            "diff_color"
+          ],
+          "relevant_ranks": {
+            "cancel_ui": 2
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "scroll_claim",
+            "memory_guess",
+            "question_answered",
+            "diff_color",
+            "perf_no_gain"
+          ],
+          "relevant_ranks": {
+            "cancel_ui": 10
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "cancel_ui",
+            "cancel_released",
+            "context_compact",
+            "offline_resume",
+            "projects_pin"
+          ],
+          "relevant_ranks": {
+            "cancel_ui": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q26",
+      "relevant": [
+        "tests_weak"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "tests_weak": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "tests_bytes",
+            "search_semantic",
+            "perf_gain",
+            "models_cache",
+            "release_published"
+          ],
+          "relevant_ranks": {
+            "tests_weak": 9
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "tests_weak",
+            "tests_behavior",
+            "storage_keep",
+            "tests_bytes",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "tests_weak": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "tests_bytes",
+            "tests_weak",
+            "tests_behavior",
+            "storage_keep",
+            "perf_no_gain"
+          ],
+          "relevant_ranks": {
+            "tests_weak": 2
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "storage_idea",
+            "tests_weak",
+            "perf_no_gain",
+            "cancel_released",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "tests_weak": 2
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "tests_weak",
+            "tests_bytes",
+            "tests_behavior",
+            "composer_late",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "tests_weak": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q27",
+      "relevant": [
+        "search_keyword"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "search_keyword": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "scroll_measured"
+          ],
+          "relevant_ranks": {
+            "search_keyword": null
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "search_keyword",
+            "cancel_wait",
+            "question_idea",
+            "cancel_released",
+            "search_deferred"
+          ],
+          "relevant_ranks": {
+            "search_keyword": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "scroll_measured",
+            "search_keyword",
+            "cancel_wait",
+            "question_idea",
+            "cancel_released"
+          ],
+          "relevant_ranks": {
+            "search_keyword": 2
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "models_default",
+            "models_cache",
+            "voice_idea",
+            "memory_guess",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "search_keyword": 9
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "search_keyword",
+            "search_deferred",
+            "context_guess",
+            "markdown_keep",
+            "cancel_ui"
+          ],
+          "relevant_ranks": {
+            "search_keyword": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q28",
+      "relevant": [
+        "composer_effect"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "composer_effect": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "composer_effect",
+            "composer_restored",
+            "projects_sort",
+            "question_answered",
+            "context_network"
+          ],
+          "relevant_ranks": {
+            "composer_effect": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "composer_effect",
+            "composer_restored",
+            "composer_late",
+            "question_answered",
+            "perf_no_gain"
+          ],
+          "relevant_ranks": {
+            "composer_effect": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "composer_effect",
+            "composer_restored",
+            "question_answered",
+            "composer_late",
+            "projects_pin"
+          ],
+          "relevant_ranks": {
+            "composer_effect": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "perf_no_gain",
+            "tests_weak",
+            "scroll_measured",
+            "context_compact",
+            "question_pending"
+          ],
+          "relevant_ranks": {
+            "composer_effect": 11
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "composer_effect",
+            "composer_restored",
+            "composer_late",
+            "context_compact",
+            "offline_reject"
+          ],
+          "relevant_ranks": {
+            "composer_effect": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q29",
+      "relevant": [
+        "offline_duplicate"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "offline_duplicate": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "offline_resume",
+            "offline_duplicate",
+            "queue_other",
+            "cancel_released",
+            "composer_late"
+          ],
+          "relevant_ranks": {
+            "offline_duplicate": 2
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "offline_duplicate",
+            "offline_resume",
+            "relay_logs",
+            "offline_reject",
+            "queue_fixed"
+          ],
+          "relevant_ranks": {
+            "offline_duplicate": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "offline_duplicate",
+            "offline_resume",
+            "queue_other",
+            "relay_logs",
+            "relay_blind"
+          ],
+          "relevant_ranks": {
+            "offline_duplicate": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "relay_blind",
+            "cancel_released",
+            "question_pending",
+            "markdown_keep",
+            "markdown_plain"
+          ],
+          "relevant_ranks": {
+            "offline_duplicate": 9
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "offline_resume",
+            "offline_duplicate",
+            "composer_late",
+            "queue_guess",
+            "offline_reject"
+          ],
+          "relevant_ranks": {
+            "offline_duplicate": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "q30",
+      "relevant": [
+        "context_network"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "context_network": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "context_guess",
+            "cancel_wait",
+            "context_compact",
+            "diff_guess",
+            "voice_screen"
+          ],
+          "relevant_ranks": {
+            "context_network": 11
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "context_compact",
+            "context_network",
+            "context_guess",
+            "markdown_keep",
+            "voice_screen"
+          ],
+          "relevant_ranks": {
+            "context_network": 2
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "context_compact",
+            "context_guess",
+            "voice_screen",
+            "context_network",
+            "diff_guess"
+          ],
+          "relevant_ranks": {
+            "context_network": 4
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "context_compact",
+            "voice_screen",
+            "queue_fixed",
+            "memory_oom",
+            "memory_guess"
+          ],
+          "relevant_ranks": {
+            "context_network": 10
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "context_compact",
+            "context_network",
+            "context_guess",
+            "queue_other",
+            "voice_screen"
+          ],
+          "relevant_ranks": {
+            "context_network": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "q31",
+      "relevant": [
+        "question_idea"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "question_idea": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "question_idea",
+            "question_pending",
+            "voice_idea",
+            "composer_late",
+            "context_guess"
+          ],
+          "relevant_ranks": {
+            "question_idea": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "question_pending",
+            "question_idea",
+            "question_answered",
+            "search_deferred",
+            "cancel_ui"
+          ],
+          "relevant_ranks": {
+            "question_idea": 2
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "question_idea",
+            "question_pending",
+            "cancel_ui",
+            "voice_idea",
+            "projects_sort"
+          ],
+          "relevant_ranks": {
+            "question_idea": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "memory_guess",
+            "models_live",
+            "storage_idea",
+            "projects_pending",
+            "question_pending"
+          ],
+          "relevant_ranks": {
+            "question_idea": 8
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "question_idea",
+            "question_pending",
+            "composer_late",
+            "markdown_idea",
+            "projects_sort"
+          ],
+          "relevant_ranks": {
+            "question_idea": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q32",
+      "relevant": [
+        "relay_logs"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {
+            "relay_logs": null
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "composer_effect",
+            "relay_proposal",
+            "relay_blind",
+            "diff_guess",
+            "memory_guess"
+          ],
+          "relevant_ranks": {
+            "relay_logs": 13
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "voice_idea",
+            "relay_blind",
+            "relay_proposal",
+            "models_default",
+            "relay_logs"
+          ],
+          "relevant_ranks": {
+            "relay_logs": 5
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "relay_blind",
+            "relay_proposal",
+            "offline_reject",
+            "memory_guess",
+            "relay_logs"
+          ],
+          "relevant_ranks": {
+            "relay_logs": 5
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "scroll_claim",
+            "relay_blind",
+            "context_compact",
+            "models_default",
+            "voice_idea"
+          ],
+          "relevant_ranks": {
+            "relay_logs": 19
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "relay_logs",
+            "relay_blind",
+            "context_network",
+            "offline_resume",
+            "relay_proposal"
+          ],
+          "relevant_ranks": {
+            "relay_logs": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q33",
+      "relevant": [
+        "release_published"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [
+            "release_published"
+          ],
+          "relevant_ranks": {
+            "release_published": 1
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "release_published"
+          ],
+          "relevant_ranks": {
+            "release_published": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "release_published",
+            "question_pending",
+            "question_idea",
+            "cancel_ui",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "release_published": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "release_published",
+            "question_pending",
+            "question_idea",
+            "cancel_ui",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "release_published": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "question_pending",
+            "tests_weak",
+            "relay_blind",
+            "release_plan",
+            "perf_no_gain"
+          ],
+          "relevant_ranks": {
+            "release_published": 10
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "release_published",
+            "queue_other",
+            "queue_fixed",
+            "tests_weak",
+            "scroll_pending"
+          ],
+          "relevant_ranks": {
+            "release_published": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q34",
+      "relevant": [
+        "queue_other"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [
+            "queue_other"
+          ],
+          "relevant_ranks": {
+            "queue_other": 1
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "queue_other"
+          ],
+          "relevant_ranks": {
+            "queue_other": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "queue_other",
+            "markdown_keep",
+            "question_pending",
+            "models_cache",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "queue_other": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "queue_other",
+            "markdown_keep",
+            "question_pending",
+            "models_cache",
+            "question_idea"
+          ],
+          "relevant_ranks": {
+            "queue_other": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "context_network",
+            "question_answered",
+            "memory_oom",
+            "tests_weak",
+            "models_default"
+          ],
+          "relevant_ranks": {
+            "queue_other": 20
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "queue_other",
+            "context_network",
+            "markdown_keep",
+            "question_answered",
+            "cancel_released"
+          ],
+          "relevant_ranks": {
+            "queue_other": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q35",
+      "relevant": [
+        "diff_full"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [
+            "diff_full"
+          ],
+          "relevant_ranks": {
+            "diff_full": 1
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "diff_full"
+          ],
+          "relevant_ranks": {
+            "diff_full": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "diff_full",
+            "diff_color",
+            "context_network",
+            "tests_weak",
+            "question_answered"
+          ],
+          "relevant_ranks": {
+            "diff_full": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "diff_full",
+            "diff_color",
+            "context_network",
+            "tests_weak",
+            "question_answered"
+          ],
+          "relevant_ranks": {
+            "diff_full": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "memory_oom",
+            "storage_move",
+            "release_published",
+            "memory_guess",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {
+            "diff_full": 18
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "diff_full",
+            "diff_color",
+            "release_published",
+            "voice_screen",
+            "diff_guess"
+          ],
+          "relevant_ranks": {
+            "diff_full": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q36",
+      "relevant": [
+        "models_live"
+      ],
+      "methods": {
+        "current_fts": {
+          "top5": [
+            "models_live"
+          ],
+          "relevant_ranks": {
+            "models_live": 1
+          }
+        },
+        "lexical_bm25": {
+          "top5": [
+            "models_live"
+          ],
+          "relevant_ranks": {
+            "models_live": 1
+          }
+        },
+        "dense_e5": {
+          "top5": [
+            "models_live",
+            "models_cache",
+            "models_default",
+            "scroll_pending",
+            "projects_pending"
+          ],
+          "relevant_ranks": {
+            "models_live": 1
+          }
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "models_live",
+            "models_cache",
+            "models_default",
+            "scroll_pending",
+            "projects_pending"
+          ],
+          "relevant_ranks": {
+            "models_live": 1
+          }
+        },
+        "hybrid_julia": {
+          "top5": [
+            "models_default",
+            "memory_guess",
+            "projects_pending",
+            "scroll_claim",
+            "models_live"
+          ],
+          "relevant_ranks": {
+            "models_live": 5
+          }
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "models_live",
+            "models_cache",
+            "models_default",
+            "scroll_pending",
+            "scroll_claim"
+          ],
+          "relevant_ranks": {
+            "models_live": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "q37",
+      "relevant": [],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {}
+        },
+        "lexical_bm25": {
+          "top5": [
+            "release_published",
+            "release_plan",
+            "release_local"
+          ],
+          "relevant_ranks": {}
+        },
+        "dense_e5": {
+          "top5": [
+            "release_local",
+            "release_published",
+            "release_plan",
+            "projects_pending",
+            "projects_pin"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "release_published",
+            "release_local",
+            "release_plan",
+            "projects_pending",
+            "projects_pin"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_julia": {
+          "top5": [
+            "question_pending",
+            "scroll_claim",
+            "question_answered",
+            "storage_move",
+            "models_cache"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "release_local",
+            "release_published",
+            "projects_pin",
+            "release_plan",
+            "models_cache"
+          ],
+          "relevant_ranks": {}
+        }
+      }
+    },
+    {
+      "id": "q38",
+      "relevant": [],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {}
+        },
+        "lexical_bm25": {
+          "top5": [
+            "perf_no_gain",
+            "composer_late",
+            "composer_effect",
+            "projects_pin",
+            "voice_permission"
+          ],
+          "relevant_ranks": {}
+        },
+        "dense_e5": {
+          "top5": [
+            "scroll_pending",
+            "scroll_claim",
+            "memory_guess",
+            "perf_plan",
+            "tests_weak"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "perf_no_gain",
+            "scroll_measured",
+            "composer_effect",
+            "memory_guess",
+            "perf_plan"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_julia": {
+          "top5": [
+            "perf_plan",
+            "tests_weak",
+            "scroll_claim",
+            "scroll_measured",
+            "cancel_released"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "perf_no_gain",
+            "scroll_measured",
+            "tests_weak",
+            "markdown_idea",
+            "cancel_ui"
+          ],
+          "relevant_ranks": {}
+        }
+      }
+    },
+    {
+      "id": "q39",
+      "relevant": [],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {}
+        },
+        "lexical_bm25": {
+          "top5": [
+            "storage_idea",
+            "tests_weak",
+            "storage_keep",
+            "markdown_plain",
+            "composer_late"
+          ],
+          "relevant_ranks": {}
+        },
+        "dense_e5": {
+          "top5": [
+            "storage_idea",
+            "storage_keep",
+            "tests_weak",
+            "storage_move",
+            "offline_duplicate"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "storage_idea",
+            "storage_keep",
+            "tests_weak",
+            "markdown_plain",
+            "composer_restored"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_julia": {
+          "top5": [
+            "tests_weak",
+            "perf_plan",
+            "storage_move",
+            "models_default",
+            "storage_idea"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "storage_keep",
+            "storage_idea",
+            "offline_duplicate",
+            "composer_late",
+            "storage_move"
+          ],
+          "relevant_ranks": {}
+        }
+      }
+    },
+    {
+      "id": "q40",
+      "relevant": [],
+      "methods": {
+        "current_fts": {
+          "top5": [],
+          "relevant_ranks": {}
+        },
+        "lexical_bm25": {
+          "top5": [],
+          "relevant_ranks": {}
+        },
+        "dense_e5": {
+          "top5": [
+            "question_pending",
+            "question_answered",
+            "cancel_released",
+            "models_cache",
+            "question_idea"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_rrf": {
+          "top5": [
+            "question_pending",
+            "question_answered",
+            "cancel_released",
+            "models_cache",
+            "question_idea"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_julia": {
+          "top5": [
+            "storage_move",
+            "cancel_released",
+            "question_pending",
+            "memory_guess",
+            "markdown_keep"
+          ],
+          "relevant_ranks": {}
+        },
+        "hybrid_crossencoder": {
+          "top5": [
+            "markdown_idea",
+            "search_semantic",
+            "scroll_pending",
+            "question_pending",
+            "question_idea"
+          ],
+          "relevant_ranks": {}
+        }
+      }
+    }
+  ]
+}

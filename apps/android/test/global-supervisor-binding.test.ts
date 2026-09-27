@@ -50,6 +50,7 @@ describe("GlobalSupervisorBindingOwner", () => {
           homeConnectionId: "server-a",
           schemaVersion: 1,
           status: "creating",
+          toolProfileVersion: 4,
         },
       ]);
       return "thread-a";
@@ -76,7 +77,47 @@ describe("GlobalSupervisorBindingOwner", () => {
       home: { connectionId: "server-a", threadId: "thread-a" },
       schemaVersion: 1,
       status: "ready",
+      toolProfileVersion: 4,
     });
+  });
+
+  it("replaces a legacy hidden thread once so newly added dynamic tools are available", async () => {
+    const storage = database(
+      stored({
+        home: { connectionId: "server-a", threadId: "legacy-supervisor" },
+        schemaVersion: 1,
+        status: "ready",
+        toolProfileVersion: 3,
+      }),
+    );
+    const startThread = vi.fn(async () => "profile-v2-supervisor");
+    const owner = createGlobalSupervisorBindingOwner({
+      database: storage.database,
+      randomUUID: () => "profile-v2-token",
+      remote: {
+        findThreadsBySource: vi.fn(async () => []),
+        readThreadSource: vi.fn(async () => null),
+        startThread,
+      },
+    });
+
+    await expect(owner.bind("server-a")).resolves.toEqual({
+      connectionId: "server-a",
+      threadId: "profile-v2-supervisor",
+    });
+    expect(startThread).toHaveBeenCalledOnce();
+    expect(storage.writes.at(-1)).toEqual({
+      home: { connectionId: "server-a", threadId: "profile-v2-supervisor" },
+      schemaVersion: 1,
+      status: "ready",
+      toolProfileVersion: 4,
+    });
+
+    await expect(owner.bind("server-a")).resolves.toEqual({
+      connectionId: "server-a",
+      threadId: "profile-v2-supervisor",
+    });
+    expect(startThread).toHaveBeenCalledOnce();
   });
 
   it("recovers a crash after thread creation by matching only the exact source token", async () => {

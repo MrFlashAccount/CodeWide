@@ -49,16 +49,6 @@ export const styles = StyleSheet.create({
     gap: spacing.md,
     paddingBottom: spacing.optical,
   },
-  pairingEmojiInput: {
-    backgroundColor: colors.surfaceRaised,
-    borderRadius: radii.medium,
-    color: colors.text,
-    minHeight: touchTarget,
-    paddingHorizontal: spacing.xs,
-    width: 52,
-    ...typeScale.emoji,
-    textAlign: "center",
-  },
   pairingEndpoint: {
     color: colors.textMuted,
     ...typeScale.label,
@@ -198,8 +188,16 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     width: 60,
   },
+  pairingSuccessIdentity: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    justifyContent: "center",
+    maxWidth: "100%",
+  },
   pairingSuccessTitle: {
     color: colors.text,
+    flexShrink: 1,
     ...typeScale.heading,
     textAlign: "center",
   },

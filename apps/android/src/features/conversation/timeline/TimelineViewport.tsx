@@ -6,6 +6,7 @@ import { useEvent } from "../../../react/useEvent";
 import { useLayoutEffect, useRef, type ReactElement } from "react";
 import {
   conversationBottomContentInset,
+  conversationHeaderChromeHeight,
   conversationTopContentInset,
 } from "../../../ui/conversation-chrome-layout";
 import { AppText as Text } from "../../../ui/Typography";
@@ -164,9 +165,15 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     <ThreadTimelineList
       anchoredEndSpace={responsePositioning.request?.anchorSpace({
         anchor: responseStartAnchor,
+        bottomInset: conversationBottomContentInset(
+          props.bottomChromeHeight,
+          props.liveStatusVisible,
+        ),
         diagnostics,
         getList: getTimelineList,
+        maxViewportHeight: props.windowLayout.height,
         offset: responseStartOffset,
+        topInset: conversationHeaderChromeHeight(props.threadSearchVisible),
       })}
       automaticallyAdjustContentInsets={false}
       contentContainerStyle={[
@@ -185,7 +192,11 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       diagnostics={diagnostics}
       extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}`}
       initialScrollAtEnd={initialScrollAtEnd}
-      initialScrollIndex={props.timelinePositioned ? undefined : responseStartAnchor?.index}
+      initialScrollIndex={
+        props.timelinePositioned
+          ? undefined
+          : responsePositioning.request?.initialPosition(responseStartAnchor, responseStartOffset)
+      }
       itemSizeEstimate={timelineRowSizeEstimate(timelineRows)}
       key={props.composerScope}
       keyboardDismissMode="interactive"
@@ -208,6 +219,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       onLoad={onLoad}
       onMomentumScrollBegin={gestures.onMomentumScrollBegin}
       onMomentumScrollEnd={gestures.onMomentumScrollEnd}
+      onReady={measurement.onReady}
       onScroll={gestures.onScroll}
       onScrollBeginDrag={onScrollBeginDrag}
       onScrollEndDrag={gestures.onScrollEndDrag}

@@ -1,5 +1,7 @@
 import { observable, type Observable } from "@legendapp/state";
 import type { RemoteConnectionState } from "@codewide/sync-client";
+import type { ConnectionPath } from "./connectionPath";
+import { connectionHealth, type ConnectionHealthStatus } from "./connectionHealth";
 
 const MAX_CONNECTION_DIAGNOSTIC_CHARS = 8000;
 
@@ -17,9 +19,11 @@ export type ConnectionStateProfile = Pick<ConnectionStateRow, "id" | "connection
 
 export type ConnectionStateModel = {
   close: () => void;
+  health$: Observable<Record<string, ConnectionHealthStatus>>;
   reconcileProfiles: (profiles: ConnectionStateProfile[]) => void;
   remove: (connectionId: string) => void;
   rows$: Observable<ConnectionStateRow[]>;
+  setPath: (connectionId: string, path: ConnectionPath | null) => void;
   // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
   // oxlint-disable-next-line eslint/max-params
   setState: (
@@ -44,8 +48,20 @@ export type ConnectionStateModel = {
  */
 export function createConnectionStateModel(): ConnectionStateModel {
   const rows$ = observable<ConnectionStateRow[]>([]);
+  const health$ = observable<Record<string, ConnectionHealthStatus>>({});
+  const paths = new Map<string, ConnectionPath | null>();
   const listeners = new Set<(row: ConnectionStateRow) => void>();
   let disposed = false;
+
+  const updateHealth = (row: ConnectionStateRow): void => {
+    health$.assign({
+      [row.connectionId]: connectionHealth({ ...row, path: paths.get(row.connectionId) ?? null }),
+    });
+  };
+  const removeHealth = (connectionId: string): void => {
+    paths.delete(connectionId);
+    health$[connectionId]?.delete();
+  };
 
   const publish = (row: ConnectionStateRow): void => {
     if (disposed) {
@@ -62,6 +78,7 @@ export function createConnectionStateModel(): ConnectionStateModel {
         ? [...rows, row]
         : rows.map((candidate, rowIndex) => (rowIndex === index ? row : candidate)),
     );
+    updateHealth(row);
     for (const listener of listeners) {
       listener(row);
     }
@@ -70,9 +87,12 @@ export function createConnectionStateModel(): ConnectionStateModel {
   return {
     close() {
       disposed = true;
+      paths.clear();
+      health$.set({});
       listeners.clear();
       rows$.set([]);
     },
+    health$,
     reconcileProfiles(profiles) {
       if (disposed) {
         return;
@@ -87,6 +107,7 @@ export function createConnectionStateModel(): ConnectionStateModel {
       for (const current of currentRows) {
         const profile = profilesById.get(current.connectionId);
         if (profile === undefined) {
+          removeHealth(current.connectionId);
           continue;
         }
         if (current.enabled === profile.enabled) {
@@ -124,6 +145,7 @@ export function createConnectionStateModel(): ConnectionStateModel {
       if (changed) {
         rows$.set(nextRows);
         for (const row of changedRows) {
+          updateHealth(row);
           for (const listener of listeners) {
             listener(row);
           }
@@ -135,12 +157,26 @@ export function createConnectionStateModel(): ConnectionStateModel {
         return;
       }
       const rows = rows$.peek();
+      removeHealth(connectionId);
       const nextRows = rows.filter((row) => row.connectionId !== connectionId);
       if (nextRows.length !== rows.length) {
         rows$.set(nextRows);
       }
     },
     rows$,
+    setPath(connectionId, path) {
+      if (disposed) {
+        return;
+      }
+      const current = rows$.peek().find((row) => row.connectionId === connectionId);
+      if (current !== undefined) {
+        // OS/path evidence belongs to presentation. Publishing it as a runtime
+        // state change invalidates history reads and schedules phantom reconnect
+        // repairs, even when the native socket and RPC admission never changed.
+        paths.set(connectionId, path);
+        updateHealth(current);
+      }
+    },
     // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
     // oxlint-disable-next-line eslint/max-params
     setState(connectionId, state, diagnostic, rpcAvailable) {

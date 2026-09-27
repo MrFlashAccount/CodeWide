@@ -5,7 +5,7 @@ import { plainThreadPreview } from "../../data/thread-cache";
 import { colors, iconSize } from "../../theme";
 import { RunningThreadTitle, ThreadTitle } from "../../ui/ThreadTitle";
 import { AppText as Text } from "../../ui/Typography";
-import { serverGlyph } from "../connections/connectionPresentation";
+import { ServerIcon } from "../connections/ServerIcon";
 import { styles } from "./ThreadRow.styles";
 import type { ThreadRowProps } from "./threadRowContract";
 
@@ -20,9 +20,9 @@ export function ThreadRowContent({
       <View style={styles.threadText}>
         <View style={styles.threadTitleLine}>
           {server !== undefined && (
-            <Text accessibilityLabel={`Server ${server.name}`} style={styles.threadServerEmoji}>
-              {serverGlyph(server)}
-            </Text>
+            <View accessibilityLabel={`Server ${server.name}`} accessible>
+              <ServerIcon color={colors.textMuted} iconId={server.iconId} metric="body" />
+            </View>
           )}
           <View style={styles.threadTitleSlot}>
             {thread.state === "running" ? (

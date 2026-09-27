@@ -1,0 +1,582 @@
+{
+  "synthetic": {
+    "metadata": {
+      "dataset_sha256": "cd7ee72e0270c316bb4fb2fcf1f6d759d33050869f84bc87265e8cc927fb9513",
+      "models": {
+        "embedding": {
+          "repository": "intfloat/multilingual-e5-small",
+          "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+        },
+        "julia": {
+          "repository": "SupersonicLabs/Julia-1",
+          "revision": "a85b127321d580d65176c89ced8273f305745d85"
+        },
+        "reranker": {
+          "repository": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+          "revision": "1427fd652930e4ba29e8149678df786c240d8825"
+        }
+      },
+      "python": "3.12.3",
+      "platform": "Linux-5.4.210-39.1.pagevecsize-x86_64-with-glibc2.39",
+      "threads": 4,
+      "dtype": "float32",
+      "versions": {
+        "torch": "2.14.0+cpu",
+        "transformers": "5.0.0",
+        "numpy": "2.2.6",
+        "safetensors": "0.6.2",
+        "huggingface_hub": "1.33.0",
+        "sentencepiece": "0.2.1",
+        "tokenizers": "0.22.2"
+      }
+    },
+    "counts": {
+      "documents": 57,
+      "queries": 40,
+      "answerable": 36
+    },
+    "methods": {
+      "current_fts": {
+        "all_answerable": {
+          "hit_at_1": 0.1111111111111111,
+          "hit_at_5": 0.1111111111111111,
+          "mrr_at_10": 0.1111111111111111,
+          "ndcg_at_5": 0.1111111111111111,
+          "recall_at_20": 0.1111111111111111
+        },
+        "by_kind": {
+          "semantic": {
+            "hit_at_1": 0,
+            "hit_at_5": 0,
+            "mrr_at_10": 0,
+            "ndcg_at_5": 0,
+            "recall_at_20": 0
+          },
+          "predicate": {
+            "hit_at_1": 0,
+            "hit_at_5": 0,
+            "mrr_at_10": 0,
+            "ndcg_at_5": 0,
+            "recall_at_20": 0
+          },
+          "exact": {
+            "hit_at_1": 1,
+            "hit_at_5": 1,
+            "mrr_at_10": 1,
+            "ndcg_at_5": 1,
+            "recall_at_20": 1
+          }
+        },
+        "by_language": {
+          "ru": {
+            "hit_at_1": 0,
+            "hit_at_5": 0,
+            "mrr_at_10": 0,
+            "ndcg_at_5": 0,
+            "recall_at_20": 0
+          },
+          "en": {
+            "hit_at_1": 0.2857142857142857,
+            "hit_at_5": 0.2857142857142857,
+            "mrr_at_10": 0.2857142857142857,
+            "ndcg_at_5": 0.2857142857142857,
+            "recall_at_20": 0.2857142857142857
+          }
+        },
+        "warm_pipeline_timing": {
+          "count": 40,
+          "median_ms": 0.32543856650590897,
+          "p95_observed_ms": 0.3940530586987734,
+          "min_ms": 0.07530488073825836,
+          "max_ms": 0.44042407535016537
+        }
+      },
+      "lexical_bm25": {
+        "all_answerable": {
+          "hit_at_1": 0.3888888888888889,
+          "hit_at_5": 0.5833333333333334,
+          "mrr_at_10": 0.4718694885361552,
+          "ndcg_at_5": 0.48688466642584005,
+          "recall_at_20": 0.75
+        },
+        "by_kind": {
+          "semantic": {
+            "hit_at_1": 0.14285714285714285,
+            "hit_at_5": 0.5,
+            "mrr_at_10": 0.30198412698412697,
+            "ndcg_at_5": 0.3364513304301648,
+            "recall_at_20": 0.7142857142857143
+          },
+          "predicate": {
+            "hit_at_1": 0.4444444444444444,
+            "hit_at_5": 0.5555555555555556,
+            "mrr_at_10": 0.48664021164021165,
+            "ndcg_at_5": 0.4898627425171075,
+            "recall_at_20": 0.7222222222222222
+          },
+          "exact": {
+            "hit_at_1": 1,
+            "hit_at_5": 1,
+            "mrr_at_10": 1,
+            "ndcg_at_5": 1,
+            "recall_at_20": 1
+          }
+        },
+        "by_language": {
+          "ru": {
+            "hit_at_1": 0.4090909090909091,
+            "hit_at_5": 0.7272727272727273,
+            "mrr_at_10": 0.5373015873015873,
+            "ndcg_at_5": 0.5694476359695565,
+            "recall_at_20": 0.9545454545454546
+          },
+          "en": {
+            "hit_at_1": 0.35714285714285715,
+            "hit_at_5": 0.35714285714285715,
+            "mrr_at_10": 0.36904761904761907,
+            "ndcg_at_5": 0.35714285714285715,
+            "recall_at_20": 0.42857142857142855
+          }
+        },
+        "warm_pipeline_timing": {
+          "count": 40,
+          "median_ms": 0.19737693946808577,
+          "p95_observed_ms": 0.3029939252883196,
+          "min_ms": 0.02570892684161663,
+          "max_ms": 0.34080189652740955
+        }
+      },
+      "dense_e5": {
+        "all_answerable": {
+          "hit_at_1": 0.6944444444444444,
+          "hit_at_5": 0.9444444444444444,
+          "mrr_at_10": 0.7983796296296296,
+          "ndcg_at_5": 0.832560503699034,
+          "recall_at_20": 1
+        },
+        "by_kind": {
+          "semantic": {
+            "hit_at_1": 0.6428571428571429,
+            "hit_at_5": 0.9285714285714286,
+            "mrr_at_10": 0.7345238095238096,
+            "ndcg_at_5": 0.7820327942056708,
+            "recall_at_20": 1
+          },
+          "predicate": {
+            "hit_at_1": 0.6666666666666666,
+            "hit_at_5": 0.9444444444444444,
+            "mrr_at_10": 0.8032407407407407,
+            "ndcg_at_5": 0.8346510563492128,
+            "recall_at_20": 1
+          },
+          "exact": {
+            "hit_at_1": 1,
+            "hit_at_5": 1,
+            "mrr_at_10": 1,
+            "ndcg_at_5": 1,
+            "recall_at_20": 1
+          }
+        },
+        "by_language": {
+          "ru": {
+            "hit_at_1": 0.7272727272727273,
+            "hit_at_5": 0.9545454545454546,
+            "mrr_at_10": 0.8196969696969697,
+            "ndcg_at_5": 0.8536200939976779,
+            "recall_at_20": 1
+          },
+          "en": {
+            "hit_at_1": 0.6428571428571429,
+            "hit_at_5": 0.9285714285714286,
+            "mrr_at_10": 0.7648809523809523,
+            "ndcg_at_5": 0.7994668618011649,
+            "recall_at_20": 1
+          }
+        },
+        "warm_pipeline_timing": {
+          "count": 40,
+          "median_ms": 14.255492482334375,
+          "p95_observed_ms": 17.263954039663076,
+          "min_ms": 9.795758873224258,
+          "max_ms": 18.98205396719277
+        }
+      },
+      "hybrid_rrf": {
+        "all_answerable": {
+          "hit_at_1": 0.5833333333333334,
+          "hit_at_5": 0.9166666666666666,
+          "mrr_at_10": 0.7243055555555555,
+          "ndcg_at_5": 0.7665386321237478,
+          "recall_at_20": 0.9722222222222222
+        },
+        "by_kind": {
+          "semantic": {
+            "hit_at_1": 0.42857142857142855,
+            "hit_at_5": 0.9285714285714286,
+            "mrr_at_10": 0.6273809523809524,
+            "ndcg_at_5": 0.702946312828126,
+            "recall_at_20": 0.9285714285714286
+          },
+          "predicate": {
+            "hit_at_1": 0.6111111111111112,
+            "hit_at_5": 0.8888888888888888,
+            "mrr_at_10": 0.7384259259259259,
+            "ndcg_at_5": 0.764119020936731,
+            "recall_at_20": 1
+          },
+          "exact": {
+            "hit_at_1": 1,
+            "hit_at_5": 1,
+            "mrr_at_10": 1,
+            "ndcg_at_5": 1,
+            "recall_at_20": 1
+          }
+        },
+        "by_language": {
+          "ru": {
+            "hit_at_1": 0.5454545454545454,
+            "hit_at_5": 0.9545454545454546,
+            "mrr_at_10": 0.706060606060606,
+            "ndcg_at_5": 0.7683115768744825,
+            "recall_at_20": 0.9545454545454546
+          },
+          "en": {
+            "hit_at_1": 0.6428571428571429,
+            "hit_at_5": 0.8571428571428571,
+            "mrr_at_10": 0.7529761904761905,
+            "ndcg_at_5": 0.7637525760868792,
+            "recall_at_20": 1
+          }
+        },
+        "warm_pipeline_timing": {
+          "count": 40,
+          "median_ms": 14.49443877208978,
+          "p95_observed_ms": 17.56428391672671,
+          "min_ms": 9.840336861088872,
+          "max_ms": 19.34528909623623
+        }
+      },
+      "hybrid_julia": {
+        "all_answerable": {
+          "hit_at_1": 0.027777777777777776,
+          "hit_at_5": 0.16666666666666666,
+          "mrr_at_10": 0.12043650793650794,
+          "ndcg_at_5": 0.0945732046677928,
+          "recall_at_20": 0.9722222222222222
+        },
+        "by_kind": {
+          "semantic": {
+            "hit_at_1": 0.07142857142857142,
+            "hit_at_5": 0.2857142857142857,
+            "mrr_at_10": 0.18194444444444444,
+            "ndcg_at_5": 0.1798416114861428,
+            "recall_at_20": 0.9285714285714286
+          },
+          "predicate": {
+            "hit_at_1": 0,
+            "hit_at_5": 0.05555555555555555,
+            "mrr_at_10": 0.08269400352733686,
+            "ndcg_at_5": 0.027777777777777776,
+            "recall_at_20": 1
+          },
+          "exact": {
+            "hit_at_1": 0,
+            "hit_at_5": 0.25,
+            "mrr_at_10": 0.07500000000000001,
+            "ndcg_at_5": 0.09671320180863541,
+            "recall_at_20": 1
+          }
+        },
+        "by_language": {
+          "ru": {
+            "hit_at_1": 0.045454545454545456,
+            "hit_at_5": 0.22727272727272727,
+            "mrr_at_10": 0.16116522366522365,
+            "ndcg_at_5": 0.13717193458209087,
+            "recall_at_20": 0.9545454545454546
+          },
+          "en": {
+            "hit_at_1": 0,
+            "hit_at_5": 0.07142857142857142,
+            "mrr_at_10": 0.05643424036281179,
+            "ndcg_at_5": 0.02763234337389583,
+            "recall_at_20": 1
+          }
+        },
+        "warm_pipeline_timing": {
+          "count": 40,
+          "median_ms": 1282.747088931501,
+          "p95_observed_ms": 1356.0375499073416,
+          "min_ms": 1166.2417775951326,
+          "max_ms": 1383.9534451253712
+        }
+      },
+      "hybrid_crossencoder": {
+        "all_answerable": {
+          "hit_at_1": 0.8055555555555556,
+          "hit_at_5": 0.9722222222222222,
+          "mrr_at_10": 0.8712962962962963,
+          "ndcg_at_5": 0.8966567241096921,
+          "recall_at_20": 0.9722222222222222
+        },
+        "by_kind": {
+          "semantic": {
+            "hit_at_1": 0.7857142857142857,
+            "hit_at_5": 0.9285714285714286,
+            "mrr_at_10": 0.8357142857142857,
+            "ndcg_at_5": 0.8584130400575714,
+            "recall_at_20": 0.9285714285714286
+          },
+          "predicate": {
+            "hit_at_1": 0.7777777777777778,
+            "hit_at_5": 1,
+            "mrr_at_10": 0.8703703703703703,
+            "ndcg_at_5": 0.9034366392857175,
+            "recall_at_20": 1
+          },
+          "exact": {
+            "hit_at_1": 1,
+            "hit_at_5": 1,
+            "mrr_at_10": 1,
+            "ndcg_at_5": 1,
+            "recall_at_20": 1
+          }
+        },
+        "by_language": {
+          "ru": {
+            "hit_at_1": 0.8181818181818182,
+            "hit_at_5": 0.9545454545454546,
+            "mrr_at_10": 0.8787878787878788,
+            "ndcg_at_5": 0.8982663412337689,
+            "recall_at_20": 0.9545454545454546
+          },
+          "en": {
+            "hit_at_1": 0.7857142857142857,
+            "hit_at_5": 1,
+            "mrr_at_10": 0.8595238095238096,
+            "ndcg_at_5": 0.894127325771857,
+            "recall_at_20": 1
+          }
+        },
+        "warm_pipeline_timing": {
+          "count": 40,
+          "median_ms": 294.1069221124053,
+          "p95_observed_ms": 332.032228121534,
+          "min_ms": 235.70104665122926,
+          "max_ms": 350.7326920516789
+        }
+      }
+    },
+    "julia_argmax_diagnostic": {
+      "unanswerable_queries": 4,
+      "unanswerable_with_any_match": 4,
+      "answerable_with_any_match": 36,
+      "answerable_with_correct_match": 30
+    },
+    "resources": {
+      "retrieval": {
+        "import_peak_rss_mib": 325.19140625,
+        "model_load_seconds": 1.7160679830703884,
+        "lexical_index_seconds": 0.0013536729384213686,
+        "embedding_index_seconds": 0.7263015189673752,
+        "embedding_bytes": 87552,
+        "max_observed_tokens": 67,
+        "peak_rss_mib": 1040.6875
+      },
+      "julia": {
+        "import_peak_rss_mib": 325.34765625,
+        "model_load_seconds": 4.159450098872185,
+        "max_observed_tokens": 134,
+        "peak_rss_mib": 1009.1171875
+      },
+      "reranker": {
+        "import_peak_rss_mib": 325.45703125,
+        "model_load_seconds": 1.9111737138591707,
+        "max_observed_tokens": 81,
+        "peak_rss_mib": 857.44921875
+      }
+    }
+  },
+  "real_timing_only": {
+    "metadata": {
+      "dataset_sha256": "04f8d5ee5aee3115fe8887970a4eef6f110d0e03d1636e5adeb611ea9ead1d3e",
+      "models": {
+        "embedding": {
+          "repository": "intfloat/multilingual-e5-small",
+          "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+        },
+        "julia": {
+          "repository": "SupersonicLabs/Julia-1",
+          "revision": "a85b127321d580d65176c89ced8273f305745d85"
+        },
+        "reranker": {
+          "repository": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+          "revision": "1427fd652930e4ba29e8149678df786c240d8825"
+        }
+      },
+      "python": "3.12.3",
+      "platform": "Linux-5.4.210-39.1.pagevecsize-x86_64-with-glibc2.39",
+      "threads": 4,
+      "dtype": "float32",
+      "versions": {
+        "torch": "2.14.0+cpu",
+        "transformers": "5.0.0",
+        "numpy": "2.2.6",
+        "safetensors": "0.6.2",
+        "huggingface_hub": "1.33.0",
+        "sentencepiece": "0.2.1",
+        "tokenizers": "0.22.2"
+      }
+    },
+    "counts": {
+      "documents": 446,
+      "queries": 12,
+      "answerable": 0
+    },
+    "methods": {
+      "current_fts": {
+        "all_answerable": {},
+        "by_kind": {
+          "semantic": {},
+          "predicate": {},
+          "exact": {}
+        },
+        "by_language": {
+          "ru": {},
+          "en": {}
+        },
+        "warm_pipeline_timing": {
+          "count": 12,
+          "median_ms": 1.743639586493373,
+          "p95_observed_ms": 2.400575904175639,
+          "min_ms": 0.12808595784008503,
+          "max_ms": 2.400575904175639
+        }
+      },
+      "lexical_bm25": {
+        "all_answerable": {},
+        "by_kind": {
+          "semantic": {},
+          "predicate": {},
+          "exact": {}
+        },
+        "by_language": {
+          "ru": {},
+          "en": {}
+        },
+        "warm_pipeline_timing": {
+          "count": 12,
+          "median_ms": 1.5603940701112151,
+          "p95_observed_ms": 2.835892839357257,
+          "min_ms": 0.03486406058073044,
+          "max_ms": 2.835892839357257
+        }
+      },
+      "dense_e5": {
+        "all_answerable": {},
+        "by_kind": {
+          "semantic": {},
+          "predicate": {},
+          "exact": {}
+        },
+        "by_language": {
+          "ru": {},
+          "en": {}
+        },
+        "warm_pipeline_timing": {
+          "count": 12,
+          "median_ms": 13.569242437370121,
+          "p95_observed_ms": 15.132080996409059,
+          "min_ms": 12.173029826954007,
+          "max_ms": 15.132080996409059
+        }
+      },
+      "hybrid_rrf": {
+        "all_answerable": {},
+        "by_kind": {
+          "semantic": {},
+          "predicate": {},
+          "exact": {}
+        },
+        "by_language": {
+          "ru": {},
+          "en": {}
+        },
+        "warm_pipeline_timing": {
+          "count": 12,
+          "median_ms": 15.267843496985734,
+          "p95_observed_ms": 17.47382595203817,
+          "min_ms": 12.23252178169787,
+          "max_ms": 17.47382595203817
+        }
+      },
+      "hybrid_julia": {
+        "all_answerable": {},
+        "by_kind": {
+          "semantic": {},
+          "predicate": {},
+          "exact": {}
+        },
+        "by_language": {
+          "ru": {},
+          "en": {}
+        },
+        "warm_pipeline_timing": {
+          "count": 12,
+          "median_ms": 2413.3766075829044,
+          "p95_observed_ms": 2956.7767921835184,
+          "min_ms": 1800.1976953819394,
+          "max_ms": 2956.7767921835184
+        }
+      },
+      "hybrid_crossencoder": {
+        "all_answerable": {},
+        "by_kind": {
+          "semantic": {},
+          "predicate": {},
+          "exact": {}
+        },
+        "by_language": {
+          "ru": {},
+          "en": {}
+        },
+        "warm_pipeline_timing": {
+          "count": 12,
+          "median_ms": 1076.7843230860308,
+          "p95_observed_ms": 1196.7003871686757,
+          "min_ms": 661.8830373045057,
+          "max_ms": 1196.7003871686757
+        }
+      }
+    },
+    "julia_argmax_diagnostic": {
+      "unanswerable_queries": 0,
+      "unanswerable_with_any_match": 0,
+      "answerable_with_any_match": 0,
+      "answerable_with_correct_match": 0
+    },
+    "resources": {
+      "retrieval": {
+        "import_peak_rss_mib": 325.3125,
+        "model_load_seconds": 1.6623940649442375,
+        "lexical_index_seconds": 0.011590298032388091,
+        "embedding_index_seconds": 23.79931602999568,
+        "embedding_bytes": 685056,
+        "max_observed_tokens": 205,
+        "peak_rss_mib": 1226.1640625
+      },
+      "julia": {
+        "import_peak_rss_mib": 325.36328125,
+        "model_load_seconds": 3.892815300030634,
+        "max_observed_tokens": 321,
+        "peak_rss_mib": 1139.3125
+      },
+      "reranker": {
+        "import_peak_rss_mib": 325.26171875,
+        "model_load_seconds": 1.766277007991448,
+        "max_observed_tokens": 218,
+        "peak_rss_mib": 997.984375
+      }
+    }
+  }
+}

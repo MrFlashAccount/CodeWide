@@ -92,6 +92,7 @@ export function useTimelineListDiagnostics<ItemT>(
   props: DiagnosticHandlers<ItemT>,
 ): DiagnosticHandlers<ItemT> {
   const onScroll = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    diagnostics?.nativeViewTag(typeof event.target === "number" ? event.target : null);
     props.onScroll?.(event);
     const native = event.nativeEvent;
     if (
@@ -132,6 +133,7 @@ export function useTimelineListDiagnostics<ItemT>(
     props.onMomentumScrollEnd?.(event);
   });
   const onLayout = useEvent<NonNullable<LegendListProps<ItemT>["onLayout"]>>((event) => {
+    diagnostics?.nativeViewTag(typeof event.target === "number" ? event.target : null);
     props.onLayout?.(event);
     diagnostics?.record({
       kind: "layout",

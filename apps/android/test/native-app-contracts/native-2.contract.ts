@@ -142,10 +142,8 @@ it("preserves native integration contracts — 2", () => {
     '"thread/fork" -> maxOf(timeoutMs, THREAD_FORK_RPC_TIMEOUT_MS)',
   );
   expect(nativeProtocolEngine).toContain("THREAD_FORK_RPC_TIMEOUT_MS = 10 * 60_000L");
-  expect(nativeProtocolEngine).toContain('EPHEMERAL_CONTROL_METHODS = setOf("turn/interrupt")');
-  expect(nativeProtocolEngine).toContain(
-    'completion(Result.failure(IllegalStateException("Connection is not live")))',
-  );
+  // Offline rejection and absence of delayed replay are exercised against the native engine
+  // by NativeLiveControlRecoveryTest, including turn/interrupt and realtime controls.
   expect(preparedMicrophone).toContain("AudioFormat.ENCODING_PCM_16BIT");
   expect(preparedMicrophone).toContain("AudioRecord.Builder()");
   expect(preparedMicrophone).toContain("MediaRecorder.AudioSource.VOICE_COMMUNICATION");

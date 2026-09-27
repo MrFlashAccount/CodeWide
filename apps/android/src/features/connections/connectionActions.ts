@@ -6,6 +6,7 @@ import {
   type ConnectionUpdateInput,
 } from "../../data/connection-validation";
 import { useEvent } from "../../react/useEvent";
+import type { ServerIconId } from "../../data/serverIcons";
 
 /** Connection intents preserve the lower credential/session authority. */
 export type ConnectionActions = {
@@ -18,7 +19,7 @@ export type ConnectionActions = {
   updateConnectionProfile: (
     connectionId: string,
     displayName: string,
-    emoji: string,
+    iconId: ServerIconId,
   ) => Promise<void>;
 };
 
@@ -50,8 +51,8 @@ export function useConnectionActions(
         throw new Error("Connection not found");
       }
       if (isProfileOnlyConnectionUpdate(input, current)) {
-        const profile = validateConnectionProfile(input.displayName, input.emoji);
-        await actions.updateConnectionProfile(connectionId, profile.displayName, profile.emoji);
+        const profile = validateConnectionProfile(input.displayName, input.iconId);
+        await actions.updateConnectionProfile(connectionId, profile.displayName, profile.iconId);
         return;
       }
       await actions.updateConnection(connectionId, input);

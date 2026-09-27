@@ -81,6 +81,7 @@ it("passes both Relay and Companion pins from a WSS pairing link to secure pairi
     expect.objectContaining({
       displayName: "Sergey's MacBook Pro",
       endpoint: "wss://192.0.2.10:8780/v1/sync",
+      iconId: "desktop",
       tlsPinSha256: `sha256/${"A".repeat(43)}=`,
       relay: { routeId: "a".repeat(64), tlsPinSha256: `sha256/${"B".repeat(43)}=` },
     }),
