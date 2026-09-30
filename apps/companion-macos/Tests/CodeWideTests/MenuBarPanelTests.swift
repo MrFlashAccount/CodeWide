@@ -1,11 +1,10 @@
 import AppKit
-import Combine
 import SwiftUI
 import Testing
 @testable import CodeWide
 
-/// Real AppKit windows driven by an in-process SwiftUI fixture. These tests
-/// cover resize/focus/lifetime, not installed-app Computer Use or glass pixels.
+/// Synchronous presentation/geometry contracts. Native disclosure, focus and
+/// close/resize ordering run in MenuBarHarness with NSApplication.run().
 @Suite(.serialized) @MainActor
 struct MenuBarPanelTests {
     private static let application: NSApplication = {
@@ -15,84 +14,9 @@ struct MenuBarPanelTests {
         return application
     }()
 
-    @Test func disclosureRemainsAttachedWhenTheStatusItemIsParkedOffscreen() async throws {
-        _ = Self.application
-        let screen = try #require(NSScreen.main)
-        let visibleAnchor = MenuBarAnchor(rect: NSRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY,
-                                                      width: 28, height: 24), visibleFrame: screen.visibleFrame)
-        var currentAnchor: MenuBarAnchor? = visibleAnchor
-        let model = MenuFixtureModel()
-        let panel = MenuBarPanel(content: MenuFixture(model: model)) { currentAnchor }
-        defer { panel.close() }
-        panel.show()
-        try await Task.sleep(for: .milliseconds(100))
-        let collapsed = panel.window.frame
-        #expect(panel.isShown)
-        // WindowServer key ownership requires NSApplication.run(), which the
-        // Swift Testing driver doesn't run. The standalone AppKit harness
-        // checks that separately, including the Cmd-N action.
-        #expect(panel.window.firstResponder === panel.window)
-        #expect(panel.window.contentView is NSGlassEffectView)
-        #expect(!panel.window.hasShadow)
-        #expect((panel.window.contentView as? NSGlassEffectView)?.cornerRadius == 22)
-        #expect((panel.window.contentView as? NSGlassEffectView)?.focusRingType == NSFocusRingType.none)
-
-        // This is the case a stable NSButton anchor never exercises: the
-        // status-item view disappears while the already-open menu changes size.
-        currentAnchor = nil
-        for index in 0..<8 {
-            model.expanded = index.isMultiple(of: 2)
-            try await Task.sleep(for: .milliseconds(100))
-            #expect(panel.isShown)
-            #expect(abs(panel.window.frame.maxY - collapsed.maxY) < 1)
-            #expect(abs(panel.window.frame.midX - collapsed.midX) < 1)
-            if model.expanded { #expect(panel.window.frame.height > collapsed.height + 80) }
-            else { #expect(abs(panel.window.frame.height - collapsed.height) < 1) }
-        }
-    }
-
-    @Test func mouseOpeningDoesNotFocusActionsButKeyboardOpeningDoes() async throws {
-        _ = Self.application
-        let screen = try #require(NSScreen.main)
-        let anchor = MenuBarAnchor(rect: NSRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY,
-                                               width: 28, height: 24), visibleFrame: screen.visibleFrame)
-        let panel = MenuBarPanel(content: MenuFixture(model: MenuFixtureModel())) { anchor }
-        defer { panel.close() }
-        panel.show()
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(panel.window.firstResponder === panel.window)
-        panel.close()
-        panel.show(keyboardInitiated: true)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(panel.isShown)
-        #expect(panel.window.firstResponder !== panel.window)
-        #expect(panel.window.firstResponder != nil)
-    }
-
-    @Test func escapeAndAQueuedResizeCannotReopenTheMenu() async throws {
-        _ = Self.application
-        let screen = try #require(NSScreen.main)
-        let anchor = MenuBarAnchor(rect: NSRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY,
-                                               width: 28, height: 24), visibleFrame: screen.visibleFrame)
-        let model = MenuFixtureModel()
-        let panel = MenuBarPanel(content: MenuFixture(model: model)) { anchor }
-        var closeCount = 0
-        panel.didClose = { closeCount += 1 }
-        panel.show()
-        model.expanded = true
-        panel.window.cancelOperation(nil)
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(!panel.isShown)
-        #expect(closeCount == 1)
-        panel.show()
-        #expect(panel.isShown)
-        panel.close()
-        #expect(closeCount == 2)
-    }
-
     @Test func anInitiallyHiddenStatusItemDoesNotOpenAtTheScreenOrigin() {
         _ = Self.application
-        let panel = MenuBarPanel(content: MenuFixture(model: MenuFixtureModel())) { nil }
+        let panel = MenuBarPanel(content: EmptyView()) { nil }
         panel.show()
         #expect(!panel.isShown)
     }
@@ -156,21 +80,5 @@ struct MenuBarPanelTests {
             Text("Third render")
         }
         #expect(first != changed)
-    }
-}
-
-@MainActor private final class MenuFixtureModel: ObservableObject {
-    @Published var expanded = false
-}
-
-private struct MenuFixture: View {
-    @ObservedObject var model: MenuFixtureModel
-
-    var body: some View {
-        CompanionMenuView(snapshot: CompanionMenuSnapshot(connection: .connected, profileName: "Default",
-                            serverVersion: "0.157.0", appVersion: "0.4.0", coreVersion: "0.4.0",
-                            address: "192.0.2.1:8767"), primaryAction: {}, revokeDevice: { _ in },
-                          initiallyShowsDetails: model.expanded, moreActions: { Button("Test") {} })
-            .id(model.expanded)
     }
 }

@@ -24,9 +24,10 @@
       }
     },
     "test": {
+      "cache": false,
       "executor": "nx:run-commands",
       "options": {
-        "command": "ffi_archive=$(./scripts/build-rust-ffi.sh) && CODEWIDE_FFI_ARCHIVE=\"$ffi_archive\" swift test",
+        "command": "python3 scripts/test-menu-bar.py && ffi_archive=$(./scripts/build-rust-ffi.sh) && CODEWIDE_FFI_ARCHIVE=\"$ffi_archive\" swift test",
         "cwd": "apps/companion-macos"
       }
     },

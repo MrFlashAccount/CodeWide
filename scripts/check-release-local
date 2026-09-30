@@ -47,6 +47,7 @@ fi
   .github/workflows/relay-release.yml \
   .github/workflows/android-release.yml
 sh scripts/check-macos-swift-local
+PYTHONDONTWRITEBYTECODE=1 python3 apps/companion-macos/scripts/test-menu-bar-runner.py
 pnpm typecheck:scripts
 pnpm exec vitest run packages/release-tools/test
 sh -n apps/companion-macos/scripts/update-smoke.sh

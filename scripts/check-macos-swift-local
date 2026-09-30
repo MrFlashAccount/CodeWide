@@ -47,6 +47,9 @@ for owner in UpdateCheckAdmission RelayAddress; do
   cp "$mac_root/Sources/CodeWide/$owner.swift" "$root/Sources/CodeWide/"
   cp "$mac_root/Tests/CodeWideTests/${owner}Tests.swift" "$root/Tests/CodeWidePortableTests/"
 done
+# The native harness uses this SDK-independent, test-only synchronization owner.
+cp "$mac_root/Tests/MenuBarHarness/WaitForCondition.swift" "$root/Sources/CodeWide/"
+cp "$repo_root/scripts/fixtures/macos-portable-swift/WaitForConditionTests.swift" "$root/Tests/CodeWidePortableTests/"
 SWIFTPM_MODULECACHE_OVERRIDE="$root/module-cache" \
   swift test --package-path "$root" --cache-path "$root/cache" \
   --config-path "$root/config" --security-path "$root/security" --jobs 2

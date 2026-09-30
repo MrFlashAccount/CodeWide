@@ -149,6 +149,18 @@ jobs:
           swift --version
           rustc --version
 
+      - name: Test native menu interactions in a running AppKit application
+        timeout-minutes: 5
+        run: python3 apps/companion-macos/scripts/test-menu-bar.py
+
+      - name: Upload native menu interaction evidence
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: macos-menu-interactions-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/macos/menu-panel-lifecycle-*.json
+          if-no-files-found: ignore
+
       - name: Download pinned Sparkle tools
         run: |
           archive="$RUNNER_TEMP/Sparkle-2.10.0.tar.xz"
@@ -267,7 +279,7 @@ jobs:
           path: .nx/cache
           key: ${{ steps.nx-cache.outputs.cache-primary-key }}
 
-      - name: Test ARM64 macOS update scheduling and runtime
+      - name: Test ARM64 macOS unit and runtime contracts
         run: swift test --package-path apps/companion-macos --arch arm64
 
       - name: Smoke previous app replacement and new runtime startup

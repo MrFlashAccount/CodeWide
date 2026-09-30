@@ -186,6 +186,8 @@ It also parses the macOS Swift source/test tree and compiles/runs the unchanged
 Testing tests. This includes real macro expansion, so compiler errors in that
 portable subset fail locally before a push. Apple SDK owners receive syntax
 checking only, not type checking.
+The test-only condition waiter is also compiled and tested on Linux, and the
+native menu evidence validator rejects missing, failed or malformed contracts.
 It does not dispatch GitHub Actions, sign, publish or require a clean/pushed
 branch. On first use it downloads and checks the pinned actionlint validator
 unless an installed tool or `CODEWIDE_ACTIONLINT_BIN` is provided.
@@ -229,7 +231,10 @@ running. Startup waits are bounded to 30 seconds per version, and shutdown to
 10 seconds; the entire smoke step has a three-minute limit. This smoke retains
 ordinary state but does not assert migrations, crash recovery or Sparkle
 installation. The workflow then publishes the DMG and signed appcast. Existing
-unit and contract tests are unchanged.
+unit and runtime contracts remain mandatory. Native menu interactions run
+separately with a real AppKit event loop, before the costly Core/app compilation;
+the UI gate covers keyboard navigation both off and on and waits for observable
+results rather than sleeping for a presumed-ready 100 ms.
 
 Required GitHub `release` environment secrets:
 
