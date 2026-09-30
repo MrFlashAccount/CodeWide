@@ -171,6 +171,24 @@ workspace and scoped access token are deliberately configured.
 
 ## macOS
 
+Before committing or pushing workflow changes, run the local control-plane
+preflight from the current worktree (including uncommitted changes):
+
+```sh
+sh scripts/check-release-local
+```
+
+It validates workflow syntax, executes the actual macOS `Resolve version`
+shell from YAML with representative inputs, and checks planning, fixture
+artifact assembly, unchanged-product reuse and Homebrew/installer contracts.
+It does not dispatch GitHub Actions, sign, publish or require a clean/pushed
+branch. On first use it downloads and checks the pinned actionlint validator
+unless an installed tool or `CODEWIDE_ACTIONLINT_BIN` is provided.
+
+This is not evidence of a passed native macOS build or Sparkle installation.
+Those require the macOS runner. In particular, the existing `release-macos
+--dry-run` below is a **CI** validation run, not a local dry run.
+
 Run a validation-only release from a clean, pushed branch:
 
 ```sh

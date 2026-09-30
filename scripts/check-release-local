@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -eq 0 ] || {
+  printf 'Usage: sh %s (local control-plane checks only)\n' "$0" >&2
+  exit 2
+}
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repo_root"
+
+printf '%s\n' 'Local release preflight: actual workflow version shell, planning, fixture assembly, reuse and installer contracts.'
+printf '%s\n' 'No commit, push, workflow dispatch, signing or publication. Native macOS build/update E2E is not part of this check.'
+
+actionlint=${CODEWIDE_ACTIONLINT_BIN:-}
+if [ -z "$actionlint" ]; then
+  if command -v actionlint >/dev/null 2>&1; then
+    actionlint=$(command -v actionlint)
+  else
+    # Cache a pinned validation tool only; do not install or change system tools.
+    case "$(uname -s):$(uname -m)" in
+      Linux:x86_64) actionlint_asset=actionlint_1.7.12_linux_amd64.tar.gz ;;
+      Linux:aarch64) actionlint_asset=actionlint_1.7.12_linux_arm64.tar.gz ;;
+      Darwin:arm64) actionlint_asset=actionlint_1.7.12_darwin_arm64.tar.gz ;;
+      Darwin:x86_64) actionlint_asset=actionlint_1.7.12_darwin_amd64.tar.gz ;;
+      *) printf '%s\n' 'Install actionlint or set CODEWIDE_ACTIONLINT_BIN on this platform.' >&2; exit 2 ;;
+    esac
+    actionlint_cache="$repo_root/.cache/actionlint/1.7.12/${actionlint_asset%.tar.gz}"
+    actionlint="$actionlint_cache/actionlint"
+    if [ ! -x "$actionlint" ]; then
+      command -v gh >/dev/null 2>&1 || { printf '%s\n' 'gh is needed to download the pinned actionlint validator.' >&2; exit 2; }
+      mkdir -p "$actionlint_cache"
+      digest=$(gh api repos/rhysd/actionlint/releases/tags/v1.7.12 \
+        --jq ".assets[] | select(.name == \"$actionlint_asset\") | .digest")
+      printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+      gh release download v1.7.12 --repo rhysd/actionlint --pattern "$actionlint_asset" --dir "$actionlint_cache" --clobber
+      printf '%s  %s\n' "${digest#sha256:}" "$actionlint_cache/$actionlint_asset" | shasum --algorithm 256 --check
+      tar -xzf "$actionlint_cache/$actionlint_asset" -C "$actionlint_cache" actionlint
+    fi
+  fi
+fi
+
+"$actionlint" -shellcheck= -pyflakes= \
+  .github/workflows/release-set.yml \
+  .github/workflows/macos-release.yml \
+  .github/workflows/companion-linux-release.yml \
+  .github/workflows/relay-release.yml \
+  .github/workflows/android-release.yml
+pnpm typecheck:scripts
+pnpm exec vitest run packages/release-tools/test
+sh scripts/macos-build-version.test.sh
+sh scripts/update-homebrew-tap.test.sh
+sh apps/companion-macos/scripts/validate-boundaries.sh
+
+printf '%s\n' '{"status":"validated-local","nativeMacOSBuild":"not-run","nativeMacOSUpdateE2E":"not-run","published":false}'

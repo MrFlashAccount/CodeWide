@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -eq 2 ] || {
+  printf 'Usage: %s <new-version> <previous-version>\n' "$0" >&2
+  exit 2
+}
+
+new_version=$1
+previous_version=$2
+scripts_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# Keep validation and the migration epoch with the build-version owner. The
+# result is a dotted numeric version, not an integer or a lexical sort key.
+new_build=$(sh "$scripts_root/macos-build-version" "$new_version")
+previous_build=$(sh "$scripts_root/macos-build-version" "$previous_version")
+if ! node -e '
+  const [next, previous] = process.argv.slice(1).map(value => value.split(".").map(BigInt));
+  for (let index = 0; index < next.length; index += 1) {
+    if (next[index] > previous[index]) process.exit(0);
+    if (next[index] < previous[index]) process.exit(1);
+  }
+  process.exit(1);
+' "$new_build" "$previous_build"; then
+  printf 'macOS version %s must be newer than published version %s.\n' "$new_version" "$previous_version" >&2
+  exit 1
+fi
