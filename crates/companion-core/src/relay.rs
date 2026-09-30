@@ -27,13 +27,88 @@ use tokio_util::sync::CancellationToken;
 const CONFIG_VERSION: u8 = 3;
 const MAX_PAIR_RESPONSE_BYTES: usize = 4096;
 
+mod enrollment;
+pub use enrollment::RelayEnrollmentStatus;
+
 #[derive(Debug, thiserror::Error)]
-#[error("relay operation failed")]
+#[error("{message}")]
 pub struct RelayError {
+    message: &'static str,
     #[source]
     source: codewide_relay::Error,
 }
 
+impl RelayError {
+    fn new(source: codewide_relay::Error) -> Self {
+        Self {
+            message: relay_error_message(source.as_ref()),
+            source,
+        }
+    }
+}
+
+// Keep credentials and request URLs out of user-facing errors. The original
+// typed source remains available to diagnostics and error-chain inspection.
+fn relay_error_message(source: &(dyn std::error::Error + 'static)) -> &'static str {
+    if let Some(config) = source.downcast_ref::<RelayConfigError>() {
+        return config.0;
+    }
+    let mut cause = Some(source);
+    while let Some(error) = cause {
+        if let Some(tls) = error.downcast_ref::<rustls::Error>() {
+            return if matches!(
+                tls,
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::ApplicationVerificationFailure
+                )
+            ) {
+                "The Relay certificate does not match this invitation. Create an invitation using the running Relay service's user and --state directory."
+            } else {
+                "Could not establish a secure connection to the Relay. Check its address, port and TLS configuration."
+            };
+        }
+        // reqwest/hyper can wrap the TLS failure in multiple io::Errors.
+        // io::Error::source skips the contained error's own concrete type.
+        cause = match error.downcast_ref::<std::io::Error>() {
+            Some(io) => io.get_ref().map(|inner| inner as &dyn std::error::Error),
+            None => error.source(),
+        };
+    }
+    if let Some(request) = source.downcast_ref::<reqwest::Error>() {
+        if request.is_timeout() {
+            return "The Relay did not respond in time. Check its address, port and network access.";
+        }
+        if let Some(status) = request.status() {
+            return match status {
+                reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+                    "The Relay invitation expired, was already used, or belongs to another Relay. Create a new invitation using the running service's --state directory."
+                }
+                reqwest::StatusCode::NOT_FOUND => {
+                    "The Relay pairing endpoint was not found. Check the address, port and Relay version."
+                }
+                _ => {
+                    "The Relay rejected the pairing request. Check the Relay service and create a new invitation."
+                }
+            };
+        }
+        if request.is_connect() {
+            return "Could not connect to the Relay. Use a reachable DNS name or IP address with its port; SSH aliases are not expanded.";
+        }
+        return "The connection to the Relay failed. Check the network and try again.";
+    }
+    if source.is::<serde_json::Error>() {
+        return "Invalid Relay invitation or response. Use a new invitation from a compatible Relay version.";
+    }
+    if let Some(error) = source.downcast_ref::<std::io::Error>()
+        && error.kind() == std::io::ErrorKind::PermissionDenied
+        && error.to_string() == "relay request rejected"
+    {
+        return "Invalid Relay invitation or saved credentials. Create a new invitation from the running Relay service.";
+    }
+    "Could not read or save Relay settings. Check access to the Companion's data directory."
+}
+
+#[derive(Clone)]
 pub struct RelayConfig {
     enabled: bool,
     relay_address: Arc<str>,
@@ -89,6 +164,8 @@ struct RelayRuntimeInner {
     running: Mutex<Option<RunningAdapter>>,
     connection: watch::Sender<RelayConnectionStatus>,
     generation: Arc<AtomicU64>,
+    reconfiguration: Arc<Mutex<()>>,
+    enrollment: std::sync::Mutex<Option<enrollment::Attempt>>,
 }
 
 struct RunningAdapter {
@@ -129,6 +206,8 @@ impl RelayRuntime {
             running: Mutex::new(None),
             connection,
             generation: Arc::new(AtomicU64::new(0)),
+            reconfiguration: Arc::new(Mutex::new(())),
+            enrollment: std::sync::Mutex::new(None),
         }));
         let config = RelayConfig::load(&runtime.0.config_path)?
             .filter(RelayConfig::is_enabled)
@@ -141,6 +220,14 @@ impl RelayRuntime {
     /// # Errors
     /// Rejects invalid input and propagates pairing or durable-write failures.
     pub async fn pair(&self, command: RelayPairCommand) -> Result<RelayStatus, RelayError> {
+        let _guard = self
+            .0
+            .reconfiguration
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| {
+                RelayError::new(invalid_config("Another Relay operation is in progress"))
+            })?;
         let config = RelayConfig::pair(
             &command.relay_address,
             command.invitation,
@@ -158,6 +245,14 @@ impl RelayRuntime {
     /// # Errors
     /// Rejects absent or invalid config and propagates durable-write failures.
     pub async fn set_enabled(&self, enabled: bool) -> Result<RelayStatus, RelayError> {
+        let _guard = self
+            .0
+            .reconfiguration
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| {
+                RelayError::new(invalid_config("Another Relay operation is in progress"))
+            })?;
         RelayConfig::set_enabled(&self.0.config_path, enabled)?;
         let adapter = if enabled {
             RelayConfig::load(&self.0.config_path)?
@@ -270,7 +365,7 @@ impl RelayConfig {
     /// # Errors
     /// Rejects unsafe files, invalid JSON, malformed origins, and malformed tokens.
     pub fn load(path: &Path) -> Result<Option<Self>, RelayError> {
-        Self::load_inner(path).map_err(|source| RelayError { source })
+        Self::load_inner(path).map_err(RelayError::new)
     }
 
     fn load_inner(path: &Path) -> codewide_relay::Result<Option<Self>> {
@@ -296,7 +391,7 @@ impl RelayConfig {
     ) -> Result<Self, RelayError> {
         Self::pair_inner(relay_address, bundle, path)
             .await
-            .map_err(|source| RelayError { source })
+            .map_err(RelayError::new)
     }
 
     async fn pair_inner(
@@ -373,7 +468,7 @@ impl RelayConfig {
     /// # Errors
     /// Rejects absent or invalid config and propagates durable write failures.
     pub fn set_enabled(path: &Path, enabled: bool) -> Result<(), RelayError> {
-        Self::set_enabled_inner(path, enabled).map_err(|source| RelayError { source })
+        Self::set_enabled_inner(path, enabled).map_err(RelayError::new)
     }
 
     fn set_enabled_inner(path: &Path, enabled: bool) -> codewide_relay::Result<()> {
@@ -462,19 +557,33 @@ pub fn default_config_path() -> PathBuf {
 }
 
 fn validate_relay_address(value: &str) -> codewide_relay::Result<String> {
-    if value.contains("//") || value.chars().any(|character| "/?#@".contains(character)) {
-        return Err(invalid_config("Relay address must be host:port"));
+    let value = value.trim();
+    let address_error = || {
+        invalid_config(
+            "Enter the Relay's DNS name or IP address and port, for example relay.example.com:8780. SSH aliases are not expanded.",
+        )
+    };
+    if value
+        .chars()
+        .any(|character| character.is_whitespace() || "/?#@".contains(character))
+    {
+        return Err(address_error());
     }
-    let parsed = url::Url::parse(&format!("ws://{value}"))?;
-    if parsed.port().is_none()
-        || parsed.host_str().is_none()
+    let port = value
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse::<u16>().ok());
+    if port.is_none_or(|port| port == 0) {
+        return Err(address_error());
+    }
+    let parsed = url::Url::parse(&format!("wss://{value}")).map_err(|_| address_error())?;
+    if parsed.host_str().is_none()
         || !parsed.username().is_empty()
         || parsed.password().is_some()
         || !matches!(parsed.path(), "" | "/")
         || parsed.query().is_some()
         || parsed.fragment().is_some()
     {
-        return Err(invalid_config("Relay address must be host:port"));
+        return Err(address_error());
     }
     Ok(value.to_owned())
 }
@@ -492,8 +601,12 @@ fn pairing_endpoint(companion_url: &str, route_id: &str) -> codewide_relay::Resu
     Ok(endpoint)
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct RelayConfigError(&'static str);
+
 fn invalid_config(message: &'static str) -> codewide_relay::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidInput, message).into()
+    RelayConfigError(message).into()
 }
 
 #[cfg(test)]
@@ -542,6 +655,43 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn relay_addresses_require_an_explicit_nonzero_port() -> codewide_relay::Result<()> {
+        for address in [
+            "relay.example:8780",
+            "127.0.0.1:80",
+            "relay.example:443",
+            "[::1]:8780",
+        ] {
+            assert_eq!(validate_relay_address(address)?, address);
+        }
+        assert_eq!(
+            validate_relay_address("  relay.example:8780\n")?,
+            "relay.example:8780"
+        );
+        for address in [
+            "Monitor",
+            "relay.example",
+            "relay.example:",
+            "relay.example:0",
+            "relay.example:65536",
+            "relay.example:port",
+            ":8780",
+            "wss://relay.example:8780",
+            "relay.example:8780/path",
+            "user:private-password@relay.example:8780",
+            "relay.\nexample:8780",
+        ] {
+            let Err(error) = validate_relay_address(address) else {
+                return Err(std::io::Error::other("An invalid Relay address was accepted").into());
+            };
+            let message = RelayError::new(error).to_string();
+            assert!(message.contains("DNS name or IP address and port"));
+            assert!(!message.contains("private-password"));
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn pairing_enable_and_disable_reconfigure_the_live_adapter() -> codewide_relay::Result<()>
     {
@@ -568,19 +718,54 @@ mod tests {
         .await?;
         assert!(!runtime.status()?.configured);
         let invitation = registry.create_invitation(None)?;
+        let bundle = |pin: String| InvitationBundle {
+            version: INVITATION_VERSION,
+            relay_tls_pin_sha256: pin,
+            route_id: invitation.route_id.clone(),
+            invitation: invitation.token.clone(),
+        };
+        let Err(wrong_identity) = runtime
+            .pair(RelayPairCommand {
+                relay_address: address.to_string(),
+                invitation: bundle(
+                    "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned(),
+                ),
+            })
+            .await
+        else {
+            return Err(
+                std::io::Error::other("An invitation for another Relay was accepted").into(),
+            );
+        };
+        assert!(
+            wrong_identity
+                .to_string()
+                .contains("certificate does not match"),
+            "{wrong_identity:?}"
+        );
+        assert!(!wrong_identity.to_string().contains(&invitation.token));
+        assert!(!runtime.status()?.configured);
+        // A failed identity check must not send or consume the invitation.
         runtime
             .pair(RelayPairCommand {
                 relay_address: address.to_string(),
-                invitation: InvitationBundle {
-                    version: INVITATION_VERSION,
-                    relay_tls_pin_sha256: pin.clone(),
-                    route_id: invitation.route_id,
-                    invitation: invitation.token,
-                },
+                invitation: bundle(pin.clone()),
             })
             .await?;
         wait_for_ready(address, &pin, reqwest::StatusCode::NO_CONTENT).await?;
         wait_for_connection(&runtime, RelayConnectionStatus::Online).await?;
+        let Err(used_invitation) = runtime
+            .pair(RelayPairCommand {
+                relay_address: address.to_string(),
+                invitation: bundle(pin.clone()),
+            })
+            .await
+        else {
+            return Err(std::io::Error::other("A used Relay invitation was accepted").into());
+        };
+        assert!(used_invitation.to_string().contains("already used"));
+        assert!(!used_invitation.to_string().contains(&invitation.token));
+        assert_eq!(runtime.status()?.connection, RelayConnectionStatus::Online);
         runtime.set_enabled(false).await?;
         assert_eq!(
             runtime.status()?.connection,

@@ -292,6 +292,30 @@ public final class DeviceListPayload: NSObject, NSSecureCoding, @unchecked Senda
     }
 }
 
+public final class DirectAccessPayload: NSObject, NSSecureCoding, @unchecked Sendable {
+    public static let supportsSecureCoding = true
+    public let listenAddress: String
+    public let endpoints: [String]
+
+    public init(listenAddress: String, endpoints: [String]) {
+        self.listenAddress = listenAddress
+        self.endpoints = endpoints
+    }
+
+    public required init?(coder: NSCoder) {
+        guard let address = coder.decodeObject(of: NSString.self, forKey: "listenAddress") as String?,
+              let endpoints = coder.decodeObject(of: [NSArray.self, NSString.self], forKey: "endpoints") as? [String]
+        else { return nil }
+        self.listenAddress = address
+        self.endpoints = endpoints
+    }
+
+    public func encode(with coder: NSCoder) {
+        coder.encode(listenAddress, forKey: "listenAddress")
+        coder.encode(endpoints, forKey: "endpoints")
+    }
+}
+
 public final class PairingPayload: NSObject, NSSecureCoding, @unchecked Sendable {
     public static let supportsSecureCoding = true
 

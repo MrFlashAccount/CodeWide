@@ -10,6 +10,7 @@ import Reanimated, {
   withTiming,
 } from "react-native-reanimated";
 import type { QueuedPrompt } from "../../data/thread-delivery-state";
+import { userFacingRemoteError } from "../../data/userFacingRemoteError";
 import { colors, iconSize } from "../../theme";
 import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
 import { InlineIcon } from "../../ui/InlineIcon";
@@ -184,11 +185,15 @@ export function QueueManagerSheet({
                 <Ionicons color={colors.red} name="trash-outline" size={iconSize.action} />
               </Pressable>
             </View>
-            {item.lastError !== null && <Text style={styles.errorText}>{item.lastError}</Text>}
+            {item.lastError !== null && (
+              <Text style={styles.errorText}>{userFacingRemoteError(item.lastError).message}</Text>
+            )}
           </View>
         ))}
       </AppSheetScrollView>
-      {error !== null && <Text style={styles.errorText}>{error}</Text>}
+      {error !== null && (
+        <Text style={styles.errorText}>{userFacingRemoteError(error).message}</Text>
+      )}
     </>
   );
   return embedded ? (

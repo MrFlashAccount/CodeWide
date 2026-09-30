@@ -1,7 +1,7 @@
 import { useIsFocused, useRouter } from "expo-router";
 
 import { recoverUnavailableRoute } from "../../../src/components/navigation/routeRecovery";
-import { SidebarProjectsSheet } from "../../../src/features/projects/SidebarProjects";
+import { SidebarProjectsSheet } from "../../../src/features/projects/SidebarProjectViews";
 import { useWorkspaceRouteResources } from "../../../src/services/workspace/workspaceRouteResources";
 
 /** Composes project management while each directory browser has its own route. */

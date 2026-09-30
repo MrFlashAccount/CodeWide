@@ -113,6 +113,13 @@ printf '%s\n' 'preserve-across-update' > "$state_dir/update-state-sentinel"
 printf '%s\n' 'enabled' > "$report_marker"
 chmod 0600 "$report_marker"
 ditto "$baseline_app" "$test_app"
+# The shipped app offers installation on demand. Only this disposable,
+# ad-hoc baseline enables automatic installation for the unattended CI gate.
+plutil -replace SUAllowsAutomaticUpdates -bool YES "$test_app/Contents/Info.plist"
+plutil -replace SUAutomaticallyUpdate -bool YES "$test_app/Contents/Info.plist"
+plutil -replace SUEnableAutomaticChecks -bool YES "$test_app/Contents/Info.plist"
+codesign --force --sign - "$test_app"
+codesign --verify --deep --strict "$test_app"
 cp "$target_dmg" "$feed_dir/"
 
 port=18766

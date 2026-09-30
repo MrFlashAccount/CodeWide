@@ -16,6 +16,9 @@ use tokio::{
 
 use crate::auth::AuthorizationChange;
 
+#[cfg(any(target_os = "macos", test))]
+mod macos;
+
 const MAX_PORTS: usize = 256;
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const FULL_REFRESH_INTERVAL: Duration = Duration::from_mins(5);
@@ -176,15 +179,24 @@ fn filter_discovered(ports: &[DiscoveredPort], excluded: &HashSet<u16>) -> Vec<D
 }
 
 fn listener_fingerprint() -> Vec<(u16, Option<u64>, Option<u32>)> {
-    let listeners = Command::new("ss")
+    listener_identity_fingerprint(&read_listeners())
+}
+
+#[cfg(target_os = "macos")]
+fn read_listeners() -> Vec<Listener> {
+    macos::read_listeners()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_listeners() -> Vec<Listener> {
+    Command::new("ss")
         .args(["-H", "-4", "-ltnpe"])
         .output()
         .ok()
         .filter(|output| output.status.success())
         .map_or_else(read_proc_listeners, |output| {
             parse_ss_listeners(&String::from_utf8_lossy(&output.stdout))
-        });
-    listener_identity_fingerprint(&listeners)
+        })
 }
 
 fn listener_identity_fingerprint(listeners: &[Listener]) -> Vec<(u16, Option<u64>, Option<u32>)> {
@@ -200,23 +212,25 @@ fn listener_identity_fingerprint(listeners: &[Listener]) -> Vec<(u16, Option<u64
 }
 
 fn inventory() -> Inventory {
-    let listeners = Command::new("ss")
-        .args(["-H", "-4", "-ltnpe"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map_or_else(read_proc_listeners, |output| {
-            parse_ss_listeners(&String::from_utf8_lossy(&output.stdout))
-        });
+    let listeners = read_listeners();
     let mut processes = read_processes();
+    #[cfg(target_os = "macos")]
+    let working_directories = macos::read_working_directories(&listeners);
     for listener in &listeners {
         let Some(pid) = listener.pid else { continue };
         let Some(process) = processes.get_mut(&pid) else {
             continue;
         };
-        process.cwd = std::fs::read_link(format!("/proc/{pid}/cwd"))
-            .ok()
-            .map(|path| path.to_string_lossy().into_owned());
+        #[cfg(target_os = "macos")]
+        {
+            process.cwd = working_directories.get(&pid).cloned();
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            process.cwd = std::fs::read_link(format!("/proc/{pid}/cwd"))
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned());
+        }
     }
     Inventory {
         current_user_id: command_text("id", &["-u"]).and_then(|value| value.trim().parse().ok()),
@@ -226,10 +240,12 @@ fn inventory() -> Inventory {
     }
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn parse_ss_listeners(output: &str) -> Vec<Listener> {
     output.lines().filter_map(parse_ss_listener).collect()
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn parse_ss_listener(line: &str) -> Option<Listener> {
     let endpoint = line.split_whitespace().nth(3)?;
     let port = endpoint.rsplit(':').next()?.parse::<u16>().ok()?;
@@ -247,16 +263,19 @@ fn parse_ss_listener(line: &str) -> Option<Listener> {
     })
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn quoted_process(line: &str) -> Option<String> {
     let start = line.find("users:((\"").map(|index| index + 9)?;
     let tail = line.get(start..)?;
     Some(tail.get(..tail.find('"')?)?.to_owned())
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn numeric_field(line: &str, marker: &str) -> Option<u32> {
     numeric_field_u64(line, marker).and_then(|value| u32::try_from(value).ok())
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn numeric_field_u64(line: &str, marker: &str) -> Option<u64> {
     line.find(marker)
         .and_then(|index| line.get(index + marker.len()..))
@@ -267,6 +286,7 @@ fn numeric_field_u64(line: &str, marker: &str) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn read_proc_listeners() -> Vec<Listener> {
     std::fs::read_to_string("/proc/net/tcp")
         .unwrap_or_default()

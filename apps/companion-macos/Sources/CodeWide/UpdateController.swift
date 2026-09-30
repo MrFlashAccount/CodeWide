@@ -6,28 +6,30 @@ import Foundation
 final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var availableVersion: String?
+    @Published private(set) var isCheckingForUpdates = false
     @Published private(set) var lastError: String?
 
     private let runtime: RuntimeConnection
     private let testFeedURL: String?
     private var updaterController: SPUStandardUpdaterController?
+    private var lastProbeAt: Date?
     private var preparingUpdate = false
     private var preparedVersion: String?
     private var deferredInstall: (() -> Void)?
 
-    init(runtime: RuntimeConnection) {
+    init(runtime: RuntimeConnection, startingUpdater: Bool = true) {
         self.runtime = runtime
         testFeedURL = ProcessInfo.processInfo.environment["CODEWIDE_UPDATE_FEED_URL"]
         super.init()
         let controller = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: startingUpdater,
             updaterDelegate: self,
             userDriverDelegate: nil
         )
         updaterController = controller
         controller.updater.publisher(for: \.canCheckForUpdates)
             .assign(to: &$canCheckForUpdates)
-        if ProcessInfo.processInfo.environment["CODEWIDE_UPDATE_E2E"] == "1" {
+        if startingUpdater, ProcessInfo.processInfo.environment["CODEWIDE_UPDATE_E2E"] == "1" {
             DispatchQueue.main.async {
                 controller.updater.checkForUpdatesInBackground()
             }
@@ -35,14 +37,31 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func checkForUpdates() {
+        lastError = nil
         updaterController?.checkForUpdates(nil)
     }
 
+    func checkForUpdatesSilentlyIfNeeded(now: Date = Date()) {
+        guard let updater = updaterController?.updater,
+              canCheckForUpdates,
+              !updater.sessionInProgress,
+              lastProbeAt.map({ now.timeIntervalSince($0) >= 60 * 60 }) ?? true else {
+            return
+        }
+
+        lastProbeAt = now
+        lastError = nil
+        isCheckingForUpdates = true
+        updater.checkForUpdateInformation()
+    }
+
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        lastError = nil
         availableVersion = item.displayVersionString
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        lastError = nil
         availableVersion = nil
     }
 
@@ -51,14 +70,28 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
         didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
         error: Error?
     ) {
+        isCheckingForUpdates = false
+        lastError = nil
         guard let error else {
             return
         }
+        let runtimeWasPaused = preparingUpdate || preparedVersion != nil
         preparingUpdate = false
         preparedVersion = nil
         deferredInstall = nil
+        if runtimeWasPaused {
+            runtime.resumeAfterUpdateFailure()
+        }
+
+        // Sparkle reports normal outcomes through NSError too. Classify by
+        // domain and code, never by its localized (and sometimes upbeat) text.
+        let sparkleError = error as NSError
+        if sparkleError.domain == SUSparkleErrorDomain,
+           [SUError.noUpdateError, .installationCanceledError, .installationAuthorizeLaterError]
+            .contains(where: { Int($0.rawValue) == sparkleError.code }) {
+            return
+        }
         lastError = error.localizedDescription
-        runtime.resumeAfterUpdateFailure()
     }
 
     func feedURLString(for updater: SPUUpdater) -> String? {

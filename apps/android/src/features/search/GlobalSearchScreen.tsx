@@ -9,7 +9,7 @@ import {
 import type { SearchScreenProps } from "./globalSearchContract";
 import { renderGlobalSearchView } from "./GlobalSearchView";
 import type { SearchResultTarget, ServerSearchResult } from "./searchResultTypes";
-import { SearchOverlayMotion } from "./SearchOverlayMotion";
+import { SearchOverlayMotion } from "./SearchOverlayMotionView";
 import { useSearchOverlayMotion } from "./searchOverlayMotion";
 
 import { searchDateBoundary } from "../../data/message-search";

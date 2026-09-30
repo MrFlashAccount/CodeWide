@@ -7,7 +7,11 @@ import type { ThreadCurrentOutcome } from "../../data/thread-current-outcome";
 export type ConversationBottomChromeProps = {
   composerContent: ReactElement;
   currentOutcome: ThreadCurrentOutcome | null;
-  failureNotice: { acceptsInput: boolean; message: string } | null;
+  failureNotice: {
+    acceptsInput: boolean;
+    kind: "conversationOpenElsewhere" | "generic";
+    message: string;
+  } | null;
   readOnly: boolean;
   remoteThread: Thread | null | undefined;
   reportBottomChromeHeight: (height: number) => void;

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { formatClockTime } from "../../../data/device-time";
 import type { GetTransferAccess } from "../../../data/private-transfer";
+import { userFacingRemoteError } from "../../../data/userFacingRemoteError";
 import { Bubble, BubbleContent } from "../../../rendering/Bubble";
 import { ImagePreviewGroup } from "../../../rendering/ImagePreviewHost";
 import { colors } from "../../../theme";
@@ -40,6 +41,7 @@ export function OptimisticTurn(props: OptimisticTurnProps) {
             : "Queued";
   const [retrying, setRetrying] = useState(false);
   const dialog = useAppDialog();
+  const failure = item.lastError === null ? null : userFacingRemoteError(item.lastError);
   const retry = () => {
     if (onRetry === undefined || retrying) {
       return;
@@ -49,7 +51,9 @@ export function OptimisticTurn(props: OptimisticTurnProps) {
       setRetrying(false);
       dialog.alert(
         "Retry failed",
-        error instanceof Error ? error.message : "Could not retry message",
+        error instanceof Error
+          ? userFacingRemoteError(error.message).message
+          : "Could not retry message",
       );
     });
   };
@@ -121,9 +125,11 @@ export function OptimisticTurn(props: OptimisticTurnProps) {
         ) : null}
         {failed && (
           <Text accessibilityLiveRegion="polite" selectable style={styles.optimisticError}>
-            {item.lastError === null
+            {failure === null
               ? "Message was rejected. Edit it and retry."
-              : `Message was rejected: ${item.lastError}`}
+              : failure.kind === "conversationOpenElsewhere"
+                ? failure.message
+                : `Message was rejected: ${failure.message}`}
           </Text>
         )}
       </View>

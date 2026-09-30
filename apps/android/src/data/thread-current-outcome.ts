@@ -1,4 +1,5 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
+import { userFacingRemoteError, type UserFacingRemoteError } from "./userFacingRemoteError";
 
 /** Latest turn outcome, independent of the resident history window. */
 export type ThreadCurrentOutcome = {
@@ -63,7 +64,7 @@ export function advanceThreadOutcome(
 export function threadFailureNotice(
   outcome: ThreadCurrentOutcome | null,
   thread: Thread | null | undefined,
-): { acceptsInput: boolean; message: string } | null {
+): ({ acceptsInput: boolean } & UserFacingRemoteError) | null {
   if (thread?.status.type === "active" || outcome?.status === "inProgress") {
     return null;
   }
@@ -73,5 +74,7 @@ export function threadFailureNotice(
       : thread?.status.type === "systemError"
         ? "The server reported an error. Details are unavailable."
         : null;
-  return message === null ? null : { acceptsInput: thread?.canAcceptDirectInput === true, message };
+  return message === null
+    ? null
+    : { acceptsInput: thread?.canAcceptDirectInput === true, ...userFacingRemoteError(message) };
 }

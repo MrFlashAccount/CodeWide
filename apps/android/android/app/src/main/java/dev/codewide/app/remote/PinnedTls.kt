@@ -2,12 +2,14 @@ package dev.codewide.app.remote
 
 import java.net.URI
 import java.security.MessageDigest
+import java.security.KeyStore
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.X509ExtendedKeyManager
 import javax.net.ssl.X509TrustManager
+import javax.net.ssl.TrustManagerFactory
 import javax.net.SocketFactory
 import okhttp3.OkHttpClient
 import okio.ByteString.Companion.toByteString
@@ -29,11 +31,25 @@ internal object PinnedTls {
   }
 
   fun client(base: OkHttpClient, endpoint: String, pin: String?): OkHttpClient {
-    requireTransport(endpoint, pin)
-    // The outer endpoint belongs to the relay/public ingress. Its ordinary TLS
-    // is useful defense in depth, but the saved Companion pin is deliberately
-    // checked only by inner TLS so a relay never needs the Companion key.
-    return base
+    val uri = requireTransport(endpoint, pin)
+    if (uri.scheme != "wss" || pin == null) return base
+    // A direct Companion owns both TLS layers and can use its already pinned
+    // identity for the outer carrier too. Existing CA-trusted ingress endpoints
+    // retain platform chain and hostname validation; inner pinning is unchanged.
+    val platform = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
+      init(null as KeyStore?)
+    }.trustManagers.filterIsInstance<X509TrustManager>().single()
+    val trust = DirectOrPlatformTrustManager(pin, platform)
+    val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
+    return base.newBuilder()
+      .sslSocketFactory(context.socketFactory, trust)
+      .hostnameVerifier { host, session ->
+        host.equals(uri.host, ignoreCase = true) && (
+          runCatching { trust.matches(session.peerCertificates.first() as X509Certificate) }.getOrDefault(false)
+            || base.hostnameVerifier.verify(host, session)
+          )
+      }
+      .build()
   }
 
   fun requireRelayEndpoint(endpoint: String, relay: PinnedRelayRoute?) {
@@ -42,9 +58,9 @@ internal object PinnedTls {
     require(uri.scheme == "wss" && uri.path == "/v1/sync") { "Pinned Relay requires WSS /v1/sync" }
   }
 
-  fun carrierClient(base: OkHttpClient, endpoint: String, relay: PinnedRelayRoute?): OkHttpClient {
+  fun carrierClient(base: OkHttpClient, endpoint: String, relay: PinnedRelayRoute?, companionPin: String? = null): OkHttpClient {
     requireRelayEndpoint(endpoint, relay)
-    if (relay == null) return client(base, endpoint, null)
+    if (relay == null) return client(base, endpoint, companionPin)
     val trustManager = RelayPinTrustManager(relay.tlsPinSha256)
     val context = SSLContext.getInstance("TLSv1.3")
     context.init(null, arrayOf(trustManager), null)
@@ -57,6 +73,26 @@ internal object PinnedTls {
 
   internal fun pinForCertificate(certificate: X509Certificate): String =
     "sha256/${certificate.encoded.toByteString().sha256().base64()}"
+
+  private class DirectOrPlatformTrustManager(
+    private val expectedPin: String,
+    private val platform: X509TrustManager,
+  ) : X509TrustManager {
+    fun matches(certificate: X509Certificate): Boolean = MessageDigest.isEqual(
+      pinFor(certificate).toByteArray(), expectedPin.toByteArray(),
+    )
+
+    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+      if (chain.isNullOrEmpty()) throw CertificateException("Companion certificate chain is empty")
+      chain[0].checkValidity()
+      if (!matches(chain[0])) platform.checkServerTrusted(chain, authType)
+    }
+
+    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
+      platform.checkClientTrusted(chain, authType)
+
+    override fun getAcceptedIssuers(): Array<X509Certificate> = platform.acceptedIssuers
+  }
 
   private class RelayPinTrustManager(private val expectedPin: String) : X509TrustManager {
     override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {

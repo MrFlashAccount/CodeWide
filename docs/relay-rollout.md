@@ -41,28 +41,37 @@ install and verify the binary without cloning the repository:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
-codewide-relay --port 8780
+codewide-relay serve --port 8780
 ```
 
 The installer downloads versions through `0.4.0` from `relay-v<version>` and
 newer versions from the combined `v<version>` release, verifies the release SHA-256,
 checks the binary-reported version, and atomically installs it to
-`${CODEWIDE_RELAY_INSTALL_DIR:-$HOME/.local/bin}`. It accepts `--version` for a
-pinned older release. Publishing the GitHub Release remains a separate approved
-operation.
+`/usr/local/bin/codewide-relay`. It requests `sudo` for the installation when
+needed; downloads and verification run as the invoking user. No shell restart or
+manual PATH edit is required. Before reporting success it verifies both
+`command -v codewide-relay` and `codewide-relay --version` by name.
+
+Use `--version` to pin a release. `--install-dir` or
+`CODEWIDE_RELAY_INSTALL_DIR` overrides the destination, which must already be in
+PATH. The installer rejects destinations outside PATH and commands shadowed by
+another existing executable before changing files. Publishing the GitHub
+Release remains a separate approved operation.
 
 The binary binds `0.0.0.0:<port>`; the default port is `8780`. Durable state
 lives under `${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay/`:
 
 ```text
 registry.lock
+daemon.lock
+control.sock
 transport-cert.der
 transport-key.der
 routes/<route-id>
 invitations/<invitation-hash>
 ```
 
-Directories use mode `0700`; files use `0600`; route updates are atomic and
+Directories use mode `0700`; files and the local control socket use `0600`; route updates are atomic and
 cross-process serialized. Tokens are stored only as hashes. Relay generates
 and persists its own TLS certificate/key; Companion pins the exact certificate
 from the invitation bundle. There is no SQLite service, external CA, or
@@ -75,9 +84,10 @@ terminator cannot share this port because the Relay itself must receive both
 plain HTTP Upgrade requests and TLS `ClientHello` records.
 
 The service-plane connections permit TLS 1.3 only and disable resumption and
-early data. Invitations, access tokens, health, and control messages exist only
-inside pinned TLS. The access token is sent only after the certificate pin is
-verified.
+early data. Normal invitations, access tokens, health, and control use pinned
+TLS. First-time interactive enrollment authenticates its TLS channel by the
+human-confirmed symbols described below, then saves the certificate pin. Subsequent
+connections send the access token only after verifying that saved pin.
 
 Legacy data-plane connections may remain `ws://` during migration. New data
 attachments use pinned WSS. Attachments carry only
@@ -91,10 +101,92 @@ firewalling and process supervision.
 
 ## Pair one Companion
 
-Create a single-use five-minute invitation on the Relay host:
+For macOS, run this on the Relay host:
 
 ```sh
-target/release/codewide-relay invite
+codewide-relay
+```
+
+Choose **Connect a computer** in the menu. The Ratatui panel displays the public
+IP and the running listener's port. In
+CodeWide, open **Advanced → Add Relay**, enter that `IP:port`, then click
+**Connect**. Check that the same four symbols appear in CodeWide and the Relay panel, then
+press **Enter** in that terminal. There is no JSON or key to copy. CodeWide
+supplies its computer name as the route label.
+
+The bare command manages the running Relay; it does not bind another listener
+or create another identity. `pair` remains a direct shortcut. For foreground
+servers use `serve`; old noninteractive service units with explicit `--port`
+continue to work. A noninteractive bare invocation reads status.
+
+The window closes after sixty seconds, including the confirmation and
+connection steps. The CLI reports success only after the Mac saves its new
+configuration and establishes the pinned, authenticated control connection.
+**Esc**, **Ctrl+C**, terminal disconnect, or expiration cancels enrollment and
+revokes any uncommitted route. A failed attempt restores the Mac's previous
+Relay configuration. The Relay does not open enrollment after a restart.
+
+Automatic public IP discovery uses HTTPS to `api.ipify.org`; it cannot discover
+an externally remapped port. Supply the reachable endpoint when needed:
+
+```sh
+codewide-relay pair --address 203.0.113.10:8780
+```
+
+All administration commands use the running daemon's private Unix socket.
+On Linux they discover the active `codewide-relay.service` and read its explicit
+`--state`. Run the service with `--group-admin` and add authorized operators to
+the service's Unix group. They can then run `codewide-relay` directly; the CLI
+never prompts for sudo. The state root is group-traversable, the socket is
+`0660`, and credential files plus route directories remain `0600`/`0700`.
+Membership changes apply after a new login.
+
+A manually managed Relay can be selected with global `--state`. Missing,
+outdated, or inaccessible control sockets produce an error instead of creating
+a separate registry, certificate, or privilege escalation.
+
+A systemd service with `RestrictAddressFamilies` must allow `AF_UNIX` as well as
+`AF_INET` and `AF_INET6`: the private administration socket lives inside the
+service's state directory. Preserve other hardening when upgrading an existing
+unit. For a unit previously limited to the two IP families, use this drop-in:
+
+```ini
+[Service]
+RestrictAddressFamilies=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+```
+
+Reload systemd after changing the unit, then restart Relay with its existing
+`--state` path. The service owner must retain write access to that directory;
+do not expose its control socket or credentials to other users.
+
+Interactive enrollment uses `/relay/enroll` over TLS 1.3 on the existing port.
+Only the private local control socket can open the window. Both endpoints
+use the TLS exporter `EXPORTER-Channel-Binding` defined by
+[RFC 9266](https://www.rfc-editor.org/rfc/rfc9266.html). Before receiving the
+server's random nonce, the client commits to its own random nonce and this
+channel binding with SHA-256. The server reserves the single candidate before
+issuing its challenge and verifies the commitment when the client reveals its
+nonce. Each side hashes the binding and both nonces with a separate domain tag
+to derive four six-bit symbols from a fixed 64-symbol alphabet. This uses the
+commit-before-challenge pattern for short authentication strings discussed in
+[RFC 6189 §7](https://www.rfc-editor.org/rfc/rfc6189.html#section-7); it is not an
+implementation of the ZRTP protocol. English names accompany the emoji for
+terminals without the matching font and for accessibility. Changing the alphabet
+or derivation requires a new enrollment wire version.
+
+The wire protocol never supplies the displayed symbols. Credentials are issued only
+after the local terminal approves the exact candidate; the certificate from
+that same channel becomes the saved pin. The bootstrap verifier is confined to
+this enrollment client; existing pinned transports retain their verification.
+One candidate, bounded messages, and an absolute deadline limit each attempt.
+
+### Older Companion clients
+
+Create a single-use five-minute invitation from the same running daemon:
+
+```sh
+codewide-relay invite
 ```
 
 The invitation is independent of DNS, IP, NAT, and listen port. It contains no
@@ -106,7 +198,8 @@ codewide-companion relay pair 203.0.113.10:8780
 # paste the invitation when prompted
 ```
 
-The address is the Relay's public `IP:port`, never a Companion address. The
+The address is the Relay's reachable DNS name or `IP:port`, never a Companion
+address or an SSH config alias. Include the port explicitly. The
 one-line invitation contains the route ID, one-time token, and Relay TLS
 certificate pin. Companion verifies the pin before sending the invitation.
 The pairing API then consumes the invitation and issues the route-specific
@@ -142,11 +235,23 @@ links continue using the old `/c/<route-id>` path until they re-pair.
 
 ## Multiple Companions, rotation and revocation
 
-Run `invite` once per Companion. Each invocation creates a different route and
+Run `pair` once per Mac, or `invite` for older clients. Each pairing creates a different route and
 token. Inspect public route IDs without printing credentials:
 
 ```sh
-target/release/codewide-relay status
+codewide-relay status
+codewide-relay status --json
+```
+
+The interactive `codewide-relay` menu owns the full paired-computer lifecycle.
+Open **Paired computers**, select a row with the arrow keys, press **E** to
+rename it, or **D** to revoke it after confirmation. Revocation immediately
+closes that computer's active Relay route. The same operations are available
+without the terminal UI:
+
+```sh
+codewide-relay rename --route <route-id> --label "Office Mac"
+codewide-relay revoke --route <route-id>
 ```
 
 Rotate one Companion while keeping its phone URL stable:
@@ -161,12 +266,17 @@ stopped and the old token and sockets for only that route stop working. No
 Companion restart is required. Revoke one route without affecting others:
 
 ```sh
-target/release/codewide-relay revoke --route <route-id>
+codewide-relay revoke --route <route-id>
 ```
 
 ## Rollout and rollback
 
-Deploy the compatible Relay first, then Companion, then the Android APK. The
+Deploy the compatible Relay first, then Companion, then the Android APK. An
+already-running older Relay must be restarted with the new binary before
+`pair` can use its local control socket. Back up its state directory before
+upgrading: older binaries may reject route records containing the new computer
+label. Existing route IDs, token hashes, and TLS identity are retained during
+upgrade. The
 new Relay still accepts version 1 phone routes, while a new Companion adapter
 needs the Relay's WSS attachment route. A phone must use an APK with native
 Relay pin support before claiming a version 2 link.

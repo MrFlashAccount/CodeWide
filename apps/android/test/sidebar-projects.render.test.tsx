@@ -7,7 +7,7 @@ import {
   SidebarProjectHeader,
   SidebarProjectRow,
   SidebarProjectsSheet,
-} from "../src/features/projects/SidebarProjects";
+} from "../src/features/projects/SidebarProjectViews";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
 import { colors } from "../src/theme";

@@ -117,7 +117,7 @@ const timelineRead = compactSource(
 
 const viewport = compactSource(
   readFileSync(
-    new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url),
+    new URL("../src/features/conversation/timeline/TimelineViewportView.tsx", import.meta.url),
     "utf8",
   ),
 );

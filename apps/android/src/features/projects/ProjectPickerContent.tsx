@@ -10,7 +10,7 @@ import { AppSheetScrollView } from "../../ui/AppSheet";
 import { useAppDialog } from "../../ui/AppDialog";
 import { AppText as Text } from "../../ui/Typography";
 import type { ProjectPickerProps } from "./projectPickerContract";
-import { EmptyState, PickerRow, ProjectChoiceRow, SectionLabel } from "./ProjectPickerRows";
+import { EmptyState, PickerRow, ProjectChoiceRow, SectionLabel } from "./ProjectPickerRowViews";
 import type { ProjectPickerSession } from "./projectPickerSession";
 import { styles } from "./ProjectPickerSheet.styles";
 

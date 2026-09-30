@@ -326,6 +326,8 @@ dependencies {
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     baselineProfile project(":baselineprofile")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     // Paste regressions need real Android spans and InputConnection delegation;
     // android.jar stubs cannot execute these contracts in local JVM tests.
     testImplementation("org.robolectric:robolectric:4.16.1")

@@ -1,6 +1,9 @@
 //! Blind reverse transport. No Companion API, device authority, or plaintext lives here.
 pub mod adapter;
+pub mod admin;
 pub mod auth;
+pub mod enrollment;
+pub mod enrollment_client;
 pub mod pairing;
 pub mod registry;
 pub mod server;

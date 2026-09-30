@@ -778,7 +778,7 @@ describe("relational thread history", () => {
         .find((value) => value.kind === "thread");
       return threadFailureNotice(metadata?.currentOutcome ?? null, metadata?.thread);
     };
-    expect(notice()).toEqual({ message: "Request rejected", acceptsInput: true });
+    expect(notice()).toEqual({ message: "Request rejected", acceptsInput: true, kind: "generic" });
     const epoch = details.chat.window$("server", "thread").peek().historyEpoch;
     await details.prependTurns(
       "server",
@@ -788,12 +788,12 @@ describe("relational thread history", () => {
       null,
     );
     await details.loadWindow({ ...request, anchorTurnId: "old-0" });
-    expect(notice()).toEqual({ message: "Request rejected", acceptsInput: true });
+    expect(notice()).toEqual({ message: "Request rejected", acceptsInput: true, kind: "generic" });
     await details.close();
     details = createThreadDetailDatabase();
     await details.prepare();
     await details.loadWindow({ ...request, anchorTurnId: "old-0" });
-    expect(notice()).toEqual({ message: "Request rejected", acceptsInput: true });
+    expect(notice()).toEqual({ message: "Request rejected", acceptsInput: true, kind: "generic" });
     await details.replaceActiveThread("server", {
       ...thread(),
       turns: [{ ...turn("next"), startedAt: 200, status: "inProgress" }],
@@ -813,6 +813,7 @@ describe("relational thread history", () => {
     expect(threadFailureNotice(null, unavailable)).toEqual({
       message: "The server reported an error. Details are unavailable.",
       acceptsInput: false,
+      kind: "generic",
     });
     expect(
       threadFailureNotice(null, { ...unavailable, canAcceptDirectInput: true })?.acceptsInput,

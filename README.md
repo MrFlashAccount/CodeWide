@@ -207,13 +207,16 @@ verified portable `x86_64` Linux binary with:
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
 ```
 
+The installer places the executable in `/usr/local/bin`, requesting `sudo`
+when needed, and verifies that `codewide-relay` runs directly from PATH.
+
 The same Relay binary is available from the CodeWide tap:
 
 ```sh
 brew install --formula MrFlashAccount/codewide/relay
 ```
 
-Run `codewide-relay --port 8780`. Android and Companion
+Run `codewide-relay serve --port 8780`. Android and Companion
 both connect outbound to that Relay address. Plain WebSocket connections carry
 opaque inner-TLS bytes, while TLS 1.3 connections on the same port carry health,
 pairing, and control. On the Relay host, `codewide-relay invite` creates an

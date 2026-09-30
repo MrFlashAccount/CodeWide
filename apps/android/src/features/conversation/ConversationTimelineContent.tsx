@@ -2,7 +2,7 @@ import { ConversationEmptyState } from "./ConversationEmptyState";
 import { ConversationQueueFooter } from "./ConversationQueueFooter";
 import type { CreateConversationTimelineContentProps } from "./ConversationTimelineContent.types";
 import { ConversationTimelineSurface } from "./timeline/ConversationTimelineSurface";
-import { TimelineViewport } from "./timeline/TimelineViewport";
+import { TimelineViewport } from "./timeline/TimelineViewportView";
 
 export function createConversationTimelineContent(props: CreateConversationTimelineContentProps) {
   const timelineContent = (

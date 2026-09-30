@@ -44,12 +44,18 @@ let package = Package(
                 "CodeWideShared",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            path: "Sources/CodeWide"
+            path: "Sources/CodeWide",
+            linkerSettings: [.linkedFramework("IOKit")]
         ),
         .executableTarget(
             name: "CodeWideRuntime",
             dependencies: ["CodeWideShared", "CompanionSwiftFFI"],
             path: "Sources/CodeWideRuntime"
+        ),
+        .testTarget(
+            name: "CodeWideTests",
+            dependencies: ["CodeWide", "CodeWideRuntime", "CodeWideShared", "CompanionSwiftFFI"],
+            path: "Tests/CodeWideTests"
         ),
         .testTarget(
             name: "CodeWideSharedTests",

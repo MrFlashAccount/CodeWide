@@ -10,6 +10,7 @@ pub mod content;
 mod database;
 pub mod device_tls;
 pub mod dictation;
+mod direct_access;
 mod file_revisions;
 pub mod file_uploads;
 pub mod files;

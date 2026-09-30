@@ -43,7 +43,27 @@ import Foundation
         withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void
     )
 
+    func beginRelayEnrollment(
+        address: String,
+        withReply reply: @escaping @Sendable (RelayEnrollmentPayload?, NSError?) -> Void
+    )
+
+    func relayEnrollmentStatus(
+        id: String,
+        withReply reply: @escaping @Sendable (RelayEnrollmentPayload?, NSError?) -> Void
+    )
+
+    func cancelRelayEnrollment(
+        id: String,
+        withReply reply: @escaping @Sendable (Bool, NSError?) -> Void
+    )
+
+    func directAccess(
+        withReply reply: @escaping @Sendable (DirectAccessPayload?, NSError?) -> Void
+    )
+
     func createPairing(
+        directEndpoint: String?,
         withReply reply: @escaping @Sendable (PairingPayload?, NSError?) -> Void
     )
 

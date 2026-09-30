@@ -10,7 +10,7 @@ const session = compactSource(readFileSync(new URL("../src/features/projects/pro
 
 const content = compactSource(readFileSync(new URL("../src/features/projects/ProjectPickerContent.tsx", import.meta.url), "utf8"));
 
-const row = compactSource(readFileSync(new URL("../src/features/projects/ProjectPickerRows.tsx", import.meta.url), "utf8"));
+const row = compactSource(readFileSync(new URL("../src/features/projects/ProjectPickerRowViews.tsx", import.meta.url), "utf8"));
 
 describe("project picker", () => {
   it("pins discovered projects without selecting them", () => {

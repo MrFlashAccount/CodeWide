@@ -10,17 +10,44 @@ final class RuntimeConnection: ObservableObject {
     @Published private(set) var appServers: [AppServerPayload] = []
     @Published private(set) var codexInstallation: CodexInstallationState?
     @Published private(set) var isDiscoveringAppServers = false
+    @Published private(set) var hasDiscoveredAppServers = false
     @Published private(set) var relay: RelayStatusPayload?
+    @Published private(set) var directAccess: DirectAccessPayload?
+    @Published var pairingEndpoint: String?
     @Published private(set) var devices: [DeviceStatusPayload] = []
     @Published private(set) var status = "Starting"
     @Published private(set) var lastError: String?
     @Published private(set) var requiresApproval = false
 
-    private let launchAgent = SMAppService.agent(
-        plistName: RuntimeConstants.launchAgentPlistName
-    )
+    private let launchAgent: any RuntimeAgentService
+    private let proxyProvider: ((@escaping @Sendable (Error) -> Void) -> RuntimeXPCProtocol?)?
+    private let runtimeValidator: ((RuntimeHealthPayload) -> Bool)?
+    private let reportsUpdateHealth: Bool
+    private let registration: RuntimeRegistration?
+    private var registrationPrepared = false
+    private var registrationRecoveryUsed = false
     private var connection: NSXPCConnection?
     private var refreshTask: Task<Void, Never>?
+    private var connectionID = UUID()
+    private var refreshInProgress = false
+    private var preparingUpdate = false
+    private var stateRevision = 0
+
+    init(
+        launchAgent: any RuntimeAgentService = SMAppService.agent(
+            plistName: RuntimeConstants.launchAgentPlistName
+        ),
+        proxyProvider: ((@escaping @Sendable (Error) -> Void) -> RuntimeXPCProtocol?)? = nil,
+        runtimeValidator: ((RuntimeHealthPayload) -> Bool)? = nil,
+        reportsUpdateHealth: Bool = true,
+        registration: RuntimeRegistration? = RuntimeRegistration.current()
+    ) {
+        self.launchAgent = launchAgent
+        self.proxyProvider = proxyProvider
+        self.runtimeValidator = runtimeValidator
+        self.reportsUpdateHealth = reportsUpdateHealth
+        self.registration = registration
+    }
 
     func start() {
         guard refreshTask == nil else {
@@ -30,7 +57,6 @@ final class RuntimeConnection: ObservableObject {
             guard let self else {
                 return
             }
-            await registerAgent()
             while !Task.isCancelled {
                 await refresh()
                 try? await Task.sleep(for: .seconds(2))
@@ -39,18 +65,28 @@ final class RuntimeConnection: ObservableObject {
     }
 
     func refresh() async {
+        guard !refreshInProgress, !preparingUpdate else { return }
+        refreshInProgress = true
+        defer { refreshInProgress = false }
+        guard await registerAgent() else { return }
+        let revision = stateRevision
         do {
             let health = try await requestHealth()
+            guard revision == stateRevision, !Task.isCancelled else { return }
             guard validatesRuntime(health) else {
                 throw RuntimeConnectionError.untrustedRuntime
             }
             self.health = health
+            registration?.confirmHealthyRuntime()
             status = health.phase == "running" ? "Running" : health.phase
             lastError = health.degradedReason ?? health.updateFailureReason
-            writeUpdateE2EReport(health)
+            if reportsUpdateHealth { writeUpdateE2EReport(health) }
         } catch {
+            guard revision == stateRevision, !Task.isCancelled else { return }
+            recoverUnconfirmedRegistration(after: error)
             disconnect()
             self.health = nil
+            self.directAccess = nil
             self.appServer = nil
             self.relay = nil
             self.devices = []
@@ -60,19 +96,49 @@ final class RuntimeConnection: ObservableObject {
         }
 
         do {
-            appServer = try await requestAppServer()
-            if appServers.isEmpty {
-                applyAppServerDiscovery(try await requestAppServers())
-            }
-            relay = try await requestRelayStatus()
+            let server = try await requestAppServer()
+            let direct = try await requestDirectAccess()
+            let relayStatus = try await requestRelayStatus()
             let deviceList = try await requestDevices()
+            guard revision == stateRevision, !Task.isCancelled else { return }
+            appServer = server
+            directAccess = direct
+            if !direct.endpoints.contains(pairingEndpoint ?? "") {
+                pairingEndpoint = direct.endpoints.first
+            }
+            relay = relayStatus
             devices = deviceList.devices
+            if appServers.isEmpty {
+                await discoverAppServers()
+            }
         } catch {
+            guard revision == stateRevision, !Task.isCancelled else { return }
+            disconnect()
+            health = nil
+            directAccess = nil
+            appServer = nil
+            relay = nil
+            devices = []
+            status = "Unavailable"
             lastError = error.localizedDescription
         }
     }
 
     func prepareForUpdate(targetVersion: String) async throws {
+        preparingUpdate = true
+        stateRevision += 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        do {
+            try await checkpointForUpdate(targetVersion: targetVersion)
+        } catch {
+            preparingUpdate = false
+            start()
+            throw error
+        }
+    }
+
+    private func checkpointForUpdate(targetVersion: String) async throws {
         let payload = try await requestPrepareForUpdate(targetVersion: targetVersion)
         guard payload.updateStatus == "prepared", validatesRuntime(payload) else {
             throw RuntimeConnectionError.updateCheckpointRejected
@@ -85,6 +151,7 @@ final class RuntimeConnection: ObservableObject {
     }
 
     func resumeAfterUpdateFailure() {
+        preparingUpdate = false
         start()
     }
 
@@ -93,23 +160,79 @@ final class RuntimeConnection: ObservableObject {
     }
 
     func pairRelay(address: String, invitationJSON: String) async throws {
-        relay = try await requestPairRelay(address: address, invitationJSON: invitationJSON)
+        let address = try RelayAddress.normalized(address)
+        let paired = try await requestPairRelay(address: address, invitationJSON: invitationJSON)
+        stateRevision += 1
+        relay = paired
+        await refresh()
+    }
+
+    func beginRelayEnrollment(address: String) async throws -> RelayEnrollmentPayload {
+        let address = try RelayAddress.normalized(address)
+        return try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.beginRelayEnrollment(address: address) { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    func relayEnrollmentStatus(id: String) async throws -> RelayEnrollmentPayload {
+        try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.relayEnrollmentStatus(id: id) { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    func cancelRelayEnrollment(id: String) async throws {
+        let _: Bool = try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.cancelRelayEnrollment(id: id) { cancelled, error in
+                if let error { gate.resume(with: .failure(error)) }
+                else { gate.resume(with: .success(cancelled)) }
+            }
+        }
+    }
+
+    func relayEnrollmentCompleted() async {
+        stateRevision += 1
         await refresh()
     }
 
     func discoverAppServers() async {
         guard !isDiscoveringAppServers else { return }
         isDiscoveringAppServers = true
+        hasDiscoveredAppServers = false
+        let revision = stateRevision
         defer { isDiscoveringAppServers = false }
+        if health == nil {
+            await refresh()
+        }
+        guard health != nil, revision == stateRevision, !Task.isCancelled else { return }
         do {
-            applyAppServerDiscovery(try await requestAppServers())
+            let payload = try await requestAppServers()
+            guard revision == stateRevision, !Task.isCancelled else { return }
+            applyAppServerDiscovery(payload)
         } catch {
+            guard revision == stateRevision, !Task.isCancelled else { return }
             lastError = error.localizedDescription
         }
     }
 
     func selectAppServer(id: String) async throws {
         let selected = try await requestSelectAppServer(id: id)
+        stateRevision += 1
         appServer = selected
         appServers = appServers.map { server in
             AppServerPayload(
@@ -123,12 +246,15 @@ final class RuntimeConnection: ObservableObject {
         status = "Switching App Server"
         health = nil
         relay = nil
+        directAccess = nil
+        pairingEndpoint = nil
         devices = []
         disconnect()
     }
 
     func startAppServer(id: String) async throws {
         let started = try await requestStartAppServer(id: id)
+        stateRevision += 1
         appServers = appServers.map { server in
             guard server.id == started.id else { return server }
             return started
@@ -139,26 +265,40 @@ final class RuntimeConnection: ObservableObject {
     }
 
     func setRelayEnabled(_ enabled: Bool) async throws {
-        relay = try await requestSetRelayEnabled(enabled)
+        let updated = try await requestSetRelayEnabled(enabled)
+        stateRevision += 1
+        relay = updated
         await refresh()
     }
 
-    func createPairing() async throws -> PairingPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
+    var preferredPairingRoute: PairingRoute {
+        PairingRoute.relay.destination(
+            endpoint: nil,
+            availableEndpoints: [],
+            relay: relay
+        ) == nil ? .direct : .relay
+    }
+
+    func createPairing(route requestedRoute: PairingRoute? = nil) async throws -> PairingPayload {
+        let route = requestedRoute ?? preferredPairingRoute
+        guard let destination = route.destination(endpoint: pairingEndpoint,
+                                                  availableEndpoints: directAccess?.endpoints ?? [],
+                                                  relay: relay) else {
+            throw route == .relay ? RuntimeConnectionError.relayUnavailable : .noNetworkAddress
+        }
+        return try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
             }
-            proxy.createPairing { payload, error in
+            proxy.createPairing(directEndpoint: destination.directEndpoint) { payload, error in
                 gate.resume(with: Self.result(payload: payload, error: error))
             }
         }
     }
 
     func revokeDevice(id: String) async throws {
-        let removed: Bool = try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
+        let removed: Bool = try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -174,37 +314,78 @@ final class RuntimeConnection: ObservableObject {
         guard removed else {
             throw RuntimeConnectionError.deviceNotFound
         }
+        stateRevision += 1
+        devices.removeAll { $0.id == id }
         await refresh()
     }
 
-    private func registerAgent() async {
+    private func registerAgent() async -> Bool {
         do {
-            switch launchAgent.status {
-            case .enabled:
-                requiresApproval = false
-            case .requiresApproval:
-                requiresApproval = true
-                status = "Approval required"
-            case .notRegistered, .notFound:
+            if launchAgent.status == .enabled,
+               !registrationPrepared, registration?.needsUpdate == true {
+                disconnect()
+                // Await unregistration before replacing a changed registration.
+                // The first new launch may still fail its macOS spawn constraint;
+                // an unconfirmed transport failure permits one fresh registration.
+                try await launchAgent.unregister()
                 try launchAgent.register()
-                requiresApproval = launchAgent.status == .requiresApproval
-            @unknown default:
-                try launchAgent.register()
-                requiresApproval = launchAgent.status == .requiresApproval
+                registrationPrepared = true
             }
+            if launchAgent.status == .notRegistered || launchAgent.status == .notFound {
+                try launchAgent.register()
+                registrationPrepared = true
+            }
+            requiresApproval = launchAgent.status == .requiresApproval
+            guard launchAgent.status == .enabled else {
+                disconnect()
+                health = nil
+                directAccess = nil
+                appServer = nil
+                relay = nil
+                devices = []
+                status = requiresApproval ? "Approval required" : "Unavailable"
+                lastError = requiresApproval
+                    ? "Allow CodeWide in Login Items Settings to start the Companion."
+                    : "The Companion background service is unavailable."
+                return false
+            }
+            return true
         } catch {
+            disconnect()
+            health = nil
+            directAccess = nil
+            appServer = nil
+            relay = nil
+            devices = []
             status = "Registration failed"
             lastError = error.localizedDescription
+            return false
         }
     }
 
+    private func recoverUnconfirmedRegistration(after error: Error) {
+        guard registrationPrepared, registration?.needsUpdate == true,
+              !registrationRecoveryUsed else { return }
+        let transportFailure: Bool
+        if let failure = error as? RuntimeConnectionError {
+            switch failure {
+            case .requestTimedOut, .invalidProxy: transportFailure = true
+            default: transportFailure = false
+            }
+        } else {
+            let failure = error as NSError
+            transportFailure = failure.domain == NSCocoaErrorDomain && [
+                CocoaError.Code.xpcConnectionInterrupted.rawValue,
+                CocoaError.Code.xpcConnectionInvalid.rawValue,
+            ].contains(failure.code)
+        }
+        guard transportFailure else { return }
+        registrationRecoveryUsed = true
+        registrationPrepared = false
+    }
+
     private func requestHealth() async throws -> RuntimeHealthPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
-            gate.timeout(
-                after: .seconds(5),
-                with: RuntimeConnectionError.requestTimedOut
-            )
+        try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -215,11 +396,22 @@ final class RuntimeConnection: ObservableObject {
         }
     }
 
+    private func requestDirectAccess() async throws -> DirectAccessPayload {
+        try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.directAccess { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
     private func requestPrepareForUpdate(targetVersion: String) async throws
         -> RuntimeHealthPayload
     {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
+        try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -231,8 +423,7 @@ final class RuntimeConnection: ObservableObject {
     }
 
     private func requestRelayStatus() async throws -> RelayStatusPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
+        try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -244,8 +435,7 @@ final class RuntimeConnection: ObservableObject {
     }
 
     private func requestAppServer() async throws -> AppServerPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
+        try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -257,9 +447,7 @@ final class RuntimeConnection: ObservableObject {
     }
 
     private func requestAppServers() async throws -> AppServerListPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
-            gate.timeout(after: .seconds(8), with: RuntimeConnectionError.requestTimedOut)
+        try await XPCReplyGate.perform(timeout: .seconds(30)) { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -271,9 +459,7 @@ final class RuntimeConnection: ObservableObject {
     }
 
     private func requestSelectAppServer(id: String) async throws -> AppServerPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
-            gate.timeout(after: .seconds(8), with: RuntimeConnectionError.requestTimedOut)
+        try await XPCReplyGate.perform(timeout: .seconds(30)) { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -285,9 +471,7 @@ final class RuntimeConnection: ObservableObject {
     }
 
     private func requestStartAppServer(id: String) async throws -> AppServerPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
-            gate.timeout(after: .seconds(30), with: RuntimeConnectionError.requestTimedOut)
+        try await XPCReplyGate.perform(timeout: .seconds(30)) { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -301,11 +485,11 @@ final class RuntimeConnection: ObservableObject {
     private func applyAppServerDiscovery(_ payload: AppServerListPayload) {
         appServers = payload.servers
         codexInstallation = payload.codexInstallation.state
+        hasDiscoveredAppServers = true
     }
 
     private func requestDevices() async throws -> DeviceListPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
+        try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -320,8 +504,7 @@ final class RuntimeConnection: ObservableObject {
         address: String,
         invitationJSON: String
     ) async throws -> RelayStatusPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
+        try await XPCReplyGate.perform(timeout: .seconds(30)) { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -333,8 +516,7 @@ final class RuntimeConnection: ObservableObject {
     }
 
     private func requestSetRelayEnabled(_ enabled: Bool) async throws -> RelayStatusPayload {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = XPCReplyGate(continuation: continuation)
+        try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
@@ -348,6 +530,9 @@ final class RuntimeConnection: ObservableObject {
     private func proxy(
         errorHandler: @escaping @Sendable (Error) -> Void
     ) -> RuntimeXPCProtocol? {
+        if let proxyProvider {
+            return proxyProvider(errorHandler)
+        }
         let connection = activeConnection()
         return connection.remoteObjectProxyWithErrorHandler(errorHandler)
             as? RuntimeXPCProtocol
@@ -365,27 +550,30 @@ final class RuntimeConnection: ObservableObject {
             RuntimeConstants.runtimeCodeSigningRequirement
         )
         newConnection.remoteObjectInterface = makeRuntimeXPCInterface()
-        newConnection.invalidationHandler = { [weak self] in
+        let id = UUID()
+        connectionID = id
+        let disconnected: @Sendable () -> Void = { [weak self] in
             Task { @MainActor in
-                self?.connection = nil
+                guard let self, self.connectionID == id else { return }
+                self.disconnect()
             }
         }
-        newConnection.interruptionHandler = { [weak self] in
-            Task { @MainActor in
-                self?.connection = nil
-            }
-        }
+        newConnection.invalidationHandler = disconnected
+        newConnection.interruptionHandler = disconnected
         newConnection.resume()
         connection = newConnection
         return newConnection
     }
 
     private func disconnect() {
-        connection?.invalidate()
+        let previous = connection
         connection = nil
+        connectionID = UUID()
+        previous?.invalidate()
     }
 
     private func validatesRuntime(_ payload: RuntimeHealthPayload) -> Bool {
+        if let runtimeValidator { return runtimeValidator(payload) }
         let executableURL = URL(fileURLWithPath: payload.hostExecutablePath)
         guard AdHocPeerValidator.acceptsRuntimeExecutable(
             executableURL,
@@ -455,6 +643,8 @@ enum RuntimeConnectionError: LocalizedError {
     case untrustedRuntime
     case updateCheckpointRejected
     case deviceNotFound
+    case noNetworkAddress
+    case relayUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -463,13 +653,26 @@ enum RuntimeConnectionError: LocalizedError {
         case .invalidProxy:
             "The runtime XPC proxy is unavailable."
         case .requestTimedOut:
-            "The runtime XPC health request timed out."
+            "The Companion did not respond in time. Try again."
         case .untrustedRuntime:
             "The XPC peer is not the ad-hoc signed runtime inside this app bundle."
         case .updateCheckpointRejected:
             "The runtime did not persist the update checkpoint."
         case .deviceNotFound:
             "The device is no longer registered."
+        case .noNetworkAddress:
+            "Connect this Mac to a network before adding a client."
+        case .relayUnavailable:
+            "Connect a Relay before creating a Relay QR code."
         }
     }
 }
+
+@MainActor
+protocol RuntimeAgentService {
+    var status: SMAppService.Status { get }
+    func register() throws
+    func unregister() async throws
+}
+
+extension SMAppService: RuntimeAgentService {}

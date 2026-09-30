@@ -62,7 +62,7 @@ const featurePublicModules = {
     "composerProjectSelection",
     "NewThreadServerSheet",
     "NewThreadFloatingButton",
-    "SidebarProjects",
+    "SidebarProjectViews",
     "sidebarProjects",
     "projectConversationCapabilities",
   ],

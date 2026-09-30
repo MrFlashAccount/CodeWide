@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    net::Ipv4Addr,
+    net::{Ipv4Addr, SocketAddr},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     sync::{Arc, RwLock},
@@ -51,6 +51,7 @@ pub struct ManagedRuntimeConfig {
     pub enable_mutations: bool,
     pub secret_storage_policy: SecretStoragePolicy,
     pub host_display_name: HostDisplayName,
+    pub listen_address: SocketAddr,
 }
 
 impl ManagedRuntimeConfig {
@@ -67,12 +68,19 @@ impl ManagedRuntimeConfig {
             enable_mutations: true,
             secret_storage_policy: SecretStoragePolicy::PlatformPreferred,
             host_display_name,
+            listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
         }
     }
 
     #[must_use]
     pub fn with_secret_storage_policy(mut self, policy: SecretStoragePolicy) -> Self {
         self.secret_storage_policy = policy;
+        self
+    }
+
+    #[must_use]
+    pub fn with_listen_address(mut self, address: SocketAddr) -> Self {
+        self.listen_address = address;
         self
     }
 }
@@ -98,6 +106,8 @@ pub struct ManagedRuntime {
     image_previews: Arc<ImagePreviewService>,
     bootstrap_handle: axum_server::Handle<std::net::SocketAddr>,
     inner_handle: axum_server::Handle<std::net::SocketAddr>,
+    public_handle: axum_server::Handle<std::net::SocketAddr>,
+    listen_address: SocketAddr,
     tasks: Vec<JoinHandle<()>>,
     task_failure: Arc<RwLock<Option<String>>>,
     host_display_name: HostDisplayName,
@@ -107,11 +117,15 @@ impl ManagedRuntime {
     /// Composes the production Companion data plane in the current platform host.
     ///
     /// # Errors
-    /// Returns an error when durable state, identity, services, or private TLS
+    /// Returns an error when durable state, identity, services, or TLS
     /// listeners cannot be initialized.
     #[allow(clippy::too_many_lines)]
     pub async fn start(config: ManagedRuntimeConfig) -> RuntimeResult<Self> {
         terminal::preflight().map_err(|error| format!("terminal preflight failed: {error}"))?;
+        let public_listener = std::net::TcpListener::bind(config.listen_address)
+            .map_err(|error| format!("Cannot listen on {}: {error}", config.listen_address))?;
+        public_listener.set_nonblocking(true)?;
+        let listen_address = public_listener.local_addr()?;
         tokio::fs::create_dir_all(&config.state_directory).await?;
         tokio::fs::set_permissions(
             &config.state_directory,
@@ -254,7 +268,11 @@ impl ManagedRuntime {
             telemetry: Some(telemetry),
             catalog: Some(catalog),
             app_server_socket_path: Some(config.app_server_socket),
-            excluded_ports: HashSet::from([bootstrap_target.port(), inner_target.port()]),
+            excluded_ports: HashSet::from([
+                listen_address.port(),
+                bootstrap_target.port(),
+                inner_target.port(),
+            ]),
             transport_identity: Some(identity.public().clone()),
             bootstrap_tls_target: Some(bootstrap_target),
             bootstrap_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(16))),
@@ -273,7 +291,15 @@ impl ManagedRuntime {
         );
         let bootstrap_handle = axum_server::Handle::new();
         let inner_handle = axum_server::Handle::new();
+        let public_handle = axum_server::Handle::new();
         let task_failure = Arc::new(RwLock::new(None));
+        let public_task = spawn_server(
+            "direct access",
+            task_failure.clone(),
+            axum_server::from_tcp_rustls(public_listener, bootstrap_tls.clone())?
+                .handle(public_handle.clone())
+                .serve(routers.public.into_make_service()),
+        );
         let bootstrap_task = spawn_server(
             "bootstrap",
             task_failure.clone(),
@@ -299,7 +325,9 @@ impl ManagedRuntime {
             image_previews,
             bootstrap_handle,
             inner_handle,
-            tasks: vec![bootstrap_task, inner_task],
+            public_handle,
+            listen_address,
+            tasks: vec![public_task, bootstrap_task, inner_task],
             task_failure,
             host_display_name: config.host_display_name,
         })
@@ -324,15 +352,44 @@ impl ManagedRuntime {
         }
     }
 
-    /// Creates a one-time pairing link for the configured Relay endpoint.
+    #[must_use]
+    pub fn listen_address(&self) -> SocketAddr {
+        self.listen_address
+    }
+
+    /// Returns currently assigned addresses reachable through the direct listener.
     /// # Errors
-    /// Requires a configured and enabled Relay and durable pairing state.
-    pub async fn create_pairing(&self) -> RuntimeResult<PairingPresentation> {
-        let transport = self
-            .relay
-            .pairing_transport()?
-            .ok_or("Relay must be configured and enabled before pairing a device")?;
-        let endpoint = Url::parse(&transport.endpoint)?;
+    /// Returns an error when network interfaces cannot be enumerated.
+    pub fn direct_endpoints(&self) -> RuntimeResult<Vec<String>> {
+        Ok(crate::direct_access::endpoints(self.listen_address)?)
+    }
+
+    /// Creates a one-time link for a direct address or the configured Relay.
+    /// # Errors
+    /// Requires an available network address and durable pairing state.
+    pub async fn create_pairing(
+        &self,
+        direct_endpoint: Option<String>,
+    ) -> RuntimeResult<PairingPresentation> {
+        let transport = if direct_endpoint.is_none() {
+            self.relay.pairing_transport()?
+        } else {
+            None
+        };
+        let endpoint = if let Some(transport) = &transport {
+            Url::parse(&transport.endpoint)?
+        } else {
+            let endpoints = self.direct_endpoints()?;
+            let selected = direct_endpoint
+                .or_else(|| endpoints.first().cloned())
+                .ok_or("Connect this Mac to a network before adding a client")?;
+            if !endpoints.contains(&selected) {
+                return Err(
+                    "This network address is no longer available. Select another address.".into(),
+                );
+            }
+            Url::parse(&selected)?
+        };
         let pairing = self.registry.create_pairing().await?;
         let link = build_link(&PairingLinkInput {
             endpoint: &endpoint,
@@ -342,7 +399,7 @@ impl ManagedRuntime {
             emoji: "🖥️",
             tls_pin_sha256: &self.identity.tls_pin_sha256,
             identity_expires_at: Some(self.identity.expires_at),
-            relay: Some(RelayPairing {
+            relay: transport.as_ref().map(|transport| RelayPairing {
                 route_id: &transport.route_id,
                 tls_pin_sha256: &transport.tls_pin_sha256,
             }),
@@ -380,7 +437,12 @@ impl ManagedRuntime {
         if relay_address.len() > 255 || invitation_json.len() > 8 * 1024 {
             return Err("Relay pairing input exceeds its bounded contract".into());
         }
-        let invitation = serde_json::from_str(&invitation_json)?;
+        let invitation = serde_json::from_str(&invitation_json).map_err(|error| {
+            format!(
+                "Invalid Relay invitation JSON at line {}, column {}. Paste the complete invitation bundle.",
+                error.line(), error.column()
+            )
+        })?;
         Ok(self
             .relay
             .pair(RelayPairCommand {
@@ -388,6 +450,35 @@ impl ManagedRuntime {
                 invitation,
             })
             .await?)
+    }
+
+    /// Begins address-only pairing with this computer's display name.
+    /// # Errors
+    /// Rejects invalid input and concurrent Relay changes.
+    pub fn begin_relay_enrollment(
+        &self,
+        address: &str,
+    ) -> RuntimeResult<crate::relay::RelayEnrollmentStatus> {
+        Ok(self
+            .relay
+            .begin_enrollment(address, self.host_display_name.as_str())?)
+    }
+
+    /// Reads the current Relay enrollment without returning credentials.
+    /// # Errors
+    /// Rejects an unknown attempt.
+    pub fn relay_enrollment_status(
+        &self,
+        id: &str,
+    ) -> RuntimeResult<crate::relay::RelayEnrollmentStatus> {
+        Ok(self.relay.enrollment_status(id)?)
+    }
+
+    /// Cancels a named Relay enrollment.
+    /// # Errors
+    /// Propagates unavailable local state.
+    pub fn cancel_relay_enrollment(&self, id: &str) -> RuntimeResult<()> {
+        Ok(self.relay.cancel_enrollment(id)?)
     }
 
     /// Enables or disables the configured Relay adapter.
@@ -409,6 +500,7 @@ impl Drop for ManagedRuntime {
     fn drop(&mut self) {
         self.bootstrap_handle.shutdown();
         self.inner_handle.shutdown();
+        self.public_handle.shutdown();
         for task in &self.tasks {
             task.abort();
         }
@@ -517,17 +609,36 @@ mod tests {
         let state = directory.path().join("state");
         let codex_home = directory.path().join("codex");
         tokio::fs::create_dir_all(&codex_home).await?;
-        let runtime = ManagedRuntime::start(ManagedRuntimeConfig::desktop(
-            state,
-            codex_home,
-            HostDisplayName::new("Test computer")?,
-        ))
+        let runtime = ManagedRuntime::start(
+            ManagedRuntimeConfig::desktop(
+                state,
+                codex_home,
+                HostDisplayName::new("Test computer")?,
+            )
+            .with_listen_address((Ipv4Addr::LOCALHOST, 0).into()),
+        )
         .await?;
 
         assert!(runtime.failure().is_none());
         assert!(!runtime.relay_status()?.configured);
         assert!(runtime.devices().await.is_empty());
-        assert!(runtime.create_pairing().await.is_err());
+        let pairing = runtime.create_pairing(None).await?;
+        let link = Url::parse(&pairing.link)?;
+        let query = link.query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(query.get("v").map(AsRef::as_ref), Some("1"));
+        assert_eq!(
+            query.get("e").map(AsRef::as_ref),
+            Some(runtime.direct_endpoints()?[0].as_str())
+        );
+        assert!(query.contains_key("t"));
+        assert!(query.contains_key("p"));
+        assert!(!query.contains_key("r"));
+        assert!(
+            runtime
+                .create_pairing(Some("wss://0.0.0.0:8766/v1/sync".to_owned()))
+                .await
+                .is_err()
+        );
         Ok(())
     }
 
@@ -551,12 +662,34 @@ mod tests {
         let state = directory.path().join("companion");
         let codex_home = directory.path().join("codex");
         tokio::fs::create_dir_all(&codex_home).await?;
-        let runtime = ManagedRuntime::start(ManagedRuntimeConfig::desktop(
-            state,
-            codex_home,
-            HostDisplayName::new("Sergey's MacBook Pro")?,
-        ))
+        let runtime = ManagedRuntime::start(
+            ManagedRuntimeConfig::desktop(
+                state,
+                codex_home,
+                HostDisplayName::new("Sergey's MacBook Pro")?,
+            )
+            .with_listen_address((Ipv4Addr::LOCALHOST, 0).into()),
+        )
         .await?;
+        let Err(invalid_invitation) = runtime
+            .pair_relay(
+                relay_address.to_string(),
+                r#"{"version":"private-invitation"}"#.to_owned(),
+            )
+            .await
+        else {
+            return Err("An invalid invitation was accepted".into());
+        };
+        assert!(
+            invalid_invitation
+                .to_string()
+                .contains("Invalid Relay invitation JSON")
+        );
+        assert!(
+            !invalid_invitation
+                .to_string()
+                .contains("private-invitation")
+        );
         let invitation = registry.create_invitation(None)?;
         runtime
             .pair_relay(
@@ -582,7 +715,7 @@ mod tests {
         })
         .await?;
 
-        let pairing = runtime.create_pairing().await?;
+        let pairing = runtime.create_pairing(None).await?;
         let link = Url::parse(&pairing.link)?;
         let query = link.query_pairs().collect::<HashMap<_, _>>();
         assert_eq!(link.scheme(), "codewide");

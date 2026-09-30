@@ -8,7 +8,7 @@ import Reanimated from "react-native-reanimated";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
 import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
-import { SidebarProjectRow } from "../projects/SidebarProjects";
+import { SidebarProjectRow } from "../projects/SidebarProjectViews";
 import { styles } from "./MobileThreads.styles";
 import { SidebarListFeedback } from "./SidebarListFeedback";
 import { sidebarRows } from "./sidebarRows";

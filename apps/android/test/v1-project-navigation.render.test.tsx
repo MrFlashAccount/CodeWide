@@ -4,7 +4,7 @@ import { KeyboardController } from "react-native-keyboard-controller";
 
 import { useComposerProjectSelection } from "../src/features/projects/composerProjectSelection";
 import { useProjectPickerSession } from "../src/features/projects/projectPickerSession";
-import { SidebarProjectsSheet } from "../src/features/projects/SidebarProjects";
+import { SidebarProjectsSheet } from "../src/features/projects/SidebarProjectViews";
 import { useRemoteProjectCatalog } from "../src/features/projects/useRemoteProjectCatalog";
 import type { SidebarProject } from "../src/features/projects/sidebarProjects";
 import {

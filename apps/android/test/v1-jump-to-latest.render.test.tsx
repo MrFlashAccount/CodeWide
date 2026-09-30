@@ -3,7 +3,7 @@ import { Pressable, View, type View as NativeView } from "react-native";
 import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react-native";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
 import { timelineRowPremeasurementEnabled$ } from "../src/data/timelineRowPremeasurementPreference";
-import { TimelineViewport } from "../src/features/conversation/timeline/TimelineViewport";
+import { TimelineViewport } from "../src/features/conversation/timeline/TimelineViewportView";
 import { JumpToLatest } from "../src/features/conversation/timeline/JumpToLatest";
 import { TimelineJumpVisibility } from "../src/features/conversation/timeline/timelineJumpVisibility";
 import type { TimelineViewportProps } from "../src/features/conversation/timeline/TimelineViewportContract";

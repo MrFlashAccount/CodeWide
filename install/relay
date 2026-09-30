@@ -2,13 +2,15 @@
 set -eu
 
 VERSION=${CODEWIDE_RELAY_VERSION:-0.1.0}
-INSTALL_DIR=${CODEWIDE_RELAY_INSTALL_DIR:-"$HOME/.local/bin"}
+INSTALL_DIR=${CODEWIDE_RELAY_INSTALL_DIR:-/usr/local/bin}
 DOWNLOAD_BASE_URL=${CODEWIDE_RELAY_DOWNLOAD_BASE_URL:-}
 ALLOW_INSECURE_DOWNLOAD=${CODEWIDE_RELAY_ALLOW_INSECURE_DOWNLOAD:-0}
 TMP_ROOT=${TMPDIR:-/tmp}
 
 usage() {
   printf '%s\n' 'Usage: install-relay [--version VERSION] [--install-dir DIRECTORY] [--download-base-url URL]'
+  printf '%s\n' 'Installs codewide-relay into /usr/local/bin, using sudo if needed.'
+  printf '%s\n' 'A custom installation directory must already be in PATH.'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -45,6 +47,31 @@ case "$VERSION" in
     exit 2
     ;;
 esac
+
+case "$INSTALL_DIR" in
+  /*) INSTALL_DIR=${INSTALL_DIR%/} ;;
+  *) printf '%s\n' 'The installation directory must be an absolute path in PATH.' >&2; exit 2 ;;
+esac
+if [ -z "$INSTALL_DIR" ]; then
+  printf '%s\n' 'Refusing to install into the filesystem root.' >&2
+  exit 2
+fi
+case ":${PATH:-}:" in
+  *":$INSTALL_DIR:"*) ;;
+  *)
+    printf 'Installation directory is not in PATH: %s\nChoose a directory already in PATH with --install-dir. Nothing was installed.\n' "$INSTALL_DIR" >&2
+    exit 2
+    ;;
+esac
+existing=$(command -v codewide-relay || :)
+if [ -n "$existing" ] && [ "$existing" != "$INSTALL_DIR/codewide-relay" ]; then
+  printf 'Another codewide-relay is already selected by PATH: %s\nUse --install-dir with its directory to update it. Nothing was installed.\n' "$existing" >&2
+  exit 2
+fi
+if [ -d "$INSTALL_DIR/codewide-relay" ]; then
+  printf 'Installation target is a directory: %s/codewide-relay\n' "$INSTALL_DIR" >&2
+  exit 2
+fi
 
 if [ "$(uname -s)" != Linux ]; then
   printf '%s\n' 'CodeWide Relay currently supports Linux only.' >&2
@@ -85,12 +112,34 @@ command -v curl >/dev/null 2>&1 || {
   exit 2
 }
 
+# Download and verify as the invoking user. Elevate only filesystem installation
+# operations, so curl | sh works without running the downloaded script as root.
+install_as_root=0
+ancestor=$INSTALL_DIR
+while [ ! -e "$ancestor" ]; do
+  ancestor=$(dirname -- "$ancestor")
+done
+if [ ! -d "$ancestor" ] || [ ! -w "$ancestor" ] || [ ! -x "$ancestor" ]; then
+  command -v sudo >/dev/null 2>&1 || {
+    printf 'Installing to %s requires administrator access, but sudo is unavailable.\n' "$INSTALL_DIR" >&2
+    exit 2
+  }
+  install_as_root=1
+fi
+install_command() {
+  if [ "$install_as_root" = 1 ]; then
+    sudo -- "$@"
+  else
+    "$@"
+  fi
+}
+
 umask 077
 temporary_root=$(mktemp -d "$TMP_ROOT/codewide-relay-install.XXXXXX")
 staged=
 cleanup() {
   if [ -n "$staged" ]; then
-    rm -f -- "$staged"
+    install_command rm -f -- "$staged"
   fi
   case "$temporary_root" in
     "$TMP_ROOT"/codewide-relay-install.*) rm -rf -- "$temporary_root" ;;
@@ -146,21 +195,31 @@ if [ "$actual" != "$expected" ]; then
 fi
 
 chmod 0755 "$payload"
-reported_version=$($payload --version)
+reported_version=$("$payload" --version)
 if [ "$reported_version" != "codewide-relay $VERSION" ]; then
   printf 'Downloaded Relay version mismatch: %s\n' "$reported_version" >&2
   exit 1
 fi
 
-mkdir -p "$INSTALL_DIR"
-staged=$(mktemp "$INSTALL_DIR/.codewide-relay.install.XXXXXX")
-cp "$payload" "$staged"
-chmod 0755 "$staged"
-mv -f -- "$staged" "$INSTALL_DIR/codewide-relay"
+if [ "$install_as_root" = 1 ]; then
+  printf 'Installing to %s (administrator access required).\n' "$INSTALL_DIR"
+  sudo -v
+fi
+# Public executable directories must be traversable by the service owner too.
+# Leave permissions of existing directories alone.
+(umask 022; install_command mkdir -p -m 0755 "$INSTALL_DIR")
+staged=$(install_command mktemp "$INSTALL_DIR/.codewide-relay.install.XXXXXX")
+install_command cp "$payload" "$staged"
+install_command chmod 0755 "$staged"
+install_command mv -f -- "$staged" "$INSTALL_DIR/codewide-relay"
 staged=
 
-printf 'Installed codewide-relay %s to %s/codewide-relay\n' "$VERSION" "$INSTALL_DIR"
-case ":${PATH:-}:" in
-  *":$INSTALL_DIR:"*) ;;
-  *) printf 'Add %s to PATH before running codewide-relay.\n' "$INSTALL_DIR" ;;
-esac
+hash -r 2>/dev/null || :
+resolved=$(command -v codewide-relay || :)
+if [ "$resolved" != "$INSTALL_DIR/codewide-relay" ] ||
+  [ "$(codewide-relay --version)" != "codewide-relay $VERSION" ]; then
+  printf 'Relay was copied, but command lookup verification failed: %s\n' "$resolved" >&2
+  exit 1
+fi
+printf 'Installed codewide-relay %s to %s\n' "$VERSION" "$resolved"
+printf '%s\n' 'Ready: codewide-relay'

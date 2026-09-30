@@ -36,8 +36,12 @@ pub fn spawn(roots: Vec<PathBuf>) -> Result<mpsc::Receiver<RolloutChange>, notif
         .into_iter()
         .enumerate()
         .filter(|(_index, root)| root.is_dir())
-        .map(|(index, root)| (root, index == 1))
-        .collect::<Vec<_>>();
+        // FSEvents reports resolved paths (for example /private/var instead
+        // of /var). Keep roots and changes in the same namespace so archived
+        // rollouts cannot be misclassified as active after a symlink hop.
+        .map(|(index, root)| root.canonicalize().map(|root| (root, index == 1)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(notify::Error::io)?;
     if watched_roots.is_empty() {
         return Ok(receiver);
     }
@@ -51,6 +55,7 @@ pub fn spawn(roots: Vec<PathBuf>) -> Result<mpsc::Receiver<RolloutChange>, notif
         move |result: notify::Result<notify::Event>| match result {
             Ok(event) if relevant_kind(event.kind) => {
                 for path in event.paths {
+                    let path = path.canonicalize().unwrap_or(path);
                     let Some(thread_id) = thread_id_from_path(&path) else {
                         continue;
                     };
@@ -135,8 +140,35 @@ mod tests {
             .await?
             .ok_or("rollout watcher stopped")?;
         assert_eq!(change.thread_id, THREAD_ID);
-        assert_eq!(change.path, path);
+        assert_eq!(change.path, path.canonicalize()?);
         assert!(!change.archived);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn archived_rollout_under_a_symlinked_home_stays_archived()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let home = directory.path().join("home");
+        let alias = directory.path().join("alias");
+        std::fs::create_dir_all(home.join("sessions"))?;
+        std::fs::create_dir_all(home.join("archived_sessions"))?;
+        std::os::unix::fs::symlink(&home, &alias)?;
+        let mut changes = spawn(vec![
+            alias.join("sessions"),
+            alias.join("archived_sessions"),
+        ])?;
+        let path = home
+            .join("archived_sessions")
+            .join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        std::fs::write(&path, "{}\n")?;
+
+        let change = tokio::time::timeout(Duration::from_secs(5), changes.recv())
+            .await?
+            .ok_or("rollout watcher stopped")?;
+        assert_eq!(change.thread_id, THREAD_ID);
+        assert_eq!(change.path, path.canonicalize()?);
+        assert!(change.archived);
         Ok(())
     }
 

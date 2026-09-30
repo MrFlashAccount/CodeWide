@@ -3,10 +3,12 @@ import SwiftUI
 
 @MainActor
 enum CodeWideBrand {
-    // Shared with the Android CodeWide palette: nebula, background, and text.
-    static let accent = Color(red: 26.0 / 255.0, green: 115.0 / 255.0, blue: 242.0 / 255.0)
-    static let graphite = Color(red: 15.0 / 255.0, green: 15.0 / 255.0, blue: 15.0 / 255.0)
-    static let warmWhite = Color(red: 242.0 / 255.0, green: 242.0 / 255.0, blue: 242.0 / 255.0)
+    // Product colors from brand/BRAND.md; native surfaces keep system neutrals.
+    static let accent = Color(red: 88.0 / 255.0, green: 120.0 / 255.0, blue: 1)
+    // Darker brand tint keeps white action labels legible in both appearances.
+    static let actionAccent = Color(red: 65.0 / 255.0, green: 91.0 / 255.0, blue: 215.0 / 255.0)
+    static let graphite = Color(red: 15.0 / 255.0, green: 15.0 / 255.0, blue: 16.0 / 255.0)
+    static let warmWhite = Color(red: 244.0 / 255.0, green: 244.0 / 255.0, blue: 245.0 / 255.0)
 
     static let markImage: NSImage? = {
         guard

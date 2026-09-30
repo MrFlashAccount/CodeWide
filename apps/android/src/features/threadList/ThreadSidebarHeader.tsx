@@ -5,7 +5,7 @@ import {
 } from "../../presentation/navigation/ThreadListHeader";
 import { AppText as Text } from "../../ui/Typography";
 import { serverScopeIncludes } from "../../services/servers/serverScope";
-import { SidebarProjectHeader } from "../projects/SidebarProjects";
+import { SidebarProjectHeader } from "../projects/SidebarProjectViews";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
 import { styles } from "./ThreadSidebar.styles";
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";

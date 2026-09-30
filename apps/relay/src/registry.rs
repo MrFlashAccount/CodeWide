@@ -35,6 +35,15 @@ struct RouteRecord {
     version: u8,
     token_hash: String,
     generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RouteSummary {
+    pub route_id: String,
+    pub label: Option<String>,
 }
 
 pub struct Invitation {
@@ -135,14 +144,17 @@ impl Registry {
             return Err(denied());
         }
 
-        let generation = match self.read_route(route_id) {
-            Ok(record) => record.generation.checked_add(1).ok_or_else(denied)?,
+        let (generation, label) = match self.read_route(route_id) {
+            Ok(record) => (
+                record.generation.checked_add(1).ok_or_else(denied)?,
+                record.label,
+            ),
             Err(error)
                 if error
                     .downcast_ref::<std::io::Error>()
                     .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
             {
-                1
+                (1, None)
             }
             Err(error) => return Err(error),
         };
@@ -153,6 +165,7 @@ impl Registry {
                 version: RECORD_VERSION,
                 token_hash: auth::digest_hex(&access_token),
                 generation,
+                label,
             },
         )?;
         Ok(PairResponse {
@@ -160,6 +173,50 @@ impl Registry {
             access_token,
             generation,
         })
+    }
+
+    /// Issues an independent route after local pairing approval.
+    /// # Errors
+    /// Rejects unsafe labels and propagates durable-write failures.
+    pub fn register(&self, label: &str) -> Result<PairResponse> {
+        validate_label(label)?;
+        let _guard = self.process_lock.lock().map_err(|_| denied())?;
+        let _file_guard = self.lock_exclusive()?;
+        let route_id = auth::generate();
+        let access_token = auth::generate();
+        create_json(
+            &self.route_path(&route_id),
+            &RouteRecord {
+                version: RECORD_VERSION,
+                token_hash: auth::digest_hex(&access_token),
+                generation: 1,
+                label: Some(label.to_owned()),
+            },
+        )?;
+        Ok(PairResponse {
+            route_id,
+            access_token,
+            generation: 1,
+        })
+    }
+
+    /// Lists labels and identifiers without returning access tokens.
+    /// # Errors
+    /// Propagates registry read failures.
+    pub fn summaries(&self) -> Result<Vec<RouteSummary>> {
+        self.routes()?
+            .into_iter()
+            .map(|route_id| {
+                let record = self.read_route(&route_id)?;
+                if let Some(label) = &record.label {
+                    validate_label(label)?;
+                }
+                Ok(RouteSummary {
+                    route_id,
+                    label: record.label,
+                })
+            })
+            .collect()
     }
 
     /// Authorizes one exact route/token pair.
@@ -204,6 +261,30 @@ impl Registry {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Changes the user-visible computer name without rotating its credentials.
+    /// # Errors
+    /// Rejects malformed identifiers or labels and propagates durable-write failures.
+    pub fn rename(&self, route_id: &str, label: &str) -> Result<bool> {
+        validate_route_id(route_id)?;
+        validate_label(label)?;
+        let _guard = self.process_lock.lock().map_err(|_| denied())?;
+        let _file_guard = self.lock_exclusive()?;
+        let mut record = match self.read_route(route_id) {
+            Ok(record) => record,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        record.label = Some(label.to_owned());
+        atomic_json(&self.route_path(route_id), &record)?;
+        Ok(true)
     }
 
     /// Returns all paired route identifiers without exposing credentials.
@@ -266,6 +347,24 @@ pub fn validate_route_id(value: &str) -> Result<&str> {
         return Err(std::io::Error::other("relay route ID is invalid").into());
     }
     Ok(value)
+}
+
+/// Validates a single-line computer label safe for terminal and UI presentation.
+/// # Errors
+/// Rejects empty, excessive, control, and bidirectional formatting characters.
+pub fn validate_label(label: &str) -> Result<()> {
+    if label.trim().is_empty()
+        || label.encode_utf16().count() > 80
+        || label.chars().any(|c| {
+            c.is_control() || matches!(c, '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
+    {
+        return Err(std::io::Error::other(
+            "Computer name must be a single line of at most 80 UTF-16 code units",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn ensure_private_directory(path: &Path) -> Result<()> {
@@ -356,6 +455,23 @@ mod tests {
         );
         assert!(registry.revoke(&first.route_id)?);
         assert_eq!(registry.routes()?, vec![second.route_id]);
+        Ok(())
+    }
+
+    #[test]
+    fn rename_preserves_credentials_and_updates_the_summary() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let registry = Registry::open(directory.path())?;
+        let paired = registry.register("Old name")?;
+
+        assert!(registry.rename(&paired.route_id, "New name")?);
+        assert!(
+            registry
+                .authorize(&paired.route_id, &paired.access_token)
+                .is_ok()
+        );
+        assert_eq!(registry.summaries()?[0].label.as_deref(), Some("New name"));
+        assert!(!registry.rename(&auth::generate(), "Missing")?);
         Ok(())
     }
 

@@ -8,7 +8,7 @@ import { useTimelineCleanup } from "./timeline/historyAnchor";
 import { useConversationAndroidBack } from "./timeline/overlayScrollOwnership";
 import { useThreadTimeline, useThreadTimelineActions } from "./timeline/ThreadTimeline";
 import { projectTimelineDateLabels } from "./timeline/timelineProjection";
-import { TimelineViewport } from "./timeline/TimelineViewport";
+import { TimelineViewport } from "./timeline/TimelineViewportView";
 
 /** Projects authoritative thread data into the read-only conversation surface. */
 export function ConversationReadSurface(props: ConversationReadSurfaceProps) {

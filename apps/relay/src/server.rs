@@ -1,12 +1,13 @@
 //! Multi-tenant rendezvous for opaque inner-TLS WebSocket streams.
 use crate::{
     Result, auth,
+    enrollment::{ChannelBinding, EXPORTER_LABEL, Enrollment},
     pairing::{PairRequest, PairResponse},
     registry::{AuthorizedSession, Registry, validate_route_id},
     wire::{self, Control, DEADLINE, Target},
 };
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{
         DefaultBodyLimit, Path, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -48,6 +49,7 @@ struct Pending {
 
 struct Inner {
     registry: Registry,
+    enrollment: Enrollment,
     upstreams: Mutex<HashMap<String, Upstream>>,
     pending: Mutex<HashMap<String, Pending>>,
     capacity: Arc<Semaphore>,
@@ -63,11 +65,17 @@ impl Relay {
     pub fn new(registry: Registry) -> Self {
         Self(Arc::new(Inner {
             registry,
+            enrollment: Enrollment::default(),
             upstreams: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             capacity: Arc::new(Semaphore::new(512)),
             shutdown: CancellationToken::new(),
         }))
+    }
+
+    #[must_use]
+    pub fn enrollment(&self) -> Enrollment {
+        self.0.enrollment.clone()
     }
 
     /// Routes reachable by phones. This surface never accepts Relay credentials.
@@ -86,6 +94,7 @@ impl Relay {
             .route("/healthz", get(health))
             .route("/readyz", get(ready))
             .route("/relay/pair/{route_id}", post(pair))
+            .route(crate::enrollment::ENDPOINT, get(enroll))
             .route("/relay/control/{route_id}", get(control))
             .route("/relay/attach/{route_id}/{ticket}", get(attach))
             .route("/v1/e2ee-tunnel", get(pinned_device))
@@ -140,6 +149,7 @@ impl Relay {
             )),
         )
         .await??;
+        self.0.enrollment.connected(&session.route_id);
         let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
         loop {
             tokio::select! {
@@ -271,7 +281,7 @@ impl Relay {
         Ok(response)
     }
 
-    fn cancel_route(&self, route_id: &str) {
+    pub(crate) fn cancel_route(&self, route_id: &str) {
         if let Ok(upstreams) = self.0.upstreams.lock()
             && let Some(active) = upstreams.get(route_id)
         {
@@ -404,6 +414,28 @@ async fn control(
         .max_frame_size(4096)
         .on_upgrade(move |socket| async move {
             let _ = worker.control(socket, permit, session).await;
+        })
+}
+
+async fn enroll(
+    State(relay): State<Relay>,
+    Extension(binding): Extension<ChannelBinding>,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let Some(window) = relay.0.enrollment.current() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(permit) = relay.0.capacity.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    upgrade
+        .max_message_size(4096)
+        .max_frame_size(4096)
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
+            window
+                .serve(socket, binding, relay.0.registry.clone())
+                .await;
         })
 }
 
@@ -548,6 +580,12 @@ async fn serve_tls_connection(
     router: Router,
 ) -> Result<()> {
     let stream = tokio::time::timeout(DEADLINE, acceptor.accept(socket)).await??;
+    let binding =
+        stream
+            .get_ref()
+            .1
+            .export_keying_material([0_u8; 32], EXPORTER_LABEL, Some(&[]))?;
+    let router = router.layer(Extension(ChannelBinding(binding)));
     http1::Builder::new()
         .serve_connection(TokioIo::new(stream), TowerToHyperService::new(router))
         .with_upgrades()

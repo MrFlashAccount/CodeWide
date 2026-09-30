@@ -30,7 +30,7 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         do {
             reply(try payload(from: core.health()), nil)
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
         }
     }
 
@@ -45,7 +45,7 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
                 exit(EXIT_SUCCESS)
             }
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
         }
     }
 
@@ -69,7 +69,7 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
                 nil
             )
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
         }
     }
 
@@ -93,7 +93,7 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
                 exit(EXIT_FAILURE)
             }
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
         }
     }
 
@@ -115,7 +115,7 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
             )
             reply(appServerPayload(from: started), nil)
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
         }
     }
 
@@ -125,7 +125,7 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         do {
             reply(relayPayload(from: try core.relayStatus()), nil)
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
         }
     }
 
@@ -141,8 +141,41 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
             )
             reply(relayPayload(from: status), nil)
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
         }
+    }
+
+    func beginRelayEnrollment(
+        address: String,
+        withReply reply: @escaping @Sendable (RelayEnrollmentPayload?, NSError?) -> Void
+    ) {
+        do {
+            reply(enrollmentPayload(try core.beginRelayEnrollment(address: address)), nil)
+        } catch { reply(nil, Self.xpcError(error)) }
+    }
+
+    func relayEnrollmentStatus(
+        id: String,
+        withReply reply: @escaping @Sendable (RelayEnrollmentPayload?, NSError?) -> Void
+    ) {
+        do {
+            reply(enrollmentPayload(try core.relayEnrollmentStatus(id: id)), nil)
+        } catch { reply(nil, Self.xpcError(error)) }
+    }
+
+    func cancelRelayEnrollment(
+        id: String,
+        withReply reply: @escaping @Sendable (Bool, NSError?) -> Void
+    ) {
+        do {
+            try core.cancelRelayEnrollment(id: id)
+            reply(true, nil)
+        } catch { reply(false, Self.xpcError(error)) }
+    }
+
+    private func enrollmentPayload(_ status: FfiRelayEnrollmentStatus) -> RelayEnrollmentPayload {
+        RelayEnrollmentPayload(id: status.id, state: status.state, code: status.code,
+                               remainingSeconds: status.remainingSeconds, message: status.message)
     }
 
     func setRelayEnabled(
@@ -152,15 +185,27 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         do {
             reply(relayPayload(from: try core.setRelayEnabled(enabled: enabled)), nil)
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
+    func directAccess(
+        withReply reply: @escaping @Sendable (DirectAccessPayload?, NSError?) -> Void
+    ) {
+        do {
+            let access = try core.directAccess()
+            reply(DirectAccessPayload(listenAddress: access.listenAddress, endpoints: access.endpoints), nil)
+        } catch {
+            reply(nil, Self.xpcError(error))
         }
     }
 
     func createPairing(
+        directEndpoint: String?,
         withReply reply: @escaping @Sendable (PairingPayload?, NSError?) -> Void
     ) {
         do {
-            let pairing = try core.createPairing()
+            let pairing = try core.createPairing(directEndpoint: directEndpoint)
             reply(
                 PairingPayload(
                     link: pairing.link,
@@ -169,7 +214,7 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
                 nil
             )
         } catch {
-            reply(nil, error as NSError)
+            reply(nil, Self.xpcError(error))
         }
     }
 
@@ -195,7 +240,7 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         do {
             reply(try core.revokeDevice(deviceId: id), nil)
         } catch {
-            reply(false, error as NSError)
+            reply(false, Self.xpcError(error))
         }
     }
 
@@ -278,6 +323,23 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
             codexHome: candidate.codexHome,
             state: state,
             selected: selected ?? candidate.selected
+        )
+    }
+
+    private static func xpcError(_ error: Error) -> NSError {
+        let original = error as NSError
+        let message: String
+        if case let CompanionFfiError.Runtime(detail) = error {
+            message = detail
+        } else {
+            message = error.localizedDescription
+        }
+        // Swift's NSError bridge may provide its description lazily. Materialize
+        // it before XPC encoding, otherwise the client receives only domain/code.
+        return NSError(
+            domain: original.domain,
+            code: original.code,
+            userInfo: [NSLocalizedDescriptionKey: message]
         )
     }
 

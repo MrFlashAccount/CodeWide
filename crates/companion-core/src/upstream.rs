@@ -1071,6 +1071,11 @@ mod tests {
     #[tokio::test]
     async fn accepts_a_single_app_server_frame_larger_than_the_library_default()
     -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use tokio_tungstenite::tungstenite::protocol::frame::{
+            Frame,
+            coding::{Data, OpCode},
+        };
+
         const LARGE_FRAME_BYTES: usize = 32 * 1024 * 1024;
 
         let directory = tempfile::tempdir()?;
@@ -1078,7 +1083,7 @@ mod tests {
         let handle = UpstreamHandle::spawn(socket_path.clone());
         let mut events = handle.subscribe_events();
         let listener = UnixListener::bind(&socket_path)?;
-        let fake = tokio::spawn(async move {
+        let mut fake = tokio::spawn(async move {
             let (stream, _) = listener.accept().await?;
             let mut socket = accept_async(stream).await?;
             let initialize = receive_json(&mut socket).await?;
@@ -1094,16 +1099,19 @@ mod tests {
             let initialized = receive_json(&mut socket).await?;
             assert_eq!(initialized["method"], "initialized");
 
-            socket
-                .send(Message::Text(
-                    json!({
-                        "method": "item/completed",
-                        "params": {"payload": "x".repeat(LARGE_FRAME_BYTES)}
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await?;
+            // Tungstenite's Vec::drain after each partial write makes the fake
+            // sender quadratic with macOS's 8 KiB Unix socket buffer. Write one
+            // serialized frame directly so this measures the production
+            // receiver's frame limit, not the test sender's buffer copying.
+            let payload = json!({
+                "method": "item/completed",
+                "params": {"payload": "x".repeat(LARGE_FRAME_BYTES)}
+            })
+            .to_string();
+            let frame = Frame::message(payload.into_bytes(), OpCode::Data(Data::Text), true);
+            let mut bytes = Vec::with_capacity(LARGE_FRAME_BYTES + 128);
+            frame.format(&mut bytes)?;
+            socket.get_mut().write_all(&bytes).await?;
 
             let request = receive_json(&mut socket).await?;
             let id = request
@@ -1119,7 +1127,15 @@ mod tests {
         });
 
         wait_for_status(&handle, ConnectionStatus::Live).await?;
-        let event = tokio::time::timeout(Duration::from_secs(10), events.recv()).await??;
+        let event = tokio::select! {
+            result = &mut fake => {
+                result??;
+                return Err("fake App Server exited before delivering the large frame".into());
+            }
+            result = tokio::time::timeout(Duration::from_secs(10), events.recv()) => {
+                result.map_err(|error| format!("large App Server frame was not delivered: {error}"))??
+            }
+        };
         assert_eq!(event["method"], "item/completed");
         assert_eq!(
             event["params"]["payload"].as_str().map(str::len),

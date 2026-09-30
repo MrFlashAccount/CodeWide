@@ -15,7 +15,7 @@ use companion_core::{
         AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
         relay_connection_label,
     },
-    relay::RelayStatus,
+    relay::{RelayEnrollmentStatus, RelayStatus},
     secure_store::SecretStoragePolicy,
     upstream::probe_app_server_version,
 };
@@ -75,6 +75,12 @@ pub struct FfiRelayStatus {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct FfiDirectAccess {
+    pub listen_address: String,
+    pub endpoints: Vec<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct FfiDeviceStatus {
     pub id: String,
     pub name: String,
@@ -127,12 +133,15 @@ impl CoreHost {
     /// Returns an adapter error when the state directory cannot be opened,
     /// migrated, exclusively locked, or durably checkpointed.
     #[uniffi::constructor]
+    // UniFFI constructors receive owned strings from the Swift boundary.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         state_directory: String,
         codex_home: String,
         app_version: String,
         host_version: String,
         computer_name: String,
+        listen_address: String,
     ) -> Result<Arc<Self>, CompanionFfiError> {
         let lifecycle = RuntimeHost::open(&state_directory, app_version, host_version)?;
         let codex_home = PathBuf::from(codex_home);
@@ -148,7 +157,8 @@ impl CoreHost {
             codex_home.clone(),
             host_display_name,
         )
-        .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly);
+        .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly)
+        .with_listen_address(listen_address.parse().map_err(CompanionFfiError::runtime)?);
         let companion = executor
             .block_on(ManagedRuntime::start(config))
             .map_err(CompanionFfiError::runtime)?;
@@ -308,6 +318,54 @@ impl CoreHost {
             .map_err(CompanionFfiError::runtime)
     }
 
+    /// Starts address-only pairing and returns its local presentation handle.
+    /// # Errors
+    /// Rejects invalid input or a concurrent operation.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI lifts owned strings at this boundary"
+    )]
+    pub fn begin_relay_enrollment(
+        &self,
+        address: String,
+    ) -> Result<FfiRelayEnrollmentStatus, CompanionFfiError> {
+        let _runtime = self.executor.enter();
+        self.companion
+            .begin_relay_enrollment(&address)
+            .map(Into::into)
+            .map_err(CompanionFfiError::runtime)
+    }
+
+    /// Reads presentation state for one enrollment attempt.
+    /// # Errors
+    /// Rejects an unknown attempt.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI lifts owned strings at this boundary"
+    )]
+    pub fn relay_enrollment_status(
+        &self,
+        id: String,
+    ) -> Result<FfiRelayEnrollmentStatus, CompanionFfiError> {
+        self.companion
+            .relay_enrollment_status(&id)
+            .map(Into::into)
+            .map_err(CompanionFfiError::runtime)
+    }
+
+    /// Cancels one enrollment attempt and restores previous settings.
+    /// # Errors
+    /// Propagates unavailable runtime state.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI lifts owned strings at this boundary"
+    )]
+    pub fn cancel_relay_enrollment(&self, id: String) -> Result<(), CompanionFfiError> {
+        self.companion
+            .cancel_relay_enrollment(&id)
+            .map_err(CompanionFfiError::runtime)
+    }
+
     /// Enables or disables the configured Relay adapter.
     /// # Errors
     /// Returns an adapter error when Relay state cannot be changed durably.
@@ -318,12 +376,28 @@ impl CoreHost {
             .map_err(CompanionFfiError::runtime)
     }
 
+    /// Returns the direct listener and current network addresses.
+    /// # Errors
+    /// Returns an adapter error when interfaces cannot be read.
+    pub fn direct_access(&self) -> Result<FfiDirectAccess, CompanionFfiError> {
+        Ok(FfiDirectAccess {
+            listen_address: self.companion.listen_address().to_string(),
+            endpoints: self
+                .companion
+                .direct_endpoints()
+                .map_err(CompanionFfiError::runtime)?,
+        })
+    }
+
     /// Creates a time-bounded device pairing link.
     /// # Errors
-    /// Returns an adapter error when Relay is unavailable or state cannot persist.
-    pub fn create_pairing(&self) -> Result<FfiPairing, CompanionFfiError> {
+    /// Returns an adapter error when the address is unavailable or state cannot persist.
+    pub fn create_pairing(
+        &self,
+        direct_endpoint: Option<String>,
+    ) -> Result<FfiPairing, CompanionFfiError> {
         self.executor
-            .block_on(self.companion.create_pairing())
+            .block_on(self.companion.create_pairing(direct_endpoint))
             .map(Into::into)
             .map_err(CompanionFfiError::runtime)
     }
@@ -434,6 +508,27 @@ fn app_server_display_name(codex_home: &Path) -> String {
     }
 }
 
+#[derive(uniffi::Record)]
+pub struct FfiRelayEnrollmentStatus {
+    pub id: String,
+    pub state: String,
+    pub code: Option<String>,
+    pub remaining_seconds: u32,
+    pub message: Option<String>,
+}
+
+impl From<RelayEnrollmentStatus> for FfiRelayEnrollmentStatus {
+    fn from(value: RelayEnrollmentStatus) -> Self {
+        Self {
+            id: value.id,
+            state: value.state,
+            code: value.code,
+            remaining_seconds: value.remaining_seconds,
+            message: value.message,
+        }
+    }
+}
+
 impl From<RelayStatus> for FfiRelayStatus {
     fn from(status: RelayStatus) -> Self {
         Self {
@@ -519,7 +614,8 @@ mod tests {
     #[test]
     fn discovery_keeps_default_and_selected_but_ignores_inactive_profiles()
     -> Result<(), Box<dyn std::error::Error>> {
-        let home = tempfile::tempdir()?;
+        // The profile suffix and control path must fit macOS's sockaddr_un.
+        let home = tempfile::Builder::new().prefix("cw-").tempdir_in("/tmp")?;
         let default = home.path().join(".codex");
         let work = home.path().join(".codex-work");
         let inactive = home.path().join(".codex-inactive");

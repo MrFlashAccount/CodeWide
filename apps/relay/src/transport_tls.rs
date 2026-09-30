@@ -98,6 +98,20 @@ impl RelayTlsIdentity {
 /// Rejects malformed pins and unsupported TLS configuration.
 pub fn pinned_client_config(pin: &str) -> Result<Arc<ClientConfig>> {
     let expected = decode_pin(pin)?;
+    client_config(Some(expected))
+}
+
+// Only the bounded enrollment client may bootstrap without an existing pin.
+// It authenticates the channel by a human comparison before retaining this identity.
+pub(crate) fn enrollment_client_config() -> Result<Arc<ClientConfig>> {
+    client_config(None)
+}
+
+pub(crate) fn certificate_pin(certificate: &[u8]) -> String {
+    encode_pin(digest(certificate))
+}
+
+fn client_config(expected: Option<[u8; 32]>) -> Result<Arc<ClientConfig>> {
     let provider = rustls::crypto::ring::default_provider();
     let algorithms = provider.signature_verification_algorithms;
     let verifier = Arc::new(PinnedCertificateVerifier {
@@ -116,7 +130,7 @@ pub fn pinned_client_config(pin: &str) -> Result<Arc<ClientConfig>> {
 
 #[derive(Debug)]
 struct PinnedCertificateVerifier {
-    expected: [u8; 32],
+    expected: Option<[u8; 32]>,
     algorithms: WebPkiSupportedAlgorithms,
 }
 
@@ -130,7 +144,10 @@ impl ServerCertVerifier for PinnedCertificateVerifier {
         _now: UnixTime,
     ) -> std::result::Result<rustls::client::danger::ServerCertVerified, TlsError> {
         let actual = digest(end_entity.as_ref());
-        if bool::from(actual.ct_eq(&self.expected)) {
+        if self
+            .expected
+            .is_none_or(|expected| bool::from(actual.ct_eq(&expected)))
+        {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         } else {
             Err(TlsError::InvalidCertificate(

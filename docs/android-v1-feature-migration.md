@@ -388,8 +388,8 @@ All platform siblings and local type/style files of a moved family move atomical
 | `data/elicitation-form` | `features/requests/elicitationForm` | `CodeWideScreen.tsx` |
 | `data/pairing-error` | `features/connections/pairingError` | `CodeWideScreen.tsx` |
 | `data/connection-diagnostic-report` | `features/connections/connectionDiagnosticReport` | `CodeWideScreen.tsx` |
-| `ui/SidebarProjects` | `features/projects/SidebarProjects` | `CodeWideScreen.tsx` |
-| `data/sidebar-projects` | `features/projects/sidebarProjects` | `CodeWideScreen.tsx`, `data/sidebar-rows.ts`, `ui/SidebarProjects.tsx` |
+| `ui/SidebarProjectViews` | `features/projects/SidebarProjectViews` | `CodeWideScreen.tsx` |
+| `data/sidebar-projects` | `features/projects/sidebarProjects` | `CodeWideScreen.tsx`, `data/sidebar-rows.ts`, `ui/SidebarProjectViews.tsx` |
 | `data/use-sidebar-project-order` | `features/projects/useSidebarProjectOrder` | `CodeWideScreen.tsx` |
 | `data/sidebar-project-order` | `features/projects/sidebarProjectOrder` | `CodeWideScreen.tsx`, `data/use-sidebar-project-order.ts` |
 | `data/use-remote-project-catalog` | `features/projects/useRemoteProjectCatalog` | `CodeWideScreen.tsx` |

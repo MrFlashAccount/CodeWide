@@ -572,6 +572,20 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
     func appServerConnection()  -> FfiAppServerConnection
 
     /**
+     * Starts address-only pairing and returns its local presentation handle.
+     * # Errors
+     * Rejects invalid input or a concurrent operation.
+     */
+    func beginRelayEnrollment(address: String) throws  -> FfiRelayEnrollmentStatus
+
+    /**
+     * Cancels one enrollment attempt and restores previous settings.
+     * # Errors
+     * Propagates unavailable runtime state.
+     */
+    func cancelRelayEnrollment(id: String) throws
+
+    /**
      * Describes whether a compatible installed Codex can start the selected App Server.
      */
     func codexInstallation(homeDirectory: String)  -> FfiCodexInstallation
@@ -579,11 +593,18 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
     /**
      * Creates a time-bounded device pairing link.
      * # Errors
-     * Returns an adapter error when Relay is unavailable or state cannot persist.
+     * Returns an adapter error when the address is unavailable or state cannot persist.
      */
-    func createPairing() throws  -> FfiPairing
+    func createPairing(directEndpoint: String?) throws  -> FfiPairing
 
     func devices()  -> [FfiDeviceStatus]
+
+    /**
+     * Returns the direct listener and current network addresses.
+     * # Errors
+     * Returns an adapter error when interfaces cannot be read.
+     */
+    func directAccess() throws  -> FfiDirectAccess
 
     /**
      * Finds local Codex homes with a reachable App Server endpoint.
@@ -621,6 +642,13 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      * fails, or another thread poisoned the runtime lock.
      */
     func prepareForUpdate(targetVersion: String) throws  -> FfiRuntimeHealth
+
+    /**
+     * Reads presentation state for one enrollment attempt.
+     * # Errors
+     * Rejects an unknown attempt.
+     */
+    func relayEnrollmentStatus(id: String) throws  -> FfiRelayEnrollmentStatus
 
     /**
      * Returns durable Relay configuration and live reachability.
@@ -700,7 +728,7 @@ open class CoreHost: CoreHostProtocol, @unchecked Sendable {
      * Returns an adapter error when the state directory cannot be opened,
      * migrated, exclusively locked, or durably checkpointed.
      */
-public convenience init(stateDirectory: String, codexHome: String, appVersion: String, hostVersion: String, computerName: String)throws  {
+public convenience init(stateDirectory: String, codexHome: String, appVersion: String, hostVersion: String, computerName: String, listenAddress: String)throws  {
     let handle =
         try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -709,7 +737,8 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
         FfiConverterString.lower(codexHome),
         FfiConverterString.lower(appVersion),
         FfiConverterString.lower(hostVersion),
-        FfiConverterString.lower(computerName),uniffiCallStatus
+        FfiConverterString.lower(computerName),
+        FfiConverterString.lower(listenAddress),uniffiCallStatus
     )
 }
     self.init(unsafeFromHandle: handle)
@@ -737,6 +766,35 @@ open func appServerConnection() -> FfiAppServerConnection  {
 }
 
     /**
+     * Starts address-only pairing and returns its local presentation handle.
+     * # Errors
+     * Rejects invalid input or a concurrent operation.
+     */
+open func beginRelayEnrollment(address: String)throws  -> FfiRelayEnrollmentStatus  {
+    return try  FfiConverterTypeFfiRelayEnrollmentStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_begin_relay_enrollment(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Cancels one enrollment attempt and restores previous settings.
+     * # Errors
+     * Propagates unavailable runtime state.
+     */
+open func cancelRelayEnrollment(id: String)throws   {try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_cancel_relay_enrollment(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),uniffiCallStatus
+    )
+}
+}
+
+    /**
      * Describes whether a compatible installed Codex can start the selected App Server.
      */
 open func codexInstallation(homeDirectory: String) -> FfiCodexInstallation  {
@@ -752,13 +810,14 @@ open func codexInstallation(homeDirectory: String) -> FfiCodexInstallation  {
     /**
      * Creates a time-bounded device pairing link.
      * # Errors
-     * Returns an adapter error when Relay is unavailable or state cannot persist.
+     * Returns an adapter error when the address is unavailable or state cannot persist.
      */
-open func createPairing()throws  -> FfiPairing  {
+open func createPairing(directEndpoint: String?)throws  -> FfiPairing  {
     return try  FfiConverterTypeFfiPairing_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
     uniffi_companion_swift_ffi_fn_method_corehost_create_pairing(
-            self.uniffiCloneHandle(),uniffiCallStatus
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(directEndpoint),uniffiCallStatus
     )
 })
 }
@@ -767,6 +826,20 @@ open func devices() -> [FfiDeviceStatus]  {
     return try!  FfiConverterSequenceTypeFfiDeviceStatus.lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_companion_swift_ffi_fn_method_corehost_devices(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Returns the direct listener and current network addresses.
+     * # Errors
+     * Returns an adapter error when interfaces cannot be read.
+     */
+open func directAccess()throws  -> FfiDirectAccess  {
+    return try  FfiConverterTypeFfiDirectAccess_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_direct_access(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -837,6 +910,21 @@ open func prepareForUpdate(targetVersion: String)throws  -> FfiRuntimeHealth  {
     uniffi_companion_swift_ffi_fn_method_corehost_prepare_for_update(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(targetVersion),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Reads presentation state for one enrollment attempt.
+     * # Errors
+     * Rejects an unknown attempt.
+     */
+open func relayEnrollmentStatus(id: String)throws  -> FfiRelayEnrollmentStatus  {
+    return try  FfiConverterTypeFfiRelayEnrollmentStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_relay_enrollment_status(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),uniffiCallStatus
     )
 })
 }
@@ -1083,6 +1171,60 @@ public func FfiConverterTypeFfiDeviceStatus_lower(_ value: FfiDeviceStatus) -> R
 }
 
 
+public struct FfiDirectAccess: Equatable, Hashable {
+    public var listenAddress: String
+    public var endpoints: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(listenAddress: String, endpoints: [String]) {
+        self.listenAddress = listenAddress
+        self.endpoints = endpoints
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiDirectAccess: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDirectAccess: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDirectAccess {
+        return
+            try FfiDirectAccess(
+                listenAddress: FfiConverterString.read(from: &buf),
+                endpoints: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDirectAccess, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.listenAddress, into: &buf)
+        FfiConverterSequenceString.write(value.endpoints, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDirectAccess_lift(_ buf: RustBuffer) throws -> FfiDirectAccess {
+    return try FfiConverterTypeFfiDirectAccess.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDirectAccess_lower(_ value: FfiDirectAccess) -> RustBuffer {
+    return FfiConverterTypeFfiDirectAccess.lower(value)
+}
+
+
 public struct FfiPairing: Equatable, Hashable {
     public var link: String
     public var expiresAtUnixMs: UInt64
@@ -1134,6 +1276,72 @@ public func FfiConverterTypeFfiPairing_lift(_ buf: RustBuffer) throws -> FfiPair
 #endif
 public func FfiConverterTypeFfiPairing_lower(_ value: FfiPairing) -> RustBuffer {
     return FfiConverterTypeFfiPairing.lower(value)
+}
+
+
+public struct FfiRelayEnrollmentStatus: Equatable, Hashable {
+    public var id: String
+    public var state: String
+    public var code: String?
+    public var remainingSeconds: UInt32
+    public var message: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, state: String, code: String?, remainingSeconds: UInt32, message: String?) {
+        self.id = id
+        self.state = state
+        self.code = code
+        self.remainingSeconds = remainingSeconds
+        self.message = message
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiRelayEnrollmentStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRelayEnrollmentStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRelayEnrollmentStatus {
+        return
+            try FfiRelayEnrollmentStatus(
+                id: FfiConverterString.read(from: &buf),
+                state: FfiConverterString.read(from: &buf),
+                code: FfiConverterOptionString.read(from: &buf),
+                remainingSeconds: FfiConverterUInt32.read(from: &buf),
+                message: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRelayEnrollmentStatus, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterOptionString.write(value.code, into: &buf)
+        FfiConverterUInt32.write(value.remainingSeconds, into: &buf)
+        FfiConverterOptionString.write(value.message, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRelayEnrollmentStatus_lift(_ buf: RustBuffer) throws -> FfiRelayEnrollmentStatus {
+    return try FfiConverterTypeFfiRelayEnrollmentStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRelayEnrollmentStatus_lower(_ value: FfiRelayEnrollmentStatus) -> RustBuffer {
+    return FfiConverterTypeFfiRelayEnrollmentStatus.lower(value)
 }
 
 
@@ -1638,6 +1846,31 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiAppServerCandidate: FfiConverterRustBuffer {
     typealias SwiftType = [FfiAppServerCandidate]
 
@@ -1703,13 +1936,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_begin_relay_enrollment() != 61786) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_cancel_relay_enrollment() != 38570) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_codex_installation() != 62835) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_create_pairing() != 24799) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_create_pairing() != 7664) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_devices() != 59987) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_direct_access() != 14688) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_discover_app_servers() != 45098) {
@@ -1724,6 +1966,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_prepare_for_update() != 40305) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_relay_enrollment_status() != 35360) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_relay_status() != 54663) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1736,7 +1981,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_start_app_server() != 22333) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 37983) {
+    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 47119) {
         return InitializationResult.apiChecksumMismatch
     }
 

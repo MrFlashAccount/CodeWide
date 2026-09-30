@@ -1,4 +1,5 @@
 import { ActivityIndicator, Pressable, View } from "react-native";
+import { userFacingRemoteError } from "../../data/userFacingRemoteError";
 import { colors, controlHitSlop, spacing } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { InlineIcon } from "../../ui/InlineIcon";
@@ -142,7 +143,7 @@ export function renderInlineQueueItem(
         )}
       </Pressable>
       {props.expanded && item.lastError !== null && (
-        <Text style={styles.errorText}>{item.lastError}</Text>
+        <Text style={styles.errorText}>{userFacingRemoteError(item.lastError).message}</Text>
       )}
       {props.expanded && (
         <View style={styles.footerRow}>

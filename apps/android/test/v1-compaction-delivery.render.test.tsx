@@ -51,6 +51,21 @@ it("stops presenting an App Server-accepted message as pending", () => {
   expect(view.getByText("Continue the task")).toBeTruthy();
 });
 
+it("explains App Server conversation ownership without exposing its diagnostic", () => {
+  const item = {
+    ...optimisticItem("failed"),
+    lastError: "This thread is open elsewhere. Close it there and retry resume to continue.",
+  };
+  const view = render(<OptimisticTurn item={item} />);
+
+  expect(
+    view.getByText(
+      "This conversation is open in another app. Close it there, then try again here.",
+    ),
+  ).toBeTruthy();
+  expect(view.queryByText(/retry resume/)).toBeNull();
+});
+
 it("shows compaction as a separate running lifecycle until completion", () => {
   const view = render(
     <PreTurnLifecycleRows

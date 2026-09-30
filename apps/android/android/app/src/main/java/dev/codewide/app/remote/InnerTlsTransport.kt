@@ -42,7 +42,7 @@ internal object InnerTlsTransport {
     purpose: String = "operation",
     telemetry: NativeTelemetryRecorder = NativeTelemetryRecorder.NONE,
   ): OkHttpClient {
-    val carrier = PinnedTls.carrierClient(base, saved.endpoint, saved.relay).newBuilder()
+    val carrier = PinnedTls.carrierClient(base, saved.endpoint, saved.relay, saved.innerTlsPinSha256).newBuilder()
       .dns(object : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
           val startedAt = SystemClock.elapsedRealtimeNanos()
@@ -76,7 +76,7 @@ internal object InnerTlsTransport {
   }
 
   fun bootstrapClient(base: OkHttpClient, endpoint: String, pin: String, relay: PinnedRelayRoute? = null): OkHttpClient {
-    val carrier = PinnedTls.carrierClient(base, endpoint, relay)
+    val carrier = PinnedTls.carrierClient(base, endpoint, relay, pin)
     return PinnedTls.innerTlsClient(
       base,
       endpoint,
@@ -113,7 +113,7 @@ internal object InnerTlsTransport {
     timeoutMs: Int,
     onCarrierCreated: (Socket) -> Unit = {},
   ): Socket {
-    val carrier = PinnedTls.carrierClient(base, saved.endpoint, saved.relay)
+    val carrier = PinnedTls.carrierClient(base, saved.endpoint, saved.relay, saved.innerTlsPinSha256)
     val raw = TunnelSocket(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH), saved.relay?.routeId)
     onCarrierCreated(raw)
     return try {

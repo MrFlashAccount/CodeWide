@@ -5,7 +5,7 @@ import {
 } from "../../presentation/navigation/ThreadListHeader";
 import { AppText as Text } from "../../ui/Typography";
 import { serverScopeIncludes } from "../../services/servers/serverScope";
-import { SidebarProjectHeader } from "../projects/SidebarProjects";
+import { SidebarProjectHeader } from "../projects/SidebarProjectViews";
 import { styles } from "./MobileThreads.styles";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";

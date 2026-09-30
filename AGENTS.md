@@ -29,6 +29,17 @@
 - Text shimmer is the default progress treatment wherever meaningful text is available. Use a spinner only when shimmer cannot represent the pending state, and only after the user has explicitly approved that exception.
 - On failure, stop the shimmer, restore or reconcile the authoritative value, and expose the real error through the owning interaction instead of leaving a progress label behind.
 
+## macOS interface
+
+- Liquid Glass is the default design language across the menu, Setup and dialogs. Use native SwiftUI `glass`, `glassProminent`, `glassEffect` and `GlassEffectContainer` APIs for controls and navigation; do not approximate glass with hand-drawn gradients, blur or borders.
+- Do not place an opaque `windowBackgroundColor` over a glass window or use `tint(.primary)` to make secondary glass controls neutral: in dark appearance it produces a bright opaque tint. Let regular glass use its untinted appearance and keep semantic color on the label.
+- Keep one prominent action per screen. Use regular glass for secondary controls, and group neighboring glass controls in a `GlassEffectContainer`.
+- Let native windows, popovers and navigation sidebars own their chrome and glass. Do not wrap a titled window's entire content in another rounded `glassEffect`, make its titlebar transparent by hand, or draw a duplicate app header over system window controls. Use a native sidebar for Setup steps.
+- Keep content readable and QR codes on an opaque white surface with a quiet zone. Glass must not distort a QR code, invitation text or error details.
+- Respect Reduce Transparency, Increase Contrast and Reduce Motion. Preserve native keyboard focus, accessibility labels and meaningful pending labels.
+- Menu-bar managers can move a status-item window offscreen while its menu is open. Keep the last visible screen anchor when content resizes; never follow an offscreen anchor. Test repeated disclosure, native action-menu tracking and mouse-versus-keyboard focus using a running AppKit event loop, not only static view measurements.
+- Verify changed screens in both appearances, including unavailable, pending, empty and populated states. Fixture rendering is visual evidence, not a passed native interaction test.
+
 ## Android V1 feature boundary
 
 - The selected V1 ownership contract and implemented source tree are in [docs/android-v1-feature-architecture.md](docs/android-v1-feature-architecture.md); exact owner moves, lifetimes and migration gates are in [docs/android-v1-feature-migration.md](docs/android-v1-feature-migration.md). Read [apps/android/src/CONTEXT.md](apps/android/src/CONTEXT.md) and the nearest local ownership contract before a V1 source move. M0–M8 source migration is implemented; the migration ledger records completed automated checks and unverified device scenarios.

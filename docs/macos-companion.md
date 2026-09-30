@@ -14,10 +14,14 @@ newer. It does not bundle or launch the Linux CLI.
 - The LaunchAgent hosts `companion-core` in-process and exposes only a typed
   Mach/XPC management service to the menu app. There is no CLI, fixed local
   management HTTP listener, or Unix socket in the macOS bundle.
-- The production device data plane uses two random loopback TLS listeners only
-  as private targets of the outbound Relay adapter. Bootstrap requires the
-  one-time pairing proof; normal traffic requires registered-device mTLS. They
-  are not app-management endpoints and are never advertised as localhost APIs.
+- The device data plane listens on `0.0.0.0:8767` for direct WSS connections.
+  Its public router exposes only the bootstrap and device TLS tunnels, never
+  app-management endpoints. The native port is separate from the Linux CLI's
+  default port 8766, allowing a local SSH forward to that service to coexist.
+- Two random loopback TLS listeners serve as private targets of the direct
+  tunnels and optional outbound Relay adapter. Bootstrap requires the one-time
+  pairing proof; normal traffic requires registered-device mTLS. They are never
+  advertised as localhost APIs.
 - The Linux executable imports `companion-core` directly. Its pre-existing
   CLI-to-running-daemon control socket remains a compatibility surface; it is
   not a host-to-core boundary and this slice adds no new Linux IPC.
@@ -43,15 +47,20 @@ launch.
 
 ## Updates and state
 
-Sparkle 2.10.0 checks and downloads updates automatically. Both the appcast and
-archive are protected by Sparkle Ed25519 signatures. Before installation, the
+Sparkle 2.10.0 silently checks for update information when the menu opens, at
+most once per hour. An available version adds a dot to More Actions and an
+Install item; checking or installing manually opens the standard Sparkle UI.
+The app does not automatically download or install updates. No-update results
+and cancellation do not appear as errors or reconnect a healthy runtime.
+Both the appcast and archive are protected by Sparkle Ed25519 signatures. Before installation, the
 app asks the runtime over XPC to atomically persist an update checkpoint and
 exit successfully. On the first launch of the new helper, `companion-core`
 migrates state, preserves a schema-versioned backup, and reports app, host, core,
 schema, PID, launch count, and update result.
 
 The release workflow builds an ad-hoc universal bundle on macOS 26, generates a
-signed appcast, then performs a real Sparkle update from a baseline bundle. It
+signed appcast, then performs a real Sparkle update from a disposable baseline
+bundle with automatic installation enabled only for that CI test. It
 requires the new app, LaunchAgent, and core versions to come up with preserved
 state. It then sends `SIGKILL` to the runtime and requires launchd to return a
 new PID and higher launch count before publishing.
@@ -64,12 +73,33 @@ that exact build version before publication.
 
 ## Menu workflows
 
-On first launch, the app presents one temporary native setup window with
-short native transitions through Codex App Server selection, optional Relay
-setup, and client pairing. Relay can be skipped and client pairing deferred; a
-reachable App Server is required because it is the Companion's upstream. The
+On first launch, the app presents one temporary native setup window with two
+steps: Codex App Server selection and direct client pairing. Client pairing can
+be deferred; a reachable App Server is required because it is the Companion's upstream. The
 flow can be reopened later from the menu bar. Its persisted completion marker
 controls presentation only; every readiness state comes from the live runtime.
+
+The setup window uses native Liquid Glass buttons for step navigation and
+actions, grouped in `GlassEffectContainer`. Content uses the system window
+background and a native group box; QR codes retain an opaque white background.
+The window is resizable and its content scrolls independently of navigation.
+System appearance and glass accessibility adaptations remain native, and the
+step transition respects Reduce Motion.
+
+Add Client opens a one-time QR link directly. The address picker lists currently
+assigned IPv4 addresses, with LAN interfaces before VPN interfaces. Select an
+address reachable from the client, such as the Mac's Wi-Fi address on the same
+network. `0.0.0.0` is a listening address and never appears in the QR. Network
+changes refresh the available addresses; a stale address cannot produce a new
+link. The connection still requires routing/firewall reachability to the Mac;
+binding all interfaces does not create a NAT port forward.
+
+The QR contains the Companion's existing SPKI identity pin. Android accepts the
+direct server's self-signed outer TLS certificate only when that pin matches.
+CA-trusted ingress endpoints retain platform certificate and hostname checking.
+The independent inner pinned TLS and registered-device mTLS checks still apply.
+Android clients need the native direct-TLS change; updating JavaScript alone
+does not update this trust behavior.
 
 The LaunchAgent discovers the default `~/.codex` plus local `~/.codex-*`
 profiles that own a live App Server control endpoint. Rust performs the bounded
@@ -79,20 +109,27 @@ atomically persists its validated Codex home, exits the helper unsuccessfully,
 and lets launchd restart a fresh core against that upstream while retaining the
 same Companion state directory.
 
-The client-first menu-bar panel exposes four production workflows over signed XPC:
+The menu-bar panel exposes these workflows over signed XPC:
 
 - selected App Server, its live connection and version, plus compact Companion
   state and recovery failures;
-- Relay pairing from `host:port` plus the one-time JSON invitation, live
-  `connecting / online / reconnecting / disabled` reachability, and enable or
-  disable;
-- device pairing as a native QR code containing the Relay WSS endpoint, route
-  ID, Relay certificate pin, one-time token, Companion TLS pin, and identity expiry;
+- direct device pairing as a native QR code containing the selected Mac WSS
+  endpoint, one-time token, Companion TLS pin, and identity expiry;
 - paired device inventory with active sync-connection count, durable last-seen
   time, and immediate revoke.
 
+Existing Relay configuration and enable/disable controls remain under Advanced.
+Relay is not part of setup or a prerequisite for Add Client. The shared core's
+Relay adapter remains compatible with existing saved routes. New address-only
+pairing requires a Relay build with `codewide-relay pair`: run it on the Relay
+host, enter its displayed address in Add Relay, check the four symbols on both
+screens, and press Enter in the Relay terminal. The sixty-second window includes
+confirmation and connection. Closing the Mac dialog cancels the attempt; a
+failed attempt preserves the previous Relay configuration. No invitation JSON
+or credentials cross the macOS presentation/XPC status boundary.
+
 Online is not inferred from a recent timestamp. It is owned by scoped leases on
-actual V1/V2 sync WebSockets; the final disconnect updates durable last-seen
+actual sync WebSockets; the final disconnect updates durable last-seen
 state. Revoke removes authorization, closes subscribed live transports, and
 purges device-owned transient runtime state.
 

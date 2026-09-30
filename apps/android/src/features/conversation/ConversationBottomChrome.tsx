@@ -28,6 +28,7 @@ export function ConversationBottomChrome({
         <ThreadErrorBanner
           acceptsInput={failureNotice.acceptsInput}
           key={`${remoteThread?.id ?? ""}:${currentOutcome?.turnId ?? "unknown"}`}
+          kind={failureNotice.kind}
           message={failureNotice.message}
         />
       )}

@@ -1,42 +1,105 @@
 import AppKit
-import CodeWideShared
+import Combine
 import SwiftUI
 
 @main
 @MainActor
-struct CodeWideApp: App {
-    @StateObject private var runtime: RuntimeConnection
-    @StateObject private var updates: UpdateController
-    @StateObject private var onboarding: OnboardingWindowController
-    @StateObject private var dialogs: CompanionDialogController
+final class CodeWideApp: NSObject, NSApplicationDelegate {
+    private var menuBar: CompanionMenuBarController?
+    private var keepAwake: KeepAwakeController?
 
-    init() {
-        let runtime = RuntimeConnection()
-        let onboarding = OnboardingWindowController(runtime: runtime)
-        _runtime = StateObject(wrappedValue: runtime)
-        _updates = StateObject(wrappedValue: UpdateController(runtime: runtime))
-        _onboarding = StateObject(wrappedValue: onboarding)
-        _dialogs = StateObject(wrappedValue: CompanionDialogController(runtime: runtime))
-        runtime.start()
-        DispatchQueue.main.async {
-            onboarding.showIfNeeded()
-        }
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = CodeWideApp()
+        application.delegate = delegate
+        application.setActivationPolicy(.accessory)
+        withExtendedLifetime(delegate) { application.run() }
     }
 
-    var body: some Scene {
-        MenuBarExtra {
-            CompanionPanel(
-                runtime: runtime,
-                updates: updates,
-                onboarding: onboarding,
-                dialogs: dialogs
-            )
-        } label: {
-            Image(nsImage: Self.menuBarImage)
-                .opacity(runtime.health == nil ? 0.45 : 1)
-                .accessibilityLabel("CodeWide")
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        installApplicationMenu()
+        let runtime = RuntimeConnection()
+        let updates = UpdateController(runtime: runtime)
+        let dialogs = CompanionDialogController(runtime: runtime)
+        let keepAwake = KeepAwakeController()
+        self.keepAwake = keepAwake
+        let onboarding = OnboardingWindowController(runtime: runtime, showRelaySetup: {
+            dialogs.showRelaySetup()
+        })
+        menuBar = CompanionMenuBarController(runtime: runtime, updates: updates,
+                                             onboarding: onboarding, dialogs: dialogs,
+                                             keepAwake: keepAwake)
+        runtime.start()
+        onboarding.showIfNeeded()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        keepAwake?.stop()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Preserve standard text-field shortcuts in the native Relay and Setup windows.
+    private func installApplicationMenu() {
+        let menu = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu(title: "CodeWide")
+        appMenu.addItem(withTitle: "Quit CodeWide", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        menu.addItem(appItem)
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        for (title, action, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"),
+                                      ("Copy", "copy:", "c"), ("Paste", "paste:", "v"),
+                                      ("Select All", "selectAll:", "a")] {
+            editMenu.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
         }
-        .menuBarExtraStyle(.window)
+        editItem.submenu = editMenu
+        menu.addItem(editItem)
+        NSApplication.shared.mainMenu = menu
+    }
+}
+
+@MainActor
+final class CompanionMenuBarController: NSObject {
+    private let statusItem: NSStatusItem
+    private let panel: MenuBarPanel
+    private let runtime: RuntimeConnection
+    private var healthObservation: AnyCancellable?
+
+    init(runtime: RuntimeConnection, updates: UpdateController,
+         onboarding: OnboardingWindowController, dialogs: CompanionDialogController,
+         keepAwake: KeepAwakeController) {
+        self.runtime = runtime
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let button = statusItem.button
+        panel = MenuBarPanel(content: CompanionPanel(runtime: runtime, updates: updates,
+                                                      onboarding: onboarding, dialogs: dialogs,
+                                                      keepAwake: keepAwake)) { [weak button] in
+            button.flatMap { MenuBarAnchor.read(from: $0) }
+        }
+        super.init()
+        statusItem.autosaveName = "CodeWide"
+        if let button = statusItem.button {
+            button.image = Self.menuBarImage
+            button.setAccessibilityLabel("CodeWide")
+            button.toolTip = "CodeWide"
+            button.target = self
+            button.action = #selector(togglePopover)
+            healthObservation = runtime.$health.sink { [weak button] health in
+                button?.alphaValue = health == nil ? 0.45 : 1
+            }
+        }
+        panel.didClose = { [weak button] in button?.highlight(false) }
+    }
+
+    @objc private func togglePopover() {
+        if panel.isShown { panel.close() }
+        else if let button = statusItem.button {
+            let keyboardInitiated = NSApplication.shared.currentEvent?.type == .keyDown
+            panel.show(keyboardInitiated: keyboardInitiated)
+            button.highlight(panel.isShown)
+        }
     }
 
     private static var menuBarImage: NSImage {
@@ -52,426 +115,5 @@ struct CodeWideApp: App {
         }
         image.isTemplate = true
         return image
-    }
-}
-
-private struct CompanionPanel: View {
-    @ObservedObject var runtime: RuntimeConnection
-    @ObservedObject var updates: UpdateController
-    @ObservedObject var onboarding: OnboardingWindowController
-    @ObservedObject var dialogs: CompanionDialogController
-
-    @State private var actionError: String?
-    @State private var actionInProgress = false
-    @State private var dismissedError: String?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            overview
-            errorBanner
-            clients
-            footer
-        }
-        .frame(width: 400, height: 560)
-        .tint(CodeWideBrand.accent)
-        .task {
-            await runtime.discoverAppServers()
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 11) {
-            ZStack {
-                Circle()
-                    .fill(appServerColor.opacity(0.14))
-                Image(systemName: "server.rack")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(statusColor)
-            }
-            .frame(width: 32, height: 32)
-
-            VStack(alignment: .leading, spacing: 2) {
-                appServerPicker
-                Text(appServerSummary)
-                    .font(.caption)
-                    .foregroundStyle(appServerColor)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 12)
-
-            Button {
-                beginPairing()
-            } label: {
-                Image(systemName: "person.badge.plus")
-            }
-            .buttonStyle(.glass)
-            .help("Add client")
-            .disabled(runtime.health == nil || actionInProgress)
-
-            Button {
-                Task {
-                    await runtime.refresh()
-                    await runtime.discoverAppServers()
-                }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.glass)
-            .help("Refresh")
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 15)
-        .padding(.bottom, 11)
-    }
-
-    @ViewBuilder
-    private var appServerPicker: some View {
-        if runtime.appServers.count > 1 {
-            Menu {
-                ForEach(runtime.appServers, id: \.id) { server in
-                    Button {
-                        runAction {
-                            try await runtime.selectAppServer(id: server.id)
-                        }
-                    } label: {
-                        if server.selected {
-                            Label(appServerMenuTitle(server), systemImage: "checkmark")
-                        } else {
-                            Text(appServerMenuTitle(server))
-                        }
-                    }
-                    .disabled(!isAvailable(server) || server.selected || actionInProgress)
-                }
-                Divider()
-                Button("Scan Again") {
-                    Task { await runtime.discoverAppServers() }
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Text(runtime.appServer?.displayName ?? "Codex App Server")
-                        .font(.system(size: 14, weight: .semibold))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .menuIndicator(.hidden)
-            .buttonStyle(.plain)
-            .fixedSize()
-        } else {
-            Text(runtime.appServer?.displayName ?? "Codex App Server")
-                .font(.system(size: 14, weight: .semibold))
-                .lineLimit(1)
-        }
-    }
-
-    private var overview: some View {
-        HStack(spacing: 14) {
-            metric(
-                value: runtime.health == nil ? "Offline" : "Running",
-                label: "Companion",
-                color: runtime.health == nil ? .secondary : .green
-            )
-            metric(
-                value: relayMetricValue,
-                label: "Relay",
-                color: relayColor
-            )
-            metric(
-                value: "\(runtime.devices.count)",
-                label: runtime.devices.count == 1 ? "Client" : "Clients",
-                color: runtime.devices.isEmpty ? .secondary : CodeWideBrand.accent
-            )
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
-        .background(Color.primary.opacity(0.035))
-        .overlay(alignment: .bottom) {
-            Divider()
-                .allowsHitTesting(false)
-        }
-    }
-
-    @ViewBuilder
-    private var errorBanner: some View {
-        if let error = visibleError, dismissedError != error {
-            HStack(alignment: .top, spacing: 9) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.red)
-                    .frame(width: 16, height: 16)
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    dismissedError = error
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
-            .padding(11)
-            .background(
-                Color.red.opacity(0.075),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.red.opacity(0.16), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 11)
-        }
-    }
-
-    private var clients: some View {
-        Group {
-            if runtime.devices.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "iphone.and.arrow.forward")
-                        .font(.system(size: 30, weight: .regular))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 64, height: 64)
-                        .background(Color.primary.opacity(0.055), in: Circle())
-                    Text("No clients")
-                        .font(.headline)
-                    Text(emptyClientsDescription)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 260)
-                    Button("Add client") {
-                        beginPairing()
-                    }
-                    .buttonStyle(.glassProminent)
-                    .disabled(runtime.health == nil || actionInProgress)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(runtime.devices, id: \.id) { device in
-                            deviceRow(device)
-                            if device.id != runtime.devices.last?.id {
-                                Divider().padding(.leading, 42)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func deviceRow(_ device: DeviceStatusPayload) -> some View {
-        HStack(spacing: 9) {
-            statusDot(color: device.activeConnections > 0 ? .green : .secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(device.name)
-                    .font(.subheadline.weight(.medium))
-                Text(device.activeConnections > 0 ? "Online" : lastSeenText(device))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button(role: .destructive) {
-                guard CompanionNativeDialog.confirmDestructive(
-                    title: "Revoke \(device.name)?",
-                    message: "It will be disconnected immediately and must be added again.",
-                    actionTitle: "Revoke Client"
-                ) else {
-                    return
-                }
-                runAction {
-                    try await runtime.revokeDevice(id: device.id)
-                }
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.plain)
-            .help("Revoke client \(device.name)")
-            .disabled(actionInProgress)
-        }
-        .padding(.vertical, 11)
-        .padding(.horizontal, 4)
-    }
-
-    private var footer: some View {
-        HStack {
-            if let health = runtime.health {
-                Text("CodeWide \(health.appVersion) · Core \(health.coreVersion)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Menu {
-                if runtime.requiresApproval {
-                    Button("Open Login Items Settings") {
-                        runtime.openLoginItemsSettings()
-                    }
-                }
-                Button(runtime.relay?.configured == true ? "Change Relay…" : "Add Relay…") {
-                    dialogs.showRelaySetup(for: .configureRelay)
-                }
-                if runtime.relay?.configured == true {
-                    Button(runtime.relay?.enabled == true ? "Disable Relay" : "Enable Relay") {
-                        runAction {
-                            try await runtime.setRelayEnabled(runtime.relay?.enabled != true)
-                        }
-                    }
-                }
-                Divider()
-                Button(updates.availableVersion.map { "Install \($0)" } ?? "Check for Updates…") {
-                    updates.checkForUpdates()
-                }
-                .disabled(!updates.canCheckForUpdates)
-                Button("Run Setup Again…") {
-                    onboarding.show()
-                }
-                Divider()
-                Button("Quit CodeWide") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .keyboardShortcut("q")
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .overlay(alignment: .top) {
-            Divider()
-                .allowsHitTesting(false)
-        }
-    }
-
-    private var statusColor: Color {
-        appServerColor
-    }
-
-    private var appServerColor: Color {
-        guard runtime.health != nil else { return .secondary }
-        guard let appServer = runtime.appServer else { return .orange }
-        switch appServer.state {
-        case .available: return .green
-        case .unavailable: return .orange
-        }
-    }
-
-    private var relayColor: Color {
-        switch runtime.relay?.connection {
-        case "online": .green
-        case "connecting", "reconnecting": .orange
-        default: .secondary
-        }
-    }
-
-    private var relayMetricValue: String {
-        guard let relay = runtime.relay, relay.configured else { return "Not set" }
-        switch relay.connection {
-        case "online": return "Online"
-        case "connecting", "reconnecting": return "Connecting"
-        default: return "Disabled"
-        }
-    }
-
-    private var appServerSummary: String {
-        guard let server = runtime.appServer else { return runtime.status }
-        switch server.state {
-        case let .available(version):
-            return version.map { "App Server \($0)" } ?? "App Server connected"
-        case let .unavailable(lastKnownVersion):
-            return lastKnownVersion.map { "App Server \($0) unavailable" } ?? "App Server unavailable"
-        }
-    }
-
-    private var emptyClientsDescription: String {
-        runtime.relay?.connection == "online"
-            ? "Create a secure QR code or copyable link for a new client."
-            : "Add a Relay before connecting your first client."
-    }
-
-    private var visibleError: String? {
-        actionError ?? runtime.lastError ?? updates.lastError
-    }
-
-    private func metric(value: String, label: String, color: Color) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(value)
-                .font(.caption.weight(.semibold))
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func appServerMenuTitle(_ server: AppServerPayload) -> String {
-        switch server.state {
-        case let .available(version):
-            version.map { "\(server.displayName) · \($0)" } ?? server.displayName
-        case .unavailable:
-            "\(server.displayName) · Unavailable"
-        }
-    }
-
-    private func isAvailable(_ server: AppServerPayload) -> Bool {
-        if case .available = server.state {
-            return true
-        }
-        return false
-    }
-
-    private func statusDot(color: Color) -> some View {
-        Circle().fill(color).frame(width: 8, height: 8)
-    }
-
-    private func lastSeenText(_ device: DeviceStatusPayload) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(device.lastSeenAtUnixMilliseconds) / 1_000)
-        return "Last seen \(date.formatted(.relative(presentation: .named)))"
-    }
-
-    private func beginPairing() {
-        dismissedError = nil
-        guard runtime.relay?.connection == "online" else {
-            if runtime.relay?.configured == true {
-                actionError = "Relay is unavailable. Wait for it to reconnect before adding a client."
-            } else {
-                dialogs.showRelaySetup(for: .pairClient)
-            }
-            return
-        }
-        runAction {
-            let pairing = try await runtime.createPairing()
-            dialogs.showPairing(pairing)
-        }
-    }
-
-    private func runAction(_ action: @escaping @MainActor () async throws -> Void) {
-        guard !actionInProgress else { return }
-        actionInProgress = true
-        actionError = nil
-        dismissedError = nil
-        Task {
-            defer { actionInProgress = false }
-            do {
-                try await action()
-            } catch {
-                actionError = error.localizedDescription
-            }
-        }
     }
 }

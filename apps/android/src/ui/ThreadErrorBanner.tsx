@@ -7,16 +7,19 @@ import { AppText } from "./AppText";
 /** Non-modal failure details; expanding them never covers or disables the composer. */
 export function ThreadErrorBanner({
   acceptsInput,
+  kind,
   message,
 }: {
   acceptsInput: boolean;
+  kind: "conversationOpenElsewhere" | "generic";
   message: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const openElsewhere = kind === "conversationOpenElsewhere";
   return (
     <View style={styles.root} testID="thread-error-banner">
       <AppText accessibilityRole="alert" style={styles.title}>
-        Response failed
+        {openElsewhere ? "Conversation open elsewhere" : "Response failed"}
       </AppText>
       {expanded && (
         <ScrollView nestedScrollEnabled style={styles.details}>
@@ -32,9 +35,11 @@ export function ThreadErrorBanner({
       )}
       <View style={styles.footer}>
         <AppText style={styles.hint}>
-          {acceptsInput
-            ? "You can send a new message."
-            : "This message was not automatically retried."}
+          {openElsewhere
+            ? "Your message wasn’t sent."
+            : acceptsInput
+              ? "You can send a new message."
+              : "This message was not automatically retried."}
         </AppText>
         <Pressable
           accessibilityRole="button"
