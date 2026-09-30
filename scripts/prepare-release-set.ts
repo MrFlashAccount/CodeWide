@@ -4,6 +4,15 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import {
+  readReleaseDelivery,
+  releaseProductIds,
+  releaseTag,
+  releaseVersion,
+  type ReleaseDelivery,
+  type ReleaseProduct,
+  type ReleaseProductAsset,
+} from "./release-product-contract.ts";
 
 type ReleasePlan = {
   readonly base: string;
@@ -11,16 +20,10 @@ type ReleasePlan = {
   readonly version: string;
   readonly tag: string;
   readonly affected: readonly string[];
-  readonly targets: readonly string[];
+  readonly targets: readonly ReleaseDelivery[];
 };
 
-type Asset = {
-  readonly name: string;
-  readonly sha256: string;
-  readonly size: number;
-};
-
-const requiredTargets = ["relay", "companion-linux", "macos", "android-apk"];
+type Asset = ReleaseProductAsset;
 
 function record(value: unknown, field: string): Readonly<Record<string, unknown>> {
   if (!isRecord(value)) throw new Error(`${field} must be an object`);
@@ -32,7 +35,8 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function string(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length === 0) throw new Error(`${field} must be a non-empty string`);
+  if (typeof value !== "string" || value.length === 0)
+    throw new Error(`${field} must be a non-empty string`);
   return value;
 }
 
@@ -46,22 +50,32 @@ function stringList(value: unknown, field: string): readonly string[] {
 function readPlan(path: string): ReleasePlan {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
   const plan = record(value, "release plan");
-  const version = string(plan.version, "version");
-  if (!/^\d+\.\d+\.\d+$/u.test(version) || plan.tag !== `v${version}`) {
-    throw new Error("Release tag and semantic version disagree");
-  }
+  const version = releaseVersion(plan.version);
+  const tag = releaseTag(plan.tag);
   const sourceRevision = string(plan.sourceRevision, "sourceRevision");
-  if (!/^[0-9a-f]{40}$/u.test(sourceRevision)) throw new Error("sourceRevision must be a full Git SHA");
+  if (!/^[0-9a-f]{40}$/u.test(sourceRevision))
+    throw new Error("sourceRevision must be a full Git SHA");
   if (!Array.isArray(plan.targets)) throw new Error("targets must be an array");
-  const targets = plan.targets.map((target) => string(record(target, "target").id, "target.id"));
-  if (targets.length !== requiredTargets.length || requiredTargets.some((id) => !targets.includes(id))) {
+  const targets = plan.targets.map(readReleaseDelivery);
+  if (
+    targets.length !== releaseProductIds.length ||
+    new Set(targets.map(({ id }) => id)).size !== releaseProductIds.length
+  ) {
     throw new Error("An atomic CodeWide release requires all four products");
+  }
+  for (const target of targets) {
+    if (
+      target.delivery === "build" &&
+      (target.sourceTag !== tag || target.sourceRevision !== sourceRevision)
+    ) {
+      throw new Error("Built product must belong to this release revision and tag");
+    }
   }
   return {
     base: string(plan.base, "base"),
     sourceRevision,
     version,
-    tag: `v${version}`,
+    tag,
     affected: stringList(plan.affected, "affected"),
     targets,
   };
@@ -69,10 +83,6 @@ function readPlan(path: string): ReleasePlan {
 
 function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
-
-function sourcePath(root: string, artifact: string, filename: string): string {
-  return join(root, artifact, filename);
 }
 
 function verifyChecksum(path: string): void {
@@ -99,9 +109,12 @@ function stageChecksum(asset: Asset, output: string): Asset {
 }
 
 function gitLog(base: string, head: string): readonly string[] {
-  const result = spawnSync("git", ["log", "--no-merges", "--format=%s", `${base}..${head}`], { encoding: "utf8" });
+  const result = spawnSync("git", ["log", "--no-merges", "--format=%s", `${base}..${head}`], {
+    encoding: "utf8",
+  });
   if (result.error !== undefined) throw result.error;
-  if (result.status !== 0) throw new Error(`Could not read release changes: ${result.stderr.trim()}`);
+  if (result.status !== 0)
+    throw new Error(`Could not read release changes: ${result.stderr.trim()}`);
   return result.stdout.split("\n").filter((line) => line.length > 0);
 }
 
@@ -110,68 +123,160 @@ function releaseNotes(plan: ReleasePlan, assets: readonly Asset[]): string {
   return [
     `# CodeWide ${plan.tag}`,
     "",
-    `One build from commit \`${plan.sourceRevision.slice(0, 12)}\`: Android APK, macOS app and signed update feed, Linux Companion, and Relay.`,
+    `Release set from commit \`${plan.sourceRevision.slice(0, 12)}\`. Unchanged products retain their original versions and build revisions.`,
+    "",
+    ...plan.targets.map(
+      (target) =>
+        `- ${target.id}: ${target.version} (${target.delivery}, source \`${target.sourceRevision.slice(0, 12)}\`)`,
+    ),
     "",
     "## Changes",
     "",
-    ...(changes.length === 0 ? ["No commits since the previous release."] : changes.map((subject) => `- ${subject}`)),
+    ...(changes.length === 0
+      ? ["No commits since the previous release."]
+      : changes.map((subject) => `- ${subject}`)),
     "",
     "## Downloads",
     "",
-    ...assets.filter(({ name }) => !name.endsWith(".sha256")).map(({ name }) => `- [${name}](https://github.com/MrFlashAccount/CodeWide/releases/download/${plan.tag}/${name})`),
+    ...assets
+      .filter(({ name }) => !name.endsWith(".sha256"))
+      .map(
+        ({ name }) =>
+          `- [${name}](https://github.com/MrFlashAccount/CodeWide/releases/download/${plan.tag}/${name})`,
+      ),
     "",
     "Checksums are in `SHA256SUMS`. The macOS app is signed for Sparkle updates but is not notarized.",
     "",
   ].join("\n");
 }
 
-export function prepareReleaseSet(planPath: string, artifactRoot: string, outputRoot: string): void {
-  const plan = readPlan(planPath);
-  const version = plan.version;
-  const assetRoot = join(outputRoot, "assets");
-  mkdirSync(assetRoot, { recursive: true });
-
-  const relay = sourcePath(artifactRoot, `codewide-relay-${version}-linux-x86_64`, "codewide-relay-x86_64-unknown-linux-musl");
-  const companionName = `codewide-companion-${version}-x86_64-unknown-linux-musl.tar.gz`;
-  const companion = sourcePath(artifactRoot, `codewide-companion-${version}-linux-x86_64`, companionName);
-  const dmgName = `CodeWide-${version}.dmg`;
-  const dmg = sourcePath(artifactRoot, `CodeWide-${version}`, dmgName);
-  const appcast = sourcePath(artifactRoot, `CodeWide-${version}`, "appcast.xml");
-  const apk = sourcePath(artifactRoot, `CodeWide-Android-${version}`, "app-release.apk");
-  for (const path of [relay, companion, apk]) verifyChecksum(path);
-  const feed = readFileSync(appcast, "utf8");
-  if (!feed.includes(`/releases/download/${plan.tag}/${dmgName}`) || !feed.includes("sparkle:edSignature=")) {
-    throw new Error("Signed macOS appcast does not point to this release's DMG");
-  }
+function androidAssetName(version: string): string {
   const versionParts = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
   if (versionParts === null) throw new Error("Invalid release version");
   const major = Number(versionParts[1]);
   const minor = Number(versionParts[2]);
   const patch = Number(versionParts[3]);
-  const androidVersionCode = major * 100000000 + minor * 100000 + patch;
-  if (!Number.isSafeInteger(androidVersionCode) || major > 20 || minor > 999 || patch > 99999) {
+  const code = major * 100000000 + minor * 100000 + patch;
+  if (!Number.isSafeInteger(code) || major > 20 || minor > 999 || patch > 99999)
     throw new Error("Android version cannot be represented as a versionCode");
+  return `CodeWide-${version}-${code}.apk`;
+}
+
+function productFiles(
+  target: ReleaseDelivery,
+): readonly { readonly name: string; readonly artifact: string; readonly filename: string }[] {
+  const version = target.version;
+  switch (target.id) {
+    case "relay":
+      return [
+        {
+          name: "codewide-relay-x86_64-unknown-linux-musl",
+          artifact: `codewide-relay-${version}-linux-x86_64`,
+          filename: "codewide-relay-x86_64-unknown-linux-musl",
+        },
+      ];
+    case "companion-linux": {
+      const name = `codewide-companion-${version}-x86_64-unknown-linux-musl.tar.gz`;
+      return [{ name, artifact: `codewide-companion-${version}-linux-x86_64`, filename: name }];
+    }
+    case "macos":
+      return [
+        {
+          name: `CodeWide-${version}.dmg`,
+          artifact: `CodeWide-${version}`,
+          filename: `CodeWide-${version}.dmg`,
+        },
+        { name: "appcast.xml", artifact: `CodeWide-${version}`, filename: "appcast.xml" },
+      ];
+    case "android-apk":
+      return [
+        {
+          name: androidAssetName(version),
+          artifact: `CodeWide-Android-${version}`,
+          filename: "app-release.apk",
+        },
+      ];
   }
-  const primaryAssets = [
-    stageAsset(relay, basename(relay), assetRoot),
-    stageAsset(companion, companionName, assetRoot),
-    stageAsset(dmg, dmgName, assetRoot),
-    stageAsset(appcast, "appcast.xml", assetRoot),
-    stageAsset(apk, `CodeWide-${version}-${androidVersionCode}.apk`, assetRoot),
-  ];
+}
+
+function stageProduct(target: ReleaseDelivery, root: string, output: string): ReleaseProduct {
+  const files = productFiles(target);
+  if (
+    target.delivery === "reuse" &&
+    (target.assets.length !== files.length ||
+      files.some(({ name }) => !target.assets.some((asset) => asset.name === name)))
+  ) {
+    throw new Error(`Reused ${target.id} assets do not match its declared version`);
+  }
+  const assets = files.map(({ name, artifact, filename }) => {
+    const path =
+      target.delivery === "reuse"
+        ? join(root, "reused-products", name)
+        : join(root, artifact, filename);
+    if (target.delivery === "build" && target.id !== "macos") verifyChecksum(path);
+    if (target.delivery === "reuse") {
+      const original = target.assets.find((asset) => asset.name === name);
+      if (
+        original === undefined ||
+        readFileSync(path).length !== original.size ||
+        sha256(path) !== original.sha256
+      ) {
+        throw new Error(`Reused asset checksum mismatch: ${name}`);
+      }
+    }
+    if (name === "appcast.xml") {
+      const feed = readFileSync(path, "utf8");
+      if (
+        !feed.includes(`/releases/download/${target.sourceTag}/CodeWide-${target.version}.dmg`) ||
+        !feed.includes("sparkle:edSignature=")
+      ) {
+        throw new Error("Signed macOS appcast does not point to this product's DMG");
+      }
+    }
+    return stageAsset(path, name, output);
+  });
+  return {
+    id: target.id,
+    version: target.version,
+    sourceRevision: target.sourceRevision,
+    sourceTag: target.sourceTag,
+    assets,
+  };
+}
+
+export function prepareReleaseSet(
+  planPath: string,
+  artifactRoot: string,
+  outputRoot: string,
+): void {
+  const plan = readPlan(planPath);
+  const assetRoot = join(outputRoot, "assets");
+  mkdirSync(assetRoot, { recursive: true });
+
+  const products = plan.targets.map((target) => stageProduct(target, artifactRoot, assetRoot));
+  const primaryAssets = products.flatMap(({ assets }) => assets);
   const assets = [
     ...primaryAssets,
-    ...primaryAssets.filter(({ name }) => name !== "appcast.xml" && !name.endsWith(".dmg"))
+    ...primaryAssets
+      .filter(({ name }) => name !== "appcast.xml" && !name.endsWith(".dmg"))
       .map((asset) => stageChecksum(asset, assetRoot)),
   ];
   const sums = assets.map(({ name, sha256: digest }) => `${digest}  ${name}`).join("\n");
   writeFileSync(join(assetRoot, "SHA256SUMS"), `${sums}\n`);
-  writeFileSync(join(assetRoot, "release-manifest.json"), `${JSON.stringify({
-    tag: plan.tag,
-    sourceRevision: plan.sourceRevision,
-    affected: plan.affected,
-    assets,
-  }, null, 2)}\n`);
+  writeFileSync(
+    join(assetRoot, "release-manifest.json"),
+    `${JSON.stringify(
+      {
+        tag: plan.tag,
+        sourceRevision: plan.sourceRevision,
+        affected: plan.affected,
+        products,
+        assets,
+      },
+      null,
+      2,
+    )}\n`,
+  );
   writeFileSync(join(outputRoot, "release-notes.md"), releaseNotes(plan, assets));
 }
 
@@ -183,7 +288,9 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === import.meta.fi
     }
     prepareReleaseSet(planPath, artifactRoot, outputRoot);
   } catch (error) {
-    process.stderr.write(`prepare-release-set: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `prepare-release-set: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     process.exitCode = 1;
   }
 }

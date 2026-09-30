@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if [ "$1" = --version ]; then
+  printf 'codex-cli 999.0.0\n'
+  exit 0
+fi
+printf '%s|%s %s %s' "$CODEX_HOME" "$1" "$2" "$3" > "${CODEX_HOME%/*}/invocation.txt"

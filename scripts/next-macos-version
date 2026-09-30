@@ -2,11 +2,12 @@
 set -eu
 
 BUMP=${1-}
+CURRENT_VERSION=${2-}
 
 case "$BUMP" in
   patch|minor|major) ;;
   *)
-    printf 'Usage: %s <patch|minor|major>\n' "$0" >&2
+    printf 'Usage: %s <patch|minor|major> [previous-product-version]\n' "$0" >&2
     exit 2
     ;;
 esac
@@ -14,18 +15,24 @@ esac
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$REPO_ROOT"
 
-LATEST_TAG=$(git tag --list 'v*' --sort=-version:refname \
-  | grep -E '^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$' \
-  | head -n 1 || true)
-if [ -n "$LATEST_TAG" ]; then
-  CURRENT_VERSION=${LATEST_TAG#v}
-else
-  CURRENT_VERSION=$(node -e '
-    const { readFileSync } = require("node:fs");
-    const project = JSON.parse(readFileSync("apps/companion-macos/project.json", "utf8"));
-    process.stdout.write(project.metadata.codewideRelease.baselineVersion);
-  ')
+if [ -z "$CURRENT_VERSION" ]; then
+  LATEST_TAG=$(git tag --list 'v*' --sort=-version:refname \
+    | grep -E '^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$' \
+    | head -n 1 || true)
+  if [ -n "$LATEST_TAG" ]; then
+    CURRENT_VERSION=${LATEST_TAG#v}
+  else
+    CURRENT_VERSION=$(node -e '
+      const { readFileSync } = require("node:fs");
+      const project = JSON.parse(readFileSync("apps/companion-macos/project.json", "utf8"));
+      process.stdout.write(project.metadata.codewideRelease.baselineVersion);
+    ')
+  fi
 fi
+printf '%s\n' "$CURRENT_VERSION" | grep -Eq '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$' || {
+  printf '%s\n' 'Invalid previous macOS product version.' >&2
+  exit 2
+}
 
 OLD_IFS=$IFS
 IFS=.

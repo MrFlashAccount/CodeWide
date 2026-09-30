@@ -23,7 +23,21 @@ if [ -z "$release_tag" ]; then
     *) usage ;;
   esac
 fi
-printf '%s\n' "$release_tag" | grep -Eq '^[a-z-]*v[0-9]+[.][0-9]+[.][0-9]+$' || usage
+printf '%s\n' "$release_tag" | grep -Eq '^([a-z-]*v[0-9]+[.][0-9]+[.][0-9]+|release-[0-9]{4}-[0-9]{2}-[0-9]{2}[.][1-9][0-9]*)$' || usage
+case "$product" in
+  linux) product_id=companion-linux ;;
+  macos) product_id=macos ;;
+  relay) product_id=relay ;;
+  *) usage ;;
+esac
+# A pinned version keeps its original build even when later inventories reuse it.
+index="$tap_root/releases/$product_id/$version"
+if [ -f "$index" ] && [ "$(cat "$index")" != "$release_tag" ]; then
+  printf '%s\n' 'Refusing to change the origin of a published product version.' >&2
+  exit 1
+fi
+mkdir -p "$tap_root/releases/$product_id"
+printf '%s\n' "$release_tag" >"$index"
 mkdir -p "$tap_root/Formula" "$tap_root/Casks"
 
 case "$product" in
@@ -41,18 +55,23 @@ case "$product" in
     ;;
   macos)
     cask="$tap_root/Casks/codewide.rb"
+    mkdir -p "$tap_root/versions"
     sed \
       -e "s/@VERSION@/$version/g" \
       -e "s/@SHA256@/$sha256/g" \
+      -e "s/@RELEASE_TAG@/$release_tag/g" \
       "$(dirname -- "$0")/../packaging/homebrew/codewide.rb.in" >"$cask"
+    printf '%s\n' "$version" >"$tap_root/versions/macos"
     ;;
   relay)
     formula="$tap_root/Formula/relay.rb"
+    mkdir -p "$tap_root/versions"
     sed \
       -e "s/@VERSION@/$version/g" \
       -e "s/@SHA256@/$sha256/g" \
       -e "s/@RELEASE_TAG@/$release_tag/g" \
       "$(dirname -- "$0")/../packaging/homebrew/relay.rb.in" >"$formula"
+    printf '%s\n' "$version" >"$tap_root/versions/relay"
     ;;
   *) usage ;;
 esac

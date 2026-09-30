@@ -19,6 +19,7 @@ if [ -z "$private_key" ]; then
   echo "SPARKLE_PRIVATE_KEY is required." >&2
   exit 1
 fi
+baseline_version=$(plutil -extract CFBundleShortVersionString raw "$baseline_app/Contents/Info.plist")
 
 root=$(mktemp -d "${TMPDIR:-/tmp}/codewide-update-e2e.XXXXXX")
 test_app="$HOME/Applications/CodeWide-E2E-$$.app"
@@ -46,7 +47,6 @@ dump_diagnostics() {
     "$state_dir/runtime-state.json" \
     "$state_dir/runtime-state.v0.backup.json" \
     "$state_dir/devices.json" \
-    "$state_dir/identity/secure-store.json" \
     "$report_marker"; do
     if [ -f "$state_file" ]; then
       stat -f '%Sp %Su:%Sg %N' "$state_file" >&2 || true
@@ -105,8 +105,8 @@ if [ -L "$state_dir" ]; then
 fi
 rm -rf -- "$state_dir"
 mkdir -p "$state_dir" "$HOME/Applications" "$feed_dir"
-printf '%s\n' '{"schemaVersion":0,"launchCount":0,"lastCoreVersion":"0.0.0"}' \
-  > "$state_dir/runtime-state.json"
+jq -n --arg version "$baseline_version" \
+  '{schemaVersion:0,launchCount:0,lastCoreVersion:$version}' > "$state_dir/runtime-state.json"
 printf '%s\n' '{"version":5,"devices":[],"pairings":[]}' > "$state_dir/devices.json"
 chmod 0600 "$state_dir/devices.json"
 printf '%s\n' 'preserve-across-update' > "$state_dir/update-state-sentinel"
@@ -142,10 +142,10 @@ CODEWIDE_UPDATE_FEED_URL="http://127.0.0.1:$port/appcast.xml" \
 baseline_ready=false
 attempt=0
 while [ "$attempt" -lt 30 ]; do
-  if [ -f "$report" ] && jq -e '
-    .appVersion == "0.0.0" and
-    .hostVersion == "0.0.0" and
-    .coreVersion == "0.0.0" and
+  if [ -f "$report" ] && jq -e --arg version "$baseline_version" '
+    .appVersion == $version and
+    .hostVersion == $version and
+    .coreVersion == $version and
     .stateSchema == 1 and
     .updateStatus == "none"
   ' "$report" >/dev/null; then
@@ -170,6 +170,7 @@ attempt=0
 while [ "$attempt" -lt 180 ]; do
   if [ -f "$report" ] && jq -e \
     --arg version "$target_version" \
+    --arg previousVersion "$baseline_version" \
     --argjson baselineAppPid "$baseline_app_pid" \
     --argjson baselineRuntimePid "$baseline_runtime_pid" '
     .phase == "running" and
@@ -180,7 +181,7 @@ while [ "$attempt" -lt 180 ]; do
     .processId != $baselineRuntimePid and
     .stateSchema == 1 and
     .updateStatus == "applied" and
-    .updateFromVersion == "0.0.0" and
+    .updateFromVersion == $previousVersion and
     .updateTargetVersion == $version
   ' "$report" >/dev/null; then
     updated=true

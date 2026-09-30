@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Version increment for the complete CodeWide release"
+        description: "Version increment for changed products (the release itself is dated)"
         required: true
         default: patch
         type: choice
@@ -14,7 +14,7 @@ on:
           - minor
           - major
       base:
-        description: "Optional Git base; defaults to the latest complete vX.Y.Z release"
+        description: "Optional Git base; defaults to the previous published inventory revision"
         required: false
         type: string
       dry_run:
@@ -82,14 +82,42 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Read the previous published product inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 1000 --json tagName --jq '[.[].tagName]' > reserved-release-tags.json
+          previous_tag=$(sh scripts/latest-published-release)
+          if [[ -z "$previous_tag" ]]; then
+            exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$previous_tag" > previous-release.json
+          inventory_count=$(jq '[.assets[] | select(.name == "release-manifest.json")] | length' previous-release.json)
+          if [[ "$inventory_count" == 0 ]]; then
+            if [[ "$previous_tag" == release-* ]]; then
+              echo "A dated release must have a verifiable product inventory."
+              exit 1
+            fi
+            echo "Legacy release has no product inventory; build all products once."
+            exit 0
+          fi
+          test "$inventory_count" = 1
+          digest=$(jq -r '.assets[] | select(.name == "release-manifest.json") | .digest' previous-release.json)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh release download "$previous_tag" --pattern release-manifest.json --dir previous-release
+          printf '%s  %s\n' "${digest#sha256:}" previous-release/release-manifest.json | sha256sum --check
+
       - name: Calculate release set
         env:
           REQUESTED_BASE: ${{ inputs.base }}
           VERSION_BUMP: ${{ inputs.bump }}
         run: |
-          args=(--bump "$VERSION_BUMP" --head "$GITHUB_SHA" --json)
+          args=(--bump "$VERSION_BUMP" --head "$GITHUB_SHA" --reserved-tags reserved-release-tags.json --json)
           if [[ -n "$REQUESTED_BASE" ]]; then
             args+=(--base "$REQUESTED_BASE")
+          fi
+          if [[ -f previous-release/release-manifest.json ]]; then
+            args+=(--previous-manifest previous-release/release-manifest.json)
           fi
           node scripts/release-set-plan.ts "${args[@]}" > release-set-plan.json
           jq -r 'if (.targets | length) == 0 then "Release set: none" else "Release set: " + ([.targets[] | .id + "@" + .version] | join(", ")) end' release-set-plan.json
@@ -102,7 +130,7 @@ jobs:
           echo "has_targets=$(jq '(.targets | length) > 0' release-set-plan.json)" >> "$GITHUB_OUTPUT"
           for target in relay companion-linux macos android-apk; do
             output_name="${target//-/_}"
-            selected=$(jq --arg target "$target" 'any(.targets[]; .id == $target)' release-set-plan.json)
+            selected=$(jq --arg target "$target" 'any(.targets[]; .id == $target and .delivery == "build")' release-set-plan.json)
             version=$(jq -r --arg target "$target" 'first(.targets[] | select(.id == $target) | .version) // ""' release-set-plan.json)
             base=$(jq -r --arg target "$target" 'first(.targets[] | select(.id == $target) | .base) // ""' release-set-plan.json)
             echo "$output_name=$selected" >> "$GITHUB_OUTPUT"
@@ -136,13 +164,8 @@ jobs:
     secrets: inherit
 
   companion-linux:
-    needs:
-      - plan
-      - relay
-    if: >-
-      ${{ always() && needs.plan.result == 'success' &&
-          (needs.relay.result == 'success' || needs.relay.result == 'skipped') &&
-          needs.plan.outputs.companion_linux == 'true' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.companion_linux == 'true' }}
     uses: ./.github/workflows/companion-linux-release.yml
     with:
       version: ${{ needs.plan.outputs.companion_linux_version }}
@@ -153,18 +176,12 @@ jobs:
     secrets: inherit
 
   macos:
-    needs:
-      - plan
-      - relay
-      - companion-linux
-    if: >-
-      ${{ always() && needs.plan.result == 'success' &&
-          (needs.relay.result == 'success' || needs.relay.result == 'skipped') &&
-          (needs['companion-linux'].result == 'success' || needs['companion-linux'].result == 'skipped') &&
-          needs.plan.outputs.macos == 'true' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.macos == 'true' }}
     uses: ./.github/workflows/macos-release.yml
     with:
       version: ${{ needs.plan.outputs.macos_version }}
+      release_tag: ${{ needs.plan.outputs.tag }}
       base: ${{ needs.plan.outputs.macos_base }}
       dry_run: true
       force: true
@@ -172,17 +189,8 @@ jobs:
     secrets: inherit
 
   android-apk:
-    needs:
-      - plan
-      - relay
-      - companion-linux
-      - macos
-    if: >-
-      ${{ always() && needs.plan.result == 'success' &&
-          (needs.relay.result == 'success' || needs.relay.result == 'skipped') &&
-          (needs['companion-linux'].result == 'success' || needs['companion-linux'].result == 'skipped') &&
-          (needs.macos.result == 'success' || needs.macos.result == 'skipped') &&
-          needs.plan.outputs.android_apk == 'true' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.android_apk == 'true' }}
     uses: ./.github/workflows/android-release.yml
     with:
       version: ${{ needs.plan.outputs.android_apk_version }}
@@ -192,6 +200,33 @@ jobs:
       request_id: release-set-${{ github.run_id }}-${{ github.run_attempt }}
     secrets: inherit
 
+  reuse:
+    needs: plan
+    if: ${{ needs.plan.outputs.has_targets == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+      - name: Download release plan
+        uses: actions/download-artifact@v8.0.0
+        with:
+          name: release-set-plan
+          path: release-plan
+      - name: Fetch and verify unchanged published products
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/reuse-release-products.ts release-plan/release-set-plan.json reused-products
+      - name: Upload reused products
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: reused-products
+          path: reused-products
+          if-no-files-found: ignore
+
   publish:
     needs:
       - plan
@@ -199,10 +234,14 @@ jobs:
       - companion-linux
       - macos
       - android-apk
+      - reuse
     if: >-
-      ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.has_targets == 'true' &&
-          needs.relay.result == 'success' && needs['companion-linux'].result == 'success' &&
-          needs.macos.result == 'success' && needs['android-apk'].result == 'success' }}
+      ${{ always() && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_targets == 'true' &&
+          (needs.relay.result == 'success' || needs.relay.result == 'skipped') &&
+          (needs['companion-linux'].result == 'success' || needs['companion-linux'].result == 'skipped') &&
+          (needs.macos.result == 'success' || needs.macos.result == 'skipped') &&
+          (needs['android-apk'].result == 'success' || needs['android-apk'].result == 'skipped') &&
+          needs.reuse.result == 'success' }}
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -276,7 +315,7 @@ jobs:
     needs:
       - plan
       - publish
-    if: ${{ inputs.dry_run != true && needs.publish.result == 'success' }}
+    if: ${{ always() && !cancelled() && inputs.dry_run != true && needs.plan.result == 'success' && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -296,7 +335,6 @@ jobs:
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           test -n "$TAP_DEPLOY_KEY"
-          version="${RELEASE_TAG#v}"
           tap_root="$RUNNER_TEMP/homebrew-codewide"
           ssh_root="$RUNNER_TEMP/homebrew-ssh"
           mkdir -p "$ssh_root"
@@ -306,18 +344,25 @@ jobs:
           gh api meta --jq '.ssh_keys[] | "github.com " + .' > "$ssh_root/known_hosts"
           export GIT_SSH_COMMAND="ssh -i $ssh_root/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_root/known_hosts"
           git clone git@github.com:MrFlashAccount/homebrew-codewide.git "$tap_root"
-          linux_asset="codewide-companion-$version-x86_64-unknown-linux-musl.tar.gz"
-          macos_asset="CodeWide-$version.dmg"
+          manifest="$RUNNER_TEMP/release-assets/release-manifest.json"
+          linux_version=$(jq -er '.products[] | select(.id == "companion-linux") | .version' "$manifest")
+          macos_version=$(jq -er '.products[] | select(.id == "macos") | .version' "$manifest")
+          relay_version=$(jq -er '.products[] | select(.id == "relay") | .version' "$manifest")
+          linux_tag=$(jq -er '.products[] | select(.id == "companion-linux") | .sourceTag' "$manifest")
+          macos_tag=$(jq -er '.products[] | select(.id == "macos") | .sourceTag' "$manifest")
+          relay_tag=$(jq -er '.products[] | select(.id == "relay") | .sourceTag' "$manifest")
+          linux_asset="codewide-companion-$linux_version-x86_64-unknown-linux-musl.tar.gz"
+          macos_asset="CodeWide-$macos_version.dmg"
           relay_asset="codewide-relay-x86_64-unknown-linux-musl"
           linux_sha=$(sha256sum "$RUNNER_TEMP/release-assets/$linux_asset" | cut -d ' ' -f 1)
           macos_sha=$(sha256sum "$RUNNER_TEMP/release-assets/$macos_asset" | cut -d ' ' -f 1)
           relay_sha=$(sha256sum "$RUNNER_TEMP/release-assets/$relay_asset" | cut -d ' ' -f 1)
-          ./scripts/update-homebrew-tap linux "$version" "$linux_sha" "$tap_root" "$RELEASE_TAG"
-          ./scripts/update-homebrew-tap macos "$version" "$macos_sha" "$tap_root" "$RELEASE_TAG"
-          ./scripts/update-homebrew-tap relay "$version" "$relay_sha" "$tap_root" "$RELEASE_TAG"
+          ./scripts/update-homebrew-tap linux "$linux_version" "$linux_sha" "$tap_root" "$linux_tag"
+          ./scripts/update-homebrew-tap macos "$macos_version" "$macos_sha" "$tap_root" "$macos_tag"
+          ./scripts/update-homebrew-tap relay "$relay_version" "$relay_sha" "$tap_root" "$relay_tag"
           git -C "$tap_root" config user.name "github-actions[bot]"
           git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tap_root" add -A Formula Casks/codewide.rb formula_renames.json versions/companion-linux
+          git -C "$tap_root" add -A Formula Casks/codewide.rb formula_renames.json versions releases
           if git -C "$tap_root" diff --cached --quiet; then exit 0; fi
           git -C "$tap_root" commit -m "codewide $RELEASE_TAG"
           attempt=0

@@ -80,12 +80,14 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Restore Linux Cargo build cache
-        uses: actions/cache@v6.1.0
+        id: native-cache
+        uses: actions/cache/restore@v6.1.0
         with:
           path: .cache/companion-linux
           key: cargo-companion-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/build-companion-linux') }}-${{ github.sha }}
           restore-keys: |
             cargo-companion-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/build-companion-linux') }}-
+            cargo-companion-linux-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -117,7 +119,15 @@ jobs:
           echo "ASSET=dist/companion-linux/codewide-companion-$version-x86_64-unknown-linux-musl.tar.gz" >> "$GITHUB_ENV"
 
       - name: Build portable bundle
+        id: build
         run: ./scripts/build-companion-linux
+
+      - name: Save completed Linux build before installer validation
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: .cache/companion-linux
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Validate installer
         env:
@@ -184,7 +194,7 @@ jobs:
           ./scripts/update-homebrew-tap linux "$CODEWIDE_VERSION" "$sha256" "$tap_root"
           git -C "$tap_root" config user.name "github-actions[bot]"
           git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tap_root" add -A Formula formula_renames.json versions/companion-linux
+          git -C "$tap_root" add -A Formula formula_renames.json versions/companion-linux releases/companion-linux
           if git -C "$tap_root" diff --cached --quiet; then
             exit 0
           fi

@@ -36,11 +36,11 @@ fi
 export CODEWIDE_FFI_ARCHIVE="$ffi_archive"
 
 swift build --package-path "$mac_root" -c release \
-  --arch arm64 --arch x86_64 --product CodeWide
+  --arch arm64 --product CodeWide
 swift build --package-path "$mac_root" -c release \
-  --arch arm64 --arch x86_64 --product CodeWideRuntime
+  --arch arm64 --product CodeWideRuntime
 bin_dir=$(swift build --package-path "$mac_root" -c release \
-  --arch arm64 --arch x86_64 --show-bin-path)
+  --arch arm64 --show-bin-path)
 
 contents="$app_dir/Contents"
 macos_dir="$contents/MacOS"

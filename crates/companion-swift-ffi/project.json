@@ -12,6 +12,28 @@
     "default": ["{projectRoot}/**/*", "rustWorkspace"]
   },
   "targets": {
+    "build-macos-arm64": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": [
+        "production",
+        "^production",
+        "{workspaceRoot}/apps/companion-macos/scripts/build-rust-ffi.sh",
+        "{workspaceRoot}/apps/companion-macos/Sources/CompanionSwiftFFI/**/*",
+        "{workspaceRoot}/apps/companion-macos/Sources/CompanionSwiftFFIFFI/**/*",
+        { "env": "CODEWIDE_CORE_VERSION" },
+        { "env": "MACOSX_DEPLOYMENT_TARGET" },
+        { "runtime": "rustc -vV" },
+        { "runtime": "xcrun --show-sdk-version" }
+      ],
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "command": "apps/companion-macos/scripts/build-rust-ffi.sh {args.outputPath}",
+        "outputPath": "apps/companion-macos/.build/rust/release",
+        "cwd": ".",
+        "forwardAllArgs": false
+      }
+    },
     "check": {
       "executor": "nx:run-commands",
       "options": {

@@ -228,7 +228,7 @@ struct VerifiedCodexInstallation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::{fs, os::unix::fs::symlink};
 
     #[test]
     fn parses_stable_and_prerelease_codex_versions() {
@@ -248,7 +248,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let home = tempfile::tempdir()?;
         let executable = home.path().join(".local/bin/codex");
-        write_fake_codex(&executable, "0.157.0", true)?;
+        install_codex_fixture(&executable, "codex-ready")?;
 
         let status = inspect_candidates(vec![executable.canonicalize()?]).await;
 
@@ -265,7 +265,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let home = tempfile::tempdir()?;
         let executable = home.path().join(".local/bin/codex");
-        write_fake_codex(&executable, "0.154.0", true)?;
+        install_codex_fixture(&executable, "codex-outdated")?;
 
         let status = inspect_candidates(vec![executable.canonicalize()?]).await;
 
@@ -289,7 +289,7 @@ mod tests {
         let codex_home = home.path().join(".codex-work");
         let executable = home.path().join(".local/bin/codex");
         let invocation = home.path().join("invocation.txt");
-        write_recording_codex(&executable, &invocation)?;
+        install_codex_fixture(&executable, "codex-recording")?;
 
         start_codex_app_server(home.path(), &codex_home).await?;
 
@@ -301,40 +301,20 @@ mod tests {
         Ok(())
     }
 
-    fn write_fake_codex(
+    fn install_codex_fixture(
         executable: &Path,
-        version: &str,
-        start_succeeds: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let start_status = i32::from(!start_succeeds);
-        let script = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'codex-cli {version}\\n'; exit 0; fi\nexit {start_status}\n"
-        );
-        write_executable(executable, &script)
-    }
-
-    fn write_recording_codex(
-        executable: &Path,
-        invocation: &Path,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let script = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'codex-cli 999.0.0\\n'; exit 0; fi\nprintf '%s|%s %s %s' \"$CODEX_HOME\" \"$1\" \"$2\" \"$3\" > '{}'\n",
-            invocation.display()
-        );
-        write_executable(executable, &script)
-    }
-
-    fn write_executable(
-        executable: &Path,
-        contents: &str,
+        fixture: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(parent) = executable.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(executable, contents)?;
-        let mut permissions = executable.metadata()?.permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(executable, permissions)?;
+        // WHY: writing executables while other tests spawn can leave inherited
+        // writable descriptors alive and make exec fail with ETXTBSY. Link a
+        // checked-in read-only fixture instead; do not retry or weaken checks.
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(fixture);
+        symlink(source, executable)?;
         Ok(())
     }
 }

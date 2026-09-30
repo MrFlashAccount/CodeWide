@@ -33,6 +33,9 @@ on:
         type: string
   workflow_call:
     inputs:
+      release_tag:
+        required: false
+        type: string
       version:
         required: true
         type: string
@@ -92,18 +95,35 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Restore Cargo and SwiftPM caches
-        uses: actions/cache@v6.1.0
+        id: native-cache
+        uses: actions/cache/restore@v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
+            apps/companion-macos/.build/arm64-apple-macosx
+            apps/companion-macos/.build/artifacts
+            apps/companion-macos/.build/checkouts
+            apps/companion-macos/.build/repositories
+            apps/companion-macos/.build/workspace-state.json
             ~/Library/Caches/org.swift.swiftpm
             ~/.cache/org.swift.swiftpm
-          key: native-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/companion-macos/Package.resolved') }}-${{ github.sha }}
+          key: native-macos-arm64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/companion-macos/Package.resolved') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            native-macos-arm64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/companion-macos/Package.resolved') }}-
+            native-macos-arm64-
             native-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'apps/companion-macos/Package.resolved') }}-
+
+      - name: Restore Nx build cache
+        id: nx-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: .nx/cache
+          key: nx-macos-release-arm64-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            nx-macos-release-arm64-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -118,28 +138,6 @@ jobs:
             base=$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
           fi
           node scripts/release-plan.ts --base "$base" --head "$GITHUB_SHA" --assert-target macos
-
-      - name: Resolve version
-        env:
-          RAW_VERSION: ${{ inputs.version }}
-          VERSION_BUMP: ${{ inputs.bump }}
-        run: |
-          if [[ -n "$RAW_VERSION" ]]; then
-            version="${RAW_VERSION#v}"
-            if [[ ! "$version" =~ ^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$ ]]; then
-              echo "Invalid version: $RAW_VERSION"
-              exit 1
-            fi
-          else
-            version=$(./scripts/next-macos-version "$VERSION_BUMP")
-          fi
-          build_number=$(./scripts/macos-build-version "$version")
-          echo "Releasing $version."
-          echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
-          echo "CODEWIDE_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
-          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
-          echo "DMG_PATH=apps/companion-macos/dist/CodeWide-$version.dmg" >> "$GITHUB_ENV"
-          echo "APPCAST_PATH=apps/companion-macos/dist/appcast.xml" >> "$GITHUB_ENV"
 
       - name: Show toolchains
         run: |
@@ -161,21 +159,113 @@ jobs:
           tar -xJf "$archive" -C "$destination"
           echo "SPARKLE_BIN=$destination/bin" >> "$GITHUB_ENV"
 
-      - name: Build baseline and release app
+      - name: Reuse previous published app for the update test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous_tag=$(sh scripts/latest-published-release)
+          test -n "$previous_tag"
+          destination="$RUNNER_TEMP/baseline-download"
+          mkdir -p "$destination" "$RUNNER_TEMP/baseline"
+          previous_version="${previous_tag#v}"
+          if [[ "$previous_tag" == release-* ]]; then
+            inventory_digest=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$previous_tag" \
+              --jq '.assets[] | select(.name == "release-manifest.json") | .digest')
+            [[ "$inventory_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            gh release download "$previous_tag" --pattern release-manifest.json --dir "$destination"
+            printf '%s  %s\n' "${inventory_digest#sha256:}" "$destination/release-manifest.json" | shasum --algorithm 256 --check
+            previous_version=$(jq -er '.products[] | select(.id == "macos") | .version' "$destination/release-manifest.json")
+            previous_tag=$(jq -er '.products[] | select(.id == "macos") | .sourceTag' "$destination/release-manifest.json")
+          fi
+          asset="CodeWide-$previous_version.dmg"
+          digest=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$previous_tag" \
+            --jq ".assets[] | select(.name == \"$asset\") | .digest")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh release download "$previous_tag" --pattern "$asset" --dir "$destination"
+          printf '%s  %s\n' "${digest#sha256:}" "$destination/$asset" | shasum --algorithm 256 --check
+          mount="$RUNNER_TEMP/baseline-mount"
+          mkdir -p "$mount"
+          hdiutil attach "$destination/$asset" -readonly -nobrowse -mountpoint "$mount"
+          trap 'hdiutil detach "$mount"' EXIT
+          ditto "$mount/CodeWide.app" "$RUNNER_TEMP/baseline/CodeWide.app"
+          codesign --verify --deep --strict "$RUNNER_TEMP/baseline/CodeWide.app"
+          test "$(plutil -extract CFBundleShortVersionString raw \
+            "$RUNNER_TEMP/baseline/CodeWide.app/Contents/Info.plist")" = "$previous_version"
+          echo "CODEWIDE_PREVIOUS_MACOS_VERSION=$previous_version" >> "$GITHUB_ENV"
+
+      - name: Resolve version
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+          VERSION_BUMP: ${{ inputs.bump }}
+          REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ -n "$RAW_VERSION" ]]; then
+            version="${RAW_VERSION#v}"
+            if [[ ! "$version" =~ ^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$ ]]; then
+              echo "Invalid version: $RAW_VERSION"
+              exit 1
+            fi
+          else
+            version=$(./scripts/next-macos-version "$VERSION_BUMP" "$CODEWIDE_PREVIOUS_MACOS_VERSION")
+          fi
+          build_number=$(./scripts/macos-build-version "$version")
+          test "$build_number" -gt "$(./scripts/macos-build-version "$CODEWIDE_PREVIOUS_MACOS_VERSION")"
+          echo "Releasing $version."
+          echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "CODEWIDE_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${REQUESTED_RELEASE_TAG:-v$version}" >> "$GITHUB_ENV"
+          echo "DMG_PATH=apps/companion-macos/dist/CodeWide-$version.dmg" >> "$GITHUB_ENV"
+          echo "APPCAST_PATH=apps/companion-macos/dist/appcast.xml" >> "$GITHUB_ENV"
+
+      - name: Build or restore ARM64 Core and FFI
+        id: core-build
+        env:
+          CODEWIDE_CORE_VERSION: ${{ env.CODEWIDE_VERSION }}
+          MACOSX_DEPLOYMENT_TARGET: "26.0"
+        run: |
+          output="apps/companion-macos/.build/rust/$CODEWIDE_VERSION"
+          pnpm nx run companion-swift-ffi:build-macos-arm64 --outputPath="$output"
+          test -s "$output/libcompanion_swift_ffi.a"
+          echo "CODEWIDE_FFI_ARCHIVE=$GITHUB_WORKSPACE/$output/libcompanion_swift_ffi.a" >> "$GITHUB_ENV"
+
+      - name: Build ARM64 release app
+        id: app-build
         env:
           CODEWIDE_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_ED25519_PUBLIC_KEY }}
         run: |
           test -n "$CODEWIDE_SPARKLE_PUBLIC_KEY"
-          baseline_archive=$(CODEWIDE_CORE_VERSION=0.0.0 apps/companion-macos/scripts/build-rust-ffi.sh)
-          CODEWIDE_VERSION=0.0.0 \
-          CODEWIDE_BUILD_NUMBER=1 \
-          CODEWIDE_FFI_ARCHIVE="$baseline_archive" \
-          CODEWIDE_APP_OUTPUT="$RUNNER_TEMP/baseline/CodeWide.app" \
-            apps/companion-macos/scripts/build-app.sh
-          release_archive=$(CODEWIDE_CORE_VERSION="$CODEWIDE_VERSION" apps/companion-macos/scripts/build-rust-ffi.sh)
-          CODEWIDE_FFI_ARCHIVE="$release_archive" \
-            apps/companion-macos/scripts/build-app.sh
+          apps/companion-macos/scripts/build-app.sh
+          test "$(lipo -archs apps/companion-macos/.build/app/CodeWide.app/Contents/MacOS/CodeWide)" = arm64
+          test "$(lipo -archs apps/companion-macos/.build/app/CodeWide.app/Contents/MacOS/CodeWideRuntime)" = arm64
           apps/companion-macos/scripts/build-dmg.sh "$CODEWIDE_VERSION"
+
+      - name: Save native compilation cache before update validation
+        if: ${{ always() && !cancelled() && steps.core-build.outcome == 'success' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            apps/companion-macos/.build/arm64-apple-macosx
+            apps/companion-macos/.build/artifacts
+            apps/companion-macos/.build/checkouts
+            apps/companion-macos/.build/repositories
+            apps/companion-macos/.build/workspace-state.json
+            ~/Library/Caches/org.swift.swiftpm
+            ~/.cache/org.swift.swiftpm
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Save Nx Core and FFI results before update validation
+        if: ${{ always() && !cancelled() && steps.core-build.outcome == 'success' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: .nx/cache
+          key: ${{ steps.nx-cache.outputs.cache-primary-key }}
+
+      - name: Test ARM64 macOS update scheduling and runtime
+        run: swift test --package-path apps/companion-macos --arch arm64
 
       - name: Prove update, state migration, and runtime recovery
         env:
@@ -275,7 +365,7 @@ jobs:
           ./scripts/update-homebrew-tap macos "$CODEWIDE_VERSION" "$sha256" "$tap_root"
           git -C "$tap_root" config user.name "github-actions[bot]"
           git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tap_root" add Casks/codewide.rb
+          git -C "$tap_root" add Casks/codewide.rb versions/macos releases/macos
           if git -C "$tap_root" diff --cached --quiet; then
             exit 0
           fi

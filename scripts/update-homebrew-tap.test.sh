@@ -25,6 +25,7 @@ test "$(cat "$tap_root/formula_renames.json")" = '{"codewide-companion":"codewid
 "$repo_root/scripts/update-homebrew-tap" macos 0.4.2 "$macos_sha" "$tap_root" v0.4.2
 "$repo_root/scripts/update-homebrew-tap" relay 0.4.2 "$relay_sha" "$tap_root" v0.4.2
 test -f "$tap_root/Casks/codewide.rb"
+grep -Fq 'depends_on arch: :arm64' "$tap_root/Casks/codewide.rb"
 test -f "$tap_root/Formula/codewide.rb"
 grep -Fq 'class Relay < Formula' "$tap_root/Formula/relay.rb"
 grep -Fq '/v0.4.2/codewide-relay-x86_64-unknown-linux-musl' "$tap_root/Formula/relay.rb"
@@ -36,6 +37,23 @@ grep -Fq 'depends_on arch: :x86_64' "$tap_root/Formula/relay.rb"
 grep -Fq '/relay-v0.4.0/codewide-relay-x86_64-unknown-linux-musl' "$tap_root/Formula/relay.rb"
 test -f "$tap_root/Formula/codewide.rb"
 test -f "$tap_root/Casks/codewide.rb"
+test "$(cat "$tap_root/versions/companion-linux")" = 0.4.2
+test "$(cat "$tap_root/versions/relay")" = 0.4.0
+
+# A release set may carry an older product unchanged. Keep its original asset URL.
+"$repo_root/scripts/update-homebrew-tap" macos 0.5.0 "$macos_sha" "$tap_root" release-2026-09-30.1
+"$repo_root/scripts/update-homebrew-tap" linux 0.5.0 "$linux_sha" "$tap_root" release-2026-09-30.1
+"$repo_root/scripts/update-homebrew-tap" relay 0.5.0 "$relay_sha" "$tap_root" release-2026-09-30.1
+grep -Fq '/release-2026-09-30.1/CodeWide-#{version}.dmg' "$tap_root/Casks/codewide.rb"
+test "$(cat "$tap_root/releases/companion-linux/0.5.0")" = release-2026-09-30.1
+test "$(cat "$tap_root/releases/relay/0.5.0")" = release-2026-09-30.1
+# Reuse is idempotent, but repointing an existing version is an error.
+"$repo_root/scripts/update-homebrew-tap" relay 0.5.0 "$relay_sha" "$tap_root" release-2026-09-30.1
+if "$repo_root/scripts/update-homebrew-tap" relay 0.5.0 "$relay_sha" "$tap_root" release-2026-10-01.1 >/dev/null 2>&1; then
+  echo 'Changed the origin of an unchanged product.' >&2
+  exit 1
+fi
+test "$(cat "$tap_root/releases/relay/0.5.0")" = release-2026-09-30.1
 
 if command -v ruby >/dev/null 2>&1; then
   ruby -c "$tap_root/Formula/codewide.rb" >/dev/null

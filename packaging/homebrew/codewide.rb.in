@@ -2,13 +2,14 @@ cask "codewide" do
   version "@VERSION@"
   sha256 "@SHA256@"
 
-  url "https://github.com/MrFlashAccount/CodeWide/releases/download/v#{version}/CodeWide-#{version}.dmg"
+  url "https://github.com/MrFlashAccount/CodeWide/releases/download/@RELEASE_TAG@/CodeWide-#{version}.dmg"
   name "CodeWide"
   desc "Native menu-bar host for CodeWide Companion"
   homepage "https://github.com/MrFlashAccount/CodeWide"
 
   auto_updates true
   depends_on macos: ">= :tahoe"
+  depends_on arch: :arm64
 
   app "CodeWide.app"
 

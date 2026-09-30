@@ -12,7 +12,7 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     private let runtime: RuntimeConnection
     private let testFeedURL: String?
     private var updaterController: SPUStandardUpdaterController?
-    private var lastProbeAt: Date?
+    private var checkAdmission: UpdateCheckAdmission
     private var preparingUpdate = false
     private var preparedVersion: String?
     private var deferredInstall: (() -> Void)?
@@ -20,17 +20,24 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     init(runtime: RuntimeConnection, startingUpdater: Bool = true) {
         self.runtime = runtime
         testFeedURL = ProcessInfo.processInfo.environment["CODEWIDE_UPDATE_FEED_URL"]
+        checkAdmission = UpdateCheckAdmission(
+            mode: ProcessInfo.processInfo.environment["CODEWIDE_UPDATE_E2E"] == "1"
+                ? .installationTest : .interactive
+        )
         super.init()
         let controller = SPUStandardUpdaterController(
-            startingUpdater: startingUpdater,
+            startingUpdater: false,
             updaterDelegate: self,
             userDriverDelegate: nil
         )
         updaterController = controller
         controller.updater.publisher(for: \.canCheckForUpdates)
             .assign(to: &$canCheckForUpdates)
-        if startingUpdater, ProcessInfo.processInfo.environment["CODEWIDE_UPDATE_E2E"] == "1" {
-            DispatchQueue.main.async {
+        if startingUpdater {
+            controller.startUpdater()
+            if checkAdmission.mode == .installationTest {
+                // Sparkle permits an immediate check before its next runloop cycle.
+                // Dispatching later lets the scheduler or a menu probe claim the session.
                 controller.updater.checkForUpdatesInBackground()
             }
         }
@@ -43,13 +50,14 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     func checkForUpdatesSilentlyIfNeeded(now: Date = Date()) {
         guard let updater = updaterController?.updater,
-              canCheckForUpdates,
-              !updater.sessionInProgress,
-              lastProbeAt.map({ now.timeIntervalSince($0) >= 60 * 60 }) ?? true else {
+              checkAdmission.admitInformationProbe(
+                  now: now,
+                  canCheckForUpdates: canCheckForUpdates,
+                  sessionInProgress: updater.sessionInProgress
+              ) else {
             return
         }
 
-        lastProbeAt = now
         lastError = nil
         isCheckingForUpdates = true
         updater.checkForUpdateInformation()

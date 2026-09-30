@@ -80,12 +80,14 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Restore Linux Cargo build cache
-        uses: actions/cache@v6.1.0
+        id: native-cache
+        uses: actions/cache/restore@v6.1.0
         with:
           path: .cache/relay-linux
           key: cargo-relay-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/build-relay-linux') }}-${{ github.sha }}
           restore-keys: |
             cargo-relay-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'scripts/build-relay-linux') }}-
+            cargo-relay-linux-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -115,11 +117,19 @@ jobs:
           echo "ASSET=dist/relay/codewide-relay-x86_64-unknown-linux-musl" >> "$GITHUB_ENV"
 
       - name: Build portable binary
+        id: build
         run: ./scripts/build-relay-linux
+
+      - name: Save completed Linux build before installer validation
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: .cache/relay-linux
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Validate standalone installer
         env:
-          CODEWIDE_RELAY_DIST_DIR: ${{ github.workspace }}/dist/relay
+          CODEWIDE_RELAY_TEST_DIST_DIR: ${{ github.workspace }}/dist/relay
         run: ./scripts/install-relay.test.sh
 
       - name: Upload workflow artifact
@@ -182,7 +192,7 @@ jobs:
           ./scripts/update-homebrew-tap relay "$CODEWIDE_RELAY_VERSION" "$sha256" "$tap_root"
           git -C "$tap_root" config user.name "github-actions[bot]"
           git -C "$tap_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tap_root" add Formula/relay.rb
+          git -C "$tap_root" add Formula/relay.rb versions/relay releases/relay
           if git -C "$tap_root" diff --cached --quiet; then
             exit 0
           fi

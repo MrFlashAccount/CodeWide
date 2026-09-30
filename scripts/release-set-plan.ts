@@ -1,8 +1,19 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  readReleaseProducts,
+  releaseProductId,
+  releaseRecord,
+  releaseRevision,
+  releaseTag,
+  type ReleaseDelivery,
+  type ReleaseProduct,
+} from "./release-product-contract.ts";
+import { nextDatedReleaseTag, releaseDate } from "./release-set-identity.ts";
 
 type Bump = "major" | "minor" | "patch";
 
@@ -18,11 +29,12 @@ type ReleaseProject = ReleaseMetadata & {
   readonly project: string;
 };
 
-type ReleaseSetTarget = ReleaseProject & {
-  readonly base: string;
-  readonly previousVersion: string;
-  readonly version: string;
-};
+type ReleaseSetTarget = ReleaseProject &
+  ReleaseDelivery & {
+    readonly base: string;
+    readonly previousVersion: string;
+    readonly version: string;
+  };
 
 type ReleaseSetPlan = {
   readonly bump: Bump;
@@ -41,6 +53,9 @@ type CliOptions = {
   readonly head: string;
   readonly files: readonly string[] | undefined;
   readonly json: boolean;
+  readonly previousManifest: string | undefined;
+  readonly date: string;
+  readonly reservedTags: string | undefined;
 };
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -53,6 +68,9 @@ function parseArguments(args: readonly string[]): CliOptions {
   let head = "HEAD";
   let files: readonly string[] | undefined;
   let json = false;
+  let previousManifest: string | undefined;
+  let date = new Date().toISOString().slice(0, 10);
+  let reservedTags: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--") continue;
@@ -61,10 +79,15 @@ function parseArguments(args: readonly string[]): CliOptions {
     else if (argument === "--head") head = requireArgument(args, ++index, argument);
     else if (argument === "--files") files = requireArgument(args, ++index, argument).split(",");
     else if (argument === "--json") json = true;
+    else if (argument === "--previous-manifest")
+      previousManifest = requireArgument(args, ++index, argument);
+    else if (argument === "--date") date = releaseDate(requireArgument(args, ++index, argument));
+    else if (argument === "--reserved-tags")
+      reservedTags = requireArgument(args, ++index, argument);
     else throw new Error(`Unknown argument: ${argument}`);
   }
   if (bump === undefined) throw new Error("--bump must be patch, minor, or major");
-  return { bump, base, head, files, json };
+  return { bump, base, head, files, json, previousManifest, date, reservedTags };
 }
 
 function parseBump(value: string): Bump {
@@ -79,7 +102,9 @@ function requireArgument(args: readonly string[], index: number, flag: string): 
 }
 
 function readReleaseProjects(): readonly ReleaseProject[] {
-  const value: unknown = JSON.parse(runCommand(nxCli, ["show", "projects", "--withTarget=release", "--json"]));
+  const value: unknown = JSON.parse(
+    runCommand(nxCli, ["show", "projects", "--withTarget=release", "--json"]),
+  );
   if (!Array.isArray(value) || value.some((project) => typeof project !== "string")) {
     throw new Error("Nx returned an invalid release-project list");
   }
@@ -105,71 +130,174 @@ function readReleaseProject(project: string): ReleaseProject {
 function planReleaseSet(options: CliOptions): ReleaseSetPlan {
   const sourceRevision = runGit(["rev-parse", options.head]);
   const projects = readReleaseProjects();
+  const previousManifest =
+    options.previousManifest === undefined
+      ? undefined
+      : releaseRecord(
+          JSON.parse(readFileSync(options.previousManifest, "utf8")),
+          "previous release manifest",
+        );
+  const previousProducts =
+    previousManifest === undefined ? [] : readReleaseProducts(previousManifest);
   const latestTag = latestStableTag("v", sourceRevision);
   const macos = projects.find(({ id }) => id === "macos");
-  if (macos === undefined) throw new Error("macOS release metadata is required for the shared version baseline");
+  if (macos === undefined)
+    throw new Error("macOS release metadata is required for the shared version baseline");
   const firstCommit = runGit(["rev-list", "--max-parents=0", sourceRevision]).split("\n")[0];
-  if (firstCommit === undefined || firstCommit.length === 0) throw new Error("Could not resolve the first repository commit");
-  const base = options.base ?? latestTag ?? firstCommit;
-  const previousVersion = latestTag === undefined ? macos.baselineVersion : version(latestTag.slice(1), `tag ${latestTag}`);
+  if (firstCommit === undefined || firstCommit.length === 0)
+    throw new Error("Could not resolve the first repository commit");
+  const inventoryBase =
+    previousManifest === undefined ? undefined : releaseRevision(previousManifest.sourceRevision);
+  if (previousManifest !== undefined) releaseTag(previousManifest.tag);
+  const base = options.base ?? inventoryBase ?? latestTag ?? firstCommit;
+  const previousVersion =
+    previousProducts.length === 0
+      ? latestTag === undefined
+        ? macos.baselineVersion
+        : version(latestTag.slice(1), `tag ${latestTag}`)
+      : previousProducts.reduce(
+          (highest, product) =>
+            compareVersions(product.version, highest) > 0 ? product.version : highest,
+          "0.0.0",
+        );
   const nextVersion = bumpVersion(previousVersion, options.bump);
-  for (const project of projects) {
-    const productTag = latestStableTag(project.tagPrefix, sourceRevision);
-    if (productTag === undefined) continue;
-    const productVersion = version(productTag.slice(project.tagPrefix.length), `tag ${productTag}`);
-    if (compareVersions(nextVersion, productVersion) <= 0) {
-      throw new Error(`Shared release v${nextVersion} must be newer than ${productTag}`);
+  const tag = nextDatedReleaseTag(options.date, reservedReleaseTags(options.reservedTags));
+  const affected = readAffectedTargetIds(
+    options.files === undefined
+      ? ["--base", base, "--head", sourceRevision]
+      : ["--files", options.files.join(",")],
+  );
+  const changedFiles =
+    options.files ?? runGit(["diff", "--name-only", `${base}...${sourceRevision}`]).split("\n");
+  // Orchestration changes may publish a new inventory, but are not by
+  // themselves evidence that every product binary changed.
+  const infrastructureChanged = changedFiles.some(isReleaseInfrastructureChange);
+  const targets =
+    affected.size === 0 && !infrastructureChanged
+      ? []
+      : projects.map((project) =>
+          planProduct(
+            project,
+            affected,
+            previousProducts,
+            base,
+            nextVersion,
+            sourceRevision,
+            tag,
+            options.bump,
+          ),
+        );
+  for (const target of targets) {
+    const publishedTag = latestStableTag(target.tagPrefix, sourceRevision);
+    if (publishedTag === undefined) continue;
+    const publishedVersion = version(
+      publishedTag.slice(target.tagPrefix.length),
+      `tag ${publishedTag}`,
+    );
+    const difference = compareVersions(target.version, publishedVersion);
+    if (difference < 0 || (difference === 0 && target.delivery === "build")) {
+      throw new Error(
+        `Product ${target.id}@${target.version} would replace or downgrade ${publishedTag}; refresh its published inventory`,
+      );
     }
   }
-  const affected = readAffectedTargetIds(options.files === undefined
-    ? ["--base", base, "--head", sourceRevision]
-    : ["--files", options.files.join(",")]);
-  const changedFiles = options.files ?? runGit(["diff", "--name-only", `${base}...${sourceRevision}`]).split("\n");
-  if (changedFiles.some(isReleaseInfrastructureChange)) {
-    for (const project of projects) affected.add(project.id);
-  }
-  const targets = affected.size === 0 ? [] : projects.map((project) => ({
-    ...project,
-    base,
-    previousVersion,
-    version: nextVersion,
-  }));
   return {
     bump: options.bump,
     sourceRevision,
     base,
     previousVersion,
     version: nextVersion,
-    tag: `v${nextVersion}`,
+    tag,
     affected: projects.filter(({ id }) => affected.has(id)).map(({ id }) => id),
     targets,
   };
 }
 
+function planProduct(
+  project: ReleaseProject,
+  affected: ReadonlySet<string>,
+  previousProducts: readonly ReleaseProduct[],
+  base: string,
+  nextVersion: string,
+  sourceRevision: string,
+  tag: string,
+  bump: Bump,
+): ReleaseSetTarget {
+  const id = releaseProductId(project.id);
+  const previous = previousProducts.find((product) => product.id === id);
+  if (!affected.has(id) && previous !== undefined) {
+    return { ...project, ...previous, delivery: "reuse", base, previousVersion: previous.version };
+  }
+  // Older releases have no inventory. Bootstrap a proven inventory instead of guessing provenance.
+  const legacyTag = latestStableTag(project.tagPrefix, sourceRevision);
+  const previousProductVersion =
+    previous?.version ??
+    (legacyTag === undefined
+      ? project.baselineVersion
+      : version(legacyTag.slice(project.tagPrefix.length), `tag ${legacyTag}`));
+  return {
+    ...project,
+    id,
+    delivery: "build",
+    base,
+    previousVersion: previousProductVersion,
+    version: previous === undefined ? nextVersion : bumpVersion(previous.version, bump),
+    sourceRevision,
+    sourceTag: tag,
+  };
+}
+
+function reservedReleaseTags(path: string | undefined): ReadonlySet<string> {
+  const tags = new Set(runGit(["tag", "--list", "release-*"]).split("\n"));
+  if (path === undefined) return tags;
+  const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (!Array.isArray(value) || value.some((tag) => typeof tag !== "string"))
+    throw new Error("Reserved release tags must be a string array");
+  for (const tag of value) tags.add(tag);
+  return tags;
+}
+
 function isReleaseInfrastructureChange(path: string): boolean {
-  return path === ".github/workflows/release-set.yml"
-    || path === "scripts/release-set-plan.ts"
-    || path === "scripts/prepare-release-set.ts"
-    || path === "scripts/update-homebrew-tap"
-    || path === "install/relay"
-    || path === "install/companion"
-    || path.startsWith("packaging/homebrew/")
-    || /^\.github\/workflows\/(android|companion-linux|macos|relay)-release\.yml$/u.test(path);
+  return (
+    path === ".github/workflows/release-set.yml" ||
+    path === "scripts/release-set-plan.ts" ||
+    path === "scripts/prepare-release-set.ts" ||
+    path === "scripts/release-product-contract.ts" ||
+    path === "scripts/release-set-identity.ts" ||
+    path === "scripts/reuse-release-products.ts" ||
+    path === "scripts/latest-published-release" ||
+    path === "scripts/update-homebrew-tap" ||
+    path === "install/relay" ||
+    path === "install/companion" ||
+    path.startsWith("packaging/homebrew/") ||
+    /^\.github\/workflows\/(android|companion-linux|macos|relay)-release\.yml$/u.test(path)
+  );
 }
 
 function readAffectedTargetIds(args: readonly string[]): Set<string> {
-  const value: unknown = JSON.parse(runCommand(process.execPath, [releasePlanner, ...args, "--json"]));
-  if (!isRecord(value) || !Array.isArray(value.targets)) throw new Error("Release planner returned invalid JSON");
+  const value: unknown = JSON.parse(
+    runCommand(process.execPath, [releasePlanner, ...args, "--json"]),
+  );
+  if (!isRecord(value) || !Array.isArray(value.targets))
+    throw new Error("Release planner returned invalid JSON");
   const ids = new Set<string>();
   for (const target of value.targets) {
-    if (!isRecord(target) || typeof target.id !== "string") throw new Error("Release planner returned an invalid target");
+    if (!isRecord(target) || typeof target.id !== "string")
+      throw new Error("Release planner returned an invalid target");
     ids.add(target.id);
   }
   return ids;
 }
 
 function latestStableTag(prefix: string, head: string): string | undefined {
-  const tags = runGit(["tag", "--merged", head, "--list", `${prefix}[0-9]*`, "--sort=-version:refname"]);
+  const tags = runGit([
+    "tag",
+    "--merged",
+    head,
+    "--list",
+    `${prefix}[0-9]*`,
+    "--sort=-version:refname",
+  ]);
   return tags.split("\n").find((tag) => {
     if (!tag.startsWith(prefix)) return false;
     return /^\d+\.\d+\.\d+$/u.test(tag.slice(prefix.length));
@@ -204,7 +332,8 @@ function version(value: unknown, field: string): string {
 }
 
 function nonEmptyString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length === 0) throw new Error(`${field} must be a non-empty string`);
+  if (typeof value !== "string" || value.length === 0)
+    throw new Error(`${field} must be a non-empty string`);
   return value;
 }
 
@@ -226,7 +355,8 @@ function runGit(args: readonly string[]): string {
 function runCommand(command: string, args: readonly string[]): string {
   const result = spawnSync(command, args, { cwd: repoRoot, encoding: "utf8", shell: false });
   if (result.error !== undefined) throw result.error;
-  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr.trim()}`);
+  if (result.status !== 0)
+    throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr.trim()}`);
   return result.stdout.trim();
 }
 
@@ -240,7 +370,9 @@ function formatPlan(plan: ReleaseSetPlan): string {
     `Release set: ${plan.targets.length === 0 ? "none" : plan.targets.map(({ id, version: next }) => `${id}@${next}`).join(", ")}`,
   ];
   for (const target of plan.targets) {
-    lines.push(`- ${target.id}: ${target.previousVersion} -> ${target.version} (base ${target.base})`);
+    lines.push(
+      `- ${target.id}: ${target.delivery} ${target.previousVersion} -> ${target.version} (source ${target.sourceTag})`,
+    );
   }
   return `${lines.join("\n")}\n`;
 }

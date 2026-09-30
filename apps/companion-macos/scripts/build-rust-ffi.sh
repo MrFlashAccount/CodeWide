@@ -5,28 +5,26 @@ mac_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 repo_root=$(CDPATH= cd -- "$mac_root/../.." && pwd)
 core_version=${CODEWIDE_CORE_VERSION:-dev}
 version_key=$(printf '%s' "$core_version" | tr -c 'A-Za-z0-9._-' '_')
-output_root="$mac_root/.build/rust/$version_key"
+output_root=${1:-"$mac_root/.build/rust/$version_key"}
+case "$output_root" in
+  /*) ;;
+  *) output_root="$repo_root/$output_root" ;;
+esac
 arm_target=aarch64-apple-darwin
-intel_target=x86_64-apple-darwin
 
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
 
-rustup target add "$arm_target" "$intel_target"
+rustup target add "$arm_target"
 cargo build --manifest-path "$repo_root/Cargo.toml" \
-  --release -p companion-swift-ffi --target "$arm_target"
-cargo build --manifest-path "$repo_root/Cargo.toml" \
-  --release -p companion-swift-ffi --target "$intel_target"
+  --locked --release -p companion-swift-ffi --target "$arm_target"
 
 mkdir -p "$output_root"
 archive="$output_root/libcompanion_swift_ffi.a"
-lipo -create \
-  "$repo_root/target/$arm_target/release/libcompanion_swift_ffi.a" \
-  "$repo_root/target/$intel_target/release/libcompanion_swift_ffi.a" \
-  -output "$archive"
+cp "$repo_root/target/$arm_target/release/libcompanion_swift_ffi.a" "$archive"
 
 generated=$(mktemp -d "${TMPDIR:-/tmp}/codewide-uniffi-check.XXXXXX")
 trap 'rm -rf -- "$generated"' EXIT HUP INT TERM
-cargo run --manifest-path "$repo_root/Cargo.toml" --quiet \
+cargo run --manifest-path "$repo_root/Cargo.toml" --locked --quiet \
   -p companion-swift-ffi --bin uniffi-bindgen -- \
   generate \
   --library "$repo_root/target/$arm_target/release/libcompanion_swift_ffi.a" \

@@ -49,24 +49,45 @@ The planner never publishes by itself.
 ## Release affected products with one dispatch
 
 Run the `Release Affected Products` workflow and choose `patch`, `minor`, or
-`major`. The latest stable `vX.Y.Z` tag is the common comparison base and
-version authority. If Nx finds no affected product, the workflow publishes
-nothing. Otherwise, it builds **all four products at the same version** from
-the same commit: Relay, Linux Companion, macOS, then Android. Building all four
-keeps the `releases/latest/download/appcast.xml` feed present on every release.
-The optional `base` changes the comparison range, but never the version base.
-The parent workflow overrides each product's affected-only guard so all four
-ship together; build, signing, installer, and update checks still run in full.
+`major`. A release is a dated inventory named `release-YYYY-MM-DD.N` (UTC);
+`N` distinguishes multiple releases on one day and skips existing tags and
+drafts. Each product has its own semantic version. Changed products increment
+their last published version; unchanged products keep their exact files,
+versions, signatures and original build provenance. The release date is not a
+product version and does not trigger an application update by itself.
+
+The previous published inventory's source revision is the comparison base.
+The optional `base` changes only the affected-file comparison. If Nx finds no
+affected product, nothing is published. Otherwise, affected Relay, Linux
+Companion, macOS and Android builds run **in parallel**. A separate parallel
+job downloads unchanged products from their original releases and checks
+their sizes and SHA-256 hashes against the previous inventory. The final set
+still contains all four products, including `appcast.xml`, so the latest
+Sparkle feed remains available even when macOS did not change.
+An orchestration-only change can publish a new inventory without rebuilding
+unchanged binaries or incrementing their versions. A later standalone product
+tag that conflicts with the inventory is rejected rather than silently
+downgrading or replacing that product.
+
+Legacy releases have no complete product inventory. The first dated release
+therefore builds all four products once, using the latest stable `vX.Y.Z` as
+the version baseline. The requested minor transition from `v0.4.0` produces
+product versions `0.5.0`. Subsequent releases reuse unchanged products.
 
 Each product workflow runs in validation mode and uploads its artifact to the
 parent run. The final job checks the available files, source checksums, and
 signed appcast URL, then generates a manifest, `SHA256SUMS`, and Markdown
 release notes from commit subjects between the common base and the release
 commit. It uploads the complete set into a **draft** GitHub Release, downloads
-it again to compare every byte, and only then publishes one `vX.Y.Z` release.
+it again to compare every byte, and only then publishes the dated release.
+The manifest records each product's `version`, `sourceRevision`, `sourceTag`
+and original asset hashes. Reuse across multiple inventories preserves the
+original build rather than attributing it to the newest release commit.
 Relay and Linux Companion keep individual `.sha256` files for their installers;
-the installers use the combined tag from `0.4.1` onward and keep older product
-tags for pinned historical versions.
+the installers retain historical product/combined tags through `0.4.x`.
+The Homebrew tap's `releases/<product>/<version>` index resolves
+each pinned product version to its original release. Tap generation refuses
+to repoint an already indexed version to another origin.
 A failed build, missing file, or failed upload leaves no public release. A
 failed upload may leave a draft, which the same commit can safely retry.
 `dry_run` stops after assembling the validated package and attaches it as a
@@ -76,10 +97,8 @@ GitHub Release publication is the atomic boundary. Homebrew tap updates run
 after publication in one commit for Linux CodeWide, Relay, and macOS; a tap
 failure needs a retry and does not roll back the public release. The standalone per-product
 commands remain available for exceptional deliveries but do not provide the
-combined-release guarantee. For the first combined release, the existing
-`v0.4.0` tag is the common version base; the initial fallback is the checked-in
-macOS baseline. Android derives a monotonic `versionCode` from the shared
-semantic version and leaves the checked-in source version unchanged.
+combined-release guarantee. Android derives a monotonic `versionCode` from
+its own semantic version and leaves the checked-in source version unchanged.
 
 Before publication, each release workflow runs `sh scripts/update-homebrew-tap.test.sh`
 to check tap generation, the Linux formula rename, and Relay's versioned URL.
@@ -122,13 +141,22 @@ affected since the last successful CI base. Nx caches deterministic task output
 and terminal results. GitHub Actions persists separate Linux and macOS Nx caches;
 pnpm, Cargo, and Gradle keep their own tool-native caches.
 
-Release workflows do not run cacheable Nx build tasks, so they do not restore
-an Nx task cache. The Linux Companion and Relay workflows instead persist their
-Docker Cargo registry, git, and target directories through GitHub Actions.
+macOS runs a cacheable, ARM64-only Core/FFI compilation task before packaging
+the app. Its inputs include the transitive Rust graph, generated bindings,
+embedded Core version, deployment target, Rust compiler and SDK version.
+Linux Companion and Relay persist their Docker Cargo registry, git, and
+target directories through GitHub Actions, including a fallback across lock
+changes; Cargo remains responsible for invalidation.
 The cache is a build accelerator, not a release artifact: Cargo still rebuilds
 changed crates and version-embedded binaries, and every delivery still performs
-packaging and validation. Android restores Gradle User Home; macOS restores
-Cargo and SwiftPM state.
+packaging and validation. Completed native builds are saved before installer
+or update validation so a later failed gate does not discard compilation work.
+Android restores Gradle User Home; macOS restores Cargo, SwiftPM and Nx state.
+Signed apps, DMGs, feeds and publication tasks are not compilation-cache outputs.
+
+Core is shared source, not one portable compiled binary: Linux uses musl/x86_64,
+macOS uses Darwin/ARM64. Separate platform compilations avoid introducing a
+cross-platform prerequisite that would serialize the independent hosts.
 
 Do not mark `release`, signing, update-feed, installation, or publication tasks
 as cacheable. A cache hit is valid only when the declared task inputs and outputs
@@ -158,8 +186,10 @@ Publish after the validation succeeds:
 The command accepts `patch`, `minor`, or `major`, dispatches the macOS 26 GitHub
 runner, and waits for the complete workflow. The workflow refuses to release
 when Nx does not select macOS; `--force` is an explicit operator override. It
-builds the ad-hoc signed app and DMG, proves a signed Sparkle update from the
-baseline app, verifies state migration and LaunchAgent recovery, then publishes
+builds the ARM64-only ad-hoc signed app and DMG, downloads and verifies the
+previous published macOS app rather than recompiling a synthetic baseline,
+proves a signed Sparkle update from that app, verifies state migration and
+LaunchAgent recovery, then publishes
 the DMG and signed appcast.
 
 Required GitHub `release` environment secrets:
