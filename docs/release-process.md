@@ -171,7 +171,7 @@ workspace and scoped access token are deliberately configured.
 
 ## macOS
 
-Before committing or pushing workflow changes, run the local control-plane
+Before committing or pushing workflow changes, run the local release
 preflight from the current worktree (including uncommitted changes):
 
 ```sh
@@ -181,9 +181,25 @@ sh scripts/check-release-local
 It validates workflow syntax, executes the actual macOS `Resolve version`
 shell from YAML with representative inputs, and checks planning, fixture
 artifact assembly, unchanged-product reuse and Homebrew/installer contracts.
+It also parses the macOS Swift source/test tree and compiles/runs the unchanged
+`UpdateCheckAdmission` and `RelayAddress` sources with their existing Swift
+Testing tests. This includes real macro expansion, so compiler errors in that
+portable subset fail locally before a push. Apple SDK owners receive syntax
+checking only, not type checking.
 It does not dispatch GitHub Actions, sign, publish or require a clean/pushed
 branch. On first use it downloads and checks the pinned actionlint validator
 unless an installed tool or `CODEWIDE_ACTIONLINT_BIN` is provided.
+
+To run only the Swift check:
+
+```sh
+sh scripts/check-macos-swift-local
+```
+
+The command uses installed Swift (6.2 or newer) or Docker with the digest-pinned
+official Swift 6.3.3 Linux image, matching the release runner observed on
+2026-09-30. Docker downloads that image on first use; compilation itself runs
+without network, with the checkout mounted read-only and ephemeral build output.
 
 This is not evidence of a passed native macOS build or startup smoke.
 Those require the macOS runner. In particular, the existing `release-macos

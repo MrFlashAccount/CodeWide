@@ -1,0 +1,53 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+case "${1:-}" in
+  "")
+    [ "$#" -eq 0 ] || { echo "Usage: sh $0" >&2; exit 2; }
+    if command -v swift >/dev/null 2>&1; then
+      exec sh "$0" --toolchain
+    fi
+    command -v docker >/dev/null 2>&1 || {
+      echo "Install Swift >= 6.2 or provide Docker for the pinned Linux toolchain." >&2
+      exit 1
+    }
+    # Swift 6.3.3 matches the release runner observed on 2026-09-30. Mount only
+    # source, read-only; all build output is ephemeral and network is disabled.
+    # The temporary filesystem is executable for package manifests and tests.
+    exec docker run --rm --network none --read-only --cap-drop ALL \
+      --user "$(id -u):$(id -g)" \
+      --security-opt no-new-privileges \
+      --tmpfs /tmp:rw,exec,nosuid,nodev \
+      --mount "type=bind,src=$repo_root,dst=/workspace,readonly" \
+      --workdir /workspace \
+      swift:6.3.3-noble@sha256:8de8ea332a61e961ead4ef41029c2552b18e1a70dd5942d25ecf7d8de2eec5b5 \
+      sh scripts/check-macos-swift-local --toolchain
+    ;;
+  --toolchain) [ "$#" -eq 1 ] || exit 2 ;;
+  *) echo "Usage: sh $0" >&2; exit 2 ;;
+esac
+
+swift --version
+mac_root="$repo_root/apps/companion-macos"
+echo "Parse macOS Swift source/tests (syntax only; no Apple SDK type checking)."
+for file in "$mac_root"/Sources/*/*.swift "$mac_root"/Tests/*/*.swift; do
+  swiftc -frontend -parse "$file"
+done
+
+root=$(mktemp -d "${TMPDIR:-/tmp}/codewide-swift-preflight.XXXXXX")
+trap 'rm -rf -- "$root"' EXIT
+trap 'exit 1' HUP INT TERM
+mkdir -p "$root/Sources/CodeWide" "$root/Tests/CodeWidePortableTests"
+cp "$repo_root/scripts/fixtures/macos-portable-swift/Package.swift" "$root/Package.swift"
+# Compile the exact existing files, including Swift Testing macro expansion.
+# These two owners have no Apple SDK dependency; do not copy their logic or add
+# platform stubs to turn a different program into a misleading green check.
+for owner in UpdateCheckAdmission RelayAddress; do
+  cp "$mac_root/Sources/CodeWide/$owner.swift" "$root/Sources/CodeWide/"
+  cp "$mac_root/Tests/CodeWideTests/${owner}Tests.swift" "$root/Tests/CodeWidePortableTests/"
+done
+SWIFTPM_MODULECACHE_OVERRIDE="$root/module-cache" \
+  swift test --package-path "$root" --cache-path "$root/cache" \
+  --config-path "$root/config" --security-path "$root/security" --jobs 2
+echo "Portable Swift compilation/tests passed. Native macOS compilation/startup is NOT validated."

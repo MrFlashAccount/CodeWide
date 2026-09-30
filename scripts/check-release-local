@@ -2,14 +2,14 @@
 set -eu
 
 [ "$#" -eq 0 ] || {
-  printf 'Usage: sh %s (local control-plane checks only)\n' "$0" >&2
+  printf 'Usage: sh %s (local release checks and portable Swift compilation)\n' "$0" >&2
   exit 2
 }
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
-printf '%s\n' 'Local release preflight: actual workflow version shell, planning, fixture assembly, reuse and installer contracts.'
+printf '%s\n' 'Local release preflight: workflow shell, release contracts and portable Swift compilation/tests.'
 printf '%s\n' 'No commit, push, workflow dispatch, signing or publication. Native macOS build/startup smoke is not part of this check.'
 
 actionlint=${CODEWIDE_ACTIONLINT_BIN:-}
@@ -46,6 +46,7 @@ fi
   .github/workflows/companion-linux-release.yml \
   .github/workflows/relay-release.yml \
   .github/workflows/android-release.yml
+sh scripts/check-macos-swift-local
 pnpm typecheck:scripts
 pnpm exec vitest run packages/release-tools/test
 sh -n apps/companion-macos/scripts/update-smoke.sh
@@ -53,4 +54,4 @@ sh scripts/macos-build-version.test.sh
 sh scripts/update-homebrew-tap.test.sh
 sh apps/companion-macos/scripts/validate-boundaries.sh
 
-printf '%s\n' '{"status":"validated-local","nativeMacOSBuild":"not-run","nativeMacOSStartupSmoke":"not-run","published":false}'
+printf '%s\n' '{"status":"validated-local","portableSwift":"passed","nativeMacOSBuild":"not-run","nativeMacOSStartupSmoke":"not-run","published":false}'
