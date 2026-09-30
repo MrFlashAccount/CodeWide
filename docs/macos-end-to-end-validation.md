@@ -98,12 +98,16 @@ dispatches a GitHub Actions workflow and requires a clean, already-pushed branch
 It is not a local build command; run it only after authorization for the remote
 workflow.
 
-## Installed app and update gate
+## Installed app and release smoke
 
 Use a disposable macOS account or the existing macOS release runner for
-`apps/companion-macos/scripts/update-e2e.sh`. It operates on the account's
-production-named LaunchAgent and removes its Companion state directory. It must
-not run against an account containing a real installation or paired devices.
+`sh apps/companion-macos/scripts/update-smoke.sh <previous-app> <new-dmg> <new-version>`.
+It requires `CODEWIDE_ALLOW_ISOLATED_MACOS_SMOKE=1`, uses the account's
+production-named LaunchAgent, and refuses an existing Companion state directory
+or running LaunchAgent. It starts the previous app, stops app and helper, replaces
+the disposable bundle from the new DMG, and checks new app/helper/core versions
+and running processes. It does not test Sparkle installation, state migration or
+recovery after a crash. It must not run against an account with a real installation.
 
 In that isolated account, collect proof in this order:
 
@@ -113,8 +117,8 @@ In that isolated account, collect proof in this order:
    response on the client. Verify client online state then revoke access.
 3. Interrupt the test connections and restart the test helper. Confirm the UI
    recovers and a request succeeds without restarting the menu app.
-4. Run the signed update gate and verify app/helper/core versions, launch count,
-   update result and preserved state.
+4. In a separate fresh disposable account, run the release smoke and verify
+   that the previous and replacement app/helper/core start with matching versions.
 5. Retain sanitized results only. Do not publish device identities, pairing
    invitations, private keys or user conversation data.
 

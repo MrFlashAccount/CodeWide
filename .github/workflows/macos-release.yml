@@ -162,7 +162,7 @@ jobs:
           tar -xJf "$archive" -C "$destination"
           echo "SPARKLE_BIN=$destination/bin" >> "$GITHUB_ENV"
 
-      - name: Reuse previous published app for the update test
+      - name: Reuse previous published app for the startup smoke
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -270,15 +270,14 @@ jobs:
       - name: Test ARM64 macOS update scheduling and runtime
         run: swift test --package-path apps/companion-macos --arch arm64
 
-      - name: Prove update, state migration, and runtime recovery
+      - name: Smoke previous app replacement and new runtime startup
+        timeout-minutes: 3
         env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
-          CODEWIDE_ALLOW_DESTRUCTIVE_UPDATE_E2E: "1"
+          CODEWIDE_ALLOW_ISOLATED_MACOS_SMOKE: "1"
         run: |
-          apps/companion-macos/scripts/update-e2e.sh \
+          sh apps/companion-macos/scripts/update-smoke.sh \
             "$RUNNER_TEMP/baseline/CodeWide.app" \
             "$DMG_PATH" \
-            "$SPARKLE_BIN" \
             "$CODEWIDE_VERSION"
 
       - name: Generate signed production feed

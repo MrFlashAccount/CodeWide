@@ -185,7 +185,7 @@ It does not dispatch GitHub Actions, sign, publish or require a clean/pushed
 branch. On first use it downloads and checks the pinned actionlint validator
 unless an installed tool or `CODEWIDE_ACTIONLINT_BIN` is provided.
 
-This is not evidence of a passed native macOS build or Sparkle installation.
+This is not evidence of a passed native macOS build or startup smoke.
 Those require the macOS runner. In particular, the existing `release-macos
 --dry-run` below is a **CI** validation run, not a local dry run.
 
@@ -206,9 +206,14 @@ runner, and waits for the complete workflow. The workflow refuses to release
 when Nx does not select macOS; `--force` is an explicit operator override. It
 builds the ARM64-only ad-hoc signed app and DMG, downloads and verifies the
 previous published macOS app rather than recompiling a synthetic baseline,
-proves a signed Sparkle update from that app, verifies state migration and
-LaunchAgent recovery, then publishes
-the DMG and signed appcast.
+then runs a short startup smoke: start that app and its Companion, stop both,
+replace the bundle at the same path with the app extracted from the new DMG,
+and verify that the new app and Companion report the expected version and are
+running. Startup waits are bounded to 30 seconds per version, and shutdown to
+10 seconds; the entire smoke step has a three-minute limit. This smoke retains
+ordinary state but does not assert migrations, crash recovery or Sparkle
+installation. The workflow then publishes the DMG and signed appcast. Existing
+unit and contract tests are unchanged.
 
 Required GitHub `release` environment secrets:
 

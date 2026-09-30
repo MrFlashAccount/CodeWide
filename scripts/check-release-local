@@ -10,7 +10,7 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
 printf '%s\n' 'Local release preflight: actual workflow version shell, planning, fixture assembly, reuse and installer contracts.'
-printf '%s\n' 'No commit, push, workflow dispatch, signing or publication. Native macOS build/update E2E is not part of this check.'
+printf '%s\n' 'No commit, push, workflow dispatch, signing or publication. Native macOS build/startup smoke is not part of this check.'
 
 actionlint=${CODEWIDE_ACTIONLINT_BIN:-}
 if [ -z "$actionlint" ]; then
@@ -48,8 +48,9 @@ fi
   .github/workflows/android-release.yml
 pnpm typecheck:scripts
 pnpm exec vitest run packages/release-tools/test
+sh -n apps/companion-macos/scripts/update-smoke.sh
 sh scripts/macos-build-version.test.sh
 sh scripts/update-homebrew-tap.test.sh
 sh apps/companion-macos/scripts/validate-boundaries.sh
 
-printf '%s\n' '{"status":"validated-local","nativeMacOSBuild":"not-run","nativeMacOSUpdateE2E":"not-run","published":false}'
+printf '%s\n' '{"status":"validated-local","nativeMacOSBuild":"not-run","nativeMacOSStartupSmoke":"not-run","published":false}'
