@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { globalSupervisorQualifiedChatRef } from "../src/data/globalSupervisorBinding";
 import { createGlobalSupervisorEventSignalSession } from "../src/data/globalSupervisorEventSignals";
 import { createGlobalSupervisorRuntimeIngress } from "../src/data/globalSupervisorRuntimeIngress";
+import { createGlobalSupervisorUnsolicitedAdmission } from "../src/data/globalSupervisorUnsolicitedAdmission";
+
+function openAdmission() {
+  const admission = createGlobalSupervisorUnsolicitedAdmission();
+  admission.setLifecycleIdle(true);
+  return admission;
+}
 
 function completed(cursor: number, threadId: string) {
   return {
@@ -33,6 +40,7 @@ describe("Global Supervisor event signals", () => {
 
     ingress.publishThreadEvents("server-a", [completed(1, "before-start")]);
     const session = createGlobalSupervisorEventSignalSession({
+      admission: openAdmission(),
       appendText,
       home: globalSupervisorQualifiedChatRef("home", "supervisor"),
       ingress,
@@ -57,6 +65,7 @@ describe("Global Supervisor event signals", () => {
       observed.resolve(text);
     });
     const session = createGlobalSupervisorEventSignalSession({
+      admission: openAdmission(),
       appendText,
       home: globalSupervisorQualifiedChatRef("home", "supervisor"),
       ingress,
@@ -71,6 +80,33 @@ describe("Global Supervisor event signals", () => {
 
     await expect(observed.promise).resolves.toBe("Always answer in Russian");
     expect(appendText).toHaveBeenCalledOnce();
+    await session.stop();
+  });
+
+  it("defers compaction reassertion through speech_stopped until the exchange is idle", async () => {
+    const ingress = createGlobalSupervisorRuntimeIngress();
+    const admission = openAdmission();
+    admission.setUserSpeaking(true);
+    admission.setLifecycleIdle(false);
+    const appendText = vi.fn(async (_text: string) => undefined);
+    const session = createGlobalSupervisorEventSignalSession({
+      admission,
+      appendText,
+      home: globalSupervisorQualifiedChatRef("home", "supervisor"),
+      ingress,
+      now: () => 1,
+      onTerminal: vi.fn(),
+      realtimeInstructions: "Always answer in Russian",
+    });
+
+    ingress.publishThreadEvents("home", [compacted(1, "supervisor")]);
+    await Promise.resolve();
+    expect(appendText).not.toHaveBeenCalled();
+    admission.setUserSpeaking(false);
+    expect(appendText).not.toHaveBeenCalled();
+    admission.completeExchange();
+    admission.setLifecycleIdle(true);
+    await vi.waitFor(() => expect(appendText).toHaveBeenCalledOnce());
     await session.stop();
   });
 });

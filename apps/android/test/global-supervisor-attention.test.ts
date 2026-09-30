@@ -9,6 +9,10 @@ import { createGlobalSupervisorAttentionDeliverySession } from "../src/data/glob
 import { createGlobalSupervisorAttentionProjection } from "../src/data/globalSupervisorAttentionProjection";
 import { createGlobalSupervisorAttentionStorage } from "../src/data/globalSupervisorAttentionStorage.web";
 import { globalSupervisorQualifiedChatRef } from "../src/data/globalSupervisorBinding";
+import {
+  createGlobalSupervisorUnsolicitedAdmission,
+  type GlobalSupervisorUnsolicitedAdmission,
+} from "../src/data/globalSupervisorUnsolicitedAdmission";
 import { createV1TestThread } from "./fixtures/v1Thread";
 
 const SUPERVISOR = globalSupervisorQualifiedChatRef("home", "supervisor");
@@ -55,6 +59,18 @@ function completed(options: {
 
 function owner(storage = createGlobalSupervisorAttentionStorage()) {
   return createGlobalSupervisorAttentionOwner({ now: () => 10_000, storage });
+}
+
+function openAdmission(): GlobalSupervisorUnsolicitedAdmission {
+  const admission = createGlobalSupervisorUnsolicitedAdmission();
+  admission.setLifecycleIdle(true);
+  return admission;
+}
+
+function completeSpeech(admission: GlobalSupervisorUnsolicitedAdmission): void {
+  admission.setLifecycleIdle(false);
+  admission.completeExchange();
+  admission.setLifecycleIdle(true);
 }
 
 describe("Global Supervisor attention", () => {
@@ -426,7 +442,9 @@ describe("Global Supervisor attention", () => {
     const appendText = vi.fn(async () => {
       accepted.resolve();
     });
+    const admission = openAdmission();
     const delivery = createGlobalSupervisorAttentionDeliverySession({
+      admission,
       appendText,
       attention,
       home: SUPERVISOR,
@@ -434,18 +452,19 @@ describe("Global Supervisor attention", () => {
     });
 
     expect(appendText).not.toHaveBeenCalled();
-    delivery.setSpeechBusy(false);
+    admission.setLifecycleIdle(false);
+    admission.setLifecycleIdle(true);
     await accepted.promise;
     expect(appendText).toHaveBeenCalledOnce();
     await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(2);
 
-    delivery.setSpeechBusy(false);
+    completeSpeech(admission);
     await vi.waitFor(async () => {
       await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(1);
     });
     expect(appendText).toHaveBeenCalledTimes(2);
 
-    delivery.setSpeechBusy(false);
+    completeSpeech(admission);
     await vi.waitFor(async () => {
       await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(0);
     });
@@ -487,20 +506,115 @@ describe("Global Supervisor attention", () => {
     const attention = owner();
     const pending = vi.spyOn(attention, "pendingForSpeech");
     const appendText = vi.fn(async () => undefined);
+    const admission = openAdmission();
     const delivery = createGlobalSupervisorAttentionDeliverySession({
+      admission,
       appendText,
       attention,
       home: SUPERVISOR,
       onTerminal: vi.fn(),
     });
 
-    delivery.setSpeechBusy(false);
+    admission.setLifecycleIdle(false);
+    admission.setLifecycleIdle(true);
     await vi.waitFor(() => expect(pending).toHaveBeenCalledOnce());
     await Promise.resolve();
     await Promise.resolve();
 
     expect(pending).toHaveBeenCalledOnce();
     expect(appendText).not.toHaveBeenCalled();
+    await delivery.stop();
+  });
+
+  it("keeps a notification that arrives during speech pending through speech_stopped", async () => {
+    const attention = owner();
+    await attention.enableDelivery(SUPERVISOR);
+    await attention.follow(SUPERVISOR, WORKER_A);
+    const pendingForSpeech = vi.spyOn(attention, "pendingForSpeech");
+    const appendText = vi.fn(async () => undefined);
+    const admission = openAdmission();
+    admission.setUserSpeaking(true);
+    admission.setLifecycleIdle(false);
+    const delivery = createGlobalSupervisorAttentionDeliverySession({
+      admission,
+      appendText,
+      attention,
+      home: SUPERVISOR,
+      onTerminal: vi.fn(),
+    });
+
+    await attention.ingestEvents(WORKER_A.connectionId, [
+      completed({ cursor: 1, observedAt: 11_000, worker: WORKER_A.threadId }),
+    ]);
+    await Promise.resolve();
+    expect(pendingForSpeech).not.toHaveBeenCalled();
+    expect(appendText).not.toHaveBeenCalled();
+
+    admission.setUserSpeaking(false);
+    expect(appendText).not.toHaveBeenCalled();
+    admission.completeExchange();
+    admission.setLifecycleIdle(true);
+    await vi.waitFor(() => expect(appendText).toHaveBeenCalledOnce());
+    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(1);
+
+    admission.completeExchange();
+    await vi.waitFor(async () => {
+      await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(0);
+    });
+    await delivery.stop();
+  });
+
+  it("rechecks admission after pendingForSpeech and retries an interrupted event without acknowledgement", async () => {
+    const attention = owner();
+    await attention.enableDelivery(SUPERVISOR);
+    await attention.follow(SUPERVISOR, WORKER_A);
+    await attention.ingestEvents(WORKER_A.connectionId, [
+      completed({ cursor: 1, observedAt: 11_000, worker: WORKER_A.threadId }),
+    ]);
+    const firstRead =
+      Promise.withResolvers<
+        Awaited<ReturnType<GlobalSupervisorAttentionOwner["pendingForSpeech"]>>
+      >();
+    const pendingForSpeech = vi.spyOn(attention, "pendingForSpeech");
+    pendingForSpeech.mockImplementationOnce(() => firstRead.promise);
+    const appendText = vi.fn(async () => undefined);
+    const admission = openAdmission();
+    const delivery = createGlobalSupervisorAttentionDeliverySession({
+      admission,
+      appendText,
+      attention,
+      home: SUPERVISOR,
+      onTerminal: vi.fn(),
+    });
+
+    admission.setLifecycleIdle(false);
+    admission.setLifecycleIdle(true);
+    await vi.waitFor(() => expect(pendingForSpeech).toHaveBeenCalledOnce());
+    admission.setUserSpeaking(true);
+    admission.setLifecycleIdle(false);
+    firstRead.resolve(await attention.pendingForSpeech(SUPERVISOR, 1));
+    await Promise.resolve();
+    expect(appendText).not.toHaveBeenCalled();
+    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(1);
+
+    admission.setUserSpeaking(false);
+    expect(appendText).not.toHaveBeenCalled();
+    admission.completeExchange();
+    admission.setLifecycleIdle(true);
+    await vi.waitFor(() => expect(appendText).toHaveBeenCalledOnce());
+
+    admission.setUserSpeaking(true);
+    admission.setLifecycleIdle(false);
+    admission.setUserSpeaking(false);
+    admission.completeExchange();
+    admission.setLifecycleIdle(true);
+    await vi.waitFor(() => expect(appendText).toHaveBeenCalledTimes(2));
+    await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(1);
+
+    completeSpeech(admission);
+    await vi.waitFor(async () => {
+      await expect(attention.pendingCount(SUPERVISOR)).resolves.toBe(0);
+    });
     await delivery.stop();
   });
 });

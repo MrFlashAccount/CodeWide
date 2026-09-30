@@ -2,6 +2,10 @@ import type { SyncEvent } from "@codewide/sync-client";
 import { globalSupervisorLimitsV1 } from "./globalSupervisorLimitsV1";
 import type { GlobalSupervisorQualifiedChatRef } from "./globalSupervisorBinding";
 import type { GlobalSupervisorRuntimeIngress } from "./globalSupervisorRuntimeIngress";
+import {
+  appendGlobalSupervisorUnsolicited,
+  type GlobalSupervisorUnsolicitedAdmission,
+} from "./globalSupervisorUnsolicitedAdmission";
 import { unknownRecord } from "./unknownRecord";
 
 export type GlobalSupervisorEventSignalSession = {
@@ -53,12 +57,14 @@ function admitSignal(signal: RealtimeContextSignal, seenEvents: Set<string>): bo
 
 /** Reasserts the activation instructions after home-thread compaction. */
 export function createGlobalSupervisorEventSignalSession(options: {
+  readonly admission: GlobalSupervisorUnsolicitedAdmission;
   readonly appendText: (text: string) => Promise<void>;
   readonly home: GlobalSupervisorQualifiedChatRef;
   readonly ingress: GlobalSupervisorRuntimeIngress;
   readonly now: () => number;
   readonly onTerminal: () => void;
   readonly realtimeInstructions: string;
+  readonly signal?: AbortSignal;
 }): GlobalSupervisorEventSignalSession {
   const seenEvents = new Set<string>();
   let windowStartedAt = options.now();
@@ -86,7 +92,13 @@ export function createGlobalSupervisorEventSignalSession(options: {
       tail = tail
         .then(async () => {
           if (accepting) {
-            await options.appendText(signal.text);
+            await appendGlobalSupervisorUnsolicited({
+              admission: options.admission,
+              appendText: async () => {
+                await options.appendText(signal.text);
+              },
+              signal: options.signal,
+            });
           }
         })
         .catch(() => {

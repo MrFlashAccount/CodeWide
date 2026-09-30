@@ -68,7 +68,7 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerOptimisticTurn).toContain('? "Checking delivery"');
   expect(ownerOptimisticTurn).toContain('? "Sending to Companion"');
   expect(ownerOptimisticTurn).toContain(': "Queued";');
-  expect(ownerOptimisticTurn).toContain("`Message was rejected: ${item.lastError}`");
+  // Failure copy is verified through rendering in v1-compaction-delivery.render.test.tsx.
   expect(ownerCompletedTurnHistory).toContain("function CompletedTurnHistory");
   expect(ownerCompletedTurnHistory).toContain("function CollapsedTurnActivity");
   expect(ownerTurnProjection).toContain("selectTurnRenderWindow(rawTurn)");

@@ -146,6 +146,7 @@ async function scan(mode, options = {}) {
     );
   }
   try {
+    await options.interact?.(page);
     const result = await page.evaluate(() => window.timelineHeightAccuracyExperiment.scan());
     assert.deepEqual(errors, []);
     return result;
@@ -298,7 +299,7 @@ test(
   },
 );
 
-test("collapsed completed activity is part of the exact physical row height", async () => {
+test("collapsed completed activity is part of the initial physical row estimate", async () => {
   const [plain, withActivity] = await Promise.all([
     scan("pretext-natural", { sources: ["Final answer"] }),
     scan("pretext-natural", { includeActivity: true, sources: ["Final answer"] }),
@@ -308,10 +309,80 @@ test("collapsed completed activity is part of the exact physical row height", as
   assert.ok(plainRow !== undefined);
   assert.ok(activityRow !== undefined);
   assert.equal(plainRow.calculated.status, "exact");
-  assert.equal(activityRow.calculated.status, "exact");
+  assert.equal(activityRow.calculated.status, "dynamic");
+  assert.equal(activityRow.calculated.reason, "expandable-history");
   assert.ok(Math.abs(plainRow.allocatedHeight - plainRow.calculated.size) <= 0.5);
-  assert.ok(Math.abs(activityRow.allocatedHeight - activityRow.calculated.size) <= 0.5);
+  assert.ok(Math.abs(activityRow.allocatedHeight - activityRow.calculated.estimate) <= 0.5);
   assert.equal(activityRow.allocatedHeight - plainRow.allocatedHeight, 20);
+});
+
+test("premeasured list remeasures nested activity on expand and collapse without replacing rows", async () => {
+  await scan("premeasured", {
+    includeActivity: true,
+    sources: ["Final answer", "Following answer"],
+    interact: async (page) => {
+      const readRows = () =>
+        page.evaluate(() => window.timelineHeightAccuracyExperiment.scan());
+      const assertNoOverlap = async () => {
+        const clearance = await page.evaluate(() => {
+          const first = document.querySelector('[data-height-row="0"]');
+          const next = document.querySelector('[data-height-row="1"]');
+          if (first === null || next === null) {
+            throw new Error("Expected activity row and following answer to remain mounted");
+          }
+          return next.getBoundingClientRect().top - first.getBoundingClientRect().bottom;
+        });
+        assert.ok(clearance >= -1, `Following answer overlaps activity by ${-clearance}px`);
+      };
+      const collapsed = await readRows();
+      const initial = collapsed.rows[0];
+      assert.ok(initial !== undefined);
+      assert.equal(initial.calculated.status, "dynamic");
+      assert.equal(initial.calculated.reason, "expandable-history");
+
+      await page.getByRole("button", { name: /^Expand activity/ }).first().click();
+      await page.waitForFunction(async (initialHeight) => {
+        const result = await window.timelineHeightAccuracyExperiment.scan();
+        const row = result.rows[0];
+        return (
+          row !== undefined &&
+          row.contentHeight > initialHeight &&
+          Math.abs(row.allocatedHeight - row.contentHeight) <= 1
+        );
+      }, initial.contentHeight);
+      const expanded = await readRows();
+      const expandedRow = expanded.rows[0];
+      assert.ok(expandedRow !== undefined);
+      assert.ok(expandedRow.contentHeight > initial.contentHeight);
+      assert.ok(Math.abs(expandedRow.allocatedHeight - expandedRow.contentHeight) <= 1);
+      await assertNoOverlap();
+      assert.deepEqual(
+        expanded.rows.map((row) => row.key),
+        collapsed.rows.map((row) => row.key),
+      );
+
+      await page.getByRole("button", { name: /^Collapse activity/ }).first().click();
+      await page.waitForFunction(async (initialHeight) => {
+        const result = await window.timelineHeightAccuracyExperiment.scan();
+        const row = result.rows[0];
+        return (
+          row !== undefined &&
+          Math.abs(row.contentHeight - initialHeight) <= 1 &&
+          Math.abs(row.allocatedHeight - row.contentHeight) <= 1
+        );
+      }, initial.contentHeight);
+      const recollapsed = await readRows();
+      const recollapsedRow = recollapsed.rows[0];
+      assert.ok(recollapsedRow !== undefined);
+      assert.ok(Math.abs(recollapsedRow.contentHeight - initial.contentHeight) <= 1);
+      assert.ok(Math.abs(recollapsedRow.allocatedHeight - initial.allocatedHeight) <= 1);
+      await assertNoOverlap();
+      assert.deepEqual(
+        recollapsed.rows.map((row) => row.key),
+        collapsed.rows.map((row) => row.key),
+      );
+    },
+  });
 });
 
 test(

@@ -62,11 +62,21 @@ function speechPhase(userSpeaking: boolean, playbackActive: boolean, busy: boole
   return busy ? "thinking" : "listening";
 }
 
+function lifecycleBusy(
+  activeTurnId: string | null,
+  threadBusy: boolean,
+  awaitingResponse: boolean,
+): boolean {
+  return activeTurnId !== null || threadBusy || awaitingResponse;
+}
+
 /** Reduces independent live speech, playback and home-thread activity into one display phase. */
 export function createGlobalSupervisorSpeechState(options: {
   readonly home: GlobalSupervisorQualifiedChatRef;
   readonly now: () => number;
   readonly publish: (phase: SpeechPhase) => void;
+  readonly publishExchangeCompleted?: () => void;
+  readonly publishUnsolicitedIdle?: (idle: boolean) => void;
 }): GlobalSupervisorSpeechState {
   let accepting = true;
   let started = false;
@@ -77,17 +87,21 @@ export function createGlobalSupervisorSpeechState(options: {
   let activeTurnId: string | null = null;
   let threadBusy = false;
   let playbackUntil = -Infinity;
+  let unsolicitedIdle: boolean | null = null;
 
   const publish = (): void => {
     if (!accepting || !started) {
       return;
     }
+    const playbackActive = options.now() < playbackUntil;
+    const busy = lifecycleBusy(activeTurnId, threadBusy, awaitingResponse);
+    const nextUnsolicitedIdle = !userSpeaking && !playbackActive && !busy;
+    if (nextUnsolicitedIdle !== unsolicitedIdle) {
+      unsolicitedIdle = nextUnsolicitedIdle;
+      options.publishUnsolicitedIdle?.(nextUnsolicitedIdle);
+    }
     // Confirmed user speech wins barge-in; transcript completion never means playback drained.
-    const next = speechPhase(
-      userSpeaking,
-      options.now() < playbackUntil,
-      activeTurnId !== null || threadBusy || awaitingResponse,
-    );
+    const next = speechPhase(userSpeaking, playbackActive, busy);
     if (next === phase) {
       return;
     }
@@ -95,28 +109,30 @@ export function createGlobalSupervisorSpeechState(options: {
     options.publish(next);
   };
 
-  const applyActivity = (activity: Activity | null): void => {
+  const applyActivity = (activity: Activity | null): boolean => {
     if (activity === null) {
-      return;
+      return false;
     }
-    switch (activity.kind) {
-      case "started":
-        activeTurnId = activity.turnId;
-        awaitingResponse = false;
-        break;
-      case "completed":
-        if (activity.turnId === activeTurnId) {
-          activeTurnId = null;
-        }
-        break;
-      case "busy":
-        threadBusy = true;
-        break;
-      case "idle":
-        threadBusy = false;
-        activeTurnId = null;
-        break;
+    if (activity.kind === "started") {
+      activeTurnId = activity.turnId;
+      awaitingResponse = false;
+      return false;
     }
+    if (activity.kind === "completed") {
+      if (activity.turnId !== activeTurnId) {
+        return false;
+      }
+      activeTurnId = null;
+      return true;
+    }
+    if (activity.kind === "busy") {
+      threadBusy = true;
+      return false;
+    }
+    const completed = lifecycleBusy(activeTurnId, threadBusy, awaitingResponse);
+    threadBusy = false;
+    activeTurnId = null;
+    return completed;
   };
 
   return {
@@ -143,7 +159,9 @@ export function createGlobalSupervisorSpeechState(options: {
         if (params?.threadId !== options.home.threadId) {
           continue;
         }
-        applyActivity(readActivity(event.payload.method, params));
+        if (applyActivity(readActivity(event.payload.method, params))) {
+          options.publishExchangeCompleted?.();
+        }
       }
       publish();
     },
@@ -155,7 +173,7 @@ export function createGlobalSupervisorSpeechState(options: {
         if (!hasVad) {
           userSpeaking = !completed;
         }
-        awaitingResponse = completed;
+        awaitingResponse = true;
       } else if (completed) {
         awaitingResponse = false;
       }

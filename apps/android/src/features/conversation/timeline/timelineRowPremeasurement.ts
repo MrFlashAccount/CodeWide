@@ -14,7 +14,7 @@ import { projectTurnPresentation } from "../turns/turnProjection";
 import type { VirtualizedTurnPart, VirtualizedTurnPlacement } from "../turns/virtualizedTurnTypes";
 import { TIMELINE_ROW_FALLBACK_ESTIMATE, type TimelineRow } from "./timelineRows";
 
-const TIMELINE_ROW_GEOMETRY_VERSION = 3;
+const TIMELINE_ROW_GEOMETRY_VERSION = 4;
 const TIMELINE_ROW_GEOMETRY_CACHE_LIMIT = 8;
 const HORIZONTAL_SIDES = 2;
 const MINIMUM_FONT_SCALE = 0.1;
@@ -204,6 +204,12 @@ function dynamicPresentationReason(
 ): TimelineFixedSizeFallbackReason | null {
   if (isLeadingPlacement(row.placement) && presentation.preTurnBlocks.length > 0) {
     return "leading-activity";
+  }
+  // WHY: Exact hints are lifetime-fixed sizes in LegendList. Expansion lives inside
+  // the row and does not replace its identity, so even collapsed history must allow
+  // native layout updates. Keep its premeasured height only as an initial estimate.
+  if (rowHasCompletedHistory(row, presentation)) {
+    return "expandable-history";
   }
   if (isTrailingPlacement(row.placement) && presentation.artifacts.length > 0) {
     return "trailing-artifacts";
@@ -414,17 +420,26 @@ function collapsedCompletedHistoryHeight(
   presentation: ReturnType<typeof projectTurnPresentation>,
   fontScale: number,
 ): number {
-  if (!isLeadingPlacement(row.placement)) {
-    return 0;
-  }
-  const indexes = selectTurnRenderWindow(presentation.rawTurn).collapsedActivityIndexes;
-  if (!hasCompletedTurnHistory(row.item.turn, indexes)) {
+  if (!rowHasCompletedHistory(row, presentation)) {
     return 0;
   }
   return Math.max(
     typeScale.body.lineHeight,
     typeScale.label.lineHeight * fontScale,
     iconSize.inline * fontScale,
+  );
+}
+
+function rowHasCompletedHistory(
+  row: MeasurableTimelineRow,
+  presentation: ReturnType<typeof projectTurnPresentation>,
+): boolean {
+  return (
+    isLeadingPlacement(row.placement) &&
+    hasCompletedTurnHistory(
+      presentation.rawTurn,
+      selectTurnRenderWindow(presentation.rawTurn).collapsedActivityIndexes,
+    )
   );
 }
 

@@ -22,6 +22,11 @@ import { createGlobalSupervisorEventSignalSession } from "./globalSupervisorEven
 import { globalSupervisorLimitsV1 } from "./globalSupervisorLimitsV1";
 import { createGlobalSupervisorSpeechState } from "./globalSupervisorSpeechState";
 import {
+  appendGlobalSupervisorUnsolicited,
+  createGlobalSupervisorUnsolicitedAdmission,
+  type GlobalSupervisorUnsolicitedAdmission,
+} from "./globalSupervisorUnsolicitedAdmission";
+import {
   createGlobalSupervisorStartupContextOwner,
   type GlobalSupervisorStartupContextOwner,
 } from "./globalSupervisorStartupContext";
@@ -204,6 +209,7 @@ type LiveSessionState = {
   readonly startupContext: GlobalSupervisorStartupContextOwner;
   stopping: boolean;
   transcriptSequence: number;
+  readonly unsolicitedAdmission: GlobalSupervisorUnsolicitedAdmission;
   readonly webRtc: GlobalSupervisorWebRtcSession;
 };
 
@@ -278,6 +284,7 @@ function failLiveState(state: LiveSessionState, failure: GlobalSupervisorRuntime
     return;
   }
   state.failurePublished = true;
+  state.unsolicitedAdmission.stop();
   state.speech.stop();
   state.onFailure(failure);
 }
@@ -336,8 +343,10 @@ function acceptTranscript(
       text,
     },
   });
-  state.attentionDelivery?.setSpeechBusy(role !== "assistant");
   state.speech.acceptTranscript(role, true);
+  if (role === "assistant") {
+    state.unsolicitedAdmission.completeExchange();
+  }
 }
 
 function acceptActivePayload(
@@ -359,7 +368,6 @@ function acceptActivePayload(
       acceptTranscript(state, params);
       return;
     case "thread/realtime/itemAdded":
-      state.attentionDelivery?.setSpeechBusy(true);
       state.speech.acceptItem(params.item);
       return;
     case "thread/realtime/error":
@@ -810,6 +818,7 @@ export function createGlobalSupervisorRuntime(
               }
             },
             onUserSpeaking(speaking) {
+              state?.unsolicitedAdmission.setUserSpeaking(speaking);
               state?.speech.setUserSpeaking(speaking);
             },
             signal,
@@ -820,6 +829,7 @@ export function createGlobalSupervisorRuntime(
           }
           recordStartupStage("offerReady");
           const channelId = authority.randomUUID();
+          const unsolicitedAdmission = createGlobalSupervisorUnsolicitedAdmission();
           state = {
             activationId,
             attentionDelivery: null,
@@ -857,10 +867,13 @@ export function createGlobalSupervisorRuntime(
                   publish({ activationId, event: phase });
                 }
               },
+              publishExchangeCompleted: unsolicitedAdmission.completeExchange,
+              publishUnsolicitedIdle: unsolicitedAdmission.setLifecycleIdle,
             }),
             startupContext,
             stopping: false,
             transcriptSequence: 0,
+            unsolicitedAdmission,
             webRtc,
           };
           if (didTerminateBeforeState()) {
@@ -934,6 +947,7 @@ export function createGlobalSupervisorRuntime(
             await webRtc.setMicrophoneMuted(microphoneMuted);
           } catch (error) {
             signal.removeEventListener("abort", abortStartup);
+            state.unsolicitedAdmission.stop();
             state.speech.stop();
             activitySubscription.unsubscribe();
             await webRtc.stop().catch(() => undefined);
@@ -945,14 +959,16 @@ export function createGlobalSupervisorRuntime(
             }
             throw error;
           }
+          const appendText = async (text: string): Promise<void> => {
+            await authority.rpcAfterAttach(attemptSession, "thread/realtime/appendText", {
+              role: "developer",
+              text,
+              threadId: home.threadId,
+            });
+          };
           const eventSignals = createGlobalSupervisorEventSignalSession({
-            appendText: async (text) => {
-              await authority.rpcAfterAttach(attemptSession, "thread/realtime/appendText", {
-                role: "developer",
-                text,
-                threadId: home.threadId,
-              });
-            },
+            admission: unsolicitedAdmission,
+            appendText,
             home,
             ingress: authority.ingress,
             now: authority.now,
@@ -960,15 +976,11 @@ export function createGlobalSupervisorRuntime(
               failLiveState(state, "realtimeFailed");
             },
             realtimeInstructions,
+            signal,
           });
           const attentionDelivery = createGlobalSupervisorAttentionDeliverySession({
-            appendText: async (text) => {
-              await authority.rpcAfterAttach(attemptSession, "thread/realtime/appendText", {
-                role: "developer",
-                text,
-                threadId: home.threadId,
-              });
-            },
+            admission: unsolicitedAdmission,
+            appendText,
             attention: authority.attention,
             home,
             onTerminal: () => {
@@ -982,14 +994,8 @@ export function createGlobalSupervisorRuntime(
           let stopped = false;
           const transport = {
             announceRecovery: createGlobalSupervisorRecoveryNotice({
-              appendText: async (text) => {
-                attentionDelivery.setSpeechBusy(true);
-                await authority.rpcAfterAttach(attemptSession, "thread/realtime/appendText", {
-                  role: "developer",
-                  text,
-                  threadId: home.threadId,
-                });
-              },
+              admission: unsolicitedAdmission,
+              appendText,
               isReady: () =>
                 !state.stopping &&
                 !state.failurePublished &&
@@ -1030,6 +1036,7 @@ export function createGlobalSupervisorRuntime(
               // Release device capture before any delivery or network drain. Those queues may
               // legitimately take seconds, but they do not own the local microphone.
               await state.webRtc.stop().catch(recordFailure);
+              unsolicitedAdmission.stop();
               await attentionDelivery.stop().catch(recordFailure);
               await eventSignals.stop().catch(recordFailure);
               if (canStopRealtime()) {
@@ -1072,15 +1079,15 @@ export function createGlobalSupervisorRuntime(
             if (activationGreetingAccepted) {
               if (reason === "recovery") {
                 await transport.announceRecovery();
-              } else {
-                attentionDelivery.setSpeechBusy(false);
               }
               return;
             }
-            await authority.rpcAfterAttach(attemptSession, "thread/realtime/appendText", {
-              role: "developer",
-              text: globalSupervisorActivationGreetingPrompt(),
-              threadId: home.threadId,
+            await appendGlobalSupervisorUnsolicited({
+              admission: unsolicitedAdmission,
+              appendText: async () => {
+                await appendText(globalSupervisorActivationGreetingPrompt());
+              },
+              signal,
             });
             activationGreetingAccepted = true;
             appLogger.info({

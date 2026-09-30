@@ -38,7 +38,6 @@ describe("companion transport trust boundary", () => {
       "PinTrustManager verifies the exact leaf SPKI during the TLS handshake",
     );
     expect(pinnedTls).not.toContain("CertificatePinner.Builder()");
-    expect(pinnedTls).toContain("saved Companion pin is deliberately");
 
     const nativeProxy = read(
       "../android/app/src/main/java/dev/codewide/app/remote/NativeCompanionHttpProxy.kt",
@@ -49,7 +48,9 @@ describe("companion transport trust boundary", () => {
     const innerTls = read(
       "../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt",
     );
-    expect(innerTls).toContain("PinnedTls.carrierClient(base, saved.endpoint, saved.relay)");
+    expect(innerTls).toContain(
+      "PinnedTls.carrierClient(base, saved.endpoint, saved.relay, saved.innerTlsPinSha256)",
+    );
     expect(innerTls).toContain("PinnedTls.innerTlsClient");
     expect(innerTls).toContain('header("x-codewide-relay-route", it)');
     expect(pinnedTls).toContain("pinForCertificate(chain[0])");

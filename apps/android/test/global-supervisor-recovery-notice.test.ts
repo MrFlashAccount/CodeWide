@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createGlobalSupervisorRecoveryNotice } from "../src/data/globalSupervisorRecoveryNotice";
+import { createGlobalSupervisorUnsolicitedAdmission } from "../src/data/globalSupervisorUnsolicitedAdmission";
 
 function fixture() {
   const abort = new AbortController();
@@ -7,14 +8,17 @@ function fixture() {
   const accepted = vi.fn();
   const failed = vi.fn();
   const isReady = vi.fn(() => true);
+  const admission = createGlobalSupervisorUnsolicitedAdmission();
+  admission.setLifecycleIdle(true);
   const notify = createGlobalSupervisorRecoveryNotice({
+    admission,
     appendText,
     isReady,
     onAccepted: accepted,
     onFailure: failed,
     signal: abort.signal,
   });
-  return { abort, appendText, accepted, failed, isReady, notify };
+  return { abort, admission, appendText, accepted, failed, isReady, notify };
 }
 
 describe("live recovery acknowledgement", () => {
@@ -36,8 +40,7 @@ describe("live recovery acknowledgement", () => {
     input.appendText.mockImplementationOnce(async () => pending.promise);
     const first = input.notify();
     const duplicate = input.notify();
-    await Promise.resolve();
-    expect(input.appendText).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(input.appendText).toHaveBeenCalledOnce());
     expect(input.appendText.mock.calls[0]?.[0]).toContain("one short sentence");
     expect(input.appendText.mock.calls[0]?.[0]).toContain("preferred language");
     expect(input.appendText.mock.calls[0]?.[0]).toContain("repeat previous requests or actions");
@@ -81,5 +84,22 @@ describe("live recovery acknowledgement", () => {
     expect(input.accepted).not.toHaveBeenCalled();
     expect(input.failed).not.toHaveBeenCalled();
     expect(input.appendText).toHaveBeenCalledOnce();
+  });
+
+  it("defers a recovery notice through speech_stopped until the exchange is idle", async () => {
+    const input = fixture();
+    input.admission.setUserSpeaking(true);
+    input.admission.setLifecycleIdle(false);
+    const notifying = input.notify();
+    await Promise.resolve();
+    expect(input.appendText).not.toHaveBeenCalled();
+
+    input.admission.setUserSpeaking(false);
+    expect(input.appendText).not.toHaveBeenCalled();
+    input.admission.completeExchange();
+    input.admission.setLifecycleIdle(true);
+    await notifying;
+    expect(input.appendText).toHaveBeenCalledOnce();
+    expect(input.accepted).toHaveBeenCalledOnce();
   });
 });

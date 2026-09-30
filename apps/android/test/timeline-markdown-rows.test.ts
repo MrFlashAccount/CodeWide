@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseRichMarkdown } from "@codewide/rendering-core";
+import type { ProjectedTurnMetadata } from "@codewide/sync-client";
 
 const pretextMock = vi.hoisted(() => ({
   measureInlineFlow: vi.fn((_prepared: unknown, _width: number, lineHeight: number) => ({
@@ -466,7 +467,7 @@ describe("feature-flagged conversation rows", () => {
     });
   });
 
-  it("includes the collapsed completed-activity header in an exact leading row", () => {
+  it("keeps expandable history measurable while including its collapsed header in the estimate", () => {
     const plainRows = projectTimelineRows(
       [completedConversationTurnRow("plain-completed", "Final answer")],
       enabled,
@@ -491,12 +492,68 @@ describe("feature-flagged conversation rows", () => {
     const activityHeight = timelineRowHeight(activity, geometry);
 
     expect(plainHeight).toMatchObject({ status: "exact" });
-    expect(activityHeight).toMatchObject({ status: "exact" });
-    if (plainHeight.status !== "exact" || activityHeight.status !== "exact") {
-      throw new Error("Expected exact completed response heights");
+    expect(activityHeight).toMatchObject({ reason: "expandable-history", status: "dynamic" });
+    if (plainHeight.status !== "exact" || activityHeight.status !== "dynamic") {
+      throw new Error("Expected fixed plain response and measurable expandable history");
     }
-    expect(activityHeight.size - plainHeight.size).toBe(20);
+    expect(activityHeight.estimate - plainHeight.size).toBe(20);
+    expect(timelineRowHeight(activity, geometry)).toEqual(activityHeight);
   });
+
+  it("limits expandable-history measurement to the leading slice of a long answer", () => {
+    const source = "First paragraph\n\nSecond paragraph\n\nFinal paragraph";
+    const rows = projectTimelineRows(
+      [completedConversationTurnWithActivityRow("segmented-history", source)],
+      enabled,
+    ).filter((row) => row.kind === "turnSlice");
+    const geometry = {
+      agentDateVisible: false,
+      beforeDateVisible: false,
+      density: 3,
+      fontScale: 1,
+      viewportWidth: 320,
+    };
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      expect(timelineRowHeight(row, geometry)).toMatchObject(
+        row.placement === "start"
+          ? { reason: "expandable-history", status: "dynamic" }
+          : { status: "exact" },
+      );
+    }
+  });
+
+  it.each([
+    { itemsView: "summary", kinds: ["commandExecution"], expected: "dynamic" },
+    { itemsView: "summary", kinds: ["reasoning"], expected: "exact" },
+    { itemsView: "full", kinds: ["commandExecution"], expected: "exact" },
+  ] as const)(
+    "uses visible history authority for $itemsView / $kinds instead of fixing unloaded history",
+    ({ itemsView, kinds, expected }) => {
+      const base = completedConversationTurnRow("summary-history", "Final answer");
+      const turn: TurnRow["turn"] & { readonly codewide: ProjectedTurnMetadata } = {
+        ...base.turn,
+        codewide: { activity: { count: 1, kinds } },
+        itemsView,
+      };
+      const rows = projectTimelineRows([{ ...base, turn }], enabled);
+      const row = rows.find((candidate) => candidate.kind === "turnSlice");
+      if (row === undefined) {
+        throw new Error("Expected completed response row");
+      }
+      const result = timelineRowHeight(row, {
+        agentDateVisible: false,
+        beforeDateVisible: false,
+        density: 3,
+        fontScale: 1,
+        viewportWidth: 320,
+      });
+      expect(result.status).toBe(expected);
+      if (expected === "dynamic") {
+        expect(result).toMatchObject({ reason: "expandable-history" });
+      }
+    },
+  );
 
   it("estimates dynamic tables from their row and cell content instead of one global size", () => {
     const shortRows = projectTimelineRows(

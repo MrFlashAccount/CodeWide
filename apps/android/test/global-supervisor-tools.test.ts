@@ -6,6 +6,7 @@ import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 import { createGlobalSupervisorAttentionOwner } from "../src/data/globalSupervisorAttention";
 import { createGlobalSupervisorAttentionDeliverySession } from "../src/data/globalSupervisorAttentionDelivery";
 import { createGlobalSupervisorAttentionStorage } from "../src/data/globalSupervisorAttentionStorage.web";
+import { createGlobalSupervisorUnsolicitedAdmission } from "../src/data/globalSupervisorUnsolicitedAdmission";
 import {
   globalSupervisorQualifiedChatRef,
   parseGlobalSupervisorBinding,
@@ -1126,18 +1127,26 @@ describe("GlobalSupervisorToolCapabilities", () => {
       lower.attention.ingestEvents(TARGET.connectionId, [completed(2, "turn-1", 2_000)]),
     ]);
     const appendText = vi.fn(async () => undefined);
+    const admission = createGlobalSupervisorUnsolicitedAdmission();
+    admission.setLifecycleIdle(true);
     const delivery = createGlobalSupervisorAttentionDeliverySession({
+      admission,
       appendText,
       attention: lower.attention,
       home: supervisor,
       onTerminal: vi.fn(),
     });
 
-    delivery.setSpeechBusy(false);
+    admission.setLifecycleIdle(false);
+    admission.setLifecycleIdle(true);
     await vi.waitFor(() => expect(appendText).toHaveBeenCalledOnce());
-    delivery.setSpeechBusy(false);
+    admission.setLifecycleIdle(false);
+    admission.completeExchange();
+    admission.setLifecycleIdle(true);
     await vi.waitFor(() => expect(appendText).toHaveBeenCalledTimes(2));
-    delivery.setSpeechBusy(false);
+    admission.setLifecycleIdle(false);
+    admission.completeExchange();
+    admission.setLifecycleIdle(true);
     await vi.waitFor(async () => {
       await expect(lower.attention.pendingCount(supervisor)).resolves.toBe(0);
     });

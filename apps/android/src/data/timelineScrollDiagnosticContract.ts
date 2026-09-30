@@ -140,6 +140,7 @@ export type TimelineRowDiagnosticKind = "item" | "turnLead" | "turnSlice";
 /** Bounded fallback categories emitted by the timeline row geometry owner. */
 export type TimelineFixedSizeFallbackReason =
   | "composite-row"
+  | "expandable-history"
   | "inline-review-state"
   | "invalid-geometry"
   | "leading-activity"

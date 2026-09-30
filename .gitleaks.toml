@@ -7,3 +7,13 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''^packages/sync-client/src/v2/contract\.generated\.ts$''']
 regexes = ['''^\s+"[A-Za-z]*[Tt]oken[A-Za-z]*": V2NonNegativeInteger(?: \| null)?;\s*$''']
+
+[[allowlists]]
+# WHY: This exact constant names a UserDefaults preference, not a credential.
+# Keep both the file and complete declaration constrained so other keys still scan.
+description = "KeepAwakeController UserDefaults storage key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''^apps/companion-macos/Sources/CodeWide/KeepAwakeController\.swift$''']
+regexes = ['''^\s*static let preferenceKey = "keepAwakePolicyV1"\s*$''']

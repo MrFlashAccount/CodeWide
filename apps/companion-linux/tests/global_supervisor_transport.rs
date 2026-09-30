@@ -344,6 +344,76 @@ async fn realtime_start_reports_a_stable_error_when_the_bound_thread_has_no_roll
 }
 
 #[tokio::test]
+async fn settings_update_restores_an_unloaded_supervisor_before_voice_start()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_settings_recovery(vec![
+        ("thread/settings/update", settings_thread_not_found()),
+        (
+            "thread/resume",
+            json!({"result": {"thread": {"id": "supervisor-thread", "turns": []}}}),
+        ),
+        ("thread/settings/update", json!({"result": {}})),
+    ])
+    .await
+}
+
+#[tokio::test]
+async fn settings_update_on_a_loaded_thread_does_not_resume()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_settings_recovery(vec![("thread/settings/update", json!({"result": {}}))]).await
+}
+
+#[tokio::test]
+async fn settings_update_preserves_unrelated_rejections_without_resuming()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_settings_recovery(vec![(
+        "thread/settings/update",
+        json!({"error": {"code": -32602, "message": "unsupported model"}}),
+    )])
+    .await
+}
+
+#[tokio::test]
+async fn settings_update_does_not_resume_a_different_missing_thread()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_settings_recovery(vec![(
+        "thread/settings/update",
+        json!({"error": {"code": -32600, "message": "thread not found: other-thread"}}),
+    )])
+    .await
+}
+
+#[tokio::test]
+async fn settings_update_preserves_a_missing_rollout_error_without_retrying()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_settings_recovery(vec![
+        ("thread/settings/update", settings_thread_not_found()),
+        (
+            "thread/resume",
+            json!({"error": {
+                "code": -32600,
+                "message": "no rollout found for thread id supervisor-thread"
+            }}),
+        ),
+    ])
+    .await
+}
+
+#[tokio::test]
+async fn settings_update_stops_after_one_rejected_retry() -> Result<(), Box<dyn std::error::Error>>
+{
+    assert_settings_recovery(vec![
+        ("thread/settings/update", settings_thread_not_found()),
+        (
+            "thread/resume",
+            json!({"result": {"thread": {"id": "supervisor-thread", "turns": []}}}),
+        ),
+        ("thread/settings/update", settings_thread_not_found()),
+    ])
+    .await
+}
+
+#[tokio::test]
 async fn dynamic_tool_request_is_snapshotted_separately_and_removed_only_after_resolution()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
@@ -698,6 +768,109 @@ async fn accept_initialized(
         return Err("initialized notification missing".into());
     }
     Ok(socket)
+}
+
+fn settings_thread_not_found() -> Value {
+    json!({"error": {"code": -32600, "message": "thread not found: supervisor-thread"}})
+}
+
+async fn assert_settings_recovery(
+    steps: Vec<(&'static str, Value)>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_receiver) = mpsc::channel(8);
+    let expected = steps
+        .last()
+        .ok_or("settings recovery script is empty")?
+        .1
+        .clone();
+    let fake = tokio::spawn(run_settings_recovery_app_server(
+        socket_path.clone(),
+        observed,
+    ));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let mut client = connect_caught_up(&format!("ws://{address}/v1/sync")).await?;
+    let settings =
+        json!({"effort": "high", "model": "supervisor-model", "threadId": "supervisor-thread"});
+    send_json(
+        &mut client,
+        &json!({"type": "rpc", "request": {
+            "id": 9, "method": "thread/settings/update", "params": settings
+        }}),
+    )
+    .await?;
+    for (method, response) in steps {
+        let (request, reply) = timeout(Duration::from_secs(2), observed_receiver.recv())
+            .await?
+            .ok_or("settings recovery request missing")?;
+        assert_eq!(request["method"], method);
+        if method == "thread/settings/update" {
+            assert_eq!(request["params"], settings);
+        } else {
+            assert_eq!(request["params"]["threadId"], "supervisor-thread");
+            assert_eq!(request["params"]["excludeTurns"], true);
+        }
+        reply.send(response).map_err(|_| "upstream reply dropped")?;
+    }
+    let response = receive_type(&mut client, "rpc").await?;
+    assert_eq!(response["response"]["id"], 9);
+    assert_eq!(response["response"]["result"], expected["result"]);
+    assert_eq!(response["response"]["error"], expected["error"]);
+
+    // An acknowledged read is a causal fence: any extra recovery RPC would
+    // arrive first on the same upstream socket, without a timing-based sleep.
+    send_json(
+        &mut client,
+        &json!({"type": "rpc", "request": {
+            "id": 10, "method": "thread/realtime/listVoices", "params": {}
+        }}),
+    )
+    .await?;
+    let (fence, reply) = timeout(Duration::from_secs(2), observed_receiver.recv())
+        .await?
+        .ok_or("recovery fence missing")?;
+    assert_eq!(fence["method"], "thread/realtime/listVoices");
+    reply
+        .send(json!({"result": {}}))
+        .map_err(|_| "fence reply dropped")?;
+    assert_eq!(
+        receive_type(&mut client, "rpc").await?["response"]["id"],
+        10
+    );
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+type SettingsRecoveryRequest = (Value, tokio::sync::oneshot::Sender<Value>);
+
+async fn run_settings_recovery_app_server(
+    socket_path: PathBuf,
+    observed: mpsc::Sender<SettingsRecoveryRequest>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    loop {
+        let request = receive_upstream_value(&mut socket).await?;
+        let id = request["id"].clone();
+        let (reply, response) = tokio::sync::oneshot::channel();
+        observed.send((request, reply)).await?;
+        let mut response = response.await?;
+        response["id"] = id;
+        send_value(&mut socket, &response).await?;
+    }
 }
 
 async fn receive_upstream_value(

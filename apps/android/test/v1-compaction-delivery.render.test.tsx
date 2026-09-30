@@ -66,6 +66,20 @@ it("explains App Server conversation ownership without exposing its diagnostic",
   expect(view.queryByText(/retry resume/)).toBeNull();
 });
 
+it.each([
+  { lastError: "Unsupported model", message: "Message was rejected: Unsupported model" },
+  { lastError: null, message: "Message was rejected. Edit it and retry." },
+])("preserves a failed message explanation: $message", ({ lastError, message }) => {
+  const view = render(<OptimisticTurn item={{ ...optimisticItem("failed"), lastError }} />);
+
+  expect(view.getByText(message)).toBeVisible();
+  for (const status of view.getAllByLabelText("Message failed")) {
+    expect(status).toBeVisible();
+  }
+  expect(view.getByText("Continue the task")).toBeVisible();
+  expect(view.queryByTestId("pending-user-message-shimmer")).toBeNull();
+});
+
 it("shows compaction as a separate running lifecycle until completion", () => {
   const view = render(
     <PreTurnLifecycleRows

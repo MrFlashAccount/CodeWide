@@ -687,6 +687,18 @@ describe("GlobalSupervisorRuntime", () => {
     ).toHaveLength(1);
     expect(foregroundRelease).not.toHaveBeenCalled();
 
+    ingress.publishLive("home", {
+      channelId: activeChannel,
+      event: "payload",
+      payload: {
+        method: "thread/realtime/transcript/done",
+        params: { role: "assistant", text: "Worker finished", threadId: HOME.threadId },
+      },
+      sequence: nextSequence++,
+      threadId: HOME.threadId,
+    });
+    await vi.waitFor(() => expect(attention.acknowledge).toHaveBeenCalledOnce());
+
     mediaStateCallbacks[1]?.(false);
     mediaStateCallbacks[1]?.(true);
     mediaStateCallbacks[1]?.(true);
@@ -1094,6 +1106,24 @@ describe("GlobalSupervisorRuntime", () => {
       rules: "Always answer in Russian",
     };
     const second = await runtime.start(HOME, vi.fn());
+    ingress.publishThreadEvents("home", [
+      {
+        cursor: 40,
+        payload: {
+          method: "turn/started",
+          params: { threadId: HOME.threadId, turn: { id: "greeting-turn" } },
+        },
+      },
+    ]);
+    ingress.publishThreadEvents("home", [
+      {
+        cursor: 41,
+        payload: {
+          method: "turn/completed",
+          params: { threadId: HOME.threadId, turn: { id: "greeting-turn" } },
+        },
+      },
+    ]);
     ingress.publishThreadEvents("home", [
       {
         cursor: 42,

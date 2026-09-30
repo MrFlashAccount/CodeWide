@@ -12,18 +12,23 @@ function fixture() {
   const home = globalSupervisorQualifiedChatRef("home", "hidden");
   const model = createGlobalSupervisorRenderModel();
   const states: string[] = [];
+  const unsolicitedIdle: boolean[] = [];
   model.publishStarting(home);
   model.render$.onChange(({ value }) => states.push(globalVoiceOrbStateForPhase(value.phase)));
   const speech = createGlobalSupervisorSpeechState({
     home,
     now: () => time,
     publish: (event) => model.publishRuntimeEvent({ activationId: "activation", event }),
+    publishUnsolicitedIdle: (idle) => unsolicitedIdle.push(idle),
   });
   return {
-    advance: (ms: number) => { time += ms; },
+    advance: (ms: number) => {
+      time += ms;
+    },
     model,
     speech,
     states,
+    unsolicitedIdle,
   };
 }
 
@@ -102,6 +107,17 @@ describe("Global Voice authoritative speech projection", () => {
     expect(states.at(-1)).toBe("speaking");
   });
 
+  it("keeps unsolicited admission busy after VAD stops until the assistant exchange completes", () => {
+    const { speech, unsolicitedIdle } = fixture();
+    speech.start();
+    speech.setUserSpeaking(true);
+    speech.setUserSpeaking(false);
+
+    expect(unsolicitedIdle).toEqual([true, false]);
+    speech.acceptTranscript("assistant", true);
+    expect(unsolicitedIdle).toEqual([true, false, true]);
+  });
+
   it("fences startup and stopped transports from connecting/error/disabled/idle", () => {
     const { speech, model, states } = fixture();
     speech.setPlaybackLevel(0.7);
@@ -121,9 +137,21 @@ describe("Global Voice authoritative speech projection", () => {
   });
 
   it("validates VAD messages without treating transcription, response or arbitrary payloads as audio", () => {
-    expect(globalVoiceWebRtcUserSpeaking('{"type":"input_audio_buffer.speech_started"}')).toBe(true);
-    expect(globalVoiceWebRtcUserSpeaking('{"type":"input_audio_buffer.speech_stopped"}')).toBe(false);
-    for (const data of [null, 12, {}, "invalid", "null", '{"type":"response.done"}', '{"type":"conversation.item.added"}']) {
+    expect(globalVoiceWebRtcUserSpeaking('{"type":"input_audio_buffer.speech_started"}')).toBe(
+      true,
+    );
+    expect(globalVoiceWebRtcUserSpeaking('{"type":"input_audio_buffer.speech_stopped"}')).toBe(
+      false,
+    );
+    for (const data of [
+      null,
+      12,
+      {},
+      "invalid",
+      "null",
+      '{"type":"response.done"}',
+      '{"type":"conversation.item.added"}',
+    ]) {
       expect(globalVoiceWebRtcUserSpeaking(data)).toBeNull();
     }
   });

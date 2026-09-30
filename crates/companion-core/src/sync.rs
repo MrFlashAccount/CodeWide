@@ -1265,15 +1265,24 @@ impl SyncHub {
                 object.insert("params".into(), prepared);
             }
         }
-        if method == "turn/start" {
+        if matches!(method.as_str(), "turn/start" | "thread/settings/update") {
             let account_pool = self.account_pool();
-            return match dispatch_turn_start_with_resume(
-                &self.upstream,
-                account_pool.as_ref(),
-                request.take(),
-            )
-            .await
-            {
+            let response = if method == "turn/start" {
+                dispatch_turn_start_with_resume(
+                    &self.upstream,
+                    account_pool.as_ref(),
+                    request.take(),
+                )
+                .await
+            } else {
+                dispatch_thread_settings_update_with_resume(
+                    &self.upstream,
+                    account_pool.as_ref(),
+                    request.take(),
+                )
+                .await
+            };
+            return match response {
                 Ok(response) => {
                     forward_rpc_response(
                         socket,
@@ -1289,7 +1298,26 @@ impl SyncHub {
                     )
                     .await
                 }
-                Err(error) => send_rpc_error(socket, id, -32040, &error.message()).await,
+                Err(error) => {
+                    let code = match (&error, method.as_str()) {
+                        (_, "turn/start") | (ThreadMutationDispatchError::AccountPool(_), _) => {
+                            -32040
+                        }
+                        (ThreadMutationDispatchError::Upstream(UpstreamError::Backpressure), _) => {
+                            -32004
+                        }
+                        (
+                            ThreadMutationDispatchError::Upstream(
+                                UpstreamError::Reconnecting | UpstreamError::Disconnected,
+                            ),
+                            _,
+                        ) => -32003,
+                        (ThreadMutationDispatchError::Upstream(UpstreamError::Protocol(_)), _) => {
+                            -32020
+                        }
+                    };
+                    send_rpc_error(socket, id, code, &error.message()).await
+                }
             };
         }
         if method == "thread/realtime/start" {
@@ -3295,6 +3323,35 @@ async fn dispatch_turn_start_with_resume(
         return Ok(resumed);
     }
     dispatch_turn_start_once(upstream, account_pool, request).await
+}
+
+async fn dispatch_thread_settings_update_with_resume(
+    upstream: &UpstreamHandle,
+    account_pool: Option<&Arc<AccountPoolService>>,
+    request: Value,
+) -> Result<Value, ThreadMutationDispatchError> {
+    let response = upstream
+        .request(request.clone())
+        .await
+        .map_err(ThreadMutationDispatchError::Upstream)?;
+    let Some(thread_id) = request.pointer("/params/threadId").and_then(Value::as_str) else {
+        return Ok(response);
+    };
+    if !is_thread_not_found_response(&response, thread_id) {
+        return Ok(response);
+    }
+
+    // Settings require a loaded runtime even when indexed history is readable.
+    // The exact thread-not-found rejection proves no settings were applied, so
+    // resume without history and retry once, before Global Voice starts audio.
+    let resumed = resume_thread_runtime(upstream, account_pool, thread_id).await?;
+    if resumed.get("error").is_some() {
+        return Ok(resumed);
+    }
+    upstream
+        .request(request)
+        .await
+        .map_err(ThreadMutationDispatchError::Upstream)
 }
 
 async fn dispatch_realtime_start_with_resume(
