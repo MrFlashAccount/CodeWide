@@ -47,6 +47,7 @@ export function createConversationScopeBindings(
       onRevokeTunnel: undefined,
       onSend: scope.onSend,
       onSetGoal: undefined,
+      onSetGoalStatus: undefined,
       onStartReview: undefined,
       onStartVoiceTranscription: async (
         listener: (event: VoiceTranscriptionEvent) => void,
@@ -84,6 +85,7 @@ export function createConversationScopeBindings(
       onRevokeTunnel: undefined,
       onSend: undefined,
       onSetGoal: undefined,
+      onSetGoalStatus: undefined,
       onStartReview: undefined,
       onStartVoiceTranscription: undefined,
       onSteerQueued: undefined,
@@ -130,6 +132,7 @@ export function createConversationScopeBindings(
     onSend: async (text: string, mode: SendMode, options: TurnSendOptions) =>
       features.composer.sendText(activeConnectionId, activeRemoteThreadId, text, mode, options),
     onSetGoal: goalCommands.onSetGoal,
+    onSetGoalStatus: goalCommands.onSetGoalStatus,
     onStartReview: async (target: ReviewTarget, delivery: ReviewDelivery) =>
       features.review.startReview(activeConnectionId, activeRemoteThreadId, target, delivery),
     onStartVoiceTranscription: async (

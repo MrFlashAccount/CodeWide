@@ -1,4 +1,4 @@
-import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
+import type { ThreadGoal, ThreadGoalStatus } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { ThreadGoalInput } from "../../data/workspace-resource-database";
 /** Qualified goal operations; transport and persisted state stay with their existing lower owners. */
 export type GoalWorkspaceCapabilities = {
@@ -8,5 +8,10 @@ export type GoalWorkspaceCapabilities = {
     connectionId: string,
     threadId: string,
     input: ThreadGoalInput,
+  ) => Promise<ThreadGoal>;
+  setThreadGoalStatus: (
+    connectionId: string,
+    threadId: string,
+    status: ThreadGoalStatus,
   ) => Promise<ThreadGoal>;
 };

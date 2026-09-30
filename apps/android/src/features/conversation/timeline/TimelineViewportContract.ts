@@ -3,6 +3,7 @@ import type { Dispatch, ReactElement, RefObject, SetStateAction } from "react";
 import type { View } from "react-native";
 import type { EdgeInsets } from "react-native-safe-area-context";
 import type { ThreadHistoryViewport } from "../../../data/use-thread-history-controller";
+import type { TimelineTurnDateLabels } from "../../../presentation/conversation/timelineDates";
 import type { ThreadTimelineListRef } from "../../../rendering/ThreadTimelineList";
 import type { TimelineItem } from "./timelineTypes";
 import type { TimelineJumpRequest } from "./timelineJump";
@@ -67,6 +68,7 @@ export type TimelineViewportProps = {
   threadSearchVisible: boolean;
   timelineCompact: boolean;
   timelineContentHeightRef: { current: number };
+  timelineDateLabels: ReadonlyMap<TimelineItem, TimelineTurnDateLabels>;
   timelineJumpRequest: TimelineJumpRequest | null;
   timelinePositioned: boolean;
   timelineRef: RefObject<ThreadTimelineListRef | null>;

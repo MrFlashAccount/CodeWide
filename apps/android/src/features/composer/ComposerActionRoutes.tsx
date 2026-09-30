@@ -46,6 +46,7 @@ export function ComposerGoalRoute({
       visible={visible}
       voiceScope={request.voiceScope}
       {...(request.setGoal === undefined ? {} : { onSetGoal: request.setGoal })}
+      {...(request.setGoalStatus === undefined ? {} : { onSetGoalStatus: request.setGoalStatus })}
       {...(request.clearGoal === undefined ? {} : { onClearGoal: request.clearGoal })}
     />
   );

@@ -81,7 +81,7 @@ it("preserves platform integration contracts — 2", () => {
   const listBodyStyle = sourceObjectDeclaration(richMarkdown, "listBody");
   expect(listBodyStyle).toContain("minWidth: 0");
   expect(listBodyStyle).toContain("flexShrink: 1");
-  expect(listBodyStyle).toContain("gap: spacing.optical");
+  expect(listBodyStyle).toContain("gap: richMarkdownGeometry.listBodyGap");
   expect(richMarkdown).not.toContain(
     "listBody: { minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: 0",
   );

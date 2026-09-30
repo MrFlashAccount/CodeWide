@@ -4,6 +4,7 @@ import type { ThreadListItem } from "../threadList/threadListTypes";
 export type ConversationSurfaceCapabilities = {
   compact: boolean;
   cwd: string;
+  firstUnreadAgentTurnId: string | null;
   newChat: boolean;
   onBack: (() => void) | undefined;
   onViewedLatest: (() => void) | undefined;

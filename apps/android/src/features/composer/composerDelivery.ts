@@ -28,6 +28,7 @@ export function useComposerDelivery({
   onStartVoiceTranscription,
   pastedAttachmentPending,
   pastedAttachmentPendingRef,
+  pauseGoalBeforeInterrupt,
   queuedComposerEdit,
   queuedComposerEditBusy,
   remoteThread,
@@ -82,6 +83,9 @@ export function useComposerDelivery({
   pastedAttachmentPendingRef: Parameters<
     typeof useComposerSubmission
   >[0]["pastedAttachmentPendingRef"];
+  pauseGoalBeforeInterrupt: Parameters<
+    typeof useComposerDeliveryActions
+  >[0]["pauseGoalBeforeInterrupt"];
   queuedComposerEdit: Parameters<typeof useComposerDeliveryActions>[0]["queuedComposerEdit"];
   queuedComposerEditBusy: Parameters<
     typeof useComposerDeliveryActions
@@ -151,7 +155,7 @@ export function useComposerDelivery({
     handleDeliveryAction,
     sendDisabled,
     steerComposer,
-    stoppingResponse,
+    stopAction,
   } = useComposerDeliveryActions({
     attachments,
     cancelQueuedComposerEdit,
@@ -165,6 +169,7 @@ export function useComposerDelivery({
     onEditQueued,
     onInterrupt,
     pastedAttachmentPending,
+    pauseGoalBeforeInterrupt,
     queuedComposerEdit,
     queuedComposerEditBusy,
     saveQueuedComposerEdit,
@@ -187,7 +192,7 @@ export function useComposerDelivery({
     retryVoice,
     sendDisabled,
     steerComposer,
-    stoppingResponse,
+    stopAction,
     toggleVoice,
   };
 }

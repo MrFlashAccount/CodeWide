@@ -17,6 +17,7 @@ export function useConversationTimelineRead({
   currentOutcome,
   draftConnectionId,
   draftThreadId,
+  firstUnreadAgentTurnId,
   historyViewport,
   messageListState,
   newChat,
@@ -33,6 +34,7 @@ export function useConversationTimelineRead({
   currentOutcome: Exclude<MainThreadReadCapabilities["currentOutcome"], undefined>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  firstUnreadAgentTurnId: string | null;
   historyViewport: Exclude<MainThreadReadCapabilities["historyViewport"], undefined>;
   messageListState: Exclude<MainThreadReadCapabilities["messageListState"], undefined>;
   newChat: Exclude<ConversationSurfaceCapabilities["newChat"], undefined>;
@@ -65,6 +67,7 @@ export function useConversationTimelineRead({
   const unreadReceiptBinding = projectUnreadReceipt(
     conversationTimelineBinding.timeline,
     unread,
+    firstUnreadAgentTurnId,
     composerScope,
     draftConnectionId,
     draftThreadId,
@@ -85,8 +88,6 @@ export function useConversationTimelineRead({
   const timelinePositioned =
     timelineState.timelineViewportStateBinding.timelineDidLoad ||
     (timelineModelReady && conversationTimelineBinding.timeline.length === 0);
-  const conversationBackdropVisible =
-    timelinePositioned && conversationTimelineBinding.timeline.length > 0;
   const timelineSearchProjectionBinding = useTimelineSearchProjection(
     timelineState.timelineSearchStateBinding.threadSearch,
     conversationTimelineBinding.timeline,
@@ -178,7 +179,6 @@ export function useConversationTimelineRead({
     unreadVisibilityFrameRef: timelineState.unreadReceiptStateBinding.unreadVisibilityFrameRef,
   });
   return {
-    conversationBackdropVisible,
     conversationPresentationBinding,
     conversationTimelineBinding,
     historyAnchorActionsBinding,

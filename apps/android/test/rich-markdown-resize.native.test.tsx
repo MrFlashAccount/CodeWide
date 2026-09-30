@@ -1,10 +1,15 @@
 import { fireEvent, render } from "@testing-library/react-native";
-import { View, StyleSheet, Text } from "react-native";
+import { Platform, View, StyleSheet, Text } from "react-native";
 import { MarkdownDocumentView } from "../src/rendering/MarkdownDocumentView";
 import { spacing } from "../src/theme";
 import { NativeMarkup } from "../src/rendering/NativeMarkup";
 import { RichMarkdown } from "../src/rendering/RichMarkdown";
 import { RichContentWidthProvider } from "../src/rendering/RichContentLayout";
+import {
+  RichMarkdownPremeasurementBoundary,
+  RichMarkdownPremeasurementProvider,
+} from "../src/rendering/RichMarkdownPremeasurementProvider";
+import * as markdownGeometry from "../src/rendering/richMarkdownGeometry";
 
 let consoleErrors: jest.SpyInstance;
 beforeEach(() => {
@@ -20,6 +25,77 @@ afterEach(() => {
 
 const source = "| Name | Value |\n| --- | --- |\n| Alpha | One |";
 const widths = [360, 720, 4, 360, 560, 280, 360];
+
+it("keeps native paragraph wrapping unless premeasurement is enabled inside its boundary", () => {
+  const paragraph = "A paragraph that wraps naturally without precomputed lines";
+  const layout = jest.spyOn(markdownGeometry, "layoutRichMarkdownInline").mockImplementation(() => {
+    throw new Error("Ordinary Markdown must use native text layout");
+  });
+  try {
+    const view = render(
+      <View>
+        <RichMarkdown source={paragraph} />
+      </View>,
+    );
+    const expectNativeParagraph = () => {
+      const text = view.getByText(paragraph);
+      expect(text.props.selectable).toBe(true);
+      expect(text.props.numberOfLines).toBeUndefined();
+      expect(StyleSheet.flatten(text.props.style)?.height).toBeUndefined();
+      expect(layout).not.toHaveBeenCalled();
+    };
+    expectNativeParagraph();
+    view.rerender(
+      <View>
+        <RichMarkdownPremeasurementProvider enabled={false} fontScale={1} width={280}>
+          <RichMarkdownPremeasurementBoundary>
+            <RichMarkdown source={paragraph} />
+          </RichMarkdownPremeasurementBoundary>
+        </RichMarkdownPremeasurementProvider>
+      </View>,
+    );
+    expectNativeParagraph();
+    view.rerender(
+      <View>
+        <RichMarkdownPremeasurementProvider enabled fontScale={1} width={280}>
+          <RichMarkdown source={paragraph} />
+        </RichMarkdownPremeasurementProvider>
+      </View>,
+    );
+    expectNativeParagraph();
+  } finally {
+    layout.mockRestore();
+  }
+});
+
+it("uses the Pretext line-breaking policy only inside a premeasured Android timeline", () => {
+  const platform = jest.replaceProperty(Platform, "OS", "android");
+  try {
+    const view = render(
+      <RichMarkdownPremeasurementProvider enabled={false} fontScale={1} width={280}>
+        <RichMarkdownPremeasurementBoundary>
+          <RichMarkdown source="A paragraph that wraps naturally" />
+        </RichMarkdownPremeasurementBoundary>
+      </RichMarkdownPremeasurementProvider>,
+    );
+    expect(
+      view.getByText("A paragraph that wraps naturally").props.textBreakStrategy,
+    ).toBeUndefined();
+
+    view.rerender(
+      <RichMarkdownPremeasurementProvider enabled fontScale={1} width={280}>
+        <RichMarkdownPremeasurementBoundary>
+          <RichMarkdown source="A paragraph that wraps naturally" />
+        </RichMarkdownPremeasurementBoundary>
+      </RichMarkdownPremeasurementProvider>,
+    );
+    expect(view.getByText("A paragraph that wraps naturally").props.textBreakStrategy).toBe(
+      "simple",
+    );
+  } finally {
+    platform.restore();
+  }
+});
 
 it.each([false, true])(
   "resizes a mounted Markdown table without pinning its viewport (streaming=%s)",
@@ -72,7 +148,11 @@ it.each([source, `> ${source.replaceAll("\n", "\n> ")}`, `- ${source.replaceAll(
             node.props.onLayout && StyleSheet.flatten(node.props.style)?.alignSelf === "stretch",
         );
       if (viewport === undefined) throw new Error("Table viewport missing");
-      const inset = markdown.startsWith(">") ? 10 : markdown.startsWith("-") ? 25 : 0;
+      const inset = markdown.startsWith(">")
+        ? markdownGeometry.richMarkdownGeometry.blockquoteInset
+        : markdown.startsWith("-")
+          ? markdownGeometry.richMarkdownGeometry.listInset
+          : 0;
       expect(StyleSheet.flatten(viewport.props.style).width).toBe(width - inset);
       expect(view.getByText("Alpha")).toBe(cell);
     }

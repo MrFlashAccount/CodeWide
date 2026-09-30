@@ -108,6 +108,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       timelineContentHeightRef={
         props.timelineState.timelineViewportStateBinding.timelineContentHeightRef
       }
+      timelineDateLabels={props.timelineRead.timelineDateLabels}
       timelineJumpRequest={props.timelineRead.timelineJumpActionsBinding.timelineJumpRequest}
       timelinePositioned={props.timelineRead.timelinePositioned}
       timelineRef={props.timelineState.timelineViewportStateBinding.timelineRef}
@@ -123,6 +124,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
     <ConversationTimelineSurface
       awayFromLatest={props.timelineState.historyAnchorStateBinding.awayFromLatest}
       bottomChromeHeight={props.timelineState.timelineViewportStateBinding.bottomChromeHeight}
+      bottomChromeMeasured={props.timelineState.timelineViewportStateBinding.bottomChromeMeasured}
       commitUnreadReceipt={props.timelineRead.unreadReceiptActionsBinding.commitUnreadReceipt}
       composerScope={props.composerScope}
       draftConnectionId={props.draftConnectionId}

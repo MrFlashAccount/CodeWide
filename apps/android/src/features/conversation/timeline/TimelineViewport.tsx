@@ -2,6 +2,9 @@ import {
   ThreadTimelineList,
   type ThreadTimelineListProps,
 } from "../../../rendering/ThreadTimelineList";
+import { RichMarkdownPremeasurementProvider } from "../../../rendering/RichMarkdownPremeasurementProvider";
+import { timelineRowPremeasurementEnabled$ } from "../../../data/timelineRowPremeasurementPreference";
+import { useSelector } from "@legendapp/state/react";
 import { useEvent } from "../../../react/useEvent";
 import { useLayoutEffect, useRef, type ReactElement } from "react";
 import {
@@ -24,6 +27,7 @@ import {
   type TimelineRow,
 } from "./timelineRows";
 import { useTimelineResponsePositioning } from "./timelineResponsePositioning";
+import { timelineMarkdownContentWidth, timelineRowHeight } from "./timelineRowPremeasurement";
 import { useTimelineScrollDiagnostics, useTimelineScrollPolicy } from "./timelineScrollDiagnostics";
 import { styles } from "./TimelineViewport.styles";
 import type { TimelineViewportProps } from "./TimelineViewportContract";
@@ -31,6 +35,7 @@ import type { TimelineViewportProps } from "./TimelineViewportContract";
 type ResponseStartAnchor = { readonly index: number; readonly key: string } | null;
 
 export function TimelineViewport(props: TimelineViewportProps): ReactElement {
+  const rowPremeasurementEnabled = useSelector(timelineRowPremeasurementEnabled$);
   const {
     awayFromLatestRef,
     completeTimelineJump,
@@ -63,7 +68,45 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     responsePositioning.request?.turnId ?? null,
   );
   const responseStartOffset = conversationTopContentInset(props.threadSearchVisible);
+  const responseStartTopInset = conversationHeaderChromeHeight(props.threadSearchVisible);
+  const responseStartBottomInset = conversationBottomContentInset(
+    props.bottomChromeHeight,
+    props.liveStatusVisible,
+  );
   const getTimelineList = useEvent(() => timelineRef.current);
+  const getTimelineRowSizeHint = useEvent((row: TimelineRow) => {
+    const startedAt = performance.now();
+    const dateLabels = props.timelineDateLabels.get(row.item);
+    const result = timelineRowHeight(row, {
+      agentDateVisible: timelineRowStartsAgentResponse(row) && (dateLabels?.agent ?? null) !== null,
+      beforeDateVisible: timelineRowStartsTurn(row) && (dateLabels?.before ?? null) !== null,
+      density: props.windowLayout.scale,
+      fontScale: props.windowLayout.fontScale,
+      viewportWidth: props.windowLayout.width,
+    });
+    diagnostics.fixedSize(performance.now() - startedAt, result, row.kind);
+    return result.status === "exact"
+      ? { size: result.size, status: "exact" as const }
+      : { size: result.estimate, status: "estimated" as const };
+  });
+  const timelineRowSizeHint = selectTimelineRowSizeHint(
+    rowPremeasurementEnabled,
+    getTimelineRowSizeHint,
+  );
+  const rowMeasurementRevision = timelineRowMeasurementRevision(
+    props.composerScope,
+    rowPremeasurementEnabled,
+  );
+  const onItemSizeChanged = useEvent<
+    NonNullable<ThreadTimelineListProps<TimelineRow>["onItemSizeChanged"]>
+  >((event) => {
+    diagnostics.itemSizeChanged({
+      index: event.index,
+      previousSizePx: event.previous,
+      rowKind: event.itemData.kind,
+      sizePx: event.size,
+    });
+  });
   const onFirstVisibleItemChanged = useEvent(
     ({ index, item: row }: { index: number; item: TimelineRow; key: string }) => {
       diagnostics.record({ index, kind: "visible-row" });
@@ -90,7 +133,24 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       props.jumpVisibility.update(distance, props.historyViewport.containsLatest);
     }
   });
-  const measurement = useTimelineMeasurementBindings(props, reconcileJumpVisibility);
+  const prepareInitialReveal = useEvent(async () => {
+    const list = timelineRef.current;
+    if (list === null) {
+      return;
+    }
+    await responsePositioning.request?.prepareInitialReveal({
+      anchor: responseStartAnchor,
+      bottomInset: responseStartBottomInset,
+      list,
+      offset: responseStartOffset,
+      topInset: responseStartTopInset,
+    });
+  });
+  const measurement = useTimelineMeasurementBindings(
+    props,
+    reconcileJumpVisibility,
+    prepareInitialReveal,
+  );
   const reconcileEndThreshold = useEvent((withinThreshold: boolean) => {
     diagnostics.record({ kind: "end-threshold", withinThreshold });
     if (
@@ -144,6 +204,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     diagnostics,
     fullscreenCovered,
     latestUnreadAgentRef,
+    onJumpStart: responsePositioning.clearResponseStartRequest,
     persistTimelineAtEnd,
     scrollOffsetRef,
     timelineJumpRequest,
@@ -162,79 +223,86 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
   });
   const listHeader = timelineListHeader(props);
   return (
-    <ThreadTimelineList
-      anchoredEndSpace={responsePositioning.request?.anchorSpace({
-        anchor: responseStartAnchor,
-        bottomInset: conversationBottomContentInset(
-          props.bottomChromeHeight,
-          props.liveStatusVisible,
-        ),
-        diagnostics,
-        getList: getTimelineList,
-        maxViewportHeight: props.windowLayout.height,
-        offset: responseStartOffset,
-        topInset: conversationHeaderChromeHeight(props.threadSearchVisible),
-      })}
-      automaticallyAdjustContentInsets={false}
-      contentContainerStyle={[
-        styles.conversationContent,
-        props.timelineCompact ? styles.conversationContentCompact : styles.conversationContentWide,
-        {
-          paddingBottom: conversationBottomContentInset(
-            props.bottomChromeHeight,
-            props.liveStatusVisible,
-          ),
-          paddingTop: conversationTopContentInset(props.threadSearchVisible),
-        },
-      ]}
-      contentInsetAdjustmentBehavior="never"
-      data={timelineRows}
-      diagnostics={diagnostics}
-      extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}`}
-      initialScrollAtEnd={initialScrollAtEnd}
-      initialScrollIndex={
-        props.timelinePositioned
-          ? undefined
-          : responsePositioning.request?.initialPosition(responseStartAnchor, responseStartOffset)
-      }
-      itemSizeEstimate={timelineRowSizeEstimate(timelineRows)}
-      key={props.composerScope}
-      keyboardDismissMode="interactive"
-      keyboardLiftBehavior={props.newChat ? "never" : "always"}
-      keyboardOffset={props.conversationInsets.bottom}
-      keyboardShouldPersistTaps="handled"
-      keyExtractor={timelineRowKey}
-      ListEmptyComponent={props.emptyContent}
-      ListFooterComponent={props.footerContent}
-      ListHeaderComponent={listHeader}
-      maintainScrollAtEnd
-      maintainScrollAtEndThreshold={TIMELINE_TAIL_MODE_THRESHOLD_RATIO}
-      maintainVisibleContentPosition
-      nestedScrollEnabled
-      onContentSizeChange={measurement.onContentSizeChange}
-      onEndReached={props.loadNewerAtTimelineEnd}
-      onEndReachedThreshold={0.5}
-      onFirstVisibleItemChanged={onFirstVisibleItemChanged}
-      onLayout={measurement.onLayout}
-      onLoad={onLoad}
-      onMomentumScrollBegin={gestures.onMomentumScrollBegin}
-      onMomentumScrollEnd={gestures.onMomentumScrollEnd}
-      onReady={measurement.onReady}
-      onScroll={gestures.onScroll}
-      onScrollBeginDrag={onScrollBeginDrag}
-      onScrollEndDrag={gestures.onScrollEndDrag}
-      onStartReached={props.loadOlderAtTimelineStart}
-      onStartReachedThreshold={0.5}
-      ref={timelineRef}
-      renderItem={props.renderTimelineItem}
-      renderRevision={props.composerScope}
-      scrollEnabled={!props.inlineQueueExpanded}
-      scrollEventThrottle={16}
-      scrollsChildToFocus={false}
-      showsVerticalScrollIndicator={false}
-      style={styles.conversationScroll}
-      testID="conversation-timeline"
-    />
+    <RichMarkdownPremeasurementProvider
+      enabled={rowPremeasurementEnabled}
+      fontScale={props.windowLayout.fontScale}
+      width={timelineMarkdownContentWidth(props.windowLayout.width)}
+    >
+      <ThreadTimelineList
+        anchoredEndSpace={responsePositioning.request?.anchorSpace({
+          anchor: responseStartAnchor,
+          bottomInset: responseStartBottomInset,
+          diagnostics,
+          getList: getTimelineList,
+          maxViewportHeight: props.windowLayout.height,
+          offset: responseStartOffset,
+          topInset: responseStartTopInset,
+        })}
+        automaticallyAdjustContentInsets={false}
+        contentContainerStyle={[
+          styles.conversationContent,
+          props.timelineCompact
+            ? styles.conversationContentCompact
+            : styles.conversationContentWide,
+          {
+            paddingBottom: conversationBottomContentInset(
+              props.bottomChromeHeight,
+              props.liveStatusVisible,
+            ),
+            paddingTop: conversationTopContentInset(props.threadSearchVisible),
+          },
+        ]}
+        contentInsetAdjustmentBehavior="never"
+        data={timelineRows}
+        diagnostics={diagnostics}
+        extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}:${String(rowPremeasurementEnabled)}`}
+        initialScrollAtEnd={initialScrollAtEnd}
+        initialScrollIndex={
+          props.timelinePositioned
+            ? undefined
+            : responsePositioning.request?.initialPosition(responseStartAnchor, responseStartOffset)
+        }
+        itemSizeEstimate={timelineRowSizeEstimate()}
+        itemSizeHint={timelineRowSizeHint}
+        key={props.composerScope}
+        keyboardDismissMode="interactive"
+        keyboardLiftBehavior={props.newChat ? "never" : "always"}
+        keyboardOffset={props.conversationInsets.bottom}
+        keyboardShouldPersistTaps="handled"
+        keyExtractor={timelineRowKey}
+        ListEmptyComponent={props.emptyContent}
+        ListFooterComponent={props.footerContent}
+        ListHeaderComponent={listHeader}
+        maintainScrollAtEnd
+        maintainScrollAtEndThreshold={TIMELINE_TAIL_MODE_THRESHOLD_RATIO}
+        maintainVisibleContentPosition
+        nestedScrollEnabled
+        onContentSizeChange={measurement.onContentSizeChange}
+        onEndReached={props.loadNewerAtTimelineEnd}
+        onEndReachedThreshold={0.5}
+        onFirstVisibleItemChanged={onFirstVisibleItemChanged}
+        onItemSizeChanged={onItemSizeChanged}
+        onLayout={measurement.onLayout}
+        onLoad={onLoad}
+        onMomentumScrollBegin={gestures.onMomentumScrollBegin}
+        onMomentumScrollEnd={gestures.onMomentumScrollEnd}
+        onReady={measurement.onReady}
+        onScroll={gestures.onScroll}
+        onScrollBeginDrag={onScrollBeginDrag}
+        onScrollEndDrag={gestures.onScrollEndDrag}
+        onStartReached={props.loadOlderAtTimelineStart}
+        onStartReachedThreshold={0.5}
+        ref={timelineRef}
+        renderItem={props.renderTimelineItem}
+        renderRevision={rowMeasurementRevision}
+        scrollEnabled={!props.inlineQueueExpanded}
+        scrollEventThrottle={16}
+        scrollsChildToFocus={false}
+        showsVerticalScrollIndicator={false}
+        style={styles.conversationScroll}
+        testID="conversation-timeline"
+      />
+    </RichMarkdownPremeasurementProvider>
   );
 }
 
@@ -270,4 +338,30 @@ function responsePositioningIsEnabled(props: TimelineViewportProps): boolean {
     props.historyViewport.containsLatest &&
     props.timelineJumpRequest === null
   );
+}
+
+function timelineRowStartsAgentResponse(row: TimelineRow): boolean {
+  return row.kind === "turnSlice" && isLeadingTimelinePlacement(row.placement);
+}
+
+function timelineRowStartsTurn(row: TimelineRow): boolean {
+  if (row.kind === "turnLead") {
+    return true;
+  }
+  return row.kind === "turnSlice" && !row.followsLead && isLeadingTimelinePlacement(row.placement);
+}
+
+function isLeadingTimelinePlacement(placement: "end" | "middle" | "single" | "start"): boolean {
+  return placement === "single" || placement === "start";
+}
+
+function selectTimelineRowSizeHint(
+  enabled: boolean,
+  getItemSizeHint: NonNullable<ThreadTimelineListProps<TimelineRow>["itemSizeHint"]>,
+): ThreadTimelineListProps<TimelineRow>["itemSizeHint"] {
+  return enabled ? getItemSizeHint : undefined;
+}
+
+function timelineRowMeasurementRevision(composerScope: string, enabled: boolean): string {
+  return `${composerScope}:${enabled ? "premeasured" : "estimated"}`;
 }

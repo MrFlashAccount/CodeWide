@@ -1,5 +1,5 @@
 /** V1 GoalFeature owner, extracted without changing interaction or resource lifetime. */
-import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
+import type { ThreadGoal, ThreadGoalStatus } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { ThreadGoalInput } from "../../data/workspace-resource-database";
 
 /** Goal editor state and actions supplied by its owning feature. */
@@ -8,6 +8,7 @@ export type GoalDialogProps = {
   onClear: () => Promise<boolean>;
   onClose: () => void;
   onSet: (input: ThreadGoalInput) => Promise<ThreadGoal>;
+  onSetStatus: (status: ThreadGoalStatus) => Promise<ThreadGoal>;
   resourceError: string | null;
   visible: boolean;
   voiceScope: string;

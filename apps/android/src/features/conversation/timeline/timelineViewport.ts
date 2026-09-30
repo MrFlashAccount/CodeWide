@@ -1,8 +1,14 @@
 import { useRef, useState } from "react";
 import type { View } from "react-native";
 import type { ThreadTimelineListRef } from "../../../rendering/ThreadTimelineList";
+import { useEvent } from "../../../react/useEvent";
+import { conversationComposerDockMinHeight } from "../../../ui/conversation-chrome-layout";
 import { useConversationRef, useConversationState } from "../../../ui/use-conversation-scope";
 import { useTimelineJumpVisibility } from "./timelineJumpVisibility";
+
+type BottomChromeMeasurement =
+  | { readonly status: "pending" }
+  | { readonly height: number; readonly status: "measured" };
 
 export function useTimelineViewportState(composerScope: string) {
   const jumpVisibility = useTimelineJumpVisibility(composerScope);
@@ -35,7 +41,22 @@ export function useTimelineViewportState(composerScope: string) {
 
   const timelineRef = useRef<ThreadTimelineListRef>(null);
 
-  const [bottomChromeHeight, setBottomChromeHeight] = useState(0);
+  const [bottomChromeMeasurement, setBottomChromeMeasurement] = useState<BottomChromeMeasurement>({
+    status: "pending",
+  });
+  const bottomChromeHeight =
+    bottomChromeMeasurement.status === "measured"
+      ? bottomChromeMeasurement.height
+      : conversationComposerDockMinHeight;
+  const bottomChromeMeasured = bottomChromeMeasurement.status === "measured";
+  const reportBottomChromeHeight = useEvent((height: number) => {
+    const nextHeight = Math.max(0, Math.ceil(height));
+    setBottomChromeMeasurement((current) =>
+      current.status === "measured" && Math.abs(current.height - nextHeight) < 1
+        ? current
+        : { height: nextHeight, status: "measured" },
+    );
+  });
 
   const [timelineDidLoad, setTimelineDidLoad] = useConversationState(composerScope, () => false);
 
@@ -45,13 +66,14 @@ export function useTimelineViewportState(composerScope: string) {
   );
   return {
     bottomChromeHeight,
+    bottomChromeMeasured,
     jumpVisibility,
     lastTimelineOffsetYRef,
     paginationEdgeLockRef,
     paginationTrimTimerRef,
+    reportBottomChromeHeight,
     scrollGestureStartedAtRef,
     scrollOffsetRef,
-    setBottomChromeHeight,
     setTimelineDidLoad,
     setTimelineGestureActive,
     timelineContentHeightRef,
@@ -65,7 +87,6 @@ export function useTimelineViewportState(composerScope: string) {
 
 import { recordThreadHistoryTelemetry } from "../../../data/thread-history-telemetry";
 import type { ThreadHistoryViewport } from "../../../data/use-thread-history-controller";
-import { useEvent } from "../../../react/useEvent";
 import type { createFullscreenScrollOwnership } from "../../../ui/fullscreen-scroll-ownership";
 import type { TimelineItem } from "./timelineTypes";
 export function usePaginationTrim({

@@ -10,12 +10,14 @@ import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { styles } from "./GoalFeature.styles";
+import { goalLifecycleAction, threadGoalStatusLabel } from "./goalStatus";
 
 function ThreadGoalDialog({
   goal,
   onClear,
   onClose,
   onSet,
+  onSetStatus,
   resourceError,
   visible,
   voiceScope: parentVoiceScope,
@@ -29,10 +31,12 @@ function ThreadGoalDialog({
     effectiveError,
     error,
     objective,
+    pending,
     save,
     setConfirmClear,
     setError,
     setObjective,
+    setStatus,
     setTokenBudget,
     tokenBudget,
     voicePhase,
@@ -42,6 +46,7 @@ function ThreadGoalDialog({
     onClear,
     onClose,
     onSet,
+    onSetStatus,
     resourceError,
     visible,
     voiceScope: parentVoiceScope,
@@ -66,6 +71,12 @@ function ThreadGoalDialog({
       clear();
     } else {
       setConfirmClear(true);
+    }
+  });
+  const lifecycleAction = goal === null ? null : goalLifecycleAction(goal.status);
+  const changeStatus = useEvent(() => {
+    if (lifecycleAction !== null) {
+      setStatus(lifecycleAction.status);
     }
   });
   return (
@@ -115,6 +126,13 @@ function ThreadGoalDialog({
             )}
           </View>
 
+          {goal !== null && (
+            <View style={styles.goalStatusRow}>
+              <Text style={styles.fieldLabel}>Status</Text>
+              <Text style={styles.goalStatusValue}>{threadGoalStatusLabel(goal.status)}</Text>
+            </View>
+          )}
+
           <Pressable
             accessibilityLabel="Advanced goal options"
             accessibilityRole="button"
@@ -151,9 +169,18 @@ function ThreadGoalDialog({
           )}
           <View style={styles.goalDialogActions}>
             {goal !== null && (
-              <Button isDisabled={busy} onPress={requestClear} size="sm" variant="danger-soft">
-                {confirmClear ? "Remove" : "Clear goal"}
-              </Button>
+              <>
+                {lifecycleAction !== null && (
+                  <Button isDisabled={busy} onPress={changeStatus} size="sm" variant="secondary">
+                    {pending === lifecycleAction.kind
+                      ? lifecycleAction.pendingLabel
+                      : lifecycleAction.label}
+                  </Button>
+                )}
+                <Button isDisabled={busy} onPress={requestClear} size="sm" variant="danger-soft">
+                  {pending === "clear" ? "Removing…" : confirmClear ? "Remove" : "Clear goal"}
+                </Button>
+              </>
             )}
             <View style={styles.flex} />
             <Button isDisabled={busy} onPress={close} size="sm" variant="ghost">
@@ -165,7 +192,7 @@ function ThreadGoalDialog({
               size="sm"
               variant="primary"
             >
-              {busy ? "Saving…" : goal === null ? "Create" : "Save"}
+              {pending === "save" ? "Saving…" : goal === null ? "Create" : "Save"}
             </Button>
           </View>
         </ScrollView>
@@ -182,6 +209,7 @@ export function GoalFeature({
   onClearGoal,
   onClose,
   onSetGoal,
+  onSetGoalStatus,
   visible,
   voiceScope,
 }: {
@@ -189,6 +217,7 @@ export function GoalFeature({
   onClearGoal?: GoalDialogProps["onClear"];
   onClose: () => void;
   onSetGoal?: GoalDialogProps["onSet"];
+  onSetGoalStatus?: GoalDialogProps["onSetStatus"];
   visible: boolean;
   voiceScope: string;
 }) {
@@ -200,7 +229,7 @@ export function GoalFeature({
   if (!visible) {
     return null;
   }
-  if (onSetGoal === undefined || onClearGoal === undefined) {
+  if (onSetGoal === undefined || onSetGoalStatus === undefined || onClearGoal === undefined) {
     return (
       <AppSheet
         contentProps={{
@@ -223,6 +252,7 @@ export function GoalFeature({
       onClear={onClearGoal}
       onClose={onClose}
       onSet={onSetGoal}
+      onSetStatus={onSetGoalStatus}
       resourceError={goalResource?.error ?? null}
       visible
       voiceScope={voiceScope}

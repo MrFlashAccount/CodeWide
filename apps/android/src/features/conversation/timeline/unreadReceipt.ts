@@ -142,6 +142,7 @@ import { selectTurnRenderWindow } from "../../../rendering/thread-render-window"
 export function projectUnreadReceipt(
   timeline: TimelineItem[],
   unread: number,
+  firstUnreadAgentTurnId: string | null,
   composerScope: string,
   draftConnectionId: string | null,
   draftThreadId: string | null,
@@ -150,25 +151,57 @@ export function projectUnreadReceipt(
     draftConnectionId ?? "",
     draftThreadId,
     "scan_unread_agent_turn",
-    () => {
-      if (unread <= 0) {
-        return null;
-      }
-      for (let index = timeline.length - 1; index >= 0; index -= 1) {
-        const item = timeline[index];
-        if (item?.kind !== "turn" || item.turn.status === "inProgress") {
-          continue;
-        }
-        if (selectTurnRenderWindow(item.turn).latestAgentIndex >= 0) {
-          return item.id;
-        }
-      }
-      return null;
-    },
+    () => selectUnreadAgentTurnId(timeline, unread, firstUnreadAgentTurnId),
     { values: { itemCount: timeline.length } },
   );
 
   const latestUnreadReceiptKey =
     latestUnreadAgentTurnId === null ? null : `${composerScope}\u0000${latestUnreadAgentTurnId}`;
   return { latestUnreadAgentTurnId, latestUnreadReceiptKey };
+}
+
+function selectUnreadAgentTurnId(
+  timeline: readonly TimelineItem[],
+  unread: number,
+  firstUnreadAgentTurnId: string | null,
+): string | null {
+  if (unread <= 0) {
+    return null;
+  }
+  return (
+    recordedUnreadAgentTurnId(timeline, firstUnreadAgentTurnId) ??
+    latestCompletedAgentTurnId(timeline)
+  );
+}
+
+function recordedUnreadAgentTurnId(
+  timeline: readonly TimelineItem[],
+  firstUnreadAgentTurnId: string | null,
+): string | null {
+  if (firstUnreadAgentTurnId === null) {
+    return null;
+  }
+  const anchored = timeline.find(
+    (item) => item.kind === "turn" && item.id === firstUnreadAgentTurnId,
+  );
+  return anchored?.kind === "turn" &&
+    anchored.turn.status !== "inProgress" &&
+    selectTurnRenderWindow(anchored.turn).latestAgentIndex >= 0
+    ? anchored.id
+    : null;
+}
+
+/** Legacy summaries and manual unread marks have no recorded turn boundary. */
+function latestCompletedAgentTurnId(timeline: readonly TimelineItem[]): string | null {
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const item = timeline[index];
+    if (
+      item?.kind === "turn" &&
+      item.turn.status !== "inProgress" &&
+      selectTurnRenderWindow(item.turn).latestAgentIndex >= 0
+    ) {
+      return item.id;
+    }
+  }
+  return null;
 }

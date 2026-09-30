@@ -256,7 +256,7 @@ it("keeps async data ownership in resources and event-driven preview controllers
   // Qualified Link dispatch and retained screen identity have executable render/router regressions.
   expect(navigationActions).not.toContain("setActiveConnection(");
   expect(screen).not.toContain("setActiveServerId(parsed.connectionId);\n      setActiveThreadId(");
-  expect(newChat).toContain("newThreadService.open(connectionId, cwd)");
+  expect(newChat).toContain("newThreadService.resumeOrOpen(connectionId, cwd)");
   expect(screen).not.toContain("setNewChatDraft(");
   expect(screen).not.toContain("active-thread-lifecycle-repair");
   expect(ownerThreadUiStateRead).toContain("useAsyncResource<ThreadUiStateLoadResult>");

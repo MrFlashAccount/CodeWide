@@ -22,6 +22,7 @@ import { ThreadTimelineNavigationCommit } from "./ThreadTimelineNavigationCommit
 export function ConversationTimelineSurface({
   awayFromLatest,
   bottomChromeHeight,
+  bottomChromeMeasured,
   commitUnreadReceipt,
   composerScope,
   draftConnectionId,
@@ -50,7 +51,7 @@ export function ConversationTimelineSurface({
 }: ConversationTimelineSurfaceProps) {
   const presentationState = messageListPresentationState(
     messageListState,
-    timelineModelReady,
+    timelineModelReady && bottomChromeMeasured,
     timelinePositioned,
   );
   return (

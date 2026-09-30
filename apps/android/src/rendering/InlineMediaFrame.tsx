@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
+import { INLINE_MEDIA_PREVIEW_HEIGHT } from "./inlineMediaGeometry";
 
-export const INLINE_MEDIA_PREVIEW_HEIGHT = 220;
+export { INLINE_MEDIA_PREVIEW_HEIGHT } from "./inlineMediaGeometry";
 
 /** Loading, decoded content and errors share geometry; only caller-owned metadata may size it. */
 export function InlineMediaFrame({

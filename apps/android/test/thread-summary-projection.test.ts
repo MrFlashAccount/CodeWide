@@ -332,6 +332,46 @@ describe("thread summary projection", () => {
     });
   });
 
+  it("retains the first unread completed turn while later turns complete or start", () => {
+    const first = projectThreadSummaryEvent(
+      "server",
+      semanticEvent({
+        kind: "turnCompleted",
+        summary: { activity: true, finalAgentResponse: true },
+        turn: { id: "first-unread" },
+      }),
+      () => summary(),
+      42,
+      8,
+    )?.value;
+    const second = projectThreadSummaryEvent(
+      "server",
+      semanticEvent({
+        kind: "turnCompleted",
+        summary: { activity: true, finalAgentResponse: true },
+        turn: { id: "second-unread" },
+      }),
+      () => first ?? undefined,
+      43,
+      9,
+    )?.value;
+    const streaming = projectThreadSummaryEvent(
+      "server",
+      semanticEvent({
+        kind: "turnStarted",
+        summary: { activity: true, finalAgentResponse: false },
+        turn: { id: "streaming" },
+      }),
+      () => second ?? undefined,
+      44,
+      10,
+    )?.value;
+
+    expect(first).toMatchObject({ firstUnreadAgentTurnId: "first-unread", unread: 1 });
+    expect(second).toMatchObject({ firstUnreadAgentTurnId: "first-unread", unread: 1 });
+    expect(streaming).toMatchObject({ firstUnreadAgentTurnId: "first-unread", unread: 1 });
+  });
+
   it("reflects turn lifecycle in the sidebar without waiting for a separate thread status event", () => {
     const started = projectThreadSummaryEvent("server", semanticEvent({
       kind: "turnStarted",

@@ -138,9 +138,9 @@ it("keeps an active-turn question visible when older activity is collapsed", asy
       currentOutcome={null}
       failureNotice={null}
       readOnly={false}
+      reportBottomChromeHeight={jest.fn()}
       remoteThread={thread}
       requestPrompt={null}
-      setBottomChromeHeight={jest.fn()}
       timeline={timeline}
     />
   );

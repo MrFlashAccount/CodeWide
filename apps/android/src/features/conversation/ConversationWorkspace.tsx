@@ -103,6 +103,7 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
       clearThreadGoal: props.features.goal.clearThreadGoal,
       getThreadGoal: props.features.goal.getThreadGoal,
       setThreadGoal: props.features.goal.setThreadGoal,
+      setThreadGoalStatus: props.features.goal.setThreadGoalStatus,
     },
     scope.activeConnectionId,
     scope.activeRemoteThreadId,

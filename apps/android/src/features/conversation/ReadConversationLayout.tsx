@@ -15,13 +15,11 @@ export function renderReadConversationLayout({
   headerContent,
   props,
   read,
-  timelinePositioned,
   timelineSurface,
 }: {
   headerContent: ReactElement;
   props: ConversationReadSurfaceProps;
   read: ReturnType<typeof useReadConversationTimelineBindings>;
-  timelinePositioned: boolean;
   timelineSurface: ReactElement;
 }) {
   return (
@@ -40,13 +38,12 @@ export function renderReadConversationLayout({
                   failureNotice={read.presentation.failureNotice}
                   readOnly
                   remoteThread={props.remoteThread}
+                  reportBottomChromeHeight={props.viewport.reportBottomChromeHeight}
                   requestPrompt={null}
-                  setBottomChromeHeight={props.viewport.setBottomChromeHeight}
                   timeline={read.timeline}
                 />
               }
               compact={props.compact}
-              conversationBackdropVisible={timelinePositioned && read.timeline.length > 0}
               conversationInsets={read.conversationInsets}
               cwd={props.remoteThread.cwd}
               headerContent={headerContent}

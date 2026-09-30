@@ -1,4 +1,4 @@
-import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
+import type { ThreadGoal, ThreadGoalStatus } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { ThreadGoalInput } from "../../data/workspace-resource-database";
 import { useEvent } from "../../react/useEvent";
 
@@ -10,6 +10,11 @@ export type GoalCommands = {
     connectionId: string,
     threadId: string,
     input: ThreadGoalInput,
+  ) => Promise<ThreadGoal>;
+  setThreadGoalStatus: (
+    connectionId: string,
+    threadId: string,
+    status: ThreadGoalStatus,
   ) => Promise<ThreadGoal>;
 };
 export function useGoalCommands(
@@ -29,8 +34,11 @@ export function useGoalCommands(
   const onSetGoal = useEvent(async (input: ThreadGoalInput) =>
     remote.setThreadGoal(activeConnectionId, requireThreadId(), input),
   );
+  const onSetGoalStatus = useEvent(async (status: ThreadGoalStatus) =>
+    remote.setThreadGoalStatus(activeConnectionId, requireThreadId(), status),
+  );
   const onClearGoal = useEvent(async () =>
     remote.clearThreadGoal(activeConnectionId, requireThreadId()),
   );
-  return { onClearGoal, onGetGoal, onSetGoal };
+  return { onClearGoal, onGetGoal, onSetGoal, onSetGoalStatus };
 }

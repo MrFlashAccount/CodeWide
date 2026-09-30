@@ -130,6 +130,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       }
       const next = {
         ...row,
+        firstUnreadAgentTurnId: readStateAgentBoundary(row, unread),
         lastSeenCursor: unread ? row.lastSeenCursor : row.latestActivityCursor,
         unread: unread ? 1 : 0,
       };
@@ -778,10 +779,15 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
         ))) &&
     left.latestActivityCursor === right.latestActivityCursor &&
     left.lastSeenCursor === right.lastSeenCursor &&
+    (left.firstUnreadAgentTurnId ?? null) === (right.firstUnreadAgentTurnId ?? null) &&
     left.unread === right.unread &&
     left.provisionalThread === right.provisionalThread &&
     left.deleteCommandId === right.deleteCommandId
   );
+}
+
+function readStateAgentBoundary(row: StoredThreadSummary, unread: boolean): string | null {
+  return unread ? (row.firstUnreadAgentTurnId ?? null) : null;
 }
 
 function compareThreadSummaryRecency(

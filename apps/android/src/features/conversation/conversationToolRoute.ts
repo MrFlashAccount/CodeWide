@@ -69,6 +69,9 @@ function openGoalRoute(input: ConversationToolRouteInput): void {
     resources: props.composer.workspaceResources,
     voiceScope: scoped.activation.composerScope,
     ...(props.goal.onSetGoal === undefined ? {} : { setGoal: props.goal.onSetGoal }),
+    ...(props.goal.onSetGoalStatus === undefined
+      ? {}
+      : { setGoalStatus: props.goal.onSetGoalStatus }),
     ...(props.goal.onClearGoal === undefined ? {} : { clearGoal: props.goal.onClearGoal }),
   });
 }

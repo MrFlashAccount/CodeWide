@@ -131,17 +131,14 @@ describe("conversation chrome layout", () => {
     expect(composerInput).toContain("maxHeight: COMPOSER_MAX_HEIGHT");
   });
 
-  it("keeps fixed header chrome opaque without painting the composer over empty history", () => {
-    expect(timelineRead).toContain(
-      "timelinePositioned && conversationTimelineBinding.timeline.length > 0",
-    );
-    expect(
-      ownerConversationLayout.match(
-        /conversationBackdropVisible && \( <ConversationPanelUnderlay/g,
-      ),
-    ).toHaveLength(1);
+  it("keeps fixed header and composer chrome opaque across empty and loaded timelines", () => {
+    expect(timelineRead).not.toContain("conversationBackdropVisible");
+    expect(ownerConversationLayout).not.toContain("conversationBackdropVisible");
     expect(ownerConversationLayout).toContain(
       "<ConversationPanelUnderlay style={[ styles.conversationHeaderUnderlay",
+    );
+    expect(ownerConversationLayout).toContain(
+      "<ConversationPanelUnderlay style={StyleSheet.absoluteFill} />",
     );
   });
   it("reuses the existing neutral surfaces instead of inventing a palette", () => {
@@ -174,16 +171,17 @@ describe("conversation chrome layout", () => {
   });
 
   it("retains the measured composer height for transcript clearance, not backdrop layout", () => {
+    expect(ownerTimelineViewport).toMatch(
+      /useState<BottomChromeMeasurement>\(\{\s*status: "pending",?\s*\}\)/,
+    );
     expect(ownerTimelineViewport).toContain(
-      "const [bottomChromeHeight, setBottomChromeHeight] = useState(0)",
+      "bottomChromeMeasurement.status === \"measured\"",
     );
     expect(ownerConversationBottomChrome).toContain('testID="conversation-bottom-chrome"');
     expect(ownerConversationBottomChrome).toContain(
-      "const nextHeight = Math.ceil(nativeEvent.layout.height)",
+      "reportBottomChromeHeight(event.nativeEvent.layout.height)",
     );
-    expect(ownerConversationBottomChrome).toContain(
-      "Math.abs(current - nextHeight) < 1 ? current : nextHeight",
-    );
+    expect(ownerTimelineViewport).toContain("Math.abs(current.height - nextHeight) < 1");
     expect(screen).not.toContain("composerDockHeight");
     expect(viewport).toContain(
       "conversationBottomContentInset( props.bottomChromeHeight, props.liveStatusVisible, )",

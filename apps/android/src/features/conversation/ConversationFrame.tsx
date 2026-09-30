@@ -12,7 +12,6 @@ import { ConversationLayout } from "./ConversationLayout";
 import type { createConversationOverlayContent } from "./ConversationOverlayContent";
 import type { createConversationTimelineContent } from "./ConversationTimelineContent";
 import type { useConversationTools } from "./ConversationTools";
-import type { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
 import type { useConversationTimelineState } from "./timeline/conversationTimelineState";
 import type { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
 import type { useConversationPaneGeometry } from "./timeline/timelineViewport";
@@ -33,7 +32,6 @@ export function createConversationFrame({
   overlayScrollOwnershipBinding,
   surfaceInputs,
   threadRenameBinding,
-  timelineRead,
   timelineState,
   timelineView,
   toolsBinding,
@@ -52,7 +50,6 @@ export function createConversationFrame({
   overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
   surfaceInputs: ConversationSurfaceCapabilities;
   threadRenameBinding: ReturnType<typeof useThreadRename>;
-  timelineRead: ReturnType<typeof useConversationTimelineRead>;
   timelineState: ReturnType<typeof useConversationTimelineState>;
   timelineView: ReturnType<typeof createConversationTimelineContent>;
   toolsBinding: ReturnType<typeof useConversationTools>;
@@ -79,7 +76,6 @@ export function createConversationFrame({
             <ConversationLayout
               bottomChrome={chromeView.bottomChrome}
               compact={surfaceInputs.compact}
-              conversationBackdropVisible={timelineRead.conversationBackdropVisible}
               conversationInsets={conversationInsets}
               cwd={surfaceInputs.cwd}
               headerContent={chromeView.headerContent}

@@ -146,7 +146,6 @@ export function createConversationSurfaceAssembly(props: {
     overlayScrollOwnershipBinding: props.scoped.overlayScrollOwnershipBinding,
     surfaceInputs: props.surfaceInputs,
     threadRenameBinding: props.scoped.threadRenameBinding,
-    timelineRead: props.timelineRead,
     timelineState: props.scoped.timelineState,
     timelineView,
     toolsBinding: props.toolsBinding,

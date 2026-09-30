@@ -95,7 +95,7 @@ export type ComposerFeatureProps = {
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
   setSelectedPersonality: (value: Personality | null) => void;
   steerComposer: () => void;
-  stoppingResponse: boolean;
+  stopAction: "goalAndResponse" | "response" | null;
   terminalEnabled: boolean;
   threadLifecycleActive: boolean;
   toggleVoice: () => Promise<void>;

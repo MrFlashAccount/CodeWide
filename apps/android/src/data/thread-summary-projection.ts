@@ -74,6 +74,7 @@ export function projectThreadSummarySnapshot(
       ? (thread.turns.at(-1)?.id ?? previous?.closedQuestionTurnId ?? null)
       : (previous?.closedQuestionTurnId ?? null),
     cwd: thread.cwd,
+    firstUnreadAgentTurnId: previous?.firstUnreadAgentTurnId ?? null,
     gitOriginUrl: thread.gitInfo?.originUrl ?? previous?.gitOriginUrl ?? null,
     lastSeenCursor: previous?.lastSeenCursor ?? 0,
     latestActivityCursor: previous?.latestActivityCursor ?? 0,
@@ -262,7 +263,17 @@ function projectThreadSummaryPatch(
       next.recencyAt = Math.max(next.recencyAt ?? 0, summary.recencyAt);
     }
     if (summary.finalAgentResponse === true) {
+      const completedTurnId = object(operation.turn)?.id;
+      const wasUnread = next.unread > 0;
       next.unread = next.unread > 0 || next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;
+      if (
+        !wasUnread &&
+        next.unread > 0 &&
+        typeof completedTurnId === "string" &&
+        completedTurnId !== ""
+      ) {
+        next.firstUnreadAgentTurnId = completedTurnId;
+      }
     }
   }
   return { key, value: next };

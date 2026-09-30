@@ -176,7 +176,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 queuedComposerEditBusy={props.queuedComposerEditBusy}
                 sendDisabled={props.sendDisabled}
                 steerComposer={props.steerComposer}
-                stoppingResponse={props.stoppingResponse}
+                stopAction={props.stopAction}
                 threadLifecycleActive={props.threadLifecycleActive}
                 voicePhase={props.voicePhase}
               />

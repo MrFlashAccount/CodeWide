@@ -2,6 +2,7 @@ import { createRef } from "react";
 import { Pressable, View, type View as NativeView } from "react-native";
 import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react-native";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
+import { timelineRowPremeasurementEnabled$ } from "../src/data/timelineRowPremeasurementPreference";
 import { TimelineViewport } from "../src/features/conversation/timeline/TimelineViewport";
 import { JumpToLatest } from "../src/features/conversation/timeline/JumpToLatest";
 import { TimelineJumpVisibility } from "../src/features/conversation/timeline/timelineJumpVisibility";
@@ -13,6 +14,7 @@ import {
   useTimelineJumpActions,
   useTimelineJumpState,
 } from "../src/features/conversation/timeline/timelineJump";
+import { projectUnreadReceipt } from "../src/features/conversation/timeline/unreadReceipt";
 import { createFullscreenScrollOwnership } from "../src/ui/fullscreen-scroll-ownership";
 import {
   conversationHeaderChromeHeight,
@@ -34,27 +36,30 @@ const unreadRow = {
   status: "completed",
 } as const;
 
-function responseTurn(status: "completed" | "inProgress"): Extract<TimelineItem, { kind: "turn" }> {
+function responseTurn(
+  status: "completed" | "inProgress",
+  id = "response-turn",
+): Extract<TimelineItem, { kind: "turn" }> {
   const turn: unknown = {
     connectionId: "server",
-    id: "response-turn",
-    key: "server/thread/response-turn",
+    id,
+    key: `server/thread/${id}`,
     kind: "turn",
     scope: "server/thread",
     threadId: "thread",
     turn: {
       completedAt: status === "completed" ? 2 : null,
       durationMs: status === "completed" ? 1 : null,
-      id: "response-turn",
+      id,
       items: [
         {
           clientId: null,
           content: [{ text: "Question", text_elements: [], type: "text" }],
-          id: "user-response",
+          id: `user-${id}`,
           type: "userMessage",
         },
         {
-          id: "agent-response",
+          id: `agent-${id}`,
           memoryCitation: null,
           phase: status === "completed" ? "final_answer" : "commentary",
           text: "A long response starts here",
@@ -159,6 +164,7 @@ function timelineScrollEvent(offsetY: number) {
 }
 
 beforeEach(() => {
+  timelineRowPremeasurementEnabled$.set(false);
   legendListScrollToEnd.mockClear();
   legendListScrollToIndex.mockClear();
   setLegendListWithinEndThreshold(true);
@@ -167,6 +173,33 @@ beforeEach(() => {
 });
 
 afterEach(() => setLegendListAnchorReadyDuringLayout(false));
+
+it("defaults to a 115 dp estimate and lets LegendList measure timeline rows", () => {
+  const props = timelineViewportProps(() => undefined);
+  props.displayedTimeline = [responseTurn("completed")];
+  const view = render(<TimelineViewport {...props} />);
+  const timeline = view.getByTestId("conversation-timeline");
+
+  expect(timeline.props.estimatedItemSize).toBe(115);
+  expect(timeline.props.getItemSizeHint).toBeUndefined();
+  expect(timeline.props.dataKey).toBe("server\u0000thread:estimated");
+});
+
+it("enables row hints behind the preference and refreshes list sizing without remounting", () => {
+  const props = timelineViewportProps(() => undefined);
+  props.displayedTimeline = [responseTurn("completed")];
+  const view = render(<TimelineViewport {...props} />);
+  const initialTimeline = view.getByTestId("conversation-timeline");
+
+  act(() => {
+    timelineRowPremeasurementEnabled$.set(true);
+  });
+
+  const premeasuredTimeline = view.getByTestId("conversation-timeline");
+  expect(premeasuredTimeline).toBe(initialTimeline);
+  expect(premeasuredTimeline.props.getItemSizeHint).toEqual(expect.any(Function));
+  expect(premeasuredTimeline.props.dataKey).toBe("server\u0000thread:premeasured");
+});
 
 it("does not overwrite a user scroll when the delayed initial load completes", () => {
   const awayFromLatestRef = { current: true };
@@ -201,7 +234,7 @@ it("does not overwrite a user scroll when the delayed initial load completes", (
   expect(setTimelineDidLoad).toHaveBeenCalledWith(true);
 });
 
-it("reveals the initial timeline on LegendList readiness, not its earlier draw callback", () => {
+it("reveals the initial timeline on LegendList readiness, not its earlier draw callback", async () => {
   const commitInitialTimelineLoad = jest.fn();
   const props = timelineViewportProps(() => undefined);
   props.commitInitialTimelineLoad = commitInitialTimelineLoad;
@@ -210,7 +243,69 @@ it("reveals the initial timeline on LegendList readiness, not its earlier draw c
 
   fireEvent(timeline, "load", { elapsedTimeInMs: 1 });
   expect(commitInitialTimelineLoad).not.toHaveBeenCalled();
-  fireEvent(timeline, "ready");
+  await act(async () => {
+    fireEvent(timeline, "ready");
+    await Promise.resolve();
+  });
+  expect(commitInitialTimelineLoad).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the initial timeline hidden until the unread start clears the composer", async () => {
+  let completeScroll: (() => void) | null = null;
+  legendListScrollToIndex.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        completeScroll = resolve;
+      }),
+  );
+  setLegendListItemViewport(500, 600);
+  const commitInitialTimelineLoad = jest.fn();
+  const props = timelineViewportProps(() => undefined);
+  props.bottomChromeHeight = 100;
+  props.commitInitialTimelineLoad = commitInitialTimelineLoad;
+  props.displayedTimeline = [responseTurn("completed")];
+  props.latestUnreadAgentTurnId = "response-turn";
+  props.timelinePositioned = false;
+  const view = render(<TimelineViewport {...props} />);
+  const timeline = view.getByTestId("conversation-timeline");
+
+  await act(async () => {
+    fireEvent(timeline, "ready");
+    await Promise.resolve();
+  });
+
+  expect(legendListScrollToIndex).toHaveBeenCalledWith({
+    animated: false,
+    index: 1,
+    viewOffset: conversationTopContentInset(false),
+    viewPosition: 0,
+  });
+  expect(commitInitialTimelineLoad).not.toHaveBeenCalled();
+
+  await act(async () => {
+    completeScroll?.();
+    await Promise.resolve();
+  });
+  expect(commitInitialTimelineLoad).toHaveBeenCalledTimes(1);
+});
+
+it("reveals without another scroll when the unread start clears both chrome overlays", async () => {
+  setLegendListItemViewport(200, 600);
+  const commitInitialTimelineLoad = jest.fn();
+  const props = timelineViewportProps(() => undefined);
+  props.bottomChromeHeight = 100;
+  props.commitInitialTimelineLoad = commitInitialTimelineLoad;
+  props.displayedTimeline = [responseTurn("completed")];
+  props.latestUnreadAgentTurnId = "response-turn";
+  props.timelinePositioned = false;
+  const view = render(<TimelineViewport {...props} />);
+
+  await act(async () => {
+    fireEvent(view.getByTestId("conversation-timeline"), "ready");
+    await Promise.resolve();
+  });
+
+  expect(legendListScrollToIndex).not.toHaveBeenCalled();
   expect(commitInitialTimelineLoad).toHaveBeenCalledTimes(1);
 });
 
@@ -255,6 +350,61 @@ it("opens the unread last row at its start without an imperative correction", as
   });
 
   expect(legendListScrollToIndex).not.toHaveBeenCalled();
+});
+
+it("projects a persisted first-unread boundary instead of the latest completed response", () => {
+  const firstUnread = responseTurn("completed", "first-unread");
+  const laterUnread = responseTurn("completed", "later-unread");
+  const streaming = responseTurn("inProgress", "streaming");
+
+  expect(
+    projectUnreadReceipt(
+      [firstUnread, laterUnread, streaming],
+      1,
+      firstUnread.id,
+      "server\u0000thread",
+      null,
+      null,
+    ).latestUnreadAgentTurnId,
+  ).toBe(firstUnread.id);
+});
+
+it("keeps the first unread response anchored while a later queued response streams", () => {
+  const firstUnread = responseTurn("completed", "first-unread");
+  const laterUnread = responseTurn("completed", "later-unread");
+  const streaming = responseTurn("inProgress", "streaming");
+  const props = timelineViewportProps(() => undefined);
+  props.awayFromLatest = false;
+  props.awayFromLatestRef.current = false;
+  props.displayedTimeline = [firstUnread, laterUnread, streaming];
+  props.latestUnreadAgentTurnId = firstUnread.id;
+  props.timelinePositioned = false;
+  const view = render(<TimelineViewport {...props} />);
+  const initial = view.getByTestId("conversation-timeline");
+
+  expect(initial.props.initialScrollAtEnd).toBe(false);
+  expect(initial.props.initialScrollIndex).toEqual({
+    index: 1,
+    viewOffset: conversationTopContentInset(false),
+    viewPosition: 0,
+  });
+  expect(initial.props.anchoredEndSpace.anchorIndex).toBe(1);
+
+  view.rerender(
+    <TimelineViewport
+      {...props}
+      displayedTimeline={[firstUnread, laterUnread, responseTurn("completed", "streaming")]}
+      latestUnreadAgentTurnId={null}
+      timelinePositioned
+    />,
+  );
+
+  const completed = view.getByTestId("conversation-timeline");
+  expect(completed.props.anchoredEndSpace.anchorIndex).toBe(1);
+
+  fireEvent(completed, "scrollBeginDrag", timelineScrollEvent(200));
+
+  expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace).toBeUndefined();
 });
 
 it.each([false, true])(

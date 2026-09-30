@@ -23,6 +23,7 @@ import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./SettingsFeature.styles";
 import { SettingsSection, SettingsSheet } from "./SettingsSheet";
 import { SettingsVersion } from "./SettingsVersion";
+import { TimelineRowMeasurementSettings } from "./TimelineRowMeasurementSettings";
 import { VoiceAssistantSettings } from "./VoiceAssistantSettings";
 import { globalVoiceLabel } from "./globalVoicePresentation";
 import { useGlobalVoicePreference } from "./useGlobalVoicePreference";
@@ -133,9 +134,14 @@ export function ConnectionSettings({
       entryPage={entryPage}
       {...(entryRequest === undefined ? {} : { entryRequest })}
       advanced={
-        <SettingsSection title="Diagnostics">
-          <PerformanceDiagnostics />
-        </SettingsSection>
+        <>
+          <SettingsSection title="Experiments">
+            <TimelineRowMeasurementSettings />
+          </SettingsSection>
+          <SettingsSection title="Diagnostics">
+            <PerformanceDiagnostics />
+          </SettingsSection>
+        </>
       }
       onAddServer={onAddServer}
       onClose={onClose}

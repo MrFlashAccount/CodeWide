@@ -18,7 +18,7 @@ type Props = Pick<
   | "handleDeliveryAction"
   | "goalAttachmentVisible"
   | "voicePhase"
-  | "stoppingResponse"
+  | "stopAction"
   | "threadLifecycleActive"
   | "currentTurnId"
 >;
@@ -35,10 +35,11 @@ export function ComposerSubmitAction({
   queuedComposerEditBusy,
   sendDisabled,
   steerComposer,
-  stoppingResponse,
+  stopAction,
   threadLifecycleActive,
   voicePhase,
 }: Props) {
+  const stoppingResponse = stopAction !== null;
   if (editingQueuedMessage) {
     return (
       <SwipeDiscardAction
@@ -64,9 +65,11 @@ export function ComposerSubmitAction({
           ? "Finish voice input and send transcript"
           : goalAttachmentVisible
             ? "Set goal"
-            : stoppingResponse
-              ? "Stop response"
-              : "Send message"
+            : stopAction === "goalAndResponse"
+              ? "Pause goal and stop response"
+              : stopAction === "response"
+                ? "Stop response"
+                : "Send message"
       }
       disabled={sendDisabled}
       disabledStyle={styles.disabled}

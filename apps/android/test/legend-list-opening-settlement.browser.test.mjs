@@ -54,6 +54,7 @@ window.mutateOnDispatch = false;
 window.requestSettled = false;
 window.commands = [];
 window.adjustments = [];
+window.performanceDiagnostics = [];
 window.measurementScale = 1;
 const measurementListeners = new Set();
 window.measureHistory = scale => {
@@ -221,7 +222,25 @@ function Probe() {
       onReady={() => {
         if (window.readyAt !== null) return;
         window.readyAt = performance.now();
-        setPositioned(true);
+        // Match the application readiness gate: verify the response against the
+        // chrome-free viewport before revealing the mounted list.
+        const responseList = {
+          indexForItemKey: key => ref.current.getState().data.findIndex(row => row.id === key),
+          measureItemViewport: async key => {
+            const viewport = document.querySelector('[data-testid="viewport"]');
+            const item = document.querySelector('[data-testid="' + key + '"]');
+            if (!viewport || !item) return { status: "unavailable" };
+            return {
+              height: viewport.clientHeight,
+              status: "measured",
+              top: item.getBoundingClientRect().top - viewport.getBoundingClientRect().top,
+            };
+          },
+          scrollToIndex: options => ref.current.scrollToIndex(options),
+        };
+        void request.prepareInitialReveal({
+          anchor, bottomInset: BOTTOM, list: responseList, offset: TOP, topInset: 56,
+        }).then(() => setPositioned(true));
         if (configuration.openingReflow) {
           requestAnimationFrame(() => requestAnimationFrame(() => {
             window.measureHistory(0.45);
@@ -237,6 +256,8 @@ function Probe() {
         if (event.phase === "adjustment") {
           window.adjustments.push(event);
           if (configuration.throwAdjustmentObserver) throw new Error("probe observer failure");
+        } else if (event.phase === "calculate" || event.phase === "size-batch") {
+          window.performanceDiagnostics.push(event);
         } else window.commands.push(event);
       }}
       recycleItems={false}

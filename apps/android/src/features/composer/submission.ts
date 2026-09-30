@@ -264,6 +264,7 @@ export function useComposerDeliveryActions({
   onEditQueued,
   onInterrupt,
   pastedAttachmentPending,
+  pauseGoalBeforeInterrupt,
   queuedComposerEdit,
   queuedComposerEditBusy,
   saveQueuedComposerEdit,
@@ -303,25 +304,37 @@ export function useComposerDeliveryActions({
     });
   });
   const requestInterrupt = useEvent(
-    (turnId: string, interrupt: (turnId: string) => Promise<void>): void => {
+    (
+      turnId: string,
+      interrupt: (turnId: string) => Promise<void>,
+      pauseGoal: (() => Promise<void>) | undefined,
+    ): void => {
       if (interruptRequest.status === "requested" && interruptRequest.turnId === turnId) {
         return;
       }
       // The RPC can succeed before the thread projection clears currentTurnId.
       // Retain the accepted turn id so that stale UI cannot interrupt it again.
       setInterruptRequest({ status: "requested", turnId });
-      runAction(async () => {
-        try {
-          await interrupt(turnId);
-        } catch (error) {
-          setInterruptRequest((current) =>
-            current.status === "requested" && current.turnId === turnId
-              ? IDLE_INTERRUPT_REQUEST
-              : current,
-          );
-          throw error;
-        }
-      }, "Could not stop response");
+      runAction(
+        async () => {
+          try {
+            if (pauseGoal !== undefined) {
+              await pauseGoal();
+            }
+            await interrupt(turnId);
+          } catch (error) {
+            setInterruptRequest((current) =>
+              current.status === "requested" && current.turnId === turnId
+                ? IDLE_INTERRUPT_REQUEST
+                : current,
+            );
+            throw error;
+          }
+        },
+        pauseGoal === undefined
+          ? "Could not stop response"
+          : "Could not pause goal and stop response",
+      );
     },
   );
   const deliveryActions: ActionMenuItem[] = [
@@ -414,7 +427,7 @@ export function useComposerDeliveryActions({
       draft.trim() === "" &&
       attachments.length === 0
     ) {
-      requestInterrupt(currentTurnId, onInterrupt);
+      requestInterrupt(currentTurnId, onInterrupt, pauseGoalBeforeInterrupt);
     } else {
       runAction(async () => {
         await send();
@@ -434,6 +447,11 @@ export function useComposerDeliveryActions({
     }
     handleDeliveryAction("steer");
   });
+  const stopAction = stoppingResponse
+    ? pauseGoalBeforeInterrupt === undefined
+      ? ("response" as const)
+      : ("goalAndResponse" as const)
+    : null;
   return {
     activatePrimaryAction,
     composerDiscardEnabled,
@@ -443,6 +461,6 @@ export function useComposerDeliveryActions({
     handleDeliveryAction,
     sendDisabled,
     steerComposer,
-    stoppingResponse,
+    stopAction,
   };
 }

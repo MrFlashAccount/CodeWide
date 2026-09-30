@@ -23,7 +23,13 @@ import { ScrollView, Text, View } from "react-native";
 import { LegendList } from "@legendapp/list/react-native";
 
 const rows = Array.from({ length: 40 }, (_, index) => ({ id: String(index) }));
-const bridge = { currentOffset: null, resets: 0, commits: [], commands: [] };
+const bridge = { currentOffset: null, resets: 0, commits: [], commands: [], performance: [], sizeHintCalls: {} };
+
+function getItemSizeHint(item) {
+  bridge.sizeHintCalls[item.id] = (bridge.sizeHintCalls[item.id] ?? 0) + 1;
+  const even = Number(item.id) % 2 === 0;
+  return { size: even ? 60 : 180, status: even ? "exact" : "estimated" };
+}
 
 // Model only the Android ReactScrollView.setContentOffset contract. The real native
 // LegendList supplies the props; DOM layout supplies physical scroll measurements.
@@ -70,12 +76,15 @@ function Probe() {
       return {
         commits: bridge.commits,
         commands: bridge.commands,
+        performance: bridge.performance,
+        sizeHintCalls: bridge.sizeHintCalls,
         currentOffset: bridge.currentOffset,
         resets: bridge.resets,
         scroll: scroller?.scrollTop ?? 0,
         viewportHeight: scroller?.clientHeight ?? 0,
         contentHeight: scroller?.scrollHeight ?? 0,
         logicalViewportHeight: list.current?.getState().scrollLength ?? 0,
+        row20Position: list.current?.getState().positionByKey("20") ?? null,
         distance: scroller ? scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop : -1,
         ready: list.current?.getState().scrollLength > 0,
       };
@@ -85,13 +94,18 @@ function Probe() {
     <LegendList
       data={data}
       estimatedItemSize={100}
+      getItemSizeHint={window.probeOptions.perItemEstimate ? getItemSizeHint : undefined}
       estimatedListSize={{ height: 360, width: 420 }}
       extraData={revision}
       initialScrollAtEnd={!positioned && !unread}
-      onScrollDiagnostic={window.probeOptions.observe === false ? undefined : command => {
+      onScrollDiagnostic={window.probeOptions.observe === false ? undefined : event => {
         if (window.probeOptions.throwObserver) throw new Error("Diagnostic failure");
+        if (event.phase === "calculate" || event.phase === "size-batch") {
+          bridge.performance.push(event);
+          return;
+        }
         const observedOffset = document.querySelector('[data-testid="native-offset-probe"]')?.scrollTop ?? 0;
-        bridge.commands.push({ ...command, observedOffset });
+        bridge.commands.push({ ...event, observedOffset });
       }}
       {...(!positioned && unread ? { initialScrollIndex: conversation > 0 ? 8 : 30 } : {})}
       key={conversation}
@@ -148,6 +162,27 @@ after(async () => {
 });
 
 for (const extension of ["js", "mjs"]) {
+  test(`${extension}: one per-item hint resolves exact and estimated row positions`, async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent('<div id="root"></div>');
+      await page.evaluate(() => {
+        window.probeOptions = { perItemEstimate: true, unread: true };
+        window.nativeFabricUIManager = {};
+      });
+      await page.addScriptTag({ content: scripts.get(extension) });
+      await expect.poll(() => page.evaluate(() => window.probe?.snapshot().ready)).toBe(true);
+      await expect
+        .poll(() => page.evaluate(() => window.probe.snapshot().row20Position))
+        .toBeGreaterThan(2100);
+      const sizeHintCalls = await page.evaluate(() => window.probe.snapshot().sizeHintCalls);
+      assert.ok(Object.keys(sizeHintCalls).length > 0);
+      assert.equal(Math.max(...Object.values(sizeHintCalls)), 1);
+    } finally {
+      await page.close();
+    }
+  });
+
   for (const mode of ["record", "absent", "throw"]) {
     test(`${extension}: internal dispatch diagnostics are observational with ${mode} observer`, async () => {
       const page = await browser.newPage();
@@ -179,6 +214,10 @@ for (const extension of ["js", "mjs"]) {
           assert.equal(away.rowCount, 40);
           assert.equal(away.animated, false);
           assert.equal("data" in away, false);
+          assert.ok(
+            snapshot.performance.some((event) => event.phase === "calculate"),
+            JSON.stringify(snapshot.performance),
+          );
         } else {
           assert.deepEqual(snapshot.commands, []);
         }

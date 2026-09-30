@@ -22,6 +22,7 @@ afterEach(() => {
 
 function Timeline({
   bottomChromeHeight = 0,
+  bottomChromeMeasured = true,
   children = <View testID="ready-timeline" />,
   liveStatusVisible = false,
   scope = "server/thread",
@@ -31,6 +32,7 @@ function Timeline({
   timelinePositioned = state.status === "ready",
 }: {
   bottomChromeHeight?: number;
+  bottomChromeMeasured?: boolean;
   children?: ReactElement;
   liveStatusVisible?: boolean;
   scope?: string;
@@ -43,6 +45,7 @@ function Timeline({
     <ConversationTimelineSurface
       awayFromLatest={false}
       bottomChromeHeight={bottomChromeHeight}
+      bottomChromeMeasured={bottomChromeMeasured}
       commitUnreadReceipt={() => () => undefined}
       composerScope={scope}
       draftConnectionId={null}
@@ -109,7 +112,6 @@ it("keeps one mounted conversation layout while timeline and composer become rea
           </ConversationComposerSlot>
         }
         compact={false}
-        conversationBackdropVisible={false}
         conversationInsets={{ bottom: 0, left: 0, right: 0, top: 0 }}
         cwd="/workspace"
         headerContent={<Header />}
@@ -166,6 +168,31 @@ it("prepares a nonempty timeline invisibly and reveals it as soon as positioning
   expect(view.queryByTestId("message-list-skeleton")).toBeNull();
   act(() => jest.advanceTimersByTime(500));
   expect(view.queryByTestId("message-list-skeleton")).toBeNull();
+});
+
+it("waits for the measured composer before mounting a nonempty timeline for positioning", () => {
+  const view = render(
+    <Timeline
+      bottomChromeMeasured={false}
+      state={{ status: "ready" }}
+      timelineModelReady
+      timelinePositioned={false}
+    />,
+  );
+
+  expect(view.queryByTestId("ready-timeline", { includeHiddenElements: true })).toBeNull();
+
+  view.rerender(
+    <Timeline
+      bottomChromeHeight={96}
+      bottomChromeMeasured
+      state={{ status: "ready" }}
+      timelineModelReady
+      timelinePositioned={false}
+    />,
+  );
+
+  expect(view.getByTestId("ready-timeline", { includeHiddenElements: true })).not.toBeVisible();
 });
 
 it("does not hide an already positioned timeline during a later model loading state", () => {
@@ -225,6 +252,9 @@ it("reserves the measured composer and header space while loading, including geo
     liveStatusVisible: boolean;
   }) {
     const [bottomChromeHeight, setBottomChromeHeight] = useState(0);
+    const reportBottomChromeHeight = (height: number) => {
+      setBottomChromeHeight(Math.ceil(height));
+    };
     return (
       <View>
         <Timeline
@@ -238,9 +268,9 @@ it("reserves the measured composer and header space while loading, including geo
           currentOutcome={null}
           failureNotice={null}
           readOnly
+          reportBottomChromeHeight={reportBottomChromeHeight}
           remoteThread={null}
           requestPrompt={null}
-          setBottomChromeHeight={setBottomChromeHeight}
           timeline={[]}
         />
       </View>

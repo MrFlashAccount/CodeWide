@@ -271,6 +271,14 @@ it("retains the route-owned draft across view remounts and closes it explicitly"
   expect(remounted.getByText("Threads")).toBeTruthy();
 });
 
+it("resumes the retained draft without replacing its composer and voice scope", () => {
+  const service = new NewThreadService();
+  const draft = service.open("server", "/first");
+
+  expect(service.resumeOrOpen("other", "/second")).toBe(draft);
+  expect(service.current()).toBe(draft);
+});
+
 it("mounts the real V1 workspace route composition", async () => {
   resetMockRouter("/");
   const initialUrl = Promise.withResolvers<string | null>();
@@ -2073,8 +2081,9 @@ it("opens a project draft above the selected catalog while a wide conversation i
     ),
   );
   act(() => view.UNSAFE_getByType(MobileThreads).props.onNewThread());
-  expect(newThreadService.current()?.cwd).toBe(projectListFixture.path);
-  expect(newThreadService.current()?.connectionId).toBe(projectListFixture.connectionId);
+  const draft = newThreadService.current();
+  expect(draft?.cwd).toBe(projectListFixture.path);
+  expect(draft?.connectionId).toBe(projectListFixture.connectionId);
   expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
     "/",
     "/project/[sessionId]",
@@ -2082,5 +2091,13 @@ it("opens a project draft above the selected catalog while a wide conversation i
   ]);
   act(() => router.back());
   expect(view.getByLabelText("Project Example project")).toBeVisible();
+  act(() =>
+    result.current.navigation.selectThread(
+      threadSelectionKey({ serverId: "server", id: "selected" }),
+    ),
+  );
+  act(() => view.UNSAFE_getByType(MobileThreads).props.onNewThread());
+  expect(newThreadService.current()).toBe(draft);
+  expect(mockRouterHistory().at(-1)?.pathname).toBe("/new");
   view.unmount();
 });

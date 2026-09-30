@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { SharedValue } from "react-native-reanimated";
 
-import { parseLegendScrollDiagnostic } from "../data/legendScrollDiagnostic";
+import { observeLegendScrollDiagnostic } from "../data/legendScrollDiagnostic";
 import type { TimelineScrollSource } from "../data/timelineScrollDiagnosticContract";
 import type { TimelineScrollDiagnostics } from "../data/timelineScrollDiagnostics";
 import { windowLayoutStore } from "../native/window-layout-store";
@@ -54,6 +54,7 @@ export type ThreadTimelineListProps<ItemT> = Omit<
   | "dataKey"
   | "drawDistance"
   | "estimatedItemSize"
+  | "getItemSizeHint"
   | "initialScrollIndex"
   | "recycleItems"
 > & {
@@ -62,6 +63,7 @@ export type ThreadTimelineListProps<ItemT> = Omit<
   diagnostics?: TimelineScrollDiagnostics;
   initialScrollIndex?: LegendListProps<ItemT>["initialScrollIndex"];
   itemSizeEstimate: number;
+  itemSizeHint?: LegendListProps<ItemT>["getItemSizeHint"] | undefined;
   keyboardLiftBehavior?: "always" | "whenAtEnd" | "persistent" | "never";
   keyboardOffset?: number;
   renderRevision: string;
@@ -75,6 +77,7 @@ function ThreadTimelineListInner<ItemT>(
     initialScrollIndex,
     itemsAreEqual,
     itemSizeEstimate,
+    itemSizeHint,
     keyboardLiftBehavior = "whenAtEnd",
     keyboardOffset = 0,
     renderRevision,
@@ -85,12 +88,7 @@ function ThreadTimelineListInner<ItemT>(
   const internalRef = useRef<LegendListRef>(null);
   const diagnosticHandlers = useTimelineListDiagnostics(diagnostics, internalRef, props);
   const onScrollDiagnostic = useEvent((input: unknown) => {
-    const command = parseLegendScrollDiagnostic(input);
-    if (command?.phase === "adjustment") {
-      diagnostics?.libraryAdjustment(command);
-    } else if (command !== null) {
-      diagnostics?.libraryCommand(command);
-    }
+    observeLegendScrollDiagnostic(diagnostics, input);
   });
   const invalidateMeasurements = useEvent(() => {
     diagnostics?.record({ kind: "layout", sizePx: 0, source: "measurement-invalidation" });
@@ -244,6 +242,7 @@ function ThreadTimelineListInner<ItemT>(
       {...(anchoredEndSpace === undefined ? {} : { anchoredEndSpace })}
       {...(initialScrollIndex === undefined ? {} : { initialScrollIndex })}
       {...props}
+      {...legendListItemSizeHintProps(itemSizeHint)}
       {...diagnosticHandlers}
       alignItemsAtEnd
       dataKey={renderRevision}
@@ -255,6 +254,12 @@ function ThreadTimelineListInner<ItemT>(
       showsVerticalScrollIndicator={false}
     />
   );
+}
+
+function legendListItemSizeHintProps<ItemT>(
+  itemSizeHint: ThreadTimelineListProps<ItemT>["itemSizeHint"],
+): Pick<LegendListProps<ItemT>, "getItemSizeHint"> | Record<string, never> {
+  return itemSizeHint === undefined ? {} : { getItemSizeHint: itemSizeHint };
 }
 
 function referenceEqual<ItemT>(previous: ItemT, next: ItemT): boolean {

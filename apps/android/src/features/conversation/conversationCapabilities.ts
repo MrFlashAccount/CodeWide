@@ -28,6 +28,7 @@ export type ConversationDetailSnapshot = {
   currentOutcome?: ThreadCurrentOutcome | null;
   currentUsage?: TurnUsageProjection | null;
   cwd?: string;
+  firstUnreadAgentTurnId?: string | null;
   historyActivityModel?: ThreadHistoryModel | null;
   historyActivityResourceId?: string;
   historyRestoreReady: boolean;

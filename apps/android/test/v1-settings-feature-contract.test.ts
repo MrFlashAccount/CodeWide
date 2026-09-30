@@ -27,7 +27,8 @@ describe("M1 feature integration contracts", () => {
     expect(source).toContain('title="Biometric Lock"');
     expect(source).not.toContain("ComposerEditorTrialEntry");
     expect(source).not.toContain("ConversationLayoutFeatureFlag");
-    expect(source).not.toContain('<SettingsSection title="Experiments">');
+    expect(source).toContain('<SettingsSection title="Experiments">');
+    expect(source).toContain("<TimelineRowMeasurementSettings />");
   });
   it("ordinary chat and Voice Assistant share the model and thinking picker", () => {
     const composer = readFileSync(

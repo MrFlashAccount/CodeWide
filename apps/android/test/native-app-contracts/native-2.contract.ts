@@ -256,7 +256,7 @@ it("preserves native integration contracts — 2", () => {
   );
   expect(manifest).toContain('android:windowSoftInputMode="adjustResize"');
   expect(appPackage.dependencies["@legendapp/list"]).toBeDefined();
-  expect(appPackage.dependencies["expo-pretext"]).toBeUndefined();
+  expect(appPackage.dependencies["expo-pretext"]).toBe("1.2.0");
   expect(appPackage.dependencies["@shopify/flash-list"]).toBeUndefined();
   expect(fileTransferNative).not.toContain("fetch(");
   expect(fileTransferNative).not.toContain("/v1/files/");

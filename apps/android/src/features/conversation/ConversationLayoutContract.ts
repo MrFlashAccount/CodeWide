@@ -9,7 +9,6 @@ import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 export type ConversationLayoutProps = {
   bottomChrome: ReactElement;
   compact: boolean;
-  conversationBackdropVisible: boolean;
   conversationInsets: EdgeInsets;
   cwd: string;
   headerContent: ReactElement;

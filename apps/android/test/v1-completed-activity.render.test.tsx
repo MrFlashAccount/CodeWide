@@ -198,11 +198,24 @@ it.each([
   expect(projectTurnPresentation(item, null, false, false).agentBubbleFill).toBe(true);
 });
 
-it.each([{}, { activityMetrics: metrics(["reasoning", "commandExecution"], 2) }])(
-  "preserves explicit lazy loading until full history proves empty: %j",
-  async (metadata) => {
+it("hides a sparse summary without Companion's positive activity signal", () => {
+  const load = jest.fn(async () => undefined);
+  const item = completedTurn([], "summary");
+  const view = render(history(item, false, load));
+  expect(view.queryByTestId("turn-activity")).toBeNull();
+  expect(projectTurnPresentation(item, null, false, false).agentBubbleFill).toBe(false);
+  expect(load).not.toHaveBeenCalled();
+});
+
+it.each(["summary", "notLoaded"] as const)(
+  "preserves explicit lazy loading for a %s turn when Companion declares visible activity",
+  async (itemsView) => {
+    const metadata: ProjectedTurnMetadata =
+      itemsView === "notLoaded"
+        ? { activity: { count: 2, kinds: ["reasoning", "commandExecution"] } }
+        : { activityMetrics: metrics(["reasoning", "commandExecution"], 2) };
     const load = jest.fn(async () => undefined);
-    const view = render(history(completedTurn([], "summary", metadata), false, load));
+    const view = render(history(completedTurn([], itemsView, metadata), false, load));
     expect(load).not.toHaveBeenCalled();
     await act(async () => {
       fireEvent.press(view.getByRole("button", { name: /^Expand activity/ }));
@@ -216,12 +229,17 @@ it.each([{}, { activityMetrics: metrics(["reasoning", "commandExecution"], 2) }]
 
 it("reveals lazily loaded nonempty history after expansion", async () => {
   const load = jest.fn(async () => undefined);
-  const view = render(history(completedTurn([], "summary"), false, load));
+  const metadata = { activityMetrics: metrics(["agentMessage"], 1) };
+  const view = render(history(completedTurn([], "summary", metadata), false, load));
   await act(async () => {
     fireEvent.press(view.getByRole("button", { name: /^Expand activity/ }));
   });
   view.rerender(
-    history(completedTurn([reasoning, agentMessage("progress", "Loaded update")]), false, load),
+    history(
+      completedTurn([reasoning, agentMessage("progress", "Loaded update")], "full", metadata),
+      false,
+      load,
+    ),
   );
   expect(within(view.getByTestId("turn-activity-list")).getByText("Loaded update")).toBeVisible();
 });

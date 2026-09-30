@@ -120,6 +120,33 @@ describe("persisted project catalog", () => {
     await reopened.close();
   });
 
+  it("clears the first unread turn boundary when the thread is marked read", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    writer.write({
+      type: "insert",
+      value: summary("anchored", {
+        firstUnreadAgentTurnId: "first-unread",
+        latestActivityCursor: 8,
+        unread: 1,
+      }),
+    });
+    await writer.commit({ durable: true });
+    await writer.close();
+
+    const database = createThreadSummaryDatabase();
+    await database.prepare();
+    await database.markRead("server", "anchored");
+
+    expect(await database.get("server", "anchored")).toMatchObject({
+      firstUnreadAgentTurnId: null,
+      lastSeenCursor: 8,
+      unread: 0,
+    });
+    database.close();
+  });
+
   it("reopens a scoped page and unread membership independently of the global head", async () => {
     const writer = createThreadSummarySqlite();
     await writer.prepare();

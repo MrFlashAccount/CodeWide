@@ -27,6 +27,7 @@ import {
   View,
   type StyleProp,
   type TextStyle,
+  type ViewStyle,
 } from "react-native";
 import { ScrollView as GestureScrollView } from "react-native-gesture-handler";
 
@@ -64,6 +65,16 @@ import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayo
 import { usePrivateImageUri } from "./use-private-image-uri";
 import { NativeMarkup } from "./NativeMarkup";
 import { HighlightSearchText } from "./SearchMessageFocus";
+import {
+  layoutRichMarkdownInline,
+  projectMarkdownAlert,
+  richMarkdownGeometry,
+  type RichMarkdownInlineRun,
+} from "./richMarkdownGeometry";
+import {
+  useRichMarkdownPremeasurement,
+  useRichMarkdownTextBreakStrategy,
+} from "./richMarkdownLayoutPolicy";
 
 const HorizontalScrollView = Platform.OS === "android" ? GestureScrollView : ScrollView;
 const RichMarkdownTextScaleContext = createContext(1);
@@ -95,6 +106,7 @@ function Text({
   reviewBlockPath,
   reviewOffset = 0,
   style,
+  textBreakStrategy,
   ...props
 }: ComponentProps<typeof AppText> & {
   reviewBlockPath?: string;
@@ -102,6 +114,8 @@ function Text({
 }) {
   const scale = useContext(RichMarkdownTextScaleContext);
   const review = useContext(RichMarkdownReviewContext);
+  const premeasuredTextBreakStrategy = useRichMarkdownTextBreakStrategy();
+  const resolvedTextBreakStrategy = premeasuredTextBreakStrategy ?? textBreakStrategy;
   const beginReview = useContentReview();
   const blockPath =
     review === null || reviewBlockPath === undefined
@@ -142,10 +156,123 @@ function Text({
         }}
         reviewHighlights={reviewHighlights}
         style={resolvedStyle}
+        textBreakStrategy={resolvedTextBreakStrategy}
       />
     );
   }
-  return <AppText {...props} style={resolvedStyle} />;
+  return <AppText {...props} style={resolvedStyle} textBreakStrategy={resolvedTextBreakStrategy} />;
+}
+
+function PremeasuredInlineText({
+  containerStyle,
+  node,
+  path,
+  style,
+}: {
+  containerStyle?: StyleProp<ViewStyle>;
+  node: Extract<RootContent, { type: "heading" | "paragraph" }>;
+  path: string;
+  style: StyleProp<TextStyle>;
+}) {
+  const policy = useRichMarkdownPremeasurement();
+  const width = useRichContentWidth();
+  if (policy === null || width === null) {
+    return (
+      <Text reviewBlockPath={path} selectable style={style}>
+        {inline(node.children)}
+      </Text>
+    );
+  }
+  const layout = layoutRichMarkdownInline(node, { fontScale: policy.fontScale, width });
+  if (layout.status === "dynamic") {
+    return (
+      <Text reviewBlockPath={path} selectable style={style}>
+        {inline(node.children)}
+      </Text>
+    );
+  }
+  return (
+    <View accessibilityLabel={fallbackText(node)} accessible style={containerStyle}>
+      {layout.lines.map((line, lineIndex) => (
+        <Text
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+          key={`${path}-line-${String(lineIndex)}`}
+          numberOfLines={1}
+          reviewBlockPath={path}
+          reviewOffset={line.reviewOffset}
+          selectable
+          style={[style, styles.premeasuredLine]}
+        >
+          {line.fragments.length === 0
+            ? "\u200B"
+            : line.fragments.map((fragment, fragmentIndex) => (
+                <PremeasuredInlineRun
+                  key={`${String(fragmentIndex)}-${fragment.text}`}
+                  run={fragment.run}
+                  text={fragment.text}
+                />
+              ))}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+function PremeasuredInlineRun({ run, text }: { run: RichMarkdownInlineRun; text: string }) {
+  const style = premeasuredInlineStyle(run);
+  if (run.presentation.icon !== null) {
+    return (
+      <MarkdownLink appendIcon={false} url={run.presentation.interaction.url}>
+        <Ionicons
+          color={colors.accent}
+          name={premeasuredIconName(run.presentation.icon)}
+          size={iconSize.indicator}
+        />
+      </MarkdownLink>
+    );
+  }
+  const content = <HighlightSearchText text={text} />;
+  if (run.presentation.interaction?.kind === "link") {
+    return (
+      <MarkdownLink appendIcon={false} url={run.presentation.interaction.url}>
+        <Text style={style}>{content}</Text>
+      </MarkdownLink>
+    );
+  }
+  if (run.presentation.interaction?.kind === "copy") {
+    return (
+      <CopyableInline style={[style, styles.inlineCode]} value={run.presentation.interaction.value}>
+        {content}
+      </CopyableInline>
+    );
+  }
+  return <Text style={[style, premeasuredToneStyle(run.presentation.tone)]}>{content}</Text>;
+}
+
+function premeasuredInlineStyle(run: RichMarkdownInlineRun): TextStyle {
+  return {
+    fontFamily:
+      typeof run.flow.style.fontFamily === "string" ? run.flow.style.fontFamily : undefined,
+    fontSize: run.flow.style.fontSize,
+    fontStyle: run.flow.style.fontStyle,
+    fontWeight: "400",
+    lineHeight: run.flow.style.lineHeight,
+    textDecorationLine: run.presentation.decoration,
+  };
+}
+
+function premeasuredIconName(icon: "download" | "external"): "download-outline" | "open-outline" {
+  return icon === "external" ? "open-outline" : "download-outline";
+}
+
+function premeasuredToneStyle(
+  tone: RichMarkdownInlineRun["presentation"]["tone"],
+): TextStyle | undefined {
+  if (tone === "secondary") {
+    return styles.secondary;
+  }
+  return tone === "code" ? styles.inlineCode : undefined;
 }
 
 function InsetRichContentWidth({ children, inset }: { children: ReactNode; inset: number }) {
@@ -354,30 +481,36 @@ function BlockNode({
           />
         );
       }
-      return (
-        <Text reviewBlockPath={path} selectable style={styles.paragraph}>
-          {inline(node.children)}
-        </Text>
-      );
+      return <PremeasuredInlineText node={node} path={path} style={styles.paragraph} />;
     case "heading": {
       const style = [styles.heading, headingStyle(node.depth)];
       return (
-        <Text reviewBlockPath={path} selectable style={style}>
-          {inline(node.children)}
-        </Text>
+        <PremeasuredInlineText
+          containerStyle={styles.premeasuredHeading}
+          node={node}
+          path={path}
+          style={style}
+        />
       );
     }
     case "blockquote": {
-      const alert = githubAlert(node);
+      const alert = projectMarkdownAlert(node);
       if (alert !== null) {
+        const presentation = ALERT_CONFIG[alert.kind];
         return (
           <View style={styles.alert}>
             <View style={styles.alertHeader}>
-              <Ionicons color={alert.color} name={alert.icon} size={iconSize.inline} />
-              <Text style={[styles.alertTitle, { color: alert.color }]}>{alert.label}</Text>
+              <Ionicons
+                color={presentation.color}
+                name={presentation.icon}
+                size={iconSize.inline}
+              />
+              <Text style={[styles.alertTitle, { color: presentation.color }]}>
+                {presentation.label}
+              </Text>
             </View>
             <View style={styles.alertBody}>
-              <InsetRichContentWidth inset={18}>
+              <InsetRichContentWidth inset={richMarkdownGeometry.alertBodyInset}>
                 {alert.children.map((child, index) => (
                   <BlockNode
                     extensions={extensions}
@@ -394,7 +527,7 @@ function BlockNode({
       }
       return (
         <View style={styles.blockquote}>
-          <InsetRichContentWidth inset={10}>
+          <InsetRichContentWidth inset={richMarkdownGeometry.blockquoteInset}>
             {node.children.map((child, index) => (
               <BlockNode
                 extensions={extensions}
@@ -430,7 +563,7 @@ function BlockNode({
                 </Text>
               )}
               <View style={styles.listBody}>
-                <InsetRichContentWidth inset={25}>
+                <InsetRichContentWidth inset={richMarkdownGeometry.listInset}>
                   {item.children.map((child, childIndex) => (
                     <BlockNode
                       extensions={extensions}
@@ -619,7 +752,15 @@ function CopyableInline({
 
 // WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
 // oxlint-disable-next-line eslint/complexity
-function MarkdownLink({ children, url }: { children: ReactNode; url: string }) {
+function MarkdownLink({
+  appendIcon = true,
+  children,
+  url,
+}: {
+  appendIcon?: boolean;
+  children: ReactNode;
+  url: string;
+}) {
   const dialog = useAppDialog();
   const openLocalLink = useMarkdownLocalLinkHandler();
   const external = isSafeLink(url);
@@ -649,9 +790,11 @@ function MarkdownLink({ children, url }: { children: ReactNode; url: string }) {
       style={styles.link}
     >
       {children}
-      {(external || localKind === "download") && " "}
-      {external && <Ionicons color={colors.accent} name="open-outline" size={iconSize.indicator} />}
-      {localKind === "download" && (
+      {appendIcon && (external || localKind === "download") && " "}
+      {appendIcon && external && (
+        <Ionicons color={colors.accent} name="open-outline" size={iconSize.indicator} />
+      )}
+      {appendIcon && localKind === "download" && (
         <Ionicons color={colors.accent} name="download-outline" size={iconSize.indicator} />
       )}
     </Text>
@@ -984,53 +1127,6 @@ const ALERT_CONFIG = {
   WARNING: { color: colors.amber, icon: "warning-outline", label: "Warning" },
 } as const;
 
-// WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
-// oxlint-disable-next-line eslint/complexity
-function githubAlert(node: Extract<RootContent, { type: "blockquote" }>) {
-  const first = node.children[0];
-  if (first?.type !== "paragraph") {
-    return null;
-  }
-  const firstInline = first.children[0];
-  if (firstInline?.type !== "text") {
-    return null;
-  }
-  const match = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s+|$)/iu.exec(firstInline.value);
-  if (match === null) {
-    return null;
-  }
-  const kind = alertKind(match[1]);
-  if (kind === null) {
-    return null;
-  }
-  const remainingText = firstInline.value.slice(match[0].length);
-  const firstChildren =
-    remainingText === ""
-      ? first.children.slice(1)
-      : [{ ...firstInline, value: remainingText }, ...first.children.slice(1)];
-  const children =
-    firstChildren.length === 0
-      ? node.children.slice(1)
-      : [{ ...first, children: firstChildren }, ...node.children.slice(1)];
-  return { ...ALERT_CONFIG[kind], children };
-}
-
-function alertKind(value: string | undefined): keyof typeof ALERT_CONFIG | null {
-  const normalized = value?.toUpperCase();
-  switch (normalized) {
-    case undefined:
-      return null;
-    case "CAUTION":
-    case "IMPORTANT":
-    case "NOTE":
-    case "TIP":
-    case "WARNING":
-      return normalized;
-    default:
-      return null;
-  }
-}
-
 function fallbackText(node: Nodes): string {
   if ("value" in node && typeof node.value === "string") {
     return node.value;
@@ -1042,14 +1138,14 @@ const styles = StyleSheet.create({
   alert: {
     backgroundColor: colors.surfaceRaised,
     borderRadius: radii.small,
-    gap: spacing.xxs,
+    gap: richMarkdownGeometry.alertGap,
     minWidth: 0,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
+    paddingHorizontal: richMarkdownGeometry.alertPaddingHorizontal,
+    paddingVertical: richMarkdownGeometry.alertPaddingVertical,
     width: "100%",
   },
   alertBody: {
-    gap: spacing.xxs,
+    gap: richMarkdownGeometry.blockGap,
     minWidth: 0,
   },
   alertHeader: {
@@ -1063,8 +1159,8 @@ const styles = StyleSheet.create({
   },
   blockquote: {
     borderLeftColor: colors.accent,
-    borderLeftWidth: 2,
-    gap: spacing.xxs,
+    borderLeftWidth: spacing.optical,
+    gap: richMarkdownGeometry.blockGap,
     paddingLeft: spacing.xs,
   },
   codeContainer: {
@@ -1072,11 +1168,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.code,
     borderColor: colors.border,
     borderRadius: radii.small,
-    borderWidth: 1,
-    gap: spacing.xxs,
+    borderWidth: richMarkdownGeometry.codeBorderWidth,
+    gap: richMarkdownGeometry.codeGap,
     maxWidth: "100%",
     minWidth: 0,
-    padding: spacing.xs,
+    padding: richMarkdownGeometry.codePadding,
     width: "100%",
   },
   copyHintDone: { color: colors.green },
@@ -1086,7 +1182,7 @@ const styles = StyleSheet.create({
     textDecorationLine: "line-through",
   },
   document: {
-    gap: spacing.xxs,
+    gap: richMarkdownGeometry.blockGap,
     minWidth: 0,
   },
   emphasis: { fontStyle: "italic" },
@@ -1113,7 +1209,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     ...typeScale.body,
     fontWeight: typeWeight.semibold,
-    marginTop: spacing.xxs,
+    marginTop: richMarkdownGeometry.headingMarginTop,
   },
   headingMinor: {
     ...typeScale.body,
@@ -1136,25 +1232,25 @@ const styles = StyleSheet.create({
   },
   list: {
     alignSelf: "flex-start",
-    gap: spacing.xxs,
+    gap: richMarkdownGeometry.listGap,
     minWidth: 0,
   },
   listBody: {
     flexShrink: 1,
-    gap: spacing.optical,
+    gap: richMarkdownGeometry.listBodyGap,
     minWidth: 0,
   },
   listMarker: {
     color: colors.textMuted,
     textAlign: "right",
-    width: typeScale.body.lineHeight,
+    width: richMarkdownGeometry.listMarkerWidth,
     ...typeScale.body,
   },
   listRow: {
     alignItems: "flex-start",
     alignSelf: "flex-start",
     flexDirection: "row",
-    gap: spacing.compact,
+    gap: richMarkdownGeometry.listRowGap,
     minWidth: 0,
   },
   localImageLink: {
@@ -1163,7 +1259,7 @@ const styles = StyleSheet.create({
     gap: spacing.xxs,
     maxWidth: "100%",
     minWidth: 0,
-    paddingVertical: spacing.xxs,
+    paddingVertical: richMarkdownGeometry.localImageVerticalPadding,
   },
   markdownImage: {
     backgroundColor: colors.code,
@@ -1176,29 +1272,31 @@ const styles = StyleSheet.create({
     minWidth: 0,
     ...typeScale.body,
   },
+  premeasuredHeading: { marginTop: richMarkdownGeometry.headingMarginTop },
+  premeasuredLine: { marginTop: 0 },
   rawHtml: {
     color: colors.textMuted,
     ...typeScale.code,
     fontFamily: "monospace",
   },
-  rule: { height: 8 },
+  rule: { height: richMarkdownGeometry.ruleHeight },
   secondary: { color: colors.textMuted },
   strong: { fontWeight: typeWeight.semibold },
   table: {
     alignSelf: "flex-start",
     borderColor: colors.border,
     borderRadius: radii.small,
-    borderWidth: 1,
+    borderWidth: richMarkdownGeometry.tableBorderWidth,
     overflow: "hidden",
   },
   tableCell: {
     borderRightColor: colors.borderSoft,
-    borderRightWidth: 1,
+    borderRightWidth: richMarkdownGeometry.tableBorderWidth,
     color: colors.text,
     flexShrink: 0,
     minWidth: 144,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xxs,
+    paddingHorizontal: richMarkdownGeometry.tableCellPaddingHorizontal,
+    paddingVertical: richMarkdownGeometry.tableCellPaddingVertical,
     ...typeScale.label,
   },
   tableCellHeader: { fontWeight: typeWeight.semibold },
@@ -1212,7 +1310,7 @@ const styles = StyleSheet.create({
   },
   tableRow: {
     borderBottomColor: colors.borderSoft,
-    borderBottomWidth: 1,
+    borderBottomWidth: richMarkdownGeometry.tableRowBorderWidth,
     flexDirection: "row",
   },
   tableViewport: {
@@ -1225,7 +1323,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     justifyContent: "center",
     minHeight: typeScale.body.lineHeight,
-    width: typeScale.body.lineHeight,
+    width: richMarkdownGeometry.listMarkerWidth,
   },
   truncated: {
     borderTopColor: colors.borderSoft,

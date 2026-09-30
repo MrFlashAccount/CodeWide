@@ -4,6 +4,7 @@ import type {
   ReviewTarget,
   Thread,
   ThreadGoal,
+  ThreadGoalStatus,
 } from "@codewide/codex-protocol/v0.155.1/v2";
 
 import type { GetTransferAccess } from "../../data/private-transfer";
@@ -55,6 +56,7 @@ type GoalRouteRequest = {
   readonly kind: "goal";
   readonly resources: WorkspaceResourceDatabase | null;
   readonly setGoal?: (input: ThreadGoalInput) => Promise<ThreadGoal>;
+  readonly setGoalStatus?: (status: ThreadGoalStatus) => Promise<ThreadGoal>;
   readonly voiceScope: string;
 };
 

@@ -885,7 +885,11 @@ impl SummaryProjectionState {
     ) -> serde_json::Map<String, Value> {
         let mut metrics = self.activity_metrics(usage);
         crate::activity_metrics::compact_summary(&mut metrics);
-        serde_json::Map::from_iter([("activityMetrics".into(), metrics)])
+        let activity = metrics["total"].clone();
+        serde_json::Map::from_iter([
+            ("activity".into(), activity),
+            ("activityMetrics".into(), metrics),
+        ])
     }
 
     fn activity_metrics(&self, usage: Option<&TurnUsageProjection>) -> Value {
@@ -985,38 +989,23 @@ impl SummaryProjectionState {
             "completedAt": digest.completed_at,
             "durationMs": digest.duration_ms
         });
-        if digest.activity_count > 0
-            || usage.is_some()
-            || !self.artifacts.is_empty()
-            || !self.rpc_questions.is_empty()
-        {
-            if !self.rpc_questions.is_empty() {
-                metadata.insert(
-                    "questions".into(),
-                    serde_json::to_value(self.rpc_questions).unwrap_or(Value::Null),
-                );
-            }
-            if !self.artifacts.is_empty() {
-                metadata.insert("artifacts".into(), Value::Array(self.artifacts));
-            }
-            if digest.activity_count > 0 {
-                metadata.insert(
-                    "activity".into(),
-                    json!({
-                        "count": digest.activity_count,
-                        "kinds": digest.activity_kinds
-                    }),
-                );
-            }
-            if let Some(usage) = usage {
-                metadata.insert(
-                    "usage".into(),
-                    serde_json::to_value(usage).unwrap_or(Value::Null),
-                );
-            }
-            if let Some(object) = turn.as_object_mut() {
-                object.insert("codewide".into(), Value::Object(metadata));
-            }
+        if !self.rpc_questions.is_empty() {
+            metadata.insert(
+                "questions".into(),
+                serde_json::to_value(self.rpc_questions).unwrap_or(Value::Null),
+            );
+        }
+        if !self.artifacts.is_empty() {
+            metadata.insert("artifacts".into(), Value::Array(self.artifacts));
+        }
+        if let Some(usage) = usage {
+            metadata.insert(
+                "usage".into(),
+                serde_json::to_value(usage).unwrap_or(Value::Null),
+            );
+        }
+        if let Some(object) = turn.as_object_mut() {
+            object.insert("codewide".into(), Value::Object(metadata));
         }
         turn
     }
@@ -1289,6 +1278,13 @@ mod tests {
     fn persisted_v2_summary_requests_artifact_refresh_but_remains_readable()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut state = SummaryProjectionState::new("turn".into());
+        state.digest.items.push(super::ProjectedItem {
+            key: "user".into(),
+            kind: "userMessage".into(),
+            text_bytes: Some(4),
+            output_bytes: None,
+            phase: crate::activity_metrics::AgentPhase::Ordinary,
+        });
         for index in 0..300 {
             state.digest.items.push(super::ProjectedItem {
                 key: format!("command-{index}"),
@@ -1349,7 +1345,12 @@ mod tests {
         assert_eq!(projected["items"][1]["id"], "agent-id");
         assert_eq!(projected["items"][1]["text"], "final");
         assert_eq!(projected["items"][1]["phase"], "final_answer");
-        assert_eq!(projected["codewide"]["activity"]["kinds"][0], "reasoning");
+        assert_eq!(projected["codewide"]["activity"]["count"], 0);
+        assert_eq!(projected["codewide"]["activity"]["kinds"], json!([]));
+        assert_eq!(
+            projected["codewide"]["activity"],
+            projected["codewide"]["activityMetrics"]["total"]
+        );
         Ok(())
     }
 
@@ -1515,6 +1516,21 @@ mod tests {
 
         assert_eq!(digest.activity_count, 0);
         assert!(digest.activity_kinds.is_empty());
+        let projected = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+        assert_eq!(projected["codewide"]["activity"]["count"], 0);
+        assert_eq!(projected["codewide"]["activity"]["kinds"], json!([]));
+        assert_eq!(
+            projected["codewide"]["activity"],
+            projected["codewide"]["activityMetrics"]["total"]
+        );
         Ok(())
     }
 

@@ -74,6 +74,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         onClearGoal: props.conversationActions.onClearGoal,
         onGetGoal: props.conversationActions.onGetGoal,
         onSetGoal: props.conversationActions.onSetGoal,
+        onSetGoalStatus: props.conversationActions.onSetGoalStatus,
       }}
       ports={{
         onCreateTunnel: props.conversationActions.onCreateTunnel,
@@ -142,6 +143,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       surface={{
         compact: !props.desktop,
         cwd: props.snapshot.cwd ?? "/workspace",
+        firstUnreadAgentTurnId: props.snapshot.firstUnreadAgentTurnId ?? null,
         newChat: props.newChatDraft !== null,
         onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,

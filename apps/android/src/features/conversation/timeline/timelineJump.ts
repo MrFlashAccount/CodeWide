@@ -196,6 +196,7 @@ export function useTimelineJumpExecution({
   diagnostics,
   fullscreenCovered,
   latestUnreadAgentRef,
+  onJumpStart,
   persistTimelineAtEnd,
   scrollOffsetRef,
   timelineJumpRequest,
@@ -206,6 +207,7 @@ export function useTimelineJumpExecution({
   diagnostics: TimelineScrollDiagnostics;
   fullscreenCovered: boolean;
   latestUnreadAgentRef: RefObject<View | null>;
+  onJumpStart: () => void;
   persistTimelineAtEnd: () => void;
   scrollOffsetRef: RefObject<number>;
   timelineJumpRequest: TimelineJumpRequest | null;
@@ -218,6 +220,7 @@ export function useTimelineJumpExecution({
     if (requestId === null || fullscreenCovered) {
       return undefined;
     }
+    onJumpStart();
     let active = true;
     executeTimelineJump({
       complete: () => {
@@ -251,6 +254,7 @@ export function useTimelineJumpExecution({
     diagnostics,
     fullscreenCovered,
     latestUnreadAgentRef,
+    onJumpStart,
     persistTimelineAtEnd,
     requestId,
     scrollOffsetRef,

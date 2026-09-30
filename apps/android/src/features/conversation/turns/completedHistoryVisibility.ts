@@ -5,7 +5,7 @@ import {
   type ActivitySummary,
 } from "@codewide/sync-client";
 
-/** Hides known-empty history while preserving the entry point for unloaded activity. */
+/** Shows unloaded history only when Companion declares visible activity. */
 export function hasCompletedTurnHistory(turn: Turn, historyIndexes: readonly number[]): boolean {
   if (hasHistoryContent(turn, historyIndexes)) {
     return true;
@@ -15,8 +15,7 @@ export function hasCompletedTurnHistory(turn: Turn, historyIndexes: readonly num
     return false;
   }
   const summary = projectedActivityMetrics(turn)?.total ?? projectedTurnMetadata(turn)?.activity;
-  // A sparse summary is not proof of an empty history. Keep explicit lazy loading available.
-  return summary === undefined || summaryHasVisibleHistory(summary);
+  return summary !== undefined && summaryHasVisibleHistory(summary);
 }
 
 function hasHistoryContent(turn: Turn, historyIndexes: readonly number[]): boolean {

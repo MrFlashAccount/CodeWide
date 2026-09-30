@@ -1,7 +1,7 @@
 import { useEvent } from "../../react/useEvent";
 /** V1 GoalFeature owner, extracted without changing interaction or resource lifetime. */
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useAppVoiceInputRuntime, useVoiceInputResource } from "../../ui/VoiceInputRuntime";
 import { validateGoalEditorDraft } from "./goalEditor";
 
@@ -12,6 +12,7 @@ export function useGoalDialog({
   onClear,
   onClose,
   onSet,
+  onSetStatus,
   resourceError,
   voiceScope: parentVoiceScope,
 }: GoalDialogProps) {
@@ -24,10 +25,12 @@ export function useGoalDialog({
   const [tokenBudget, setTokenBudget] = useState(
     goal?.tokenBudget === null || goal?.tokenBudget === undefined ? "" : String(goal.tokenBudget),
   );
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<"clear" | "pause" | "resume" | "save" | null>(null);
+  const operationPending = useRef(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const voicePhase = voiceResource?.phase ?? "idle";
+  const busy = pending !== null;
   const effectiveError = error ?? voiceResource?.error ?? resourceError;
   const applyGoal = (next: ThreadGoal | null) => {
     setObjective(next?.objective ?? "");
@@ -36,6 +39,9 @@ export function useGoalDialog({
     );
   };
   const close = useEvent(() => {
+    if (operationPending.current) {
+      return;
+    }
     if (voicePhase === "idle" || voiceController === null) {
       onClose();
       return;
@@ -45,12 +51,16 @@ export function useGoalDialog({
     });
   });
   const save = useEvent(() => {
+    if (operationPending.current) {
+      return;
+    }
     const validation = validateGoalEditorDraft(objective, tokenBudget, goal?.status ?? "active");
     if (validation.error !== null) {
       setError(validation.error);
       return;
     }
-    setBusy(true);
+    operationPending.current = true;
+    setPending("save");
     setError(null);
     const input = validation.value;
     const operation = onSet(input);
@@ -65,15 +75,21 @@ export function useGoalDialog({
         },
       )
       .then(() => {
-        setBusy(false);
+        operationPending.current = false;
+        setPending(null);
       })
       .catch((error: unknown) => {
         setError(error instanceof Error ? error.message : "Could not save goal");
-        setBusy(false);
+        operationPending.current = false;
+        setPending(null);
       });
   });
   const clear = useEvent(() => {
-    setBusy(true);
+    if (operationPending.current) {
+      return;
+    }
+    operationPending.current = true;
+    setPending("clear");
     setError(null);
     const operation = onClear();
     operation
@@ -92,11 +108,41 @@ export function useGoalDialog({
         },
       )
       .then(() => {
-        setBusy(false);
+        operationPending.current = false;
+        setPending(null);
       })
       .catch((error: unknown) => {
         setError(error instanceof Error ? error.message : "Could not clear goal");
-        setBusy(false);
+        operationPending.current = false;
+        setPending(null);
+      });
+  });
+  const setStatus = useEvent((status: "active" | "paused") => {
+    if (operationPending.current) {
+      return;
+    }
+    operationPending.current = true;
+    setPending(status === "active" ? "resume" : "pause");
+    setError(null);
+    const operation = onSetStatus(status);
+    operation
+      .then(
+        (next) => {
+          applyGoal(next);
+          onClose();
+        },
+        (error: unknown) => {
+          setError(error instanceof Error ? error.message : "Could not update goal status");
+        },
+      )
+      .then(() => {
+        operationPending.current = false;
+        setPending(null);
+      })
+      .catch((error: unknown) => {
+        setError(error instanceof Error ? error.message : "Could not update goal status");
+        operationPending.current = false;
+        setPending(null);
       });
   });
 
@@ -108,10 +154,12 @@ export function useGoalDialog({
     effectiveError,
     error,
     objective,
+    pending,
     save,
     setConfirmClear,
     setError,
     setObjective,
+    setStatus,
     setTokenBudget,
     tokenBudget,
     voicePhase,

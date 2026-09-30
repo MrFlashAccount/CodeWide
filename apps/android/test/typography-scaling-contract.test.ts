@@ -123,7 +123,7 @@ describe("windowed typography scaling contract", () => {
 
   it("invalidates variable timeline measurements while keeping fixed thread rows stable", () => {
     expect(ownerTimelineViewport).toContain("windowLayout.measurementRevision");
-    expect(ownerTimelineViewport).toContain("renderRevision={props.composerScope}");
+    expect(ownerTimelineViewport).toContain("renderRevision={rowMeasurementRevision}");
     expect(ownerTimelineViewport).not.toContain("measurementRevision={");
     expect(screen).not.toContain("key={`timeline-layout:${windowLayout.measurementRevision}`}");
     expect(timelineList).toContain("subscribeMeasurementInvalidation(invalidateMeasurements)");

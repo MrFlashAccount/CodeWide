@@ -10,6 +10,7 @@ import { ContentReviewComments } from "../../../rendering/ContentReviewHost";
 import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard";
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
 import { RichMarkdownDocumentBlockView } from "../../../rendering/RichMarkdown";
+import { RichMarkdownPremeasurementBoundary } from "../../../rendering/RichMarkdownPremeasurementProvider";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
 import { StreamingRevealSurface } from "../../../rendering/StreamingRevealSurface";
 import { AppText as Text } from "../../../ui/Typography";
@@ -156,23 +157,25 @@ function VirtualizedMarkdownGroup({
   const reviewTarget = presentation.agentReviewTarget;
   const comments = renderReviewComments(first, placement, presentation);
   const content = (
-    <View
-      style={[
-        markdownStyles.agentMarkdownDocument,
-        presentation.agentBubbleFill && markdownStyles.agentMarkdownDocumentFill,
-        !isTrailingSlice(placement) && markdownStyles.virtualizedMarkdownBlockGap,
-      ]}
-    >
-      {parts.map((part) => (
-        <RichMarkdownDocumentBlockView
-          animateStreaming={part.streaming && animateNew}
-          block={part.block}
-          key={part.block.key}
-          {...(reviewTarget === null ? {} : { reviewTarget })}
-        />
-      ))}
-      {comments}
-    </View>
+    <RichMarkdownPremeasurementBoundary>
+      <View
+        style={[
+          markdownStyles.agentMarkdownDocument,
+          presentation.agentBubbleFill && markdownStyles.agentMarkdownDocumentFill,
+          !isTrailingSlice(placement) && markdownStyles.virtualizedMarkdownBlockGap,
+        ]}
+      >
+        {parts.map((part) => (
+          <RichMarkdownDocumentBlockView
+            animateStreaming={part.streaming && animateNew}
+            block={part.block}
+            key={part.block.key}
+            {...(reviewTarget === null ? {} : { reviewTarget })}
+          />
+        ))}
+        {comments}
+      </View>
+    </RichMarkdownPremeasurementBoundary>
   );
   const itemId = first.response.raw.id;
   const message = renderSearchMessage(itemId, content);

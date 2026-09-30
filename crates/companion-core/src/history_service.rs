@@ -1350,10 +1350,16 @@ fn turns_page(
     let selected = page_refs.into_iter().take(limit).collect::<Vec<_>>();
     let mut data = reader.project(&selected, indexed_exact)?;
     for projected in &mut data {
-        if not_loaded && let Some(object) = projected.as_object_mut() {
-            object.insert("items".into(), json!([]));
-            object.insert("itemsView".into(), Value::String("notLoaded".into()));
-            object.remove("codewide");
+        if not_loaded {
+            let activity = projected.pointer_mut("/codewide/activity").map(Value::take);
+            if let Some(object) = projected.as_object_mut() {
+                object.insert("items".into(), json!([]));
+                object.insert("itemsView".into(), Value::String("notLoaded".into()));
+                object.remove("codewide");
+                if let Some(activity) = activity {
+                    object.insert("codewide".into(), json!({"activity": activity}));
+                }
+            }
         }
     }
     validate_expected_recency(params, cursor.as_ref(), thread_id, &data)?;
@@ -1871,6 +1877,47 @@ mod tests {
         assert_eq!(page["data"][3]["items"][0]["text"], "Hello");
         assert_eq!(page["data"][4]["id"], "voice-before");
         assert_eq!(page["data"][4]["items"][0]["content"][0]["text"], "Before");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn not_loaded_page_preserves_only_the_activity_signal()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(path)?;
+        for line in [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"task"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"Inspect"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"exec_command_begin","call_id":"command"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"task","last_agent_message":"Done"}}"#,
+        ] {
+            writeln!(rollout, "{line}")?;
+        }
+        rollout.sync_all()?;
+        let service = history_service(directory.path())?;
+        let unloaded = service
+            .try_turns_page(
+                "thread/turns/list",
+                &json!({
+                    "threadId": THREAD_ID,
+                    "limit": 10,
+                    "sortDirection": "desc",
+                    "itemsView": "notLoaded"
+                }),
+            )
+            .await
+            .ok_or("not-loaded history page was not handled")??;
+        assert_eq!(unloaded["data"][0]["items"], json!([]));
+        assert_eq!(unloaded["data"][0]["itemsView"], "notLoaded");
+        assert_eq!(unloaded["data"][0]["codewide"]["activity"]["count"], 1);
+        assert!(
+            unloaded["data"][0]["codewide"]
+                .get("activityMetrics")
+                .is_none()
+        );
         Ok(())
     }
 

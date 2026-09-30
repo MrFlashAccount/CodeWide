@@ -1,8 +1,11 @@
 import { incrementMetric, recordTiming } from "./operational-metrics";
 import type {
+  TimelineFixedSizeDiagnostic,
+  TimelineLibraryPerformance,
   TimelineLibraryScrollAdjustment,
   TimelineLibraryScrollCommand,
   TimelineListGeometry,
+  TimelineRowDiagnosticKind,
   TimelineScrollGesture,
   TimelineScrollObservation,
   TimelineScrollPolicy,
@@ -17,6 +20,8 @@ const END_EPSILON_PX = 2;
 const GESTURE_TRAVEL_THRESHOLD_PX = 32;
 const REBOUND_MIN_DISTANCE_PX = 64;
 const REBOUND_VIEWPORT_RATIO = 0.5;
+const SLOW_FIXED_SIZE_MS = 1;
+const SLOW_LIBRARY_WORK_MS = 4;
 const POLICY_KEYS = [
   "anchorIndex",
   "anchorReason",
@@ -149,6 +154,118 @@ export class TimelineScrollDiagnostics {
           rowCount: adjustment.rowCount,
           sentinelDeltaPx: adjustment.sentinelDeltaPx,
           viewportHeightPx: adjustment.viewportHeightPx,
+        },
+      },
+      false,
+    );
+  }
+
+  /** Separates LegendList's own synchronous JS work from native layout/draw frame timings. */
+  libraryPerformance(measurement: TimelineLibraryPerformance): void {
+    if (measurement.phase === "calculate") {
+      incrementMetric("timeline_list_calculations");
+      recordTiming("timeline_list_calculate_ms", measurement.durationMs);
+      recordTiming("timeline_list_position_ms", measurement.positionDurationMs);
+      if (measurement.durationMs < SLOW_LIBRARY_WORK_MS) {
+        return;
+      }
+      this.#emit(
+        "library-performance",
+        {
+          tags: { phase: measurement.phase, source: "legend-list" },
+          values: {
+            dataChanged: Number(measurement.dataChanged),
+            doMVCP: Number(measurement.doMVCP),
+            durationMs: measurement.durationMs,
+            forceFullItemPositions: Number(measurement.forceFullItemPositions),
+            positionDurationMs: measurement.positionDurationMs,
+            positionStartIndex: measurement.positionStartIndex,
+            rowCount: measurement.rowCount,
+            visibleEndIndex: measurement.visibleEndIndex,
+            visibleStartIndex: measurement.visibleStartIndex,
+          },
+        },
+        false,
+      );
+      return;
+    }
+    incrementMetric("timeline_list_size_batches");
+    if (measurement.measurementCount > 0) {
+      incrementMetric("timeline_list_item_measurements", measurement.measurementCount);
+    }
+    if (measurement.changedCount > 0) {
+      incrementMetric("timeline_list_size_changes", measurement.changedCount);
+    }
+    recordTiming("timeline_list_size_batch_ms", measurement.durationMs);
+    if (measurement.durationMs >= SLOW_LIBRARY_WORK_MS) {
+      this.#emit(
+        "library-performance",
+        {
+          tags: { phase: measurement.phase, source: "legend-list" },
+          values: {
+            changedCount: measurement.changedCount,
+            durationMs: measurement.durationMs,
+            measurementCount: measurement.measurementCount,
+            needsRecalculate: Number(measurement.needsRecalculate),
+            rowCount: measurement.rowCount,
+          },
+        },
+        false,
+      );
+    }
+  }
+
+  /** Times the fixed-size callback separately because its premeasurement runs inside list work. */
+  fixedSize(
+    durationMs: number,
+    result: TimelineFixedSizeDiagnostic,
+    rowKind: TimelineRowDiagnosticKind,
+  ): void {
+    incrementMetric("timeline_fixed_size_calls");
+    if (result.status === "exact") {
+      incrementMetric("timeline_fixed_size_resolved");
+      incrementMetric(
+        result.source === "cache" ? "timeline_fixed_size_cached" : "timeline_fixed_size_calculated",
+      );
+    } else {
+      incrementMetric("timeline_fixed_size_dynamic");
+    }
+    recordTiming("timeline_fixed_size_ms", durationMs);
+    if (durationMs >= SLOW_FIXED_SIZE_MS) {
+      this.#emit(
+        "fixed-size",
+        {
+          tags: {
+            detail: result.status === "exact" ? result.source : result.reason,
+            result: result.status === "exact" ? "resolved" : "fallback",
+            rowKind,
+          },
+          values: {
+            durationMs,
+            estimatePx: result.status === "dynamic" ? result.estimate : 0,
+          },
+        },
+        false,
+      );
+    }
+  }
+
+  /** Records public LegendList size changes without retaining item keys or row content. */
+  itemSizeChanged(change: {
+    readonly index: number;
+    readonly previousSizePx: number;
+    readonly rowKind: TimelineRowDiagnosticKind;
+    readonly sizePx: number;
+  }): void {
+    this.#emit(
+      "item-size",
+      {
+        tags: { rowKind: change.rowKind },
+        values: {
+          deltaPx: change.sizePx - change.previousSizePx,
+          index: change.index,
+          previousSizePx: change.previousSizePx,
+          sizePx: change.sizePx,
         },
       },
       false,

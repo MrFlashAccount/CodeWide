@@ -1,6 +1,8 @@
+import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { useConversationOwner } from "../../ui/use-conversation-owner";
 import type { ConversationGoalCapabilities } from "../goal/conversationGoalCapabilities";
 import { useGoalDetails } from "../goal/GoalFeature";
+import { useEvent } from "../../react/useEvent";
 import type { QueueWorkspaceCapabilities } from "../queue/queueWorkspaceCapabilities";
 import { useComposerAccessoryActions } from "./ComposerAccessoryTray";
 import type { useComposerCommands } from "./composerCommands";
@@ -16,10 +18,12 @@ export function useComposerInteractions({
   composerStateBinding,
   conversationOwner,
   createAndOpenTerminal,
+  currentGoal,
   currentTurnId,
   draftConnectionId,
   draftThreadId,
   onSetGoal,
+  onSetGoalStatus,
   openDrawing,
   queueInputs,
   remoteThread,
@@ -33,10 +37,12 @@ export function useComposerInteractions({
   composerStateBinding: ReturnType<typeof useComposerState>;
   conversationOwner: ReturnType<typeof useConversationOwner>;
   createAndOpenTerminal: Parameters<typeof useComposerFeatureActions>[2];
+  currentGoal: ThreadGoal | null;
   currentTurnId: string | null;
   draftConnectionId: string | null;
   draftThreadId: string | null;
   onSetGoal: ConversationGoalCapabilities["onSetGoal"];
+  onSetGoalStatus: ConversationGoalCapabilities["onSetGoalStatus"];
   openDrawing: Parameters<typeof useComposerFeatureActions>[1];
   queueInputs: QueueWorkspaceCapabilities;
   remoteThread: Parameters<typeof useComposerDelivery>[0]["remoteThread"];
@@ -71,6 +77,13 @@ export function useComposerInteractions({
           },
         }
       : null;
+  const pauseActiveGoal = useEvent(async (): Promise<void> => {
+    if (currentGoal?.status === "active" && onSetGoalStatus !== undefined) {
+      await onSetGoalStatus("paused");
+    }
+  });
+  const pauseGoalBeforeInterrupt =
+    currentGoal?.status === "active" && onSetGoalStatus !== undefined ? pauseActiveGoal : undefined;
   const composerDeliveryBinding = useComposerDelivery({
     attachments: composerStateBinding.composerEditingBinding.attachments,
     cancelQueuedComposerEdit: composerCommands.queueEditActionsBinding.cancelQueuedComposerEdit,
@@ -101,6 +114,7 @@ export function useComposerInteractions({
     pastedAttachmentPending: composerStateBinding.largePasteStateBinding.pastedAttachmentPending,
     pastedAttachmentPendingRef:
       composerStateBinding.largePasteStateBinding.pastedAttachmentPendingRef,
+    pauseGoalBeforeInterrupt,
     queuedComposerEdit: composerStateBinding.queueEditStateBinding.queuedComposerEdit,
     queuedComposerEditBusy: composerStateBinding.queueEditStateBinding.queuedComposerEditBusy,
     remoteThread: remoteThread,

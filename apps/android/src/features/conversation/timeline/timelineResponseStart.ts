@@ -9,7 +9,12 @@ type ResponseList = Pick<
   "indexForItemKey" | "measureItemViewport" | "scrollToIndex"
 >;
 type ResponseStartState =
-  | { readonly reason: "initialUnread"; readonly status: "initial" | "cancelled" }
+  | { readonly reason: "initialUnread"; readonly status: "cancelled" | "initial" | "settled" }
+  | {
+      readonly promise: Promise<void>;
+      readonly reason: "initialUnread";
+      readonly status: "measuring";
+    }
   | {
       readonly reason: "completedResponse" | "lateUnread";
       readonly status: "pending" | "measuring" | "settled";
@@ -46,6 +51,36 @@ export class TimelineResponseStart {
     const { reason } = this.state;
     this.state =
       reason === "initialUnread" ? { reason, status: "cancelled" } : { reason, status: "settled" };
+  }
+
+  /** Verifies bootstrap placement against the chrome-free viewport before the list is revealed. */
+  async prepareInitialReveal({
+    anchor,
+    bottomInset,
+    list,
+    offset,
+    topInset,
+  }: {
+    readonly anchor: Anchor | null;
+    readonly bottomInset: number;
+    readonly list: ResponseList;
+    readonly offset: number;
+    readonly topInset: number;
+  }): Promise<void> {
+    const state = this.state;
+    if (state.reason !== "initialUnread" || anchor === null) {
+      return;
+    }
+    if (state.status === "measuring") {
+      await state.promise;
+      return;
+    }
+    if (state.status !== "initial") {
+      return;
+    }
+    const promise = this.verifyInitialReveal({ anchor, bottomInset, list, offset, topInset });
+    this.state = { promise, reason: state.reason, status: "measuring" };
+    await promise;
   }
 
   /** Binds readiness to this exact intent, rather than a later React render's handler. */
@@ -129,11 +164,7 @@ export class TimelineResponseStart {
     if (getList() !== list || list.indexForItemKey(anchor.key) !== anchor.index) {
       return;
     }
-    if (
-      viewport.status === "measured" &&
-      viewport.top >= topInset &&
-      viewport.top < viewport.height - bottomInset
-    ) {
+    if (responseStartIsVisible(viewport, topInset, bottomInset)) {
       return;
     }
     await list.scrollToIndex(
@@ -141,4 +172,55 @@ export class TimelineResponseStart {
       "response-start",
     );
   }
+
+  private async verifyInitialReveal({
+    anchor,
+    bottomInset,
+    list,
+    offset,
+    topInset,
+  }: {
+    readonly anchor: Anchor;
+    readonly bottomInset: number;
+    readonly list: ResponseList;
+    readonly offset: number;
+    readonly topInset: number;
+  }): Promise<void> {
+    const viewport = await list.measureItemViewport(anchor.key);
+    if (this.state.reason !== "initialUnread" || this.state.status !== "measuring") {
+      return;
+    }
+    if (list.indexForItemKey(anchor.key) !== anchor.index) {
+      this.state = { reason: "initialUnread", status: "settled" };
+      return;
+    }
+    if (!responseStartIsVisible(viewport, topInset, bottomInset)) {
+      await list
+        .scrollToIndex(
+          { animated: false, index: anchor.index, viewOffset: offset, viewPosition: 0 },
+          "response-start",
+        )
+        .catch(() => undefined);
+    }
+    this.finishInitialMeasurement();
+  }
+
+  private finishInitialMeasurement(): void {
+    const state = this.state;
+    if (state.reason === "initialUnread" && state.status === "measuring") {
+      this.state = { reason: state.reason, status: "settled" };
+    }
+  }
+}
+
+function responseStartIsVisible(
+  viewport: Awaited<ReturnType<ResponseList["measureItemViewport"]>>,
+  topInset: number,
+  bottomInset: number,
+): boolean {
+  return (
+    viewport.status === "measured" &&
+    viewport.top >= topInset &&
+    viewport.top < viewport.height - bottomInset
+  );
 }

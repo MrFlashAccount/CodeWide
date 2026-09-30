@@ -18,6 +18,7 @@ export type ComposerDeliveryCapabilities = {
     | undefined;
   onInterrupt: ((turnId: string) => Promise<void>) | undefined;
   pastedAttachmentPending: boolean;
+  pauseGoalBeforeInterrupt: (() => Promise<void>) | undefined;
   queuedComposerEdit: QueuedComposerEdit | null;
   queuedComposerEditBusy: boolean;
   saveQueuedComposerEdit: () => void;

@@ -87,6 +87,8 @@ it("preserves conversation timeline integration contracts", () => {
   expect(ownerTimelineViewport).toContain("onStartReached={props.loadOlderAtTimelineStart}");
   expect(ownerTimelineViewport).toContain("showsVerticalScrollIndicator={false}");
   expect(ownerTimelineViewport).not.toContain("getItemType");
+  expect(ownerTimelineViewport).toContain("itemSizeHint={timelineRowSizeHint}");
+  expect(ownerTimelineViewport).not.toContain("getEstimatedItemSize");
   expect(ownerHistoryAnchor).not.toContain("timelineInitialPosition");
   expect(gestureBindings).toMatch(
     /const distance = Math\.max\(\s*0,\s*nativeEvent\.contentSize\.height -\s*nativeEvent\.layoutMeasurement\.height -\s*nativeEvent\.contentOffset\.y,?\s*\)/,
@@ -104,7 +106,7 @@ it("preserves conversation timeline integration contracts", () => {
       'scope="bubble"',
     ]),
   ).toBe(true);
-  expect(ownerTimelineViewport).toContain("renderRevision={props.composerScope}");
+  expect(ownerTimelineViewport).toContain("renderRevision={rowMeasurementRevision}");
   expect(ownerTimelineViewport).toContain("<ThreadTimelineList");
   expect(ownerThreadTimeline).toContain("{ getAccess: props.getStableTransferAccess }");
   expect(

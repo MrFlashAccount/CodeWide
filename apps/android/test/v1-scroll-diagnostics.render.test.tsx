@@ -206,6 +206,54 @@ it("records MVCP commit calculations separately and rejects invalid or private f
   view.unmount();
 });
 
+it("validates LegendList performance timings and omits arbitrary dependency payload", () => {
+  const journal = new TimelineScrollJournal();
+  const diagnostics = new TimelineScrollDiagnostics("server", "thread", journal);
+  const view = render(<ThreadTimelineList {...listProps} diagnostics={diagnostics} />);
+  const target = view.getByTestId("timeline");
+  const calculation = {
+    dataChanged: false,
+    doMVCP: true,
+    durationMs: 8,
+    forceFullItemPositions: false,
+    phase: "calculate",
+    positionDurationMs: 3,
+    positionStartIndex: 10,
+    rowCount: 50,
+    visibleEndIndex: 18,
+    visibleStartIndex: 12,
+    data: listProps.data,
+    text: "PRIVATE",
+  };
+  fireEvent(target, "scrollDiagnostic", calculation);
+  fireEvent(target, "scrollDiagnostic", { ...calculation, durationMs: -1 });
+  fireEvent(target, "scrollDiagnostic", {
+    changedCount: 2,
+    durationMs: 5,
+    measurementCount: 3,
+    needsRecalculate: true,
+    phase: "size-batch",
+    rowCount: 50,
+    text: "PRIVATE",
+  });
+  fireEvent(target, "scrollDiagnostic", {
+    changedCount: 2,
+    durationMs: 5,
+    measurementCount: 1.5,
+    needsRecalculate: true,
+    phase: "size-batch",
+    rowCount: 50,
+  });
+
+  const events = journal
+    .snapshot()
+    .samples.filter((event) => event.name === "chat.scroll.library-performance");
+  expect(events).toHaveLength(2);
+  expect(events.map((event) => event.tags.phase)).toEqual(["calculate", "size-batch"]);
+  expect(JSON.stringify(events)).not.toContain("PRIVATE");
+  view.unmount();
+});
+
 it("records failed commands while preserving the original rejection, without logging error content", async () => {
   const journal = new TimelineScrollJournal();
   const diagnostics = new TimelineScrollDiagnostics("server", "thread", journal);

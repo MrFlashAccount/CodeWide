@@ -5,6 +5,7 @@ import {
 } from "../../../data/thread-navigation-metrics";
 import { useEvent } from "../../../react/useEvent";
 import type { ThreadTimelineListProps } from "../../../rendering/ThreadTimelineList";
+import { useRef } from "react";
 import type { TimelineItem } from "./timelineTypes";
 import type { TimelineViewportProps } from "./TimelineViewportContract";
 
@@ -12,8 +13,13 @@ import type { TimelineViewportProps } from "./TimelineViewportContract";
 export function useTimelineMeasurementBindings(
   props: TimelineViewportProps,
   onGeometryChanged: () => void,
+  prepareInitialReveal: () => Promise<void>,
 ) {
   const { timelineContentHeightRef, timelineViewportHeightRef } = props;
+  const readinessRef = useRef<
+    | { readonly scope: string; readonly status: "committed" | "preparing" }
+    | { readonly status: "idle" }
+  >({ status: "idle" });
   const onLoad = useEvent<NonNullable<ThreadTimelineListProps<TimelineItem>["onLoad"]>>(
     ({ elapsedTimeInMs }) => {
       recordTiming("timeline_first_draw_ms", elapsedTimeInMs);
@@ -47,7 +53,21 @@ export function useTimelineMeasurementBindings(
     },
   );
   const onReady = useEvent<NonNullable<ThreadTimelineListProps<TimelineItem>["onReady"]>>(() => {
-    props.commitInitialTimelineLoad();
+    const readiness = readinessRef.current;
+    if (readiness.status !== "idle" && readiness.scope === props.composerScope) {
+      return;
+    }
+    readinessRef.current = { scope: props.composerScope, status: "preparing" };
+    const scope = props.composerScope;
+    const commitReadyTimeline = () => {
+      const current = readinessRef.current;
+      if (current.status !== "preparing" || current.scope !== scope) {
+        return;
+      }
+      readinessRef.current = { scope, status: "committed" };
+      props.commitInitialTimelineLoad();
+    };
+    void prepareInitialReveal().then(commitReadyTimeline, commitReadyTimeline);
   });
   const onLayout = useEvent<NonNullable<ThreadTimelineListProps<TimelineItem>["onLayout"]>>(
     ({ nativeEvent }) => {

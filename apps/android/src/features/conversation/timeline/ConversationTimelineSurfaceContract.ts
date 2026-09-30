@@ -12,6 +12,7 @@ import type { MessageListState } from "../../../ui/MessageListBoundary";
 export type ConversationTimelineSurfaceProps = {
   awayFromLatest: boolean;
   bottomChromeHeight: number;
+  bottomChromeMeasured: boolean;
   commitUnreadReceipt: () => () => void;
   composerScope: string;
   draftConnectionId: string | null;

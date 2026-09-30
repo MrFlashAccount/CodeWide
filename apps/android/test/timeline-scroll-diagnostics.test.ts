@@ -57,6 +57,89 @@ function anchorPolicy(turnId: string): TimelineScrollPolicy {
 }
 
 describe("timeline scroll observation", () => {
+  it("aggregates list calculation, measurement and fixed-size costs without row content", () => {
+    const { diagnostics, journal } = recorder();
+    diagnostics.libraryPerformance({
+      dataChanged: false,
+      doMVCP: true,
+      durationMs: 7,
+      forceFullItemPositions: false,
+      phase: "calculate",
+      positionDurationMs: 3,
+      positionStartIndex: 20,
+      rowCount: 80,
+      visibleEndIndex: 28,
+      visibleStartIndex: 24,
+    });
+    diagnostics.libraryPerformance({
+      changedCount: 2,
+      durationMs: 6,
+      measurementCount: 3,
+      needsRecalculate: true,
+      phase: "size-batch",
+      rowCount: 80,
+    });
+    diagnostics.fixedSize(1.5, { source: "calculated", status: "exact" }, "turnSlice");
+    diagnostics.fixedSize(0.2, { source: "cache", status: "exact" }, "turnSlice");
+    diagnostics.fixedSize(
+      0.1,
+      { estimate: 115, reason: "unsupported-row", status: "dynamic" },
+      "item",
+    );
+    diagnostics.itemSizeChanged({
+      index: 24,
+      previousSizePx: 180,
+      rowKind: "turnSlice",
+      sizePx: 240,
+    });
+
+    expect(operationalMetricsSnapshot()).toMatchObject({
+      counters: {
+        timeline_fixed_size_cached: 1,
+        timeline_fixed_size_calculated: 1,
+        timeline_fixed_size_calls: 3,
+        timeline_fixed_size_dynamic: 1,
+        timeline_fixed_size_resolved: 2,
+        timeline_list_calculations: 1,
+        timeline_list_item_measurements: 3,
+        timeline_list_size_batches: 1,
+        timeline_list_size_changes: 2,
+      },
+      timings: {
+        timeline_fixed_size_ms: { totalCount: 3, totalMs: 1.8 },
+        timeline_list_calculate_ms: { totalCount: 1, totalMs: 7 },
+        timeline_list_position_ms: { totalCount: 1, totalMs: 3 },
+        timeline_list_size_batch_ms: { totalCount: 1, totalMs: 6 },
+      },
+    });
+    expect(journal.snapshot().samples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "chat.scroll.library-performance",
+          tags: { phase: "calculate", source: "legend-list" },
+          values: expect.objectContaining({ durationMs: 7, positionDurationMs: 3 }),
+        }),
+        expect.objectContaining({
+          name: "chat.scroll.library-performance",
+          tags: { phase: "size-batch", source: "legend-list" },
+          values: expect.objectContaining({ changedCount: 2, measurementCount: 3 }),
+        }),
+        expect.objectContaining({
+          name: "chat.scroll.fixed-size",
+          tags: { detail: "calculated", result: "resolved", rowKind: "turnSlice" },
+        }),
+        expect.objectContaining({
+          name: "chat.scroll.item-size",
+          tags: { rowKind: "turnSlice" },
+          values: { deltaPx: 60, index: 24, previousSizePx: 180, sizePx: 240 },
+        }),
+      ]),
+    );
+    expect(
+      journal.snapshot().samples.filter((event) => event.name === "chat.scroll.fixed-size"),
+    ).toHaveLength(1);
+  });
+
   it("captures a one-frame return after reaching the end, including the intervening command", () => {
     const { diagnostics, journal } = recorder();
     const end = diagnostics.beginCommand("jump-end", { kind: "end" }, null);

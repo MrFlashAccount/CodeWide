@@ -18,7 +18,8 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
-      "@legendapp/list/react-native": ["./.expo/types/legend-list-native.d.ts"]
+      "@legendapp/list/react-native": ["./.expo/types/legend-list-native.d.ts"],
+      "expo-pretext": ["./src/types/expoPretext.d.ts"]
     }
   },
   "files": [],

@@ -134,6 +134,7 @@ export function MainConversationDetail({
     resources,
     searchState,
     searchWindow,
+    storedThread,
     threadId,
   });
 }
@@ -154,6 +155,7 @@ export function NewConversationDetail({
       {conversation.renderContent({
         composerState: composerState,
         cwd: conversation.cwd ?? "/workspace",
+        firstUnreadAgentTurnId: null,
         historyRestoreReady: true,
         historyViewport: COMPLETE_STATIC_THREAD_HISTORY,
         queuedPrompts: [],

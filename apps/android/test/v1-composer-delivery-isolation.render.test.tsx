@@ -20,6 +20,7 @@ function delivery(
     goalSubmissionActive: false,
     onEditQueued: undefined,
     onInterrupt: undefined,
+    pauseGoalBeforeInterrupt: undefined,
     pastedAttachmentPending: false,
     queuedComposerEdit: null,
     queuedComposerEditBusy: false,
@@ -83,6 +84,58 @@ it("does not interrupt the same turn again after the first request succeeds", as
   await act(async () => Promise.resolve());
   expect(interrupt).toHaveBeenCalledTimes(2);
   expect(interrupt).toHaveBeenLastCalledWith("turn:second");
+});
+
+it("pauses an active goal before interrupting its current turn", async () => {
+  const paused = Promise.withResolvers<void>();
+  const pauseGoalBeforeInterrupt = jest.fn(() => paused.promise);
+  const interrupt = jest.fn(async () => undefined);
+  const send = jest.fn(async () => undefined);
+  const hook = renderHook(useComposerDeliveryActions, {
+    initialProps: delivery("server:goal", send, {
+      currentTurnId: "turn:goal",
+      draft: "",
+      onInterrupt: interrupt,
+      pauseGoalBeforeInterrupt,
+      threadLifecycleActive: true,
+    }),
+  });
+
+  expect(hook.result.current.stopAction).toBe("goalAndResponse");
+  act(() => hook.result.current.activatePrimaryAction());
+  expect(pauseGoalBeforeInterrupt).toHaveBeenCalledTimes(1);
+  expect(interrupt).not.toHaveBeenCalled();
+
+  await act(async () => paused.resolve());
+  expect(interrupt).toHaveBeenCalledTimes(1);
+  expect(interrupt).toHaveBeenCalledWith("turn:goal");
+});
+
+it("does not interrupt when pausing the active goal fails", async () => {
+  const pauseGoalBeforeInterrupt = jest.fn(async () => {
+    throw new Error("Goal status rejected");
+  });
+  const interrupt = jest.fn(async () => undefined);
+  const hook = renderHook(useComposerDeliveryActions, {
+    initialProps: delivery(
+      "server:goal-failure",
+      jest.fn(async () => undefined),
+      {
+        currentTurnId: "turn:goal",
+        draft: "",
+        onInterrupt: interrupt,
+        pauseGoalBeforeInterrupt,
+        threadLifecycleActive: true,
+      },
+    ),
+  });
+
+  act(() => hook.result.current.activatePrimaryAction());
+  await act(async () => Promise.resolve());
+
+  expect(pauseGoalBeforeInterrupt).toHaveBeenCalledTimes(1);
+  expect(interrupt).not.toHaveBeenCalled();
+  expect(hook.result.current.sendDisabled).toBe(false);
 });
 
 it("can discard pending voice finalization and send again without waiting for remote cleanup", async () => {

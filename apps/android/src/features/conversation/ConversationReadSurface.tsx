@@ -38,6 +38,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
     onBack: props.onBack,
     threadSearchVisible: read.search.threadSearchVisible,
   });
+  const timelineDateLabels = projectTimelineDateLabels(read.timeline, true);
   const rowActions = useThreadTimelineActions(props.onFixUnsupportedBlock, undefined, undefined);
   const rows = useThreadTimeline({
     animateLiveUpdates: props.server?.status === "live",
@@ -60,7 +61,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
     setLatestUnreadAgentNode: read.unreadActions.setLatestUnreadAgentNode,
     threadSearchActive: read.searchProjection.threadSearchActive,
     timelineCompact: props.compact || read.narrow,
-    timelineDateLabels: projectTimelineDateLabels(read.timeline, true),
+    timelineDateLabels,
   });
   const timelinePositioned = read.timeline.length === 0 || props.viewport.timelineDidLoad;
   const liveStatusVisible =
@@ -110,6 +111,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       searchMessageItemId={null}
       setAwayFromLatest={read.anchor.setAwayFromLatest}
       timelineCompact={props.compact || read.narrow}
+      timelineDateLabels={timelineDateLabels}
       timelinePositioned={timelinePositioned}
       timelineViewportRef={props.viewport.timelineViewportRef}
       windowLayout={read.windowLayout}
@@ -165,7 +167,6 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
     headerContent,
     props,
     read,
-    timelinePositioned,
     timelineSurface,
   });
 }

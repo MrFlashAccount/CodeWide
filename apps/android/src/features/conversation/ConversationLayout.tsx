@@ -13,7 +13,6 @@ import { ThreadCwdContext } from "./turns/turnContexts";
 export function ConversationLayout({
   bottomChrome,
   compact,
-  conversationBackdropVisible,
   conversationInsets,
   cwd,
   headerContent,
@@ -84,9 +83,7 @@ export function ConversationLayout({
             offset={{ closed: 0, opened: conversationInsets.bottom }}
             style={styles.composerSticky}
           >
-            {conversationBackdropVisible && (
-              <ConversationPanelUnderlay style={StyleSheet.absoluteFill} />
-            )}
+            <ConversationPanelUnderlay style={StyleSheet.absoluteFill} />
             {jumpContent}
 
             {bottomChrome}

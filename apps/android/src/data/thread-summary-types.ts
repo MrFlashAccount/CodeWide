@@ -13,6 +13,8 @@ export type StoredThreadSummary = {
   cwd: string;
   /** Native outbox command hiding this row until delivery or rollback. */
   deleteCommandId: string | null;
+  /** First completed agent turn observed after the thread became unread. */
+  firstUnreadAgentTurnId?: string | null;
   /** Repository identity reported by Codex. Unlike cwd, it is stable across Git worktrees. */
   gitOriginUrl?: string | null;
   lastSeenCursor: number;
@@ -47,6 +49,10 @@ export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredTh
   return {
     ...row,
     deleteCommandId: row.deleteCommandId ?? null,
+    firstUnreadAgentTurnId:
+      typeof row.firstUnreadAgentTurnId === "string" && row.firstUnreadAgentTurnId !== ""
+        ? row.firstUnreadAgentTurnId
+        : null,
     parentThreadId: row.parentThreadId ?? null,
     recencyAt: row.recencyAt ?? null,
     status: normalizeThreadStatus(row.status),

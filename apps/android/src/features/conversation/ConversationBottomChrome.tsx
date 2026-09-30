@@ -1,6 +1,7 @@
 import { QuestionDock } from "../requests/QuestionFeature";
-import { View } from "react-native";
+import { View, type LayoutChangeEvent } from "react-native";
 import { ThreadErrorBanner } from "../../ui/ThreadErrorBanner";
+import { useEvent } from "../../react/useEvent";
 import type { ConversationBottomChromeProps } from "./ConversationBottomChromeContract";
 
 export function ConversationBottomChrome({
@@ -9,20 +10,15 @@ export function ConversationBottomChrome({
   failureNotice,
   readOnly,
   remoteThread,
+  reportBottomChromeHeight,
   requestPrompt,
-  setBottomChromeHeight,
   timeline,
 }: ConversationBottomChromeProps) {
+  const onLayout = useEvent((event: LayoutChangeEvent) => {
+    reportBottomChromeHeight(event.nativeEvent.layout.height);
+  });
   return (
-    <View
-      onLayout={({ nativeEvent }) => {
-        const nextHeight = Math.ceil(nativeEvent.layout.height);
-        setBottomChromeHeight((current) =>
-          Math.abs(current - nextHeight) < 1 ? current : nextHeight,
-        );
-      }}
-      testID="conversation-bottom-chrome"
-    >
+    <View onLayout={onLayout} testID="conversation-bottom-chrome">
       {!readOnly &&
         requestPrompt !== null &&
         !timeline.some((item) => item.kind === "turn" && item.turn.status === "inProgress") && (

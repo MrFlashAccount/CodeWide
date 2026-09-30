@@ -110,3 +110,54 @@ export type TimelineLibraryScrollAdjustment = {
   readonly sentinelDeltaPx: number;
   readonly viewportHeightPx: number;
 };
+
+/** Content-free timing emitted by the pinned LegendList adapter around its synchronous JS work. */
+export type TimelineLibraryPerformance =
+  | {
+      readonly dataChanged: boolean;
+      readonly doMVCP: boolean;
+      readonly durationMs: number;
+      readonly forceFullItemPositions: boolean;
+      readonly phase: "calculate";
+      readonly positionDurationMs: number;
+      readonly positionStartIndex: number;
+      readonly rowCount: number;
+      readonly visibleEndIndex: number;
+      readonly visibleStartIndex: number;
+    }
+  | {
+      readonly changedCount: number;
+      readonly durationMs: number;
+      readonly measurementCount: number;
+      readonly needsRecalculate: boolean;
+      readonly phase: "size-batch";
+      readonly rowCount: number;
+    };
+
+/** Content-free row category used to aggregate list measurement behavior. */
+export type TimelineRowDiagnosticKind = "item" | "turnLead" | "turnSlice";
+
+/** Bounded fallback categories emitted by the timeline row geometry owner. */
+export type TimelineFixedSizeFallbackReason =
+  | "composite-row"
+  | "inline-review-state"
+  | "invalid-geometry"
+  | "leading-activity"
+  | "markdown-html"
+  | "markdown-measurement-error"
+  | "markdown-measurement-unavailable"
+  | "markdown-table"
+  | "markdown-unsupported-node"
+  | "performance-experiment"
+  | "streaming"
+  | "trailing-artifacts"
+  | "unsupported-row";
+
+/** Result of the synchronous row geometry lookup performed inside LegendList work. */
+export type TimelineFixedSizeDiagnostic =
+  | { readonly source: "cache" | "calculated"; readonly status: "exact" }
+  | {
+      readonly estimate: number;
+      readonly reason: TimelineFixedSizeFallbackReason;
+      readonly status: "dynamic";
+    };

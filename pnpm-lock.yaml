@@ -14,7 +14,7 @@ patchedDependencies:
     hash: 3df09f814019403e370e825f864483b9bdd4b74ef6f029c3d1bd6b34ea3ca6af
     path: patches/@expo__ui@57.0.9.patch
   '@legendapp/list@3.4.0':
-    hash: 3d13b15f1ef901ec16d59ef40cfdbf5bb15e3fcb96e3d8f594732b2369be7c72
+    hash: 6d2f24f37969d04025311c3bbf3c8836286eb61a412d1f144ea297013a3f8210
     path: patches/@legendapp__list@3.4.0.patch
   '@quickdrawjs/react-native@0.2.0':
     hash: 8a0c443b275b3c773c55fe75aa8dce968443bc88844ba665f3c0f2c8b9c7aa16
@@ -110,7 +110,7 @@ importers:
         version: 15.1.1(expo-font@57.0.1)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       '@legendapp/list':
         specifier: 3.4.0
-        version: 3.4.0(patch_hash=3d13b15f1ef901ec16d59ef40cfdbf5bb15e3fcb96e3d8f594732b2369be7c72)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
+        version: 3.4.0(patch_hash=6d2f24f37969d04025311c3bbf3c8836286eb61a412d1f144ea297013a3f8210)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       '@legendapp/state':
         specifier: 2.1.15
         version: 2.1.15(react@19.2.3)
@@ -183,6 +183,9 @@ importers:
       expo-local-authentication:
         specifier: ~57.0.2
         version: 57.0.2(expo@57.0.11)
+      expo-pretext:
+        specifier: 1.2.0
+        version: 1.2.0(expo@57.0.11)(react-native-reanimated@4.5.1(react-native-worklets@0.10.1(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       expo-router:
         specifier: 57.0.11
         version: 57.0.11(6319a3f9381dfffd95a43b1e31e4cfd2)
@@ -10089,7 +10092,7 @@ snapshots:
       react: 19.2.3
       react-native: 0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3)
 
-  '@legendapp/list@3.4.0(patch_hash=3d13b15f1ef901ec16d59ef40cfdbf5bb15e3fcb96e3d8f594732b2369be7c72)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)':
+  '@legendapp/list@3.4.0(patch_hash=6d2f24f37969d04025311c3bbf3c8836286eb61a412d1f144ea297013a3f8210)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)':
     dependencies:
       react: 19.2.3
       use-sync-external-store: 1.6.0(react@19.2.3)

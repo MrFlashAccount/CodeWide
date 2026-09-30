@@ -24,6 +24,11 @@ export class NewThreadService {
     return draft;
   }
 
+  /** Reopens the retained draft instead of replacing its composer and voice scope. */
+  resumeOrOpen(connectionId: string, cwd: string | null): NewThreadDraft {
+    return this.draft$.peek() ?? this.open(connectionId, cwd);
+  }
+
   current(): NewThreadDraft | null {
     return this.draft$.peek();
   }

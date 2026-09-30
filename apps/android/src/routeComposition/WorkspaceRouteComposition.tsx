@@ -240,8 +240,8 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     workspaceCapabilities.refreshAccountRateLimits,
   );
   const openNewThread = useEvent((connectionId: string, cwd: string | null): void => {
-    list.selectServer({ connectionId, kind: "connection" });
-    newThreadService.open(connectionId, cwd);
+    const draft = newThreadService.resumeOrOpen(connectionId, cwd);
+    list.selectServer({ connectionId: draft.connectionId, kind: "connection" });
     ensureV1NewThreadRoute(route.router, route.pathname, route.projectListSessionId);
   });
   const createSidebarThread = (): void => {

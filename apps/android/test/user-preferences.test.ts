@@ -42,6 +42,10 @@ import {
   decodePersonalVoiceFilterPreferences,
   encodePersonalVoiceFilterPreferences,
 } from "../src/data/personalVoiceFilterPreferences";
+import {
+  decodeTimelineRowPremeasurementPreference,
+  encodeTimelineRowPremeasurementPreference,
+} from "../src/data/timelineRowPremeasurementPreferences";
 
 const nativeDatabase = readFileSync(
   new URL("../src/data/user-preferences-database.native.ts", import.meta.url),
@@ -188,6 +192,19 @@ describe("user preferences", () => {
       enabled: false,
     });
     expect(decodePersonalVoiceFilterPreferences("not json")).toEqual({ enabled: false });
+  });
+
+  it("keeps timeline row premeasurement opt-in and fail-disabled", () => {
+    expect(decodeTimelineRowPremeasurementPreference(null)).toEqual({ enabled: false });
+    expect(
+      decodeTimelineRowPremeasurementPreference(
+        encodeTimelineRowPremeasurementPreference({ enabled: true }),
+      ),
+    ).toEqual({ enabled: true });
+    expect(decodeTimelineRowPremeasurementPreference("not json")).toEqual({ enabled: false });
+    expect(decodeTimelineRowPremeasurementPreference('{"enabled":true,"schemaVersion":2}')).toEqual(
+      { enabled: false },
+    );
   });
 
   it("keeps Voice Assistant personality separate, versioned and bounded", () => {

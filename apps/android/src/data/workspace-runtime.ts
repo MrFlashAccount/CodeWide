@@ -70,6 +70,7 @@ import { createThreadSyncProjection } from "./thread-sync-projection";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
 import { createThreadSyncRuntime } from "./thread-sync-runtime";
+import { hydrateTimelineRowPremeasurementPreference } from "./timelineRowPremeasurementPreference";
 import {
   createThreadUiStateDatabase,
   type ThreadUiStateDatabase,
@@ -233,6 +234,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     await Promise.all([
       globalSupervisorAttention.ready,
       hydrateGlobalVoiceOrbStylePreference(),
+      hydrateTimelineRowPremeasurementPreference(),
       details.prepare(),
       profiles.collection.preload(),
       pendingRequests.collection.preload(),

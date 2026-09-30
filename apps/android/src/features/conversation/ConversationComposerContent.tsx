@@ -138,7 +138,7 @@ export function createConversationComposerContent({
         }
         setSelectedPersonality={composerStateBinding.composerEditingBinding.setSelectedPersonality}
         steerComposer={composerDelivery.composerDeliveryBinding.steerComposer}
-        stoppingResponse={composerDelivery.composerDeliveryBinding.stoppingResponse}
+        stopAction={composerDelivery.composerDeliveryBinding.stopAction}
         terminalEnabled={composerDelivery.composerAccessoryActionsBinding.terminalEnabled}
         threadLifecycleActive={timelineRead.conversationPresentationBinding.threadLifecycleActive}
         toggleVoice={composerDelivery.composerDeliveryBinding.toggleVoice}

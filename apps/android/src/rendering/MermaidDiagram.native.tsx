@@ -31,9 +31,11 @@ import { NativeCodeBlock } from "./NativeCodeBlock";
 import { NativeRevealSurface } from "./NativeRevealSurface";
 import { FluidLayoutFrame } from "./FluidLayoutFrame";
 import { DiagramSvgPreview } from "./DiagramSvgPreview.native";
-import { INLINE_MEDIA_PREVIEW_HEIGHT } from "./InlineMediaFrame";
+import {
+  INLINE_MEDIA_PREVIEW_HEIGHT,
+  MAX_INLINE_DIAGRAM_SOURCE_CHARS,
+} from "./inlineMediaGeometry";
 
-const MAX_SOURCE_CHARS = 128 * 1024;
 const MAX_HEIGHT = 440;
 
 type DiagramEngine = {
@@ -143,7 +145,7 @@ function LocalDiagram({
   const dialog = useAppDialog();
   const [copied, setCopied] = useState(false);
   const [renderedKey, setRenderedKey] = useState<string | null>(null);
-  const tooLarge = source.length > MAX_SOURCE_CHARS;
+  const tooLarge = source.length > MAX_INLINE_DIAGRAM_SOURCE_CHARS;
   const boundedSource = tooLarge ? "" : source;
   const renderKey = `${engine.kind}:${boundedSource}`;
 

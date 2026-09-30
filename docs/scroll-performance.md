@@ -69,6 +69,16 @@ with the HUD off and records these `chat.scroll.*` events:
   A mount `contentOffset` seed can settle without an imperative dispatch. Keyboard
   worklet commands bypass this observer; absence of a matching entry is not proof
   that no native command occurred.
+- `library-performance`: only synchronous LegendList calculations taking at least
+  4 ms. `phase=calculate` separates total `calculateItemsInView` time from
+  `positionDurationMs`; `phase=size-batch` reports measured and changed row counts
+  and whether those measurements caused another range calculation. Faster calls
+  remain in the aggregate `streaming.timings` distribution without filling the journal.
+- `fixed-size`: only timeline `getFixedItemSize` calls taking at least 1 ms, tagged
+  as resolved or fallback and by the closed row kind. This includes expo-pretext
+  work because LegendList invokes the callback synchronously inside its calculation.
+- `item-size`: LegendList's public `onItemSizeChanged` observation with index,
+  previous/next size and delta. It contains neither the row key nor message content.
 - `native-view`: binds the JS recorder session to the native `viewTag`, so parallel
   lists and rapid chat switches are not correlated by timestamp alone.
 - `sample` and `list-state`: actual scroll offset, content/viewport heights and
@@ -111,6 +121,22 @@ Local counters are `timeline_scroll_commands`, `timeline_scroll_command_failures
 `timeline_scroll_rebound_ms` measures observed time from end arrival to return.
 Their P50/P95 values describe those events, **not** frame performance or the
 probability of a stuck scroll.
+
+List-cost aggregates live under `streaming`: `timeline_list_calculate_ms`,
+`timeline_list_position_ms`, `timeline_list_size_batch_ms` and
+`timeline_fixed_size_ms`, with matching call/measurement/change counters. Compare
+their P95/max and timestamped slow events with `nativeTimelineScroll.trace`:
+
+- high JS calculation time isolates LegendList range/position work;
+- high fixed-size time isolates the premeasurement callback;
+- many item-size changes plus high native frame layout time indicates cold dynamic
+  row layout and the ensuing list correction;
+- low list timings with high draw/GPU time points away from size calculation and
+  toward rendering.
+
+These correlations distinguish owners but are not a sampled JS stack. If list
+timings stay low while UI delay remains high, capture a Hermes/system trace before
+attributing the stall to React reconciliation or another JS task.
 
 The position journal contains numeric geometry, closed diagnostic labels and
 opaque connection/thread/recorder IDs only. It does not retain message text,

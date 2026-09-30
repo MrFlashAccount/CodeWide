@@ -42,7 +42,6 @@ export function useTimelineResponsePositioning({
     lifecycle,
     request: initialUnreadRequest({
       enabled,
-      lifecycle,
       timelinePositioned,
       unreadTurnId: latestUnreadAgentTurnId,
     }),
@@ -69,13 +68,14 @@ export function useTimelineResponsePositioning({
       timelinePositioned,
       unreadTurnId: latestUnreadAgentTurnId,
     });
-    if (!enabled || isStreamingResponse(lifecycle)) {
-      request = null;
-    } else if (completedTurnId !== null) {
-      request = new TimelineResponseStart("completedResponse", completedTurnId);
-    } else if (unreadTurnId !== null) {
-      request = unreadResponseStart(unreadTurnId, timelinePositioned);
-    }
+    request = reconcileResponseStartRequest({
+      completedTurnId,
+      enabled,
+      lifecycle,
+      request,
+      timelinePositioned,
+      unreadTurnId,
+    });
     // Adjust only this component's state before its children commit. No scroll or mutable
     // external owner is updated during render. Bootstrap owns initial unread positioning;
     // readiness performs the one imperative action only for responses arriving later.
@@ -87,18 +87,47 @@ export function useTimelineResponsePositioning({
 
 function initialUnreadRequest({
   enabled,
-  lifecycle,
   timelinePositioned,
   unreadTurnId,
 }: {
   readonly enabled: boolean;
-  readonly lifecycle: TimelineResponseLifecycle | null;
   readonly timelinePositioned: boolean;
   readonly unreadTurnId: string | null;
 }): TimelineResponseStart | null {
-  return enabled && !isStreamingResponse(lifecycle) && unreadTurnId !== null
+  return enabled && unreadTurnId !== null
     ? unreadResponseStart(unreadTurnId, timelinePositioned)
     : null;
+}
+
+function isUnreadResponseRequest(request: TimelineResponseStart | null): boolean {
+  return request?.reason === "initialUnread" || request?.reason === "lateUnread";
+}
+
+function reconcileResponseStartRequest({
+  completedTurnId,
+  enabled,
+  lifecycle,
+  request,
+  timelinePositioned,
+  unreadTurnId,
+}: {
+  readonly completedTurnId: string | null;
+  readonly enabled: boolean;
+  readonly lifecycle: TimelineResponseLifecycle | null;
+  readonly request: TimelineResponseStart | null;
+  readonly timelinePositioned: boolean;
+  readonly unreadTurnId: string | null;
+}): TimelineResponseStart | null {
+  if (!enabled) {
+    return null;
+  }
+  if (unreadTurnId !== null) {
+    return unreadResponseStart(unreadTurnId, timelinePositioned);
+  }
+  if (completedTurnId !== null && !isUnreadResponseRequest(request)) {
+    return new TimelineResponseStart("completedResponse", completedTurnId);
+  }
+  return isStreamingResponse(lifecycle) && request?.reason === "completedResponse" ? null : request;
 }
 
 function unreadResponseStart(turnId: string, timelinePositioned: boolean): TimelineResponseStart {

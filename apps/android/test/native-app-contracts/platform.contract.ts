@@ -130,7 +130,7 @@ it("preserves platform integration contracts — 1", () => {
   expect(richMarkdown).not.toContain("borderLeftWidth: 3");
   const documentStyle = sourceObjectDeclaration(richMarkdown, "document");
   expect(documentStyle).toContain("minWidth: 0");
-  expect(documentStyle).toContain("gap: spacing.xxs");
+  expect(documentStyle).toContain("gap: richMarkdownGeometry.blockGap");
   expect(richMarkdown).not.toContain('document: { minWidth: 0, maxWidth: "100%"');
   expect(richMarkdown).toContain("<View style={styles.document}>");
   expect(richMarkdown).not.toContain("documentFill:");

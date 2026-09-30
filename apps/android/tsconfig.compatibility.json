@@ -8,7 +8,8 @@
     "exactOptionalPropertyTypes": true,
     "moduleSuffixes": [".native", ""],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "expo-pretext": ["./src/types/expoPretext.d.ts"]
     }
   },
   "include": ["app/**/*.tsx", "src/**/*.ts", "src/**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts", "test/types/**/*.ts"]

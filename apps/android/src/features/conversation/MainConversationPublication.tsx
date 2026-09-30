@@ -1,6 +1,7 @@
 import { startTransition } from "react";
 import type { ThreadChatWindowRequest } from "../../data/thread-chat-model";
 import { recordThreadNavigationVisualEvent } from "../../data/thread-navigation-metrics";
+import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import type { useThreadChatWindow } from "../../data/use-thread-chat-window";
 import type { useThreadHistoryCursor } from "../../data/use-thread-history";
 import type { useThreadUiState } from "../../data/use-thread-ui-state";
@@ -31,6 +32,7 @@ export function renderMainConversationPublication({
   resources,
   searchState,
   searchWindow,
+  storedThread,
   threadId,
 }: {
   chatDatabase: NonNullable<ConversationDetailResources["threadDetails"]>;
@@ -49,6 +51,7 @@ export function renderMainConversationPublication({
   resources: ConversationDetailResources;
   searchState: ReturnType<SearchConversationWindow["state$"]["peek"]> | null;
   searchWindow: SearchConversationWindow | null;
+  storedThread: StoredThreadSummary | null;
   threadId: string;
 }) {
   return (
@@ -101,6 +104,7 @@ export function renderMainConversationPublication({
         currentOutcome: history.projection.currentOutcome,
         currentUsage: history.projection.currentUsage,
         cwd: history.conversationCwd,
+        firstUnreadAgentTurnId: storedThread?.firstUnreadAgentTurnId ?? null,
         historyActivityModel: historyModel,
         historyActivityResourceId: historyResourceId,
         historyRestoreReady:

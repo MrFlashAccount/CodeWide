@@ -22,9 +22,11 @@ so a partial or unrelated range cannot inherit a whole-turn total.
 Completed history visibility is separate from numeric attribution. Once full items
 are loaded, show the disclosure only for renderable history or plan/diff metadata;
 hidden reasoning and empty agent placeholders do not keep it visible. Before full
-hydration, a known zero/only-reasoning summary hides the disclosure, while unknown
-or mixed activity retains explicit lazy loading. This decision also controls the
-bubble's disclosure width and does not replace server-provided counts or costs.
+hydration, Companion always publishes the filtered total, including `count: 0`.
+Android opens lazy activity only for that positive server signal; a missing, zero,
+or reasoning-only summary does not create an empty disclosure. This decision also
+controls the bubble's disclosure width and does not replace server-provided counts
+or costs.
 
 Live ingestion observes raw command output before private-content externalization.
 The durable activity state stores IDs, kinds, byte counts and presentation flags,

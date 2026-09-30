@@ -86,4 +86,15 @@ export const styles = StyleSheet.create({
     textAlignVertical: "top",
     ...typeScale.body,
   },
+  goalStatusRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: controlSize.regular,
+  },
+  goalStatusValue: {
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
 });

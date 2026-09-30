@@ -6,7 +6,10 @@ module.exports = {
     "<rootDir>/test/native-markup.native.test.tsx",
     "<rootDir>/test/rich-markdown-resize.native.test.tsx",
   ],
-  setupFiles: ["react-native-gesture-handler/jestSetup.js"],
+  setupFiles: [
+    "<rootDir>/test/setup-expo-render-runtime.cjs",
+    "react-native-gesture-handler/jestSetup.js",
+  ],
   // Render real Markdown/table components; only unrelated platform services remain mocked.
   moduleNameMapper: Object.fromEntries(
     Object.entries(require("./jest.shared.config.cjs").moduleNameMapper).filter(

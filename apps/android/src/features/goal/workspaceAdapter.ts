@@ -2,6 +2,7 @@ import type {
   ThreadGoal,
   ThreadGoalGetResponse,
   ThreadGoalSetResponse,
+  ThreadGoalStatus,
 } from "@codewide/codex-protocol/v0.155.1/v2";
 import type {
   ThreadGoalInput,
@@ -103,6 +104,30 @@ export function createGoalWorkspaceAdapter({
     return response.goal;
   };
 
+  const setThreadGoalStatus = async (
+    connectionId: string,
+    threadId: string,
+    status: ThreadGoalStatus,
+  ): Promise<ThreadGoal> => {
+    const session = getSession(connectionId);
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
+    const response = await rpcAfterAttach<ThreadGoalSetResponse>(session, "thread/goal/set", {
+      status,
+      threadId,
+    });
+    getResources().putThreadGoal({
+      connectionId,
+      error: null,
+      goal: response.goal,
+      id: threadResourceKey(connectionId, threadId),
+      status: "ready",
+      threadId,
+    });
+    return response.goal;
+  };
+
   const clearThreadGoal = async (connectionId: string, threadId: string): Promise<boolean> => {
     const session = getSession(connectionId);
     if (session === undefined) {
@@ -123,7 +148,7 @@ export function createGoalWorkspaceAdapter({
     }
     return response.cleared;
   };
-  return { clearThreadGoal, getThreadGoal, setThreadGoal };
+  return { clearThreadGoal, getThreadGoal, setThreadGoal, setThreadGoalStatus };
 }
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "Remote operation failed";

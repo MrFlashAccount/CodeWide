@@ -5,8 +5,7 @@ import type { VirtualizedTurnPart, VirtualizedTurnPlacement } from "../turns/vir
 import { timelineItemKey } from "./timelineProjection";
 import type { TimelineItem } from "./timelineTypes";
 
-const TIMELINE_ITEM_ESTIMATE = 480;
-const MARKDOWN_BLOCK_ESTIMATE = 180;
+export const TIMELINE_ROW_FALLBACK_ESTIMATE = 115;
 
 export type TimelineRow =
   | {
@@ -226,22 +225,6 @@ export function timelineResponseStartRow(
   return index < 0 || row === undefined ? null : { index, key: row.key };
 }
 
-export function timelineRowSizeEstimate(rows: readonly TimelineRow[]): number {
-  if (rows.length === 0) {
-    return TIMELINE_ITEM_ESTIMATE;
-  }
-  let blockSlices = 0;
-  for (const row of rows) {
-    if (
-      row.kind === "turnSlice" &&
-      row.parts.length === 1 &&
-      row.parts[0]?.kind === "markdownBlock"
-    ) {
-      blockSlices += 1;
-    }
-  }
-  const itemCount = rows.length - blockSlices;
-  return Math.round(
-    (blockSlices * MARKDOWN_BLOCK_ESTIMATE + itemCount * TIMELINE_ITEM_ESTIMATE) / rows.length,
-  );
+export function timelineRowSizeEstimate(): number {
+  return TIMELINE_ROW_FALLBACK_ESTIMATE;
 }

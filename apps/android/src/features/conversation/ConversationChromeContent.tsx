@@ -141,8 +141,8 @@ export function createConversationChromeContent({
       failureNotice={timelineRead.conversationPresentationBinding.failureNotice}
       readOnly={readOnly}
       remoteThread={readInputs.remoteThread}
+      reportBottomChromeHeight={timelineState.timelineViewportStateBinding.reportBottomChromeHeight}
       requestPrompt={requestPrompt}
-      setBottomChromeHeight={timelineState.timelineViewportStateBinding.setBottomChromeHeight}
       timeline={timelineRead.conversationTimelineBinding.timeline}
     />
   );

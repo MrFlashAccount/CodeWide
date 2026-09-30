@@ -139,6 +139,7 @@ impl ActivityState {
             .filter(|(index, item)| {
                 item.kind != "userMessage"
                     && item.phase != AgentPhase::Question
+                    && (item.kind != "agentMessage" || item.text)
                     && (item.kind != "reasoning" || (self.active && Some(*index) == last))
             })
             .collect();
@@ -395,6 +396,20 @@ mod tests {
             json!({"id":"question","type":"agentMessage","text":"question","delivery":"async","questions":[{}]}),
             json!({"id":"final","type":"agentMessage","text":"answer","phase":"final_answer"})],"completed")).projection();
         assert_eq!(projection["total"]["count"], 1);
+    }
+
+    #[test]
+    fn blank_agent_placeholder_is_not_activity() {
+        let projection = ActivityState::from_turn(&turn(
+            &[
+                user(),
+                json!({"id":"placeholder","type":"agentMessage","text":""}),
+            ],
+            "completed",
+        ))
+        .projection();
+        assert_eq!(projection["total"]["count"], 0);
+        assert_eq!(projection["total"]["kinds"], json!([]));
     }
 
     #[test]
