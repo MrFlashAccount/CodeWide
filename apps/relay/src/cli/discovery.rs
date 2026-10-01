@@ -11,6 +11,12 @@ pub struct Target {
     pub admin_group: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+enum ServiceScope {
+    System,
+    User,
+}
+
 pub fn default_state_path() -> PathBuf {
     std::env::var_os("XDG_STATE_HOME")
         .map_or_else(
@@ -32,8 +38,8 @@ pub fn target(explicit: Option<&Path>) -> Result<Target> {
             admin_group: None,
         });
     }
-    if cfg!(target_os = "linux") && property("ActiveState").as_deref() == Some("active") {
-        let pid: u32 = property("MainPID")
+    if let Some(scope) = active_service() {
+        let pid: u32 = property(scope, "MainPID")
             .ok_or("Cannot read Relay service PID")?
             .parse()?;
         let bytes = std::fs::read(format!("/proc/{pid}/cmdline"))?;
@@ -43,9 +49,9 @@ pub fn target(explicit: Option<&Path>) -> Result<Target> {
             .map(std::str::from_utf8)
             .collect::<std::result::Result<_, _>>()?;
         let state = state_argument(&args).ok_or("The running Relay service must declare --state explicitly. Use --state to select its existing directory.")?;
-        let admin_group = property("Group")
+        let admin_group = property(scope, "Group")
             .filter(|value| !value.is_empty())
-            .or_else(|| property("User").filter(|value| !value.is_empty()));
+            .or_else(|| property(scope, "User").filter(|value| !value.is_empty()));
         return Ok(Target {
             state: PathBuf::from(state),
             admin_group,
@@ -67,8 +73,23 @@ fn state_argument<'a>(args: &'a [&str]) -> Option<&'a str> {
     })
 }
 
-fn property(name: &str) -> Option<String> {
-    let result = Process::new("systemctl")
+fn active_service() -> Option<ServiceScope> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    // Preserve the existing system-service preference. The installer refuses
+    // ambiguous deployments rather than starting a second Relay identity.
+    [ServiceScope::System, ServiceScope::User]
+        .into_iter()
+        .find(|scope| property(*scope, "ActiveState").as_deref() == Some("active"))
+}
+
+fn property(scope: ServiceScope, name: &str) -> Option<String> {
+    let mut command = Process::new("systemctl");
+    if matches!(scope, ServiceScope::User) {
+        command.arg("--user");
+    }
+    let result = command
         .args([
             "show",
             "codewide-relay.service",

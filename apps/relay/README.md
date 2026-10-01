@@ -33,6 +33,24 @@ separate deployable service with independent state and failure handling.
 cargo run -p codewide-relay -- --help
 ```
 
+## Install on a Linux VPS
+
+On Linux x86_64 with systemd, run as the user that will administer this Relay:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
+codewide-relay pair
+```
+
+The installer verifies the released binary, installs it into PATH, and starts a
+user service with autostart after logout and reboot. It requests administrator
+access when needed, preserves existing service settings and identity, and
+restores the previous deployment if the new daemon cannot become ready. Allow
+inbound TCP `8780` in the VPS firewall; firewall settings are not changed by the
+installer. `--no-start` is available for manually managed binary-only installs.
+
+## Terminal commands
+
 Run `codewide-relay` to open the interactive menu for the running service.
 Choose **Connect a computer** or **Paired computers** with the arrow keys and
 Enter. Escape returns to the menu; Escape from the menu exits without stopping
@@ -72,8 +90,10 @@ codewide-relay status --json
 codewide-relay revoke --route <route-id>
 ```
 
-On Linux, commands discover the active `codewide-relay.service` and its state
-directory. The service should run with `--group-admin`; members of its Unix
+On Linux, commands discover the active system or user `codewide-relay.service`
+and its state directory. The curl-installed service is owned by the installing
+user, who can administer it directly. A separately managed service owned by
+another user should run with `--group-admin`; members of its Unix
 group can then use the administration socket directly, without `sudo`. Only the
 socket is group-readable and writable: credential files and route directories
 remain private to the service user. After adding an administrator to the group,

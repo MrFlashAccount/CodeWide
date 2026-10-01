@@ -41,16 +41,40 @@ install and verify the binary without cloning the repository:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
-codewide-relay serve --port 8780
+codewide-relay pair
 ```
 
-The installer downloads versions through `0.4.0` from `relay-v<version>` and
-newer versions from the combined `v<version>` release, verifies the release SHA-256,
+The installer resolves the published product version and its release origin
+(including dated releases), verifies the release SHA-256,
 checks the binary-reported version, and atomically installs it to
 `/usr/local/bin/codewide-relay`. It requests `sudo` for the installation when
 needed; downloads and verification run as the invoking user. No shell restart or
 manual PATH edit is required. Before reporting success it verifies both
-`command -v codewide-relay` and `codewide-relay --version` by name.
+`command -v codewide-relay` and `codewide-relay --version` by name, then verifies
+the running service through its private administration socket.
+
+On a Linux host running systemd, it creates a user service and enables lingering
+automatically, so Relay starts after reboot and keeps running after SSH logout.
+It runs as the installing user, using that user's existing state directory. No
+manual `systemctl` commands or unit editing are required. Existing user or system
+services retain their configuration, port, and state; the installer restarts
+them with the updated binary instead of creating another Relay. If startup or
+readiness fails, it restores the previous binary and restarts the previous
+active service. It never deletes or regenerates the Relay's identity or routes.
+Ambiguous system/user services and a running unmanaged foreground daemon are
+rejected before installation rather than replaced silently.
+
+Run `codewide-relay pair` to connect a Mac. The public address is detected
+automatically; `--state` and `--address` are not needed in the ordinary case.
+The VPS must accept inbound TCP `8780` (or the port of an existing customized
+service). Host and cloud firewall policies remain operator-owned.
+
+For a binary-only installation without systemd activation, append `--no-start`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh -s -- --no-start
+codewide-relay serve
+```
 
 Use `--version` to pin a release. `--install-dir` or
 `CODEWIDE_RELAY_INSTALL_DIR` overrides the destination, which must already be in
@@ -134,8 +158,11 @@ codewide-relay pair --address 203.0.113.10:8780
 ```
 
 All administration commands use the running daemon's private Unix socket.
-On Linux they discover the active `codewide-relay.service` and read its explicit
-`--state`. Run the service with `--group-admin` and add authorized operators to
+On Linux they discover the active system or user `codewide-relay.service` and
+read its explicit `--state`. The curl installer uses the installing user's
+private socket, so that user can administer it immediately without a new login.
+For a separately managed service running as another user, use `--group-admin`
+and add authorized operators to
 the service's Unix group. They can then run `codewide-relay` directly; the CLI
 never prompts for sudo. The state root is group-traversable, the socket is
 `0660`, and credential files plus route directories remain `0600`/`0700`.

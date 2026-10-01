@@ -17,6 +17,23 @@ if [ "${CODEWIDE_ALLOW_ISOLATED_MACOS_SMOKE:-}" != 1 ]; then
   echo "Set CODEWIDE_ALLOW_ISOLATED_MACOS_SMOKE=1 in a disposable macOS account." >&2
   exit 1
 fi
+if [ "${CODEWIDE_EXPECT_MISSING_CODEX_SMOKE:-}" = 1 ]; then
+  if command -v codex >/dev/null 2>&1; then
+    echo "Missing-Codex smoke requires a disposable environment without Codex on PATH." >&2
+    exit 1
+  fi
+  for executable in \
+    "$HOME/.local/bin/codex" \
+    "$HOME/.codex/packages/standalone/current/bin/codex" \
+    "$HOME/Applications/Codex.app/Contents/Resources/codex" \
+    /Applications/Codex.app/Contents/Resources/codex \
+    /opt/homebrew/bin/codex /usr/local/bin/codex; do
+    if [ -x "$executable" ]; then
+      echo "Missing-Codex smoke requires an environment with no installed Codex. Nothing was changed." >&2
+      exit 1
+    fi
+  done
+fi
 
 state_dir="$HOME/Library/Application Support/CodeWide/Companion"
 job="gui/$(id -u)/dev.codewide.runtime"
@@ -114,5 +131,26 @@ runtime_pid=
 rm -rf -- "$test_app"
 ditto "$root/CodeWide.app" "$test_app"
 start_and_wait "$target_version"
+if [ "${CODEWIDE_EXPECT_MISSING_CODEX_SMOKE:-}" = 1 ]; then
+  attempt=0
+  while [ "$attempt" -lt 30 ]; do
+    kill -0 "$app_pid" >/dev/null 2>&1 || break
+    if jq -e '
+      .codexNotFound == true and
+      .setupTitle == "Install Codex to continue" and
+      .setupAction == "Open Codex Guide" and .setupActionEnabled == true and
+      (.setupExplanation | contains("Install and sign in"))
+    ' "$report" >/dev/null 2>&1; then
+      echo "Missing Codex: native app remains alive; Setup offers installation and an enabled Codex guide action."
+      break
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  if [ "$attempt" -ge 30 ] || ! kill -0 "$app_pid" >/dev/null 2>&1; then
+    echo "Native app did not reach actionable missing-Codex state within 30 seconds." >&2
+    exit 1
+  fi
+fi
 jq -n --arg previousVersion "$baseline_version" --arg version "$target_version" \
   '{status:"ok", check:"startup-after-replacement", previousVersion:$previousVersion, version:$version}'

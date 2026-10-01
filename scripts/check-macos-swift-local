@@ -38,15 +38,22 @@ done
 root=$(mktemp -d "${TMPDIR:-/tmp}/codewide-swift-preflight.XXXXXX")
 trap 'rm -rf -- "$root"' EXIT
 trap 'exit 1' HUP INT TERM
-mkdir -p "$root/Sources/CodeWide" "$root/Tests/CodeWidePortableTests"
+mkdir -p "$root/Sources/CodeWide" "$root/Sources/CodeWideShared" "$root/Tests/CodeWidePortableTests"
 cp "$repo_root/scripts/fixtures/macos-portable-swift/Package.swift" "$root/Package.swift"
 # Compile the exact existing files, including Swift Testing macro expansion.
-# These two owners have no Apple SDK dependency; do not copy their logic or add
+# These owners have no Apple SDK dependency; do not copy their logic or add
 # platform stubs to turn a different program into a misleading green check.
 for owner in UpdateCheckAdmission RelayAddress; do
   cp "$mac_root/Sources/CodeWide/$owner.swift" "$root/Sources/CodeWide/"
   cp "$mac_root/Tests/CodeWideTests/${owner}Tests.swift" "$root/Tests/CodeWidePortableTests/"
 done
+for owner in RuntimeHealthPayload ManagementPayloads; do
+  cp "$mac_root/Sources/CodeWideShared/$owner.swift" "$root/Sources/CodeWideShared/"
+done
+for owner in SetupState PairingRoute CompanionMenuState; do
+  cp "$mac_root/Sources/CodeWide/$owner.swift" "$root/Sources/CodeWide/"
+done
+cp "$mac_root/Tests/CodeWideTests/SetupStateTests.swift" "$root/Tests/CodeWidePortableTests/"
 # The native harness uses this SDK-independent, test-only synchronization owner.
 cp "$mac_root/Tests/MenuBarHarness/WaitForCondition.swift" "$root/Sources/CodeWide/"
 cp "$repo_root/scripts/fixtures/macos-portable-swift/WaitForConditionTests.swift" "$root/Tests/CodeWidePortableTests/"

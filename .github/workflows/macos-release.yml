@@ -274,6 +274,7 @@ jobs:
         timeout-minutes: 3
         env:
           CODEWIDE_ALLOW_ISOLATED_MACOS_SMOKE: "1"
+          CODEWIDE_EXPECT_MISSING_CODEX_SMOKE: "1"
         run: |
           sh apps/companion-macos/scripts/update-smoke.sh \
             "$RUNNER_TEMP/baseline/CodeWide.app" \

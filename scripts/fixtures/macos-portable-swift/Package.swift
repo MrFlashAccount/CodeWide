@@ -7,8 +7,9 @@ import PackageDescription
 let package = Package(
     name: "CodeWidePortablePreflight",
     targets: [
-        .target(name: "CodeWide"),
-        .testTarget(name: "CodeWidePortableTests", dependencies: ["CodeWide"]),
+        .target(name: "CodeWideShared"),
+        .target(name: "CodeWide", dependencies: ["CodeWideShared"]),
+        .testTarget(name: "CodeWidePortableTests", dependencies: ["CodeWide", "CodeWideShared"]),
     ],
     swiftLanguageModes: [.v6]
 )

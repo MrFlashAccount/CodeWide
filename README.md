@@ -207,8 +207,24 @@ verified portable `x86_64` Linux binary with:
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
 ```
 
-The installer places the executable in `/usr/local/bin`, requesting `sudo`
-when needed, and verifies that `codewide-relay` runs directly from PATH.
+The installer verifies the binary, places it in `/usr/local/bin`, and starts
+Relay with autostart after logout and reboot. It requests `sudo` only when
+installation or persistent startup needs administrator access. On a Linux host
+running systemd, no manual unit file, shell restart, or PATH edit is needed.
+Existing service configuration, Relay keys, and paired computers are preserved;
+a failed startup restores the previous executable and running service. Use
+`--no-start` only for a manually managed, binary-only installation.
+
+To connect a Mac, run:
+
+```sh
+codewide-relay pair
+```
+
+The terminal automatically shows the public IP and port. Enter that address in
+CodeWide's **Advanced → Add Relay**, click **Connect**, compare the four symbols,
+and confirm in the Relay terminal. Allow inbound TCP `8780` in the VPS firewall;
+the installer does not change host or cloud firewall rules.
 
 The same Relay binary is available from the CodeWide tap:
 
@@ -216,11 +232,13 @@ The same Relay binary is available from the CodeWide tap:
 brew install --formula MrFlashAccount/codewide/relay
 ```
 
-Run `codewide-relay serve --port 8780`. Android and Companion
-both connect outbound to that Relay address. Plain WebSocket connections carry
-opaque inner-TLS bytes, while TLS 1.3 connections on the same port carry health,
-pairing, and control. On the Relay host, `codewide-relay invite` creates an
-address-independent one-time bundle. On the Companion host, run
+The Homebrew formula installs only the executable; use `codewide-relay serve`
+for a foreground server, or the curl installer for automatic service setup.
+Android and Companion both connect outbound to that Relay address. Plain
+WebSocket connections carry opaque inner-TLS bytes, while TLS 1.3 connections
+on the same port carry health, pairing, and control. For a Linux Companion,
+`codewide-relay invite` creates an address-independent one-time bundle on the
+Relay host. On the Companion host, run
 `codewide-companion relay pair relay.example:8780` and paste that bundle. The
 running Companion applies pairing and `relay disable|enable` immediately through
 its private control socket; no restart is required. Setup, canary and rollback are documented in

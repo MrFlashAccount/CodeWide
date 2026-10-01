@@ -117,6 +117,17 @@ struct SetupStateTests {
         #expect(state(installation: .notFound(minimumVersion: "0.157.0")) == .installCodex)
     }
 
+    @Test func missingCodexOffersInstallationInsteadOfWaitingOrStarting() {
+        let result = state(installation: .notFound(minimumVersion: "0.157.0"))
+        #expect(result.title == "Install Codex to continue")
+        #expect(result.explanation.contains("Install and sign in"))
+        #expect(result.primaryTitle == "Open Codex Guide")
+        #expect(result.canPerformPrimaryAction)
+        let snapshot = SetupSnapshot(macState: result)
+        #expect(!snapshot.canNavigate(to: .relay))
+        #expect(!snapshot.canNavigate(to: .phone))
+    }
+
     @Test func permissionTakesPrecedenceOverOldConnectedState() {
         let result = SetupMacState(health: healthy, server: profile(available: true), servers: [],
                                    installation: nil, requiresApproval: true, runtimeStatus: "Running",

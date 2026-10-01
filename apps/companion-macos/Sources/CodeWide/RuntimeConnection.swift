@@ -614,6 +614,22 @@ final class RuntimeConnection: ObservableObject {
         report["updateTargetVersion"] = payload.updateTargetVersion
         report["degradedReason"] = payload.degradedReason
         report["updateFailureReason"] = payload.updateFailureReason
+        // Opt-in smoke evidence uses the same state owner rendered by Setup;
+        // no profile paths, pairing links, credentials or user content are exported.
+        let setup = SetupMacState(
+            health: health, server: appServer, servers: appServers,
+            installation: codexInstallation, requiresApproval: requiresApproval,
+            runtimeStatus: status, isDiscovering: isDiscoveringAppServers,
+            hasDiscovered: hasDiscoveredAppServers
+        )
+        report["codexNotFound"] = {
+            if case .some(.notFound) = codexInstallation { return true }
+            return false
+        }()
+        report["setupTitle"] = setup.title
+        report["setupExplanation"] = setup.explanation
+        report["setupAction"] = setup.primaryTitle
+        report["setupActionEnabled"] = setup.canPerformPrimaryAction
         do {
             let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
             try data.write(to: reportURL, options: [.atomic])

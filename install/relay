@@ -6,11 +6,25 @@ INSTALL_DIR=${CODEWIDE_RELAY_INSTALL_DIR:-/usr/local/bin}
 DOWNLOAD_BASE_URL=${CODEWIDE_RELAY_DOWNLOAD_BASE_URL:-}
 ALLOW_INSECURE_DOWNLOAD=${CODEWIDE_RELAY_ALLOW_INSECURE_DOWNLOAD:-0}
 TMP_ROOT=${TMPDIR:-/tmp}
+activate=1
+unit_root="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay"
+unit_path="$unit_root/codewide-relay.service"
+service_scope=user
+service_existed=0
+service_was_active=0
+service_was_enabled=0
+unit_created=0
+activation_started=0
+deployment_started=0
+linger_changed=0
 
 usage() {
-  printf '%s\n' 'Usage: install-relay [--version VERSION] [--install-dir DIRECTORY] [--download-base-url URL]'
+  printf '%s\n' 'Usage: install-relay [--version VERSION] [--install-dir DIRECTORY] [--download-base-url URL] [--no-start]'
   printf '%s\n' 'Installs codewide-relay into /usr/local/bin, using sudo if needed.'
+  printf '%s\n' 'Starts a persistent systemd service, ready for codewide-relay pair.'
   printf '%s\n' 'A custom installation directory must already be in PATH.'
+  printf '%s\n' '--no-start installs only the executable (for manually managed deployments).'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -30,6 +44,10 @@ while [ "$#" -gt 0 ]; do
       DOWNLOAD_BASE_URL=$2
       shift 2
       ;;
+    --no-start)
+      activate=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -44,6 +62,73 @@ done
 command -v curl >/dev/null 2>&1 || {
   printf '%s\n' 'curl is required to install CodeWide Relay.' >&2
   exit 2
+}
+
+privileged() {
+  if [ "$(id -u)" = 0 ]; then
+    "$@"
+  else
+    command -v sudo >/dev/null 2>&1 || {
+      printf '%s\n' 'Administrator access is required to configure Relay autostart, but sudo is unavailable.' >&2
+      return 2
+    }
+    sudo -- "$@"
+  fi
+}
+
+user_systemctl() {
+  relay_runtime_dir=${XDG_RUNTIME_DIR:-"/run/user/$(id -u)"}
+  XDG_RUNTIME_DIR="$relay_runtime_dir" \
+    DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$relay_runtime_dir/bus}" \
+    systemctl --user "$@"
+}
+
+service_command() {
+  if [ "$service_scope" = system ]; then
+    privileged systemctl "$@" codewide-relay.service
+  else
+    user_systemctl "$@" codewide-relay.service
+  fi
+}
+
+inspect_service() {
+  [ "$activate" = 1 ] || return 0
+  for dependency in systemctl loginctl timeout env; do
+    command -v "$dependency" >/dev/null 2>&1 || {
+      printf '%s is required for Relay autostart. Use --no-start for a binary-only installation.\n' "$dependency" >&2
+      exit 2
+    }
+  done
+  systemctl show --property=Version --value >/dev/null 2>&1 || {
+    printf '%s\n' 'Relay autostart requires a running systemd manager. Nothing was installed. Use --no-start for a manually managed deployment.' >&2
+    exit 2
+  }
+  system_fragment=$(systemctl show codewide-relay.service --property=FragmentPath --value 2>/dev/null || :)
+  user_fragment=$(user_systemctl show codewide-relay.service --property=FragmentPath --value 2>/dev/null || :)
+  if [ -n "$system_fragment" ] && { [ -n "$user_fragment" ] || [ -e "$unit_path" ]; }; then
+    printf '%s\n' 'Both system and user Relay services exist. Refusing to choose a different Relay identity. Nothing was installed.' >&2
+    exit 2
+  fi
+  if [ -n "$system_fragment" ]; then
+    service_scope=system
+    service_existed=1
+  elif [ -n "$user_fragment" ] || [ -e "$unit_path" ]; then
+    service_existed=1
+  fi
+  if service_command is-active --quiet; then service_was_active=1; fi
+  if service_command is-enabled --quiet; then service_was_enabled=1; fi
+  if [ "$service_scope" = user ]; then
+    for path in "$unit_root" "$state_root" "$INSTALL_DIR"; do
+      case "$path" in
+        /*) ;;
+        *) printf '%s\n' 'Relay service paths must be absolute. Nothing was installed.' >&2; exit 2 ;;
+      esac
+      if printf '%s' "$path" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+        printf '%s\n' 'Relay service paths cannot contain control characters. Nothing was installed.' >&2
+        exit 2
+      fi
+    done
+  fi
 }
 
 if [ -z "$VERSION" ]; then
@@ -91,6 +176,7 @@ if [ "$(uname -m)" != x86_64 ]; then
   printf 'Unsupported Linux architecture: %s\n' "$(uname -m)" >&2
   exit 2
 fi
+inspect_service
 target=x86_64-unknown-linux-musl
 asset="codewide-relay-$target"
 if [ -z "$DOWNLOAD_BASE_URL" ]; then
@@ -129,11 +215,6 @@ case "$DOWNLOAD_BASE_URL" in
     ;;
 esac
 
-command -v curl >/dev/null 2>&1 || {
-  printf '%s\n' 'curl is required to install CodeWide Relay.' >&2
-  exit 2
-}
-
 # Download and verify as the invoking user. Elevate only filesystem installation
 # operations, so curl | sh works without running the downloaded script as root.
 install_as_root=0
@@ -159,16 +240,132 @@ install_command() {
 umask 077
 temporary_root=$(mktemp -d "$TMP_ROOT/codewide-relay-install.XXXXXX")
 staged=
+unit_staged=
 cleanup() {
   if [ -n "$staged" ]; then
     install_command rm -f -- "$staged"
   fi
+  if [ -n "$unit_staged" ]; then rm -f -- "$unit_staged"; fi
   case "$temporary_root" in
     "$TMP_ROOT"/codewide-relay-install.*) rm -rf -- "$temporary_root" ;;
     *) printf 'Refusing to remove unexpected directory: %s\n' "$temporary_root" >&2 ;;
   esac
 }
-trap cleanup EXIT HUP INT TERM
+
+replace_binary() {
+  staged=$(install_command mktemp "$INSTALL_DIR/.codewide-relay.install.XXXXXX") || return 1
+  install_command cp "$1" "$staged" || return 1
+  install_command chmod 0755 "$staged" || return 1
+  install_command mv -f -- "$staged" "$INSTALL_DIR/codewide-relay" || return 1
+  staged=
+}
+
+finish() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$status" -ne 0 ] && [ "$deployment_started" = 1 ]; then
+    printf '%s\n' 'Relay installation failed; restoring the previous deployment without changing its state.' >&2
+    if [ "$activation_started" = 1 ]; then service_command stop || :; fi
+    if [ -f "$temporary_root/previous-binary" ]; then
+      replace_binary "$temporary_root/previous-binary" || printf '%s\n' 'Failed to restore the previous Relay executable.' >&2
+    else
+      install_command rm -f -- "$INSTALL_DIR/codewide-relay" || :
+    fi
+    if [ "$activation_started" = 1 ] && [ "$service_was_enabled" = 0 ]; then
+      service_command disable || :
+    fi
+    if [ "$unit_created" = 1 ]; then rm -f -- "$unit_path"; fi
+    if [ "$activation_started" = 1 ]; then
+      if [ "$service_scope" = system ]; then privileged systemctl daemon-reload || :;
+      else user_systemctl daemon-reload || :; fi
+      if [ "$service_was_active" = 1 ]; then
+        if service_command restart; then
+          wait_service_ready || printf '%s\n' 'The previous Relay could not become ready after rollback.' >&2
+        else
+          printf '%s\n' 'Failed to restart the previous Relay service.' >&2
+        fi
+      fi
+    fi
+    if [ "$linger_changed" = 1 ]; then privileged loginctl disable-linger "$(id -un)" || :; fi
+  fi
+  cleanup
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# systemd expands percent specifiers and dollar variables even in quoted paths.
+unit_argument() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g; s/\$/$$/g'
+}
+
+write_unit() {
+  mkdir -p -- "$unit_root"
+  unit_staged=$(mktemp "$unit_root/.codewide-relay.unit.XXXXXX")
+  # systemd rejects a dollar sign in its executable token. env immediately
+  # execs the Relay, preserving both literal installation paths and MainPID.
+  printf '%s\n' '[Unit]' 'Description=CodeWide Relay' '' '[Service]' \
+    "ExecStart=\"$(unit_argument "$(command -v env)")\" -- \"$(unit_argument "$INSTALL_DIR/codewide-relay")\" serve --state \"$(unit_argument "$state_root")\"" \
+    'Restart=on-failure' 'RestartSec=2' 'TimeoutStopSec=20' 'UMask=0077' \
+    'NoNewPrivileges=yes' '' '[Install]' 'WantedBy=default.target' >"$unit_staged"
+  chmod 0644 "$unit_staged"
+  unit_created=1
+  mv -- "$unit_staged" "$unit_path"
+  unit_staged=
+}
+
+start_service() {
+  if [ "$service_scope" = user ]; then
+    if [ "$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null || :)" != yes ]; then
+      linger_changed=1
+      privileged loginctl enable-linger "$(id -un)"
+    fi
+    # Enabling lingering can start a previously absent user manager. Wait for
+    # its bus rather than racing systemctl against that asynchronous startup.
+    attempt=0
+    until user_systemctl show-environment >/dev/null 2>"$temporary_root/manager-error"; do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 10 ]; then
+        printf '%s\n' 'The systemd user manager did not become available.' >&2
+        sed -n '1,8p' "$temporary_root/manager-error" >&2
+        return 1
+      fi
+      sleep 1
+    done
+    if [ "$service_existed" = 0 ] && \
+      [ -n "$(user_systemctl show codewide-relay.service --property=FragmentPath --value)" ]; then
+      # A pre-existing global user unit can become visible after the bus starts.
+      service_existed=1
+      if service_command is-active --quiet; then service_was_active=1; fi
+      if service_command is-enabled --quiet; then service_was_enabled=1; fi
+    fi
+    if [ "$service_existed" = 0 ]; then write_unit; fi
+    user_systemctl daemon-reload
+  else
+    privileged systemctl daemon-reload
+  fi
+  activation_started=1
+  service_command enable
+  service_command restart
+  wait_service_ready
+}
+
+wait_service_ready() {
+  attempt=0
+  while [ "$attempt" -lt 10 ]; do
+    if service_command is-active --quiet && \
+      timeout 2 "$INSTALL_DIR/codewide-relay" status --json >"$temporary_root/status" 2>"$temporary_root/status-error"; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  printf '%s\n' 'Relay did not become ready through its administration socket.' >&2
+  if [ -f "$temporary_root/status-error" ]; then sed -n '1,8p' "$temporary_root/status-error" >&2; fi
+  return 1
+}
 
 download() {
   source_url=$1
@@ -222,6 +419,12 @@ if [ "$reported_version" != "codewide-relay $VERSION" ]; then
   printf 'Downloaded Relay version mismatch: %s\n' "$reported_version" >&2
   exit 1
 fi
+if [ "$activate" = 1 ] && [ "$service_existed" = 0 ] && \
+  [ -S "$state_root/control.sock" ] && \
+  timeout 5 "$payload" --state "$state_root" status --json >/dev/null 2>&1; then
+  printf '%s\n' 'A manually managed Relay is already running. Refusing to start a second server. Nothing was installed. Use --no-start to update only its executable.' >&2
+  exit 2
+fi
 
 if [ "$install_as_root" = 1 ]; then
   printf 'Installing to %s (administrator access required).\n' "$INSTALL_DIR"
@@ -230,11 +433,11 @@ fi
 # Public executable directories must be traversable by the service owner too.
 # Leave permissions of existing directories alone.
 (umask 022; install_command mkdir -p -m 0755 "$INSTALL_DIR")
-staged=$(install_command mktemp "$INSTALL_DIR/.codewide-relay.install.XXXXXX")
-install_command cp "$payload" "$staged"
-install_command chmod 0755 "$staged"
-install_command mv -f -- "$staged" "$INSTALL_DIR/codewide-relay"
-staged=
+if [ -f "$INSTALL_DIR/codewide-relay" ]; then
+  install_command cp -p "$INSTALL_DIR/codewide-relay" "$temporary_root/previous-binary"
+fi
+deployment_started=1
+replace_binary "$payload"
 
 hash -r 2>/dev/null || :
 resolved=$(command -v codewide-relay || :)
@@ -244,4 +447,11 @@ if [ "$resolved" != "$INSTALL_DIR/codewide-relay" ] ||
   exit 1
 fi
 printf 'Installed codewide-relay %s to %s\n' "$VERSION" "$resolved"
-printf '%s\n' 'Ready: codewide-relay'
+if [ "$activate" = 1 ]; then
+  start_service
+  printf '%s\n' 'Relay is running and will start automatically after logout and reboot.'
+  printf '%s\n' 'Ready: codewide-relay pair' 'Allow inbound TCP 8780 in your VPS firewall (or the existing service port if customized).'
+else
+  printf '%s\n' 'Service activation skipped. Executable ready: codewide-relay'
+fi
+deployment_started=0
