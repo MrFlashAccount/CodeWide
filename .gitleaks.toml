@@ -25,6 +25,6 @@ regexes = ['''^\s*static let preferenceKey = "keepAwakePolicyV1"\s*$''']
 description = "Relay installer public WebSocket handshake fixture nonce"
 targetRules = ["generic-api-key"]
 condition = "AND"
-regexTarget = "line"
+regexTarget = "match"
 paths = ['''^scripts/relay-installer-service\.test\.py$''']
-regexes = ['''"Sec-WebSocket-Key": "aW5zdGFsbGVyLXRlc3QhIQ=="''']
+regexes = ['''^Sec-WebSocket-Key": "aW5zdGFsbGVyLXRlc3QhIQ=="$''']
