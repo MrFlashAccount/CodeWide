@@ -17,3 +17,14 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''^apps/companion-macos/Sources/CodeWide/KeepAwakeController\.swift$''']
 regexes = ['''^\s*static let preferenceKey = "keepAwakePolicyV1"\s*$''']
+
+[[allowlists]]
+# WHY: RFC 6455 Sec-WebSocket-Key is a public 16-byte handshake nonce, not an
+# access token. This exact fixture value decodes to "installer-test!!"; constrain
+# the owner, protocol field and value so real Authorization headers still scan.
+description = "Relay installer public WebSocket handshake fixture nonce"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''^scripts/relay-installer-service\.test\.py$''']
+regexes = ['''"Sec-WebSocket-Key": "aW5zdGFsbGVyLXRlc3QhIQ=="''']
