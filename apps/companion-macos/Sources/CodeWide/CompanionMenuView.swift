@@ -450,6 +450,9 @@ struct CompanionActionMenuIdentity: Equatable {
     let actionInProgress: Bool
     let keepAwakePolicy: String
     let keepAwakeStatus: String
+    let launchAtLoginEnabled: Bool
+    let launchAtLoginRequiresApproval: Bool
+    let launchAtLoginChanging: Bool
 
     static let empty = Self(
         appVersion: nil,
@@ -462,6 +465,9 @@ struct CompanionActionMenuIdentity: Equatable {
         isCheckingForUpdates: false,
         actionInProgress: false,
         keepAwakePolicy: "",
-        keepAwakeStatus: ""
+        keepAwakeStatus: "",
+        launchAtLoginEnabled: false,
+        launchAtLoginRequiresApproval: false,
+        launchAtLoginChanging: false
     )
 }

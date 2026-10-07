@@ -126,7 +126,10 @@ struct MenuBarPanelTests {
             isCheckingForUpdates: false,
             actionInProgress: false,
             keepAwakePolicy: KeepAwakePolicy.whilePluggedIn.rawValue,
-            keepAwakeStatus: "On battery · sleep allowed"
+            keepAwakeStatus: "On battery · sleep allowed",
+            launchAtLoginEnabled: true,
+            launchAtLoginRequiresApproval: false,
+            launchAtLoginChanging: false
         )
         let first = CompanionActionMenu(availableUpdate: nil, darkAppearance: true, identity: stable) {
             Text("First render")
@@ -150,7 +153,10 @@ struct MenuBarPanelTests {
                 isCheckingForUpdates: stable.isCheckingForUpdates,
                 actionInProgress: stable.actionInProgress,
                 keepAwakePolicy: KeepAwakePolicy.always.rawValue,
-                keepAwakeStatus: "Preventing idle sleep"
+                keepAwakeStatus: "Preventing idle sleep",
+                launchAtLoginEnabled: stable.launchAtLoginEnabled,
+                launchAtLoginRequiresApproval: stable.launchAtLoginRequiresApproval,
+                launchAtLoginChanging: stable.launchAtLoginChanging
             )
         ) {
             Text("Third render")
