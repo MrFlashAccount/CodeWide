@@ -7,6 +7,7 @@ import SwiftUI
 final class CodeWideApp: NSObject, NSApplicationDelegate {
     private var menuBar: CompanionMenuBarController?
     private var keepAwake: KeepAwakeController?
+    private var launchAtLogin: LaunchAtLoginController?
 
     static func main() {
         let application = NSApplication.shared
@@ -22,13 +23,16 @@ final class CodeWideApp: NSObject, NSApplicationDelegate {
         let updates = UpdateController(runtime: runtime)
         let dialogs = CompanionDialogController(runtime: runtime)
         let keepAwake = KeepAwakeController()
+        let launchAtLogin = LaunchAtLoginController()
         self.keepAwake = keepAwake
+        self.launchAtLogin = launchAtLogin
         let onboarding = OnboardingWindowController(runtime: runtime, showRelaySetup: {
             dialogs.showRelaySetup()
         })
         menuBar = CompanionMenuBarController(runtime: runtime, updates: updates,
                                              onboarding: onboarding, dialogs: dialogs,
-                                             keepAwake: keepAwake)
+                                             keepAwake: keepAwake,
+                                             launchAtLogin: launchAtLogin)
         runtime.start()
         onboarding.showIfNeeded()
     }
@@ -69,13 +73,14 @@ final class CompanionMenuBarController: NSObject {
 
     init(runtime: RuntimeConnection, updates: UpdateController,
          onboarding: OnboardingWindowController, dialogs: CompanionDialogController,
-         keepAwake: KeepAwakeController) {
+         keepAwake: KeepAwakeController, launchAtLogin: LaunchAtLoginController) {
         self.runtime = runtime
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let button = statusItem.button
         panel = MenuBarPanel(content: CompanionPanel(runtime: runtime, updates: updates,
                                                       onboarding: onboarding, dialogs: dialogs,
-                                                      keepAwake: keepAwake)) { [weak button] in
+                                                      keepAwake: keepAwake,
+                                                      launchAtLogin: launchAtLogin)) { [weak button] in
             button.flatMap { MenuBarAnchor.read(from: $0) }
         }
         super.init()

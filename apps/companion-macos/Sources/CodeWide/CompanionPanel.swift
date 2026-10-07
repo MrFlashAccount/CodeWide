@@ -8,6 +8,7 @@ struct CompanionPanel: View {
     @ObservedObject var onboarding: OnboardingWindowController
     @ObservedObject var dialogs: CompanionDialogController
     @ObservedObject var keepAwake: KeepAwakeController
+    @ObservedObject var launchAtLogin: LaunchAtLoginController
 
     @State private var actionError: String?
     @State private var actionInProgress = false
@@ -20,7 +21,10 @@ struct CompanionPanel: View {
             actionsIdentity: actionsIdentity,
             moreActions: { moreActions }
         )
-        .onAppear { updates.checkForUpdatesSilentlyIfNeeded() }
+        .onAppear {
+            launchAtLogin.refreshStatus()
+            updates.checkForUpdatesSilentlyIfNeeded()
+        }
         .task { await runtime.discoverAppServers() }
     }
 
@@ -43,7 +47,10 @@ struct CompanionPanel: View {
             isCheckingForUpdates: updates.isCheckingForUpdates,
             actionInProgress: actionInProgress,
             keepAwakePolicy: keepAwake.policy.rawValue,
-            keepAwakeStatus: keepAwake.statusSummary
+            keepAwakeStatus: keepAwake.statusSummary,
+            launchAtLoginEnabled: launchAtLogin.isEnabled,
+            launchAtLoginRequiresApproval: launchAtLogin.requiresApproval,
+            launchAtLoginChanging: launchAtLogin.isChanging
         )
     }
 
@@ -79,6 +86,9 @@ struct CompanionPanel: View {
         } else if let error = keepAwake.lastError {
             value.noticeTitle = "Keep Awake needs attention"
             value.notice = error
+        } else if let error = launchAtLogin.lastError {
+            value.noticeTitle = "Launch at Login needs attention"
+            value.notice = error
         } else if let error = updates.lastError {
             value.noticeTitle = "Update couldn't finish"
             value.notice = error
@@ -94,6 +104,13 @@ struct CompanionPanel: View {
         Button("Refresh Connection", systemImage: "arrow.clockwise") { refresh() }
             .disabled(actionInProgress)
         Button("Open Setup…", systemImage: "slider.horizontal.3") { onboarding.show() }
+        Toggle("Launch at Login", isOn: Binding(
+            get: { launchAtLogin.isEnabled },
+            set: { enabled in
+                Task { await launchAtLogin.setEnabled(enabled) }
+            }
+        ))
+        .disabled(launchAtLogin.isChanging)
         Menu("Keep This Mac Awake", systemImage: "moon.zzz") {
             ForEach(KeepAwakePolicy.allCases) { policy in
                 Button {
@@ -109,8 +126,8 @@ struct CompanionPanel: View {
             Divider()
             Text(keepAwake.statusSummary)
         }
-        if runtime.requiresApproval {
-            Button("Open Login Items…") { runtime.openLoginItemsSettings() }
+        if runtime.requiresApproval || launchAtLogin.requiresApproval {
+            Button("Open Login Items…") { launchAtLogin.openLoginItemsSettings() }
         }
         if runtime.appServers.count > 1 {
             Menu("Codex Profile") {

@@ -45,7 +45,9 @@ native client-first panel. Its compact header shows the selected Codex App
 Server and reported version; the body is either a centered `No clients` action
 or the live client list with revoke. Companion, Relay, and client counts stay in
 a narrow overview strip. Relay setup, updates, setup replay, and quit live in
-the footer menu instead of permanent diagnostic cards.
+the footer menu instead of permanent diagnostic cards. The same menu exposes
+Launch at Login, enabled by default on first launch and backed by the native
+macOS Login Items service.
 
 On first launch, a native animated setup assistant opens as the application's
 only temporary ordinary window. It discovers reachable local Codex App Servers,

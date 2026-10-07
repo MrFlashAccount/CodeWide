@@ -111,6 +111,8 @@ same Companion state directory.
 
 The menu-bar panel exposes these workflows over signed XPC:
 
+- Launch at Login is enabled by default on first launch and remains directly
+  controllable from the actions menu; macOS Login Items remains the authority;
 - selected App Server, its live connection and version, plus compact Companion
   state and recovery failures;
 - direct device pairing as a native QR code containing the selected Mac WSS
