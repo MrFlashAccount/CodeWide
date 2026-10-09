@@ -4,7 +4,6 @@ import {
   newChat,
   ownerNewChatSubmission,
   projectWorkspaceAdapter,
-  newThreadServerSheet,
   projectPickerContent,
   projectPickerRows,
   projectPicker,
@@ -40,7 +39,6 @@ it("keeps a server-scoped new chat local until the first send", () => {
   );
   expect(ownerNewChatSubmission).toContain("const commandId = await commands.sendText(");
   expect(ownerNewChatSubmission).toContain("{ ...options, workspaceRequestId: draftChat.id }");
-  expect(newThreadServerSheet).toContain("function NewThreadServerSheet");
   expect(screen).not.toContain("function NewThreadSheet");
   expect(ownerConversationEmptyState).toContain('testID="new-chat-empty-state"');
   expect(ownerConversationEmptyState).toContain("What would you like to work on?");

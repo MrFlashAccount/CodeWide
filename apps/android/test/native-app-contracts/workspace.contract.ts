@@ -26,7 +26,8 @@ import {
 it("preserves workspace integration contracts", () => {
   expect(ownerNewServerRoute).toContain("<ConnectionSheet");
   expect(ownerSettingsRoute).toContain("<SubscribedConnectionSettings");
-  expect(ownerNewThreadRoute).toContain("<NewThreadServerSheet");
+  expect(ownerNewThreadRoute).toContain("<ActiveWorkspaceConversation");
+  expect(ownerNewThreadRoute).not.toContain("NewThreadServerSheet");
   expect(ownerWorkspaceLayout).toMatch(
     /<WorkspaceVoiceAura(?=[^>]*controller=\{workspaceRuntime\.voiceController\})(?=[^>]*resources=\{resources\.runtime\.resources\})[^>]*>/u,
   );

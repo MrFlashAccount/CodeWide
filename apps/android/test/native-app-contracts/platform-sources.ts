@@ -13,10 +13,6 @@ export const nativeCodeBlockHost = readFileSync(
   "utf8",
 );
 export const screen = readFileSync(new URL("../../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
-export const nativeShimmerTextHost = readFileSync(
-  new URL("../../src/presentation/text/nativeShimmerText.tsx", import.meta.url),
-  "utf8",
-);
 export const richMarkdown = readFileSync(
   new URL("../../src/rendering/RichMarkdown.tsx", import.meta.url),
   "utf8",
