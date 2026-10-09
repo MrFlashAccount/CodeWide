@@ -274,6 +274,28 @@ impl ClientWireGateway {
         }
     }
 
+    /// Removes rows of native threads that continue another app thread (a
+    /// non-first binding segment) from a `thread/list` result. Without any
+    /// continuation the result is untouched.
+    pub fn hide_continuations(&self, result: &mut Value) {
+        self.retain_rows(result, "id");
+    }
+
+    /// Removes search hits of continuation threads.
+    pub fn hide_continuation_hits(&self, result: &mut Value) {
+        self.retain_rows(result, "threadId");
+    }
+
+    fn retain_rows(&self, result: &mut Value, field: &str) {
+        if let Some(rows) = result.get_mut("data").and_then(Value::as_array_mut) {
+            rows.retain(|row| {
+                row.get(field)
+                    .and_then(Value::as_str)
+                    .is_none_or(|id| !self.bindings.is_continuation(id))
+            });
+        }
+    }
+
     /// Decodes a client-wire runtime request id.
     #[must_use]
     pub fn decode_request_id(&self, id: &Value) -> Option<RuntimeRequestId> {
@@ -342,7 +364,7 @@ impl ClientWireGateway {
             .await
         {
             Ok(BindOutcome::Bound | BindOutcome::AlreadyBound) => Ok(()),
-            Ok(BindOutcome::Conflict { .. }) => Err(RpcFailure::new(
+            Ok(BindOutcome::Conflict { .. } | BindOutcome::Continuation) => Err(RpcFailure::new(
                 -32_020,
                 "thread id is already bound to another provider",
             )),
@@ -462,6 +484,55 @@ pub fn mint_app_thread_id() -> AppThreadId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn continuation_threads_leave_list_pages_and_search_hits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::agent::{
+            bindings::BindingSegment,
+            model::{CapabilitySet, ProviderThreadRef, StartWhileActiveMode},
+            testing::FakeProvider,
+        };
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(crate::store::IndexStore::open(
+            directory.path().join("state.redb"),
+        )?);
+        let bindings = Arc::new(BindingStore::new(store));
+        let registry = Arc::new(ProviderRegistry::single(
+            FakeProvider::new(
+                "codex",
+                CapabilitySet::none(StartWhileActiveMode::NativeJoin),
+            )
+            .into_arc(),
+            Vec::new(),
+        ));
+        let gateway = ClientWireGateway::new(registry, bindings.clone());
+        let mut page = json!({"data": [{"id": "app"}, {"id": "native-b"}, {"id": "other"}]});
+        gateway.hide_continuations(&mut page);
+        assert_eq!(page["data"].as_array().map(Vec::len), Some(3));
+
+        let app = AppThreadId::from_static("app");
+        let segment = |provider: &'static str, native: &'static str, first| BindingSegment {
+            provider: ProviderId::from_static(provider),
+            native_thread_id: ProviderThreadRef::same_as(&AppThreadId::from_static(native)),
+            first_turn_ordinal: first,
+            last_turn_ordinal: None,
+            handoff_refs: Vec::new(),
+        };
+        bindings
+            .replace_segments(
+                &app,
+                vec![segment("codex", "app", 0), segment("claude", "native-b", 3)],
+                BindingOrigin::Created,
+            )
+            .await?;
+        gateway.hide_continuations(&mut page);
+        assert_eq!(page["data"], json!([{"id": "app"}, {"id": "other"}]));
+        let mut hits = json!({"data": [{"threadId": "native-b"}, {"threadId": "app"}]});
+        gateway.hide_continuation_hits(&mut hits);
+        assert_eq!(hits["data"], json!([{"threadId": "app"}]));
+        Ok(())
+    }
 
     #[test]
     fn minted_ids_are_uuid_v7_and_distinct() {

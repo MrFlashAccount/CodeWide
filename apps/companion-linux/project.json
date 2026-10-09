@@ -4,7 +4,7 @@
   "projectType": "application",
   "sourceRoot": "apps/companion-linux/src",
   "tags": ["language:rust", "type:application", "platform:linux"],
-  "implicitDependencies": ["companion-core", "relay", "release-contracts"],
+  "implicitDependencies": ["companion-core", "agent-provider-codex", "relay", "release-contracts"],
   "metadata": {
     "description": "Headless Linux host for Companion core",
     "codewideRelease": {

@@ -10,6 +10,7 @@ use codewide_companion::{
     catalog::SessionCatalog,
     files::{FileQuery, FileService},
     resources::ResourceService,
+    rollout_store::RolloutStore,
     store::IndexStore,
 };
 use serde_json::{Value, json};
@@ -58,7 +59,7 @@ async fn canonical_resources_are_incremental_crash_safe_and_live()
         .await?,
     );
     let catalog = Arc::new(SessionCatalog::scan(directory.path()));
-    let index = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
+    let index = rollout_index(&directory.path().join("index.redb"))?;
     let service = ResourceService::open(
         directory.path().join("resources.redb"),
         catalog.clone(),
@@ -292,7 +293,7 @@ async fn agent_linked_files_outside_the_workspace_are_readable_without_warmup()
     let service = ResourceService::open(
         directory.path().join("resources.redb"),
         catalog,
-        Arc::new(IndexStore::open(directory.path().join("index.redb"))?),
+        rollout_index(&directory.path().join("index.redb"))?,
         files.clone(),
     )?;
 
@@ -334,7 +335,7 @@ async fn fresh_rpc_image_is_readable_before_rollout_materializes()
         Arc::new(SessionCatalog::scan(
             &directory.path().join("missing-sessions"),
         )),
-        Arc::new(IndexStore::open(directory.path().join("index.redb"))?),
+        rollout_index(&directory.path().join("index.redb"))?,
         files.clone(),
     )?;
 
@@ -406,4 +407,12 @@ async fn wait_for_preview(
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     Err("resource prewarm did not authorize the attachment".into())
+}
+
+/// The companion host index with the Codex rollout tables attached.
+fn rollout_index(
+    path: &Path,
+) -> Result<Arc<RolloutStore>, Box<dyn std::error::Error + Send + Sync>> {
+    let host = Arc::new(IndexStore::open(path)?);
+    Ok(Arc::new(RolloutStore::attach(host.database(), host)?))
 }

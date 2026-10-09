@@ -1,0 +1,259 @@
+{
+  "description": "optional native-session operations: the companion's native index pages a provider's own session store and reads one session as neutral turns",
+  "messages": [
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-stdio:20",
+        "method": "nativeSession.list",
+        "params": {
+          "cursor": null,
+          "dir": "/workspace",
+          "limit": 100
+        }
+      }
+    },
+    {
+      "respondsTo": "nativeSession.list",
+      "message": {
+        "id": "codewide-stdio:20",
+        "result": {
+          "nextCursor": "v1:100",
+          "sessions": [
+            {
+              "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+              "createdAtMs": 1791542375696,
+              "cwd": "/workspace",
+              "fileSize": 128274,
+              "firstPrompt": "Run the tests",
+              "interactive": true,
+              "lastModifiedMs": 1791542379693,
+              "sessionId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+              "summary": "Run the tests",
+              "title": "Test run",
+              "codewide": {
+                "createdAt": 1791542375,
+                "cwd": "/workspace",
+                "origin": "interactive",
+                "presence": {
+                  "type": "listed",
+                  "archived": false
+                },
+                "recencyAt": 1791542375,
+                "settings": {
+                  "model": "claude-sonnet-4-5",
+                  "effort": "high",
+                  "permissionProfile": ":workspace",
+                  "serviceTier": null
+                },
+                "title": {
+                  "type": "pending",
+                  "name": "Test run"
+                },
+                "updatedAt": 1791542379
+              }
+            },
+            {
+              "appThreadId": "9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f",
+              "createdAtMs": 1791542375696,
+              "cwd": "/workspace",
+              "fileSize": 128274,
+              "firstPrompt": "Refactor the parser",
+              "interactive": true,
+              "lastModifiedMs": 1791542379693,
+              "sessionId": "9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f",
+              "summary": "Old terminal work",
+              "title": "Old terminal work",
+              "codewide": {
+                "createdAt": 1791500000,
+                "cwd": "/workspace",
+                "origin": "external",
+                "presence": {
+                  "type": "deleted",
+                  "deletedAt": 1791542400
+                },
+                "recencyAt": null,
+                "settings": {
+                  "model": "default",
+                  "effort": null,
+                  "permissionProfile": ":read-only",
+                  "serviceTier": null
+                },
+                "title": {
+                  "type": "cleared",
+                  "hiddenTitle": "Old terminal work"
+                },
+                "updatedAt": 1791500000
+              }
+            },
+            {
+              "appThreadId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+              "createdAtMs": 1791542375696,
+              "cwd": "/workspace",
+              "fileSize": 128274,
+              "firstPrompt": "Refactor the parser",
+              "interactive": false,
+              "lastModifiedMs": 1791542379693,
+              "sessionId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+              "summary": "Old terminal work",
+              "title": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-stdio:21",
+        "method": "nativeSession.read",
+        "params": {
+          "sessionId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+        }
+      }
+    },
+    {
+      "respondsTo": "nativeSession.read",
+      "message": {
+        "id": "codewide-stdio:21",
+        "result": {
+          "session": {
+            "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+            "createdAtMs": 1791542375696,
+            "cwd": "/workspace",
+            "fileSize": 128274,
+            "firstPrompt": "Run the tests",
+            "interactive": true,
+            "lastModifiedMs": 1791542379693,
+            "sessionId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+            "summary": "Run the tests",
+            "title": "Test run",
+            "codewide": {
+              "createdAt": 1791542375,
+              "cwd": "/workspace",
+              "origin": "interactive",
+              "presence": {
+                "type": "listed",
+                "archived": false
+              },
+              "recencyAt": 1791542375,
+              "settings": {
+                "model": "claude-sonnet-4-5",
+                "effort": "high",
+                "permissionProfile": ":workspace",
+                "serviceTier": null
+              },
+              "title": {
+                "type": "pending",
+                "name": "Test run"
+              },
+              "updatedAt": 1791542379
+            }
+          },
+          "subagents": [
+            {
+              "agentId": "a05d989c3914f829e",
+              "parentAgentId": null,
+              "parentToolUseId": "toolu_02",
+              "turns": [
+                {
+                  "turnId": "6a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
+                  "status": "completed",
+                  "origin": "user",
+                  "startedAt": 1791542376,
+                  "completedAt": 1791542377,
+                  "error": null,
+                  "items": [
+                    {
+                      "type": "userMessage",
+                      "itemId": "6a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d:user:0",
+                      "clientMessageId": null,
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Find the failing test"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "agentMessage",
+                      "itemId": "msg_02:0",
+                      "text": "None fail.",
+                      "phase": "final"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "turns": [
+            {
+              "turnId": "5f0c2a1e-3b4d-4e5f-8a6b-7c8d9e0f1a2b",
+              "status": "completed",
+              "origin": "user",
+              "startedAt": 1791542375,
+              "completedAt": 1791542379,
+              "error": null,
+              "items": [
+                {
+                  "type": "userMessage",
+                  "itemId": "5f0c2a1e-3b4d-4e5f-8a6b-7c8d9e0f1a2b:user:0",
+                  "clientMessageId": "client-1",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Run the tests"
+                    }
+                  ],
+                  "provenance": {
+                    "provider": "claude",
+                    "nativeThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+                  }
+                },
+                {
+                  "type": "command",
+                  "itemId": "toolu_01",
+                  "command": "pnpm test",
+                  "cwd": "/workspace",
+                  "status": "completed",
+                  "output": "ok",
+                  "exitCode": 0,
+                  "durationMs": 1200,
+                  "provenance": {
+                    "provider": "claude",
+                    "nativeThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+                  }
+                },
+                {
+                  "type": "agentMessage",
+                  "itemId": "msg_01:1",
+                  "text": "Tests pass.",
+                  "phase": "final",
+                  "provenance": {
+                    "provider": "claude",
+                    "nativeThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+                  }
+                }
+              ],
+              "provenance": {
+                "provider": "claude",
+                "nativeThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-stdio:22",
+        "error": {
+          "code": -32600,
+          "message": "native session not found: 00000000-0000-4000-8000-000000000000",
+          "data": null
+        }
+      }
+    }
+  ]
+}

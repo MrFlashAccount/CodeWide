@@ -22,8 +22,8 @@ export type ProtocolRequest = {
 
 export interface RpcError {
   readonly code: number;
-  readonly message: string;
   readonly data: RpcErrorData | null;
+  readonly message: string;
 }
 
 /** Structured error data. `capability` is set for `CAPABILITY_UNSUPPORTED`. */
@@ -34,7 +34,7 @@ export interface RpcErrorData {
 
 export type ProtocolResponse<Name extends OperationName = OperationName> =
   | { readonly id: RpcId; readonly result: OperationResult<Name> }
-  | { readonly id: RpcId; readonly error: RpcError };
+  | { readonly error: RpcError; readonly id: RpcId };
 
 export interface EventNotification {
   readonly method: "event";
@@ -45,23 +45,48 @@ export interface InitializedNotification {
   readonly method: "initialized";
 }
 
-export type ProtocolMessage = ProtocolRequest | ProtocolResponse | EventNotification | InitializedNotification;
+export type ProtocolMessage =
+  | ProtocolRequest
+  | ProtocolResponse
+  | EventNotification
+  | InitializedNotification;
+
+const INVALID_REQUEST = -32_600;
+const METHOD_NOT_FOUND = -32_601;
+const INVALID_PARAMS = -32_602;
+const INTERNAL_ERROR = -32_603;
+const PROVIDER_DISABLED = -32_070;
+const CAPABILITY_UNSUPPORTED = -32_072;
+
+/** JSON-RPC error codes shared by the companion and providers. */
+export interface ErrorCodes {
+  /** The thread's provider does not declare the capability the call needs. */
+  readonly capabilityUnsupported: number;
+  readonly internal: number;
+  readonly invalidParams: number;
+  /** Invalid request or unknown thread: `"thread not found: <id>"`, `"expected turn is not active"`. */
+  readonly invalidRequest: number;
+  readonly methodNotFound: number;
+  /** Companion: the thread's provider is disabled on this host. Terminal for queued commands. */
+  readonly providerDisabled: number;
+}
 
 /** Error codes shared by the companion and providers. */
-export const ERROR_CODES = {
-  /** Invalid request or unknown thread: `"thread not found: <id>"`, `"expected turn is not active"`. */
-  invalidRequest: -32600,
-  methodNotFound: -32601,
-  invalidParams: -32602,
-  internal: -32603,
-  /** Companion: the thread's provider is disabled on this host. Terminal for queued commands. */
-  providerDisabled: -32070,
-  /** The thread's provider does not declare the capability the call needs. */
-  capabilityUnsupported: -32072,
-} as const;
+export const ERROR_CODES: ErrorCodes = {
+  capabilityUnsupported: CAPABILITY_UNSUPPORTED,
+  internal: INTERNAL_ERROR,
+  invalidParams: INVALID_PARAMS,
+  invalidRequest: INVALID_REQUEST,
+  methodNotFound: METHOD_NOT_FOUND,
+  providerDisabled: PROVIDER_DISABLED,
+};
 
 export function threadNotFoundMessage(appThreadId: string): string {
   return `thread not found: ${appThreadId}`;
+}
+
+export function nativeSessionNotFoundMessage(sessionId: string): string {
+  return `native session not found: ${sessionId}`;
 }
 
 export const EXPECTED_TURN_NOT_ACTIVE = "expected turn is not active" as const;

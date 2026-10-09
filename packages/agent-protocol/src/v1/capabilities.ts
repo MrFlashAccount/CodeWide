@@ -58,22 +58,20 @@ export type CapabilityName = BooleanCapability | typeof START_WHILE_ACTIVE_CAPAB
  * present, so "declared unsupported" (`false`) is distinguishable from a name
  * the consumer does not know yet.
  */
-export type CapabilitySet = {
-  readonly [Name in BooleanCapability]: boolean;
-} & {
+export type CapabilitySet = Readonly<Record<BooleanCapability, boolean>> & {
   readonly [START_WHILE_ACTIVE_CAPABILITY]: StartWhileActiveMode;
 };
 
 /** Client-wire extension attached to every projected `Thread` in multi-provider mode. */
 export interface CodewideAgentThreadExtension {
+  /** The provider's declared capability set. */
+  readonly capabilities: CapabilitySet;
+  /** Whether the provider is the host's primary provider (no badge). */
+  readonly primary: boolean;
   /** Provider bound to the thread for its whole life. */
   readonly provider: string;
   /** Human-readable provider name, used only as badge text. */
   readonly providerName: string;
-  /** Whether the provider is the host's primary provider (no badge). */
-  readonly primary: boolean;
-  /** The provider's declared capability set. */
-  readonly capabilities: CapabilitySet;
 }
 
 /**

@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
 };
 
+use agent_provider_codex::{host::RolloutThreadMetadata, rollout_content::RolloutContentSource};
 use base64::{Engine as _, engine::general_purpose};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codewide_companion::{
@@ -30,9 +31,10 @@ use codewide_companion::{
     rollout::{
         TurnRefReport, index_rollout_fully, read_rollout_metadata, rollout_file_id, scan_tail_turns,
     },
+    rollout_store::{ROLLOUT_INDEX_SCHEMA, RolloutStore, TurnRef},
     server,
     state_migration::{StateMigrationPaths, migrate_legacy_installation},
-    store::{IndexStore, TurnRef},
+    store::IndexStore,
     sync::SyncHub,
     telemetry::TelemetryStore,
     terminal,
@@ -47,6 +49,16 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod local_control;
+
+/// Default log levels; the companion's library crates report warnings.
+const DEFAULT_LOG_FILTER: &str = "codewide_companion=info,companion_core=warn,companion_host=warn,\
+agent_core=warn,agent_transport=warn,agent_provider_codex=warn,agent_provider_claude=warn";
+
+/// Opens the companion index with the Codex rollout tables, as the server does.
+fn open_rollout_index(path: &Path) -> Result<RolloutStore, Box<dyn std::error::Error>> {
+    let host = Arc::new(IndexStore::open_with(path, &[&ROLLOUT_INDEX_SCHEMA])?);
+    Ok(RolloutStore::attach(host.database(), host)?)
+}
 
 fn parse_vcs_scope(value: &str) -> Result<VcsScope, Box<dyn std::error::Error>> {
     Ok(serde_json::from_value(serde_json::Value::String(
@@ -349,7 +361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("codewide_companion=info,companion_core=warn")),
+                .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER)),
         )
         .with_target(false)
         .compact()
@@ -431,7 +443,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string(identity.public())?);
         }
         Command::Index { state, rollout } => {
-            let store = IndexStore::open(state)?;
+            let store = open_rollout_index(&state)?;
             let report = index_rollout_fully(&store, &rollout)?;
             println!("{}", serde_json::to_string(&report)?);
         }
@@ -449,7 +461,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             limit,
             before_offset,
         } => {
-            let store = IndexStore::open(state)?;
+            let store = open_rollout_index(&state)?;
             let file_id = rollout_file_id(&rollout);
             let turns: Vec<TurnRefReport> = store
                 .turns_desc(&file_id, before_offset, limit)?
@@ -1058,7 +1070,11 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let token = read_administrator_token(&options.token_file).await?;
     let app_server_socket = options.app_server_socket.clone();
     let upstream = UpstreamHandle::spawn(options.app_server_socket);
-    let store = Arc::new(IndexStore::open(options.state_path.clone())?);
+    let store = Arc::new(IndexStore::open_with(
+        options.state_path.clone(),
+        &[&ROLLOUT_INDEX_SCHEMA],
+    )?);
+    let rollout_store = Arc::new(RolloutStore::attach(store.database(), store.clone())?);
     let codex_home = options.codex_home.unwrap_or_else(default_codex_home);
     let state_directory = options
         .data_dir
@@ -1144,7 +1160,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         &state_directory.join("message-search.sqlite"),
         catalog.clone(),
     );
-    let history = HistoryService::new(catalog.clone(), store.clone());
+    let history = HistoryService::new(catalog.clone(), rollout_store.clone());
     let history = match search {
         Ok(search) => history.with_search(search),
         Err(error) => {
@@ -1193,8 +1209,11 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     {
         content_fallbacks.push(directory);
     }
-    let content =
-        PrivateContentService::open_indexed(content_directory, content_fallbacks, store.clone());
+    let content = PrivateContentService::open_indexed(
+        content_directory,
+        content_fallbacks,
+        Arc::new(RolloutContentSource::new(rollout_store.clone())),
+    );
     let image_previews = Arc::new(ImagePreviewService::new());
     let media = Arc::new(MediaProxyService::new());
     let tunnels = Arc::new(LocalhostTunnelService::new()?);
@@ -1212,13 +1231,13 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         ResourceService::open(
             state_directory.join("resource-index.redb"),
             catalog.clone(),
-            store.clone(),
+            rollout_store,
             files.clone(),
         )?
         .with_vcs(vcs.clone()),
     );
     let workspaces = Arc::new(codewide_companion::workspaces::WorkspaceService::new(
-        vcs,
+        vcs.clone(),
         codex_home.join("worktrees"),
     ));
     let projects =
@@ -1227,8 +1246,16 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     // The Codex storage modules are reached only through the Codex adapter.
     let codex = CodexProvider::new(upstream.clone())
         .with_storage(CodexStorage::new(history).with_resources(resources.clone()));
-    let registry =
-        codewide_companion::agent::providers::load_registry(&state_directory, Arc::new(codex));
+    let registry = codewide_companion::agent::providers::load_registry(
+        &state_directory,
+        Arc::new(codex),
+        Some(&codewide_companion::agent::providers::ProviderHost {
+            index: store.clone(),
+            state_directory: state_directory.clone(),
+            files: files.clone(),
+            vcs: Some(vcs.clone()),
+        }),
+    );
     let mut sync = SyncHub::with_registry(registry, store.clone(), options.enable_mutations)
         .with_content_projector(projector)
         .with_dictation(dictation)
@@ -1283,7 +1310,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
                 state_directory.join("diagnostic-reports"),
             )?,
         )),
-        catalog: Some(catalog),
+        thread_metadata: Some(Arc::new(RolloutThreadMetadata::new(catalog))),
         app_server_socket_path: Some(app_server_socket),
         excluded_ports,
         transport_identity: Some(identity.public().clone()),

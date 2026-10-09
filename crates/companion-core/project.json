@@ -4,7 +4,17 @@
   "projectType": "library",
   "sourceRoot": "crates/companion-core/src",
   "tags": ["language:rust", "type:library"],
-  "implicitDependencies": ["relay", "companion-sync-contract"],
+  "implicitDependencies": [
+    "relay",
+    "companion-sync-contract",
+    "agent-core",
+    "agent-transport",
+    "companion-host",
+    "agent-search",
+    "agent-resources",
+    "agent-provider-codex",
+    "agent-provider-claude"
+  ],
   "metadata": {
     "description": "Shared Companion runtime and domain owners"
   },

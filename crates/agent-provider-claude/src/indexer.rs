@@ -1,0 +1,536 @@
+//! Keeps the Claude session index current. A changed session record (from
+//! the watcher), a finished live turn and the startup backfill each ask the
+//! Claude host for a fresh neutral read (`nativeSession.read`); the index and
+//! the search documents are replaced only when the read differs. Reads that
+//! fail while the host is unavailable are retried once it is live again.
+
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
+
+use agent_core::{
+    model::{
+        AppThreadId, ERROR_INVALID_REQUEST, NativeSessionListParams, NativeSessionListResult,
+        NativeSessionReadResult,
+    },
+    provider::{ProviderError, ProviderStatus},
+};
+use async_trait::async_trait;
+use tokio::sync::{mpsc, watch};
+use tracing::{debug, error, warn};
+
+use crate::{
+    search::ClaudeSearch,
+    storage::Freshness,
+    store::{ClaudeStore, Observation},
+    watcher::SessionChange,
+};
+
+/// Sessions per `nativeSession.list` page (the host's maximum).
+const LIST_PAGE: u32 = 500;
+/// Newest sessions scanned for a finished turn of a thread not indexed yet.
+const RECENT_PAGE: u32 = 20;
+const RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// The Claude host's native-session reads.
+#[async_trait]
+pub trait NativeSessions: Send + Sync {
+    async fn list(
+        &self,
+        params: NativeSessionListParams,
+    ) -> Result<NativeSessionListResult, ProviderError>;
+
+    async fn read(&self, session_id: &str) -> Result<NativeSessionReadResult, ProviderError>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum IndexError {
+    #[error(transparent)]
+    Host(#[from] ProviderError),
+    #[error(transparent)]
+    Store(#[from] companion_host::index::StoreError),
+    #[error(transparent)]
+    Search(#[from] crate::search::ClaudeSearchError),
+}
+
+impl IndexError {
+    /// Whether the host could not be asked; the read is retried later.
+    fn host_unavailable(&self) -> bool {
+        matches!(self, Self::Host(error) if error.not_sent() || matches!(error, ProviderError::Disconnected(_)))
+    }
+}
+
+pub struct ClaudeIndexer {
+    store: Arc<ClaudeStore>,
+    search: Arc<ClaudeSearch>,
+    sessions: Arc<dyn NativeSessions>,
+    freshness: Arc<Freshness>,
+}
+
+impl ClaudeIndexer {
+    #[must_use]
+    pub fn new(
+        store: Arc<ClaudeStore>,
+        search: Arc<ClaudeSearch>,
+        sessions: Arc<dyn NativeSessions>,
+        freshness: Arc<Freshness>,
+    ) -> Self {
+        Self {
+            store,
+            search,
+            sessions,
+            freshness,
+        }
+    }
+
+    /// Reads one session and replaces its indexed turns; a session the host
+    /// no longer has is removed. Returns the session's thread.
+    ///
+    /// # Errors
+    /// Returns host, index or search failures.
+    pub async fn index_session(&self, session_id: &str) -> Result<Option<AppThreadId>, IndexError> {
+        let previous = self
+            .store
+            .session(session_id)?
+            .map(|stored| stored.session.app_thread_id);
+        if let Some(thread) = &previous {
+            self.freshness.mark_stale(thread);
+        }
+        match self.sessions.read(session_id).await {
+            Ok(read) => {
+                let thread = read.session.app_thread_id.clone();
+                self.freshness.mark_stale(&thread);
+                self.store.replace_session(&read)?;
+                self.search.reindex_thread(&thread)?;
+                if let Some(previous) = previous.filter(|previous| previous != &thread) {
+                    self.search.reindex_thread(&previous)?;
+                    self.freshness.mark_fresh(&previous);
+                }
+                self.freshness.mark_fresh(&thread);
+                Ok(Some(thread))
+            }
+            Err(ProviderError::Rejected(rejection))
+                if rejection.code == ERROR_INVALID_REQUEST
+                    && rejection.message.starts_with("native session not found:") =>
+            {
+                let removed = self.store.remove_session(session_id)?;
+                if let Some(thread) = &removed {
+                    self.search.reindex_thread(thread)?;
+                    self.freshness.mark_fresh(thread);
+                }
+                Ok(removed)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Indexes every listed session that changed and drops indexed sessions
+    /// the store no longer lists.
+    ///
+    /// # Errors
+    /// Returns the first host, index or search failure.
+    pub async fn backfill(&self) -> Result<(), IndexError> {
+        let mut cursor = None;
+        let mut listed = BTreeSet::new();
+        loop {
+            let page = self
+                .sessions
+                .list(NativeSessionListParams {
+                    cursor,
+                    dir: None,
+                    limit: LIST_PAGE,
+                })
+                .await?;
+            for session in &page.sessions {
+                listed.insert(session.session_id.clone());
+                let observed = session
+                    .file_size
+                    .and_then(|size| u64::try_from(size).ok())
+                    .map(|file_size| Observation {
+                        file_size,
+                        last_modified_ms: session.last_modified_ms,
+                    });
+                if let Some(observed) = observed
+                    && self.store.is_current(&session.session_id, observed)?
+                {
+                    // The record is unchanged; its listed facts may not be.
+                    if self.store.update_session(session)? {
+                        self.search.reindex_thread(&session.app_thread_id)?;
+                    }
+                    continue;
+                }
+                self.index_session(&session.session_id).await?;
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        for session_id in self.store.session_ids()? {
+            if !listed.contains(&session_id) {
+                self.index_session(&session_id).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Re-reads a thread's sessions after its live turn finished. A thread
+    /// not indexed yet is looked up among the newest sessions.
+    ///
+    /// # Errors
+    /// Returns host, index or search failures.
+    pub async fn refresh_thread(&self, thread: &AppThreadId) -> Result<(), IndexError> {
+        let known = self.store.thread_sessions(thread)?;
+        let session_ids = if known.is_empty() {
+            self.sessions
+                .list(NativeSessionListParams {
+                    cursor: None,
+                    dir: None,
+                    limit: RECENT_PAGE,
+                })
+                .await?
+                .sessions
+                .into_iter()
+                .filter(|session| &session.app_thread_id == thread)
+                .map(|session| session.session_id)
+                .collect::<Vec<_>>()
+        } else {
+            known
+                .into_iter()
+                .map(|stored| stored.session.session_id)
+                .collect()
+        };
+        for session_id in session_ids {
+            self.index_session(&session_id).await?;
+        }
+        self.freshness.mark_fresh(thread);
+        Ok(())
+    }
+
+    /// Applies one watcher change.
+    ///
+    /// # Errors
+    /// Returns host, index or search failures.
+    pub async fn apply(&self, change: &SessionChange) -> Result<(), IndexError> {
+        if let Some(observed) = change.observed
+            && self.store.is_current(&change.session_id, observed)?
+        {
+            return Ok(());
+        }
+        self.index_session(&change.session_id)
+            .await
+            .map(|_thread| ())
+    }
+
+    /// Runs until both input streams end: the backfill once the host is
+    /// live, then watcher changes and finished turns. Work the host could
+    /// not serve is retried after it is live again.
+    pub async fn run(
+        self,
+        mut changes: mpsc::Receiver<SessionChange>,
+        mut finished: mpsc::Receiver<AppThreadId>,
+        mut relist: mpsc::Receiver<()>,
+        mut status: watch::Receiver<ProviderStatus>,
+    ) {
+        let mut backfilled = false;
+        let mut relist_open = true;
+        let mut pending_sessions = BTreeSet::<String>::new();
+        let mut pending_threads = BTreeSet::<AppThreadId>::new();
+        let mut changes_open = true;
+        let mut finished_open = true;
+        loop {
+            if *status.borrow() == ProviderStatus::Live {
+                if !backfilled {
+                    self.search.set_indexing(true);
+                    match self.backfill().await {
+                        Ok(()) => {
+                            backfilled = true;
+                            self.search.set_indexing(false);
+                            // A listing requested during the pass runs again.
+                            if relist.try_recv().is_err() {
+                                self.freshness.set_catalog_current(true);
+                            } else {
+                                backfilled = false;
+                            }
+                        }
+                        Err(err) => report(&err, "Claude session backfill failed"),
+                    }
+                }
+                for session_id in std::mem::take(&mut pending_sessions) {
+                    if let Err(err) = self.index_session(&session_id).await {
+                        report(&err, "Claude session indexing failed");
+                        pending_sessions.insert(session_id);
+                    }
+                }
+                for thread in std::mem::take(&mut pending_threads) {
+                    if let Err(err) = self.refresh_thread(&thread).await {
+                        report(&err, "Claude thread re-indexing failed");
+                        pending_threads.insert(thread);
+                    }
+                }
+            }
+            if !changes_open && !finished_open {
+                return;
+            }
+            let retry = !backfilled || !pending_sessions.is_empty() || !pending_threads.is_empty();
+            tokio::select! {
+                change = changes.recv(), if changes_open => match change {
+                    Some(change) => {
+                        if let Err(err) = self.apply(&change).await {
+                            report(&err, "Claude session indexing failed");
+                            pending_sessions.insert(change.session_id);
+                        }
+                    }
+                    None => changes_open = false,
+                },
+                thread = finished.recv(), if finished_open => match thread {
+                    Some(thread) => {
+                        if let Err(err) = self.refresh_thread(&thread).await {
+                            report(&err, "Claude thread re-indexing failed");
+                            pending_threads.insert(thread);
+                        }
+                    }
+                    None => finished_open = false,
+                },
+                signal = relist.recv(), if relist_open => match signal {
+                    Some(()) => backfilled = false,
+                    None => relist_open = false,
+                },
+                live = status.changed() => {
+                    if live.is_err() {
+                        return;
+                    }
+                }
+                () = tokio::time::sleep(RETRY_DELAY), if retry => {}
+            }
+        }
+    }
+}
+
+/// Logs a failed index step: an unavailable host is expected and retried.
+fn report(err: &IndexError, message: &'static str) {
+    if err.host_unavailable() {
+        debug!(err = %err, "{message}; retrying when the Claude host is live");
+    } else if matches!(err, IndexError::Host(_)) {
+        warn!(err = %err, "{message}");
+    } else {
+        error!(err = %err, "{message}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Mutex};
+
+    use agent_core::model::{NativeSession, RpcError};
+
+    use super::*;
+    use crate::test_support::{MemoryThreadIndex, session_read};
+
+    /// A Claude host over fixture reads, counting reads per session.
+    #[derive(Default)]
+    pub(crate) struct FakeHost {
+        pub(crate) sessions: Mutex<HashMap<String, NativeSessionReadResult>>,
+        pub(crate) reads: Mutex<Vec<String>>,
+    }
+
+    impl FakeHost {
+        fn put(&self, read: NativeSessionReadResult) {
+            self.sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(read.session.session_id.clone(), read);
+        }
+
+        fn remove(&self, session_id: &str) {
+            self.sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(session_id);
+        }
+
+        fn reads(&self) -> Vec<String> {
+            self.reads
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl NativeSessions for FakeHost {
+        async fn list(
+            &self,
+            _params: NativeSessionListParams,
+        ) -> Result<NativeSessionListResult, ProviderError> {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .values()
+                .map(|read| read.session.clone())
+                .collect::<Vec<NativeSession>>();
+            sessions.sort_by_key(|session| std::cmp::Reverse(session.last_modified_ms));
+            Ok(NativeSessionListResult {
+                next_cursor: None,
+                sessions,
+            })
+        }
+
+        async fn read(&self, session_id: &str) -> Result<NativeSessionReadResult, ProviderError> {
+            self.reads
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(session_id.to_owned());
+            self.sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(session_id)
+                .cloned()
+                .ok_or_else(|| {
+                    ProviderError::Rejected(RpcError {
+                        code: ERROR_INVALID_REQUEST,
+                        message: format!("native session not found: {session_id}"),
+                        data: None,
+                    })
+                })
+        }
+    }
+
+    fn indexer(
+        directory: &std::path::Path,
+        host: Arc<FakeHost>,
+    ) -> Result<(ClaudeIndexer, Arc<ClaudeStore>), Box<dyn std::error::Error>> {
+        let database = companion_host::database::open(directory.join("index.redb"), "test")?;
+        let store = Arc::new(ClaudeStore::attach(
+            database,
+            Arc::new(MemoryThreadIndex::default()),
+        )?);
+        let search = Arc::new(ClaudeSearch::open(
+            &directory.join("search.sqlite"),
+            store.clone(),
+        )?);
+        Ok((
+            ClaudeIndexer::new(store.clone(), search, host, Arc::new(Freshness::default())),
+            store,
+        ))
+    }
+
+    #[tokio::test]
+    async fn backfill_indexes_a_terminal_session_once_and_follows_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let host = Arc::new(FakeHost::default());
+        host.put(session_read("terminal", "terminal", 10, &["hello"]));
+        let (indexer, store) = indexer(directory.path(), host.clone())?;
+
+        indexer.backfill().await?;
+        indexer.backfill().await?;
+        assert_eq!(host.reads(), ["terminal"]);
+        assert!(
+            store
+                .thread_turns(&AppThreadId::from_static("terminal"))?
+                .is_some()
+        );
+
+        // An unchanged observation needs no read; a changed one re-reads.
+        let unchanged = SessionChange {
+            session_id: "terminal".into(),
+            observed: Some(Observation {
+                file_size: 10,
+                last_modified_ms: 10_000,
+            }),
+        };
+        indexer.apply(&unchanged).await?;
+        assert_eq!(host.reads().len(), 1);
+        host.put(session_read(
+            "terminal",
+            "terminal",
+            20,
+            &["hello", "again"],
+        ));
+        indexer
+            .apply(&SessionChange {
+                session_id: "terminal".into(),
+                observed: Some(Observation {
+                    file_size: 20,
+                    last_modified_ms: 20_000,
+                }),
+            })
+            .await?;
+        assert_eq!(
+            store
+                .thread_turns(&AppThreadId::from_static("terminal"))?
+                .map(|turns| turns.len()),
+            Some(2)
+        );
+
+        host.remove("terminal");
+        indexer
+            .apply(&SessionChange {
+                session_id: "terminal".into(),
+                observed: None,
+            })
+            .await?;
+        assert!(store.session_ids()?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn backfill_refreshes_codewide_metadata_without_reading_turns()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use agent_core::model::{
+            NativeSessionCodewide, NativeThreadOrigin, NativeThreadPresence, NativeTitleOverride,
+            ThreadSettings,
+        };
+        let directory = tempfile::tempdir()?;
+        let host = Arc::new(FakeHost::default());
+        host.put(session_read("session", "thread", 10, &["hello"]));
+        let (indexer, store) = indexer(directory.path(), host.clone())?;
+        indexer.backfill().await?;
+        let mut archived = session_read("session", "thread", 10, &["hello"]);
+        archived.session.codewide = Some(NativeSessionCodewide {
+            created_at: 1,
+            cwd: "/work".into(),
+            origin: NativeThreadOrigin::Interactive,
+            presence: NativeThreadPresence::Listed { archived: true },
+            recency_at: None,
+            settings: ThreadSettings {
+                model: "default".into(),
+                effort: None,
+                permission_profile: ":read-only".into(),
+                service_tier: None,
+            },
+            title: NativeTitleOverride::None,
+            updated_at: 2,
+        });
+        host.put(archived.clone());
+        indexer.backfill().await?;
+        assert_eq!(
+            host.reads(),
+            ["session"],
+            "an unchanged record is not read again"
+        );
+        assert_eq!(
+            store
+                .session("session")?
+                .and_then(|stored| stored.session.codewide),
+            archived.session.codewide
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_finished_turn_of_a_new_thread_is_found_among_recent_sessions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let host = Arc::new(FakeHost::default());
+        host.put(session_read("session-x", "thread-x", 10, &["first"]));
+        let (indexer, store) = indexer(directory.path(), host)?;
+        let thread = AppThreadId::from_static("thread-x");
+        indexer.refresh_thread(&thread).await?;
+        assert_eq!(
+            store.thread_turns(&thread)?.map(|turns| turns.len()),
+            Some(1)
+        );
+        Ok(())
+    }
+}

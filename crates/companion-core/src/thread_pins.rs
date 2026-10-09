@@ -59,13 +59,6 @@ impl ThreadPinImportRequest {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ThreadPinSnapshot {
-    pub cursor: u64,
-    pub thread_ids: Vec<String>,
-}
-
 /// Attaches durable Companion pin metadata to thread shells and catalog
 /// pages of every provider; pins are companion state, not agent storage.
 ///

@@ -12,6 +12,8 @@ import type {
   AgentThread,
   AgentTurn,
   JsonValue,
+  NativeSession,
+  NativeSubagent,
   RuntimeResponse,
   ThreadSettings,
   UserContent,
@@ -21,15 +23,15 @@ export const PROTOCOL_NAME = "codewide-agent" as const;
 export const PROTOCOL_VERSION = 1 as const;
 
 export interface InitializeParams {
+  readonly client: { readonly name: string; readonly version: string };
   readonly protocol: typeof PROTOCOL_NAME;
   readonly protocolVersion: number;
-  readonly client: { readonly name: string; readonly version: string };
 }
 
 export interface ProviderDescriptor {
-  readonly id: ProviderId;
   /** Human-readable name, e.g. "Claude". */
   readonly displayName: string;
+  readonly id: ProviderId;
   /** `Thread.modelProvider` value on the client wire, e.g. "anthropic". */
   readonly modelProvider: string;
   readonly version: string;
@@ -43,33 +45,33 @@ export interface ProviderAccount {
 }
 
 export interface InitializeResult {
+  readonly account: ProviderAccount | null;
+  readonly capabilities: CapabilitySet;
   readonly protocolVersion: typeof PROTOCOL_VERSION;
   readonly provider: ProviderDescriptor;
-  readonly capabilities: CapabilitySet;
-  readonly account: ProviderAccount | null;
 }
 
 export interface ModelEffort {
-  readonly effort: string;
   readonly description: string;
+  readonly effort: string;
 }
 
 export interface ModelEntry {
-  readonly id: string;
-  readonly model: string;
-  readonly displayName: string;
-  readonly description: string;
-  readonly isDefault: boolean;
-  readonly hidden: boolean;
-  readonly efforts: readonly ModelEffort[];
   readonly defaultEffort: string | null;
+  readonly description: string;
+  readonly displayName: string;
+  readonly efforts: readonly ModelEffort[];
+  readonly hidden: boolean;
+  readonly id: string;
   readonly inputModalities: readonly ("text" | "image")[];
+  readonly isDefault: boolean;
+  readonly model: string;
 }
 
 export interface PermissionProfileEntry {
-  readonly id: string;
-  readonly displayName: string;
   readonly description: string;
+  readonly displayName: string;
+  readonly id: string;
 }
 
 /** Inclusive/exclusive bounds of a sort-key window, unix seconds. */
@@ -91,33 +93,43 @@ export type ItemsView = "notLoaded" | "summary" | "full";
  */
 export interface ThreadListParams {
   readonly archived: boolean;
-  readonly cwd: string | null;
-  readonly searchTerm: string | null;
-  readonly sortKey: ThreadSortKey;
-  readonly sortDirection: SortDirection;
-  readonly window: SortWindow | null;
   readonly cursor: string | null;
+  readonly cwd: string | null;
   readonly limit: number;
+  readonly searchTerm: string | null;
+  readonly sortDirection: SortDirection;
+  readonly sortKey: ThreadSortKey;
+  // WHY: `window` is the wire field name shared with the Rust mirror; react-doctor
+  // mistakes this type-only property for a read of the browser global.
+  // oxlint-disable-next-line react-doctor/no-unguarded-browser-global-at-module-scope
+  readonly window: SortWindow | null;
 }
 
 export type ThreadChange =
-  | { readonly type: "name"; readonly name: string | null }
-  | { readonly type: "archived"; readonly archived: boolean }
+  | { readonly name: string | null; readonly type: "name" }
+  | { readonly archived: boolean; readonly type: "archived" }
   | { readonly type: "deleted" }
   | {
-      readonly type: "settings";
-      readonly model: string | null;
       readonly effort: string | null;
+      readonly model: string | null;
       readonly permissionProfile: string | null;
       readonly serviceTier: string | null;
+      readonly type: "settings";
     };
 
 export type TurnStartResult =
-  | { readonly type: "started"; readonly turnId: TurnId }
-  | { readonly type: "busy"; readonly activeTurnId: TurnId };
+  | { readonly turnId: TurnId; readonly type: "started" }
+  | { readonly activeTurnId: TurnId; readonly type: "busy" };
 
 export interface OperationMap {
-  readonly initialize: { readonly params: InitializeParams; readonly result: InitializeResult };
+  readonly "capability.invoke": {
+    readonly params: {
+      readonly capability: string;
+      readonly method: string;
+      readonly params: JsonValue;
+    };
+    readonly result: { readonly result: JsonValue };
+  };
   readonly "catalog.models": {
     readonly params: Record<string, never>;
     readonly result: { readonly models: readonly ModelEntry[] };
@@ -125,6 +137,52 @@ export interface OperationMap {
   readonly "catalog.permissionProfiles": {
     readonly params: Record<string, never>;
     readonly result: { readonly profiles: readonly PermissionProfileEntry[] };
+  };
+  readonly initialize: { readonly params: InitializeParams; readonly result: InitializeResult };
+  /**
+   * Optional. Pages the provider's own session store, newest first, for the
+   * companion's native index: every session, programmatic and interactive.
+   * `dir` narrows to one project directory; the cursor is opaque. A provider
+   * without a native store answers `-32601`.
+   */
+  readonly "nativeSession.list": {
+    readonly params: {
+      readonly cursor: string | null;
+      readonly dir: string | null;
+      readonly limit: number;
+    };
+    readonly result: {
+      readonly nextCursor: string | null;
+      readonly sessions: readonly NativeSession[];
+    };
+  };
+  /**
+   * Optional. Reads one native session as neutral turns and the turns of its
+   * sub-agents. Turn and item ids are derived only from the stored messages
+   * and the provider's own metadata, so the same stored input reads as the
+   * same ids (re-indexing is idempotent). A turn still running in a live
+   * session is returned as its live snapshot (`inProgress`). Unknown session:
+   * `-32600 "native session not found: <id>"`.
+   */
+  readonly "nativeSession.read": {
+    readonly params: { readonly sessionId: string };
+    readonly result: {
+      readonly session: NativeSession;
+      readonly subagents: readonly NativeSubagent[];
+      readonly turns: readonly AgentTurn[];
+    };
+  };
+  readonly "request.respond": {
+    readonly params: {
+      readonly appThreadId: AppThreadId;
+      readonly requestId: NativeRequestId;
+      readonly response: RuntimeResponse;
+    };
+    readonly result: Record<string, never>;
+  };
+  readonly "thread.compact": {
+    readonly params: { readonly appThreadId: AppThreadId };
+    readonly result: Record<string, never>;
   };
   /**
    * Creates a thread. `appThreadId` is host-minted for providers that declare
@@ -139,25 +197,32 @@ export interface OperationMap {
     };
     readonly result: { readonly thread: AgentThread };
   };
+  readonly "thread.list": {
+    readonly params: ThreadListParams;
+    readonly result: {
+      readonly nextCursor: string | null;
+      readonly threads: readonly AgentThread[];
+    };
+  };
+  readonly "thread.owns": {
+    readonly params: { readonly appThreadId: AppThreadId };
+    readonly result: { readonly owned: boolean };
+  };
   /** Idempotent. Unknown id: `-32600 "thread not found: <id>"`. */
   readonly "thread.read": {
     readonly params: { readonly appThreadId: AppThreadId };
-    readonly result: { readonly thread: AgentThread; readonly activeTurnId: TurnId | null };
-  };
-  readonly "thread.list": {
-    readonly params: ThreadListParams;
-    readonly result: { readonly threads: readonly AgentThread[]; readonly nextCursor: string | null };
+    readonly result: { readonly activeTurnId: TurnId | null; readonly thread: AgentThread };
   };
   /** Idempotent. Cursor is the last returned turn id; pages are strictly after it. */
   readonly "thread.turns": {
     readonly params: {
       readonly appThreadId: AppThreadId;
       readonly cursor: string | null;
+      readonly itemsView: ItemsView;
       readonly limit: number;
       readonly sortDirection: SortDirection;
-      readonly itemsView: ItemsView;
     };
-    readonly result: { readonly turns: readonly AgentTurn[]; readonly nextCursor: string | null };
+    readonly result: { readonly nextCursor: string | null; readonly turns: readonly AgentTurn[] };
   };
   /**
    * Repeats answer `{thread}` (or `{thread: null}` after delete, by tombstone)
@@ -167,12 +232,13 @@ export interface OperationMap {
     readonly params: { readonly appThreadId: AppThreadId; readonly change: ThreadChange };
     readonly result: { readonly thread: AgentThread | null };
   };
-  readonly "thread.owns": {
-    readonly params: { readonly appThreadId: AppThreadId };
-    readonly result: { readonly owned: boolean };
-  };
-  readonly "thread.compact": {
-    readonly params: { readonly appThreadId: AppThreadId };
+  /**
+   * Answers `{}` at once when the turn is active, already interrupted,
+   * completed, or the thread is idle. Errors only for a foreign `turnId`
+   * during an active turn or an unknown thread.
+   */
+  readonly "turn.interrupt": {
+    readonly params: { readonly appThreadId: AppThreadId; readonly turnId: TurnId | null };
     readonly result: Record<string, never>;
   };
   /** Never steers: an active thread answers `busy` (or joins natively for `nativeJoin`). */
@@ -188,36 +254,11 @@ export interface OperationMap {
   readonly "turn.steer": {
     readonly params: {
       readonly appThreadId: AppThreadId;
-      readonly expectedTurnId: TurnId;
       readonly clientMessageId: ClientMessageId | null;
+      readonly expectedTurnId: TurnId;
       readonly input: readonly UserContent[];
     };
     readonly result: { readonly turnId: TurnId };
-  };
-  /**
-   * Answers `{}` at once when the turn is active, already interrupted,
-   * completed, or the thread is idle. Errors only for a foreign `turnId`
-   * during an active turn or an unknown thread.
-   */
-  readonly "turn.interrupt": {
-    readonly params: { readonly appThreadId: AppThreadId; readonly turnId: TurnId | null };
-    readonly result: Record<string, never>;
-  };
-  readonly "request.respond": {
-    readonly params: {
-      readonly appThreadId: AppThreadId;
-      readonly requestId: NativeRequestId;
-      readonly response: RuntimeResponse;
-    };
-    readonly result: Record<string, never>;
-  };
-  readonly "capability.invoke": {
-    readonly params: {
-      readonly capability: string;
-      readonly method: string;
-      readonly params: JsonValue;
-    };
-    readonly result: { readonly result: JsonValue };
   };
 }
 
@@ -225,7 +266,7 @@ export type OperationName = keyof OperationMap;
 export type OperationParams<Name extends OperationName> = OperationMap[Name]["params"];
 export type OperationResult<Name extends OperationName> = OperationMap[Name]["result"];
 
-export const OPERATION_NAMES = [
+export const OPERATION_NAMES: readonly OperationName[] = [
   "initialize",
   "catalog.models",
   "catalog.permissionProfiles",
@@ -241,4 +282,6 @@ export const OPERATION_NAMES = [
   "turn.interrupt",
   "request.respond",
   "capability.invoke",
-] as const satisfies readonly OperationName[];
+  "nativeSession.list",
+  "nativeSession.read",
+];

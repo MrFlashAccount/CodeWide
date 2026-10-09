@@ -2,11 +2,12 @@ packages:
   - apps/*
   - packages/*
   - android-modules/*
+  - crates/*/host
 
 allowBuilds:
   - expo-libghostty
 
-# The Claude sidecar always passes the user's own `claude` executable to the
+# The Claude agent host always passes the user's own `claude` executable to the
 # Agent SDK (`pathToClaudeCodeExecutable`), so the SDK's bundled per-platform
 # CLI binaries are never used. Skip them in development installs; the host
 # install uses `npm ci --omit=optional` for the same reason.

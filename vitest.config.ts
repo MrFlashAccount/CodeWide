@@ -6,7 +6,11 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json-summary"],
     },
-    include: ["packages/**/test/**/*.test.ts", "apps/**/test/**/*.test.ts"],
+    include: [
+      "packages/**/test/**/*.test.ts",
+      "apps/**/test/**/*.test.ts",
+      "crates/*/host/test/**/*.test.ts",
+    ],
     testTimeout: 15_000,
   },
 });

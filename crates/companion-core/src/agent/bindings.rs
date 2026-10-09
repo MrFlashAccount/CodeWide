@@ -1,14 +1,22 @@
 //! Thread → provider bindings: the durable store, observation upserts, the
 //! one-time backfill job and discovery on a miss.
 //!
+//! A binding is an ordered list of segments: each segment is one provider's
+//! native thread serving a contiguous run of the app thread's turns. The app
+//! thread id is the first segment's native id; routing uses the active
+//! (last) segment; a native thread that is a non-first segment of an app
+//! thread (a continuation) is never listed or bound as its own app thread,
+//! and an app thread's history is its segments' turns concatenated in order
+//! (`assemble_history`).
+//!
 //! Invariants (phase 1): every thread has exactly one binding with exactly
-//! one provider ref equal to the app thread id, and a binding's provider
+//! one segment whose native id is the app thread id, and a binding's provider
 //! never changes. Upserts insert only absent keys; a conflicting claim is
 //! logged at `error` and ignored. Routing reads only bindings, never model
 //! ids, `thread_metadata.model_provider` or id shapes.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -18,14 +26,19 @@ use tracing::{error, info, warn};
 
 use super::{
     model::{
-        AppThreadId, ProviderId, ProviderThreadRef, SortDirection, ThreadListParams, ThreadSortKey,
+        AgentTurn, AppThreadId, ProviderId, ProviderThreadRef, SortDirection, ThreadListParams,
+        ThreadSortKey,
     },
     provider::{AgentProvider, ProviderStatus},
     registry::ProviderRegistry,
 };
 use crate::store::{BindingWrite, IndexStore, StoreError};
 
-const BINDING_RECORD_VERSION: u8 = 1;
+/// v2: segments. v1 records (one provider ref) are upgraded on open; v2
+/// records keep the v1 fields as a projection so an older companion still
+/// routes them.
+const BINDING_RECORD_VERSION: u8 = 2;
+const SEGMENTS_UPGRADED_KEY: &str = "agent_bindings_segments_v2";
 const MAX_CACHED_BINDINGS: usize = 16_384;
 const BACKFILL_MARKER_PREFIX: &str = "agent_bindings_backfill_v1:";
 const BACKFILL_PAGE_SIZE: u32 = 100;
@@ -43,13 +56,44 @@ pub enum BindingOrigin {
     Backfilled,
 }
 
-/// Versioned durable record (`v: 1`).
+/// One provider's native thread serving a contiguous run of an app
+/// thread's turns. Ordinals are 0-based app-thread turn positions.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingSegment {
+    pub provider: ProviderId,
+    pub native_thread_id: ProviderThreadRef,
+    pub first_turn_ordinal: u64,
+    /// `None` while the segment is active.
+    pub last_turn_ordinal: Option<u64>,
+    /// Handoff context the next segment was started with (phase 2).
+    pub handoff_refs: Vec<String>,
+}
+
+impl BindingSegment {
+    fn first(provider: &ProviderId, native_thread_id: ProviderThreadRef) -> Self {
+        Self {
+            provider: provider.clone(),
+            native_thread_id,
+            first_turn_ordinal: 0,
+            last_turn_ordinal: None,
+            handoff_refs: Vec::new(),
+        }
+    }
+}
+
+/// Versioned durable record (`v: 2`).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BindingRecord {
     v: u8,
     app_thread_id: AppThreadId,
+    /// Absent in a v1 record; see [`Self::upgraded`].
+    #[serde(default)]
+    segments: Vec<BindingSegment>,
+    /// v1 projection: the active segment's provider.
     active_provider: ProviderId,
+    /// v1 projection: each segment's native id by provider.
     refs: BTreeMap<ProviderId, ProviderThreadRef>,
     origin: BindingOrigin,
     created_at_ms: u64,
@@ -57,22 +101,92 @@ struct BindingRecord {
 
 impl BindingRecord {
     fn new(app_thread_id: &AppThreadId, provider: &ProviderId, origin: BindingOrigin) -> Self {
-        let created_at_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-            });
         // Phase 1: the provider's thread handle is the app thread id itself.
-        let thread_ref = ProviderThreadRef::same_as(app_thread_id);
+        let segment = BindingSegment::first(provider, ProviderThreadRef::same_as(app_thread_id));
+        Self::with_segments(app_thread_id, vec![segment], origin, now_ms())
+    }
+
+    fn with_segments(
+        app_thread_id: &AppThreadId,
+        segments: Vec<BindingSegment>,
+        origin: BindingOrigin,
+        created_at_ms: u64,
+    ) -> Self {
+        let active_provider = segments.last().map_or_else(
+            || ProviderId::from_static("unknown"),
+            |segment| segment.provider.clone(),
+        );
+        let refs = segments
+            .iter()
+            .map(|segment| (segment.provider.clone(), segment.native_thread_id.clone()))
+            .collect();
         Self {
             v: BINDING_RECORD_VERSION,
             app_thread_id: app_thread_id.clone(),
-            active_provider: provider.clone(),
-            refs: BTreeMap::from([(provider.clone(), thread_ref)]),
+            segments,
+            active_provider,
+            refs,
             origin,
             created_at_ms,
         }
     }
+
+    /// The record as v2: a v1 record becomes one open segment of its active
+    /// provider's ref (the app thread id when the ref is missing).
+    fn upgraded(self) -> Self {
+        if self.v >= BINDING_RECORD_VERSION && !self.segments.is_empty() {
+            return self;
+        }
+        let native = self
+            .refs
+            .get(&self.active_provider)
+            .cloned()
+            .unwrap_or_else(|| ProviderThreadRef::same_as(&self.app_thread_id));
+        let segment = BindingSegment::first(&self.active_provider, native);
+        Self::with_segments(
+            &self.app_thread_id,
+            vec![segment],
+            self.origin,
+            self.created_at_ms,
+        )
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice::<Self>(bytes).map(Self::upgraded)
+    }
+
+    /// The provider of the active (last) segment.
+    fn active(&self) -> &ProviderId {
+        self.segments
+            .last()
+            .map_or(&self.active_provider, |segment| &segment.provider)
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// An app thread's history: each segment's native turns in segment order;
+/// a closed segment contributes at most its ordinal span.
+#[must_use]
+pub fn assemble_history(segments: &[(BindingSegment, Vec<AgentTurn>)]) -> Vec<AgentTurn> {
+    let mut history = Vec::new();
+    for (segment, turns) in segments {
+        let span = segment.last_turn_ordinal.map_or(usize::MAX, |last| {
+            usize::try_from(
+                last.saturating_sub(segment.first_turn_ordinal)
+                    .saturating_add(1),
+            )
+            .unwrap_or(usize::MAX)
+        });
+        history.extend(turns.iter().take(span).cloned());
+    }
+    history
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -83,6 +197,31 @@ pub enum BindingError {
     Invalid(#[from] serde_json::Error),
     #[error("binding worker failed: {0}")]
     Worker(String),
+    #[error("binding segments are invalid: {0}")]
+    Segments(String),
+}
+
+/// Rewrites every v1 record as v2 once; a durable marker skips later opens.
+fn upgrade_records(store: &IndexStore) -> Result<(), BindingError> {
+    if store.agent_meta(SEGMENTS_UPGRADED_KEY)?.is_some() {
+        return Ok(());
+    }
+    let upgraded =
+        store.agent_bindings_upgrade(|bytes| -> Result<Option<Vec<u8>>, BindingError> {
+            let record = serde_json::from_slice::<BindingRecord>(bytes)?;
+            if record.v >= BINDING_RECORD_VERSION && !record.segments.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(serde_json::to_vec(&record.upgraded())?))
+        })?;
+    store.put_agent_meta(SEGMENTS_UPGRADED_KEY, b"1")?;
+    if upgraded > 0 {
+        info!(
+            records = upgraded,
+            "thread binding records upgraded to segments"
+        );
+    }
+    Ok(())
 }
 
 /// Result of a single bind attempt.
@@ -94,6 +233,9 @@ pub enum BindOutcome {
     Conflict {
         existing: ProviderId,
     },
+    /// The id is a non-first segment of an app thread; it is never bound as
+    /// its own app thread.
+    Continuation,
 }
 
 /// Where a thread-scoped call goes.
@@ -112,15 +254,107 @@ pub enum ThreadRoute {
 pub struct BindingStore {
     store: Arc<IndexStore>,
     cache: Mutex<HashMap<AppThreadId, ProviderId>>,
+    /// Native ids of non-first segments (empty in phase 1).
+    continuations: Mutex<HashSet<String>>,
 }
 
 impl BindingStore {
+    /// Opens the binding store, upgrading v1 records to segments once.
+    /// A failed upgrade is logged at `error`; v1 records are still read as
+    /// one segment.
     #[must_use]
     pub fn new(store: Arc<IndexStore>) -> Self {
+        if let Err(err) = upgrade_records(&store) {
+            error!(err = ?err, "thread binding records could not be upgraded to segments");
+        }
+        let continuations = match store.agent_continuations() {
+            Ok(continuations) => continuations
+                .into_iter()
+                .map(|(native, _app)| native)
+                .collect(),
+            Err(err) => {
+                error!(err = ?err, "thread binding continuations are unreadable");
+                HashSet::new()
+            }
+        };
         Self {
             store,
             cache: Mutex::new(HashMap::new()),
+            continuations: Mutex::new(continuations),
         }
+    }
+
+    /// Whether a native thread id continues another app thread.
+    #[must_use]
+    pub fn is_continuation(&self, native_thread_id: &str) -> bool {
+        let continuations = self
+            .continuations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !continuations.is_empty() && continuations.contains(native_thread_id)
+    }
+
+    /// The app thread's segments, oldest first.
+    ///
+    /// # Errors
+    /// Returns an error when the durable store cannot be read.
+    pub async fn segments(
+        &self,
+        id: &AppThreadId,
+    ) -> Result<Option<Vec<BindingSegment>>, BindingError> {
+        let store = self.store.clone();
+        let key = id.clone();
+        let stored = tokio::task::spawn_blocking(move || store.agent_binding(key.as_str()))
+            .await
+            .map_err(|error| BindingError::Worker(error.to_string()))??;
+        stored
+            .map(|bytes| BindingRecord::decode(&bytes).map(|record| record.segments))
+            .transpose()
+            .map_err(BindingError::from)
+    }
+
+    /// Replaces an app thread's segments (provider switching, phase 2). The
+    /// first segment's native id must be the app thread id.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid segment list or a failed write.
+    pub async fn replace_segments(
+        &self,
+        id: &AppThreadId,
+        segments: Vec<BindingSegment>,
+        origin: BindingOrigin,
+    ) -> Result<(), BindingError> {
+        if segments
+            .first()
+            .is_none_or(|first| first.native_thread_id.as_str() != id.as_str())
+        {
+            return Err(BindingError::Segments(
+                "the first segment must be the app thread".into(),
+            ));
+        }
+        let continuations = segments
+            .iter()
+            .skip(1)
+            .map(|segment| segment.native_thread_id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        let record = BindingRecord::with_segments(id, segments, origin, now_ms());
+        let active = record.active().clone();
+        let encoded = serde_json::to_vec(&record)?;
+        let store = self.store.clone();
+        let key = id.clone();
+        let natives = continuations.clone();
+        tokio::task::spawn_blocking(move || {
+            let natives = natives.iter().map(String::as_str).collect::<Vec<_>>();
+            store.agent_binding_replace(key.as_str(), &encoded, &natives)
+        })
+        .await
+        .map_err(|error| BindingError::Worker(error.to_string()))??;
+        self.continuations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(continuations);
+        self.remember(id.clone(), active);
+        Ok(())
     }
 
     fn cached(&self, id: &AppThreadId) -> Option<ProviderId> {
@@ -158,9 +392,10 @@ impl BindingStore {
         let Some(stored) = stored else {
             return Ok(None);
         };
-        let record: BindingRecord = serde_json::from_slice(&stored)?;
-        self.remember(id.clone(), record.active_provider.clone());
-        Ok(Some(record.active_provider))
+        let record = BindingRecord::decode(&stored)?;
+        let provider = record.active().clone();
+        self.remember(id.clone(), provider.clone());
+        Ok(Some(provider))
     }
 
     /// Binds one thread unless it is bound already.
@@ -196,6 +431,10 @@ impl BindingStore {
         let mut pending = Vec::with_capacity(ids.len());
         let mut outcomes = vec![BindOutcome::AlreadyBound; ids.len()];
         for (index, id) in ids.iter().enumerate() {
+            if self.is_continuation(id.as_str()) {
+                outcomes[index] = BindOutcome::Continuation;
+                continue;
+            }
             match self.cached(id) {
                 Some(existing) if &existing == provider => {}
                 Some(existing) => {
@@ -232,13 +471,12 @@ impl BindingStore {
                     outcomes[index] = BindOutcome::Bound;
                 }
                 BindingWrite::Existing(existing) => {
-                    let record: BindingRecord = serde_json::from_slice(&existing)?;
-                    self.remember(id.clone(), record.active_provider.clone());
-                    if &record.active_provider != provider {
-                        error!(app_thread_id = %id, existing = %record.active_provider, claimed = %provider, "conflicting thread binding claim ignored");
-                        outcomes[index] = BindOutcome::Conflict {
-                            existing: record.active_provider,
-                        };
+                    let record = BindingRecord::decode(&existing)?;
+                    let active = record.active().clone();
+                    self.remember(id.clone(), active.clone());
+                    if &active != provider {
+                        error!(app_thread_id = %id, existing = %active, claimed = %provider, "conflicting thread binding claim ignored");
+                        outcomes[index] = BindOutcome::Conflict { existing: active };
                     }
                 }
             }
@@ -260,6 +498,9 @@ impl BindingStore {
     ) -> Result<ThreadRoute, BindingError> {
         if let Some(provider) = self.provider_of(id).await? {
             return Ok(ThreadRoute::Bound(provider));
+        }
+        if self.is_continuation(id.as_str()) {
+            return Ok(ThreadRoute::Unknown);
         }
         let candidates = registry.discovery_providers().cloned().collect::<Vec<_>>();
         match candidates.as_slice() {
@@ -505,10 +746,173 @@ mod tests {
             .await?;
         let stored: serde_json::Value =
             serde_json::from_slice(&store.agent_binding("thread-9")?.ok_or("record missing")?)?;
-        assert_eq!(stored["v"], 1);
+        assert_eq!(stored["v"], 2);
+        assert_eq!(
+            stored["segments"],
+            serde_json::json!([{"provider": "codex", "nativeThreadId": "thread-9",
+                "firstTurnOrdinal": 0, "lastTurnOrdinal": null, "handoffRefs": []}])
+        );
+        // The v1 projection an older companion routes by.
         assert_eq!(stored["activeProvider"], "codex");
         assert_eq!(stored["refs"], serde_json::json!({"codex": "thread-9"}));
         assert_eq!(stored["origin"], "backfilled");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn v1_records_are_upgraded_to_one_segment_losslessly()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("state.redb");
+        let v1 = serde_json::json!({"v": 1, "appThreadId": "legacy", "activeProvider": "codex",
+            "refs": {"codex": "legacy"}, "origin": "discovered", "createdAtMs": 1234});
+        {
+            let store = IndexStore::open(&path)?;
+            store.agent_bindings_insert_absent(&[("legacy", &serde_json::to_vec(&v1)?)])?;
+        }
+        let store = Arc::new(IndexStore::open(&path)?);
+        let bindings = BindingStore::new(store.clone());
+        let stored: serde_json::Value =
+            serde_json::from_slice(&store.agent_binding("legacy")?.ok_or("record missing")?)?;
+        assert_eq!(stored["v"], 2);
+        assert_eq!(stored["segments"][0]["provider"], "codex");
+        assert_eq!(stored["segments"][0]["nativeThreadId"], "legacy");
+        assert_eq!(stored["segments"].as_array().map(Vec::len), Some(1));
+        for field in [
+            "appThreadId",
+            "activeProvider",
+            "refs",
+            "origin",
+            "createdAtMs",
+        ] {
+            assert_eq!(stored[field], v1[field], "{field} changed in the upgrade");
+        }
+        assert_eq!(
+            bindings.provider_of(&id("legacy")?).await?,
+            Some(provider("codex")?)
+        );
+        // The upgrade runs once.
+        assert_eq!(
+            store.agent_meta(SEGMENTS_UPGRADED_KEY)?.as_deref(),
+            Some(&b"1"[..])
+        );
+        Ok(())
+    }
+
+    fn segment(
+        provider_id: &str,
+        native: &str,
+        first: u64,
+        last: Option<u64>,
+    ) -> Result<BindingSegment, Box<dyn std::error::Error>> {
+        Ok(BindingSegment {
+            provider: provider(provider_id)?,
+            native_thread_id: ProviderThreadRef::same_as(&id(native)?),
+            first_turn_ordinal: first,
+            last_turn_ordinal: last,
+            handoff_refs: Vec::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn the_active_segment_routes_and_continuations_are_never_their_own_threads()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("state.redb");
+        {
+            let bindings = BindingStore::new(Arc::new(IndexStore::open(&path)?));
+            bindings
+                .replace_segments(
+                    &id("app")?,
+                    vec![
+                        segment("codex", "app", 0, Some(1))?,
+                        segment("claude", "claude-session", 2, None)?,
+                    ],
+                    BindingOrigin::Created,
+                )
+                .await?;
+            assert!(
+                bindings
+                    .replace_segments(
+                        &id("other")?,
+                        vec![segment("codex", "app", 0, None)?],
+                        BindingOrigin::Created
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+        let bindings = BindingStore::new(Arc::new(IndexStore::open(&path)?));
+        assert_eq!(
+            bindings.provider_of(&id("app")?).await?,
+            Some(provider("claude")?)
+        );
+        assert!(bindings.is_continuation("claude-session"));
+        assert!(!bindings.is_continuation("app"));
+        assert_eq!(
+            bindings
+                .bind(
+                    &id("claude-session")?,
+                    &provider("claude")?,
+                    BindingOrigin::Discovered
+                )
+                .await?,
+            BindOutcome::Continuation
+        );
+        assert_eq!(bindings.provider_of(&id("claude-session")?).await?, None);
+        let registry = ProviderRegistry::single(
+            crate::agent::testing::FakeProvider::new("codex", discovery_capabilities()).into_arc(),
+            Vec::new(),
+        );
+        assert_eq!(
+            bindings.route(&registry, &id("claude-session")?).await?,
+            ThreadRoute::Unknown
+        );
+        assert_eq!(
+            bindings
+                .segments(&id("app")?)
+                .await?
+                .map(|segments| segments.len()),
+            Some(2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn history_concatenates_segments_within_their_spans() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::agent::model::{TurnId, TurnOrigin, TurnStatus};
+        let turn = |turn_id: &str| -> Result<AgentTurn, Box<dyn std::error::Error>> {
+            Ok(AgentTurn {
+                turn_id: TurnId::parse(turn_id).ok_or("turn id")?,
+                status: TurnStatus::Completed,
+                origin: TurnOrigin::User,
+                started_at: 0,
+                completed_at: Some(1),
+                error: None,
+                items: Vec::new(),
+                provenance: None,
+            })
+        };
+        let history = assemble_history(&[
+            (
+                segment("codex", "app", 0, Some(1))?,
+                vec![turn("c1")?, turn("c2")?, turn("c3-late")?],
+            ),
+            (
+                segment("claude", "session", 2, None)?,
+                vec![turn("k1")?, turn("k2")?],
+            ),
+        ]);
+        assert_eq!(
+            history
+                .iter()
+                .map(|turn| turn.turn_id.as_str())
+                .collect::<Vec<_>>(),
+            ["c1", "c2", "k1", "k2"]
+        );
+        let single = assemble_history(&[(segment("codex", "app", 0, None)?, vec![turn("c1")?])]);
+        assert_eq!(single.len(), 1);
         Ok(())
     }
 

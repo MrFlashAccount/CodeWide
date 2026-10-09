@@ -41,6 +41,6 @@ export type NativeRequestId = string | number;
  * issue the same native id; the pair is unique.
  */
 export interface RuntimeRequestId {
-  readonly provider: ProviderId;
   readonly nativeId: NativeRequestId;
+  readonly provider: ProviderId;
 }

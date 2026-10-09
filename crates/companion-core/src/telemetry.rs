@@ -144,7 +144,7 @@ impl TelemetryStore {
     ///
     /// Returns an error when the database cannot be opened or has an unsupported schema.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TelemetryError> {
-        let database = crate::database::open(path, "telemetry")?;
+        let database = companion_host::database::open(path, "telemetry")?;
         let write = database.begin_write()?;
         {
             let mut meta = write.open_table(META)?;

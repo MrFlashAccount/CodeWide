@@ -32,7 +32,9 @@ function loadFixture(name: string): FixtureFile {
 
 describe("codewide-agent v1 fixtures", () => {
   it("are present", () => {
-    expect(fixtureNames).toEqual(expect.arrayContaining(["events.json", "handshake.json", "operations.json"]));
+    expect(fixtureNames).toEqual(
+      expect.arrayContaining(["events.json", "handshake.json", "operations.json"]),
+    );
   });
 
   for (const name of fixtureNames) {
@@ -47,7 +49,9 @@ describe("codewide-agent v1 fixtures", () => {
   }
 
   it("cover every operation request and every event type", () => {
-    const messages = fixtureNames.flatMap((name) => loadFixture(name).messages.map((entry) => entry.message));
+    const messages = fixtureNames.flatMap((name) =>
+      loadFixture(name).messages.map((entry) => entry.message),
+    );
     const methods = new Set<string>();
     const events = new Set<string>();
     for (const message of messages) {
@@ -90,16 +94,21 @@ describe("shape checks reject drift", () => {
     expect(checkMessage({ ...base, params: { ...base.params, extra: 1 } })).toEqual([
       "$.params.extra: undeclared field",
     ]);
-    expect(checkMessage({ method: "event", params: { type: "diff.updated", appThreadId: "t", turnId: "u" } })).toEqual(
-      ["$.params.diff: missing"],
-    );
+    expect(
+      checkMessage({
+        method: "event",
+        params: { type: "diff.updated", appThreadId: "t", turnId: "u" },
+      }),
+    ).toEqual(["$.params.diff: missing"]);
     expect(checkMessage({ method: "event", params: { type: "turn.paused" } })).toEqual([
       "$.params.type: unknown variant turn.paused",
     ]);
   });
 
   it("requires the answered operation to check a result", () => {
-    expect(checkMessage({ id: 1, result: {} })).toEqual(["$: a response needs the operation it answers"]);
+    expect(checkMessage({ id: 1, result: {} })).toEqual([
+      "$: a response needs the operation it answers",
+    ]);
     expect(checkMessage({ id: 1, result: {} }, "turn.interrupt")).toEqual([]);
   });
 });

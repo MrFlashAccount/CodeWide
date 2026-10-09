@@ -140,7 +140,7 @@ async fn enrich_activity_response(
         if let Some(metrics) = metadata.get(&id).and_then(|m| m.get("activityMetrics")) {
             for entry in entries {
                 if let Some(item) = entry.get_mut("item") {
-                    crate::activity_metrics::attach_item_metrics(item, metrics);
+                    companion_host::activity_metrics::attach_item_metrics(item, metrics);
                 }
             }
         }
@@ -699,6 +699,7 @@ async fn handle_thread_list(
                 hub.gateway.observe_threads(&id, &listed).await;
             }
         }
+        hub.gateway.hide_continuations(result);
     }
     forward_rpc_response(
         socket,

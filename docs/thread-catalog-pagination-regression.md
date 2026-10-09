@@ -100,13 +100,13 @@ Deleted local policy modules:
 
 Server changes:
 
-- `crates/companion-core/src/catalog_visibility.rs`
-- `crates/companion-core/src/catalog.rs`
-- `crates/companion-core/src/catalog_summary.rs`
-- `crates/companion-core/src/history_service.rs`
+- `crates/agent-provider-codex/src/catalog_visibility.rs`
+- `crates/agent-provider-codex/src/catalog.rs`
+- `crates/agent-provider-codex/src/catalog_summary.rs`
+- `crates/agent-provider-codex/src/history_service.rs`
 - `crates/companion-core/src/lib.rs`
 - `crates/companion-core/src/sync.rs`
-- `crates/companion-core/src/message_search/mod.rs`
+- `crates/agent-provider-codex/src/message_search/mod.rs`
 
 Regression fixtures/contracts:
 
@@ -126,7 +126,7 @@ Regression fixtures/contracts:
 - `apps/android/test/workspace-navigation.render.test.tsx`
 - `apps/android/test/native-app-contracts/runtime.contract.ts`
 - `apps/android/test/native-app-contracts/workspace.contract.ts`
-- `crates/companion-core/src/message_search/tests.rs`
+- `crates/agent-provider-codex/src/message_search/tests.rs`
 - `apps/companion-linux/tests/sync_transport.rs`
 
 Ownership documentation:

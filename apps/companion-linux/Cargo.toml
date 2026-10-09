@@ -10,6 +10,7 @@ description = "Crash-safe companion for CodeWide"
 default = []
 
 [dependencies]
+agent-provider-codex = { path = "../../crates/agent-provider-codex" }
 companion-core = { path = "../../crates/companion-core" }
 codewide-relay = { path = "../relay" }
 async-trait = "0.1.89"

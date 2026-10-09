@@ -1,7 +1,7 @@
 /**
  * Neutral thread, turn, item and runtime-request model of `codewide-agent` v1.
  *
- * Wire rules shared with the Rust mirror (`crates/companion-core/src/agent/model`):
+ * Wire rules shared with the Rust mirror (`crates/agent-core/src/model`):
  * - every field is always present; "absent" is encoded as `null`;
  * - unions carry a literal `type` discriminator;
  * - timestamps are unix seconds unless the field name says otherwise.
@@ -14,7 +14,14 @@
  * 5. `item.completed` carries the full item content.
  */
 
-import type { AppThreadId, ClientMessageId, ItemId, ProviderId, TurnId } from "./ids";
+import type {
+  AppThreadId,
+  ClientMessageId,
+  ItemId,
+  ProviderId,
+  ProviderThreadRef,
+  TurnId,
+} from "./ids";
 
 /** JSON value carried opaquely by the protocol. */
 export type JsonValue =
@@ -32,26 +39,26 @@ export type ThreadOrigin = "interactive" | "external" | "supervisor";
 
 /** Settings applied to the next turns of a thread. */
 export interface ThreadSettings {
-  readonly model: string;
   readonly effort: string | null;
+  readonly model: string;
   readonly permissionProfile: string;
   readonly serviceTier: string | null;
 }
 
 export interface AgentThread {
   readonly appThreadId: AppThreadId;
-  readonly provider: ProviderId;
+  readonly archived: boolean;
+  readonly createdAt: number;
   readonly cwd: string;
   readonly name: string | null;
+  readonly origin: ThreadOrigin;
   /** Usually the first user message; empty when the thread has none. */
   readonly preview: string;
-  readonly createdAt: number;
-  readonly updatedAt: number;
+  readonly provider: ProviderId;
   readonly recencyAt: number | null;
-  readonly archived: boolean;
-  readonly origin: ThreadOrigin;
-  readonly status: ThreadStatus;
   readonly settings: ThreadSettings;
+  readonly status: ThreadStatus;
+  readonly updatedAt: number;
 }
 
 export type TurnStatus = "inProgress" | "completed" | "interrupted" | "failed";
@@ -73,21 +80,37 @@ export interface TurnError {
   readonly message: string;
 }
 
-export interface AgentTurn {
-  readonly turnId: TurnId;
-  readonly status: TurnStatus;
-  readonly origin: TurnOrigin;
-  readonly startedAt: number;
+/**
+ * The provider native thread a turn or item came from. With in-thread
+ * provider switching an app thread spans several native threads (binding
+ * segments); in phase 1 `nativeThreadId` equals the `AppThreadId`.
+ * Optional on the wire: absent means "the thread's only native thread".
+ */
+export interface Provenance {
+  readonly nativeThreadId: ProviderThreadRef;
+  readonly provider: ProviderId;
+}
+
+/** The optional origin carried by every turn and item. */
+export interface WithProvenance {
+  readonly provenance?: Provenance;
+}
+
+export interface AgentTurn extends WithProvenance {
   readonly completedAt: number | null;
   readonly error: TurnError | null;
   readonly items: readonly AgentItem[];
+  readonly origin: TurnOrigin;
+  readonly startedAt: number;
+  readonly status: TurnStatus;
+  readonly turnId: TurnId;
 }
 
 /** User input content. */
 export type UserContent =
-  | { readonly type: "text"; readonly text: string }
+  | { readonly text: string; readonly type: "text" }
   | { readonly type: "image"; readonly url: string }
-  | { readonly type: "localImage"; readonly path: string };
+  | { readonly path: string; readonly type: "localImage" };
 
 /** Status of a tool-like item that executes something on the host. */
 export type ExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
@@ -98,16 +121,16 @@ export type CallStatus = "inProgress" | "completed" | "failed";
 export type FileChangeKind = "add" | "delete" | "update";
 
 export interface FileChange {
-  readonly path: string;
+  /** Unified diff (hunks) or raw content for `add`. */
+  readonly diff: string;
   readonly kind: FileChangeKind;
   /** Destination path of a rename, otherwise `null`. */
   readonly movePath: string | null;
-  /** Unified diff (hunks) or raw content for `add`. */
-  readonly diff: string;
+  readonly path: string;
 }
 
 export type WebSearchAction =
-  | { readonly type: "search"; readonly query: string }
+  | { readonly query: string; readonly type: "search" }
   | { readonly type: "openPage"; readonly url: string };
 
 export interface McpToolResult {
@@ -115,78 +138,81 @@ export interface McpToolResult {
   readonly structuredContent: JsonValue;
 }
 
-export type AgentItem =
+/** Every item variant, without its optional provenance. */
+export type AgentItemBody =
   | {
-      readonly type: "userMessage";
-      readonly itemId: ItemId;
       readonly clientMessageId: ClientMessageId | null;
       readonly content: readonly UserContent[];
-    }
-  | {
-      readonly type: "agentMessage";
       readonly itemId: ItemId;
-      readonly text: string;
-      readonly phase: "commentary" | "final";
+      readonly type: "userMessage";
     }
   | {
-      readonly type: "reasoning";
+      readonly itemId: ItemId;
+      readonly phase: "commentary" | "final";
+      readonly text: string;
+      readonly type: "agentMessage";
+    }
+  | {
+      readonly content: readonly string[];
       readonly itemId: ItemId;
       readonly summary: readonly string[];
-      readonly content: readonly string[];
+      readonly type: "reasoning";
     }
   | {
-      readonly type: "command";
-      readonly itemId: ItemId;
       readonly command: string;
       readonly cwd: string;
-      readonly status: ExecutionStatus;
-      readonly output: string | null;
+      readonly durationMs: number | null;
       readonly exitCode: number | null;
-      readonly durationMs: number | null;
-    }
-  | {
-      readonly type: "fileChange";
       readonly itemId: ItemId;
-      readonly changes: readonly FileChange[];
+      readonly output: string | null;
       readonly status: ExecutionStatus;
+      readonly type: "command";
     }
   | {
-      readonly type: "mcpToolCall";
+      readonly changes: readonly FileChange[];
       readonly itemId: ItemId;
-      readonly server: string;
-      readonly tool: string;
-      readonly arguments: JsonValue;
-      readonly status: CallStatus;
-      readonly result: McpToolResult | null;
-      readonly error: string | null;
-      readonly durationMs: number | null;
+      readonly status: ExecutionStatus;
+      readonly type: "fileChange";
     }
   | {
-      readonly type: "toolCall";
+      readonly arguments: JsonValue;
+      readonly durationMs: number | null;
+      readonly error: string | null;
+      readonly itemId: ItemId;
+      readonly result: McpToolResult | null;
+      readonly server: string;
+      readonly status: CallStatus;
+      readonly tool: string;
+      readonly type: "mcpToolCall";
+    }
+  | {
+      readonly arguments: JsonValue;
+      readonly durationMs: number | null;
       readonly itemId: ItemId;
       readonly namespace: string | null;
-      readonly tool: string;
-      readonly arguments: JsonValue;
       readonly output: string | null;
       readonly status: CallStatus;
-      readonly durationMs: number | null;
+      readonly tool: string;
+      readonly type: "toolCall";
     }
   | {
-      readonly type: "webSearch";
+      readonly action: WebSearchAction | null;
       readonly itemId: ItemId;
       readonly query: string;
-      readonly action: WebSearchAction | null;
+      readonly type: "webSearch";
     }
-  | { readonly type: "imageView"; readonly itemId: ItemId; readonly path: string }
-  | { readonly type: "plan"; readonly itemId: ItemId; readonly text: string }
-  | { readonly type: "compaction"; readonly itemId: ItemId }
+  | { readonly itemId: ItemId; readonly path: string; readonly type: "imageView" }
+  | { readonly itemId: ItemId; readonly text: string; readonly type: "plan" }
+  | { readonly itemId: ItemId; readonly type: "compaction" }
   | {
-      readonly type: "capabilityItem";
-      readonly itemId: ItemId;
       readonly capability: string;
+      readonly itemId: ItemId;
       readonly kind: string;
       readonly payload: JsonValue;
+      readonly type: "capabilityItem";
     };
+
+export type AgentItem = AgentItemBody & WithProvenance;
 
 export type AgentItemType = AgentItem["type"];
 
@@ -194,18 +220,18 @@ export type AgentItemType = AgentItem["type"];
 export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
 export interface QuestionOption {
-  readonly label: string;
   readonly description: string;
+  readonly label: string;
 }
 
 export interface UserInputQuestion {
-  readonly id: string;
-  readonly header: string;
-  readonly question: string;
-  readonly options: readonly QuestionOption[];
-  readonly multiSelect: boolean;
-  readonly secret: boolean;
   readonly allowOther: boolean;
+  readonly header: string;
+  readonly id: string;
+  readonly multiSelect: boolean;
+  readonly options: readonly QuestionOption[];
+  readonly question: string;
+  readonly secret: boolean;
 }
 
 export type ApprovalKind = "command" | "fileChange" | "tool";
@@ -213,25 +239,25 @@ export type ApprovalKind = "command" | "fileChange" | "tool";
 /** A question the provider asks while a turn runs. */
 export type RuntimeRequest =
   | {
-      readonly type: "approval";
-      readonly kind: ApprovalKind;
-      readonly itemId: ItemId;
-      /** Honest one-line description of what is being approved. */
-      readonly title: string;
-      readonly detail: string | null;
       readonly command: string | null;
       readonly cwd: string | null;
       readonly decisions: readonly ApprovalDecision[];
+      readonly detail: string | null;
+      readonly itemId: ItemId;
+      readonly kind: ApprovalKind;
+      /** Honest one-line description of what is being approved. */
+      readonly title: string;
+      readonly type: "approval";
     }
   | {
-      readonly type: "userInput";
       readonly itemId: ItemId;
       readonly questions: readonly UserInputQuestion[];
+      readonly type: "userInput";
     }
   | {
-      readonly type: "capabilityRequest";
       readonly capability: string;
       readonly payload: JsonValue;
+      readonly type: "capabilityRequest";
     };
 
 /** One answer per question id. */
@@ -241,25 +267,95 @@ export interface UserInputAnswer {
 
 /** The user's response to a runtime request. */
 export type RuntimeResponse =
-  | { readonly type: "approval"; readonly decision: ApprovalDecision }
-  | { readonly type: "userInput"; readonly answers: { readonly [questionId: string]: UserInputAnswer } }
-  | { readonly type: "capability"; readonly payload: JsonValue }
+  | { readonly decision: ApprovalDecision; readonly type: "approval" }
+  | { readonly answers: Readonly<Record<string, UserInputAnswer>>; readonly type: "userInput" }
+  | { readonly payload: JsonValue; readonly type: "capability" }
   /** The client failed to answer; providers treat it as a decline, never as an allow. */
-  | { readonly type: "error"; readonly message: string };
+  | { readonly message: string; readonly type: "error" };
 
 export type RequestResolution = "responded" | "cancelled" | "turnEnded" | "providerRestarted";
 
 export interface TokenUsage {
-  readonly inputTokens: number;
   readonly cachedInputTokens: number;
+  readonly inputTokens: number;
   readonly outputTokens: number;
   readonly reasoningOutputTokens: number;
   readonly totalTokens: number;
 }
 
+/**
+ * One session in a provider's own session store (for example, a Claude
+ * session file), as the companion's native index sees it. Timestamps are
+ * milliseconds, as the field names say.
+ */
+export interface NativeSession {
+  /** The thread the session belongs to: its own id, or the thread a replacement session continues. */
+  readonly appThreadId: AppThreadId;
+  /** CodeWide metadata of that thread; absent for a session CodeWide never touched. */
+  readonly codewide?: NativeSessionCodewide;
+  readonly createdAtMs: number | null;
+  readonly cwd: string | null;
+  /** Byte size of the stored session file, when the store knows it; with `lastModifiedMs` a cheap change detector. */
+  readonly fileSize: number | null;
+  readonly firstPrompt: string | null;
+  /** Started by a person (terminal, IDE) rather than programmatically. */
+  readonly interactive: boolean;
+  /** Modification time of the stored session file (ms, floor of its mtime). */
+  readonly lastModifiedMs: number;
+  readonly sessionId: string;
+  /** The store's display summary (title, generated summary or first prompt). */
+  readonly summary: string;
+  readonly title: string | null;
+}
+
+/** How the host shows a title Claude's store cannot hold. */
+export type NativeTitleOverride =
+  /** Claude's own session title is the thread name. */
+  | { readonly type: "none" }
+  /** Named before the session existed; the provider applies it to its store once it can. */
+  | { readonly name: string; readonly type: "pending" }
+  /** The name was cleared; a store title equal to `hiddenTitle` is not shown. */
+  | { readonly hiddenTitle: string; readonly type: "cleared" };
+
+/** Whether the thread is listed (and archived) or deleted (tombstone). */
+export type NativeThreadPresence =
+  | { readonly archived: boolean; readonly type: "listed" }
+  | { readonly deletedAt: number; readonly type: "deleted" };
+
+/**
+ * The CodeWide metadata of the thread a native session belongs to: every
+ * `thread.list` row field the provider's store cannot hold. Timestamps are
+ * unix seconds.
+ */
+export interface NativeSessionCodewide {
+  /** Creation time of the thread as CodeWide knows it. */
+  readonly createdAt: number;
+  /** The CodeWide thread's working directory (where its turns run). */
+  readonly cwd: string;
+  /** `interactive` for a thread CodeWide created, `external` for a session it found. */
+  readonly origin: "external" | "interactive";
+  readonly presence: NativeThreadPresence;
+  readonly recencyAt: number | null;
+  /** Effective settings of the next turn (pending settings when set). */
+  readonly settings: ThreadSettings;
+  readonly title: NativeTitleOverride;
+  /** Last activity CodeWide itself caused. */
+  readonly updatedAt: number;
+}
+
+/** The turns of one sub-agent of a native session. */
+export interface NativeSubagent {
+  readonly agentId: string;
+  /** The parent sub-agent, or `null` for a sub-agent the main conversation spawned. */
+  readonly parentAgentId: string | null;
+  /** The tool call that spawned the sub-agent, when the store records it. */
+  readonly parentToolUseId: string | null;
+  readonly turns: readonly AgentTurn[];
+}
+
 export type PlanStepStatus = "pending" | "inProgress" | "completed";
 
 export interface PlanStep {
-  readonly step: string;
   readonly status: PlanStepStatus;
+  readonly step: string;
 }

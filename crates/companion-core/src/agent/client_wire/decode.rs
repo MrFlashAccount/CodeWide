@@ -76,7 +76,7 @@ pub fn thread_capability(method: &str) -> Option<Capability> {
     })
 }
 
-/// Companion thread-resource reads served from Codex rollouts.
+/// Companion thread-resource reads served by the `history.threadResources` owner.
 #[must_use]
 pub fn is_thread_resource_method(method: &str) -> bool {
     matches!(

@@ -16,19 +16,27 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const str: Check = (value, path, errors) => {
-  if (typeof value !== "string") errors.push(`${path}: expected string`);
+  if (typeof value !== "string") {
+    errors.push(`${path}: expected string`);
+  }
 };
 const int: Check = (value, path, errors) => {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) errors.push(`${path}: expected integer`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    errors.push(`${path}: expected integer`);
+  }
 };
 const bool: Check = (value, path, errors) => {
-  if (typeof value !== "boolean") errors.push(`${path}: expected boolean`);
+  if (typeof value !== "boolean") {
+    errors.push(`${path}: expected boolean`);
+  }
 };
 const json: Check = () => {};
 const nullable =
   (inner: Check): Check =>
   (value, path, errors) => {
-    if (value !== null) inner(value, path, errors);
+    if (value !== null) {
+      inner(value, path, errors);
+    }
   };
 const literal =
   (...allowed: readonly (string | number)[]): Check =>
@@ -37,7 +45,9 @@ const literal =
       errors.push(`${path}: expected one of ${allowed.join(", ")}`);
       return;
     }
-    if (!allowed.includes(value)) errors.push(`${path}: unexpected ${String(value)}`);
+    if (!allowed.includes(value)) {
+      errors.push(`${path}: unexpected ${String(value)}`);
+    }
   };
 const arr =
   (inner: Check): Check =>
@@ -46,8 +56,19 @@ const arr =
       errors.push(`${path}: expected array`);
       return;
     }
-    value.forEach((entry: unknown, index) => inner(entry, `${path}[${index}]`, errors));
+    value.forEach((entry: unknown, index) => {
+      inner(entry, `${path}[${String(index)}]`, errors);
+    });
   };
+/** Checks that may be absent: an absent field is valid, a present one is checked. */
+const optionalChecks = new WeakSet<Check>();
+const optional = (inner: Check): Check => {
+  const check: Check = (value, path, errors) => {
+    inner(value, path, errors);
+  };
+  optionalChecks.add(check);
+  return check;
+};
 const obj =
   (fields: Readonly<Record<string, Check>>): Check =>
   (value, path, errors) => {
@@ -57,13 +78,17 @@ const obj =
     }
     for (const [key, check] of Object.entries(fields)) {
       if (!(key in value)) {
-        errors.push(`${path}.${key}: missing`);
+        if (!optionalChecks.has(check)) {
+          errors.push(`${path}.${key}: missing`);
+        }
         continue;
       }
       check(value[key], `${path}.${key}`, errors);
     }
     for (const key of Object.keys(value)) {
-      if (!(key in fields)) errors.push(`${path}.${key}: undeclared field`);
+      if (!(key in fields)) {
+        errors.push(`${path}.${key}: undeclared field`);
+      }
     }
   };
 const map =
@@ -73,7 +98,9 @@ const map =
       errors.push(`${path}: expected object`);
       return;
     }
-    for (const [key, entry] of Object.entries(value)) inner(entry, `${path}.${key}`, errors);
+    for (const [key, entry] of Object.entries(value)) {
+      inner(entry, `${path}.${key}`, errors);
+    }
   };
 const tagged =
   (tag: string, variants: Readonly<Record<string, Readonly<Record<string, Check>>>>): Check =>
@@ -97,118 +124,183 @@ const capabilitySet: Check = obj({
   [START_WHILE_ACTIVE_CAPABILITY]: literal("busy", "nativeJoin"),
 });
 
-const settings = obj({ model: str, effort: nullable(str), permissionProfile: str, serviceTier: nullable(str) });
+const settings = obj({
+  effort: nullable(str),
+  model: str,
+  permissionProfile: str,
+  serviceTier: nullable(str),
+});
 const thread = obj({
   appThreadId: str,
-  provider: str,
+  archived: bool,
+  createdAt: int,
   cwd: str,
   name: nullable(str),
-  preview: str,
-  createdAt: int,
-  updatedAt: int,
-  recencyAt: nullable(int),
-  archived: bool,
   origin: literal("interactive", "external", "supervisor"),
-  status: literal("idle", "active", "notLoaded", "failed"),
+  preview: str,
+  provider: str,
+  recencyAt: nullable(int),
   settings,
+  status: literal("idle", "active", "notLoaded", "failed"),
+  updatedAt: int,
 });
 const userContent = tagged("type", {
-  text: { text: str },
   image: { url: str },
   localImage: { path: str },
+  text: { text: str },
 });
 const executionStatus = literal("inProgress", "completed", "failed", "declined");
 const callStatus = literal("inProgress", "completed", "failed");
-const fileChange = obj({ path: str, kind: literal("add", "delete", "update"), movePath: nullable(str), diff: str });
-const item = tagged("type", {
-  userMessage: { itemId: str, clientMessageId: nullable(str), content: arr(userContent) },
-  agentMessage: { itemId: str, text: str, phase: literal("commentary", "final") },
-  reasoning: { itemId: str, summary: arr(str), content: arr(str) },
-  command: {
-    itemId: str,
-    command: str,
-    cwd: str,
-    status: executionStatus,
-    output: nullable(str),
-    exitCode: nullable(int),
-    durationMs: nullable(int),
-  },
-  fileChange: { itemId: str, changes: arr(fileChange), status: executionStatus },
-  mcpToolCall: {
-    itemId: str,
-    server: str,
-    tool: str,
-    arguments: json,
-    status: callStatus,
-    result: nullable(obj({ content: arr(json), structuredContent: json })),
-    error: nullable(str),
-    durationMs: nullable(int),
-  },
-  toolCall: {
-    itemId: str,
-    namespace: nullable(str),
-    tool: str,
-    arguments: json,
-    output: nullable(str),
-    status: callStatus,
-    durationMs: nullable(int),
-  },
-  webSearch: {
-    itemId: str,
-    query: str,
-    action: nullable(tagged("type", { search: { query: str }, openPage: { url: str } })),
-  },
-  imageView: { itemId: str, path: str },
-  plan: { itemId: str, text: str },
-  compaction: { itemId: str },
-  capabilityItem: { itemId: str, capability: str, kind: str, payload: json },
+const fileChange = obj({
+  diff: str,
+  kind: literal("add", "delete", "update"),
+  movePath: nullable(str),
+  path: str,
 });
+const provenance = optional(obj({ nativeThreadId: str, provider: str }));
+/** Adds the optional `provenance` field to every variant. */
+const withProvenance = (
+  variants: Readonly<Record<string, Readonly<Record<string, Check>>>>,
+): Readonly<Record<string, Readonly<Record<string, Check>>>> =>
+  Object.fromEntries(
+    Object.entries(variants).map(([name, fields]) => [name, { ...fields, provenance }]),
+  );
+const item = tagged(
+  "type",
+  withProvenance({
+    agentMessage: { itemId: str, phase: literal("commentary", "final"), text: str },
+    capabilityItem: { capability: str, itemId: str, kind: str, payload: json },
+    command: {
+      command: str,
+      cwd: str,
+      durationMs: nullable(int),
+      exitCode: nullable(int),
+      itemId: str,
+      output: nullable(str),
+      status: executionStatus,
+    },
+    compaction: { itemId: str },
+    fileChange: { changes: arr(fileChange), itemId: str, status: executionStatus },
+    imageView: { itemId: str, path: str },
+    mcpToolCall: {
+      arguments: json,
+      durationMs: nullable(int),
+      error: nullable(str),
+      itemId: str,
+      result: nullable(obj({ content: arr(json), structuredContent: json })),
+      server: str,
+      status: callStatus,
+      tool: str,
+    },
+    plan: { itemId: str, text: str },
+    reasoning: { content: arr(str), itemId: str, summary: arr(str) },
+    toolCall: {
+      arguments: json,
+      durationMs: nullable(int),
+      itemId: str,
+      namespace: nullable(str),
+      output: nullable(str),
+      status: callStatus,
+      tool: str,
+    },
+    userMessage: { clientMessageId: nullable(str), content: arr(userContent), itemId: str },
+    webSearch: {
+      action: nullable(tagged("type", { openPage: { url: str }, search: { query: str } })),
+      itemId: str,
+      query: str,
+    },
+  }),
+);
 const turn = obj({
-  turnId: str,
-  status: literal("inProgress", "completed", "interrupted", "failed"),
-  origin: literal("user", "provider"),
-  startedAt: int,
   completedAt: nullable(int),
   error: nullable(
     obj({
-      kind: literal("provider", "authentication", "processExited", "sessionLost", "usageLimit", "unknown"),
+      kind: literal(
+        "provider",
+        "authentication",
+        "processExited",
+        "sessionLost",
+        "usageLimit",
+        "unknown",
+      ),
       message: str,
     }),
   ),
   items: arr(item),
+  origin: literal("user", "provider"),
+  provenance,
+  startedAt: int,
+  status: literal("inProgress", "completed", "interrupted", "failed"),
+  turnId: str,
+});
+
+const codewideMetadata = obj({
+  createdAt: int,
+  cwd: str,
+  origin: literal("interactive", "external"),
+  presence: tagged("type", { deleted: { deletedAt: int }, listed: { archived: bool } }),
+  recencyAt: nullable(int),
+  settings,
+  title: tagged("type", {
+    cleared: { hiddenTitle: str },
+    none: {},
+    pending: { name: str },
+  }),
+  updatedAt: int,
+});
+
+const nativeSession = obj({
+  appThreadId: str,
+  codewide: optional(codewideMetadata),
+  createdAtMs: nullable(int),
+  cwd: nullable(str),
+  fileSize: nullable(int),
+  firstPrompt: nullable(str),
+  interactive: bool,
+  lastModifiedMs: int,
+  sessionId: str,
+  summary: str,
+  title: nullable(str),
+});
+
+const nativeSubagent = obj({
+  agentId: str,
+  parentAgentId: nullable(str),
+  parentToolUseId: nullable(str),
+  turns: arr(turn),
 });
 const decision = literal("accept", "acceptForSession", "decline", "cancel");
 const runtimeRequest = tagged("type", {
   approval: {
-    kind: literal("command", "fileChange", "tool"),
-    itemId: str,
-    title: str,
-    detail: nullable(str),
     command: nullable(str),
     cwd: nullable(str),
     decisions: arr(decision),
+    detail: nullable(str),
+    itemId: str,
+    kind: literal("command", "fileChange", "tool"),
+    title: str,
   },
+  capabilityRequest: { capability: str, payload: json },
   userInput: {
     itemId: str,
     questions: arr(
       obj({
-        id: str,
-        header: str,
-        question: str,
-        options: arr(obj({ label: str, description: str })),
-        multiSelect: bool,
-        secret: bool,
         allowOther: bool,
+        header: str,
+        id: str,
+        multiSelect: bool,
+        options: arr(obj({ description: str, label: str })),
+        question: str,
+        secret: bool,
       }),
     ),
   },
-  capabilityRequest: { capability: str, payload: json },
 });
 const runtimeResponse = tagged("type", {
   approval: { decision },
-  userInput: { answers: map(obj({ answers: arr(str) })) },
   capability: { payload: json },
   error: { message: str },
+  userInput: { answers: map(obj({ answers: arr(str) })) },
 });
 const nativeRequestId: Check = (value, path, errors) => {
   if (typeof value !== "string" && !(typeof value === "number" && Number.isSafeInteger(value))) {
@@ -216,126 +308,160 @@ const nativeRequestId: Check = (value, path, errors) => {
   }
 };
 const tokenUsage = obj({
-  inputTokens: int,
   cachedInputTokens: int,
+  inputTokens: int,
   outputTokens: int,
   reasoningOutputTokens: int,
   totalTokens: int,
 });
 const delta = tagged("kind", {
-  text: { text: str },
-  reasoning: { text: str, summaryIndex: int },
-  output: { text: str },
   fileChanges: { changes: arr(fileChange) },
+  output: { text: str },
+  reasoning: { summaryIndex: int, text: str },
+  text: { text: str },
 });
 
 /** Shape check of one `AgentEvent`. */
 export const checkEvent: Check = tagged("type", {
-  "thread.updated": { thread },
-  "turn.started": { appThreadId: str, turn },
-  "turn.completed": { appThreadId: str, turn },
-  "item.started": { appThreadId: str, turnId: str, item },
-  "item.delta": { appThreadId: str, turnId: str, itemId: str, delta },
-  "item.completed": { appThreadId: str, turnId: str, item },
-  "request.opened": { appThreadId: str, turnId: str, requestId: nativeRequestId, request: runtimeRequest },
-  "request.resolved": {
-    appThreadId: str,
-    requestId: nativeRequestId,
-    reason: literal("responded", "cancelled", "turnEnded", "providerRestarted"),
-  },
-  "usage.updated": {
-    appThreadId: str,
-    turnId: str,
-    last: tokenUsage,
-    total: tokenUsage,
-    contextWindow: nullable(int),
-  },
+  "capability.event": { appThreadId: nullable(str), capability: str, payload: json },
+  "diff.updated": { appThreadId: str, diff: str, turnId: str },
+  "item.completed": { appThreadId: str, item, turnId: str },
+  "item.delta": { appThreadId: str, delta, itemId: str, turnId: str },
+  "item.started": { appThreadId: str, item, turnId: str },
   "plan.updated": {
     appThreadId: str,
-    turnId: str,
     explanation: nullable(str),
-    plan: arr(obj({ step: str, status: literal("pending", "inProgress", "completed") })),
+    plan: arr(obj({ status: literal("pending", "inProgress", "completed"), step: str })),
+    turnId: str,
   },
-  "diff.updated": { appThreadId: str, turnId: str, diff: str },
-  "capability.event": { appThreadId: nullable(str), capability: str, payload: json },
+  "request.opened": {
+    appThreadId: str,
+    request: runtimeRequest,
+    requestId: nativeRequestId,
+    turnId: str,
+  },
+  "request.resolved": {
+    appThreadId: str,
+    reason: literal("responded", "cancelled", "turnEnded", "providerRestarted"),
+    requestId: nativeRequestId,
+  },
+  "thread.updated": { thread },
+  "turn.completed": { appThreadId: str, turn },
+  "turn.started": { appThreadId: str, turn },
+  "usage.updated": {
+    appThreadId: str,
+    contextWindow: nullable(int),
+    last: tokenUsage,
+    total: tokenUsage,
+    turnId: str,
+  },
 });
 
-const sortWindow = obj({ lower: nullable(int), lowerInclusive: bool, upper: nullable(int), upperInclusive: bool });
+const sortWindow = obj({
+  lower: nullable(int),
+  lowerInclusive: bool,
+  upper: nullable(int),
+  upperInclusive: bool,
+});
 const sortDirection = literal("asc", "desc");
 
-const operationChecks: Readonly<Record<OperationName, { readonly params: Check; readonly result: Check }>> = {
-  initialize: {
-    params: obj({ protocol: literal("codewide-agent"), protocolVersion: int, client: obj({ name: str, version: str }) }),
-    result: obj({
-      protocolVersion: literal(1),
-      provider: obj({ id: str, displayName: str, modelProvider: str, version: str }),
-      capabilities: capabilitySet,
-      account: nullable(obj({ authenticated: bool, label: nullable(str) })),
-    }),
+const operationChecks: Readonly<
+  Record<OperationName, { readonly params: Check; readonly result: Check }>
+> = {
+  "capability.invoke": {
+    params: obj({ capability: str, method: str, params: json }),
+    result: obj({ result: json }),
   },
   "catalog.models": {
     params: emptyObject,
     result: obj({
       models: arr(
         obj({
-          id: str,
-          model: str,
-          displayName: str,
-          description: str,
-          isDefault: bool,
-          hidden: bool,
-          efforts: arr(obj({ effort: str, description: str })),
           defaultEffort: nullable(str),
+          description: str,
+          displayName: str,
+          efforts: arr(obj({ description: str, effort: str })),
+          hidden: bool,
+          id: str,
           inputModalities: arr(literal("text", "image")),
+          isDefault: bool,
+          model: str,
         }),
       ),
     }),
   },
   "catalog.permissionProfiles": {
     params: emptyObject,
-    result: obj({ profiles: arr(obj({ id: str, displayName: str, description: str })) }),
+    result: obj({ profiles: arr(obj({ description: str, displayName: str, id: str })) }),
   },
+  initialize: {
+    params: obj({
+      client: obj({ name: str, version: str }),
+      protocol: literal("codewide-agent"),
+      protocolVersion: int,
+    }),
+    result: obj({
+      account: nullable(obj({ authenticated: bool, label: nullable(str) })),
+      capabilities: capabilitySet,
+      protocolVersion: literal(1),
+      provider: obj({ displayName: str, id: str, modelProvider: str, version: str }),
+    }),
+  },
+  "nativeSession.list": {
+    params: obj({ cursor: nullable(str), dir: nullable(str), limit: int }),
+    result: obj({ nextCursor: nullable(str), sessions: arr(nativeSession) }),
+  },
+  "nativeSession.read": {
+    params: obj({ sessionId: str }),
+    result: obj({ session: nativeSession, subagents: arr(nativeSubagent), turns: arr(turn) }),
+  },
+  "request.respond": {
+    params: obj({ appThreadId: str, requestId: nativeRequestId, response: runtimeResponse }),
+    result: emptyObject,
+  },
+  "thread.compact": { params: obj({ appThreadId: str }), result: emptyObject },
   "thread.create": {
     params: obj({ appThreadId: nullable(str), cwd: str, settings }),
     result: obj({ thread }),
   },
-  "thread.read": {
-    params: obj({ appThreadId: str }),
-    result: obj({ thread, activeTurnId: nullable(str) }),
-  },
   "thread.list": {
     params: obj({
       archived: bool,
-      cwd: nullable(str),
-      searchTerm: nullable(str),
-      sortKey: literal("createdAt", "updatedAt", "recencyAt"),
-      sortDirection,
-      window: nullable(sortWindow),
       cursor: nullable(str),
+      cwd: nullable(str),
       limit: int,
+      searchTerm: nullable(str),
+      sortDirection,
+      sortKey: literal("createdAt", "updatedAt", "recencyAt"),
+      window: nullable(sortWindow),
     }),
-    result: obj({ threads: arr(thread), nextCursor: nullable(str) }),
+    result: obj({ nextCursor: nullable(str), threads: arr(thread) }),
+  },
+  "thread.owns": { params: obj({ appThreadId: str }), result: obj({ owned: bool }) },
+  "thread.read": {
+    params: obj({ appThreadId: str }),
+    result: obj({ activeTurnId: nullable(str), thread }),
   },
   "thread.turns": {
     params: obj({
       appThreadId: str,
       cursor: nullable(str),
+      itemsView: literal("notLoaded", "summary", "full"),
       limit: int,
       sortDirection,
-      itemsView: literal("notLoaded", "summary", "full"),
     }),
-    result: obj({ turns: arr(turn), nextCursor: nullable(str) }),
+    result: obj({ nextCursor: nullable(str), turns: arr(turn) }),
   },
   "thread.update": {
     params: obj({
       appThreadId: str,
       change: tagged("type", {
-        name: { name: nullable(str) },
         archived: { archived: bool },
         deleted: {},
+        name: { name: nullable(str) },
         settings: {
-          model: nullable(str),
           effort: nullable(str),
+          model: nullable(str),
           permissionProfile: nullable(str),
           serviceTier: nullable(str),
         },
@@ -343,24 +469,22 @@ const operationChecks: Readonly<Record<OperationName, { readonly params: Check; 
     }),
     result: obj({ thread: nullable(thread) }),
   },
-  "thread.owns": { params: obj({ appThreadId: str }), result: obj({ owned: bool }) },
-  "thread.compact": { params: obj({ appThreadId: str }), result: emptyObject },
-  "turn.start": {
-    params: obj({ appThreadId: str, clientMessageId: nullable(str), input: arr(userContent) }),
-    result: tagged("type", { started: { turnId: str }, busy: { activeTurnId: str } }),
-  },
-  "turn.steer": {
-    params: obj({ appThreadId: str, expectedTurnId: str, clientMessageId: nullable(str), input: arr(userContent) }),
-    result: obj({ turnId: str }),
-  },
-  "turn.interrupt": { params: obj({ appThreadId: str, turnId: nullable(str) }), result: emptyObject },
-  "request.respond": {
-    params: obj({ appThreadId: str, requestId: nativeRequestId, response: runtimeResponse }),
+  "turn.interrupt": {
+    params: obj({ appThreadId: str, turnId: nullable(str) }),
     result: emptyObject,
   },
-  "capability.invoke": {
-    params: obj({ capability: str, method: str, params: json }),
-    result: obj({ result: json }),
+  "turn.start": {
+    params: obj({ appThreadId: str, clientMessageId: nullable(str), input: arr(userContent) }),
+    result: tagged("type", { busy: { activeTurnId: str }, started: { turnId: str } }),
+  },
+  "turn.steer": {
+    params: obj({
+      appThreadId: str,
+      clientMessageId: nullable(str),
+      expectedTurnId: str,
+      input: arr(userContent),
+    }),
+    result: obj({ turnId: str }),
   },
 };
 
@@ -370,42 +494,61 @@ const rpcId: Check = (value, path, errors) => {
   }
 };
 
-const isOperationName = (value: unknown): value is OperationName =>
-  typeof value === "string" && (OPERATION_NAMES as readonly string[]).includes(value);
+const OPERATION_NAME_SET: ReadonlySet<unknown> = new Set<unknown>(OPERATION_NAMES);
+
+const isOperationName = (value: unknown): value is OperationName => OPERATION_NAME_SET.has(value);
+
+const checkRequest = (
+  value: Readonly<Record<string, unknown>>,
+  errors: string[],
+): readonly string[] => {
+  const method = value["method"];
+  if (method === "event") {
+    obj({ method: str, params: checkEvent })(value, "$", errors);
+    return errors;
+  }
+  if (method === "initialized") {
+    obj({ method: str })(value, "$", errors);
+    return errors;
+  }
+  if (!isOperationName(method)) {
+    return [`$.method: unknown operation ${String(method)}`];
+  }
+  obj({ id: rpcId, method: str, params: operationChecks[method].params })(value, "$", errors);
+  return errors;
+};
+
+const checkError: Check = obj({
+  error: obj({
+    code: int,
+    data: nullable(obj({ capability: nullable(str), provider: nullable(str) })),
+    message: str,
+  }),
+  id: rpcId,
+});
 
 /**
  * Checks one protocol message. Responses are checked against the result of
  * `respondsTo`, the method of the request they answer.
  */
-export function checkMessage(value: unknown, respondsTo: OperationName | null = null): readonly string[] {
+export function checkMessage(
+  value: unknown,
+  respondsTo: OperationName | null = null,
+): readonly string[] {
   const errors: string[] = [];
-  if (!isRecord(value)) return ["$: expected object"];
-  if (value["method"] === "event") {
-    obj({ method: str, params: checkEvent })(value, "$", errors);
-    return errors;
-  }
-  if (value["method"] === "initialized") {
-    obj({ method: str })(value, "$", errors);
-    return errors;
+  if (!isRecord(value)) {
+    return ["$: expected object"];
   }
   if ("method" in value) {
-    const method = value["method"];
-    if (!isOperationName(method)) return [`$.method: unknown operation ${String(method)}`];
-    obj({ id: rpcId, method: str, params: operationChecks[method].params })(value, "$", errors);
-    return errors;
+    return checkRequest(value, errors);
   }
   if ("error" in value) {
-    obj({
-      id: rpcId,
-      error: obj({
-        code: int,
-        message: str,
-        data: nullable(obj({ capability: nullable(str), provider: nullable(str) })),
-      }),
-    })(value, "$", errors);
+    checkError(value, "$", errors);
     return errors;
   }
-  if (respondsTo === null) return ["$: a response needs the operation it answers"];
+  if (respondsTo === null) {
+    return ["$: a response needs the operation it answers"];
+  }
   obj({ id: rpcId, result: operationChecks[respondsTo].result })(value, "$", errors);
   return errors;
 }

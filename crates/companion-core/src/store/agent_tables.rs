@@ -13,6 +13,9 @@ const AGENT_THREAD_BINDINGS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("agent_thread_bindings");
 /// Layer metadata such as `agent_bindings_backfill_v1:<provider>` markers.
 const AGENT_META: TableDefinition<&str, &[u8]> = TableDefinition::new("agent_meta");
+/// Native thread id of a non-first binding segment → its app thread id.
+const AGENT_CONTINUATIONS: TableDefinition<&str, &str> =
+    TableDefinition::new("agent_thread_continuations");
 
 /// Outcome of an insert-if-absent write.
 #[derive(Debug, Eq, PartialEq)]
@@ -25,6 +28,7 @@ pub enum BindingWrite {
 pub(super) fn create(write: &WriteTransaction) -> Result<(), StoreError> {
     write.open_table(AGENT_THREAD_BINDINGS)?;
     write.open_table(AGENT_META)?;
+    write.open_table(AGENT_CONTINUATIONS)?;
     Ok(())
 }
 
@@ -66,6 +70,84 @@ impl IndexStore {
         }
         write.commit()?;
         Ok(outcomes)
+    }
+
+    /// Rewrites binding records in one transaction: `upgrade` returns the
+    /// new bytes of a record that changes, `None` otherwise. Returns how
+    /// many records changed.
+    ///
+    /// # Errors
+    /// Returns an error when the transaction fails or `upgrade` rejects a
+    /// record; no record changes then.
+    pub fn agent_bindings_upgrade<E: From<StoreError>>(
+        &self,
+        upgrade: impl Fn(&[u8]) -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<usize, E> {
+        let write = self.database.begin_write().map_err(StoreError::from)?;
+        let mut changed = 0;
+        {
+            let mut table = write
+                .open_table(AGENT_THREAD_BINDINGS)
+                .map_err(StoreError::from)?;
+            let mut updates = Vec::new();
+            for entry in table.iter().map_err(StoreError::from)? {
+                let (key, value) = entry.map_err(StoreError::from)?;
+                if let Some(next) = upgrade(value.value())? {
+                    updates.push((key.value().to_owned(), next));
+                }
+            }
+            for (key, value) in updates {
+                table
+                    .insert(key.as_str(), value.as_slice())
+                    .map_err(StoreError::from)?;
+                changed += 1;
+            }
+        }
+        write.commit().map_err(StoreError::from)?;
+        Ok(changed)
+    }
+
+    /// Replaces one binding record and indexes the native ids of its
+    /// non-first segments, in one transaction.
+    ///
+    /// # Errors
+    /// Returns an error when the transaction fails.
+    pub fn agent_binding_replace(
+        &self,
+        app_thread_id: &str,
+        record: &[u8],
+        continuations: &[&str],
+    ) -> Result<(), StoreError> {
+        let write = self.database.begin_write()?;
+        {
+            write
+                .open_table(AGENT_THREAD_BINDINGS)?
+                .insert(app_thread_id, record)?;
+            let mut table = write.open_table(AGENT_CONTINUATIONS)?;
+            for native in continuations {
+                table.insert(*native, app_thread_id)?;
+            }
+        }
+        write.commit()?;
+        Ok(())
+    }
+
+    /// Every native thread id that continues an app thread (a non-first
+    /// segment), with its app thread id.
+    ///
+    /// # Errors
+    /// Returns an error when the index cannot be read.
+    pub fn agent_continuations(&self) -> Result<Vec<(String, String)>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(AGENT_CONTINUATIONS)?;
+        table
+            .iter()?
+            .map(|entry| {
+                entry
+                    .map(|(native, app)| (native.value().to_owned(), app.value().to_owned()))
+                    .map_err(StoreError::from)
+            })
+            .collect()
     }
 
     /// Reads one agent-layer metadata record.

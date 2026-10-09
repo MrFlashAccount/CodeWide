@@ -1,0 +1,7 @@
+{
+  "extends": "@sergeigarin/hygene/tsconfig.node.json",
+  "compilerOptions": {
+    "rootDir": ".."
+  },
+  "include": ["../src/**/*.ts", "./**/*.ts"]
+}

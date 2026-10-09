@@ -6,11 +6,12 @@
 //! suppresses the provider badge. The configuration loader at the bottom only
 //! parses `agent-providers.json`; mapping its provider ids to adapters is
 //! `build_registry` in `agent/providers/mod.rs`, the only code outside
-//! `providers/<id>/` that branches on a provider id. Everywhere else
+//! the adapter crates that branches on a provider id. Everywhere else
 //! providers are selected by binding or by capability.
 
 use std::{path::Path, sync::Arc};
 
+use agent_core::usage::UsagePricing;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -116,6 +117,17 @@ impl ProviderRegistry {
     #[must_use]
     pub fn is_multi_provider(&self) -> bool {
         self.providers.len() > 1
+    }
+
+    /// The enabled providers' price tables in registry order.
+    #[must_use]
+    pub fn usage_pricing(&self) -> UsagePricing {
+        UsagePricing::new(
+            self.providers
+                .iter()
+                .filter_map(|provider| provider.usage_pricing())
+                .collect(),
+        )
     }
 
     #[must_use]

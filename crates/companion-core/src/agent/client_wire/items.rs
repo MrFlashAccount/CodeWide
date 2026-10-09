@@ -185,6 +185,7 @@ pub fn item(item: &AgentItem) -> Value {
             item_id,
             client_message_id,
             content,
+            ..
         } => json!({
             "type": "userMessage",
             "id": item_id.as_str(),
@@ -195,6 +196,7 @@ pub fn item(item: &AgentItem) -> Value {
             item_id,
             text,
             phase,
+            ..
         } => json!({
             "type": "agentMessage",
             "id": item_id.as_str(),
@@ -211,6 +213,7 @@ pub fn item(item: &AgentItem) -> Value {
             item_id,
             summary,
             content,
+            ..
         } => json!({
             "type": "reasoning",
             "id": item_id.as_str(),
@@ -225,6 +228,7 @@ pub fn item(item: &AgentItem) -> Value {
             output,
             exit_code,
             duration_ms,
+            ..
         } => json!({
             "type": "commandExecution",
             "id": item_id.as_str(),
@@ -244,6 +248,7 @@ pub fn item(item: &AgentItem) -> Value {
             item_id,
             changes,
             status,
+            ..
         } => json!({
             "type": "fileChange",
             "id": item_id.as_str(),
@@ -259,6 +264,7 @@ pub fn item(item: &AgentItem) -> Value {
             result,
             error,
             duration_ms,
+            ..
         } => json!({
             "type": "mcpToolCall",
             "id": item_id.as_str(),
@@ -285,6 +291,7 @@ pub fn item(item: &AgentItem) -> Value {
             output,
             status,
             duration_ms,
+            ..
         } => json!({
             "type": "dynamicToolCall",
             "id": item_id.as_str(),
@@ -304,6 +311,7 @@ pub fn item(item: &AgentItem) -> Value {
             item_id,
             query,
             action,
+            ..
         } => json!({
             "type": "webSearch",
             "id": item_id.as_str(),
@@ -315,13 +323,13 @@ pub fn item(item: &AgentItem) -> Value {
                 WebSearchAction::OpenPage { url } => json!({"type": "openPage", "url": url}),
             }),
         }),
-        AgentItem::ImageView { item_id, path } => {
+        AgentItem::ImageView { item_id, path, .. } => {
             json!({"type": "imageView", "id": item_id.as_str(), "path": path})
         }
-        AgentItem::Plan { item_id, text } => {
+        AgentItem::Plan { item_id, text, .. } => {
             json!({"type": "plan", "id": item_id.as_str(), "text": text})
         }
-        AgentItem::Compaction { item_id } => {
+        AgentItem::Compaction { item_id, .. } => {
             json!({"type": "contextCompaction", "id": item_id.as_str()})
         }
         AgentItem::CapabilityItem {
@@ -329,6 +337,7 @@ pub fn item(item: &AgentItem) -> Value {
             capability,
             kind,
             payload,
+            ..
         } => json!({
             "type": "dynamicToolCall",
             "id": item_id.as_str(),

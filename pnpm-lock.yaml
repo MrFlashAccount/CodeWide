@@ -320,7 +320,7 @@ importers:
         specifier: 1.32.5
         version: 1.32.5
 
-  apps/claude-sidecar:
+  crates/agent-provider-claude/host:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.295
@@ -337,9 +337,40 @@ importers:
     devDependencies:
       '@codewide/agent-protocol':
         specifier: workspace:*
-        version: link:../../packages/agent-protocol
+        version: link:../../../packages/agent-protocol
+      '@sergeigarin/hygene':
+        specifier: github:MrFlashAccount/hygiene#828e4a23b913b010ac314964b32aa903870fa621
+        version: https://codeload.github.com/MrFlashAccount/hygiene/tar.gz/828e4a23b913b010ac314964b32aa903870fa621(@types/node@24.13.3)(jiti@2.7.0)(oxlint-tsgolint@7.0.2001)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(typescript@7.0.2)
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      oxfmt:
+        specifier: 0.64.0
+        version: 0.64.0
+      oxlint:
+        specifier: 1.79.0
+        version: 1.79.0(oxlint-tsgolint@7.0.2001)
+      oxlint-tsgolint:
+        specifier: 7.0.2001
+        version: 7.0.2001
 
-  packages/agent-protocol: {}
+  packages/agent-protocol:
+    devDependencies:
+      '@sergeigarin/hygene':
+        specifier: github:MrFlashAccount/hygiene#828e4a23b913b010ac314964b32aa903870fa621
+        version: https://codeload.github.com/MrFlashAccount/hygiene/tar.gz/828e4a23b913b010ac314964b32aa903870fa621(@types/node@24.13.3)(jiti@2.7.0)(oxlint-tsgolint@7.0.2001)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(typescript@7.0.2)
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      oxfmt:
+        specifier: 0.64.0
+        version: 0.64.0
+      oxlint:
+        specifier: 1.79.0
+        version: 1.79.0(oxlint-tsgolint@7.0.2001)
+      oxlint-tsgolint:
+        specifier: 7.0.2001
+        version: 7.0.2001
 
   packages/app-server-client:
     dependencies:

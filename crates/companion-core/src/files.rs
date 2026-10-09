@@ -188,6 +188,24 @@ struct ContentRange {
     total: u64,
 }
 
+#[async_trait::async_trait]
+impl companion_host::files::PreviewFiles for FileService {
+    async fn observe_preview_paths(&self, paths: Vec<PathBuf>) {
+        Self::observe_preview_paths(self, paths).await;
+    }
+
+    async fn observe_preview_paths_within(&self, root: PathBuf, paths: Vec<PathBuf>) {
+        Self::observe_preview_paths_within(self, root, paths).await;
+    }
+
+    async fn mark_thread_attachments_deleted(
+        &self,
+        thread_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Self::mark_thread_attachments_deleted(self, thread_id).await?)
+    }
+}
+
 impl FileService {
     /// Creates a scoped file service from canonical roots.
     ///
@@ -361,41 +379,6 @@ impl FileService {
             .collect::<Vec<_>>()
             .await;
         self.record_observed_preview_paths(canonical).await;
-    }
-
-    /// Resolves one reported file path and grants its canonical target to the
-    /// private preview endpoint. Read access is intentionally host-wide for an
-    /// authenticated device; the workspace is retained only as source context.
-    pub(crate) async fn preview_metadata_within(
-        &self,
-        _root: PathBuf,
-        path: PathBuf,
-    ) -> Result<(u64, String), FileError> {
-        self.host_preview_metadata(path).await
-    }
-
-    /// Resolves one explicitly requested host file and grants its exact canonical
-    /// target to the private preview endpoint. Callers must enforce terminal-level
-    /// authorization before invoking this capability.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the path is missing, cannot be inspected, or does
-    /// not resolve to a regular file.
-    pub(crate) async fn host_preview_metadata(
-        &self,
-        path: PathBuf,
-    ) -> Result<(u64, String), FileError> {
-        let canonical = self
-            .canonical_preview_path(&path)
-            .await
-            .ok_or_else(|| client(StatusCode::NOT_FOUND, "file_not_found"))?;
-        let metadata = tokio::fs::metadata(&canonical).await?;
-        if !metadata.is_file() {
-            return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
-        }
-        self.record_observed_preview_paths(vec![canonical]).await;
-        Ok((metadata.len(), content_type(&path).to_owned()))
     }
 
     async fn canonical_preview_path(&self, path: &Path) -> Option<PathBuf> {

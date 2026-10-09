@@ -1,10 +1,11 @@
 #!/bin/sh
-# Installs the CodeWide Claude sidecar on this host and registers it as the
-# `claude` provider in the companion's agent-providers.json.
+# Installs the CodeWide Claude agent host on this host and registers it as
+# the `claude` provider in the companion's agent-providers.json.
 #
 # What it does:
-#   1. copies apps/claude-sidecar/dist and the pinned host manifest + lock
-#      into the install directory;
+#   1. copies crates/agent-provider-claude/host/dist and the pinned install
+#      manifest + lock (crates/agent-provider-claude/host/install) into the
+#      install directory;
 #   2. runs `npm ci --omit=optional --ignore-scripts` there (the SDK's bundled
 #      platform CLI binaries are never installed; the user's own `claude`
 #      executable is used);
@@ -12,33 +13,44 @@
 #   4. atomically writes <state-dir>/agent-providers.json, replacing only
 #      `providers.claude` and keeping every other key.
 #
-# It builds nothing (run `pnpm --filter @codewide/claude-sidecar build`
+# It builds nothing (run `pnpm --filter @codewide/claude-agent-host build`
 # first), never restarts a service and never installs a systemd drop-in:
 # the E-HARDEN experiment has not run yet. Restart the companion yourself to
 # pick up the new configuration. Remove `providers.claude` from the file and
-# restart to disable Claude again; bindings and the journal stay.
+# restart to disable Claude again; bindings and the host's thread metadata
+# stay.
+#
+# Migration from the former "Claude sidecar" install: the config keys
+# (`sidecarEntry`, `journalDirectory`) are unchanged because the companion
+# reads them. The default install directory moved from
+# ~/.local/lib/codewide/claude-sidecar to ~/.local/lib/codewide/claude-agent-host;
+# re-running this script points `sidecarEntry` at the new directory, and the
+# old one can be deleted after the companion restarted. The metadata
+# directory default (<state-dir>/claude-journal) is unchanged; the host
+# converts the version-1 journal there on its first start.
 set -eu
 
 usage() {
   cat <<'EOF'
 Usage: install-claude-provider.sh --node <abs> --claude <abs> [options]
 
-  --node <abs>                 Node.js >= 22 executable that runs the sidecar
+  --node <abs>                 Node.js >= 22 executable that runs the host
   --claude <abs>               the user's signed-in `claude` executable
-  --install-dir <abs>          default: ~/.local/lib/codewide/claude-sidecar
+  --install-dir <abs>          default: ~/.local/lib/codewide/claude-agent-host
   --state-dir <abs>            companion state directory
                                default: ~/.local/state/codewide/companion
-  --journal-dir <abs>          default: <state-dir>/claude-journal
+  --journal-dir <abs>          host metadata directory (config key journalDirectory)
+                               default: <state-dir>/claude-journal
   --idle-release-minutes <n>   5..240, default 30
   --dry-run                    print the plan and the config, change nothing
 EOF
 }
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-sidecar_root="$repo_root/apps/claude-sidecar"
+host_root="$repo_root/crates/agent-provider-claude/host"
 node=
 claude=
-install_dir="${HOME}/.local/lib/codewide/claude-sidecar"
+install_dir="${HOME}/.local/lib/codewide/claude-agent-host"
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/codewide/companion"
 journal_dir=
 idle_minutes=30
@@ -92,8 +104,8 @@ fi
 
 [ -x "$node" ] || { printf 'not executable: %s\n' "$node" >&2; exit 1; }
 [ -x "$claude" ] || { printf 'not executable: %s\n' "$claude" >&2; exit 1; }
-[ -f "$sidecar_root/dist/main.js" ] || {
-  printf '%s\n' 'apps/claude-sidecar/dist is missing; run: pnpm --filter @codewide/claude-sidecar build' >&2
+[ -f "$host_root/dist/main.js" ] || {
+  printf '%s\n' 'crates/agent-provider-claude/host/dist is missing; run: pnpm --filter @codewide/claude-agent-host build' >&2
   exit 1
 }
 node_major=$("$node" -p 'process.versions.node.split(".")[0]')
@@ -105,11 +117,11 @@ claude_version=$("$claude" --version)
 printf 'claude: %s\n' "$claude_version"
 
 config_path="$state_dir/agent-providers.json"
-sidecar_entry="$install_dir/dist/main.js"
+host_entry="$install_dir/dist/main.js"
 
 # Merges providers.claude into the existing config (or a new one) and prints it.
 render_config() {
-  "$node" - "$config_path" "$node" "$sidecar_entry" "$claude" "$journal_dir" "$idle_minutes" <<'EOF'
+  "$node" - "$config_path" "$node" "$host_entry" "$claude" "$journal_dir" "$idle_minutes" <<'EOF'
 const fs = require("node:fs");
 const [configPath, runtimeExecutable, sidecarEntry, claudeExecutable, journalDirectory, idle] = process.argv.slice(2);
 let config = { version: 1, primary: "codex", providers: {} };
@@ -125,7 +137,7 @@ EOF
 }
 
 if [ "$dry_run" -eq 1 ]; then
-  printf 'dry run: would install %s and %s into %s\n' "$sidecar_root/dist" "$sidecar_root/host" "$install_dir"
+  printf 'dry run: would install %s and %s into %s\n' "$host_root/dist" "$host_root/install" "$install_dir"
   printf 'dry run: would run npm ci --omit=optional --ignore-scripts in %s\n' "$install_dir"
   printf 'dry run: would write %s:\n' "$config_path"
   render_config
@@ -140,8 +152,8 @@ mkdir -p "$install_dir" "$state_dir"
 chmod 0700 "$state_dir"
 staging=$(mktemp -d "$install_dir/.staging.XXXXXX")
 trap 'rm -rf "$staging"' EXIT
-cp -R "$sidecar_root/dist" "$staging/dist"
-cp "$sidecar_root/host/package.json" "$sidecar_root/host/package-lock.json" "$staging/"
+cp -R "$host_root/dist" "$staging/dist"
+cp "$host_root/install/package.json" "$host_root/install/package-lock.json" "$staging/"
 (cd "$staging" && PATH="$(dirname -- "$node"):$PATH" "$npm_bin" ci --omit=optional --ignore-scripts --no-audit --no-fund)
 rm -rf "$install_dir/dist" "$install_dir/node_modules"
 mv "$staging/dist" "$install_dir/dist"
@@ -155,6 +167,6 @@ render_config > "$config_tmp"
 chmod 0600 "$config_tmp"
 mv "$config_tmp" "$config_path"
 
-printf 'installed Claude sidecar into %s\n' "$install_dir"
+printf 'installed the Claude agent host into %s\n' "$install_dir"
 printf 'wrote %s\n' "$config_path"
 printf '%s\n' 'note: no systemd drop-in is installed (E-HARDEN has not run); restart the companion to apply.'

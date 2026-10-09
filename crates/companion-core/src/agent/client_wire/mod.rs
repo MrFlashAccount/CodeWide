@@ -4,7 +4,8 @@
 //!
 //! - `decode` classifies client requests and decodes neutral params;
 //! - `items`, `events`, `results`, `settings` project neutral values;
-//! - `request_ids` owns the runtime request-id wire encoding;
+//! - `request_ids` is the runtime request-id wire encoding owned by
+//!   `agent-core` (the Codex adapter checks the same namespace);
 //! - `list` and `catalog` merge `thread/list`, `model/list` and
 //!   `permissionProfile/list` across providers.
 //!
@@ -18,12 +19,13 @@ pub mod gateway;
 pub mod history;
 pub mod items;
 pub mod list;
-pub mod request_ids;
 pub mod results;
 pub mod settings;
 
 #[cfg(test)]
 mod golden_tests;
+
+pub use agent_core::request_ids;
 
 use serde_json::{Value, json};
 

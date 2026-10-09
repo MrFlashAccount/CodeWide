@@ -21,72 +21,72 @@ import type {
 /** Incremental content for an item that is still in progress. */
 export type ItemDelta =
   | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "reasoning"; readonly text: string; readonly summaryIndex: number }
+  | { readonly kind: "reasoning"; readonly summaryIndex: number; readonly text: string }
   | { readonly kind: "output"; readonly text: string }
-  | { readonly kind: "fileChanges"; readonly changes: readonly FileChange[] };
+  | { readonly changes: readonly FileChange[]; readonly kind: "fileChanges" };
 
 export type AgentEvent =
-  | { readonly type: "thread.updated"; readonly thread: AgentThread }
-  | { readonly type: "turn.started"; readonly appThreadId: AppThreadId; readonly turn: AgentTurn }
-  | { readonly type: "turn.completed"; readonly appThreadId: AppThreadId; readonly turn: AgentTurn }
+  | { readonly thread: AgentThread; readonly type: "thread.updated" }
+  | { readonly appThreadId: AppThreadId; readonly turn: AgentTurn; readonly type: "turn.started" }
+  | { readonly appThreadId: AppThreadId; readonly turn: AgentTurn; readonly type: "turn.completed" }
   | {
+      readonly appThreadId: AppThreadId;
+      readonly item: AgentItem;
+      readonly turnId: TurnId;
       readonly type: "item.started";
-      readonly appThreadId: AppThreadId;
-      readonly turnId: TurnId;
-      readonly item: AgentItem;
     }
   | {
-      readonly type: "item.delta";
       readonly appThreadId: AppThreadId;
-      readonly turnId: TurnId;
-      readonly itemId: ItemId;
       readonly delta: ItemDelta;
+      readonly itemId: ItemId;
+      readonly turnId: TurnId;
+      readonly type: "item.delta";
     }
   | {
-      readonly type: "item.completed";
       readonly appThreadId: AppThreadId;
-      readonly turnId: TurnId;
       readonly item: AgentItem;
+      readonly turnId: TurnId;
+      readonly type: "item.completed";
     }
   | {
-      readonly type: "request.opened";
       readonly appThreadId: AppThreadId;
-      readonly turnId: TurnId;
-      readonly requestId: NativeRequestId;
       readonly request: RuntimeRequest;
-    }
-  | {
-      readonly type: "request.resolved";
-      readonly appThreadId: AppThreadId;
       readonly requestId: NativeRequestId;
-      readonly reason: RequestResolution;
+      readonly turnId: TurnId;
+      readonly type: "request.opened";
     }
   | {
-      readonly type: "usage.updated";
       readonly appThreadId: AppThreadId;
-      readonly turnId: TurnId;
+      readonly reason: RequestResolution;
+      readonly requestId: NativeRequestId;
+      readonly type: "request.resolved";
+    }
+  | {
+      readonly appThreadId: AppThreadId;
+      readonly contextWindow: number | null;
       readonly last: TokenUsage;
       readonly total: TokenUsage;
-      readonly contextWindow: number | null;
+      readonly turnId: TurnId;
+      readonly type: "usage.updated";
     }
   | {
-      readonly type: "plan.updated";
       readonly appThreadId: AppThreadId;
-      readonly turnId: TurnId;
       readonly explanation: string | null;
       readonly plan: readonly PlanStep[];
-    }
-  | {
-      readonly type: "diff.updated";
-      readonly appThreadId: AppThreadId;
       readonly turnId: TurnId;
-      readonly diff: string;
+      readonly type: "plan.updated";
     }
   | {
-      readonly type: "capability.event";
+      readonly appThreadId: AppThreadId;
+      readonly diff: string;
+      readonly turnId: TurnId;
+      readonly type: "diff.updated";
+    }
+  | {
       readonly appThreadId: AppThreadId | null;
       readonly capability: string;
       readonly payload: JsonValue;
+      readonly type: "capability.event";
     };
 
 export type AgentEventType = AgentEvent["type"];

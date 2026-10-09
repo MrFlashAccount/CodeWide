@@ -1,5 +1,5 @@
 //! Converts Desktop's file envelope to displayable App Server user inputs.
-//! Canonical rollout text remains untouched; only the outbound projection changes.
+//! Canonical provider history remains untouched; only the outbound projection changes.
 
 use std::path::Path;
 

@@ -28,12 +28,16 @@ use codewide_companion::{
             ThreadUpdateResult, TurnId, TurnInterruptParams, TurnOrigin, TurnStartParams,
             TurnStartResult, TurnStatus, TurnSteerParams, TurnSteerResult,
         },
-        provider::{AgentProvider, ProviderError, ProviderEvent, ProviderFence, ProviderStatus},
+        provider::{
+            AgentProvider, NativeThreadResources, ProviderError, ProviderEvent, ProviderFence,
+            ProviderStatus, SearchWindow, StoredMessageSearch,
+        },
         providers::codex::{CodexProvider, storage::CodexStorage},
         registry::ProviderRegistry,
     },
     catalog::SessionCatalog,
     history_service::HistoryService,
+    rollout_store::RolloutStore,
     server,
     store::{IndexStore, OutboxState},
     sync::SyncHub,
@@ -78,6 +82,99 @@ struct FakeNeutral {
     responses: Mutex<Vec<RequestRespondParams>>,
     events: Mutex<Option<mpsc::Receiver<ProviderEvent>>>,
     status: watch::Sender<ProviderStatus>,
+    /// Stored history of a provider with its own index (Claude-like).
+    stored: std::sync::OnceLock<Arc<FakeStored>>,
+}
+
+/// Thread resources and message search of a provider's own index.
+#[derive(Default)]
+struct FakeStored {
+    reads: Mutex<Vec<(String, String)>>,
+    observed: Mutex<Vec<String>>,
+}
+
+impl FakeStored {
+    fn reads(&self) -> Vec<(String, String)> {
+        self.reads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn observed(&self) -> Vec<String> {
+        self.observed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn record(&self, method: &str, params: &Value) {
+        self.reads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((
+                method.to_owned(),
+                params["threadId"].as_str().unwrap_or_default().to_owned(),
+            ));
+    }
+}
+
+#[async_trait]
+impl NativeThreadResources for FakeStored {
+    fn handles(&self, method: &str) -> bool {
+        method.starts_with("companion/thread") && method.ends_with("/read")
+    }
+
+    async fn read(&self, method: &str, params: &Value) -> Result<Value, String> {
+        self.record(method, params);
+        Ok(json!({"threadId": params["threadId"], "from": "fake-index"}))
+    }
+
+    fn prewarm(&self, _thread_id: &str) {}
+
+    async fn observe_event(&self, payload: &Value) {
+        self.observed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(payload["method"].as_str().unwrap_or_default().to_owned());
+    }
+
+    async fn observe_rpc_result(&self, _method: &str, _result: &Value) {}
+}
+
+#[async_trait]
+impl StoredMessageSearch for FakeStored {
+    async fn search(&self, params: &Value) -> Result<Value, String> {
+        self.record("companion/search", params);
+        Ok(
+            json!({"data": [{"messageId": 7, "threadId": "fake-hit", "turnId": "t",
+            "title": "", "project": "/work", "timestamp": "2099-01-01T00:00:00Z",
+            "sourceOffset": 1, "kind": "user_message", "excerpt": "hello"}],
+            "nextOffset": null, "indexing": false, "failedSources": 0}),
+        )
+    }
+
+    async fn context(&self, params: &Value) -> Result<Value, String> {
+        self.record("companion/search/context", params);
+        Ok(json!({"messages": [], "older": null, "newer": null}))
+    }
+
+    async fn window(&self, params: &Value) -> Result<SearchWindow, String> {
+        self.record("companion/search/window", params);
+        Ok(SearchWindow {
+            page: json!({"messages": [], "older": null, "newer": null}),
+            turns: vec![AgentTurn {
+                turn_id: TurnId::from_static("window-turn"),
+                status: TurnStatus::Completed,
+                origin: TurnOrigin::User,
+                started_at: 1,
+                completed_at: Some(2),
+                error: None,
+                items: Vec::new(),
+                provenance: None,
+            }],
+        })
+    }
 }
 
 impl FakeNeutral {
@@ -93,6 +190,7 @@ impl FakeNeutral {
                 responses: Mutex::new(Vec::new()),
                 events: Mutex::new(Some(receiver)),
                 status,
+                stored: std::sync::OnceLock::new(),
             }),
             sender,
         )
@@ -183,7 +281,21 @@ impl AgentProvider for FakeNeutral {
     }
 
     fn capabilities(&self) -> CapabilitySet {
-        neutral_capabilities()
+        let mut capabilities = neutral_capabilities();
+        let stored = self.stored.get().is_some();
+        capabilities.history_thread_resources = stored;
+        capabilities.history_message_search = stored;
+        capabilities
+    }
+
+    fn thread_resources(&self) -> Option<Arc<dyn NativeThreadResources>> {
+        let stored: Arc<dyn NativeThreadResources> = self.stored.get()?.clone();
+        Some(stored)
+    }
+
+    fn message_search(&self) -> Option<Arc<dyn StoredMessageSearch>> {
+        let stored: Arc<dyn StoredMessageSearch> = self.stored.get()?.clone();
+        Some(stored)
     }
 
     fn status(&self) -> ProviderStatus {
@@ -438,6 +550,14 @@ impl Harness {
         answer: fn(&Value) -> Value,
         prepare: impl FnOnce(&Arc<IndexStore>) -> Vec<(AppThreadId, ProviderId)>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with(answer, prepare, None).await
+    }
+
+    async fn start_with(
+        answer: fn(&Value) -> Value,
+        prepare: impl FnOnce(&Arc<IndexStore>) -> Vec<(AppThreadId, ProviderId)>,
+        stored: Option<Arc<FakeStored>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let socket_path = directory.path().join("app-server.sock");
         let upstream_path = socket_path.clone();
@@ -457,9 +577,12 @@ impl Harness {
         }
         let history = HistoryService::new(
             Arc::new(SessionCatalog::scan(directory.path())),
-            store.clone(),
+            Arc::new(RolloutStore::attach(store.database(), store.clone())?),
         );
         let (fake, events) = FakeNeutral::new();
+        if let Some(stored) = stored {
+            let _ = fake.stored.set(stored);
+        }
         let registry = ProviderRegistry::new(
             vec![
                 Arc::new(CodexProvider::new(upstream).with_storage(CodexStorage::new(history)))
@@ -709,6 +832,7 @@ async fn busy_start_stays_queued_and_is_delivered_once_after_turn_completed() ->
                 completed_at: Some(2),
                 error: None,
                 items: Vec::new(),
+                provenance: None,
             },
         })))
         .await?;
@@ -760,6 +884,81 @@ async fn missing_capability_answers_32072_without_contacting_the_provider() -> T
         assert_eq!(response["error"]["data"]["provider"], FAKE);
     }
     assert_eq!(harness.fake.calls(), before);
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_provider_index_serves_its_threads_resources_and_joins_search() -> TestResult {
+    let stored = Arc::new(FakeStored::default());
+    let mut harness =
+        Harness::start_with(default_answer, |_| Vec::new(), Some(stored.clone())).await?;
+    let thread_id = harness.new_fake_thread().await?;
+
+    let resources = harness
+        .rpc(
+            "resources",
+            "companion/threadResources/read",
+            json!({"threadId": thread_id}),
+        )
+        .await?;
+    assert_eq!(resources["result"]["from"], "fake-index");
+
+    let window = harness
+        .rpc(
+            "window",
+            "companion/search/window",
+            json!({"threadId": thread_id, "messageId": 7, "direction": "around"}),
+        )
+        .await?;
+    assert_eq!(window["result"]["turns"][0]["id"], "window-turn");
+
+    // The Codex index of this harness has no search worker: the global page
+    // still carries the provider index's hits and counts the failed source.
+    let global = harness
+        .rpc("search", "companion/search", json!({"query": "hello"}))
+        .await?;
+    assert_eq!(global["result"]["data"][0]["threadId"], "fake-hit");
+    assert_eq!(global["result"]["failedSources"], 1);
+
+    assert_eq!(
+        stored.reads(),
+        [
+            (
+                "companion/threadResources/read".to_owned(),
+                thread_id.clone()
+            ),
+            ("companion/search/window".to_owned(), thread_id.clone()),
+            ("companion/search".to_owned(), String::new()),
+        ]
+    );
+
+    harness
+        .events
+        .send(ProviderEvent::Event(Box::new(AgentEvent::TurnStarted {
+            app_thread_id: AppThreadId::parse(&thread_id).ok_or("id")?,
+            turn: AgentTurn {
+                turn_id: TurnId::from_static("turn-live"),
+                status: TurnStatus::InProgress,
+                origin: TurnOrigin::User,
+                started_at: 1,
+                completed_at: None,
+                error: None,
+                items: Vec::new(),
+                provenance: None,
+            },
+        })))
+        .await?;
+    timeout(Duration::from_secs(3), async {
+        while !stored
+            .observed()
+            .iter()
+            .any(|method| method == "turn/started")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
     harness.stop();
     Ok(())
 }
@@ -1170,7 +1369,7 @@ async fn real_sidecar_serves_threads_catalogs_and_degradation_without_a_turn() -
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let registry = ProviderRegistry::new(
         vec![

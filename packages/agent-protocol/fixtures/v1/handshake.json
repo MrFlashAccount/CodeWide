@@ -24,7 +24,7 @@
             "turns.steer": true,
             "turns.providerInitiated": true,
             "threads.hostMintedIds": true,
-            "threads.externalDiscovery": false,
+            "threads.externalDiscovery": true,
             "threads.compact": true,
             "threads.fork": false,
             "requests.userInput": true,

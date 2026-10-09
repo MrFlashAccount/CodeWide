@@ -18,8 +18,9 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use codewide_companion::{
-    catalog::SessionCatalog, dictation::DictationService, history_service::HistoryService, server,
-    store::IndexStore, sync::SyncHub, upstream::UpstreamHandle,
+    catalog::SessionCatalog, dictation::DictationService, history_service::HistoryService,
+    rollout_store::RolloutStore, server, store::IndexStore, sync::SyncHub,
+    upstream::UpstreamHandle,
 };
 use futures_util::{SinkExt, StreamExt};
 use http::HeaderValue;
@@ -71,7 +72,7 @@ async fn dictation_stays_local_retries_and_replays_completed_result()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),

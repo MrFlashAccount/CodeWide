@@ -10,15 +10,19 @@ development machines.
 ## Architecture
 
 The Android client talks to the companion over the `/v1` sync protocol. The
-companion talks to coding agents only through its agent provider layer
-(`crates/companion-core/src/agent/`): a provider trait, the neutral versioned
-`codewide-agent` protocol (`packages/agent-protocol`) and declared
-capabilities. Codex (the in-process App Server adapter) and Claude (the
-optional `apps/claude-sidecar` over the user's own `claude` CLI) are equal
-providers, and every thread is bound to one provider for its life. In phase 1
-the client keeps its Codex-shaped wire; the companion projects neutral events
-to it in one place and the client hides features a thread's provider does not
-declare. See [docs/agent-providers.md](docs/agent-providers.md).
+companion talks to coding agents only through its agent provider layer: the
+neutral core (`crates/agent-core`: provider trait, model mirror, usage
+accounting), the versioned `codewide-agent` protocol
+(`packages/agent-protocol`), declared capabilities and one crate per
+provider. Codex (`crates/agent-provider-codex`, the in-process App Server
+adapter with its storage) and Claude (`crates/agent-provider-claude`: a Rust
+adapter plus its Node child, the Claude agent host in `host/`, over the
+user's own `claude` CLI) are equal providers, and every thread is bound to
+one provider for its life. Claude history is read from Claude's own session
+store, so sessions started with `claude` in a terminal appear next to
+CodeWide's threads. In phase 1 the client keeps its Codex-shaped wire; the
+companion projects neutral events to it in one place and the client hides
+features a thread's provider does not declare. See [docs/agent-providers.md](docs/agent-providers.md).
 
 ## Current executable surface
 

@@ -9,6 +9,7 @@ use codewide_companion::{
         MAX_PROJECTED_TURN_BYTES, PrivateContentService,
     },
     history_service::HistoryService,
+    rollout_store::RolloutStore,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
@@ -100,7 +101,7 @@ async fn large_text_and_inline_images_use_private_bounded_content()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),

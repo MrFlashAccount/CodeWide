@@ -1,5 +1,5 @@
 //! Semantic history pages (`companion/thread/history/before|after`) for
-//! providers without Codex rollout storage, built from neutral
+//! providers without native history storage, built from neutral
 //! `thread.turns` pages in the same shape the client validates: summary
 //! turns in chronological order, `hasMore`, and an opaque `sourceWitness`.
 //!

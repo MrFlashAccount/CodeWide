@@ -1,106 +1,18 @@
+//! Live token usage of every thread, projected from client-wire
+//! notifications during sync ingest. Accounting types and the price-table
+//! contract live in `agent_core::usage`; prices come from the enabled
+//! providers' tables (`UsagePricing`) and are never persisted.
+
 use std::{collections::HashMap, sync::Arc};
 
+use agent_core::usage::{
+    ModelPricing, ReplayPricing, RequestUsage, TokenCounts, TurnUsageProjection, UsagePricing,
+    UsageScopeProjection, UsageStatus, normalize_model,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::store::{IndexStore, StoreError};
-
-pub const PRICING_VERSION: &str = "openai-api-2026-10-02";
-const LONG_CONTEXT_INPUT_TOKENS: u64 = 272_000;
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenCounts {
-    pub total_tokens: u64,
-    pub input_tokens: u64,
-    pub cached_input_tokens: u64,
-    pub cache_write_input_tokens: u64,
-    pub output_tokens: u64,
-    pub reasoning_output_tokens: u64,
-}
-
-impl TokenCounts {
-    #[must_use]
-    pub fn saturating_sub(self, baseline: Self) -> Self {
-        Self {
-            total_tokens: self.total_tokens.saturating_sub(baseline.total_tokens),
-            input_tokens: self.input_tokens.saturating_sub(baseline.input_tokens),
-            cached_input_tokens: self
-                .cached_input_tokens
-                .saturating_sub(baseline.cached_input_tokens),
-            cache_write_input_tokens: self
-                .cache_write_input_tokens
-                .saturating_sub(baseline.cache_write_input_tokens),
-            output_tokens: self.output_tokens.saturating_sub(baseline.output_tokens),
-            reasoning_output_tokens: self
-                .reasoning_output_tokens
-                .saturating_sub(baseline.reasoning_output_tokens),
-        }
-    }
-
-    #[must_use]
-    pub fn is_monotonic_from(self, baseline: Self) -> bool {
-        self.total_tokens >= baseline.total_tokens
-            && self.input_tokens >= baseline.input_tokens
-            && self.cached_input_tokens >= baseline.cached_input_tokens
-            && self.cache_write_input_tokens >= baseline.cache_write_input_tokens
-            && self.output_tokens >= baseline.output_tokens
-            && self.reasoning_output_tokens >= baseline.reasoning_output_tokens
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelPrice {
-    pub input: f64,
-    pub cached_input: f64,
-    pub output: f64,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CostProjection {
-    pub model: String,
-    pub pricing_version: String,
-    pub currency: String,
-    pub basis: String,
-    pub price: ModelPrice,
-    pub uncached_input_tokens: u64,
-    pub cached_input_tokens: u64,
-    pub cache_write_input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_hit_percent: f64,
-    pub uncached_input_cost_usd: f64,
-    pub cached_input_cost_usd: f64,
-    pub cache_write_input_cost_usd: f64,
-    pub output_cost_usd: f64,
-    pub total_cost_usd: f64,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageScopeProjection {
-    pub tokens: TokenCounts,
-    pub cost: Option<CostProjection>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TurnUsageProjection {
-    pub version: u8,
-    pub status: UsageStatus,
-    pub model_context_window: Option<u64>,
-    pub latest_request: TokenCounts,
-    pub turn: UsageScopeProjection,
-    pub thread: UsageScopeProjection,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum UsageStatus {
-    Live,
-    Final,
-}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,20 +21,6 @@ struct PersistedThreadUsage {
     total: TokenCounts,
     has_total: bool,
     turns: HashMap<String, PersistedTurnUsage>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct RequestUsage {
-    model: String,
-    tokens: TokenCounts,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ReplayPricing {
-    model: Option<String>,
-    thread_model: Option<String>,
-    turn_requests: Option<Vec<RequestUsage>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -141,14 +39,16 @@ struct PersistedTurnUsage {
 
 pub struct LiveUsageProjector {
     store: Arc<IndexStore>,
+    pricing: UsagePricing,
     threads: HashMap<String, PersistedThreadUsage>,
 }
 
 impl LiveUsageProjector {
     #[must_use]
-    pub fn new(store: Arc<IndexStore>) -> Self {
+    pub fn new(store: Arc<IndexStore>, pricing: UsagePricing) -> Self {
         Self {
             store,
+            pricing,
             threads: HashMap::new(),
         }
     }
@@ -278,7 +178,7 @@ impl LiveUsageProjector {
                     turn.model_context_window = model_context_window;
                     state.total = total;
                     state.has_total = true;
-                    projection = Some(project(&state, turn_id));
+                    projection = Some(project(&state, turn_id, &self.pricing));
                 }
             }
             "turn/completed" => {
@@ -290,7 +190,7 @@ impl LiveUsageProjector {
                     && let Some(turn) = state.turns.get_mut(turn_id)
                 {
                     turn.status = UsageStatus::Final;
-                    projection = Some(project(&state, turn_id));
+                    projection = Some(project(&state, turn_id, &self.pricing));
                 }
             }
             _ => return Ok(None),
@@ -344,157 +244,11 @@ impl LiveUsageProjector {
     }
 }
 
-/// Stores replay notifications without derived prices. A legacy journal entry
-/// has no pricing inputs and is delivered without its stale cached prices.
-pub(crate) fn prepare_replay_payload(mut payload: Value, pricing: Option<Value>) -> Value {
-    visit_pricing_fields(&mut payload, None);
-    if let Some(pricing) = pricing
-        && let Some(object) = payload.as_object_mut()
-    {
-        object.insert("codewideReplayPricing".into(), pricing);
-    }
-    payload
-}
-
-pub(crate) fn price_replay_payload(mut payload: Value) -> Value {
-    let pricing = payload
-        .as_object_mut()
-        .and_then(|object| object.remove("codewideReplayPricing"))
-        .and_then(|value| serde_json::from_value::<ReplayPricing>(value).ok());
-    visit_pricing_fields(&mut payload, pricing.as_ref());
-    payload
-}
-
-fn visit_pricing_fields(value: &mut Value, pricing: Option<&ReplayPricing>) {
-    match value {
-        Value::Array(values) => {
-            for value in values {
-                visit_pricing_fields(value, pricing);
-            }
-        }
-        Value::Object(object) => {
-            if object
-                .get("turn")
-                .is_some_and(|turn| turn.get("tokens").is_some())
-                && object
-                    .get("thread")
-                    .is_some_and(|thread| thread.get("tokens").is_some())
-            {
-                if let Some(turn) = object.get_mut("turn").and_then(Value::as_object_mut) {
-                    let cost = pricing
-                        .and_then(|pricing| pricing.turn_requests.as_deref())
-                        .and_then(estimate_requests_cost)
-                        .and_then(|cost| serde_json::to_value(cost).ok())
-                        .unwrap_or(Value::Null);
-                    turn.insert("cost".into(), cost);
-                }
-                if let Some(thread) = object.get_mut("thread").and_then(Value::as_object_mut) {
-                    let cost = pricing
-                        .and_then(|pricing| pricing.thread_model.as_deref())
-                        .and_then(|model| {
-                            thread
-                                .get("tokens")
-                                .cloned()
-                                .and_then(|tokens| {
-                                    serde_json::from_value::<TokenCounts>(tokens).ok()
-                                })
-                                .and_then(|tokens| estimate_session_cost(Some(model), tokens))
-                        })
-                        .and_then(|cost| serde_json::to_value(cost).ok())
-                        .unwrap_or(Value::Null);
-                    thread.insert("cost".into(), cost);
-                }
-            }
-            if object.get("basis").and_then(Value::as_str) == Some("approxBytesPerToken") {
-                let price = pricing
-                    .and_then(|pricing| pricing.model.as_deref())
-                    .and_then(input_price_for);
-                let tokens = object.get("estimatedTokens").and_then(Value::as_u64);
-                // WHY: the cost is a display estimate derived from the stored
-                // token count and the current Companion model price.
-                #[allow(clippy::cast_precision_loss)]
-                let cost = tokens
-                    .zip(price)
-                    .map(|(tokens, price)| tokens as f64 * price / 1_000_000.0);
-                object.insert("estimatedInputCostUsd".into(), serde_json::json!(cost));
-            }
-            for child in object.values_mut() {
-                visit_pricing_fields(child, pricing);
-            }
-        }
-        _ => {}
-    }
-}
-
-#[must_use]
-pub fn projection_from_rollout(
-    model: Option<&str>,
-    baseline: TokenCounts,
-    total: TokenCounts,
-    latest_request: TokenCounts,
-    requests: &[TokenCounts],
-    model_context_window: Option<u64>,
-    final_status: bool,
+fn project(
+    state: &PersistedThreadUsage,
+    turn_id: &str,
+    pricing: &UsagePricing,
 ) -> TurnUsageProjection {
-    let turn_tokens = total.saturating_sub(baseline);
-    let turn_cost = requests.iter().copied().fold(None, |cost, request| {
-        add_cost(cost, estimate_request_cost(model, request))
-    });
-    TurnUsageProjection {
-        version: 1,
-        status: if final_status {
-            UsageStatus::Final
-        } else {
-            UsageStatus::Live
-        },
-        model_context_window,
-        latest_request,
-        turn: UsageScopeProjection {
-            tokens: turn_tokens,
-            cost: turn_cost,
-        },
-        thread: UsageScopeProjection {
-            tokens: total,
-            cost: estimate_session_cost(model, total),
-        },
-    }
-}
-
-#[must_use]
-pub fn parse_rollout_usage(payload: &Value) -> Option<(TokenCounts, TokenCounts, Option<u64>)> {
-    let info = payload.get("info")?;
-    let total = parse_counts(info.get("total_token_usage")?, true);
-    let last = parse_counts(info.get("last_token_usage")?, true);
-    let context = info.get("model_context_window").and_then(Value::as_u64);
-    Some((total, last, context))
-}
-
-fn parse_live_usage(value: &Value) -> Option<(TokenCounts, TokenCounts, Option<u64>)> {
-    Some((
-        parse_counts(value.get("total")?, false),
-        parse_counts(value.get("last")?, false),
-        value.get("modelContextWindow").and_then(Value::as_u64),
-    ))
-}
-
-fn parse_counts(value: &Value, snake_case: bool) -> TokenCounts {
-    let get = |camel: &str, snake: &str| {
-        value
-            .get(if snake_case { snake } else { camel })
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-    };
-    TokenCounts {
-        total_tokens: get("totalTokens", "total_tokens"),
-        input_tokens: get("inputTokens", "input_tokens"),
-        cached_input_tokens: get("cachedInputTokens", "cached_input_tokens"),
-        cache_write_input_tokens: get("cacheWriteInputTokens", "cache_write_input_tokens"),
-        output_tokens: get("outputTokens", "output_tokens"),
-        reasoning_output_tokens: get("reasoningOutputTokens", "reasoning_output_tokens"),
-    }
-}
-
-fn project(state: &PersistedThreadUsage, turn_id: &str) -> TurnUsageProjection {
     let turn = &state.turns[turn_id];
     let model = turn.model.as_deref().or(state.model.as_deref());
     TurnUsageProjection {
@@ -507,377 +261,118 @@ fn project(state: &PersistedThreadUsage, turn_id: &str) -> TurnUsageProjection {
                 turn.baseline
                     .unwrap_or_else(|| turn.total.saturating_sub(turn.latest_request)),
             ),
-            cost: turn.requests.as_deref().and_then(estimate_requests_cost),
+            cost: turn
+                .requests
+                .as_deref()
+                .and_then(|requests| pricing.requests_cost(requests)),
         },
         thread: UsageScopeProjection {
             tokens: state.total,
             cost: state
                 .has_total
-                .then(|| estimate_session_cost(model, state.total))
+                .then(|| model.and_then(|model| pricing.session_cost(model, state.total)))
                 .flatten(),
         },
     }
 }
 
-fn estimate_requests_cost(requests: &[RequestUsage]) -> Option<CostProjection> {
-    let mut total = None;
-    for request in requests {
-        let estimate = estimate_request_cost(Some(&request.model), request.tokens)?;
-        total = add_cost(total, Some(estimate));
-    }
-    total
+fn parse_live_usage(value: &Value) -> Option<(TokenCounts, TokenCounts, Option<u64>)> {
+    Some((
+        TokenCounts::from_camel_case(value.get("total")?),
+        TokenCounts::from_camel_case(value.get("last")?),
+        value.get("modelContextWindow").and_then(Value::as_u64),
+    ))
 }
 
-fn normalize_model(model: &str) -> String {
-    model.trim().to_ascii_lowercase()
-}
+#[cfg(test)]
+pub(crate) mod test_pricing {
+    use agent_core::usage::{
+        CostProjection, ModelPrice, ModelPricing, TokenCounts, normalize_model,
+    };
 
-fn price_for(model: &str) -> Option<ModelPrice> {
-    match normalize_model(model).as_str() {
-        "gpt-6-astra" => Some(ModelPrice {
-            input: 10.0,
-            cached_input: 1.0,
-            output: 50.0,
-        }),
-        "gpt-6.1-sol" => Some(ModelPrice {
-            input: 2.0,
-            cached_input: 0.1,
-            output: 10.0,
-        }),
-        "gpt-6-sol" => Some(ModelPrice {
-            input: 2.0,
-            cached_input: 0.2,
-            output: 10.0,
-        }),
-        "gpt-6-luna" => Some(ModelPrice {
-            input: 0.1,
-            cached_input: 0.01,
-            output: 0.5,
-        }),
-        "gpt-5.6" | "gpt-5.6-sol" => Some(ModelPrice {
-            input: 4.0,
-            cached_input: 0.4,
-            output: 20.0,
-        }),
-        "gpt-5.6-terra" => Some(ModelPrice {
-            input: 2.0,
-            cached_input: 0.2,
-            output: 12.0,
-        }),
-        "gpt-5.6-luna" => Some(ModelPrice {
-            input: 0.2,
-            cached_input: 0.02,
-            output: 1.2,
-        }),
-        _ => None,
-    }
-}
+    pub(crate) const TEST_PRICING_VERSION: &str = "test-pricing";
 
-pub(crate) fn input_price_for(model: &str) -> Option<f64> {
-    price_for(model).map(|price| price.input)
-}
+    /// A linear price table for tests: `model-a` and `model-b` are priced.
+    pub(crate) struct TestPricing;
 
-fn estimate_request_cost(model: Option<&str>, usage: TokenCounts) -> Option<CostProjection> {
-    estimate_cost(model, usage, true)
-}
-
-fn estimate_session_cost(model: Option<&str>, usage: TokenCounts) -> Option<CostProjection> {
-    // Cumulative counters do not preserve the request boundaries needed to
-    // reconstruct long-context multipliers. Keep the estimate deterministic
-    // and price the aggregate at the selected model's base API rates.
-    estimate_cost(model, usage, false)
-}
-
-fn estimate_cost(
-    model: Option<&str>,
-    usage: TokenCounts,
-    apply_long_context_multiplier: bool,
-) -> Option<CostProjection> {
-    let model = normalize_model(model?);
-    let price = price_for(&model)?;
-    let cached = usage.cached_input_tokens.min(usage.input_tokens);
-    let cache_write = usage
-        .cache_write_input_tokens
-        .min(usage.input_tokens.saturating_sub(cached));
-    let uncached = usage
-        .input_tokens
-        .saturating_sub(cached)
-        .saturating_sub(cache_write);
-    let long_context =
-        apply_long_context_multiplier && usage.input_tokens > LONG_CONTEXT_INPUT_TOKENS;
-    let input_multiplier = if long_context { 2.0 } else { 1.0 };
-    let output_multiplier = if long_context { 1.5 } else { 1.0 };
-    let uncached_cost = cost(uncached, price.input * input_multiplier);
-    let cached_cost = cost(cached, price.cached_input * input_multiplier);
-    let cache_write_cost = cost(cache_write, price.input * 1.25 * input_multiplier);
-    let output_cost = cost(usage.output_tokens, price.output * output_multiplier);
-    Some(CostProjection {
-        model,
-        pricing_version: PRICING_VERSION.into(),
-        currency: "USD".into(),
-        basis: "apiEquivalent".into(),
-        price,
-        uncached_input_tokens: uncached,
-        cached_input_tokens: cached,
-        cache_write_input_tokens: cache_write,
-        output_tokens: usage.output_tokens,
-        cache_hit_percent: percentage(cached, usage.input_tokens),
-        uncached_input_cost_usd: uncached_cost,
-        cached_input_cost_usd: cached_cost,
-        cache_write_input_cost_usd: cache_write_cost,
-        output_cost_usd: output_cost,
-        total_cost_usd: uncached_cost + cached_cost + cache_write_cost + output_cost,
-    })
-}
-
-fn add_cost(left: Option<CostProjection>, right: Option<CostProjection>) -> Option<CostProjection> {
-    match (left, right) {
-        (None, value) | (value, None) => value,
-        (Some(mut left), Some(right)) => {
-            if left.model != right.model {
-                left.model = "mixed".into();
-                left.price = ModelPrice {
-                    input: 0.0,
-                    cached_input: 0.0,
-                    output: 0.0,
-                };
-            }
-            left.uncached_input_tokens = left
-                .uncached_input_tokens
-                .saturating_add(right.uncached_input_tokens);
-            left.cached_input_tokens = left
-                .cached_input_tokens
-                .saturating_add(right.cached_input_tokens);
-            left.cache_write_input_tokens = left
-                .cache_write_input_tokens
-                .saturating_add(right.cache_write_input_tokens);
-            left.output_tokens = left.output_tokens.saturating_add(right.output_tokens);
-            left.uncached_input_cost_usd += right.uncached_input_cost_usd;
-            left.cached_input_cost_usd += right.cached_input_cost_usd;
-            left.cache_write_input_cost_usd += right.cache_write_input_cost_usd;
-            left.output_cost_usd += right.output_cost_usd;
-            left.total_cost_usd += right.total_cost_usd;
-            let total_input = left.uncached_input_tokens
-                + left.cached_input_tokens
-                + left.cache_write_input_tokens;
-            left.cache_hit_percent = percentage(left.cached_input_tokens, total_input);
-            Some(left)
+    fn price(model: &str) -> Option<ModelPrice> {
+        match normalize_model(model).as_str() {
+            "model-a" => Some(ModelPrice {
+                input: 2.0,
+                cached_input: 0.2,
+                output: 10.0,
+            }),
+            "model-b" => Some(ModelPrice {
+                input: 4.0,
+                cached_input: 0.4,
+                output: 20.0,
+            }),
+            _ => None,
         }
     }
-}
 
-#[allow(clippy::cast_precision_loss)]
-fn cost(tokens: u64, dollars_per_million: f64) -> f64 {
-    tokens as f64 * dollars_per_million / 1_000_000.0
-}
+    // WHY: test token counts are small integers that convert exactly.
+    #[allow(clippy::cast_precision_loss)]
+    fn usd(tokens: u64, per_million: f64) -> f64 {
+        tokens as f64 * per_million / 1_000_000.0
+    }
 
-#[allow(clippy::cast_precision_loss)]
-fn percentage(part: u64, total: u64) -> f64 {
-    if total == 0 {
-        0.0
-    } else {
-        part as f64 / total as f64 * 100.0
+    impl ModelPricing for TestPricing {
+        fn request_cost(&self, model: &str, usage: TokenCounts) -> Option<CostProjection> {
+            let price = price(model)?;
+            let input = usd(usage.input_tokens, price.input);
+            let output = usd(usage.output_tokens, price.output);
+            Some(CostProjection {
+                model: normalize_model(model),
+                pricing_version: TEST_PRICING_VERSION.into(),
+                currency: "USD".into(),
+                basis: "apiEquivalent".into(),
+                price,
+                uncached_input_tokens: usage.input_tokens,
+                cached_input_tokens: 0,
+                cache_write_input_tokens: 0,
+                output_tokens: usage.output_tokens,
+                cache_hit_percent: 0.0,
+                uncached_input_cost_usd: input,
+                cached_input_cost_usd: 0.0,
+                cache_write_input_cost_usd: 0.0,
+                output_cost_usd: output,
+                total_cost_usd: input + output,
+            })
+        }
+
+        fn session_cost(&self, model: &str, usage: TokenCounts) -> Option<CostProjection> {
+            self.request_cost(model, usage)
+        }
+
+        fn input_price(&self, model: &str) -> Option<f64> {
+            price(model).map(|price| price.input)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+
+    use agent_core::usage::{UsagePricing, prepare_replay_payload, price_replay_payload};
     use serde_json::json;
 
-    #[test]
-    fn prices_each_request_with_long_context_multiplier() -> Result<(), &'static str> {
-        let usage = TokenCounts {
-            total_tokens: 274_100,
-            input_tokens: 273_000,
-            output_tokens: 1_100,
-            ..TokenCounts::default()
-        };
-        let cost =
-            estimate_request_cost(Some("gpt-5.6-luna"), usage).ok_or("known model missing")?;
-        assert!((cost.total_cost_usd - 0.11118).abs() < 0.000_000_1);
-        Ok(())
-    }
+    use super::*;
+    use test_pricing::{TEST_PRICING_VERSION, TestPricing};
 
-    #[test]
-    fn uses_current_model_prices() -> Result<(), &'static str> {
-        let million = TokenCounts {
-            total_tokens: 2_000_000,
-            input_tokens: 1_000_000,
-            output_tokens: 1_000_000,
-            ..TokenCounts::default()
-        };
-        let terra =
-            estimate_request_cost(Some("GPT-5.6-Terra"), million).ok_or("known model missing")?;
-        assert_eq!(
-            terra.price,
-            ModelPrice {
-                input: 2.0,
-                cached_input: 0.2,
-                output: 12.0
-            }
-        );
-        assert!((terra.total_cost_usd - 22.0).abs() < f64::EPSILON);
-
-        let astra =
-            estimate_request_cost(Some("GPT-6-Astra"), million).ok_or("known model missing")?;
-        assert_eq!(
-            astra.price,
-            ModelPrice {
-                input: 10.0,
-                cached_input: 1.0,
-                output: 50.0
-            }
-        );
-        assert!((astra.total_cost_usd - 95.0).abs() < f64::EPSILON);
-        Ok(())
-    }
-
-    #[test]
-    fn prices_new_gpt_6_models_with_cached_input() -> Result<(), &'static str> {
-        let usage = TokenCounts {
-            total_tokens: 2_000,
-            input_tokens: 1_000,
-            cached_input_tokens: 500,
-            output_tokens: 1_000,
-            ..TokenCounts::default()
-        };
-        for (model, expected_price, expected_cost) in [
-            (
-                " GPT-6.1-Sol ",
-                ModelPrice {
-                    input: 2.0,
-                    cached_input: 0.1,
-                    output: 10.0,
-                },
-                0.01105,
-            ),
-            (
-                "gpt-6-sol",
-                ModelPrice {
-                    input: 2.0,
-                    cached_input: 0.2,
-                    output: 10.0,
-                },
-                0.0111,
-            ),
-            (
-                "gpt-6-luna",
-                ModelPrice {
-                    input: 0.1,
-                    cached_input: 0.01,
-                    output: 0.5,
-                },
-                0.000_555,
-            ),
-        ] {
-            let projection =
-                estimate_request_cost(Some(model), usage).ok_or("known model missing")?;
-            assert_eq!(projection.price, expected_price);
-            assert!((projection.total_cost_usd - expected_cost).abs() < 0.000_000_1);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn gpt_6_1_sol_projection_prices_cache_writes_and_long_context() -> Result<(), &'static str> {
-        // Standard API rates: https://developers.openai.com/api/docs/pricing
-        // Long-context rates apply only when an individual request exceeds 272K input tokens.
-        for (input_tokens, expected_turn_cost, expected_thread_cost) in
-            [(272_000, 0.519, 0.519), (273_000, 1.037, 0.521)]
-        {
-            let usage = TokenCounts {
-                total_tokens: input_tokens + 1_000,
-                input_tokens,
-                cached_input_tokens: 20_000,
-                cache_write_input_tokens: 6_000,
-                output_tokens: 1_000,
-                ..TokenCounts::default()
-            };
-            let projection = projection_from_rollout(
-                Some("gpt-6.1-sol"),
-                TokenCounts::default(),
-                usage,
-                usage,
-                &[usage],
-                None,
-                true,
-            );
-            let turn = projection.turn.cost.ok_or("turn cost missing")?;
-            let thread = projection.thread.cost.ok_or("thread cost missing")?;
-            assert_eq!(turn.model, "gpt-6.1-sol");
-            assert_eq!(turn.basis, "apiEquivalent");
-            assert_eq!(turn.uncached_input_tokens, input_tokens - 26_000);
-            assert_eq!(turn.cached_input_tokens, 20_000);
-            assert_eq!(turn.cache_write_input_tokens, 6_000);
-            assert!((turn.total_cost_usd - expected_turn_cost).abs() < 0.000_000_1);
-            assert!((thread.total_cost_usd - expected_thread_cost).abs() < 0.000_000_1);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn rollout_projection_owns_the_turn_delta() {
-        let baseline = TokenCounts {
-            total_tokens: 100,
-            input_tokens: 80,
-            output_tokens: 20,
-            ..TokenCounts::default()
-        };
-        let total = TokenCounts {
-            total_tokens: 160,
-            input_tokens: 125,
-            output_tokens: 35,
-            ..TokenCounts::default()
-        };
-        let last = TokenCounts {
-            total_tokens: 60,
-            input_tokens: 45,
-            output_tokens: 15,
-            ..TokenCounts::default()
-        };
-        let projection = projection_from_rollout(
-            Some("gpt-5.6-sol"),
-            baseline,
-            total,
-            last,
-            &[last],
-            Some(200_000),
-            true,
-        );
-        assert_eq!(projection.turn.tokens, last);
-        assert!(projection.turn.cost.is_some());
-        assert_eq!(projection.thread.tokens, total);
-        assert!(projection.thread.cost.is_some());
-    }
-
-    #[test]
-    fn session_projection_prices_cumulative_tokens_without_fake_request_premium()
-    -> Result<(), &'static str> {
-        let usage = TokenCounts {
-            total_tokens: 2_000_000,
-            input_tokens: 1_000_000,
-            cached_input_tokens: 500_000,
-            output_tokens: 1_000_000,
-            ..TokenCounts::default()
-        };
-        let estimate =
-            estimate_session_cost(Some("gpt-5.6-luna"), usage).ok_or("known model missing")?;
-        assert!((estimate.uncached_input_cost_usd - 0.1).abs() < f64::EPSILON);
-        assert!((estimate.cached_input_cost_usd - 0.01).abs() < f64::EPSILON);
-        assert!((estimate.output_cost_usd - 1.2).abs() < f64::EPSILON);
-        assert!((estimate.total_cost_usd - 1.31).abs() < f64::EPSILON);
-        Ok(())
+    fn pricing() -> UsagePricing {
+        UsagePricing::new(vec![Arc::new(TestPricing)])
     }
 
     #[test]
     fn live_projection_survives_a_companion_restart() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
-        let mut projector = LiveUsageProjector::new(store.clone());
+        let mut projector = LiveUsageProjector::new(store.clone(), pricing());
         projector.observe(&json!({
             "method": "thread/settings/updated",
-            "params": {"threadId": "thread", "threadSettings": {"model": "gpt-5.6-sol"}}
+            "params": {"threadId": "thread", "threadSettings": {"model": "model-b"}}
         }))?;
         projector.observe(&json!({
             "method": "turn/started",
@@ -896,13 +391,10 @@ mod tests {
         let stored: Value = store.thread_usage("thread")?.ok_or("usage state missing")?;
         assert!(stored.get("threadCost").is_none());
         assert!(stored["turns"]["turn"].get("cost").is_none());
-        assert_eq!(
-            stored["turns"]["turn"]["requests"][0]["model"],
-            "gpt-5.6-sol"
-        );
+        assert_eq!(stored["turns"]["turn"]["requests"][0]["model"], "model-b");
 
         drop(projector);
-        let mut restarted = LiveUsageProjector::new(store);
+        let mut restarted = LiveUsageProjector::new(store, pricing());
         let Some(second) = restarted.observe(&live_usage_event(30, 18))? else {
             return Err("second usage projection is missing".into());
         };
@@ -934,10 +426,10 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
-        let mut projector = LiveUsageProjector::new(store);
+        let mut projector = LiveUsageProjector::new(store, pricing());
         projector.observe(&json!({
             "method": "thread/settings/updated",
-            "params": {"threadId": "thread", "threadSettings": {"model": "gpt-6-sol"}}
+            "params": {"threadId": "thread", "threadSettings": {"model": "model-a"}}
         }))?;
         projector.observe(&json!({
             "method": "turn/started",
@@ -945,7 +437,7 @@ mod tests {
         }))?;
         let event = live_usage_event(12, 12);
         let usage = projector.observe(&event)?.ok_or("usage missing")?;
-        let pricing = projector.replay_pricing(&event);
+        let replay_pricing = projector.replay_pricing(&event);
         let payload = json!({
             "method": "thread/tokenUsage/updated",
             "params": {"threadId": "thread", "turnId": "turn",
@@ -953,7 +445,7 @@ mod tests {
                     "estimatedTokens": 1_000, "estimatedInputCostUsd": 999.0}},
             "codewideThreadPatch": {"operation": {"usage": usage}}
         });
-        let stored = prepare_replay_payload(payload, pricing);
+        let stored = prepare_replay_payload(payload, replay_pricing);
         let operation = &stored["codewideThreadPatch"]["operation"];
         assert!(operation["usage"]["turn"]["cost"].is_null());
         assert!(operation["usage"]["thread"]["cost"].is_null());
@@ -961,7 +453,7 @@ mod tests {
         let encoded = serde_json::to_string(&stored)?;
         assert!(!encoded.contains("totalCostUsd"));
         assert!(!encoded.contains("\"price\""));
-        let delivered = price_replay_payload(stored);
+        let delivered = price_replay_payload(stored, &pricing());
         assert!(delivered.get("codewideReplayPricing").is_none());
         assert_eq!(
             delivered["codewideThreadPatch"]["operation"]["usage"]["turn"]["cost"]["price"]["input"],
@@ -975,7 +467,7 @@ mod tests {
             "turn": {"tokens": TokenCounts::default(), "cost": {"totalCostUsd": 999.0}},
             "thread": {"tokens": TokenCounts::default(), "cost": {"totalCostUsd": 999.0}}
         }}}});
-        let legacy = price_replay_payload(legacy);
+        let legacy = price_replay_payload(legacy, &pricing());
         assert!(legacy["codewideThreadPatch"]["operation"]["usage"]["turn"]["cost"].is_null());
         assert!(legacy["codewideThreadPatch"]["operation"]["usage"]["thread"]["cost"].is_null());
         Ok(())
@@ -986,10 +478,10 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
-        let mut projector = LiveUsageProjector::new(store);
+        let mut projector = LiveUsageProjector::new(store, pricing());
         projector.observe(&json!({
             "method": "thread/started",
-            "params": {"thread": {"id": "thread", "model": "gpt-6-sol", "reasoningEffort": "high"}}
+            "params": {"thread": {"id": "thread", "model": "model-a", "reasoningEffort": "high"}}
         }))?;
         projector.observe(&json!({
             "method": "turn/started",
@@ -998,7 +490,7 @@ mod tests {
         let projection = projector
             .observe(&live_usage_event(12, 12))?
             .ok_or("usage projection missing")?;
-        assert_eq!(projection["turn"]["cost"]["model"], "gpt-6-sol");
+        assert_eq!(projection["turn"]["cost"]["model"], "model-a");
         assert_eq!(projection["turn"]["cost"]["price"]["input"], 2.0);
         Ok(())
     }
@@ -1017,13 +509,13 @@ mod tests {
         store.put_thread_usage(
             "thread",
             &json!({
-                "model": "gpt-6-sol",
+                "model": "model-a",
                 "total": total,
                 "hasTotal": true,
                 "threadCost": {"totalCostUsd": 999.0},
                 "threadCostComplete": true,
                 "turns": {"turn": {
-                    "model": "gpt-6-sol",
+                    "model": "model-a",
                     "baseline": TokenCounts::default(),
                     "total": total,
                     "latestRequest": total,
@@ -1033,7 +525,7 @@ mod tests {
                 }}
             }),
         )?;
-        let mut projector = LiveUsageProjector::new(store.clone());
+        let mut projector = LiveUsageProjector::new(store.clone(), pricing());
         let projection = projector
             .observe(&json!({
                 "method": "turn/completed",
@@ -1043,7 +535,7 @@ mod tests {
         assert!(projection["turn"]["cost"].is_null());
         assert_eq!(
             projection["thread"]["cost"]["pricingVersion"],
-            PRICING_VERSION
+            TEST_PRICING_VERSION
         );
         let stored: Value = store.thread_usage("thread")?.ok_or("usage state missing")?;
         assert!(stored.get("threadCost").is_none());

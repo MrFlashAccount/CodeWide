@@ -58,10 +58,12 @@
 
 ## Agent provider layer
 
-- The provider layer contract is in [docs/agent-providers.md](docs/agent-providers.md). Read the nearest `CONTEXT.md` before changing `crates/companion-core/src/agent/**`, `packages/agent-protocol/**` or `apps/claude-sidecar/**`; their `must_not_import` rules are checked in review.
-- Run `pnpm --filter @codewide/agent-protocol test` and `pnpm test:companion` for changes under `packages/agent-protocol/**`; protocol fixtures must round-trip in both TypeScript and Rust.
-- Run `pnpm --filter @codewide/claude-sidecar test` and `pnpm typecheck` for changes under `apps/claude-sidecar/**`.
-- Run `pnpm test:companion`, Cargo Clippy and Cargo format checks for changes under `crates/companion-core/src/agent/**`.
+- The provider layer contract is in [docs/agent-providers.md](docs/agent-providers.md). Read the nearest `CONTEXT.md` before changing `crates/agent-core/**`, `crates/agent-transport/**`, `crates/agent-search/**`, `crates/agent-resources/**`, `crates/companion-host/**`, `crates/agent-provider-codex/**`, `crates/agent-provider-claude/**`, `crates/companion-core/src/agent/**` or `packages/agent-protocol/**`; their dependency and `must_not_import` rules are checked in review.
+- `apps/` holds only standalone shippable apps. A process that exists only as a child of the companion lives with its provider crate: the Claude agent host is `crates/agent-provider-claude/host` (`@codewide/claude-agent-host`).
+- Run `pnpm --filter @codewide/agent-protocol test` and `pnpm test:companion` for changes under `packages/agent-protocol/**`; protocol fixtures must round-trip in both TypeScript and Rust (`crates/agent-core/src/model/`).
+- Run `pnpm --filter @codewide/claude-agent-host test` and `pnpm typecheck` for changes under `crates/agent-provider-claude/host/**`.
+- Run `pnpm validate:agents` (format check, type-aware hygiene lint, tests) before handing off any change under `packages/agent-protocol/**` or `crates/agent-provider-claude/host/**`. Both packages use the shared `@sergeigarin/hygene` preset with no baseline: fix every finding; a narrow exception names one rule on one line with an adjacent `WHY` comment.
+- Run `pnpm test:companion`, Cargo Clippy and Cargo format checks for changes under `crates/agent-core/**`, `crates/agent-transport/**`, `crates/agent-search/**`, `crates/agent-resources/**`, `crates/companion-host/**`, `crates/agent-provider-codex/**`, `crates/agent-provider-claude/src/**` or `crates/companion-core/src/agent/**`.
 
 ## Releases
 

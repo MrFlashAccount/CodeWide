@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use agent_core::usage::UsagePricing;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{
     SinkExt, StreamExt,
@@ -57,6 +58,7 @@ mod outbox;
 mod outbox_state;
 mod provider_rpc;
 mod queue;
+mod search_routing;
 
 use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
 #[cfg(test)]
@@ -116,14 +118,24 @@ enum DurableSignal {
     Failed,
 }
 
+/// Which resource store observes a provider's events.
+#[derive(Clone)]
+enum ResourceRoute {
+    /// The `history.threadResources` owner (the `codex.native` surface).
+    Owner,
+    /// None: the provider lacks `history.threadResources`, so its threads
+    /// have no stored history a resource store could ever read or evict.
+    Skip,
+    /// The provider's own resources, built from its stored history.
+    Own(Arc<dyn NativeThreadResources>),
+}
+
 enum IngestInput {
     Payload(Value),
-    /// A provider payload; `observe_resources` is false for providers
-    /// without `history.threadResources`, whose threads have no stored
-    /// history the resource owner could ever read or evict.
+    /// A provider payload with the resource store that observes it.
     ProviderPayload {
         payload: Value,
-        observe_resources: bool,
+        resources: ResourceRoute,
     },
     Fence(tokio::sync::oneshot::Sender<Result<u64, ProviderError>>),
     ThreadPinImport(
@@ -144,6 +156,8 @@ struct IngestContext {
     /// Owner of `history.threadResources`, resolved once at build.
     resources: Option<Arc<dyn NativeThreadResources>>,
     usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
+    /// The enabled providers' price tables, for live activity estimates.
+    usage_pricing: UsagePricing,
 }
 
 struct InitialSession {
@@ -432,6 +446,7 @@ impl SyncHub {
         mutation_mode: MutationMode,
     ) -> Self {
         let bindings = Arc::new(BindingStore::new(store.clone()));
+        let usage_pricing = registry.usage_pricing();
         let gateway = Arc::new(ClientWireGateway::new(registry, bindings.clone()));
         let registry = gateway.registry().clone();
         let thread_view = ThreadViewService::new(gateway.clone());
@@ -452,7 +467,7 @@ impl SyncHub {
         let projects = Arc::new(std::sync::RwLock::new(None));
         let workspaces = Arc::new(std::sync::RwLock::new(None));
         let usage_projector = Arc::new(std::sync::Mutex::new(
-            crate::usage::LiveUsageProjector::new(store.clone()),
+            crate::usage::LiveUsageProjector::new(store.clone(), usage_pricing.clone()),
         ));
         // One ordered forwarder per provider; each keeps its own fence order.
         for provider in registry.enabled() {
@@ -495,6 +510,7 @@ impl SyncHub {
                 .owner(Capability::HistoryThreadResources)
                 .and_then(|provider| provider.native_surface()?.thread_resources()),
             usage_projector: usage_projector.clone(),
+            usage_pricing,
         };
         tokio::spawn(ingest_events(ordered_ingest_rx, ingest_context));
         if let Some(owner) = registry.owner(Capability::RequestsDynamicToolCall) {
@@ -650,6 +666,99 @@ impl SyncHub {
             .owner(Capability::HistoryThreadResources)?
             .native_surface()?
             .thread_resources()
+    }
+
+    /// Thread resource reads: the thread's own provider store, else the
+    /// `history.threadResources` owner. `false` when no store answers `method`.
+    async fn try_handle_resource_rpc(
+        &self,
+        socket: &SessionSocket,
+        id: &Value,
+        method: &str,
+        params: &Value,
+    ) -> Result<bool, ()> {
+        let Some(resources) = self
+            .thread_resources()
+            .filter(|resources| resources.handles(method))
+            .or_else(|| {
+                self.any_own_thread_resources()
+                    .filter(|own| own.handles(method))
+            })
+        else {
+            return Ok(false);
+        };
+        let resources = match params.get("threadId").and_then(Value::as_str) {
+            Some(thread_id) if self.has_own_thread_resources() => self
+                .own_thread_resources(thread_id)
+                .await
+                .unwrap_or(resources),
+            _ => resources,
+        };
+        if let Err(failure) = self
+            .gate_thread_capability(params, Capability::HistoryThreadResources)
+            .await
+        {
+            send_rpc_failure(socket, id.clone(), &failure).await?;
+            return Ok(true);
+        }
+        match resources.read(method, params).await {
+            Ok(result) => send_local_rpc_result(socket, id, result).await?,
+            Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await?,
+        }
+        Ok(true)
+    }
+
+    /// Resources a provider builds from its own stored history (no
+    /// `codex.native` surface), in registry order.
+    fn own_thread_resources_list(&self) -> Vec<(ProviderId, Arc<dyn NativeThreadResources>)> {
+        self.registry()
+            .enabled()
+            .filter(|provider| provider.native_surface().is_none())
+            .filter_map(|provider| Some((provider.descriptor().id, provider.thread_resources()?)))
+            .collect()
+    }
+
+    fn has_own_thread_resources(&self) -> bool {
+        !self.own_thread_resources_list().is_empty()
+    }
+
+    fn any_own_thread_resources(&self) -> Option<Arc<dyn NativeThreadResources>> {
+        self.own_thread_resources_list()
+            .into_iter()
+            .next()
+            .map(|(_, resources)| resources)
+    }
+
+    /// The thread's own provider resources, when its provider builds them.
+    async fn own_thread_resources(
+        &self,
+        thread_id: &str,
+    ) -> Option<Arc<dyn NativeThreadResources>> {
+        let target = self.gateway.resolve_thread(thread_id, None).await.ok()?;
+        if target.native().is_some() {
+            return None;
+        }
+        target.provider.thread_resources()
+    }
+
+    /// The resource store of a thread whose provider declares
+    /// `history.threadResources`: its own, else the owner's.
+    async fn thread_resources_of(&self, thread_id: &str) -> Option<Arc<dyn NativeThreadResources>> {
+        let owner = self.thread_resources();
+        if owner.is_none() && !self.has_own_thread_resources() {
+            return None;
+        }
+        let target = self
+            .gateway
+            .resolve_thread(thread_id, Some(Capability::HistoryThreadResources))
+            .await
+            .ok()?;
+        if target.native().is_none()
+            && let Some(own) = target.provider.thread_resources()
+        {
+            return Some(own);
+        }
+        owner
     }
 
     /// Stored threads of the `capability` owner.
@@ -1254,15 +1363,10 @@ impl SyncHub {
             method.as_str(),
             "thread/read" | "thread/turns/list" | "thread/items/list"
         ) && let Some(thread_id) = params.get("threadId").and_then(Value::as_str)
-            && let Some(resources) = self.thread_resources()
-            && self
-                .gateway
-                .resolve_thread(thread_id, Some(Capability::HistoryThreadResources))
-                .await
-                .is_ok()
+            && let Some(resources) = self.thread_resources_of(thread_id).await
         {
             // Only threads whose provider declares `history.threadResources`
-            // reach the resource owner's storage.
+            // reach a resource store.
             resources.prewarm(thread_id);
         }
         if self
@@ -1493,21 +1597,10 @@ impl SyncHub {
             }
             return Ok(true);
         }
-        if let Some(resources) = self
-            .thread_resources()
-            .filter(|resources| resources.handles(method))
+        if self
+            .try_handle_resource_rpc(socket, id, method, params)
+            .await?
         {
-            if let Err(failure) = self
-                .gate_thread_capability(params, Capability::HistoryThreadResources)
-                .await
-            {
-                send_rpc_failure(socket, id.clone(), &failure).await?;
-                return Ok(true);
-            }
-            match resources.read(method, params).await {
-                Ok(result) => send_local_rpc_result(socket, id, result).await?,
-                Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await?,
-            }
             return Ok(true);
         }
         if ProjectService::handles(method) {
@@ -1713,13 +1806,50 @@ impl SyncHub {
     }
 
     /// `companion/search*` through the `history.messageSearch` owner; `None`
-    /// for methods it does not answer.
+    /// for methods it does not answer. Providers that search their own
+    /// stored history answer their threads' reads and join global pages.
     async fn search(&self, method: &str, params: &Value) -> Option<Result<Value, String>> {
-        let search = self
+        let native = self
             .registry()
             .owner(Capability::HistoryMessageSearch)
             .and_then(|owner| owner.native_surface()?.message_search());
-        match search {
+        let stored = self
+            .registry()
+            .enabled()
+            .filter(|provider| provider.native_surface().is_none())
+            .filter_map(|provider| provider.message_search())
+            .collect::<Vec<_>>();
+        if !stored.is_empty()
+            && matches!(
+                method,
+                "companion/search" | "companion/search/context" | "companion/search/window"
+            )
+        {
+            if let Some(thread_id) = params.get("threadId").and_then(Value::as_str) {
+                if let Ok(target) = self.gateway.resolve_thread(thread_id, None).await
+                    && target.native().is_none()
+                    && let Some(search) = target.provider.message_search()
+                {
+                    return search_routing::stored(&*search, method, params).await;
+                }
+            } else if method == "companion/search" {
+                let sources = native
+                    .clone()
+                    .map(search_routing::SearchSource::Native)
+                    .into_iter()
+                    .chain(stored.into_iter().map(search_routing::SearchSource::Stored))
+                    .collect::<Vec<_>>();
+                return Some(
+                    search_routing::merged(&sources, params)
+                        .await
+                        .map(|mut page| {
+                            self.gateway.hide_continuation_hits(&mut page);
+                            page
+                        }),
+                );
+            }
+        }
+        match native {
             Some(search) => search.search(method, params).await,
             None if matches!(
                 method,
@@ -2085,13 +2215,25 @@ async fn forward_provider_events(
     live_channels: Arc<LiveChannelRegistry>,
 ) {
     let provider_id: ProviderId = projector.provider_id().clone();
-    let observe_resources = gateway
+    let resources = gateway
         .registry()
         .get(&provider_id)
-        .is_some_and(|provider| {
-            provider
-                .capabilities()
-                .supports(Capability::HistoryThreadResources)
+        .map_or(ResourceRoute::Skip, |provider| {
+            match provider
+                .native_surface()
+                .is_none()
+                .then(|| provider.thread_resources())
+                .flatten()
+            {
+                Some(own) => ResourceRoute::Own(own),
+                None if provider
+                    .capabilities()
+                    .supports(Capability::HistoryThreadResources) =>
+                {
+                    ResourceRoute::Owner
+                }
+                None => ResourceRoute::Skip,
+            }
         });
     while let Some(event) = provider_events.recv().await {
         match event {
@@ -2118,7 +2260,7 @@ async fn forward_provider_events(
                     }
                     let input = IngestInput::ProviderPayload {
                         payload,
-                        observe_resources,
+                        resources: resources.clone(),
                     };
                     if ingest.send(input).await.is_err() {
                         return;
@@ -2237,11 +2379,8 @@ async fn ingest_events(
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     while let Some(first) = ingest.recv().await {
         let first = match first {
-            IngestInput::Payload(payload) => (payload, true),
-            IngestInput::ProviderPayload {
-                payload,
-                observe_resources,
-            } => (payload, observe_resources),
+            IngestInput::Payload(payload) => (payload, ResourceRoute::Owner),
+            IngestInput::ProviderPayload { payload, resources } => (payload, resources),
             control => {
                 if process_ingest_control(&context, control).await.is_err() {
                     break;
@@ -2258,11 +2397,12 @@ async fn ingest_events(
                 break;
             }
             match tokio::time::timeout(remaining, ingest.recv()).await {
-                Ok(Some(IngestInput::Payload(payload))) => payloads.push((payload, true)),
-                Ok(Some(IngestInput::ProviderPayload {
-                    payload,
-                    observe_resources,
-                })) => payloads.push((payload, observe_resources)),
+                Ok(Some(IngestInput::Payload(payload))) => {
+                    payloads.push((payload, ResourceRoute::Owner));
+                }
+                Ok(Some(IngestInput::ProviderPayload { payload, resources })) => {
+                    payloads.push((payload, resources));
+                }
                 Ok(Some(command)) => {
                     control = Some(command);
                     break;
@@ -2284,19 +2424,40 @@ async fn ingest_events(
     }
 }
 
-async fn ingest_payload_batch(
-    context: &IngestContext,
-    stream_diagnostics: &mut AgentStreamDiagnostics,
-    batch: Vec<(Value, bool)>,
-) -> Result<(), ()> {
+/// Thread resources observed by a payload: the owner's, none, or the
+/// provider's own store (keyed by thread id).
+type OwnResources = HashMap<String, Arc<dyn NativeThreadResources>>;
+
+fn split_resource_routes(
+    batch: Vec<(Value, ResourceRoute)>,
+) -> (Vec<Value>, HashSet<String>, OwnResources) {
     let mut without_resources = HashSet::new();
+    let mut own_resources = HashMap::new();
     let mut payloads = Vec::with_capacity(batch.len());
-    for (payload, observe_resources) in batch {
-        if !observe_resources && let Some(thread_id) = payload_thread_id(&payload) {
-            without_resources.insert(thread_id.to_owned());
+    for (payload, route) in batch {
+        if let Some(thread_id) = payload_thread_id(&payload) {
+            match route {
+                ResourceRoute::Owner => {}
+                ResourceRoute::Skip => {
+                    without_resources.insert(thread_id.to_owned());
+                }
+                ResourceRoute::Own(own) => {
+                    without_resources.insert(thread_id.to_owned());
+                    own_resources.insert(thread_id.to_owned(), own);
+                }
+            }
         }
         payloads.push(payload);
     }
+    (payloads, without_resources, own_resources)
+}
+
+async fn ingest_payload_batch(
+    context: &IngestContext,
+    stream_diagnostics: &mut AgentStreamDiagnostics,
+    batch: Vec<(Value, ResourceRoute)>,
+) -> Result<(), ()> {
+    let (mut payloads, without_resources, own_resources) = split_resource_routes(batch);
     payloads = reject_oversized_dynamic_tool_requests(&context.server_requests, payloads)
         .await
         .map_err(|()| {
@@ -2315,6 +2476,11 @@ async fn ingest_payload_batch(
         return Err(());
     }
     observe_batch(context, &payloads, &without_resources).await;
+    for payload in &payloads {
+        if let Some(own) = payload_thread_id(payload).and_then(|id| own_resources.get(id)) {
+            own.observe_event(payload).await;
+        }
+    }
     let projector = match context.content_projector.read() {
         Ok(slot) => slot.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
@@ -2339,11 +2505,15 @@ async fn ingest_payload_batch(
             let _ = context.events.send(DurableSignal::Failed);
             return Err(());
         };
-        let metrics =
-            crate::activity_metrics_live::observe(&context.store, &payload, usage.as_ref())
-                .map_err(|_| {
-                    let _ = context.events.send(DurableSignal::Failed);
-                })?;
+        let metrics = crate::activity_metrics_live::observe(
+            &context.store,
+            &payload,
+            usage.as_ref(),
+            &context.usage_pricing,
+        )
+        .map_err(|_| {
+            let _ = context.events.send(DurableSignal::Failed);
+        })?;
         let payload = match &projector {
             Some(projector) => projector.project_notification(payload),
             None => payload,
@@ -2352,7 +2522,7 @@ async fn ingest_payload_batch(
             crate::thread_patch::attach_thread_patch_with_usage(payload, usage),
             metrics,
         );
-        projected_payloads.push(crate::usage::prepare_replay_payload(
+        projected_payloads.push(agent_core::usage::prepare_replay_payload(
             projected,
             replay_pricing,
         ));
@@ -2849,8 +3019,9 @@ mod tests {
             content_projector: Arc::new(std::sync::RwLock::new(None)),
             resources: None,
             usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(store.clone()),
+                crate::usage::LiveUsageProjector::new(store.clone(), UsagePricing::default()),
             )),
+            usage_pricing: UsagePricing::default(),
         };
         let task = tokio::spawn(ingest_events(receiver, context));
         ingest

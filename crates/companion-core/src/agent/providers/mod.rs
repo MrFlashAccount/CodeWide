@@ -1,18 +1,54 @@
-//! Provider adapters and the factory that turns configuration into a
-//! registry. Provider ids are named only here and inside each adapter.
+//! Wiring of the provider adapter crates and the factory that turns
+//! configuration into a registry. Provider ids are named only here and
+//! inside each adapter crate.
 
-pub mod claude;
-pub mod codex;
+pub use agent_provider_claude as claude;
+pub use agent_provider_codex as codex;
 
-use std::{path::Path, sync::Arc};
+#[cfg(test)]
+mod codex_golden_tests;
+pub mod codex_hub;
+
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use companion_host::{files::PreviewFiles, vcs::WorkspaceVcs};
 
 use tracing::{error, info};
+
+use crate::store::IndexStore;
 
 use super::{
     model::ProviderId,
     provider::AgentProvider,
     registry::{AgentProvidersConfig, CONFIG_FILE_NAME, ProviderRegistry},
 };
+
+/// Companion storage the adapters keep their own indexes in.
+pub struct ProviderHost {
+    /// The companion index (`state.redb`).
+    pub index: Arc<IndexStore>,
+    pub state_directory: PathBuf,
+    /// Preview authorization for thread resources.
+    pub files: Arc<dyn PreviewFiles>,
+    /// The workspace VCS overlay of thread resources.
+    pub vcs: Option<Arc<dyn WorkspaceVcs>>,
+}
+
+impl ProviderHost {
+    fn claude_storage(&self) -> claude::ClaudeStorageHost {
+        claude::ClaudeStorageHost {
+            database: self.index.database(),
+            threads: self.index.clone(),
+            search_path: self.state_directory.join("claude-message-search.sqlite"),
+            projects_root: claude::watcher::projects_root(),
+            files: self.files.clone(),
+            vcs: self.vcs.clone(),
+        }
+    }
+}
 
 /// Builds the registry from `<state_directory>/agent-providers.json`. A
 /// missing file means Codex only; an unreadable or invalid file is logged
@@ -22,6 +58,7 @@ use super::{
 pub fn load_registry(
     state_directory: &Path,
     codex: Arc<codex::CodexProvider>,
+    host: Option<&ProviderHost>,
 ) -> Arc<ProviderRegistry> {
     let path = state_directory.join(CONFIG_FILE_NAME);
     let config = match AgentProvidersConfig::load(&path) {
@@ -31,7 +68,7 @@ pub fn load_registry(
             None
         }
     };
-    let registry = build_registry(config, codex);
+    let registry = build_registry(config, codex, host);
     let enabled = registry
         .enabled()
         .map(|provider| provider.descriptor().id.to_string())
@@ -48,6 +85,7 @@ pub fn load_registry(
 pub fn build_registry(
     config: Option<AgentProvidersConfig>,
     codex: Arc<codex::CodexProvider>,
+    host: Option<&ProviderHost>,
 ) -> Arc<ProviderRegistry> {
     let codex_id = ProviderId::from_static(codex::PROVIDER_ID);
     let config = config.unwrap_or_else(|| AgentProvidersConfig::primary_only(codex_id.clone()));
@@ -57,7 +95,13 @@ pub fn build_registry(
         match id.as_str() {
             codex::PROVIDER_ID => {}
             claude::PROVIDER_ID => match claude::ClaudeConfig::parse(entry) {
-                Ok(claude_config) => providers.push(claude::ClaudeProvider::spawn(&claude_config)),
+                Ok(claude_config) => providers.push(match host {
+                    Some(host) => claude::ClaudeProvider::spawn_with_storage(
+                        &claude_config,
+                        host.claude_storage(),
+                    ),
+                    None => claude::ClaudeProvider::spawn(&claude_config),
+                }),
                 Err(err) => {
                     error!(provider = %id, err = %err, "agent provider is disabled: invalid configuration");
                     disabled.push(id.clone());
