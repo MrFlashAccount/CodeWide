@@ -9,6 +9,7 @@
  * `history/entries.ts`.
  */
 
+import type { ClientToolSpec, ToolCallResult } from "../protocol.js";
 import type { JsonRecord } from "../mapping/frames.js";
 import type { PermissionDecision } from "../permissions/approvals.js";
 import type { ProfileOptions } from "../permissions/profiles.js";
@@ -54,9 +55,29 @@ export type SessionIdentity =
   | { readonly sessionId: string; readonly type: "new" }
   | { readonly sessionId: string; readonly type: "resume" };
 
+/** One call of a client tool, as the in-process MCP server receives it. */
+export interface ClientToolInvocation {
+  /** Arguments after the SDK checked them against the tool's input schema. */
+  readonly arguments: JsonRecord;
+  /** Aborted when Claude cancels the call; `null` when the SDK passes no signal. */
+  readonly signal: AbortSignal | null;
+  /** The bare client tool name (`ClientToolSpec.name`). */
+  readonly tool: string;
+}
+
+/** The client tools of one query and how their calls are answered. */
+export interface ClientToolBinding {
+  readonly invoke: (invocation: ClientToolInvocation) => Promise<ToolCallResult>;
+  /** Called for each tool whose input schema the adapter cannot use; that tool is left out. */
+  readonly rejected: (tool: string, error: Error) => void;
+  readonly specs: readonly ClientToolSpec[];
+}
+
 /** Everything needed to open one long-lived query. */
 export interface QueryOpenOptions {
   readonly canUseTool: CanUseToolHandler;
+  /** The companion's client tools, registered as one in-process MCP server; `null` for none. */
+  readonly clientTools: ClientToolBinding | null;
   readonly cwd: string;
   readonly effort: string | null;
   readonly identity: SessionIdentity;

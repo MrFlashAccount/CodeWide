@@ -1,4 +1,10 @@
-import { readThreadAgent, whenThreadAgentSupports as gate } from "../../data/threadAgent";
+import {
+  readThreadAgent,
+  threadAgentSupports,
+  whenThreadAgentSupports as gate,
+} from "../../data/threadAgent";
+import type { ConversationAccountCapabilities } from "../accounts/conversationAccountCapabilities";
+import { threadOffersFork } from "../turnActions/forkTargets";
 import type { createConversationScopeBindings } from "./conversationScopeBindings";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
 
@@ -25,7 +31,9 @@ export type ThreadAgentActions = Pick<
 /**
  * Removes every thread action whose capability the thread's agent does not declare.
  * Features already render an `undefined` action as a hidden or disabled control, so
- * an unsupported feature never reaches the Companion. A thread without a descriptor
+ * an unsupported feature never reaches the Companion. Fork stays available when the
+ * agent can fork into another agent (`threads.crossProviderFork`) even without its own
+ * `threads.fork`; the picker then offers only other agents. A thread without a descriptor
  * (legacy Companion, or a detail snapshot that is not loaded yet) keeps every action.
  */
 export function threadAgentActions(
@@ -38,7 +46,7 @@ export function threadAgentActions(
     captureGoalLifecycle: gate(agent, "goals", actions.captureGoalLifecycle),
     onClearGoal: gate(agent, "goals", actions.onClearGoal),
     onCompact: gate(agent, "threads.compact", actions.onCompact),
-    onFork: gate(agent, "threads.fork", onFork),
+    onFork: threadOffersFork(agent) ? onFork : undefined,
     onGetGoal: gate(agent, "goals", actions.onGetGoal),
     onListTerminals: gate(agent, "backgroundTerminals", actions.onListTerminals),
     onLoadThreadChangeDiff: gate(agent, "history.threadResources", actions.onLoadThreadChangeDiff),
@@ -48,4 +56,18 @@ export function threadAgentActions(
     onStartReview: gate(agent, "review", actions.onStartReview),
     onTerminateTerminal: gate(agent, "backgroundTerminals", actions.onTerminateTerminal),
   };
+}
+
+/**
+ * Account rate limits belong to the provider that declares `accounts.rateLimits`.
+ * A thread of another provider keeps its context usage but gets no account rows
+ * and never reads the account pool. A legacy thread keeps both.
+ */
+export function threadAgentAccounts(
+  thread: unknown,
+  accounts: ConversationAccountCapabilities,
+): ConversationAccountCapabilities {
+  return threadAgentSupports(readThreadAgent(thread), "accounts.rateLimits")
+    ? accounts
+    : { accountRateLimitsDatabase: null, onRefreshAccountRateLimits: undefined };
 }

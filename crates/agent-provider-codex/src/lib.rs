@@ -17,6 +17,7 @@ pub mod account_pool;
 pub mod catalog;
 mod catalog_summary;
 mod catalog_visibility;
+mod client_tools;
 mod dispatch;
 pub mod history;
 mod history_questions;
@@ -48,9 +49,9 @@ use agent_core::{
         TurnSteerParams, TurnSteerResult, thread_not_found_message,
     },
     provider::{
-        AdmissionError, AgentProvider, DispatchError, NativeMessageSearch, NativeSurface,
-        NativeThreadResources, NativeThreadStore, ProviderError, ProviderEvent, ProviderFence,
-        ProviderStatus,
+        AdmissionError, AgentProvider, ClientToolHost, DispatchError, NativeMessageSearch,
+        NativeSurface, NativeThreadResources, NativeThreadStore, ProviderError, ProviderEvent,
+        ProviderFence, ProviderStatus,
     },
     request_ids,
     usage::ModelPricing,
@@ -61,7 +62,10 @@ use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::error;
 
-use crate::account_pool::{AccountPoolError, AccountPoolService};
+use crate::{
+    account_pool::{AccountPoolError, AccountPoolService},
+    client_tools::CodexClientTools,
+};
 
 pub const PROVIDER_ID: &str = "codex";
 const EVENT_CHANNEL_CAPACITY: usize = 2_048;
@@ -94,6 +98,8 @@ pub const CAPABILITIES: CapabilitySet = CapabilitySet {
     host_fs: true,
     host_config: true,
     codex_native: true,
+    orchestration_tools: true,
+    threads_cross_provider_fork: true,
     turns_start_while_active: StartWhileActiveMode::NativeJoin,
 };
 
@@ -102,6 +108,7 @@ pub struct CodexProvider {
     upstream: UpstreamHandle,
     account_pool: RwLock<Option<Arc<AccountPoolService>>>,
     storage: Option<Arc<storage::CodexStorage>>,
+    client_tools: Arc<CodexClientTools>,
     id: ProviderId,
 }
 
@@ -113,6 +120,7 @@ impl CodexProvider {
             upstream,
             account_pool: RwLock::new(None),
             storage: None,
+            client_tools: Arc::new(CodexClientTools::default()),
             id: codex_provider_id(),
         }
     }
@@ -283,13 +291,29 @@ fn native_thread_id(payload: &Value) -> Option<AppThreadId> {
         .and_then(AppThreadId::parse)
 }
 
+/// The adapter side of the native event forwarder: client tools answered
+/// here and the connection that answers them.
+struct ToolInterception {
+    tools: Arc<CodexClientTools>,
+    upstream: UpstreamHandle,
+    provider: ProviderId,
+}
+
 async fn forward_native_events(
     mut upstream: mpsc::Receiver<OrderedUpstreamEvent>,
     events: mpsc::Sender<ProviderEvent>,
+    interception: ToolInterception,
 ) {
     while let Some(event) = upstream.recv().await {
         let forwarded = match event {
             OrderedUpstreamEvent::Notification(payload) => {
+                if interception.tools.intercept(
+                    &payload,
+                    &interception.upstream,
+                    &interception.provider,
+                ) {
+                    continue;
+                }
                 if payload.get("method").is_some()
                     && payload
                         .get("id")
@@ -363,6 +387,11 @@ impl AgentProvider for CodexProvider {
         tokio::spawn(forward_native_events(
             self.upstream.take_ordered_events(),
             sender,
+            ToolInterception {
+                tools: self.client_tools.clone(),
+                upstream: self.upstream.clone(),
+                provider: self.id.clone(),
+            },
         ));
         receiver
     }
@@ -405,6 +434,9 @@ impl AgentProvider for CodexProvider {
         if let Some(tier) = params.settings.service_tier {
             request["serviceTier"] = json!(tier);
         }
+        // Codex declares its own tools from the installed host; the neutral
+        // `clientTools` field is the Claude host's channel.
+        self.client_tools.declare_on_params(&mut request);
         let result = self.rpc("thread/start", request).await?;
         let thread = result
             .get("thread")
@@ -619,6 +651,10 @@ impl AgentProvider for CodexProvider {
         }
     }
 
+    fn install_client_tools(&self, host: Arc<dyn ClientToolHost>) {
+        self.client_tools.install(host);
+    }
+
     fn native_surface(&self) -> Option<&dyn NativeSurface> {
         Some(self)
     }
@@ -630,7 +666,8 @@ impl AgentProvider for CodexProvider {
 
 #[async_trait]
 impl NativeSurface for CodexProvider {
-    async fn request(&self, request: Value) -> Result<Value, ProviderError> {
+    async fn request(&self, mut request: Value) -> Result<Value, ProviderError> {
+        self.client_tools.declare_on_thread_start(&mut request);
         self.upstream
             .request(request)
             .await
@@ -639,8 +676,9 @@ impl NativeSurface for CodexProvider {
 
     async fn request_fenced(
         &self,
-        request: Value,
+        mut request: Value,
     ) -> Result<(Value, ProviderFence), ProviderError> {
+        self.client_tools.declare_on_thread_start(&mut request);
         let (response, fence) = self
             .upstream
             .request_fenced(request)

@@ -8,6 +8,11 @@ unit_source=${CODEWIDE_COMPANION_UNIT_SOURCE:-"$repo_root/apps/companion-linux/d
 memory_watch_source=${CODEWIDE_COMPANION_MEMORY_WATCH_SOURCE:-"$repo_root/apps/companion-linux/deploy/memory-watch.sh"}
 memory_watch_service_source=${CODEWIDE_COMPANION_MEMORY_WATCH_SERVICE_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service"}
 memory_watch_timer_source=${CODEWIDE_COMPANION_MEMORY_WATCH_TIMER_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer"}
+# Optional release payload of the Claude agent host and its installer. They
+# are only staged here; the Claude provider is enabled by running
+# $binary_root/libexec/codewide-install-claude-provider.
+claude_host_payload=${CODEWIDE_COMPANION_CLAUDE_HOST_PAYLOAD:-}
+claude_installer_source=${CODEWIDE_COMPANION_CLAUDE_INSTALLER_SOURCE:-}
 binary_root=${CODEWIDE_COMPANION_INSTALL_ROOT:-"$HOME/.local/lib/codewide"}
 plugin_root="$binary_root/plugins"
 unit_root=${CODEWIDE_COMPANION_UNIT_ROOT:-"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"}
@@ -31,6 +36,18 @@ install -m 0755 "$memory_watch_source" "$binary_root/codewide-companion-memory-w
 install -m 0644 "$unit_source" "$unit_root/codewide-companion.service"
 install -m 0644 "$memory_watch_service_source" "$unit_root/codewide-companion-memory-watch.service"
 install -m 0644 "$memory_watch_timer_source" "$unit_root/codewide-companion-memory-watch.timer"
+if [ -n "$claude_host_payload" ] && [ -n "$claude_installer_source" ]; then
+  test -f "$claude_host_payload/dist/main.js"
+  mkdir -p "$binary_root/libexec" "$binary_root/share"
+  install -m 0755 "$claude_installer_source" "$binary_root/libexec/codewide-install-claude-provider"
+  # The running host lives in its own install directory; this copy is only
+  # the installer's source, replaced as a whole.
+  claude_payload_staging=$(mktemp -d "$binary_root/share/.claude-agent-host.XXXXXX")
+  cp -R "$claude_host_payload/." "$claude_payload_staging/"
+  chmod 0755 "$claude_payload_staging"
+  rm -rf -- "$binary_root/share/claude-agent-host"
+  mv "$claude_payload_staging" "$binary_root/share/claude-agent-host"
+fi
 
 previous_unit=
 if [ "$activate" -eq 1 ]; then

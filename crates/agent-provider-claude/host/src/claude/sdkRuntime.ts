@@ -31,6 +31,9 @@ import type {
   RuntimeAccount,
 } from "./port.js";
 import { sessionScoped, type PermissionDecision } from "../permissions/approvals.js";
+import type { ProfileOptions } from "../permissions/profiles.js";
+import { CLIENT_TOOL_SERVER } from "../mapping/clientTools.js";
+import { clientToolServer } from "./sdkClientTools.js";
 
 const PROBE_TIMEOUT_MS = 15_000;
 
@@ -135,6 +138,20 @@ function baseOptions(claudeExecutable: string): Options {
   };
 }
 
+/**
+ * The `mcpServers` option: the profile's own set (`:read-only`: none; other
+ * profiles: unset, so settings decide) plus the client tool server.
+ */
+function mcpServersOption(
+  profile: ProfileOptions,
+  clientTools: QueryOpenOptions["clientTools"],
+): Pick<Options, "mcpServers"> {
+  if (clientTools === null) {
+    return profile.mcpServers === null ? {} : { mcpServers: {} };
+  }
+  return { mcpServers: { [CLIENT_TOOL_SERVER]: clientToolServer(clientTools) } };
+}
+
 function accountOf(value: unknown): RuntimeAccount | null {
   if (typeof value !== "object" || value === null) {
     return null;
@@ -218,7 +235,7 @@ export function createSdkRuntime(claudeExecutable: string): ClaudeRuntime {
           ? { allowDangerouslySkipPermissions: true }
           : {}),
         ...(profile.strictMcpConfig ? { strictMcpConfig: true } : {}),
-        ...(profile.mcpServers === null ? {} : { mcpServers: {} }),
+        ...mcpServersOption(profile, options.clientTools),
         tools:
           profile.tools === null ? { preset: "claude_code", type: "preset" } : [...profile.tools],
         ...(options.identity.type === "new"

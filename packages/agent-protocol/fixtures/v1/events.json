@@ -422,6 +422,21 @@
       "message": {
         "method": "event",
         "params": {
+          "type": "usage.updated",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000002",
+          "last": { "inputTokens": 1500, "cachedInputTokens": 1000, "cacheWriteInputTokens": 400, "outputTokens": 90, "reasoningOutputTokens": 30, "totalTokens": 1590 },
+          "total": { "inputTokens": 8100, "cachedInputTokens": 6000, "cacheWriteInputTokens": 900, "outputTokens": 420, "reasoningOutputTokens": 30, "totalTokens": 8520 },
+          "contextWindow": 200000,
+          "cost": { "basis": "managed", "model": "mixed", "turnUsd": 0.042, "threadUsd": null }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
           "type": "plan.updated",
           "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
           "turnId": "0199a3c4-8000-7000-8000-000000000001",

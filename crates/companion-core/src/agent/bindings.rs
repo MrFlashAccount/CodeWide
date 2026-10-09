@@ -892,6 +892,7 @@ mod tests {
                 error: None,
                 items: Vec::new(),
                 provenance: None,
+                usage: None,
             })
         };
         let history = assemble_history(&[

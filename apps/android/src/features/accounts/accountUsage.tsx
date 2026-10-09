@@ -22,9 +22,11 @@ import { styles } from "./UsageMenu.styles";
 export function AccountUsageSection({
   accountSources,
   hasContext,
+  title = "Accounts",
 }: {
   accountSources: readonly AccountUsageSource[] | undefined;
   hasContext: boolean;
+  title?: string;
 }) {
   const singleRateLimits =
     accountSources?.length === 1 ? (accountSources[0]?.rateLimits ?? null) : null;
@@ -51,7 +53,7 @@ export function AccountUsageSection({
       <View style={styles.weeklyTitle}>
         <Ionicons color={colors.textMuted} name="people-outline" size={iconSize.inline} />
         <Text accessibilityRole="header" style={styles.title}>
-          Accounts
+          {title}
         </Text>
         {(loading || refreshing) && (
           <ActivityIndicator
@@ -126,7 +128,7 @@ export function AccountUsageSection({
       <View style={styles.weeklyTitle}>
         <Ionicons color={colors.textMuted} name="people-outline" size={17} />
         <Text accessibilityRole="header" style={styles.title}>
-          Accounts
+          {title}
         </Text>
         {(loading || refreshing) && (
           <ActivityIndicator

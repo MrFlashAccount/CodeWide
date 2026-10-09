@@ -22,14 +22,15 @@ export interface TurnFooterProps {
   readonly completedAt: number | null;
   readonly diff?: string;
   readonly durationMs: number | null;
+  /** The model the turn ran on, when known; names the model in the unpriced-cost hint. */
+  readonly model?: string | null;
   readonly status: "completed" | "interrupted" | "failed" | "inProgress";
   readonly usage?: TurnUsageProjection | null;
 }
 
 export function TurnFooter(props: TurnFooterProps) {
-  const { completedAt, diff = "", durationMs, status, usage = null } = props;
+  const { completedAt, diff = "", durationMs, model = null, status, usage = null } = props;
   const tokenUsage = usage?.turn.tokens ?? null;
-  const estimatedCost = usage?.turn.cost ?? null;
   const canOpenChanges = useContext(TurnChangesContext) !== null;
   return (
     <MessageFooterRow
@@ -38,11 +39,7 @@ export function TurnFooter(props: TurnFooterProps) {
           <TurnChangesFooter diff={diff} target={props.changesTarget} />
         ) : null
       }
-      cost={
-        estimatedCost === null ? null : (
-          <CostBreakdownMenu animated={status === "inProgress"} estimate={estimatedCost} />
-        )
-      }
+      cost={footerCost(usage, status, model)}
       time={completedAt === null ? null : formatClockTime(completedAt)}
       tokens={
         tokenUsage === null ? null : (
@@ -117,5 +114,32 @@ export function TurnFooter(props: TurnFooterProps) {
         </Text>
       )}
     </MessageFooterRow>
+  );
+}
+
+/**
+ * The turn's estimated cost, or a hint that its usage is known but no price
+ * is: hiding the cost silently would read as a free turn.
+ */
+function footerCost(
+  usage: TurnUsageProjection | null,
+  status: TurnFooterProps["status"],
+  model: string | null,
+): React.JSX.Element | null {
+  if (usage === null) {
+    return null;
+  }
+  if (usage.turn.cost !== null) {
+    return <CostBreakdownMenu animated={status === "inProgress"} estimate={usage.turn.cost} />;
+  }
+  return (
+    <Text
+      accessibilityLabel={`Cost not available for ${model ?? "this model"}`}
+      numberOfLines={1}
+      style={styles.turnMetaText}
+      testID="turn-cost-unavailable"
+    >
+      cost n/a
+    </Text>
   );
 }

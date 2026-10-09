@@ -11,6 +11,8 @@ import type { AppThreadId, ClientMessageId, NativeRequestId, ProviderId, TurnId 
 import type {
   AgentThread,
   AgentTurn,
+  ClientToolSpec,
+  ClientToolTextContent,
   JsonValue,
   NativeSession,
   NativeSubagent,
@@ -117,6 +119,18 @@ export type ThreadChange =
       readonly type: "settings";
     };
 
+/**
+ * The optional client tools of `thread.create` and `turn.start`. Absent:
+ * the thread keeps its current set. Present: replaces the set (an empty
+ * array removes every client tool). The set is live state of the provider
+ * process, not persisted thread metadata: the companion sends it with every
+ * `turn.start` of a thread that should have the tools. A provider without
+ * client-tool support ignores the field.
+ */
+export interface ClientToolsParam {
+  readonly clientTools?: readonly ClientToolSpec[];
+}
+
 export type TurnStartResult =
   | { readonly turnId: TurnId; readonly type: "started" }
   | { readonly activeTurnId: TurnId; readonly type: "busy" };
@@ -188,9 +202,11 @@ export interface OperationMap {
    * Creates a thread. `appThreadId` is host-minted for providers that declare
    * `threads.hostMintedIds`, otherwise `null` and the provider mints it.
    * Repeating with the same host-minted id returns the existing thread.
+   * `clientTools` (optional, see `ClientToolsParam`) sets the thread's client
+   * tools.
    */
   readonly "thread.create": {
-    readonly params: {
+    readonly params: ClientToolsParam & {
       readonly appThreadId: AppThreadId | null;
       readonly cwd: string;
       readonly settings: ThreadSettings;
@@ -241,9 +257,13 @@ export interface OperationMap {
     readonly params: { readonly appThreadId: AppThreadId; readonly turnId: TurnId | null };
     readonly result: Record<string, never>;
   };
-  /** Never steers: an active thread answers `busy` (or joins natively for `nativeJoin`). */
+  /**
+   * Never steers: an active thread answers `busy` (or joins natively for
+   * `nativeJoin`). `clientTools` (optional, see `ClientToolsParam`) replaces
+   * the thread's client tools from this turn on.
+   */
   readonly "turn.start": {
-    readonly params: {
+    readonly params: ClientToolsParam & {
       readonly appThreadId: AppThreadId;
       readonly clientMessageId: ClientMessageId | null;
       readonly input: readonly UserContent[];
@@ -285,3 +305,47 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   "nativeSession.list",
   "nativeSession.read",
 ];
+
+/** Params of `tool.call`: one call of a client tool by the thread's model. */
+export interface ToolCallParams {
+  readonly appThreadId: AppThreadId;
+  /** The tool's arguments as the model sent them. */
+  readonly arguments: JsonValue;
+  /**
+   * Provider-unique id of this call. When the provider can correlate the
+   * call with its timeline item, it is that item's `itemId`.
+   */
+  readonly callId: string;
+  /** The `ClientToolSpec.name` the model called. */
+  readonly tool: string;
+  /** The turn the call belongs to. */
+  readonly turnId: TurnId;
+}
+
+/**
+ * Result of `tool.call`, returned to the model. A tool-level failure is
+ * `success: false` with an explanatory text; a JSON-RPC error answer is
+ * treated by the provider as `success: false` too.
+ */
+export interface ToolCallResult {
+  readonly content: readonly ClientToolTextContent[];
+  readonly success: boolean;
+}
+
+/**
+ * Requests a provider sends to the companion (provider → companion). The
+ * companion answers each with a JSON-RPC response on the same channel. When
+ * the turn ends (completed, interrupted or failed) before the answer, the
+ * provider stops waiting; a late answer is ignored.
+ */
+export interface ProviderRequestMap {
+  readonly "tool.call": { readonly params: ToolCallParams; readonly result: ToolCallResult };
+}
+
+export type ProviderRequestName = keyof ProviderRequestMap;
+export type ProviderRequestParams<Name extends ProviderRequestName> =
+  ProviderRequestMap[Name]["params"];
+export type ProviderRequestResult<Name extends ProviderRequestName> =
+  ProviderRequestMap[Name]["result"];
+
+export const PROVIDER_REQUEST_NAMES: readonly ProviderRequestName[] = ["tool.call"];

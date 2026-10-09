@@ -1,8 +1,10 @@
-//! Durable tables of the agent provider layer: thread bindings and the
-//! layer's small metadata records (backfill progress markers).
+//! Durable tables of the agent provider layer: thread bindings, the layer's
+//! small metadata records (backfill progress markers), subagent links of the
+//! orchestration tools and cross-provider fork records.
 //!
-//! The values are opaque versioned JSON owned by `agent::bindings`; this
-//! module only provides atomic storage primitives.
+//! The values are opaque versioned JSON owned by `agent::bindings`,
+//! `agent::orchestration` and `agent::fork`; this module only provides
+//! atomic storage primitives.
 
 use redb::{ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction};
 
@@ -17,6 +19,15 @@ const AGENT_META: TableDefinition<&str, &[u8]> = TableDefinition::new("agent_met
 const AGENT_CONTINUATIONS: TableDefinition<&str, &str> =
     TableDefinition::new("agent_thread_continuations");
 
+/// `<parent>\0<child>` → subagent link record (JSON).
+const AGENT_SUBAGENT_CHILDREN: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("agent_subagent_children");
+/// Child app thread id → parent app thread id of a subagent link.
+const AGENT_SUBAGENT_PARENTS: TableDefinition<&str, &str> =
+    TableDefinition::new("agent_subagent_parents");
+/// App thread id of a cross-provider fork → fork record (JSON).
+const AGENT_THREAD_FORKS: TableDefinition<&str, &[u8]> = TableDefinition::new("agent_thread_forks");
+
 /// Outcome of an insert-if-absent write.
 #[derive(Debug, Eq, PartialEq)]
 pub enum BindingWrite {
@@ -29,7 +40,14 @@ pub(super) fn create(write: &WriteTransaction) -> Result<(), StoreError> {
     write.open_table(AGENT_THREAD_BINDINGS)?;
     write.open_table(AGENT_META)?;
     write.open_table(AGENT_CONTINUATIONS)?;
+    write.open_table(AGENT_SUBAGENT_CHILDREN)?;
+    write.open_table(AGENT_SUBAGENT_PARENTS)?;
+    write.open_table(AGENT_THREAD_FORKS)?;
     Ok(())
+}
+
+fn subagent_key(parent: &str, child: &str) -> String {
+    format!("{parent}\0{child}")
 }
 
 impl IndexStore {
@@ -172,5 +190,117 @@ impl IndexStore {
         }
         write.commit()?;
         Ok(())
+    }
+
+    /// Links a child app thread to its parent, in one transaction. A child
+    /// has one parent; linking it again replaces the record.
+    ///
+    /// # Errors
+    /// Returns an error when the transaction fails.
+    pub fn put_agent_subagent_link(
+        &self,
+        parent: &str,
+        child: &str,
+        record: &[u8],
+    ) -> Result<(), StoreError> {
+        let write = self.database.begin_write()?;
+        {
+            write
+                .open_table(AGENT_SUBAGENT_CHILDREN)?
+                .insert(subagent_key(parent, child).as_str(), record)?;
+            write
+                .open_table(AGENT_SUBAGENT_PARENTS)?
+                .insert(child, parent)?;
+        }
+        write.commit()?;
+        Ok(())
+    }
+
+    /// The link records of one parent's children, ordered by child id.
+    ///
+    /// # Errors
+    /// Returns an error when the index cannot be read.
+    pub fn agent_subagent_children(&self, parent: &str) -> Result<Vec<Vec<u8>>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(AGENT_SUBAGENT_CHILDREN)?;
+        let start = format!("{parent}\0");
+        let end = format!("{parent}\u{1}");
+        table
+            .range(start.as_str()..end.as_str())?
+            .map(|entry| {
+                entry
+                    .map(|(_key, value)| value.value().to_vec())
+                    .map_err(StoreError::from)
+            })
+            .collect()
+    }
+
+    /// The parent of a linked child thread.
+    ///
+    /// # Errors
+    /// Returns an error when the index cannot be read.
+    pub fn agent_subagent_parent(&self, child: &str) -> Result<Option<String>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(AGENT_SUBAGENT_PARENTS)?;
+        Ok(table.get(child)?.map(|value| value.value().to_owned()))
+    }
+
+    /// Every linked child thread id.
+    ///
+    /// # Errors
+    /// Returns an error when the index cannot be read.
+    pub fn agent_subagent_child_ids(&self) -> Result<Vec<String>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(AGENT_SUBAGENT_PARENTS)?;
+        table
+            .iter()?
+            .map(|entry| {
+                entry
+                    .map(|(child, _parent)| child.value().to_owned())
+                    .map_err(StoreError::from)
+            })
+            .collect()
+    }
+
+    /// Reads the fork record of one app thread.
+    ///
+    /// # Errors
+    /// Returns an error when the index cannot be read.
+    pub fn agent_thread_fork(&self, thread: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(AGENT_THREAD_FORKS)?;
+        Ok(table.get(thread)?.map(|value| value.value().to_vec()))
+    }
+
+    /// Replaces the fork record of one app thread.
+    ///
+    /// # Errors
+    /// Returns an error when the transaction fails.
+    pub fn put_agent_thread_fork(&self, thread: &str, record: &[u8]) -> Result<(), StoreError> {
+        let write = self.database.begin_write()?;
+        {
+            write
+                .open_table(AGENT_THREAD_FORKS)?
+                .insert(thread, record)?;
+        }
+        write.commit()?;
+        Ok(())
+    }
+
+    /// Every app thread with a fork record.
+    ///
+    /// # Errors
+    /// Returns an error when the index cannot be read.
+    pub fn agent_thread_fork_ids(&self) -> Result<Vec<String>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(AGENT_THREAD_FORKS)?;
+        table
+            .iter()?
+            .map(|entry| {
+                entry
+                    .map(|(thread, _record)| thread.value().to_owned())
+                    .map_err(StoreError::from)
+            })
+            .collect()
     }
 }

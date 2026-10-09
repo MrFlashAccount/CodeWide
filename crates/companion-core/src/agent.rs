@@ -5,11 +5,15 @@
 //! their own crates (`agent-provider-codex`, `agent-provider-claude`), wired
 //! in by `providers`; every thread is bound to one provider for its life
 //! (`bindings`), and `client_wire` is the single translation to the
-//! Codex-shaped client wire. See `agent/CONTEXT.md` and
-//! `docs/agent-providers.md`.
+//! Codex-shaped client wire. `orchestration` owns the model-driven
+//! subagent tools and `fork` the fork into another provider. See
+//! `agent/CONTEXT.md` and `docs/agent-providers.md`.
 
 pub mod bindings;
 pub mod client_wire;
+pub mod fork;
+pub mod orchestration;
+pub mod provider_status;
 pub mod providers;
 pub mod registry;
 

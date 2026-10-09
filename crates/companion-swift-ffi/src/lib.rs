@@ -21,6 +21,7 @@ use companion_core::{
 };
 
 mod codex_installation;
+mod logging;
 
 pub use codex_installation::FfiCodexInstallation;
 use codex_installation::{inspect_codex_installation, start_codex_app_server};
@@ -143,6 +144,7 @@ impl CoreHost {
         computer_name: String,
         listen_address: String,
     ) -> Result<Arc<Self>, CompanionFfiError> {
+        logging::install(Path::new(&state_directory));
         let lifecycle = RuntimeHost::open(&state_directory, app_version, host_version)?;
         let codex_home = PathBuf::from(codex_home);
         let executor = tokio::runtime::Builder::new_multi_thread()

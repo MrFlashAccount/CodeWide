@@ -13,9 +13,11 @@ import type {
   JsonValue,
   McpToolResult,
   Provenance,
+  ProviderCost,
   ThreadSettings,
   TokenUsage,
   TurnError,
+  TurnUsageRecord,
   UserContent,
   WebSearchAction,
 } from "../protocol.js";
@@ -76,14 +78,38 @@ export const threadSettings: Check<ThreadSettings> = (value, path) => {
   };
 };
 
+/** Token usage; an absent `cacheWriteInputTokens` (state written before it existed) reads as 0. */
 export const tokenUsage: Check<TokenUsage> = (value, path) => {
   const reader = objectReader(value, path);
   return {
     cachedInputTokens: reader.at("cachedInputTokens", int),
+    cacheWriteInputTokens: reader.at("cacheWriteInputTokens", nullable(int)) ?? 0,
     inputTokens: reader.at("inputTokens", int),
     outputTokens: reader.at("outputTokens", int),
     reasoningOutputTokens: reader.at("reasoningOutputTokens", int),
     totalTokens: reader.at("totalTokens", int),
+  };
+};
+
+export const providerCost: Check<ProviderCost> = (value, path) => {
+  const reader = objectReader(value, path);
+  return {
+    basis: reader.at("basis", oneOf(["list", "managed"])),
+    model: reader.at("model", str),
+    threadUsd: reader.at("threadUsd", nullable(num)),
+    turnUsd: reader.at("turnUsd", num),
+  };
+};
+
+export const turnUsageRecord: Check<TurnUsageRecord> = (value, path) => {
+  const reader = objectReader(value, path);
+  const cost = reader.at("cost", nullable(providerCost));
+  return {
+    contextWindow: reader.at("contextWindow", nullable(int)),
+    ...(cost === null ? {} : { cost }),
+    last: reader.at("last", tokenUsage),
+    total: reader.at("total", tokenUsage),
+    turn: reader.at("turn", tokenUsage),
   };
 };
 

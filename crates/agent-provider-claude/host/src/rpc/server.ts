@@ -7,13 +7,19 @@
  *   the process keeps running. Other operations before `initialize` fail.
  * - Events are written as `{"method":"event","params":AgentEvent}` and are
  *   buffered until the companion's `initialized` notification.
- * - The server never sends JSON-RPC requests.
+ * - The only requests the server sends are provider requests (`tool.call`,
+ *   see `providerRequests.ts`); a line without `method` is the companion's
+ *   answer to one of them.
  */
 
 import type {
+  AccountUpdatedNotification,
   AgentEvent,
   InitializeResult,
   OperationName,
+  ProviderAccount,
+  ToolCallParams,
+  ToolCallResult,
   TurnId,
   UserContent,
 } from "../protocol.js";
@@ -35,7 +41,8 @@ import { ModelCatalog } from "../catalog/models.js";
 import type { OperationResult, ThreadService, UserMessage } from "../threads/service.js";
 import { ShapeError } from "../validation/checks.js";
 import { unreachable } from "../support/unreachable.js";
-import { isOperation, validateParams } from "./validate.js";
+import { ProviderRequests, type ProviderAnswer } from "./providerRequests.js";
+import { isOperation, toolCallResult, validateParams } from "./validate.js";
 
 type RpcId = string | number;
 
@@ -73,9 +80,17 @@ interface InboundRequest {
   readonly type: "request";
 }
 
+/** The companion's answer to a provider request. */
+interface InboundResponse {
+  readonly answer: Exclude<ProviderAnswer, { readonly status: "aborted" }>;
+  readonly id: RpcId;
+  readonly type: "response";
+}
+
 /** One inbound line, classified. */
 type Inbound =
   | InboundRequest
+  | InboundResponse
   | { readonly error: RpcErrorBody; readonly type: "invalid" }
   | { readonly method: string; readonly type: "notification" }
   | { readonly type: "ignore" };
@@ -98,6 +113,27 @@ function parseJson(
   }
 }
 
+/** A message without `method`: an answer to a provider request, when it has an id and a body. */
+function parseResponse(message: Readonly<Record<string, unknown>>): Inbound {
+  const id = message["id"];
+  if (!isRpcId(id)) {
+    return invalid(ERROR_CODES.invalidRequest, "invalid request");
+  }
+  if ("result" in message) {
+    return { answer: { result: message["result"], status: "result" }, id, type: "response" };
+  }
+  const error = message["error"];
+  if (isRecord(error)) {
+    const text = error["message"];
+    return {
+      answer: { message: typeof text === "string" ? text : "tool call failed", status: "error" },
+      id,
+      type: "response",
+    };
+  }
+  return invalid(ERROR_CODES.invalidRequest, "invalid request");
+}
+
 function parseInbound(line: string): Inbound {
   if (line.trim().length === 0) {
     return { type: "ignore" };
@@ -107,7 +143,15 @@ function parseInbound(line: string): Inbound {
     return invalid(PARSE_ERROR, "parse error");
   }
   const message = parsed.value;
-  if (!isRecord(message) || typeof message["method"] !== "string") {
+  if (!isRecord(message)) {
+    return invalid(ERROR_CODES.invalidRequest, "invalid request");
+  }
+  return "method" in message ? parseRequest(message) : parseResponse(message);
+}
+
+/** A message with `method`: a request or a notification of the companion. */
+function parseRequest(message: Readonly<Record<string, unknown>>): Inbound {
+  if (typeof message["method"] !== "string") {
     return invalid(ERROR_CODES.invalidRequest, "invalid request");
   }
   const id = message["id"];
@@ -131,6 +175,14 @@ const userMessage = (params: {
 
 const PROBE_INTERVAL_MS = 60_000;
 
+const failedToolCall = (text: string): ToolCallResult => ({
+  content: [{ text, type: "text" }],
+  success: false,
+});
+
+/** Text returned to the model for a call the turn's end cancelled. */
+export const TOOL_CALL_CANCELLED = "The tool call was cancelled.";
+
 export interface ServerDeps {
   readonly logger: Logger;
   readonly runtime: ClaudeRuntime;
@@ -147,11 +199,47 @@ export class RpcServer {
   private probing: Promise<void> | null = null;
   private lastProbeAtMs: number | null = null;
   private account: InitializeResult["account"] = null;
+  private readonly providerRequests: ProviderRequests;
 
   private readonly deps: ServerDeps;
 
   public constructor(deps: ServerDeps) {
     this.deps = deps;
+    this.providerRequests = new ProviderRequests((message) => {
+      this.send(message);
+    });
+  }
+
+  /**
+   * Sends `tool.call` to the companion and answers with its result. An error
+   * answer, a malformed result and an aborted call become `success: false`.
+   */
+  public async callTool(params: ToolCallParams, signal: AbortSignal): Promise<ToolCallResult> {
+    const answer = await this.providerRequests.request("tool.call", params, signal);
+    switch (answer.status) {
+      case "aborted":
+        return failedToolCall(TOOL_CALL_CANCELLED);
+      case "error":
+        return failedToolCall(answer.message);
+      case "result":
+        try {
+          return toolCallResult(answer.result, "result");
+        } catch (error) {
+          const cause = error instanceof Error ? error : new Error(String(error));
+          this.deps.logger.log("error", "tool.call answer is malformed", {
+            callId: params.callId,
+            err: cause,
+          });
+          return failedToolCall("The tool returned a malformed result.");
+        }
+      default:
+        return unreachable(answer);
+    }
+  }
+
+  /** Stops waiting for every provider request (stdin closed). */
+  public shutdown(): void {
+    this.providerRequests.abortAll();
   }
 
   /** Event sink for the service; buffers until `initialized`. */
@@ -189,7 +277,7 @@ export class RpcServer {
       .then((probe) => {
         this.catalog.update(probe.models);
         if (probe.account !== null) {
-          this.account = probe.account;
+          this.updateAccount(probe.account);
         }
       })
       .catch((error: unknown) => {
@@ -211,6 +299,13 @@ export class RpcServer {
         return;
       case "invalid":
         this.error(null, inbound.error);
+        return;
+      case "response":
+        if (!this.providerRequests.settle(inbound.id, inbound.answer)) {
+          this.deps.logger.log("debug", "answer to no waiting provider request", {
+            requestId: String(inbound.id),
+          });
+        }
         return;
       case "notification":
         if (inbound.method === "initialized" && this.negotiated) {
@@ -281,8 +376,31 @@ export class RpcServer {
     return this.operation(method, rawParams);
   }
 
+  /**
+   * Keeps the latest signed-in state and tells the companion when it changes
+   * after `initialized` (`account.updated`); before that, `initialize` carries it.
+   */
+  private updateAccount(account: ProviderAccount): void {
+    const previous = this.account;
+    this.account = account;
+    if (
+      this.initialized &&
+      (previous === null ||
+        previous.authenticated !== account.authenticated ||
+        previous.label !== account.label)
+    ) {
+      const notification: AccountUpdatedNotification = {
+        method: "account.updated",
+        params: { account },
+      };
+      this.send(notification);
+    }
+  }
+
   private async models(): Promise<Reply> {
-    if (this.catalog.models.length === 0) {
+    // A signed-out runtime is probed again (at most once per minute), so a
+    // sign-in on the server reaches the companion through `account.updated`.
+    if (this.catalog.models.length === 0 || this.account?.authenticated !== true) {
       await this.refreshProbe();
     }
     return { result: { models: this.catalog.models } };
@@ -302,7 +420,11 @@ export class RpcServer {
         return { result: { profiles: PERMISSION_PROFILES } };
       case "thread.create": {
         const params = validateParams(method, rawParams);
-        return threadReply(service.create(params.appThreadId, params.cwd, params.settings));
+        const created = service.create(params.appThreadId, params.cwd, params.settings);
+        if (created.status === "ok" && params.clientTools !== null) {
+          service.useClientTools(created.value.appThreadId, params.clientTools);
+        }
+        return threadReply(created);
       }
       case "thread.read":
         return reply(await service.read(validateParams(method, rawParams).appThreadId));
@@ -322,7 +444,9 @@ export class RpcServer {
         return reply(await service.compact(validateParams(method, rawParams).appThreadId));
       case "turn.start": {
         const params = validateParams(method, rawParams);
-        return reply(await service.startTurn(params.appThreadId, userMessage(params)));
+        return reply(
+          await service.startTurn(params.appThreadId, userMessage(params), params.clientTools),
+        );
       }
       case "turn.steer": {
         const params = validateParams(method, rawParams);

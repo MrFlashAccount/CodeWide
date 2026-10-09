@@ -4,14 +4,16 @@ import { describe, expect, it } from "vitest";
 import {
   BOOLEAN_CAPABILITIES,
   OPERATION_NAMES,
+  PROVIDER_REQUEST_NAMES,
   checkMessage,
   supportsCapability,
   type CapabilitySet,
   type OperationName,
+  type ProviderRequestName,
 } from "../src/v1/index";
 
 interface FixtureEntry {
-  readonly respondsTo: OperationName | null;
+  readonly respondsTo: OperationName | ProviderRequestName | null;
   readonly message: unknown;
 }
 
@@ -33,7 +35,12 @@ function loadFixture(name: string): FixtureFile {
 describe("codewide-agent v1 fixtures", () => {
   it("are present", () => {
     expect(fixtureNames).toEqual(
-      expect.arrayContaining(["events.json", "handshake.json", "operations.json"]),
+      expect.arrayContaining([
+        "client-tools.json",
+        "events.json",
+        "handshake.json",
+        "operations.json",
+      ]),
     );
   });
 
@@ -65,6 +72,7 @@ describe("codewide-agent v1 fixtures", () => {
       }
     }
     for (const operation of OPERATION_NAMES) expect(methods).toContain(operation);
+    for (const request of PROVIDER_REQUEST_NAMES) expect(methods).toContain(request);
     expect([...events].sort()).toEqual(
       [
         "capability.event",
@@ -110,6 +118,86 @@ describe("shape checks reject drift", () => {
       "$: a response needs the operation it answers",
     ]);
     expect(checkMessage({ id: 1, result: {} }, "turn.interrupt")).toEqual([]);
+  });
+});
+
+describe("client tools", () => {
+  const turnStart = {
+    id: 1,
+    method: "turn.start",
+    params: { appThreadId: "t", clientMessageId: null, input: [] },
+  };
+  const spec = { name: "codewide_list_agents", description: "Lists agents", inputSchema: {} };
+
+  it("keeps clientTools optional on turn.start and checks each spec", () => {
+    expect(checkMessage(turnStart)).toEqual([]);
+    expect(
+      checkMessage({ ...turnStart, params: { ...turnStart.params, clientTools: [spec] } }),
+    ).toEqual([]);
+    expect(
+      checkMessage({
+        ...turnStart,
+        params: { ...turnStart.params, clientTools: [{ name: "x", inputSchema: {} }] },
+      }),
+    ).toEqual(["$.params.clientTools[0].description: missing"]);
+  });
+
+  it("checks tool.call requests and their results", () => {
+    const call = {
+      id: "claude-host:1",
+      method: "tool.call",
+      params: { appThreadId: "t", turnId: "u", callId: "c", tool: "codewide_list_agents" },
+    };
+    expect(checkMessage(call)).toEqual(["$.params.arguments: missing"]);
+    expect(
+      checkMessage({ id: "claude-host:1", result: { success: true, content: [] } }, "tool.call"),
+    ).toEqual([]);
+    expect(
+      checkMessage(
+        { id: "claude-host:1", result: { success: true, content: [{ type: "image", url: "u" }] } },
+        "tool.call",
+      ),
+    ).toEqual(["$.result.content[0].type: unknown variant image"]);
+  });
+});
+
+describe("additive capability names", () => {
+  const initializeResult = (capabilities: Record<string, unknown>) => ({
+    id: 1,
+    result: {
+      account: null,
+      capabilities,
+      protocolVersion: 1,
+      provider: { displayName: "Claude", id: "claude", modelProvider: "anthropic", version: "0" },
+    },
+  });
+  const original = {
+    ...Object.fromEntries(BOOLEAN_CAPABILITIES.map((name) => [name, false])),
+    "turns.startWhileActive": "busy",
+  };
+
+  it("accepts a declaration with or without them and reads absence as unsupported", () => {
+    expect(checkMessage(initializeResult(original), "initialize")).toEqual([]);
+    expect(
+      checkMessage(
+        initializeResult({
+          ...original,
+          "orchestration.tools": true,
+          "threads.crossProviderFork": false,
+        }),
+        "initialize",
+      ),
+    ).toEqual([]);
+    expect(
+      checkMessage(initializeResult({ ...original, "orchestration.tools": "yes" }), "initialize"),
+    ).toEqual(["$.result.capabilities.orchestration.tools: expected boolean"]);
+    const extension = {
+      provider: "claude",
+      providerName: "Claude",
+      primary: false,
+      capabilities: original as CapabilitySet, // WHY: built from the exhaustive name list above.
+    };
+    expect(supportsCapability(extension, "threads.crossProviderFork")).toBe(false);
   });
 });
 

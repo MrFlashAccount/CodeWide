@@ -58,6 +58,13 @@ cp "$repo_root/brand/macos/CodeWideMenuBarTemplate.png" "$resources_dir/CodeWide
 cp "$repo_root/brand/macos/CodeWideMenuBarTemplate@2x.png" "$resources_dir/CodeWideMenuBarTemplate@2x.png"
 cp "$repo_root/brand/codewide-menubar-template-64.png" "$resources_dir/CodeWideBrandMark.png"
 
+# The Claude agent host payload and its installer (opt-in Claude provider).
+# The Claude Agent SDK is installed from npm by the installer, never bundled.
+"$repo_root/scripts/stage-claude-agent-host" "$resources_dir/claude-agent-host" "$version" >/dev/null
+rm -f -- "$resources_dir/claude-agent-host/claude-provider.conf"
+cp "$repo_root/scripts/install-claude-provider.sh" "$resources_dir/codewide-install-claude-provider"
+chmod 755 "$resources_dir/codewide-install-claude-provider"
+
 icon_dir=$(mktemp -d "${TMPDIR:-/tmp}/codewide-icon.XXXXXX")
 trap 'rm -rf -- "$icon_dir"' EXIT HUP INT TERM
 cp -R "$repo_root/brand/macos/AppIcon.iconset" "$icon_dir/CodeWide.iconset"

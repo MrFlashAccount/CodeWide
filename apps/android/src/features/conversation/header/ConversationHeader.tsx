@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View } from "react-native";
 import { contextUsageFromProjection } from "../../../data/account-rate-limits";
+import { readThreadAgent } from "../../../data/threadAgent";
 import { colors, iconSize } from "../../../theme";
 import { InlineEmoji } from "../../../ui/InlineIcon";
 import { leadingEmoji } from "../../../ui/ThreadTitle";
@@ -26,6 +27,7 @@ export function ConversationHeader({
   dismissComposerKeyboardForOverlay,
   draftConnectionId,
   draftThreadId,
+  forkTargets,
   historyActivityModel,
   historyActivityResourceId,
   newChat,
@@ -47,6 +49,8 @@ export function ConversationHeader({
   threadChatModel,
   threadSearchVisible,
 }: ConversationHeaderProps) {
+  // In multi-provider mode a thread with account limits shows its own provider's pool.
+  const accountsOwnerName = readThreadAgent(remoteThread)?.providerName ?? null;
   return (
     <View style={styles.conversationHeader} testID="conversation-header">
       {compact && (
@@ -97,6 +101,7 @@ export function ConversationHeader({
       )}
       {!newChat && (
         <WorkspaceAccountUsageMenu
+          accountsOwnerName={accountsOwnerName}
           align="end"
           compactionCount={sessionCompactionCount}
           currentUsage={currentUsage}
@@ -114,7 +119,11 @@ export function ConversationHeader({
             : { onRefresh: onRefreshAccountRateLimits })}
         >
           <Pressable
-            accessibilityLabel="Context usage and account limits"
+            accessibilityLabel={
+              accountRateLimitsDatabase === null
+                ? "Context usage"
+                : "Context usage and account limits"
+            }
             style={styles.headerIcon}
           >
             <ContextRing
@@ -142,6 +151,7 @@ export function ConversationHeader({
               : { onArchive })}
           {...(onCompact === undefined ? {} : { onCompact })}
           {...(onFork === undefined ? {} : { onFork })}
+          {...(forkTargets === undefined ? {} : { forkTargets })}
           {...(deleteThread === undefined ? {} : { onDelete: deleteThread })}
         />
       )}

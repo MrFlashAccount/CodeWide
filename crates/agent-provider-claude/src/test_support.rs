@@ -86,6 +86,7 @@ pub(crate) fn turn(session: &str, prompt: &str, started_at: i64) -> AgentTurn {
                 phase: MessagePhase::Final,
             },
         ],
+        usage: None,
     }
 }
 

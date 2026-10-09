@@ -16,6 +16,7 @@ import type { ConnectionSettingsProps } from "./connectionSettingsContract";
 /** Presents qualified server status and editors through the public settings capability. */
 export function connectionSettingsSections({
   accountRateLimits,
+  agentProviders,
   connections,
   onActivateAccountProfile,
   onCancelAccountLogin,
@@ -36,6 +37,7 @@ export function connectionSettingsSections({
           accountRateLimits.find((row) => row.connectionId === connection.id)?.accountPool ?? null
         }
         connection={connection}
+        {...(agentProviders === undefined ? {} : { agentProviders })}
         onDelete={onDelete}
         onReconnect={onReconnect}
         onToggle={onToggle}
@@ -51,6 +53,14 @@ export function connectionSettingsSections({
     ),
     description: connectionStateLabel(connection.state, connection.enabled, connection.health),
     id: connection.id,
+    ...(agentProviders === undefined
+      ? {}
+      : {
+          onOpen: () => {
+            // Detail-page intent; a failure keeps the last snapshot and its error in the resource.
+            agentProviders.refresh(connection.id).catch(() => undefined);
+          },
+        }),
     leading: <ServerIcon color={colors.text} iconId={connection.iconId} metric="title" />,
     statusIcon:
       connection.enabled && connectionActivity(connection.state, connection.health) !== null ? (

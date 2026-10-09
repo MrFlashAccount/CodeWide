@@ -10,6 +10,7 @@ use std::{
 use agent_provider_codex::{host::RolloutThreadMetadata, rollout_content::RolloutContentSource};
 use base64::{Engine as _, engine::general_purpose};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use codewide_companion::log_filter::LogFilter;
 use codewide_companion::{
     account_pool::AccountPoolService,
     agent::providers::codex::{CodexProvider, storage::CodexStorage},
@@ -45,14 +46,10 @@ use codewide_companion::{
 use rand::{TryRngCore, rngs::OsRng};
 use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
-use tracing::info;
-use tracing_subscriber::EnvFilter;
+use tracing::{info, warn};
 
 mod local_control;
-
-/// Default log levels; the companion's library crates report warnings.
-const DEFAULT_LOG_FILTER: &str = "codewide_companion=info,companion_core=warn,companion_host=warn,\
-agent_core=warn,agent_transport=warn,agent_provider_codex=warn,agent_provider_claude=warn";
+mod provider_status;
 
 /// Opens the companion index with the Codex rollout tables, as the server does.
 fn open_rollout_index(path: &Path) -> Result<RolloutStore, Box<dyn std::error::Error>> {
@@ -185,6 +182,26 @@ enum Command {
     Telemetry(Box<TelemetryOptions>),
     Diagnostics(DiagnosticOptions),
     Vcs(VcsOptions),
+    /// Agent provider configuration (`agent-providers.json`).
+    Providers(ProvidersOptions),
+}
+
+#[derive(Debug, Args)]
+struct ProvidersOptions {
+    #[command(subcommand)]
+    command: ProvidersCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProvidersCommand {
+    /// Prints the configured providers and whether each could start, as JSON.
+    /// Offline: reads the configuration and file metadata only. Exits with an
+    /// error when the configuration is invalid or a provider is not ready.
+    Status {
+        /// Companion state directory (default: the user service's).
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -358,14 +375,15 @@ enum RelayCommand {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let log_filter = LogFilter::from_env();
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER)),
-        )
+        .with_env_filter(log_filter.filter)
         .with_target(false)
         .compact()
         .init();
+    for directive in &log_filter.rejected_directives {
+        warn!(directive = %directive, "ignored an invalid RUST_LOG directive");
+    }
 
     let worker_threads = std::thread::available_parallelism()
         .map_or(4, usize::from)
@@ -667,6 +685,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let body = control_request(reqwest::Method::GET, &path, None, control).await?;
             println!("{body}");
         }
+        Command::Providers(options) => match options.command {
+            ProvidersCommand::Status { state_dir } => {
+                let state_dir = state_dir.unwrap_or_else(provider_status::default_state_directory);
+                let report = provider_status::report(&state_dir, std::env::var_os("PATH").as_ref());
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                if !report.ready() {
+                    return Err("agent provider configuration is not ready".into());
+                }
+            }
+        },
         Command::Vcs(options) => match options.command {
             VcsCommand::Changes {
                 workspace,

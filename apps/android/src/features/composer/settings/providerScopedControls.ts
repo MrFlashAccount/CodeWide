@@ -27,7 +27,8 @@ export function providerScopedControls(
     ),
     permissions: controls.permissions.filter(
       (permission) =>
-        permission.providers === null || permission.providers.includes(agent.provider),
+        permission.providers === null ||
+        (agent.provider !== null && permission.providers.includes(agent.provider)),
     ),
     skills: threadAgentSupports(agent, "input.skillsAndMentions") ? controls.skills : [],
   };

@@ -16,6 +16,8 @@ interface SettingsServer {
   readonly description: string;
   readonly id: string;
   readonly leading: ReactNode;
+  /** Detail-page open intent, for reads the page shows. */
+  readonly onOpen?: () => void;
   readonly statusIcon: ReactNode;
   readonly title: string;
 }
@@ -81,6 +83,7 @@ export function SettingsSheet(props: SettingsSheetProps) {
     setNavigation({ direction: "forward", page: { kind: "advanced" } });
   });
   const openServer = useEvent((id: string) => {
+    props.servers.find((server) => server.id === id)?.onOpen?.();
     setNavigation({ direction: "forward", page: { id, kind: "server" } });
   });
   const openSecurity = useEvent(() => {

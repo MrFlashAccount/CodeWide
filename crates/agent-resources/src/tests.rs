@@ -436,6 +436,7 @@ fn neutral_turns_project_like_their_client_wire_items() {
         error: None,
         items,
         provenance: None,
+        usage: None,
     };
     let finished = turn(
         "turn-1",

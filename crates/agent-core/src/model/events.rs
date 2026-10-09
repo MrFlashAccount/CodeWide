@@ -6,8 +6,8 @@ use serde_json::Value;
 use super::{
     ids::{AppThreadId, ItemId, NativeRequestId, TurnId},
     thread::{
-        AgentItem, AgentThread, AgentTurn, FileChange, PlanStep, RequestResolution, RuntimeRequest,
-        TokenUsage,
+        AgentItem, AgentThread, AgentTurn, FileChange, PlanStep, ProviderCost, RequestResolution,
+        RuntimeRequest, TokenUsage,
     },
 };
 
@@ -78,6 +78,9 @@ pub enum AgentEvent {
         last: TokenUsage,
         total: TokenUsage,
         context_window: Option<i64>,
+        /// The provider's own cost estimate of the turn (added within v1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost: Option<ProviderCost>,
     },
     #[serde(rename = "plan.updated")]
     PlanUpdated {

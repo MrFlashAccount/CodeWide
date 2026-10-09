@@ -3,7 +3,7 @@
  * buffering until `initialized`.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RpcServer } from "../src/rpc/server.js";
 import { createMemoryLogger } from "../src/log.js";
 import { harness, scriptedRuntime } from "./support/scripted.js";
@@ -30,6 +30,54 @@ const initialize = {
 };
 
 describe("rpc server", () => {
+  it("forwards a later sign-in as account.updated once per change", async () => {
+    vi.useFakeTimers();
+    try {
+      const lines: unknown[] = [];
+      const { service } = harness();
+      const { runtime } = scriptedRuntime();
+      const accounts = [
+        { authenticated: false, label: null },
+        { authenticated: true, label: "max" },
+        { authenticated: true, label: "max" },
+      ];
+      let probes = 0;
+      const rpc = new RpcServer({
+        service,
+        runtime: {
+          ...runtime,
+          probe: () => {
+            const account = accounts[Math.min(probes, accounts.length - 1)] ?? null;
+            probes += 1;
+            return Promise.resolve({ account, models: [] });
+          },
+        },
+        logger: createMemoryLogger(),
+        write: (line) => lines.push(JSON.parse(line)),
+        version: "0.1.0",
+      });
+      await rpc.handleLine(JSON.stringify(initialize));
+      expect(lines.at(-1)).toMatchObject({
+        result: { account: { authenticated: false, label: null } },
+      });
+      await rpc.handleLine(JSON.stringify({ method: "initialized" }));
+      const models = { id: "m", method: "catalog.models", params: {} };
+      vi.advanceTimersByTime(61_000);
+      await rpc.handleLine(JSON.stringify(models));
+      vi.advanceTimersByTime(61_000);
+      await rpc.handleLine(JSON.stringify(models));
+      expect(probes).toBe(3);
+      const updates = lines.filter(
+        (line) => (line as { readonly method?: unknown }).method === "account.updated",
+      );
+      expect(updates).toEqual([
+        { method: "account.updated", params: { account: { authenticated: true, label: "max" } } },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("negotiates v1 and rejects other versions without exiting", async () => {
     const { rpc, lines } = server();
     await rpc.handleLine(

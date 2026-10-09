@@ -47,6 +47,8 @@
             "host.fs": false,
             "host.config": false,
             "codex.native": false,
+            "orchestration.tools": true,
+            "threads.crossProviderFork": true,
             "turns.startWhileActive": "busy"
           },
           "account": { "authenticated": true, "label": null }

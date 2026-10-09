@@ -8,6 +8,7 @@ pub mod ids;
 pub mod operations;
 pub mod sessions;
 pub mod thread;
+pub mod tools;
 pub mod turns;
 
 pub use capabilities::{Capability, CapabilitySet, StartWhileActiveMode};
@@ -19,6 +20,7 @@ pub use ids::{
 pub use operations::*;
 pub use sessions::*;
 pub use thread::*;
+pub use tools::*;
 
 #[cfg(test)]
 mod fixture_tests;

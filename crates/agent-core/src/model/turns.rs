@@ -90,6 +90,7 @@ pub fn view_items(turn: &AgentTurn, view: ItemsView) -> AgentTurn {
         completed_at: turn.completed_at,
         error: turn.error.clone(),
         items,
+        usage: turn.usage.clone(),
     }
 }
 
@@ -108,6 +109,7 @@ mod tests {
             completed_at: Some(2),
             error: None,
             items: Vec::new(),
+            usage: None,
         }
     }
 

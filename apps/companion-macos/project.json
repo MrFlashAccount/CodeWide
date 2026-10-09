@@ -4,7 +4,7 @@
   "projectType": "application",
   "sourceRoot": "apps/companion-macos/Sources",
   "tags": ["language:swift", "type:application", "platform:macos"],
-  "implicitDependencies": ["companion-swift-ffi", "release-contracts"],
+  "implicitDependencies": ["companion-swift-ffi", "@codewide/claude-agent-host", "release-contracts"],
   "metadata": {
     "description": "Native CodeWide menu-bar application and LaunchAgent",
     "codewideRelease": {

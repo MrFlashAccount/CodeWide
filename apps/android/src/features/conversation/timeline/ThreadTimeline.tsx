@@ -278,7 +278,7 @@ export function useThreadTimelineActions(
     if (onFork === undefined) {
       throw new Error("Thread fork is unavailable");
     }
-    await onFork({ boundary: { kind: "through", turnId }, ephemeral: false });
+    await onFork({ boundary: { kind: "through", turnId }, ephemeral: false, target: null });
   });
   const loadStableTurnItems = useEvent(async (turnId: string) => {
     if (onLoadTurnItems === undefined) {

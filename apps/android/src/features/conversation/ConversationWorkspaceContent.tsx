@@ -1,5 +1,6 @@
 import { ConversationComposition } from "./ConversationComposition";
-import { threadAgentActions } from "./threadAgentActions";
+import { forkTargetChoices } from "../turnActions/forkTargets";
+import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
 /**
  * Joins one resolved detail snapshot with the independently scoped feature surfaces.
@@ -22,16 +23,25 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       : listedThread;
   return (
     <ConversationComposition
-      accounts={{
+      accounts={threadAgentAccounts(remoteThread, {
         accountRateLimitsDatabase: props.runtime.accountRateLimits,
         onRefreshAccountRateLimits:
           props.activeConnectionId === ""
             ? undefined
             : async () =>
                 props.features.accounts.refreshAccountRateLimits(props.activeConnectionId, true),
-      }}
+      })}
       actions={{
         archived: props.activeThread?.archived ?? false,
+        forkTargets:
+          gated.onFork === undefined
+            ? undefined
+            : () =>
+                forkTargetChoices(
+                  remoteThread,
+                  props.runtime.resources?.turnControls.get(props.activeControlsResourceId ?? "")
+                    ?.value?.models ?? [],
+                ),
         onArchive: props.threadMutationActions.onArchive,
         onCompact: gated.onCompact,
         onDelete: props.threadMutationActions.onDelete,

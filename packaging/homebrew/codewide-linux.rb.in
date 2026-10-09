@@ -13,6 +13,13 @@ class Codewide < Formula
     bin.install "bin/codewide-companion"
     libexec.install "libexec/codewide-vcs-git"
     libexec.install "libexec/codewide-companion-memory-watch"
+    # The Claude agent host payload; the installer next to it installs the
+    # Claude Agent SDK from npm and registers the provider (opt-in). Older
+    # bundles reused by a later release set carry no payload.
+    if (buildpath/"share/claude-agent-host").directory?
+      libexec.install "libexec/codewide-install-claude-provider"
+      share.install "share/claude-agent-host"
+    end
 
     service_file = buildpath/"systemd/user/codewide-companion.service"
     inreplace service_file,
@@ -31,6 +38,9 @@ class Codewide < Formula
       The service also requires the Codex app-server control socket documented by CodeWide.
       Then start it with:
         brew services start codewide
+
+      Optional Claude provider (needs Node.js >= 22 and a signed-in `claude`):
+        #{opt_libexec}/codewide-install-claude-provider
     EOS
   end
 

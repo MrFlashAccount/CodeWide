@@ -289,6 +289,7 @@ function renderVirtualizedTurnFooter(
       completedAt={presentation.rawTurn.completedAt}
       diff={projectedTurnMetadata(presentation.rawTurn)?.diff ?? ""}
       durationMs={presentation.rawTurn.durationMs}
+      model={projectedTurnMetadata(presentation.rawTurn)?.execution?.model ?? null}
       status={presentation.rawTurn.status}
       usage={usage}
     />

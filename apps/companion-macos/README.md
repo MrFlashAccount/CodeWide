@@ -38,6 +38,14 @@ Shared Companion behavior and durable domain state belong in
 - `scripts`: binding generation, bundle construction, DMG creation, boundary
   validation, and update E2E.
 
+`build-app.sh` also places the Claude agent host payload in
+`Contents/Resources/claude-agent-host` and its installer in
+`Contents/Resources/codewide-install-claude-provider`. Enabling Claude is a
+manual step (the Claude Agent SDK is installed from npm by that installer);
+after an app update, re-run the installer and restart the runtime with
+`launchctl kickstart -k gui/$UID/dev.codewide.runtime`. Runtime logs are in
+`~/Library/Logs/CodeWide/companion.log`.
+
 ## Current menu and capability boundary
 
 The application has no ordinary window. Clicking the menu-bar icon opens a

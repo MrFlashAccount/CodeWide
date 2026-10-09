@@ -187,18 +187,28 @@ impl EventProjector {
                 last,
                 total,
                 context_window,
-            } => vec![json!({
-                "method": "thread/tokenUsage/updated",
-                "params": {
-                    "threadId": app_thread_id.as_str(),
-                    "turnId": turn_id.as_str(),
-                    "tokenUsage": {
-                        "total": usage(&total),
-                        "last": usage(&last),
-                        "modelContextWindow": context_window,
+                cost,
+            } => {
+                let mut notification = json!({
+                    "method": "thread/tokenUsage/updated",
+                    "params": {
+                        "threadId": app_thread_id.as_str(),
+                        "turnId": turn_id.as_str(),
+                        "tokenUsage": {
+                            "total": usage(&total),
+                            "last": usage(&last),
+                            "modelContextWindow": context_window,
+                        }
                     }
+                });
+                if let Some(cost) = cost
+                    && let Ok(cost) = serde_json::to_value(cost)
+                    && let Some(params) = notification["params"].as_object_mut()
+                {
+                    params.insert(agent_core::usage::PROVIDER_COST_FIELD.into(), cost);
                 }
-            })],
+                vec![notification]
+            }
             AgentEvent::PlanUpdated {
                 app_thread_id,
                 turn_id,
@@ -415,7 +425,7 @@ fn usage(usage: &TokenUsage) -> Value {
         "totalTokens": usage.total_tokens,
         "inputTokens": usage.input_tokens,
         "cachedInputTokens": usage.cached_input_tokens,
-        "cacheWriteInputTokens": 0,
+        "cacheWriteInputTokens": usage.cache_write_input_tokens.unwrap_or(0),
         "outputTokens": usage.output_tokens,
         "reasoningOutputTokens": usage.reasoning_output_tokens,
     })
@@ -586,6 +596,41 @@ mod tests {
                     payload: json!({"method": "account/updated"}),
                 })
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn usage_carries_cache_writes_and_only_a_reported_provider_cost() {
+        let usage = TokenUsage {
+            input_tokens: 1_330,
+            cached_input_tokens: 1_000,
+            cache_write_input_tokens: Some(300),
+            output_tokens: 40,
+            reasoning_output_tokens: 5,
+            total_tokens: 1_370,
+        };
+        let event = |cost| AgentEvent::UsageUpdated {
+            app_thread_id: AppThreadId::from_static("t"),
+            turn_id: TurnId::from_static("u"),
+            last: usage,
+            total: usage,
+            context_window: Some(200_000),
+            cost,
+        };
+        let mut projector = projector();
+        let unpriced = projector.project(event(None));
+        let params = &unpriced[0]["params"];
+        assert_eq!(params["tokenUsage"]["last"]["cacheWriteInputTokens"], 300);
+        assert!(params.get(agent_core::usage::PROVIDER_COST_FIELD).is_none());
+        let priced = projector.project(event(Some(crate::agent::model::ProviderCost {
+            basis: crate::agent::model::ProviderCostBasis::Managed,
+            model: "claude-sonnet-4-6".into(),
+            turn_usd: 0.25,
+            thread_usd: None,
+        })));
+        assert_eq!(
+            priced[0]["params"][agent_core::usage::PROVIDER_COST_FIELD],
+            json!({"basis": "managed", "model": "claude-sonnet-4-6", "turnUsd": 0.25, "threadUsd": null})
         );
     }
 }

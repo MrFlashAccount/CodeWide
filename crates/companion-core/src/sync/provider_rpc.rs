@@ -25,6 +25,7 @@ use crate::{
             list, results,
         },
         model::{Capability, CapabilityInvokeParams, RequestRespondParams},
+        orchestration::OrchestrationService,
         provider::{
             AgentProvider, DispatchError, NativeSurface, NativeThreadResources, NativeThreadStore,
             ProviderError, ProviderStatus,
@@ -44,6 +45,8 @@ pub(super) struct RpcResultObservers {
     pub(super) pins: Arc<IndexStore>,
     pub(super) resources: Option<Arc<dyn NativeThreadResources>>,
     pub(super) projects: Option<Arc<ProjectService>>,
+    /// Effective permission profiles of threads, for spawned agents.
+    pub(super) orchestration: Option<Arc<OrchestrationService>>,
     pub(super) wire: WireProvider,
 }
 
@@ -209,6 +212,10 @@ pub(super) async fn forward_rpc_response(
         warn!(err = ?error, "thread pin projection failed");
         return send_rpc_error(socket, id, -32020, "Thread pin projection unavailable").await;
     }
+    if let (Some(orchestration), Some(result)) = (&observers.orchestration, response.get("result"))
+    {
+        orchestration.observe_rpc_result(method, result);
+    }
     if let (Some(projects), Some(result)) = (observers.projects, response.get("result")) {
         projects.observe_rpc_result(method, result).await;
     }
@@ -366,6 +373,37 @@ pub(super) async fn handle_thread_start(
                 Err(failure) => send_rpc_failure(socket, id, &failure).await,
             }
         }
+    }
+}
+
+/// `thread/fork` into another provider: a new thread whose first turn
+/// carries the source thread's context handoff.
+pub(super) async fn handle_cross_provider_fork(
+    hub: &SyncHub,
+    socket: &SessionSocket,
+    source: &Target,
+    provider: &crate::agent::model::ProviderId,
+    params: &Value,
+    id: Value,
+) -> Result<(), ()> {
+    match hub.agents.fork.fork(source, provider, params).await {
+        Ok(result) => {
+            let wire = hub
+                .gateway
+                .registry()
+                .get(provider)
+                .map_or_else(|| source.wire.clone(), |target| hub.gateway.wire(target));
+            forward_rpc_response(
+                socket,
+                json!({"id": "thread-fork", "result": result}),
+                id,
+                "thread/fork",
+                hub.projector(),
+                hub.observers(&wire),
+            )
+            .await
+        }
+        Err(failure) => send_rpc_failure(socket, id, &failure).await,
     }
 }
 
@@ -559,16 +597,27 @@ async fn merge_catalog(
     let Some(result) = response.get_mut("result") else {
         return response;
     };
-    let others = live_others(&hub.gateway);
-    let merged_result = if merged == MergedMethod::ModelList {
+    // Only the first `model/list` page carries other providers' rows.
+    let asks_others = first_page || merged == MergedMethod::PermissionProfileList;
+    let mut unavailable = Vec::new();
+    let mut others = Vec::new();
+    if asks_others {
+        for (provider, wire) in hub.gateway.non_primary() {
+            if provider.status() == ProviderStatus::Live {
+                others.push((provider, wire));
+            } else {
+                unavailable.push(wire.descriptor.id);
+            }
+        }
+    }
+    let mut merged_result = if merged == MergedMethod::ModelList {
         let mut catalogs = Vec::new();
-        if first_page {
-            for (provider, wire) in &others {
-                match provider.catalog_models().await {
-                    Ok(catalog) => catalogs.push((wire.clone(), catalog.models)),
-                    Err(err) => {
-                        warn!(provider = %wire.descriptor.id, err = %err, "provider model catalog unavailable");
-                    }
+        for (provider, wire) in &others {
+            match provider.catalog_models().await {
+                Ok(catalog) => catalogs.push((wire.clone(), catalog.models)),
+                Err(err) => {
+                    warn!(provider = %wire.descriptor.id, err = %err, "provider model catalog unavailable");
+                    unavailable.push(wire.descriptor.id.clone());
                 }
             }
         }
@@ -580,11 +629,13 @@ async fn merge_catalog(
                 Ok(catalog) => catalogs.push((wire.clone(), catalog.profiles)),
                 Err(err) => {
                     warn!(provider = %wire.descriptor.id, err = %err, "provider permission profiles unavailable");
+                    unavailable.push(wire.descriptor.id.clone());
                 }
             }
         }
         catalog::merge_permission_profiles(result.take(), primary, &catalogs)
     };
+    catalog::attach_unavailable(&mut merged_result, &unavailable);
     *result = merged_result;
     response
 }
@@ -712,6 +763,7 @@ async fn handle_thread_list(
             pins: hub.store.clone(),
             resources: hub.thread_resources(),
             projects: hub.projects(),
+            orchestration: None,
             // Rows already carry their provider extension.
             wire: WireProvider {
                 multi_provider: false,

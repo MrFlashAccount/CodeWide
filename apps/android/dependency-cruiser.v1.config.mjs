@@ -170,6 +170,7 @@ const featurePublicModules = {
     "turnActions",
     "turnActionCapabilities",
     "threadConversationCapabilities",
+    "forkTargets",
   ],
   search: [
     "GlobalSearchScreen",

@@ -117,6 +117,7 @@ pub fn turn(turn: &Value) -> Option<AgentTurn> {
             })
         }),
         items,
+        usage: None,
     })
 }
 

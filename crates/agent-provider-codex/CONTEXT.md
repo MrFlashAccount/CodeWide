@@ -11,6 +11,7 @@ Adapter:
 - `lib.rs` — `CodexProvider`, the `AgentProvider` implementation over `UpstreamHandle`, the account pool and the Codex storage modules; exposes the `codex.native` `NativeSurface` and the `OpenAI` price table (`usage_pricing`); stamps neutral turns and items with `provenance {provider: "codex", nativeThreadId}` (phase 1: the app thread id).
 - `storage.rs` — `CodexStorage`, the only bridge from the sync hub to the Codex storage modules: it implements `NativeThreadStore`, `NativeMessageSearch` and `NativeThreadResources` over `history_service` (rollout catalog and history), message search and `resources`, keeping the error messages and codes the hub forwarded before.
 - `rollout_changes.rs` — watches rollout files written by other App Server processes and turns them into thread invalidations for the sync hub's journal (echoes coalesced, the trailing write never dropped).
+- `client_tools.rs` — the installed client tools as `dynamicTools` on `thread/start`, and `item/tool/call` requests for them answered here (with their `serverRequest/resolved`) instead of reaching the client.
 - `mapping.rs` — pure App Server values → neutral model and neutral params → App Server params (`thread.list` asks for all source kinds, state-DB only).
 - `dispatch.rs` — thread-mutation dispatch with account admission and one safe resume-retry.
 - `host.rs` — Codex services the companion host wires in at startup: the catalog metadata warmup (`spawn_catalog_warmup`) and `RolloutThreadMetadata`, the `ThreadMetadataSource` for threads the host index does not know yet.
@@ -42,6 +43,8 @@ AccountPool runs only inside this adapter's `turn.start` and `thread.update(sett
 Codex notifications and request params with no neutral or capability mapping pass through unchanged as `capability.event` or `providerOptions["codex.native"]`, so phase 1 cannot regress unmapped Codex features. `keep_temporarily`, owner backend. Removal condition: every Codex method the client uses has a neutral or capability mapping and the client speaks the neutral protocol. Negative check: no other provider emits it.
 
 ## Invariants
+
+- Without a model call of an installed client tool the client wire is unchanged; installed tools change only the `thread/start` request sent upstream.
 
 - A golden replay of recorded App Server streams and RPC exchanges through this adapter and the wire projector is byte-identical to today's client wire, including request ids, cursors, `codewideCatalogSummary`, pins and extension fields.
 - With only Codex enabled, no client-wire extension is attached and `thread/list` cursors pass through byte-for-byte. With several providers the only golden-replay difference is the additive `codewideAgent` extension on projected threads.

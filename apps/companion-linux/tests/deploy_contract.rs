@@ -3,6 +3,42 @@ const MEMORY_WATCH_UNIT: &str = include_str!("../deploy/codewide-companion-memor
 const INSTALL_SCRIPT: &str = include_str!("../deploy/install.sh");
 const VERIFY_SCRIPT: &str = include_str!("../deploy/verify.sh");
 const RELEASE_SCRIPT: &str = include_str!("../../../scripts/release-companion");
+const CLAUDE_DROP_IN: &str = include_str!("../deploy/claude-provider.conf");
+
+fn settings(unit: &str) -> Vec<&str> {
+    unit.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect()
+}
+
+#[test]
+fn companion_service_keeps_the_default_log_filter() {
+    // A unit-level RUST_LOG used to replace the companion's default filter
+    // and silence every provider crate; overrides are for local diagnosis.
+    assert!(!COMPANION_UNIT.contains("RUST_LOG"));
+}
+
+#[test]
+fn claude_drop_in_relaxes_only_the_proven_properties() {
+    assert_eq!(
+        settings(CLAUDE_DROP_IN),
+        [
+            "[Service]",
+            "RestrictAddressFamilies=AF_NETLINK",
+            "RestrictNamespaces=user mnt pid net ipc uts cgroup",
+        ]
+    );
+    let unit = settings(COMPANION_UNIT);
+    for kept in [
+        "ProtectSystem=full",
+        "NoNewPrivileges=true",
+        "RestrictNamespaces=true",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+    ] {
+        assert!(unit.contains(&kept), "the base unit keeps {kept}");
+    }
+}
 
 #[test]
 fn companion_service_keeps_host_ptys_available() {

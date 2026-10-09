@@ -39,10 +39,42 @@ export interface ToolResultBlock {
   readonly toolUseId: string;
 }
 
-export interface UsageFigures {
-  readonly cachedInputTokens: number;
+/** Token counts of one model request (`message.usage` of an assistant message). */
+export interface RequestFigures {
+  readonly cacheCreationInputTokens: number;
+  readonly cacheReadInputTokens: number;
+  /** Uncached prompt tokens only, as the API reports them. */
   readonly inputTokens: number;
   readonly outputTokens: number;
+}
+
+/**
+ * Which price table the SDK priced a model's latest request with: built-in
+ * list prices, organization-managed rates, or neither (`unknown`: the cost
+ * is a guess). An absent field means `list` (SDK contract).
+ */
+export type CostBasis = "list" | "managed" | "unknown";
+
+/**
+ * One model's cumulative totals from a result's `modelUsage`: everything the
+ * query pipeline used since the query() call started (or since the totals a
+ * resumed session restored), across turns.
+ */
+export interface ModelTotals {
+  readonly cacheCreationInputTokens: number;
+  readonly cacheReadInputTokens: number;
+  /** The model id used for pricing, when the SDK names one. */
+  readonly canonicalModel: string | null;
+  readonly contextWindow: number | null;
+  readonly costBasis: CostBasis;
+  readonly costUsd: number;
+  /** Uncached prompt tokens only. */
+  readonly inputTokens: number;
+  /** The `modelUsage` key (raw model string). */
+  readonly model: string;
+  /** Includes `thinkingTokens`. */
+  readonly outputTokens: number;
+  readonly thinkingTokens: number;
 }
 
 export type StreamEvent =
@@ -74,6 +106,8 @@ export type ClaudeFrame =
       readonly kind: "assistant";
       readonly messageId: string;
       readonly parentToolUseId: string | null;
+      /** Token counts of the model request that produced the message. */
+      readonly usage: RequestFigures | null;
       /** Uuid Claude persists the message under. */
       readonly uuid: string | null;
     }
@@ -89,17 +123,19 @@ export type ClaudeFrame =
       readonly uuid: string | null;
     }
   | {
-      readonly contextWindow: number | null;
       readonly errors: readonly string[];
       readonly isError: boolean;
       readonly kind: "result";
+      /** The result's own main-loop usage (per turn; subagents excluded). */
+      readonly mainLoopUsage: RequestFigures | null;
+      /** Cumulative per-model totals of the query; empty when the result carries none. */
+      readonly modelUsage: readonly ModelTotals[];
       readonly numTurns: number;
       /** `origin.kind` (e.g. `task-notification`, `peer`) or `null` for a user turn. */
       readonly origin: string | null;
       readonly result: string | null;
       readonly subtype: string;
       readonly terminalReason: string | null;
-      readonly usage: UsageFigures | null;
       readonly userMessageUuids: readonly string[];
     }
   | { readonly kind: "compactBoundary"; readonly uuid: string | null }
@@ -107,32 +143,49 @@ export type ClaudeFrame =
   | { readonly kind: "rateLimit"; readonly status: string | null }
   | { readonly kind: "other"; readonly type: string };
 
-function parseUsage(value: unknown): UsageFigures | null {
+function parseRequestFigures(value: unknown): RequestFigures | null {
   if (!isRecord(value)) {
     return null;
   }
-  const input = num(value["input_tokens"]) ?? 0;
-  const cacheRead = num(value["cache_read_input_tokens"]) ?? 0;
-  const cacheCreation = num(value["cache_creation_input_tokens"]) ?? 0;
   return {
-    cachedInputTokens: cacheRead,
-    inputTokens: input + cacheRead + cacheCreation,
+    cacheCreationInputTokens: num(value["cache_creation_input_tokens"]) ?? 0,
+    cacheReadInputTokens: num(value["cache_read_input_tokens"]) ?? 0,
+    inputTokens: num(value["input_tokens"]) ?? 0,
     outputTokens: num(value["output_tokens"]) ?? 0,
   };
 }
 
-function contextWindowOf(modelUsage: unknown): number | null {
-  if (!isRecord(modelUsage)) {
-    return null;
+const COST_BASES: ReadonlySet<unknown> = new Set<unknown>(["list", "managed", "unknown"]);
+const isCostBasis = (value: unknown): value is CostBasis => COST_BASES.has(value);
+
+function modelTotals(model: string, entry: JsonRecord): ModelTotals {
+  const count = (field: string): number => num(entry[field]) ?? 0;
+  const basis = entry["costBasis"];
+  return {
+    cacheCreationInputTokens: count("cacheCreationInputTokens"),
+    cacheReadInputTokens: count("cacheReadInputTokens"),
+    canonicalModel: str(entry["canonicalModel"]),
+    contextWindow: num(entry["contextWindow"]),
+    costBasis: isCostBasis(basis) ? basis : "list",
+    costUsd: count("costUSD"),
+    inputTokens: count("inputTokens"),
+    model,
+    outputTokens: count("outputTokens"),
+    thinkingTokens: count("thinkingTokens"),
+  };
+}
+
+function parseModelUsage(value: unknown): readonly ModelTotals[] {
+  if (!isRecord(value)) {
+    return [];
   }
-  let best: number | null = null;
-  for (const entry of Object.values(modelUsage)) {
-    const window = isRecord(entry) ? num(entry["contextWindow"]) : null;
-    if (window !== null && (best === null || window > best)) {
-      best = window;
+  const totals: ModelTotals[] = [];
+  for (const [model, entry] of Object.entries(value)) {
+    if (isRecord(entry)) {
+      totals.push(modelTotals(model, entry));
     }
   }
-  return best;
+  return totals;
 }
 
 function parseAssistantBlock(value: unknown): AssistantBlock {
@@ -261,6 +314,7 @@ function assistantFrame(value: JsonRecord): ClaudeFrame {
     kind: "assistant",
     messageId: str(message["id"]) ?? str(value["uuid"]) ?? "message",
     parentToolUseId: str(value["parent_tool_use_id"]),
+    usage: parseRequestFigures(message["usage"]),
     uuid: str(value["uuid"]),
   };
 }
@@ -333,16 +387,16 @@ function resultFrame(value: JsonRecord): ClaudeFrame {
   ]);
   const origin = value["origin"];
   return {
-    contextWindow: contextWindowOf(value["modelUsage"]),
     errors: strings(value["errors"]),
     isError: value["is_error"] === true,
     kind: "result",
+    mainLoopUsage: parseRequestFigures(value["usage"]),
+    modelUsage: parseModelUsage(value["modelUsage"]),
     numTurns: num(value["num_turns"]) ?? 0,
     origin: isRecord(origin) ? (str(origin["kind"]) ?? "unknown") : null,
     result: str(value["result"]),
     subtype: str(value["subtype"]) ?? "unknown",
     terminalReason: str(value["terminal_reason"]),
-    usage: parseUsage(value["usage"]),
     userMessageUuids: [...uuids],
   };
 }

@@ -10,6 +10,8 @@
 import type {
   AppThreadId,
   ClientMessageId,
+  ClientToolSpec,
+  ClientToolTextContent,
   ItemId,
   OperationName,
   ProviderId,
@@ -20,6 +22,7 @@ import type {
   ThreadChange,
   ThreadListParams,
   ThreadSettings,
+  ToolCallResult,
   UserContent,
 } from "../protocol.js";
 import {
@@ -34,6 +37,7 @@ import {
   str,
   type Check,
 } from "../validation/checks.js";
+import { jsonValue } from "../validation/modelChecks.js";
 
 const fail = (path: string, expected: string): never => {
   throw new ShapeError(`${path}: expected ${expected}`);
@@ -56,6 +60,39 @@ const userContent: Check<UserContent> = (value, path) => {
     default:
       return fail(`${path}.type`, "text | image | localImage");
   }
+};
+
+/** Tool names Claude accepts for MCP tools. */
+const TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/u;
+
+const clientToolSpec: Check<ClientToolSpec> = (value, path) => {
+  const spec = record(value, path);
+  const name = str(spec["name"], `${path}.name`);
+  return {
+    description: str(spec["description"], `${path}.description`),
+    inputSchema: jsonValue(spec["inputSchema"], `${path}.inputSchema`),
+    name: TOOL_NAME.test(name) ? name : fail(`${path}.name`, "tool name [A-Za-z0-9_-]{1,64}"),
+  };
+};
+
+/** Absent `clientTools` is `null`: the thread keeps its current set. */
+const clientTools: Check<readonly ClientToolSpec[] | null> = nullable(list(clientToolSpec));
+
+const textContent: Check<ClientToolTextContent> = (value, path) => {
+  const block = record(value, path);
+  return {
+    text: str(block["text"], `${path}.text`),
+    type: oneOf(["text"])(block["type"], `${path}.type`),
+  };
+};
+
+/** The companion's `tool.call` result. */
+export const toolCallResult: Check<ToolCallResult> = (value, path) => {
+  const result = record(value, path);
+  return {
+    content: list(textContent)(result["content"], `${path}.content`),
+    success: bool(result["success"], `${path}.success`),
+  };
 };
 
 const settings: Check<ThreadSettings> = (value, path) => {
@@ -168,7 +205,20 @@ type Unbranded<Value> = Value extends BrandedId
 
 export type ValidParams<Name extends OperationName> = Unbranded<OperationParams<Name>>;
 
-const validators: { readonly [Name in OperationName]: Check<ValidParams<Name>> } = {
+/** Operations whose params carry the optional client tools. */
+type ClientToolOperation = "thread.create" | "turn.start";
+
+/**
+ * Params as the host uses them: the optional `clientTools` of the wire is
+ * always present, `null` when the companion left it out.
+ */
+export type HostParams<Name extends OperationName> = Name extends ClientToolOperation
+  ? Omit<ValidParams<Name>, "clientTools"> & {
+      readonly clientTools: readonly ClientToolSpec[] | null;
+    }
+  : ValidParams<Name>;
+
+const validators: { readonly [Name in OperationName]: Check<HostParams<Name>> } = {
   "capability.invoke": (value, path) => {
     const params = record(value, path);
     return {
@@ -223,6 +273,7 @@ const validators: { readonly [Name in OperationName]: Check<ValidParams<Name>> }
     const params = record(value, path);
     return {
       appThreadId: nullable(str)(params["appThreadId"], `${path}.appThreadId`),
+      clientTools: clientTools(params["clientTools"], `${path}.clientTools`),
       cwd: str(params["cwd"], `${path}.cwd`),
       settings: settings(params["settings"], `${path}.settings`),
     };
@@ -263,6 +314,7 @@ const validators: { readonly [Name in OperationName]: Check<ValidParams<Name>> }
     return {
       appThreadId: str(params["appThreadId"], `${path}.appThreadId`),
       clientMessageId: nullable(str)(params["clientMessageId"], `${path}.clientMessageId`),
+      clientTools: clientTools(params["clientTools"], `${path}.clientTools`),
       input: list(userContent)(params["input"], `${path}.input`),
     };
   },
@@ -284,6 +336,6 @@ export function isOperation(method: string): method is OperationName {
 export function validateParams<Name extends OperationName>(
   name: Name,
   params: unknown,
-): ValidParams<Name> {
+): HostParams<Name> {
   return validators[name](params, "params");
 }

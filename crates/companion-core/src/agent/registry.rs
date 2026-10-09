@@ -119,13 +119,17 @@ impl ProviderRegistry {
         self.providers.len() > 1
     }
 
-    /// The enabled providers' price tables in registry order.
+    /// The enabled providers' price tables in registry order, each owned by
+    /// its provider so a thread is priced only by its own provider's table.
     #[must_use]
     pub fn usage_pricing(&self) -> UsagePricing {
-        UsagePricing::new(
-            self.providers
+        UsagePricing::by_provider(
+            self.ids
                 .iter()
-                .filter_map(|provider| provider.usage_pricing())
+                .zip(&self.providers)
+                .filter_map(|(id, provider)| {
+                    provider.usage_pricing().map(|table| (id.clone(), table))
+                })
                 .collect(),
         )
     }
@@ -141,6 +145,11 @@ impl ProviderRegistry {
     /// Enabled providers in configured order.
     pub fn enabled(&self) -> impl Iterator<Item = &Arc<dyn AgentProvider>> {
         self.providers.iter()
+    }
+
+    /// Configured or previously bound providers that are not enabled now.
+    pub fn disabled(&self) -> impl Iterator<Item = &ProviderId> {
+        self.disabled.iter()
     }
 
     /// Whether `id` was configured or bound before but is not enabled now.

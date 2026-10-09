@@ -9,6 +9,7 @@ import {
   int,
   list,
   nullable,
+  num,
   objectReader,
   oneOf,
   ShapeError,
@@ -16,7 +17,19 @@ import {
   tagged,
   type Check,
 } from "../validation/checks.js";
-import { agentTurn, threadSettings, tokenUsage, turnError } from "../validation/modelChecks.js";
+import {
+  agentTurn,
+  threadSettings,
+  tokenUsage,
+  turnError,
+  turnUsageRecord,
+} from "../validation/modelChecks.js";
+import {
+  initialThreadCost,
+  type ModelCounters,
+  type ThreadCost,
+  type UsageBaseline,
+} from "../mapping/usage.js";
 import {
   THREAD_STATE_VERSION,
   type ActiveTurnFile,
@@ -61,8 +74,39 @@ const turnRecord: Check<TurnRecord> = (value, path) => {
     prompts: reader.at("prompts", list(promptRecord)),
     startedAt: reader.at("startedAt", int),
     turnId: reader.at("turnId", str),
+    usage: reader.at("usage", nullable(turnUsageRecord)),
   };
 };
+
+const modelCounters: Check<ModelCounters> = (value, path) => {
+  const reader = objectReader(value, path);
+  return {
+    cacheCreationInputTokens: reader.at("cacheCreationInputTokens", num),
+    cacheReadInputTokens: reader.at("cacheReadInputTokens", num),
+    costUsd: reader.at("costUsd", num),
+    inputTokens: reader.at("inputTokens", num),
+    model: reader.at("model", str),
+    outputTokens: reader.at("outputTokens", num),
+    thinkingTokens: reader.at("thinkingTokens", num),
+  };
+};
+
+/** An absent baseline (state written before it existed) is unknown. */
+const usageBaseline: Check<UsageBaseline> = (value, path) =>
+  value === undefined
+    ? { type: "unknown" }
+    : tagged<UsageBaseline>("type", {
+        known: (reader) => ({
+          checkpoints: reader.at("checkpoints", list(list(modelCounters))),
+          type: "known",
+        }),
+        unknown: () => ({ type: "unknown" }),
+      })(value, path);
+
+const threadCost: Check<ThreadCost> = tagged<ThreadCost>("type", {
+  known: (reader) => ({ type: "known", usd: reader.at("usd", num) }),
+  unknown: () => ({ type: "unknown" }),
+});
 
 const titleOverride: Check<TitleOverride> = tagged<TitleOverride>("type", {
   cleared: (reader) => ({ hiddenTitle: reader.at("hiddenTitle", str), type: "cleared" }),
@@ -85,6 +129,7 @@ const sessionChain: Check<readonly [string, ...string[]]> = (value, path) => {
 
 export const threadState: Check<ThreadState> = (value, path) => {
   const reader = objectReader(value, path);
+  const totalUsage = reader.at("totalUsage", tokenUsage);
   return {
     appThreadId: reader.at("appThreadId", str),
     createdAt: reader.at("createdAt", int),
@@ -97,9 +142,12 @@ export const threadState: Check<ThreadState> = (value, path) => {
     sessionStarted: reader.at("sessionStarted", bool),
     settings: reader.at("settings", threadSettings),
     title: reader.at("title", titleOverride),
-    totalUsage: reader.at("totalUsage", tokenUsage),
+    // An absent cost (state written before it existed) is known only for a thread without usage.
+    totalCost: reader.at("totalCost", nullable(threadCost)) ?? initialThreadCost(totalUsage),
+    totalUsage,
     turns: reader.at("turns", list(turnRecord)),
     updatedAt: reader.at("updatedAt", int),
+    usageBaseline: reader.at("usageBaseline", usageBaseline),
     version: reader.at("version", version),
   };
 };

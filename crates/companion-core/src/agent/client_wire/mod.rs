@@ -19,6 +19,7 @@ pub mod gateway;
 pub mod history;
 pub mod items;
 pub mod list;
+pub mod observe;
 pub mod results;
 pub mod settings;
 
@@ -37,6 +38,13 @@ pub const THREAD_EXTENSION_FIELD: &str = "codewideAgent";
 pub const PROVIDER_FIELD: &str = "codewideAgentProvider";
 /// Client-wire field that names the providers offering a permission profile.
 pub const PROFILE_PROVIDERS_FIELD: &str = "codewideAgentProviders";
+/// `model/list` / `permissionProfile/list` result field (multi-provider mode):
+/// the providers whose rows are missing from this answer because they are not
+/// live or their catalog failed. Absent when every provider answered.
+pub const PROVIDERS_UNAVAILABLE_FIELD: &str = "codewideAgentProvidersUnavailable";
+/// Optional `thread/fork` field: the first message of a cross-provider fork,
+/// sent at once with the context handoff instead of waiting for the user.
+pub const FORK_INITIAL_PROMPT_FIELD: &str = "codewideInitialPrompt";
 /// Approval title extension read by the client approval card.
 pub const APPROVAL_TITLE_FIELD: &str = "codewideApprovalTitle";
 

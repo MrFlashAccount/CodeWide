@@ -168,6 +168,7 @@ describe("history from Claude's session store", () => {
       ],
       startedAt: 1_791_542_431,
       turnId: "turn-from-index",
+      usage: null,
     };
     const turns = reconstructTurns(messages, [record], context);
     expect(turns.map((turn) => [turn.turnId, turn.status])).toEqual([
@@ -187,7 +188,22 @@ describe("history from Claude's session store", () => {
     expect(turns[0]).toMatchObject({ completedAt: 1_791_542_449, startedAt: 1_791_542_431 });
   });
 
-  it("keeps a failed outcome and its error from the index", () => {
+  it("keeps a failed outcome, its error and its usage from the index", () => {
+    const counts = {
+      cacheWriteInputTokens: 100,
+      cachedInputTokens: 900,
+      inputTokens: 1_010,
+      outputTokens: 20,
+      reasoningOutputTokens: 5,
+      totalTokens: 1_030,
+    };
+    const recordedUsage = {
+      contextWindow: 200_000,
+      cost: { basis: "list" as const, model: "claude-sonnet-4-6", threadUsd: 0.5, turnUsd: 0.5 },
+      last: counts,
+      total: counts,
+      turn: counts,
+    };
     const messages = fixture("three_tools_final");
     const first = promptUuid(messages, "Do these three steps");
     const turns = reconstructTurns(
@@ -201,6 +217,7 @@ describe("history from Claude's session store", () => {
           prompts: [{ clientMessageId: null, role: "first", uuid: first }],
           startedAt: 1,
           turnId: "failed-turn",
+          usage: recordedUsage,
         },
       ],
       context,
@@ -210,6 +227,9 @@ describe("history from Claude's session store", () => {
       status: "failed",
       turnId: "failed-turn",
     });
+    // The usage `usage.updated` reported when the turn ended comes back on a read.
+    expect(turns[0]?.usage).toEqual(recordedUsage);
+    expect(turns.slice(1).every((turn) => turn.usage === undefined)).toBe(true);
     // A failed turn has no final answer.
     expect(nonReasoning(turns[0]).at(-1)).toMatchObject({
       phase: "commentary",

@@ -242,6 +242,8 @@ export async function replayTranscript(entries: readonly TranscriptEntry[]): Pro
 
   const nowMs = steppingClock();
   const service = new ThreadService({
+    // Recorded fixtures carry no client tools.
+    callClientTool: () => Promise.reject(new Error("replays declare no client tools")),
     catalog: new SessionCatalog(store),
     sessionStore: store,
     stateStore: new ThreadStateStore(directory),

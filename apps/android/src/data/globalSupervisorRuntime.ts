@@ -158,6 +158,11 @@ type GlobalSupervisorRuntimeAuthority = {
   readonly ensureStarted: () => Promise<void>;
   readonly getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   readonly getSupervisor: () => WorkspaceSyncSupervisor | null;
+  /**
+   * Whether the server declares a host capability (`companion/agentProviders/read`);
+   * `null` while unknown (older Companion, list not loaded), which keeps the probe.
+   */
+  readonly hostDeclaresCapability?: (connectionId: string, capability: string) => boolean | null;
   readonly ingress: GlobalSupervisorRuntimeIngress;
   readonly isRpcAvailable: (connectionId: string) => boolean;
   readonly microphoneLeases: V1MicrophoneLeaseRegistry;
@@ -237,9 +242,10 @@ function requireLiveSession(
 }
 
 /**
- * Voice Mode requires the host's `realtimeVoice` capability. When no enabled agent
- * provider declares it, the Companion rejects the realtime catalog with `-32072`
- * and preparation reports `capabilityUnavailable` instead of a generic failure.
+ * Voice Mode requires the host's `realtimeVoice` capability. A server whose provider
+ * list says no enabled provider declares it is unavailable without a probe; otherwise
+ * the Companion rejects the realtime catalog with `-32072` and preparation reports
+ * `capabilityUnavailable` instead of a generic failure.
  */
 async function prepareReadyHome(
   authority: GlobalSupervisorRuntimeAuthority,
@@ -257,6 +263,13 @@ async function prepareReadyHome(
     return {
       failure: "homeUnavailable",
       recovery: "reconnectHome",
+      status: "failed",
+    };
+  }
+  if (authority.hostDeclaresCapability?.(home.connectionId, "realtimeVoice") === false) {
+    return {
+      failure: "capabilityUnavailable",
+      recovery: "retryCapabilityProbe",
       status: "failed",
     };
   }

@@ -41,6 +41,22 @@ export const BOOLEAN_CAPABILITIES = [
 export type BooleanCapability = (typeof BOOLEAN_CAPABILITIES)[number];
 
 /**
+ * Boolean capabilities added within v1 after the first declaration shape. A
+ * provider built before them omits them, which means unsupported.
+ * `orchestration.tools`: the provider registers the companion's client tools
+ * (`clientTools`) for its model and calls them back with `tool.call`.
+ * `threads.crossProviderFork`: a thread of this provider can be forked into a
+ * thread of another provider (a context handoff by the companion) and receive
+ * such a fork.
+ */
+export const ADDITIVE_BOOLEAN_CAPABILITIES = [
+  "orchestration.tools",
+  "threads.crossProviderFork",
+] as const;
+
+export type AdditiveBooleanCapability = (typeof ADDITIVE_BOOLEAN_CAPABILITIES)[number];
+
+/**
  * What a provider does with `turn.start` while a turn of the same thread is
  * active. `busy`: it refuses with `busy {activeTurnId}` and the companion
  * keeps the command queued. `nativeJoin`: the provider joins the active turn
@@ -51,16 +67,21 @@ export type StartWhileActiveMode = "busy" | "nativeJoin";
 export const START_WHILE_ACTIVE_CAPABILITY = "turns.startWhileActive" as const;
 
 /** Every capability name in v1. */
-export type CapabilityName = BooleanCapability | typeof START_WHILE_ACTIVE_CAPABILITY;
+export type CapabilityName =
+  | BooleanCapability
+  | AdditiveBooleanCapability
+  | typeof START_WHILE_ACTIVE_CAPABILITY;
 
 /**
- * The complete capability declaration of one provider. Every v1 name is
- * present, so "declared unsupported" (`false`) is distinguishable from a name
- * the consumer does not know yet.
+ * The complete capability declaration of one provider. Every original v1
+ * name is present, so "declared unsupported" (`false`) is distinguishable
+ * from a name the consumer does not know yet; an additive name may be absent
+ * (unsupported).
  */
-export type CapabilitySet = Readonly<Record<BooleanCapability, boolean>> & {
-  readonly [START_WHILE_ACTIVE_CAPABILITY]: StartWhileActiveMode;
-};
+export type CapabilitySet = Readonly<Record<BooleanCapability, boolean>> &
+  Readonly<Partial<Record<AdditiveBooleanCapability, boolean>>> & {
+    readonly [START_WHILE_ACTIVE_CAPABILITY]: StartWhileActiveMode;
+  };
 
 /** Client-wire extension attached to every projected `Thread` in multi-provider mode. */
 export interface CodewideAgentThreadExtension {

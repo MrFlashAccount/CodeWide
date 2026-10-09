@@ -5,11 +5,13 @@
  * client sees the command or diff before any approval), `completeItem` builds
  * the final item from the matching `tool_result` and the structured
  * `tool_use_result`. Tools without a dedicated neutral item become
- * `toolCall {namespace: "claude"}`. Pure; no I/O.
+ * `toolCall {namespace: "claude"}`; the companion's client tools become
+ * `toolCall {namespace: null}` with their bare name. Pure; no I/O.
  */
 
 import type { AgentItem, ExecutionStatus, ItemId } from "../protocol.js";
 import { asItemId } from "../protocol.js";
+import { clientToolOf } from "./clientTools.js";
 import { completedDiff, inputDiff } from "./diffs.js";
 import { isRecord, type JsonRecord, type ToolResultBlock } from "./frames.js";
 import { toJsonValue } from "./json.js";
@@ -138,8 +140,21 @@ function webItem(call: ToolCallInput): AgentItem | null {
 
 function callItem(call: ToolCallInput, context: ToolContext): AgentItem {
   const itemId = asItemId(call.id);
-  const mcp = splitMcpToolName(call.name, context.mcpServers);
   const args = toJsonValue(call.input);
+  const clientTool = clientToolOf(call.name);
+  if (clientTool !== null) {
+    return {
+      arguments: args,
+      durationMs: null,
+      itemId,
+      namespace: null,
+      output: null,
+      status: "inProgress",
+      tool: clientTool,
+      type: "toolCall",
+    };
+  }
+  const mcp = splitMcpToolName(call.name, context.mcpServers);
   if (mcp !== null) {
     return {
       arguments: args,

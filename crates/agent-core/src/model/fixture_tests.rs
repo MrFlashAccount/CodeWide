@@ -35,6 +35,7 @@ fn round_trip_result(operation: &str, result: &Value) -> Result<Value, String> {
         "capability.invoke" => round_trip::<CapabilityInvokeResult>(result),
         "nativeSession.list" => round_trip::<NativeSessionListResult>(result),
         "nativeSession.read" => round_trip::<NativeSessionReadResult>(result),
+        "tool.call" => round_trip::<ToolCallResult>(result),
         other => Err(format!("fixture answers unknown operation {other}")),
     }
 }
@@ -47,6 +48,7 @@ fn round_trip_message(responds_to: Option<&str>, message: &Value) -> Result<Valu
             Ok(serde_json::json!({"method": "event", "params": event}))
         }
         Some("initialized") => Ok(message.clone()),
+        Some(ACCOUNT_UPDATED_NOTIFICATION) => round_trip::<AccountUpdatedNotification>(message),
         Some(_) => round_trip::<RequestEnvelope>(message),
         None if message.get("error").is_some() => {
             let error = round_trip::<RpcError>(&message["error"])?;

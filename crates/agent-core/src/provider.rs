@@ -21,11 +21,12 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::model::{
-    AgentEvent, AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ModelCatalog,
-    PermissionProfileCatalog, ProviderDescriptor, RequestRespondParams, RpcError,
-    ThreadCreateParams, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams,
-    ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, TurnInterruptParams,
-    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+    AgentEvent, AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ClientToolSpec,
+    ModelCatalog, PermissionProfileCatalog, ProviderDescriptor, ProviderId, RequestRespondParams,
+    RpcError, ThreadCreateParams, ThreadListParams, ThreadListResult, ThreadReadResult,
+    ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, ToolCallParams,
+    ToolCallResult, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
+    TurnSteerResult,
 };
 
 pub use native_storage::{
@@ -44,6 +45,30 @@ use crate::usage::ModelPricing;
 pub enum ProviderStatus {
     Reconnecting,
     Live,
+}
+
+/// Sign-in state reported by a provider runtime. Never carries credentials,
+/// tokens, emails or organization names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderAuth {
+    /// The provider does not report sign-in state, or has not reported it yet.
+    Unknown,
+    Unauthenticated,
+    /// Signed in; `plan_label` is an opaque plan name such as `max`.
+    Authenticated {
+        plan_label: Option<String>,
+    },
+}
+
+/// Whether an enabled provider can serve at all, independent of its
+/// transport lifecycle ([`ProviderStatus`]).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderHealth {
+    /// Usable whenever its transport is live, with its sign-in state.
+    Available(ProviderAuth),
+    /// Running but unusable on this host (for example its runtime speaks
+    /// another protocol version); every call is rejected.
+    Unavailable,
 }
 
 /// Failure of one provider call. The variants preserve the retry semantics
@@ -127,6 +152,26 @@ pub enum ProviderEvent {
     Fence(oneshot::Sender<Result<u64, ProviderError>>),
 }
 
+/// The companion-side owner of client-side tools: it declares them and
+/// answers every call a provider's model makes. Providers translate the
+/// declaration and the calls to their own channel (Codex `dynamicTools` and
+/// `item/tool/call`, the neutral `clientTools` and `tool.call`); the tool
+/// semantics live only here.
+#[async_trait]
+pub trait ClientToolHost: Send + Sync {
+    /// The declared tools, identical for every provider.
+    fn specs(&self) -> &[ClientToolSpec];
+
+    /// Answers one call. `provider` is the provider whose channel carried
+    /// it, so the caller identity never comes from the call's arguments.
+    async fn call(&self, provider: &ProviderId, call: ToolCallParams) -> ToolCallResult;
+
+    /// Whether `tool` is one of the declared tools.
+    fn declares(&self, tool: &str) -> bool {
+        self.specs().iter().any(|spec| spec.name == tool)
+    }
+}
+
 /// The neutral provider contract.
 #[async_trait]
 pub trait AgentProvider: Send + Sync {
@@ -143,6 +188,17 @@ pub trait AgentProvider: Send + Sync {
     fn status(&self) -> ProviderStatus;
 
     fn subscribe_status(&self) -> watch::Receiver<ProviderStatus>;
+
+    /// Health and sign-in state beyond the transport status. Providers that
+    /// report neither are available with unknown sign-in state.
+    fn health(&self) -> ProviderHealth {
+        ProviderHealth::Available(ProviderAuth::Unknown)
+    }
+
+    /// Changes of [`Self::health`]; `None` when it never changes.
+    fn subscribe_health(&self) -> Option<watch::Receiver<ProviderHealth>> {
+        None
+    }
 
     /// Installs the single lossless ordered event stream. Called once.
     fn take_events(&self) -> mpsc::Receiver<ProviderEvent>;
@@ -208,6 +264,14 @@ pub trait AgentProvider: Send + Sync {
     /// admit every turn.
     async fn admit_turn(&self) -> Result<(), AdmissionError> {
         Ok(())
+    }
+
+    /// Installs the companion's client-side tools. A provider declaring
+    /// `orchestration.tools` declares them to its model on threads and turns
+    /// it starts afterwards and routes their calls to `host`; other providers
+    /// ignore it. Called at most once, before any thread is started.
+    fn install_client_tools(&self, host: Arc<dyn ClientToolHost>) {
+        let _ = host;
     }
 
     /// The `codex.native` compatibility surface; `None` unless the provider

@@ -89,6 +89,9 @@ impl StdioProfile {
 pub struct SupervisedCommand {
     pub program: PathBuf,
     pub args: Vec<OsString>,
+    /// Variables set on top of the inherited environment (an entry replaces
+    /// the inherited value of the same name). Values are never logged.
+    pub env: Vec<(OsString, OsString)>,
     /// Stable label for logs (never includes arguments).
     pub label: &'static str,
 }
@@ -208,6 +211,7 @@ type LaunchedChild = (tokio::process::Child, ChildStdin, ChildStdout, ChildStder
 fn launch(command: &SupervisedCommand) -> std::io::Result<LaunchedChild> {
     let mut child = Command::new(&command.program)
         .args(&command.args)
+        .envs(command.env.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -381,7 +385,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let counter = directory.path().join("starts");
         let script = format!(
-            r#"echo x >> '{}'
+            r#"echo "$CODEWIDE_TEST_PROBE" >> '{}'
 IFS= read -r initialize
 printf '%s\n' '{{"id":"codewide-companion-initialize","result":{{"provider":{{"version":"9.9"}}}}}}'
 IFS= read -r initialized
@@ -394,6 +398,7 @@ printf '%s\n' '{{"id":"codewide-stdio:1","result":{{"ok":true}}}}'
             SupervisedCommand {
                 program: PathBuf::from("sh"),
                 args: vec!["-c".into(), script.into()],
+                env: vec![("CODEWIDE_TEST_PROBE".into(), "from-config".into())],
                 label: "test-child",
             },
             StdioProfile {
@@ -419,6 +424,8 @@ printf '%s\n' '{{"id":"codewide-stdio:1","result":{{"ok":true}}}}'
             }
         })
         .await?;
+        let starts = std::fs::read_to_string(&counter)?;
+        assert!(starts.lines().all(|line| line == "from-config"));
         Ok(())
     }
 }

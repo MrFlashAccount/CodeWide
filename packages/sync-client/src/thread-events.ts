@@ -35,23 +35,39 @@ export type UsageTokenCounts = {
   reasoningOutputTokens: number;
 };
 
-export type UsageCostProjection = {
+type UsageCostTokens = {
   model: string;
-  pricingVersion: string;
   currency: "USD";
-  basis: "apiEquivalent";
-  price: { input: number; cachedInput: number; output: number };
   uncachedInputTokens: number;
   cachedInputTokens: number;
   cacheWriteInputTokens: number;
   outputTokens: number;
   cacheHitPercent: number;
+  totalCostUsd: number;
+};
+
+/** An API-equivalent estimate the companion computed from a price table, per component. */
+export type ApiEquivalentCostProjection = UsageCostTokens & {
+  basis: "apiEquivalent";
+  pricingVersion: string;
+  price: { input: number; cachedInput: number; output: number };
   uncachedInputCostUsd: number;
   cachedInputCostUsd: number;
   cacheWriteInputCostUsd: number;
   outputCostUsd: number;
-  totalCostUsd: number;
 };
+
+/**
+ * A cost the agent provider estimated itself (for example, the Claude Agent
+ * SDK). Only the total is known; `pricingVersion` names the provider's price
+ * table: its list prices or rates managed by the user's organization.
+ */
+export type ProviderReportedCostProjection = UsageCostTokens & {
+  basis: "providerReported";
+  pricingVersion: "list" | "managed";
+};
+
+export type UsageCostProjection = ApiEquivalentCostProjection | ProviderReportedCostProjection;
 
 export type UsageScopeProjection = {
   tokens: UsageTokenCounts;

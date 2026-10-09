@@ -265,7 +265,14 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "usage": {
+                "contextWindow": 200000,
+                "last": { "inputTokens": 1400, "cachedInputTokens": 1000, "cacheWriteInputTokens": 300, "outputTokens": 40, "reasoningOutputTokens": 10, "totalTokens": 1440 },
+                "turn": { "inputTokens": 2700, "cachedInputTokens": 2000, "cacheWriteInputTokens": 600, "outputTokens": 90, "reasoningOutputTokens": 10, "totalTokens": 2790 },
+                "total": { "inputTokens": 2700, "cachedInputTokens": 2000, "cacheWriteInputTokens": 600, "outputTokens": 90, "reasoningOutputTokens": 10, "totalTokens": 2790 },
+                "cost": { "basis": "list", "model": "claude-sonnet-4-5", "turnUsd": 0.0125, "threadUsd": 0.0125 }
+              }
             }
           ],
           "nextCursor": "0199a3c4-8000-7000-8000-000000000001"

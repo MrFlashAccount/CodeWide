@@ -20,6 +20,7 @@ import type {
   AgentThread,
   AgentTurn,
   ClientMessageId,
+  ClientToolSpec,
   ItemsView,
   NativeSession,
   NativeRequestId,
@@ -44,6 +45,7 @@ import {
   currentSessionId,
   isArchived,
   isDeleted,
+  NEW_THREAD_USAGE,
   THREAD_STATE_VERSION,
   ZERO_USAGE,
   type ThreadState,
@@ -354,9 +356,12 @@ export class ThreadService {
       sessionStarted: true,
       settings: DISCOVERED_SETTINGS,
       title: { type: "none" },
+      // A discovered session may hold usage the host never measured.
+      totalCost: { type: "unknown" },
       totalUsage: ZERO_USAGE,
       turns: [],
       updatedAt: seconds(session.lastModifiedMs),
+      usageBaseline: { type: "unknown" },
       version: THREAD_STATE_VERSION,
     });
   }
@@ -443,7 +448,7 @@ export class ThreadService {
       sessionStarted: false,
       settings: { ...settings, serviceTier: null },
       title: { type: "none" },
-      totalUsage: ZERO_USAGE,
+      ...NEW_THREAD_USAGE,
       turns: [],
       updatedAt: now,
       version: THREAD_STATE_VERSION,
@@ -693,13 +698,23 @@ export class ThreadService {
     return ok(entry);
   }
 
+  /** `clientTools` replaces the thread's client tools when the turn starts; `null` keeps them. */
+  /** Replaces the client tools of a thread the host keeps metadata for (`thread.create`). */
+  public useClientTools(appThreadId: string, clientTools: readonly ClientToolSpec[]): void {
+    this.registry.get(appThreadId)?.session.useClientTools(clientTools);
+  }
+
   public async startTurn(
     appThreadId: string,
     message: UserMessage,
+    clientTools: readonly ClientToolSpec[] | null = null,
   ): Promise<OperationResult<TurnStartResult>> {
     const entry = await this.turnEntry(appThreadId);
     if (entry.status === "error") {
       return entry;
+    }
+    if (clientTools !== null) {
+      entry.value.session.useClientTools(clientTools);
     }
     return ok(entry.value.session.startTurn({ ...message, kind: "user" }));
   }

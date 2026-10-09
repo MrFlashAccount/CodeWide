@@ -22,6 +22,7 @@ import {
   str,
   type Check,
 } from "../validation/checks.js";
+import { initialThreadCost } from "../mapping/usage.js";
 import { agentTurn, threadSettings, tokenUsage } from "../validation/modelChecks.js";
 import {
   THREAD_STATE_VERSION,
@@ -130,6 +131,7 @@ function turnRecord(legacy: LegacyTurn): TurnRecord {
     prompts: legacy.prompts.map(promptRecord),
     startedAt: legacy.turn.startedAt,
     turnId: legacy.turn.turnId,
+    usage: null,
   };
 }
 
@@ -179,9 +181,12 @@ export function convertLegacyThread(directory: string, appThreadId: string): Leg
     sessionStarted: thread.sessionStarted,
     settings: thread.settings,
     title: thread.name === null ? { type: "none" } : { name: thread.name, type: "pending" },
+    totalCost: initialThreadCost(thread.totalUsage),
     totalUsage: thread.totalUsage,
     turns: turns.map(turnRecord),
     updatedAt: thread.updatedAt,
+    // The former sidecar kept no per-model totals.
+    usageBaseline: { type: "unknown" },
     version: THREAD_STATE_VERSION,
   };
   return { activeTurn: active, state };

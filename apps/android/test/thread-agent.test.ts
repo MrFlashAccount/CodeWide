@@ -22,7 +22,10 @@ import {
 } from "../src/data/voiceAssistantBackgroundModel";
 import { storedThreadToListItem } from "../src/features/threadList/threadListProjection";
 import { providerScopedControls } from "../src/features/composer/settings/providerScopedControls";
-import { threadAgentActions } from "../src/features/conversation/threadAgentActions";
+import {
+  threadAgentAccounts,
+  threadAgentActions,
+} from "../src/features/conversation/threadAgentActions";
 import { summary } from "./fixtures/thread-summary";
 import { createV1TestThread } from "./fixtures/v1Thread";
 
@@ -67,11 +70,35 @@ describe("thread agent descriptor", () => {
       }),
     ).toEqual({ capabilities: [], primary: true, provider: "x", providerName: "x" });
     expect(readThreadAgent({})).toBeNull();
-    expect(readThreadAgent({ codewideAgent: { capabilities: [], provider: "" } })).toBeNull();
-    expect(readThreadAgent({ codewideAgent: { provider: "claude" } })).toBeNull();
+    expect(readThreadAgent({ codewideAgent: null })).toBeNull();
     expect(threadAgentSupports(null, "review")).toBe(true);
     expect(threadAgentSupports(readThreadAgent(claudeThread), "review")).toBe(false);
     expect(threadAgentSupports(readThreadAgent(claudeThread), "threads.compact")).toBe(true);
+  });
+
+  it("reads a malformed descriptor as an agent without capabilities, not as legacy Codex", () => {
+    expect(readThreadAgent({ codewideAgent: { capabilities: [], provider: "" } })).toEqual({
+      capabilities: [],
+      primary: true,
+      provider: null,
+      providerName: "Agent",
+    });
+    const missingCapabilities = readThreadAgent({
+      codewideAgent: { primary: false, provider: "claude", providerName: "Claude" },
+    });
+    expect(missingCapabilities).toEqual({
+      capabilities: [],
+      primary: false,
+      provider: "claude",
+      providerName: "Claude",
+    });
+    expect(threadAgentSupports(missingCapabilities, "review")).toBe(false);
+    expect(threadAgentSupports(readThreadAgent({ codewideAgent: "codex" }), "goals")).toBe(false);
+    const scoped = providerScopedControls(mixedControls, false, {
+      codewideAgent: { provider: 7 },
+    });
+    expect(scoped.models.map((row) => row.id)).toEqual(["unannotated"]);
+    expect(scoped.permissions).toEqual([]);
   });
 
   it("persists the descriptor with the summary and keeps older rows legacy", () => {
@@ -214,5 +241,34 @@ describe("thread list provider badge", () => {
     expect(storedThreadToListItem(claude).agentBadge).toBe("Claude");
     expect(storedThreadToListItem(codex).agentBadge).toBeNull();
     expect(storedThreadToListItem(summary("legacy-thread")).agentBadge).toBeNull();
+  });
+});
+
+describe("account limits in the conversation header", () => {
+  const accounts = {
+    // WHY: the gate passes the database through untouched; its contents are irrelevant here.
+    accountRateLimitsDatabase: {} as never,
+    onRefreshAccountRateLimits: vi.fn(async () => undefined),
+  };
+
+  it("drops the account pool for a thread whose agent has no account rate limits", () => {
+    expect(threadAgentAccounts(claudeThread, accounts)).toEqual({
+      accountRateLimitsDatabase: null,
+      onRefreshAccountRateLimits: undefined,
+    });
+    expect(accounts.onRefreshAccountRateLimits).not.toHaveBeenCalled();
+  });
+
+  it("keeps it for a thread declaring accounts.rateLimits and for a legacy thread", () => {
+    const codexThread = {
+      codewideAgent: {
+        capabilities: { "accounts.rateLimits": true },
+        primary: true,
+        provider: "codex",
+        providerName: "Codex",
+      },
+    };
+    expect(threadAgentAccounts(codexThread, accounts)).toBe(accounts);
+    expect(threadAgentAccounts(createV1TestThread("t", null, 1, []), accounts)).toBe(accounts);
   });
 });

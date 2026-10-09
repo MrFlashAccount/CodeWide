@@ -25,6 +25,10 @@
  *   background tasks defer it up to a bound.
  * - The turn index entry is written when a turn starts, on a steer and when
  *   it ends; the in-flight snapshot whenever an item starts or completes.
+ * - Client tools are allowed without a prompt under every profile (the
+ *   companion enforces their limits); a changed tool set applies when the
+ *   query (re)opens, so an idle query without background tasks is closed;
+ *   in-flight client tool calls are cancelled when their turn ends.
  */
 
 import type {
@@ -32,6 +36,7 @@ import type {
   AgentTurn,
   AppThreadId,
   ClientMessageId,
+  ClientToolSpec,
   NativeRequestId,
   RuntimeRequest,
   RuntimeResponse,
@@ -40,6 +45,7 @@ import type {
   TurnId,
   TurnOrigin,
   TurnStartResult,
+  TurnUsageRecord,
   UserContent,
 } from "../protocol.js";
 import { asItemId, asTurnId, EXPECTED_TURN_NOT_ACTIVE } from "../protocol.js";
@@ -59,6 +65,17 @@ import {
   type TurnOutcome,
 } from "../mapping/result.js";
 import { toolDisposition } from "../mapping/tools.js";
+import {
+  addDelta,
+  addUsage,
+  meterResult,
+  NEW_SESSION_BASELINE,
+  providerCost,
+  requestUsage,
+  threadCostAfter,
+  ZERO_USAGE,
+  type UsageDelta,
+} from "../mapping/usage.js";
 import {
   approvalDecision,
   approvalRequest,
@@ -83,6 +100,7 @@ import {
   type ThreadState,
   type TurnOutcomeRecord,
 } from "../state/threadState.js";
+import { ClientToolCalls, type ClientToolCaller } from "./clientToolCalls.js";
 import { promptContent } from "./prompt.js";
 import { TurnBuilder } from "./turnBuilder.js";
 import { unreachable } from "../support/unreachable.js";
@@ -111,6 +129,8 @@ export interface ThreadPort {
 
 export interface SessionDeps {
   readonly backgroundDeferMaxMs: number;
+  /** Sends a client tool call to the companion (`tool.call`). */
+  readonly callClientTool: ClientToolCaller;
   readonly emit: (event: AgentEvent) => void;
   readonly idleReleaseMs: number;
   readonly interruptTimeoutMs: number;
@@ -137,12 +157,16 @@ interface ActiveTurn {
   frameAnchored: boolean;
   interruptRequested: boolean;
   interruptTimer: NodeJS.Timeout | null;
+  /** The context size of the turn's latest top-level model request. */
+  lastRequest: TokenUsage | null;
   /** Steers whose `aborted_*` restart result must not end the turn. */
   pendingSteerAborts: number;
   readonly prompts: PromptRecord[];
   /** E-INT-TOOL fallback: release the process after this turn. */
   releaseAfter: boolean;
   sessionReplacements: number;
+  /** Usage measured from this turn's results so far; `null` before the first. */
+  usage: UsageDelta | null;
 }
 
 export type SteerOutcome =
@@ -172,31 +196,6 @@ interface TurnStart {
     readonly content: readonly UserContent[];
   } | null;
 }
-
-interface TurnUsage {
-  readonly contextWindow: number | null;
-  readonly usage: TokenUsage;
-}
-
-const usageOf = (figures: {
-  readonly cachedInputTokens: number;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-}): TokenUsage => ({
-  cachedInputTokens: figures.cachedInputTokens,
-  inputTokens: figures.inputTokens,
-  outputTokens: figures.outputTokens,
-  reasoningOutputTokens: 0,
-  totalTokens: figures.inputTokens + figures.outputTokens,
-});
-
-const addUsage = (left: TokenUsage, right: TokenUsage): TokenUsage => ({
-  cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
-  inputTokens: left.inputTokens + right.inputTokens,
-  outputTokens: left.outputTokens + right.outputTokens,
-  reasoningOutputTokens: left.reasoningOutputTokens + right.reasoningOutputTokens,
-  totalTokens: left.totalTokens + right.totalTokens,
-});
 
 const toError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error));
@@ -232,9 +231,6 @@ function isTopLevelContent(frame: ContentFrame): boolean {
 
 type ResultFrame = Extract<ClaudeFrame, { readonly kind: "result" }>;
 
-const usageReport = (frame: ResultFrame): TurnUsage | null =>
-  frame.usage === null ? null : { contextWindow: frame.contextWindow, usage: usageOf(frame.usage) };
-
 const profileOf = (settings: ThreadSettings): ProfileOptions =>
   profileOptions(
     isProfileId(settings.permissionProfile) ? settings.permissionProfile : ":read-only",
@@ -246,16 +242,36 @@ export class ClaudeSession {
   private active: ActiveTurn | null = null;
   private readonly pending = new Map<string, PendingRequest>();
   private backgroundTasks = 0;
+  /** The context size of the session's latest top-level model request, across turns. */
+  private lastRequest: TokenUsage | null = null;
   private mcpServers: readonly string[] = [];
   private idleTimer: NodeJS.Timeout | null = null;
   private idleSinceMs: number | null = null;
   private disposed = false;
   private readonly thread: ThreadPort;
   private readonly deps: SessionDeps;
+  private readonly clientTools: ClientToolCalls;
+  /** The client tool set the open query was opened with. */
+  private queryClientTools: readonly ClientToolSpec[] = [];
 
   public constructor(thread: ThreadPort, deps: SessionDeps) {
     this.thread = thread;
     this.deps = deps;
+    this.clientTools = new ClientToolCalls({
+      appThreadId: thread.appThreadId,
+      call: deps.callClientTool,
+      logger: deps.logger,
+      newUuid: deps.newUuid,
+      turn: () => {
+        const active = this.active;
+        return active === null
+          ? null
+          : {
+              openToolCalls: (toolName) => active.builder.openToolCalls(toolName),
+              turnId: active.builder.turnId,
+            };
+      },
+    });
   }
 
   public get activeTurnId(): TurnId | null {
@@ -306,6 +322,7 @@ export class ClaudeSession {
     }
     this.clearIdleTimer();
     this.applyPendingSettingsIfPossible();
+    this.reopenForClientTools();
     const offerUuid = this.deps.newUuid();
     const turnId = asTurnId(offerUuid);
     const user = request.kind === "user" ? request : null;
@@ -340,10 +357,12 @@ export class ClaudeSession {
       frameAnchored: false,
       interruptRequested: false,
       interruptTimer: null,
+      lastRequest: null,
       pendingSteerAborts: 0,
       prompts: start.prompts,
       releaseAfter: false,
       sessionReplacements: 0,
+      usage: null,
     };
     const nowSeconds = seconds(this.deps.nowMs());
     this.thread.update((current) => ({
@@ -358,8 +377,8 @@ export class ClaudeSession {
     this.thread.emitThreadUpdated();
   }
 
-  /** Writes the active turn's index entry with `outcome`. */
-  private recordActiveTurn(outcome: TurnOutcomeRecord): void {
+  /** Writes the active turn's index entry with `outcome` and, when it ended, its usage. */
+  private recordActiveTurn(outcome: TurnOutcomeRecord, usage: TurnUsageRecord | null = null): void {
     const active = this.active;
     if (active === null) {
       return;
@@ -374,6 +393,7 @@ export class ClaudeSession {
         prompts: [...active.prompts],
         startedAt: active.builder.startedAt,
         turnId: active.builder.turnId,
+        usage,
       }),
     );
   }
@@ -428,10 +448,11 @@ export class ClaudeSession {
 
   private requestInterrupt(active: ActiveTurn): void {
     active.interruptRequested = true;
+    this.clientTools.cancelAll();
     active.releaseAfter = active.builder.hasRunningCommand;
     const query = this.query;
     if (query === null) {
-      this.finishTurn({ status: "interrupted" }, null);
+      this.finishTurn({ status: "interrupted" });
       return;
     }
     query.interrupt().catch((error: unknown) => {
@@ -443,7 +464,7 @@ export class ClaudeSession {
       }
       this.log("warn", "claude interrupt did not settle; closing the session");
       this.closeQuery();
-      this.finishTurn({ status: "interrupted" }, null);
+      this.finishTurn({ status: "interrupted" });
     }, this.deps.interruptTimeoutMs);
   }
 
@@ -559,6 +580,15 @@ export class ClaudeSession {
     if (active === null) {
       return cancelledDecision(request.toolUseId);
     }
+    if (this.clientTools.owns(request.toolName)) {
+      this.emitAll(active.builder.startTool(request.toolUseId, request.toolName, request.input));
+      return {
+        behavior: "allow",
+        scope: "once",
+        toolUseID: request.toolUseId,
+        updatedInput: request.input,
+      };
+    }
     const disposition = toolDisposition(request.toolName);
     if (disposition.type === "exitPlan") {
       this.emitAll(active.builder.startTool(request.toolUseId, request.toolName, request.input));
@@ -638,6 +668,7 @@ export class ClaudeSession {
     const sessionId = currentSessionId(state);
     const query = this.deps.runtime.open({
       canUseTool: async (request) => this.canUseTool(request),
+      clientTools: this.clientTools.binding(),
       cwd: state.cwd,
       effort: state.settings.effort,
       identity: state.sessionStarted ? { sessionId, type: "resume" } : { sessionId, type: "new" },
@@ -645,6 +676,7 @@ export class ClaudeSession {
       profile: profileOf(state.settings),
     });
     this.query = query;
+    this.queryClientTools = this.clientTools.current;
     this.deps.liveSessions.count += 1;
     this.log("info", "claude session opened", {
       liveSessions: this.deps.liveSessions.count,
@@ -708,7 +740,6 @@ export class ClaudeSession {
       active.interruptRequested
         ? { status: "interrupted" }
         : { error: { kind: "processExited", message: PROCESS_EXITED_MESSAGE }, status: "failed" },
-      null,
     );
   }
 
@@ -765,7 +796,39 @@ export class ClaudeSession {
       active.frameAnchored = true;
       active.anchors.push(uuid);
     }
+    this.observeRequest(active, frame);
     this.emitAll(active.builder.onFrame(frame));
+  }
+
+  /**
+   * Tracks the context size of the latest top-level model request: the
+   * `last` usage that context fill is computed from. A compaction makes the
+   * earlier size meaningless until the next request.
+   */
+  private observeRequest(active: ActiveTurn, frame: ContentFrame): void {
+    if (frame.kind === "assistant" && frame.usage !== null) {
+      active.lastRequest = requestUsage(frame.usage);
+      this.lastRequest = active.lastRequest;
+    } else if (frame.kind === "compactBoundary") {
+      active.lastRequest = null;
+      this.lastRequest = null;
+    }
+  }
+
+  /**
+   * Adds the usage a result measures (against the session's persisted
+   * totals) to the active turn, including results that do not end it.
+   */
+  private meterResult(active: ActiveTurn, frame: ResultFrame): void {
+    const { baseline, delta } = meterResult(this.thread.state().usageBaseline, {
+      mainLoop: frame.mainLoopUsage,
+      totals: frame.modelUsage,
+    });
+    if (delta === null) {
+      return;
+    }
+    active.usage = addDelta(active.usage, delta);
+    this.thread.update((state) => ({ ...state, usageBaseline: baseline }));
   }
 
   /**
@@ -787,8 +850,10 @@ export class ClaudeSession {
   private onResult(frame: ResultFrame): void {
     const active = this.active;
     if (active === null) {
+      // Not measured: the baseline stays, so the next turn's first result counts it.
       return;
     }
+    this.meterResult(active, frame);
     if (isLostSession(frame)) {
       this.replaceLostSession(active);
       return;
@@ -800,20 +865,17 @@ export class ClaudeSession {
       active.interruptRequested && isInterruption(frame)
         ? { status: "interrupted" }
         : turnOutcome(frame, active.builder.assistantError);
-    this.finishTurn(outcome, usageReport(frame));
+    this.finishTurn(outcome);
   }
 
   private replaceLostSession(active: ActiveTurn): void {
     const firstOffer = active.firstOffer;
     if (active.sessionReplacements >= 1 || firstOffer === null) {
       this.closeQuery();
-      this.finishTurn(
-        {
-          error: { kind: "sessionLost", message: "The Claude session for this thread was lost." },
-          status: "failed",
-        },
-        null,
-      );
+      this.finishTurn({
+        error: { kind: "sessionLost", message: "The Claude session for this thread was lost." },
+        status: "failed",
+      });
       return;
     }
     active.sessionReplacements += 1;
@@ -826,6 +888,7 @@ export class ClaudeSession {
       ...state,
       sessionIds: [...state.sessionIds, sessionId],
       sessionStarted: false,
+      usageBaseline: NEW_SESSION_BASELINE,
     }));
     this.thread
       .historyLines()
@@ -865,7 +928,37 @@ export class ClaudeSession {
     this.ensureQuery().offer({ content, priority: null, uuid });
   }
 
-  private finishTurn(outcome: TurnOutcome, usage: TurnUsage | null): void {
+  /**
+   * The usage a finished turn reports (its measured usage, the thread totals
+   * after it and the context size of its last request) and the thread's
+   * totals after it. The record is `null` when no result measured anything;
+   * the next turn then counts it.
+   */
+  private turnUsage(active: ActiveTurn): {
+    readonly record: TurnUsageRecord | null;
+    readonly totals: Pick<ThreadState, "totalCost" | "totalUsage">;
+  } {
+    const state = this.thread.state();
+    const measured = active.usage;
+    if (measured === null) {
+      return { record: null, totals: { totalCost: state.totalCost, totalUsage: state.totalUsage } };
+    }
+    const totalCost = threadCostAfter(state.totalCost, measured.cost);
+    const cost = providerCost(measured.cost, totalCost);
+    const total = addUsage(state.totalUsage, measured.usage);
+    return {
+      record: {
+        contextWindow: measured.contextWindow,
+        ...(cost === null ? {} : { cost }),
+        last: active.lastRequest ?? this.lastRequest ?? ZERO_USAGE,
+        total,
+        turn: measured.usage,
+      },
+      totals: { totalCost, totalUsage: total },
+    };
+  }
+
+  private finishTurn(outcome: TurnOutcome): void {
     const active = this.active;
     if (active === null) {
       return;
@@ -873,19 +966,14 @@ export class ClaudeSession {
     if (active.interruptTimer !== null) {
       clearTimeout(active.interruptTimer);
     }
+    this.clientTools.cancelAll();
     this.resolveAllPending(outcome.status === "interrupted" ? "cancelled" : "turnEnded");
-    const total =
-      usage === null
-        ? this.thread.state().totalUsage
-        : addUsage(this.thread.state().totalUsage, usage.usage);
-    const { events } = active.builder.finish(
-      outcome,
-      usage === null ? null : { contextWindow: usage.contextWindow, last: usage.usage, total },
-    );
-    this.recordActiveTurn(outcomeRecord(outcome));
+    const usage = this.turnUsage(active);
+    const { events } = active.builder.finish(outcome, usage.record);
+    this.recordActiveTurn(outcomeRecord(outcome), usage.record);
     this.active = null;
     const nowSeconds = seconds(this.deps.nowMs());
-    this.thread.update((current) => ({ ...current, totalUsage: total, updatedAt: nowSeconds }));
+    this.thread.update((current) => ({ ...current, ...usage.totals, updatedAt: nowSeconds }));
     this.thread.writeActiveTurn(null);
     this.emitAll(events);
     this.thread.emitThreadUpdated();
@@ -919,6 +1007,30 @@ export class ClaudeSession {
     this.closeQuery();
     this.thread.update((current) => ({ ...current, pendingSettings: null, settings: pending }));
     this.thread.emitThreadUpdated();
+  }
+
+  /** Replaces the thread's client tools; they apply when a turn next opens or reopens the query. */
+  public useClientTools(tools: readonly ClientToolSpec[]): void {
+    this.clientTools.replace(tools);
+  }
+
+  /**
+   * Before a user turn: the open query keeps the tools it was opened with,
+   * so an idle query with an outdated set is closed and the turn reopens it
+   * with `resume`. With background tasks running it is kept (closing would
+   * end them) and the new set applies when it next opens.
+   */
+  private reopenForClientTools(): void {
+    if (this.query === null || this.queryClientTools === this.clientTools.current) {
+      return;
+    }
+    if (this.backgroundTasks > 0) {
+      this.log("info", "client tools change waits for background tasks", {
+        backgroundTasks: this.backgroundTasks,
+      });
+      return;
+    }
+    this.closeQuery();
   }
 
   // ----------------------------------------------------------------- idle
@@ -968,7 +1080,7 @@ export class ClaudeSession {
     if (this.active !== null) {
       this.active.interruptRequested = true;
       this.closeQuery();
-      this.finishTurn({ status: "interrupted" }, null);
+      this.finishTurn({ status: "interrupted" });
     }
     this.closeQuery();
   }

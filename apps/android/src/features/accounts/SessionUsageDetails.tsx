@@ -11,14 +11,27 @@ import {
 } from "../../ui/AnimatedNumber";
 import { AppText as Text } from "../../ui/Typography";
 
+/**
+ * The session's estimated cost: an API-equivalent estimate per token kind, or
+ * a total the agent reported from its list prices or organization rates.
+ */
+export type SessionCostDetails =
+  | {
+      readonly basis: "apiEquivalent";
+      readonly cached: number;
+      readonly input: number;
+      readonly output: number;
+      readonly total: number;
+    }
+  | {
+      readonly basis: "providerReported";
+      readonly prices: "list" | "managed";
+      readonly total: number;
+    };
+
 interface SessionUsageDetailsProps {
   readonly compactionCount: number | null;
-  readonly cost: {
-    readonly cached: number;
-    readonly input: number;
-    readonly output: number;
-    readonly total: number;
-  } | null;
+  readonly cost: SessionCostDetails | null;
   readonly tokens: {
     readonly cached: number;
     readonly input: number;
@@ -40,9 +53,9 @@ export function SessionUsageDetails({ compactionCount, cost, tokens }: SessionUs
             <Text style={[styles.columnHeading, styles.numberColumn]}>Tokens</Text>
             <Text style={[styles.columnHeading, styles.numberColumn]}>Est. cost</Text>
           </View>
-          <SessionUsageRow cost={cost?.input ?? null} label="Input" tokens={tokens.input} />
-          <SessionUsageRow cost={cost?.cached ?? null} label="Cached" tokens={tokens.cached} />
-          <SessionUsageRow cost={cost?.output ?? null} label="Output" tokens={tokens.output} />
+          <SessionUsageRow cost={rowCost(cost, "input")} label="Input" tokens={tokens.input} />
+          <SessionUsageRow cost={rowCost(cost, "cached")} label="Cached" tokens={tokens.cached} />
+          <SessionUsageRow cost={rowCost(cost, "output")} label="Output" tokens={tokens.output} />
           <SessionUsageRow cost={cost?.total ?? null} label="Total" tokens={tokens.total} total />
         </>
       )}
@@ -82,25 +95,41 @@ export function SessionUsageDetails({ compactionCount, cost, tokens }: SessionUs
               name="information-circle-outline"
               size={iconSize.inline}
             />
-            <Text style={[styles.caption, styles.explanationLabel]}>
-              API estimate · current model prices
-            </Text>
+            <Text style={[styles.caption, styles.explanationLabel]}>{costLabel(cost)}</Text>
             <Ionicons
               color={colors.textDim}
               name={explanationOpen ? "chevron-up" : "chevron-down"}
               size={iconSize.indicator}
             />
           </Pressable>
-          {explanationOpen && (
-            <Text style={styles.caption}>
-              Estimated API-equivalent cost, not an account charge. Model switches and per-request
-              long-context premiums are not reconstructed.
-            </Text>
-          )}
+          {explanationOpen && <Text style={styles.caption}>{costExplanation(cost)}</Text>}
         </>
       )}
     </View>
   );
+}
+
+/** A per-kind cost: an agent-reported estimate has only its total. */
+function rowCost(
+  cost: SessionCostDetails | null,
+  kind: "cached" | "input" | "output",
+): number | null {
+  return cost?.basis === "apiEquivalent" ? cost[kind] : null;
+}
+
+function costLabel(cost: SessionCostDetails): string {
+  if (cost.basis === "apiEquivalent") {
+    return "API estimate · current model prices";
+  }
+  return cost.prices === "managed"
+    ? "Agent estimate · organization rates"
+    : "Agent estimate · list prices";
+}
+
+function costExplanation(cost: SessionCostDetails): string {
+  return cost.basis === "apiEquivalent"
+    ? "Estimated API-equivalent cost, not an account charge. Model switches and per-request long-context premiums are not reconstructed."
+    : "Estimated by the agent for every model it used, not an account charge. Only the total is known.";
 }
 
 function SessionUsageRow({

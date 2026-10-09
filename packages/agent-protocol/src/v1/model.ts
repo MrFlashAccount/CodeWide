@@ -104,6 +104,8 @@ export interface AgentTurn extends WithProvenance {
   readonly startedAt: number;
   readonly status: TurnStatus;
   readonly turnId: TurnId;
+  /** Recorded usage of a finished turn on a read (added within v1); absent when unknown. */
+  readonly usage?: TurnUsageRecord;
 }
 
 /** User input content. */
@@ -275,12 +277,57 @@ export type RuntimeResponse =
 
 export type RequestResolution = "responded" | "cancelled" | "turnEnded" | "providerRestarted";
 
+/**
+ * Token counters. `inputTokens` counts every prompt token, including the
+ * cache reads (`cachedInputTokens`) and cache writes (`cacheWriteInputTokens`)
+ * it contains; `outputTokens` includes `reasoningOutputTokens`;
+ * `totalTokens = inputTokens + outputTokens`.
+ */
 export interface TokenUsage {
   readonly cachedInputTokens: number;
+  /** Prompt tokens written to the provider's prompt cache. Added within v1; absent means 0. */
+  readonly cacheWriteInputTokens?: number;
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly reasoningOutputTokens: number;
   readonly totalTokens: number;
+}
+
+/**
+ * Which price table a provider-reported cost used: the provider's built-in
+ * list prices or rates managed by the user's organization.
+ */
+export type ProviderCostBasis = "list" | "managed";
+
+/**
+ * A cost the provider itself computed for its own usage (added within v1).
+ * It is an estimate, not a bill. A provider sends it only when it knows the
+ * price table it used.
+ */
+export interface ProviderCost {
+  readonly basis: ProviderCostBasis;
+  /** The priced model, or `"mixed"` when the turn used several priced models. */
+  readonly model: string;
+  /** The whole thread's cost in USD after this turn; `null` when an earlier turn's cost is unknown. */
+  readonly threadUsd: number | null;
+  /** This turn's cost in USD. */
+  readonly turnUsd: number;
+}
+
+/**
+ * The usage a provider recorded for one finished turn (added within v1), so
+ * a history read shows the same figures `usage.updated` reported live.
+ */
+export interface TurnUsageRecord {
+  readonly contextWindow: number | null;
+  /** Absent when the provider does not know the turn's cost. */
+  readonly cost?: ProviderCost;
+  /** The turn's last model request: the context size the turn ended with. */
+  readonly last: TokenUsage;
+  /** The thread's cumulative usage after this turn. */
+  readonly total: TokenUsage;
+  /** This turn's own usage. */
+  readonly turn: TokenUsage;
 }
 
 /**
@@ -351,6 +398,25 @@ export interface NativeSubagent {
   /** The tool call that spawned the sub-agent, when the store records it. */
   readonly parentToolUseId: string | null;
   readonly turns: readonly AgentTurn[];
+}
+
+/**
+ * A tool the companion declares for a thread's model to call (client-side
+ * tool). The provider registers it natively and, whenever the model calls it,
+ * sends the `tool.call` provider request to the companion and returns the
+ * result to the model. `inputSchema` is a JSON Schema object for the
+ * arguments (`{"type": "object", ...}`).
+ */
+export interface ClientToolSpec {
+  readonly description: string;
+  readonly inputSchema: JsonValue;
+  readonly name: string;
+}
+
+/** One content block of a client tool result. */
+export interface ClientToolTextContent {
+  readonly text: string;
+  readonly type: "text";
 }
 
 export type PlanStepStatus = "pending" | "inProgress" | "completed";

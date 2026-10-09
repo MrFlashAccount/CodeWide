@@ -1,13 +1,18 @@
 //! Live token usage of every thread, projected from client-wire
 //! notifications during sync ingest. Accounting types and the price-table
-//! contract live in `agent_core::usage`; prices come from the enabled
-//! providers' tables (`UsagePricing`) and are never persisted.
+//! contract live in `agent_core::usage`; prices come from the thread's own
+//! provider's table (`UsagePricing::for_provider`), or from the cost the
+//! provider reported itself (`codewideProviderCost`), and are never persisted.
 
 use std::{collections::HashMap, sync::Arc};
 
-use agent_core::usage::{
-    ModelPricing, ReplayPricing, RequestUsage, TokenCounts, TurnUsageProjection, UsagePricing,
-    UsageScopeProjection, UsageStatus, normalize_model,
+use agent_core::{
+    model::{ProviderCost, ProviderId},
+    usage::{
+        ModelPricing, PROVIDER_COST_FIELD, ReplayPricing, RequestUsage, TokenCounts,
+        TurnUsageProjection, UsagePricing, UsageScopeProjection, UsageStatus, normalize_model,
+        provider_reported_cost,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,9 +23,16 @@ use crate::store::{IndexStore, StoreError};
 #[serde(rename_all = "camelCase")]
 struct PersistedThreadUsage {
     model: Option<String>,
+    /// The thread's provider, once an event of its provider stream was seen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider: Option<ProviderId>,
     total: TokenCounts,
     has_total: bool,
     turns: HashMap<String, PersistedTurnUsage>,
+    /// The provider-reported cost of the latest usage update: a pricing
+    /// input, carried by providers without a price table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_cost: Option<ProviderCost>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -35,6 +47,9 @@ struct PersistedTurnUsage {
     // be recovered from cumulative counters alone.
     requests: Option<Vec<RequestUsage>>,
     status: UsageStatus,
+    /// The provider-reported cost of this turn, when the provider sent one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_cost: Option<ProviderCost>,
 }
 
 pub struct LiveUsageProjector {
@@ -51,6 +66,33 @@ impl LiveUsageProjector {
             pricing,
             threads: HashMap::new(),
         }
+    }
+
+    /// Records that `payload` came from `provider`'s event stream, so its
+    /// thread is priced only by that provider's table. The record is kept
+    /// with the thread's usage state when [`Self::observe`] next writes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the durable usage state cannot be read.
+    pub fn observe_provider(
+        &mut self,
+        payload: &Value,
+        provider: &ProviderId,
+    ) -> Result<(), StoreError> {
+        let Some(thread_id) = payload_thread_id(payload) else {
+            return Ok(());
+        };
+        if let Some(state) = self.threads.get_mut(thread_id) {
+            if state.provider.as_ref() != Some(provider) {
+                state.provider = Some(provider.clone());
+            }
+            return Ok(());
+        }
+        let mut state = self.load(thread_id)?;
+        state.provider = Some(provider.clone());
+        self.threads.insert(thread_id.to_owned(), state);
+        Ok(())
     }
 
     /// Observes one App Server notification and returns a backend-owned usage
@@ -75,6 +117,7 @@ impl LiveUsageProjector {
             return Ok(None);
         };
         let mut state = self.load(thread_id)?;
+        let pricing = self.pricing.for_provider(state.provider.as_ref());
         let mut projection = None;
         match method {
             "thread/started" => {
@@ -112,6 +155,7 @@ impl LiveUsageProjector {
                             model_context_window: None,
                             requests: Some(Vec::new()),
                             status: UsageStatus::Live,
+                            provider_cost: None,
                         });
                 }
             }
@@ -131,6 +175,7 @@ impl LiveUsageProjector {
                             model_context_window: None,
                             requests: Some(Vec::new()),
                             status: UsageStatus::Live,
+                            provider_cost: None,
                         })
                         .model = Some(normalize_model(model));
                 }
@@ -150,6 +195,7 @@ impl LiveUsageProjector {
                             model_context_window,
                             requests: None,
                             status: UsageStatus::Live,
+                            provider_cost: None,
                         }
                     });
                     let is_new_request = total != turn.total;
@@ -173,12 +219,18 @@ impl LiveUsageProjector {
                             turn.requests = None;
                         }
                     }
+                    let provider_cost = params
+                        .get(PROVIDER_COST_FIELD)
+                        .cloned()
+                        .and_then(|cost| serde_json::from_value::<ProviderCost>(cost).ok());
                     turn.total = total;
                     turn.latest_request = last;
                     turn.model_context_window = model_context_window;
+                    turn.provider_cost.clone_from(&provider_cost);
                     state.total = total;
                     state.has_total = true;
-                    projection = Some(project(&state, turn_id, &self.pricing));
+                    state.provider_cost = provider_cost;
+                    projection = Some(project(&state, turn_id, &pricing));
                 }
             }
             "turn/completed" => {
@@ -190,7 +242,7 @@ impl LiveUsageProjector {
                     && let Some(turn) = state.turns.get_mut(turn_id)
                 {
                     turn.status = UsageStatus::Final;
-                    projection = Some(project(&state, turn_id, &self.pricing));
+                    projection = Some(project(&state, turn_id, &pricing));
                 }
             }
             _ => return Ok(None),
@@ -221,6 +273,12 @@ impl LiveUsageProjector {
             .and_then(Value::as_str)
             .or_else(|| params.pointer("/thread/id").and_then(Value::as_str))?;
         let state = self.threads.get(thread_id)?;
+        // A thread whose provider has no price table keeps no model inputs,
+        // so no other provider's table can price it on replay.
+        let priced = !self
+            .pricing
+            .for_provider(state.provider.as_ref())
+            .is_empty();
         let turn_id = params
             .get("turnId")
             .and_then(Value::as_str)
@@ -228,7 +286,8 @@ impl LiveUsageProjector {
         let turn = turn_id.and_then(|id| state.turns.get(id));
         let model = turn
             .and_then(|turn| turn.model.clone())
-            .or_else(|| state.model.clone());
+            .or_else(|| state.model.clone())
+            .filter(|_| priced);
         let has_usage_projection = matches!(
             payload.get("method").and_then(Value::as_str),
             Some("thread/tokenUsage/updated" | "turn/completed")
@@ -238,10 +297,38 @@ impl LiveUsageProjector {
             thread_model: has_usage_projection.then_some(model).flatten(),
             turn_requests: has_usage_projection
                 .then(|| turn.and_then(|turn| turn.requests.clone()))
-                .flatten(),
+                .flatten()
+                .filter(|_| priced),
+            provider_cost: has_usage_projection
+                .then(|| turn.and_then(|turn| turn.provider_cost.clone()))
+                .flatten()
+                .map(|cost| ProviderCost {
+                    thread_usd: state
+                        .provider_cost
+                        .as_ref()
+                        .and_then(|thread| thread.thread_usd),
+                    ..cost
+                }),
         };
         serde_json::to_value(pricing).ok()
     }
+
+    /// The price tables that may price `payload`'s thread: its provider's
+    /// table once the provider is known.
+    pub(crate) fn thread_pricing(&self, payload: &Value) -> UsagePricing {
+        let provider = payload_thread_id(payload)
+            .and_then(|thread_id| self.threads.get(thread_id))
+            .and_then(|state| state.provider.as_ref());
+        self.pricing.for_provider(provider)
+    }
+}
+
+fn payload_thread_id(payload: &Value) -> Option<&str> {
+    let params = payload.get("params")?;
+    params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .or_else(|| params.pointer("/thread/id").and_then(Value::as_str))
 }
 
 fn project(
@@ -251,27 +338,40 @@ fn project(
 ) -> TurnUsageProjection {
     let turn = &state.turns[turn_id];
     let model = turn.model.as_deref().or(state.model.as_deref());
+    let turn_tokens = turn.total.saturating_sub(
+        turn.baseline
+            .unwrap_or_else(|| turn.total.saturating_sub(turn.latest_request)),
+    );
     TurnUsageProjection {
         version: 1,
         status: turn.status,
         model_context_window: turn.model_context_window,
         latest_request: turn.latest_request,
         turn: UsageScopeProjection {
-            tokens: turn.total.saturating_sub(
-                turn.baseline
-                    .unwrap_or_else(|| turn.total.saturating_sub(turn.latest_request)),
-            ),
-            cost: turn
-                .requests
-                .as_deref()
-                .and_then(|requests| pricing.requests_cost(requests)),
+            tokens: turn_tokens,
+            cost: match &turn.provider_cost {
+                Some(reported) => Some(provider_reported_cost(
+                    reported,
+                    reported.turn_usd,
+                    turn_tokens,
+                )),
+                None => turn
+                    .requests
+                    .as_deref()
+                    .and_then(|requests| pricing.requests_cost(requests)),
+            },
         },
         thread: UsageScopeProjection {
             tokens: state.total,
-            cost: state
-                .has_total
-                .then(|| model.and_then(|model| pricing.session_cost(model, state.total)))
-                .flatten(),
+            cost: match &state.provider_cost {
+                Some(reported) => reported
+                    .thread_usd
+                    .map(|usd| provider_reported_cost(reported, usd, state.total)),
+                None => state
+                    .has_total
+                    .then(|| model.and_then(|model| pricing.session_cost(model, state.total)))
+                    .flatten(),
+            },
         },
     }
 }
@@ -540,6 +640,100 @@ mod tests {
         let stored: Value = store.thread_usage("thread")?.ok_or("usage state missing")?;
         assert!(stored.get("threadCost").is_none());
         assert!(stored["turns"]["turn"].get("cost").is_none());
+        Ok(())
+    }
+
+    fn provider_pricing() -> UsagePricing {
+        UsagePricing::by_provider(vec![(
+            ProviderId::from_static("codex"),
+            Arc::new(TestPricing),
+        )])
+    }
+
+    fn started(
+        projector: &mut LiveUsageProjector,
+        provider: &'static str,
+    ) -> Result<(), StoreError> {
+        let thread = json!({"method": "thread/started", "params": {"thread": {"id": "thread", "model": "model-a"}}});
+        projector.observe_provider(&thread, &ProviderId::from_static(provider))?;
+        projector.observe(&thread)?;
+        projector.observe(&json!({
+            "method": "turn/started",
+            "params": {"threadId": "thread", "turn": {"id": "turn"}}
+        }))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_thread_is_priced_only_by_its_own_providers_table() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
+        let mut codex = LiveUsageProjector::new(store, provider_pricing());
+        started(&mut codex, "codex")?;
+        let priced = codex
+            .observe(&live_usage_event(12, 12))?
+            .ok_or("usage missing")?;
+        assert_eq!(priced["turn"]["cost"]["model"], "model-a");
+
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
+        let mut claude = LiveUsageProjector::new(store, provider_pricing());
+        // The model name is in another provider's table; it must not price this thread.
+        started(&mut claude, "claude")?;
+        let unpriced = claude
+            .observe(&live_usage_event(12, 12))?
+            .ok_or("usage missing")?;
+        assert!(unpriced["turn"]["cost"].is_null());
+        assert!(unpriced["thread"]["cost"].is_null());
+        let replay = claude
+            .replay_pricing(&live_usage_event(12, 12))
+            .ok_or("replay pricing missing")?;
+        assert!(replay["model"].is_null());
+        assert!(replay["turnRequests"].is_null());
+        assert!(claude.thread_pricing(&live_usage_event(12, 12)).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_provider_reported_cost_prices_the_turn_and_thread_and_survives_replay()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
+        let mut projector = LiveUsageProjector::new(store.clone(), provider_pricing());
+        started(&mut projector, "claude")?;
+        let mut event = live_usage_event(30, 18);
+        event["params"][PROVIDER_COST_FIELD] = json!({"basis": "list", "model": "claude-sonnet-4-6", "turnUsd": 0.02, "threadUsd": 0.05});
+        let usage = projector.observe(&event)?.ok_or("usage missing")?;
+        assert_eq!(usage["turn"]["cost"]["basis"], "providerReported");
+        assert_eq!(usage["turn"]["cost"]["model"], "claude-sonnet-4-6");
+        assert_eq!(usage["turn"]["cost"]["totalCostUsd"], 0.02);
+        assert_eq!(usage["thread"]["cost"]["totalCostUsd"], 0.05);
+
+        let replay_pricing = projector.replay_pricing(&event);
+        let payload = json!({
+            "method": "thread/tokenUsage/updated",
+            "params": {"threadId": "thread", "turnId": "turn"},
+            "codewideThreadPatch": {"operation": {"usage": usage}}
+        });
+        let stored = prepare_replay_payload(payload, replay_pricing);
+        assert!(!serde_json::to_string(&stored)?.contains("totalCostUsd"));
+        // Any provider's table may reprice the journal: the reported cost wins.
+        let delivered = price_replay_payload(stored, &provider_pricing());
+        let replayed = &delivered["codewideThreadPatch"]["operation"]["usage"];
+        assert_eq!(replayed["turn"]["cost"]["totalCostUsd"], 0.02);
+        assert_eq!(replayed["thread"]["cost"]["totalCostUsd"], 0.05);
+
+        // The final projection after a restart keeps the reported cost.
+        drop(projector);
+        let mut restarted = LiveUsageProjector::new(store, provider_pricing());
+        let final_projection = restarted
+            .observe(&json!({
+                "method": "turn/completed",
+                "params": {"threadId": "thread", "turn": {"id": "turn"}}
+            }))?
+            .ok_or("final usage missing")?;
+        assert_eq!(final_projection["turn"]["cost"]["totalCostUsd"], 0.02);
         Ok(())
     }
 

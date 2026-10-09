@@ -401,6 +401,38 @@ impl ClientWireGateway {
             .and_then(Value::as_str)
             .unwrap_or(":workspace")
             .to_owned();
+        let thread = self
+            .create_thread(
+                provider,
+                wire,
+                cwd,
+                ThreadSettings {
+                    model,
+                    effort: params
+                        .pointer("/config/model_reasoning_effort")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    permission_profile,
+                    service_tier: None,
+                },
+            )
+            .await?;
+        Ok(Self::started_thread(&thread, wire))
+    }
+
+    /// Creates a thread through the neutral `thread.create` on any provider
+    /// and writes its `created` binding before returning: a host-minted id
+    /// is bound before the provider is asked, a provider-minted id after.
+    ///
+    /// # Errors
+    /// Returns the provider or binding failure.
+    pub async fn create_thread(
+        &self,
+        provider: &Arc<dyn AgentProvider>,
+        wire: &WireProvider,
+        cwd: String,
+        settings: ThreadSettings,
+    ) -> Result<crate::agent::model::AgentThread, RpcFailure> {
         let app_thread_id = provider
             .capabilities()
             .supports(Capability::ThreadsHostMintedIds)
@@ -412,25 +444,28 @@ impl ClientWireGateway {
             .thread_create(ThreadCreateParams {
                 app_thread_id,
                 cwd,
-                settings: ThreadSettings {
-                    model,
-                    effort: params
-                        .pointer("/config/model_reasoning_effort")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    permission_profile,
-                    service_tier: None,
-                },
+                settings,
+                client_tools: None,
             })
             .await
             .map_err(|error| RpcFailure::from_provider(&error))?;
         self.bind_created(&wire.descriptor.id, thread.app_thread_id.as_str())
             .await?;
-        let projected = super::items::thread(&thread, wire, &[]);
+        Ok(thread)
+    }
+
+    /// The `ThreadStartResponse` and `thread/started` notification of a
+    /// thread created through the neutral operation.
+    #[must_use]
+    pub fn started_thread(
+        thread: &crate::agent::model::AgentThread,
+        wire: &WireProvider,
+    ) -> (Value, Value) {
+        let projected = super::items::thread(thread, wire, &[]);
         let response =
-            settings::response_envelope(&thread, &wire.descriptor.model_provider, &projected);
+            settings::response_envelope(thread, &wire.descriptor.model_provider, &projected);
         let started = json!({"method": "thread/started", "params": {"thread": projected}});
-        Ok((response, started))
+        (response, started)
     }
 
     /// Builds the `turn/start` result for a provider without the native
@@ -441,7 +476,11 @@ impl ClientWireGateway {
     }
 }
 
-async fn default_model(provider: &Arc<dyn AgentProvider>) -> Result<String, RpcFailure> {
+/// The provider's default model (its `isDefault` row, else its first row).
+///
+/// # Errors
+/// Returns the provider failure or `-32602` for an empty catalog.
+pub async fn default_model(provider: &Arc<dyn AgentProvider>) -> Result<String, RpcFailure> {
     let catalog = provider
         .catalog_models()
         .await

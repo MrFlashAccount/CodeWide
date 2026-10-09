@@ -123,6 +123,10 @@ pub struct AgentTurn {
     /// the companion stamps it (see [`AgentTurn::stamp`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
+    /// Recorded usage of a finished turn on a read. Optional on the wire
+    /// (added within v1); absent when the provider does not know it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TurnUsageRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -443,14 +447,60 @@ pub enum RequestResolution {
     ProviderRestarted,
 }
 
+/// Token counters. `input_tokens` counts every prompt token, including the
+/// cache reads and cache writes it contains; `output_tokens` includes
+/// `reasoning_output_tokens`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenUsage {
     pub input_tokens: i64,
     pub cached_input_tokens: i64,
+    /// Prompt tokens written to the provider's prompt cache. Optional on the
+    /// wire (added within v1); absent means 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_input_tokens: Option<i64>,
     pub output_tokens: i64,
     pub reasoning_output_tokens: i64,
     pub total_tokens: i64,
+}
+
+/// Which price table a provider-reported cost used.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderCostBasis {
+    /// The provider's built-in list prices.
+    List,
+    /// Rates managed by the user's organization.
+    Managed,
+}
+
+/// A cost the provider computed for its own usage: an estimate, not a bill.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderCost {
+    pub basis: ProviderCostBasis,
+    /// The priced model, or `"mixed"` when the turn used several.
+    pub model: String,
+    /// This turn's cost in USD.
+    pub turn_usd: f64,
+    /// The whole thread's cost in USD after this turn; `None` when an
+    /// earlier turn's cost is unknown.
+    pub thread_usd: Option<f64>,
+}
+
+/// The usage a provider recorded for one finished turn.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnUsageRecord {
+    /// The turn's last model request: the context size the turn ended with.
+    pub last: TokenUsage,
+    /// This turn's own usage.
+    pub turn: TokenUsage,
+    /// The thread's cumulative usage after this turn.
+    pub total: TokenUsage,
+    pub context_window: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<ProviderCost>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

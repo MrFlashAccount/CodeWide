@@ -11,6 +11,19 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::model::{ProviderCost, ProviderCostBasis, ProviderId, TokenUsage, TurnUsageRecord};
+
+/// `CostProjection::basis` of a cost the provider computed itself (for
+/// example, the Claude Agent SDK). It carries only a total: the price and
+/// per-component costs are zero, and `pricing_version` names the provider's
+/// price table (`list` or `managed`).
+pub const PROVIDER_REPORTED_BASIS: &str = "providerReported";
+
+/// Client-wire field of `thread/tokenUsage/updated` params that carries a
+/// provider-reported cost ([`ProviderCost`]). Present only when the provider
+/// reported one, so a Codex stream never carries it.
+pub const PROVIDER_COST_FIELD: &str = "codewideProviderCost";
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenCounts {
@@ -49,6 +62,20 @@ impl TokenCounts {
             && self.cache_write_input_tokens >= baseline.cache_write_input_tokens
             && self.output_tokens >= baseline.output_tokens
             && self.reasoning_output_tokens >= baseline.reasoning_output_tokens
+    }
+
+    /// Counters of a neutral [`TokenUsage`]; negative counters read as zero.
+    #[must_use]
+    pub fn from_usage(usage: &TokenUsage) -> Self {
+        let count = |value: i64| u64::try_from(value).unwrap_or(0);
+        Self {
+            total_tokens: count(usage.total_tokens),
+            input_tokens: count(usage.input_tokens),
+            cached_input_tokens: count(usage.cached_input_tokens),
+            cache_write_input_tokens: count(usage.cache_write_input_tokens.unwrap_or(0)),
+            output_tokens: count(usage.output_tokens),
+            reasoning_output_tokens: count(usage.reasoning_output_tokens),
+        }
     }
 
     /// Reads counters with camelCase field names (client-wire usage).
@@ -150,6 +177,82 @@ pub struct ReplayPricing {
     pub model: Option<String>,
     pub thread_model: Option<String>,
     pub turn_requests: Option<Vec<RequestUsage>>,
+    /// The provider-reported cost of the notification's turn and thread, a
+    /// pricing input of providers without a price table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_cost: Option<ProviderCost>,
+}
+
+impl TurnUsageProjection {
+    /// The final projection of a turn usage record a provider kept for a
+    /// finished turn (history reads). Costs come only from the record's
+    /// provider-reported cost.
+    #[must_use]
+    pub fn from_record(record: &TurnUsageRecord) -> Self {
+        let turn = TokenCounts::from_usage(&record.turn);
+        let thread = TokenCounts::from_usage(&record.total);
+        let cost = record.cost.as_ref();
+        Self {
+            version: 1,
+            status: UsageStatus::Final,
+            model_context_window: record
+                .context_window
+                .and_then(|window| u64::try_from(window).ok()),
+            latest_request: TokenCounts::from_usage(&record.last),
+            turn: UsageScopeProjection {
+                tokens: turn,
+                cost: cost.map(|cost| provider_reported_cost(cost, cost.turn_usd, turn)),
+            },
+            thread: UsageScopeProjection {
+                tokens: thread,
+                cost: cost.and_then(|cost| {
+                    cost.thread_usd
+                        .map(|usd| provider_reported_cost(cost, usd, thread))
+                }),
+            },
+        }
+    }
+}
+
+/// A provider-reported cost of `tokens`: only the total is known, so the
+/// price and per-component costs are zero (see [`PROVIDER_REPORTED_BASIS`]).
+#[must_use]
+pub fn provider_reported_cost(
+    cost: &ProviderCost,
+    usd: f64,
+    tokens: TokenCounts,
+) -> CostProjection {
+    let cached = tokens.cached_input_tokens.min(tokens.input_tokens);
+    let cache_write = tokens
+        .cache_write_input_tokens
+        .min(tokens.input_tokens.saturating_sub(cached));
+    CostProjection {
+        model: cost.model.clone(),
+        pricing_version: match cost.basis {
+            ProviderCostBasis::List => "list".into(),
+            ProviderCostBasis::Managed => "managed".into(),
+        },
+        currency: "USD".into(),
+        basis: PROVIDER_REPORTED_BASIS.into(),
+        price: ModelPrice {
+            input: 0.0,
+            cached_input: 0.0,
+            output: 0.0,
+        },
+        uncached_input_tokens: tokens
+            .input_tokens
+            .saturating_sub(cached)
+            .saturating_sub(cache_write),
+        cached_input_tokens: cached,
+        cache_write_input_tokens: cache_write,
+        output_tokens: tokens.output_tokens,
+        cache_hit_percent: cache_hit_percent(cached, tokens.input_tokens),
+        uncached_input_cost_usd: 0.0,
+        cached_input_cost_usd: 0.0,
+        cache_write_input_cost_usd: 0.0,
+        output_cost_usd: 0.0,
+        total_cost_usd: usd,
+    }
 }
 
 /// A provider-owned price table. Model ids are compared after
@@ -166,17 +269,74 @@ pub trait ModelPricing: Send + Sync {
     fn input_price(&self, model: &str) -> Option<f64>;
 }
 
+/// One price table and the provider that owns it (`None` for a table of no
+/// particular provider).
+#[derive(Clone)]
+struct PricingEntry {
+    provider: Option<ProviderId>,
+    table: Arc<dyn ModelPricing>,
+}
+
 /// The host's price tables in provider order: the first table that prices a
-/// model answers for it. An empty set leaves every model unpriced.
+/// model answers for it. An empty set leaves every model unpriced. A thread
+/// is priced only by its own provider's table ([`UsagePricing::for_provider`]),
+/// so a model can never be priced by another provider's table.
 #[derive(Clone, Default)]
 pub struct UsagePricing {
-    tables: Vec<Arc<dyn ModelPricing>>,
+    tables: Vec<PricingEntry>,
 }
 
 impl UsagePricing {
+    /// Tables of no particular provider; [`UsagePricing::for_provider`] of
+    /// any provider leaves them out.
     #[must_use]
     pub fn new(tables: Vec<Arc<dyn ModelPricing>>) -> Self {
-        Self { tables }
+        Self {
+            tables: tables
+                .into_iter()
+                .map(|table| PricingEntry {
+                    provider: None,
+                    table,
+                })
+                .collect(),
+        }
+    }
+
+    /// The enabled providers' tables in registry order.
+    #[must_use]
+    pub fn by_provider(tables: Vec<(ProviderId, Arc<dyn ModelPricing>)>) -> Self {
+        Self {
+            tables: tables
+                .into_iter()
+                .map(|(provider, table)| PricingEntry {
+                    provider: Some(provider),
+                    table,
+                })
+                .collect(),
+        }
+    }
+
+    /// The tables a thread is priced by: its provider's table only, or every
+    /// table while the thread's provider is unknown.
+    #[must_use]
+    pub fn for_provider(&self, provider: Option<&ProviderId>) -> Self {
+        match provider {
+            None => self.clone(),
+            Some(provider) => Self {
+                tables: self
+                    .tables
+                    .iter()
+                    .filter(|entry| entry.provider.as_ref() == Some(provider))
+                    .cloned()
+                    .collect(),
+            },
+        }
+    }
+
+    /// Whether no table prices anything.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tables.is_empty()
     }
 
     /// The summed cost of every request, or `None` when any request is unpriced.
@@ -190,19 +350,19 @@ impl ModelPricing for UsagePricing {
     fn request_cost(&self, model: &str, usage: TokenCounts) -> Option<CostProjection> {
         self.tables
             .iter()
-            .find_map(|table| table.request_cost(model, usage))
+            .find_map(|entry| entry.table.request_cost(model, usage))
     }
 
     fn session_cost(&self, model: &str, usage: TokenCounts) -> Option<CostProjection> {
         self.tables
             .iter()
-            .find_map(|table| table.session_cost(model, usage))
+            .find_map(|entry| entry.table.session_cost(model, usage))
     }
 
     fn input_price(&self, model: &str) -> Option<f64> {
         self.tables
             .iter()
-            .find_map(|table| table.input_price(model))
+            .find_map(|entry| entry.table.input_price(model))
     }
 }
 
@@ -321,28 +481,35 @@ fn visit_pricing_fields(
                     .get("thread")
                     .is_some_and(|thread| thread.get("tokens").is_some())
             {
+                let provider_cost = pricing.and_then(|pricing| pricing.provider_cost.as_ref());
                 if let Some(turn) = object.get_mut("turn").and_then(Value::as_object_mut) {
-                    let cost = pricing
-                        .and_then(|pricing| pricing.turn_requests.as_deref())
-                        .and_then(|requests| requests_cost(tables, requests))
-                        .and_then(|cost| serde_json::to_value(cost).ok())
-                        .unwrap_or(Value::Null);
+                    let cost = match provider_cost {
+                        Some(reported) => scope_tokens(turn).map(|tokens| {
+                            provider_reported_cost(reported, reported.turn_usd, tokens)
+                        }),
+                        None => pricing
+                            .and_then(|pricing| pricing.turn_requests.as_deref())
+                            .and_then(|requests| requests_cost(tables, requests)),
+                    }
+                    .and_then(|cost| serde_json::to_value(cost).ok())
+                    .unwrap_or(Value::Null);
                     turn.insert("cost".into(), cost);
                 }
                 if let Some(thread) = object.get_mut("thread").and_then(Value::as_object_mut) {
-                    let cost = pricing
-                        .and_then(|pricing| pricing.thread_model.as_deref())
-                        .and_then(|model| {
-                            thread
-                                .get("tokens")
-                                .cloned()
-                                .and_then(|tokens| {
-                                    serde_json::from_value::<TokenCounts>(tokens).ok()
-                                })
-                                .and_then(|tokens| tables.session_cost(model, tokens))
-                        })
-                        .and_then(|cost| serde_json::to_value(cost).ok())
-                        .unwrap_or(Value::Null);
+                    let cost = match provider_cost {
+                        Some(reported) => reported.thread_usd.and_then(|usd| {
+                            scope_tokens(thread)
+                                .map(|tokens| provider_reported_cost(reported, usd, tokens))
+                        }),
+                        None => pricing
+                            .and_then(|pricing| pricing.thread_model.as_deref())
+                            .and_then(|model| {
+                                scope_tokens(thread)
+                                    .and_then(|tokens| tables.session_cost(model, tokens))
+                            }),
+                    }
+                    .and_then(|cost| serde_json::to_value(cost).ok())
+                    .unwrap_or(Value::Null);
                     thread.insert("cost".into(), cost);
                 }
             }
@@ -365,6 +532,14 @@ fn visit_pricing_fields(
         }
         _ => {}
     }
+}
+
+/// The token counters of one usage scope (`turn` or `thread`).
+fn scope_tokens(scope: &serde_json::Map<String, Value>) -> Option<TokenCounts> {
+    scope
+        .get("tokens")
+        .cloned()
+        .and_then(|tokens| serde_json::from_value::<TokenCounts>(tokens).ok())
 }
 
 #[cfg(test)]

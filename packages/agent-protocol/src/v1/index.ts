@@ -6,5 +6,6 @@ export type * from "./events";
 export type * from "./ids";
 export type * from "./model";
 export * from "./operations";
+export * from "./providers";
 export * from "./rpc";
 export { checkEvent, checkMessage } from "./schema";

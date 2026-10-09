@@ -8,6 +8,7 @@ use super::{
     capabilities::CapabilitySet,
     ids::{AppThreadId, ClientMessageId, NativeRequestId, ProviderId, TurnId},
     thread::{AgentThread, AgentTurn, RuntimeResponse, ThreadSettings, UserContent},
+    tools::{ClientToolSpec, ToolCallParams},
 };
 
 pub const PROTOCOL_NAME: &str = "codewide-agent";
@@ -61,6 +62,23 @@ pub struct ProviderDescriptor {
 pub struct ProviderAccount {
     pub authenticated: bool,
     pub label: Option<String>,
+}
+
+/// Provider → companion notification method: the provider's signed-in
+/// state changed after `initialize`.
+pub const ACCOUNT_UPDATED_NOTIFICATION: &str = "account.updated";
+
+/// Params of `account.updated`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AccountUpdatedParams {
+    pub account: ProviderAccount,
+}
+
+/// The `account.updated` notification envelope.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AccountUpdatedNotification {
+    pub method: String,
+    pub params: AccountUpdatedParams,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -158,6 +176,9 @@ pub struct ThreadCreateParams {
     pub app_thread_id: Option<AppThreadId>,
     pub cwd: String,
     pub settings: ThreadSettings,
+    /// Additive: client-side tools declared to the thread's model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_tools: Option<Vec<ClientToolSpec>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -260,6 +281,10 @@ pub struct TurnStartParams {
     pub app_thread_id: AppThreadId,
     pub client_message_id: Option<ClientMessageId>,
     pub input: Vec<UserContent>,
+    /// Additive: client-side tools declared to the model for this turn (a
+    /// released or resumed session gets them again).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_tools: Option<Vec<ClientToolSpec>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -353,6 +378,9 @@ pub enum OperationCall {
     NativeSessionList(super::sessions::NativeSessionListParams),
     #[serde(rename = "nativeSession.read")]
     NativeSessionRead(super::sessions::NativeSessionReadParams),
+    /// Host → companion request: the model called a declared client tool.
+    #[serde(rename = "tool.call")]
+    ToolCall(ToolCallParams),
 }
 
 /// JSON-RPC request envelope.

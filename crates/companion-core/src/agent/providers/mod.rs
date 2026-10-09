@@ -8,6 +8,8 @@ pub use agent_provider_codex as codex;
 #[cfg(test)]
 mod codex_golden_tests;
 pub mod codex_hub;
+#[cfg(test)]
+mod codex_tools_tests;
 
 use std::{
     path::{Path, PathBuf},
@@ -38,12 +40,14 @@ pub struct ProviderHost {
 }
 
 impl ProviderHost {
-    fn claude_storage(&self) -> claude::ClaudeStorageHost {
+    /// Claude's storage host; the watched session store follows the
+    /// configured `CLAUDE_CONFIG_DIR`, as the host child's `claude` does.
+    fn claude_storage(&self, config: &claude::ClaudeConfig) -> claude::ClaudeStorageHost {
         claude::ClaudeStorageHost {
             database: self.index.database(),
             threads: self.index.clone(),
             search_path: self.state_directory.join("claude-message-search.sqlite"),
-            projects_root: claude::watcher::projects_root(),
+            projects_root: config.projects_root(),
             files: self.files.clone(),
             vcs: self.vcs.clone(),
         }
@@ -98,7 +102,7 @@ pub fn build_registry(
                 Ok(claude_config) => providers.push(match host {
                     Some(host) => claude::ClaudeProvider::spawn_with_storage(
                         &claude_config,
-                        host.claude_storage(),
+                        host.claude_storage(&claude_config),
                     ),
                     None => claude::ClaudeProvider::spawn(&claude_config),
                 }),
@@ -113,14 +117,24 @@ pub fn build_registry(
             }
         }
     }
-    let primary = if providers
+    let primary = match providers
         .iter()
-        .any(|provider| provider.descriptor().id == config.primary)
+        .find(|provider| provider.descriptor().id == config.primary)
     {
-        config.primary.clone()
-    } else {
-        error!(primary = %config.primary, "configured primary provider is not enabled; Codex leads");
-        codex_id.clone()
+        // The primary leads the merged `thread/list`, `model/list` and
+        // `permissionProfile/list`, which pass through its native surface.
+        Some(provider) if provider.native_surface().is_some() => config.primary.clone(),
+        Some(_) => {
+            error!(
+                primary = %config.primary,
+                "configured primary provider cannot serve the merged client surface (codex.native); Codex leads"
+            );
+            codex_id.clone()
+        }
+        None => {
+            error!(primary = %config.primary, "configured primary provider is not enabled; Codex leads");
+            codex_id.clone()
+        }
     };
     match ProviderRegistry::new(providers, &primary, disabled.clone()) {
         Ok(registry) => Arc::new(registry),
@@ -135,4 +149,49 @@ pub fn build_registry(
 #[must_use]
 pub fn codex_only(codex: Arc<codex::CodexProvider>, disabled: Vec<ProviderId>) -> ProviderRegistry {
     ProviderRegistry::single(codex, disabled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::upstream::UpstreamHandle;
+
+    fn claude_entry(directory: &Path) -> Result<serde_json::Value, std::io::Error> {
+        let script = directory.join("host.sh");
+        std::fs::write(&script, "sleep 5\n")?;
+        let claude = directory.join("claude");
+        std::fs::write(&claude, "")?;
+        Ok(serde_json::json!({
+            "runtimeExecutable": "/bin/sh",
+            "sidecarEntry": script,
+            "claudeExecutable": claude,
+            "journalDirectory": directory.join("journal"),
+        }))
+    }
+
+    #[tokio::test]
+    async fn a_primary_without_the_merged_surface_falls_back_to_codex()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let codex = Arc::new(codex::CodexProvider::new(UpstreamHandle::spawn(
+            directory.path().join("missing.sock"),
+        )));
+        let config = AgentProvidersConfig::parse(
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "primary": "claude",
+                "providers": {"claude": claude_entry(directory.path())?},
+            }))?
+            .as_slice(),
+        )?;
+        let registry = build_registry(Some(config), codex, None);
+        assert_eq!(registry.primary_id().as_str(), codex::PROVIDER_ID);
+        assert!(registry.is_multi_provider());
+        assert!(
+            registry
+                .get(&ProviderId::from_static(claude::PROVIDER_ID))
+                .is_some()
+        );
+        Ok(())
+    }
 }

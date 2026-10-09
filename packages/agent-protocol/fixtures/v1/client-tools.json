@@ -1,0 +1,147 @@
+{
+  "description": "client tools: thread.create and turn.start declare the companion's client tools; the provider calls one with the tool.call provider request and the companion answers on the same channel",
+  "messages": [
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-stdio:30",
+        "method": "thread.create",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "cwd": "/home/dev/project",
+          "settings": {
+            "model": "claude-sonnet-4-5",
+            "effort": null,
+            "permissionProfile": ":workspace",
+            "serviceTier": null
+          },
+          "clientTools": [
+            {
+              "name": "codewide_list_agents",
+              "description": "Lists the agents this thread started.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-stdio:31",
+        "method": "turn.start",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "clientMessageId": "client-msg-9",
+          "input": [
+            {
+              "type": "text",
+              "text": "Ask another agent to review the diff"
+            }
+          ],
+          "clientTools": [
+            {
+              "name": "codewide_spawn_agent",
+              "description": "Starts another agent on a task and returns its thread id.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "prompt": { "type": "string" },
+                  "provider": { "type": "string" },
+                  "model": { "type": "string" },
+                  "name": { "type": "string" },
+                  "cwd": { "type": "string" },
+                  "permissionProfile": { "type": "string" }
+                },
+                "required": ["prompt"],
+                "additionalProperties": false
+              }
+            },
+            {
+              "name": "codewide_wait_agent",
+              "description": "Waits for an agent to finish its current turn.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "agentThreadId": { "type": "string" },
+                  "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 300 }
+                },
+                "required": ["agentThreadId"],
+                "additionalProperties": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "claude-host:1",
+        "method": "tool.call",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d80",
+          "callId": "toolu_01ABCDEF",
+          "tool": "codewide_spawn_agent",
+          "arguments": {
+            "prompt": "Review the diff in src/",
+            "provider": "codex",
+            "name": "reviewer"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": "tool.call",
+      "message": {
+        "id": "claude-host:1",
+        "result": {
+          "success": true,
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"agentThreadId\":\"0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d81\",\"provider\":\"codex\",\"model\":\"gpt-5.5\",\"status\":\"running\"}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "claude-host:2",
+        "method": "tool.call",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d80",
+          "callId": "toolu_01ABCDF0",
+          "tool": "codewide_wait_agent",
+          "arguments": {
+            "agentThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d81",
+            "timeoutSeconds": 60
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": "tool.call",
+      "message": {
+        "id": "claude-host:2",
+        "result": {
+          "success": false,
+          "content": [
+            {
+              "type": "text",
+              "text": "agent not found: 0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d81"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

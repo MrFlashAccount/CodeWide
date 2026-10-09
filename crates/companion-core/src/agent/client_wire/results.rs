@@ -206,6 +206,7 @@ pub async fn execute(target: &Target, method: &str, params: &Value) -> Result<Va
                     app_thread_id: thread_id,
                     client_message_id: decode::client_message_id(params),
                     input,
+                    client_tools: None,
                 })
                 .await
                 .map_err(|error| failure(&error))?;

@@ -16,6 +16,12 @@ command -v docker >/dev/null 2>&1 || {
   printf '%s\n' 'Docker is required to build the portable Linux Companion bundle.' >&2
   exit 2
 }
+for tool in node pnpm; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf '%s is required to build the Claude agent host payload.\n' "$tool" >&2
+    exit 2
+  }
+done
 
 if [ -n "${CODEWIDE_COMPANION_CACHE_ROOT:-}" ]; then
   case "$CODEWIDE_COMPANION_CACHE_ROOT" in
@@ -83,6 +89,7 @@ install -m 0755 "$repo_root/apps/companion-linux/deploy/memory-watch.sh" "$bundl
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion.service" "$bundle_root/systemd/user/codewide-companion.service"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service" "$bundle_root/systemd/user/codewide-companion-memory-watch.service"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer" "$bundle_root/systemd/user/codewide-companion-memory-watch.timer"
+install -m 0755 "$repo_root/scripts/install-claude-provider.sh" "$bundle_root/libexec/codewide-install-claude-provider"
 
 for binary in "$bundle_root/bin/codewide-companion" "$bundle_root/libexec/codewide-vcs-git"; do
   file "$binary" | grep -E 'statically linked|static-pie linked' >/dev/null || {
@@ -93,6 +100,9 @@ done
 
 version=$($bundle_root/bin/codewide-companion --version | awk '{print $2}')
 test -n "$version"
+# The Claude agent host ships with the companion build it was tested with;
+# its npm dependencies (the Claude Agent SDK) are installed on the host.
+"$repo_root/scripts/stage-claude-agent-host" "$bundle_root/share/claude-agent-host" "$version" >/dev/null
 asset_name="codewide-companion-$version-$target.tar.gz"
 archive="$dist_root/$asset_name"
 checksum="$archive.sha256"

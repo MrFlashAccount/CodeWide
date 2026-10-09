@@ -11,6 +11,15 @@ import {
 } from "../../theme";
 
 export const styles = StyleSheet.create({
+  agentProviders: {
+    gap: spacing.xxs,
+    minWidth: 0,
+  },
+  agentProvidersTitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.xxs,
+  },
   connectionActionMenuAnchor: {
     flexShrink: 0,
     height: touchTarget,

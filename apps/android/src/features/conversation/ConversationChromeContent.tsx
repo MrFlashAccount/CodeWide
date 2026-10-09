@@ -89,6 +89,7 @@ export function createConversationChromeContent({
       }
       draftConnectionId={draftConnectionId}
       draftThreadId={draftThreadId}
+      forkTargets={actionsInputs.forkTargets}
       historyActivityModel={historyActivityModel}
       historyActivityResourceId={historyActivityResourceId}
       newChat={newChat}

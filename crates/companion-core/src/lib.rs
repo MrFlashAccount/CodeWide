@@ -14,6 +14,7 @@ pub mod global_supervisor_limits;
 pub mod host_identity;
 pub mod identity;
 pub mod image_previews;
+pub mod log_filter;
 pub mod managed_runtime;
 pub mod media;
 pub mod pairing_qr;

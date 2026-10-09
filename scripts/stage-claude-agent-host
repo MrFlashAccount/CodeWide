@@ -1,0 +1,99 @@
+#!/bin/sh
+# Stages the Claude agent host release payload into <output-dir>:
+#
+#   dist/                  the built host (no dependencies bundled)
+#   package.json           the pinned install manifest, versioned with the companion
+#   package-lock.json      its lock, for `npm ci --omit=optional --ignore-scripts`
+#   VERSION                the companion release this payload belongs to
+#   claude-provider.conf   the Linux systemd drop-in
+#
+# The Claude Agent SDK is never vendored: the installer installs it from npm
+# on the target host. Usage:
+#
+#   stage-claude-agent-host <output-dir> <version> [--no-build]
+#
+# --no-build reuses an existing crates/agent-provider-claude/host/dist.
+set -eu
+
+usage() {
+  printf 'Usage: %s <output-dir> <version> [--no-build]\n' "$0" >&2
+  exit 2
+}
+
+[ "$#" -ge 2 ] || usage
+output=$1
+version=${2#v}
+build=1
+shift 2
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-build) build=0; shift ;;
+    *) usage ;;
+  esac
+done
+case "$output" in
+  /*) ;;
+  *) printf '%s\n' 'output directory must be absolute' >&2; exit 2 ;;
+esac
+printf '%s\n' "$version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$' || usage
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+host_root="$repo_root/crates/agent-provider-claude/host"
+
+if [ "$build" -eq 1 ]; then
+  (cd "$repo_root" && pnpm --filter @codewide/claude-agent-host build) >&2
+fi
+test -f "$host_root/dist/main.js" || {
+  printf '%s\n' 'the Claude agent host is not built; run: pnpm --filter @codewide/claude-agent-host build' >&2
+  exit 1
+}
+# The lock must match the host's dependencies (same check as the host tests).
+node "$host_root/scripts/checkInstallLock.mjs" >&2
+
+rm -rf -- "$output"
+mkdir -p "$output"
+cp -R "$host_root/dist" "$output/dist"
+# Source maps and declarations are not needed at runtime.
+find "$output/dist" -type f \( -name '*.map' -o -name '*.d.ts' \) -exec rm -f -- {} +
+cp "$host_root/install/package-lock.json" "$output/package-lock.json"
+# WHY: the single-quoted argument is JavaScript, not shell; nothing expands.
+# shellcheck disable=SC2016
+node -e '
+const fs = require("node:fs");
+const [source, target, version] = process.argv.slice(1);
+const manifest = JSON.parse(fs.readFileSync(source, "utf8"));
+manifest.version = version;
+fs.writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`);
+' "$host_root/install/package.json" "$output/package.json" "$version"
+printf '%s\n' "$version" >"$output/VERSION"
+cp "$repo_root/apps/companion-linux/deploy/claude-provider.conf" "$output/claude-provider.conf"
+# Bare imports of the built host must all be pinned in the install manifest.
+# WHY: the single-quoted argument is JavaScript, not shell; nothing expands.
+# shellcheck disable=SC2016
+node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const [root, manifestPath] = process.argv.slice(1);
+const pinned = new Set(Object.keys(JSON.parse(fs.readFileSync(manifestPath, "utf8")).dependencies ?? {}));
+const missing = new Set();
+const visit = (directory) => {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) visit(file);
+    else if (file.endsWith(".js")) {
+      for (const match of fs.readFileSync(file, "utf8").matchAll(/(?:from|import)\s*\(?\s*["\x27]([^"\x27]+)["\x27]/g)) {
+        const specifier = match[1];
+        if (specifier.startsWith(".") || specifier.startsWith("node:")) continue;
+        const name = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0];
+        if (!pinned.has(name)) missing.add(name);
+      }
+    }
+  }
+};
+visit(root);
+if (missing.size > 0) {
+  console.error(`host imports packages missing from the install manifest: ${[...missing].join(", ")}`);
+  process.exit(1);
+}
+' "$output/dist" "$output/package.json"
+printf '%s\n' "$output"

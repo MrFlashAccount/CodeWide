@@ -1,14 +1,17 @@
+import { useState } from "react";
 import { useEvent } from "../../react/useEvent";
 /** V1 ThreadActions owner, extracted without changing interaction or resource lifetime. */
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { useAppNotice } from "../../ui/useAppNotice";
+import type { ForkTargetChoice } from "./forkTargets";
 import { copySessionId } from "./turnActions";
 
 import type { ThreadHeaderProps } from "./threadHeaderContract";
 
 export function useThreadHeaderActions({
   archived,
+  forkTargets,
   onArchive,
   onCompact,
   onDelete,
@@ -20,6 +23,7 @@ export function useThreadHeaderActions({
   threadId,
 }: ThreadHeaderProps) {
   const dialog = useAppDialog();
+  const [forkChoices, setForkChoices] = useState<readonly ForkTargetChoice[] | null>(null);
   const showNotice = useAppNotice().show;
   const actions: ActionMenuItem[] = [
     { icon: "copy-outline", id: "copy-session-id", label: "Copy session ID" },
@@ -81,7 +85,15 @@ export function useThreadHeaderActions({
     } else if (id === "pin") {
       run(onTogglePin, pinned ? "Unpin" : "Pin");
     } else if (id === "fork" && onFork !== undefined) {
-      run(async () => onFork({ boundary: { kind: "all" }, ephemeral: false }), "Fork");
+      const choices = forkTargets?.() ?? null;
+      if (choices === null) {
+        run(
+          async () => onFork({ boundary: { kind: "all" }, ephemeral: false, target: null }),
+          "Fork",
+        );
+      } else {
+        setForkChoices(choices);
+      }
     } else if (id === "compact") {
       run(onCompact, "Compact");
     } else if (id === "archive") {
@@ -104,5 +116,18 @@ export function useThreadHeaderActions({
     }
   });
 
-  return { actions, handleAction, run };
+  const closeForkTargets = useEvent(() => {
+    setForkChoices(null);
+  });
+  const selectForkTarget = useEvent((choice: ForkTargetChoice) => {
+    setForkChoices(null);
+    if (onFork !== undefined) {
+      run(
+        async () => onFork({ boundary: { kind: "all" }, ephemeral: false, target: choice.target }),
+        "Fork",
+      );
+    }
+  });
+
+  return { actions, closeForkTargets, forkChoices, handleAction, run, selectForkTarget };
 }

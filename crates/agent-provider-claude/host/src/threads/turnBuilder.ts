@@ -22,10 +22,10 @@ import type {
   ClientMessageId,
   ItemId,
   Provenance,
-  TokenUsage,
   TurnError,
   TurnId,
   TurnOrigin,
+  TurnUsageRecord,
   UserContent,
 } from "../protocol.js";
 import { asItemId, asProviderThreadRef, PROVIDER_ID } from "../protocol.js";
@@ -295,6 +295,17 @@ export class TurnBuilder {
     return item === null ? [] : this.start(item);
   }
 
+  /** Ids of started tool calls named `name` that have no result yet, oldest first. */
+  openToolCalls(name: string): readonly string[] {
+    const open: string[] = [];
+    for (const [toolUseId, call] of this.tools) {
+      if (call.name === name && this.slots.get(toolUseId)?.completed !== true) {
+        open.push(toolUseId);
+      }
+    }
+    return open;
+  }
+
   markDeclined(toolUseId: string): void {
     this.declined.add(toolUseId);
   }
@@ -452,11 +463,7 @@ export class TurnBuilder {
    */
   finish(
     outcome: TurnOutcome,
-    usage: {
-      readonly contextWindow: number | null;
-      readonly last: TokenUsage;
-      readonly total: TokenUsage;
-    } | null,
+    usage: TurnUsageRecord | null,
   ): {
     readonly events: AgentEvent[];
     readonly turn: AgentTurn;
@@ -475,6 +482,7 @@ export class TurnBuilder {
       events.push({
         appThreadId: this.context.appThreadId,
         contextWindow: usage.contextWindow,
+        ...(usage.cost === undefined ? {} : { cost: usage.cost }),
         last: usage.last,
         total: usage.total,
         turnId: this.context.turnId,

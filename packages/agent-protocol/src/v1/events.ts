@@ -13,6 +13,7 @@ import type {
   FileChange,
   JsonValue,
   PlanStep,
+  ProviderCost,
   RequestResolution,
   RuntimeRequest,
   TokenUsage,
@@ -64,7 +65,11 @@ export type AgentEvent =
   | {
       readonly appThreadId: AppThreadId;
       readonly contextWindow: number | null;
+      /** The provider's own cost estimate of the turn (added within v1); absent when unknown. */
+      readonly cost?: ProviderCost;
+      /** The turn's last model request: the context size the turn ended with. */
       readonly last: TokenUsage;
+      /** The thread's cumulative usage after this turn. */
       readonly total: TokenUsage;
       readonly turnId: TurnId;
       readonly type: "usage.updated";

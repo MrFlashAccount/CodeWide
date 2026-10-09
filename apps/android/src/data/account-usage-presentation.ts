@@ -49,3 +49,15 @@ export function accountPlanLabel(plan: string | null): string {
   const normalized = plan.replaceAll("_", " ");
   return normalized.replaceAll(/\b\w/gu, (letter) => letter.toUpperCase());
 }
+
+/**
+ * Title of the account section. In multi-provider mode the accounts belong to one
+ * provider's pool, so the section names it ("Codex accounts"); with no owner, or
+ * owners that differ across the listed servers, it stays "Accounts".
+ */
+export function accountsSectionTitle(ownerNames: readonly (string | null)[]): string {
+  const first = ownerNames[0] ?? null;
+  return first !== null && ownerNames.every((name) => name === first)
+    ? `${first} accounts`
+    : "Accounts";
+}

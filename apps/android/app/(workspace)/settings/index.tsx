@@ -2,6 +2,7 @@ import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 
 import { recoverUnavailableRoute } from "../../../src/components/navigation/routeRecovery";
 import {
+  agentProviders,
   globalVoiceModelCatalog,
   globalVoicePreviewRuntime,
   workspaceRuntime,
@@ -30,6 +31,7 @@ export default function V1SettingsRoute(): React.JSX.Element {
   return (
     <SubscribedConnectionSettings
       accountRateLimitsDatabase={resources.runtime.accountRateLimits}
+      agentProviders={agentProviders}
       connections={resources.list.settingsConnections}
       entryPage={params.section === "voice-assistant" ? "voiceAssistant" : "overview"}
       {...(params.request === undefined ? {} : { entryRequest: params.request })}

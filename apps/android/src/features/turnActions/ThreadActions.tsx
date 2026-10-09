@@ -2,13 +2,14 @@ import { useThreadHeaderActions } from "./threadHeaderActions";
 import type { ThreadHeaderProps } from "./threadHeaderContract";
 /** V1 ThreadActions owner, extracted without changing interaction or resource lifetime. */
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { Platform, Pressable } from "react-native";
 import { colors, iconSize } from "../../theme";
-import { ActionMenu } from "../../ui/ActionMenu";
+import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { AppSheet } from "../../ui/AppSheet";
 import { MenuAction } from "../../ui/MenuAction";
 import { AppText as Text } from "../../ui/Typography";
+import { ForkTargetSheet } from "./ForkTargetSheet";
 import { styles } from "./ThreadActions.styles";
 
 export function ThreadHeaderMenu(props: ThreadHeaderProps) {
@@ -16,7 +17,6 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
     archived,
     onArchive,
     onCompact,
-    onFork,
     onOpenMenu,
     onRenameRequest,
     onTogglePin,
@@ -24,7 +24,11 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
     pinned,
   } = props;
   const [webMenuVisible, setWebMenuVisible] = useState(false);
-  const { actions, handleAction, run } = useThreadHeaderActions(props);
+  const { actions, closeForkTargets, forkChoices, handleAction, run, selectForkTarget } =
+    useThreadHeaderActions(props);
+  const forkTargetSheet = forkChoices !== null && (
+    <ForkTargetSheet choices={forkChoices} onClose={closeForkTargets} onSelect={selectForkTarget} />
+  );
   if (Platform.OS === "web") {
     return (
       <>
@@ -75,9 +79,7 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
               icon="git-branch-outline"
               onPress={() => {
                 setWebMenuVisible(false);
-                if (onFork !== undefined) {
-                  run(async () => onFork({ boundary: { kind: "all" }, ephemeral: false }), "Fork");
-                }
+                handleAction("fork");
               }}
               subtitle=""
               title="Fork thread"
@@ -112,9 +114,32 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
             />
           </AppSheet>
         )}
+        {forkTargetSheet}
       </>
     );
   }
+  return (
+    <>
+      <NativeThreadMenu
+        actions={actions}
+        onSelect={handleAction}
+        {...(onOpenMenu === undefined ? {} : { onOpenMenu })}
+      />
+      {forkTargetSheet}
+    </>
+  );
+}
+
+/** The native thread menu anchored to the header's overflow button. */
+function NativeThreadMenu({
+  actions,
+  onOpenMenu,
+  onSelect,
+}: {
+  readonly actions: readonly ActionMenuItem[];
+  readonly onOpenMenu?: () => void;
+  readonly onSelect: (id: string) => void;
+}): ReactElement {
   return (
     <ActionMenu
       accessibilityLabel="Thread menu"
@@ -128,7 +153,7 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
               }
             },
           })}
-      onSelect={handleAction}
+      onSelect={onSelect}
       style={styles.headerMenuAnchor}
     >
       <Pressable accessibilityLabel="Thread menu" style={styles.headerIcon}>

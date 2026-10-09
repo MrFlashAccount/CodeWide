@@ -97,6 +97,7 @@ export function ThreadSidebarHeader({
         <ThreadListMenu
           accountDatabase={remote.accountRateLimitsDatabase}
           accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}
+          agentProviders={remote.agentProviders}
           archived={mode === "archived"}
           onManageProjects={onManageProjects}
           onManageTerminals={onManageTerminals}

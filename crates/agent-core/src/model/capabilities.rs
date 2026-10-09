@@ -36,10 +36,12 @@ pub enum Capability {
     HostFs,
     HostConfig,
     CodexNative,
+    OrchestrationTools,
+    ThreadsCrossProviderFork,
 }
 
 impl Capability {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 28] = [
         Self::TurnsSteer,
         Self::TurnsProviderInitiated,
         Self::ThreadsHostMintedIds,
@@ -66,6 +68,8 @@ impl Capability {
         Self::HostFs,
         Self::HostConfig,
         Self::CodexNative,
+        Self::OrchestrationTools,
+        Self::ThreadsCrossProviderFork,
     ];
 
     /// Protocol name of the capability.
@@ -98,6 +102,8 @@ impl Capability {
             Self::HostFs => "host.fs",
             Self::HostConfig => "host.config",
             Self::CodexNative => "codex.native",
+            Self::OrchestrationTools => "orchestration.tools",
+            Self::ThreadsCrossProviderFork => "threads.crossProviderFork",
         }
     }
 }
@@ -166,6 +172,16 @@ pub struct CapabilitySet {
     pub host_config: bool,
     #[serde(rename = "codex.native")]
     pub codex_native: bool,
+    /// The companion's orchestration tools (`codewide_*_agent`) reach the
+    /// provider's model as native client-side tools. Absent in an older
+    /// declaration → unsupported.
+    #[serde(rename = "orchestration.tools", default)]
+    pub orchestration_tools: bool,
+    /// A thread of this provider can be forked into another provider's
+    /// thread through a context handoff, and receive such a fork. Absent in
+    /// an older declaration → unsupported.
+    #[serde(rename = "threads.crossProviderFork", default)]
+    pub threads_cross_provider_fork: bool,
     #[serde(rename = "turns.startWhileActive")]
     pub turns_start_while_active: StartWhileActiveMode,
 }
@@ -201,6 +217,8 @@ impl CapabilitySet {
             host_fs: false,
             host_config: false,
             codex_native: false,
+            orchestration_tools: false,
+            threads_cross_provider_fork: false,
             turns_start_while_active,
         }
     }
@@ -235,6 +253,8 @@ impl CapabilitySet {
             Capability::HostFs => self.host_fs,
             Capability::HostConfig => self.host_config,
             Capability::CodexNative => self.codex_native,
+            Capability::OrchestrationTools => self.orchestration_tools,
+            Capability::ThreadsCrossProviderFork => self.threads_cross_provider_fork,
         }
     }
 }
@@ -272,12 +292,28 @@ mod tests {
             host_fs: true,
             host_config: true,
             codex_native: true,
+            orchestration_tools: true,
+            threads_cross_provider_fork: true,
             turns_start_while_active: StartWhileActiveMode::Busy,
         })?;
         for capability in Capability::ALL {
             assert_eq!(declared[capability.name()], true, "{}", capability.name());
         }
         assert_eq!(declared["turns.startWhileActive"], "busy");
+        Ok(())
+    }
+
+    #[test]
+    fn an_older_declaration_without_the_additive_names_is_unsupported()
+    -> Result<(), serde_json::Error> {
+        let mut older = serde_json::to_value(CapabilitySet::none(StartWhileActiveMode::Busy))?;
+        if let Some(object) = older.as_object_mut() {
+            object.remove("orchestration.tools");
+            object.remove("threads.crossProviderFork");
+        }
+        let declared: CapabilitySet = serde_json::from_value(older)?;
+        assert!(!declared.supports(Capability::OrchestrationTools));
+        assert!(!declared.supports(Capability::ThreadsCrossProviderFork));
         Ok(())
     }
 }

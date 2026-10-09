@@ -50,6 +50,8 @@ pub(super) struct PumpContext {
     pub(super) local_events: tokio::sync::mpsc::Sender<Value>,
     pub(super) files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     pub(super) workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
+    /// Pending cross-provider fork handoffs, prepended to a first turn.
+    pub(super) fork: Arc<crate::agent::fork::ForkService>,
 }
 
 /// Classification of a failed delivery attempt.
@@ -472,29 +474,32 @@ async fn deliver_outbox_start(context: &PumpContext, target: &Target, command: O
         Ok(slot) => slot.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     };
-    let mut prepared_params =
-        match prepare_remote_file_inputs(&command.method, command.params.clone(), file_service)
-            .await
-        {
-            Ok(params) => params,
-            Err(RemoteInputError::FileServiceUnavailable) => {
-                // The active pump is spawned before main installs optional
-                // services. Keep a restored command queued across that startup
-                // window instead of turning a valid attachment into a failure.
-                return;
-            }
-            Err(error) => {
-                fail_queued_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    &error.to_string(),
-                )
-                .await;
-                return;
-            }
-        };
+    let mut prepared_params = match prepare_remote_file_inputs(
+        &command.method,
+        context.fork.inject(&command.method, command.params.clone()),
+        file_service,
+    )
+    .await
+    {
+        Ok(params) => params,
+        Err(RemoteInputError::FileServiceUnavailable) => {
+            // The active pump is spawned before main installs optional
+            // services. Keep a restored command queued across that startup
+            // window instead of turning a valid attachment into a failure.
+            return;
+        }
+        Err(error) => {
+            fail_queued_outbox(
+                store,
+                local_events,
+                &command.remote_thread_id,
+                &command.command_id,
+                &error.to_string(),
+            )
+            .await;
+            return;
+        }
+    };
     let Some((claimed, claim_token)) =
         claim_outbox_dispatch(store, local_events, &command.command_id).await
     else {
@@ -507,7 +512,7 @@ async fn deliver_outbox_start(context: &PumpContext, target: &Target, command: O
         };
         prepared_params = match prepare_remote_file_inputs(
             &claimed.method,
-            claimed.params.clone(),
+            context.fork.inject(&claimed.method, claimed.params.clone()),
             refreshed_file_service,
         )
         .await
@@ -592,6 +597,7 @@ async fn neutral_resolution(
             app_thread_id: target.thread_id.clone(),
             client_message_id,
             input,
+            client_tools: None,
         })
         .await;
     match started {

@@ -305,6 +305,7 @@ fn window_turn(
         completed_at: turn.completed_at,
         error: turn.error.clone(),
         items,
+        usage: None,
     })
 }
 

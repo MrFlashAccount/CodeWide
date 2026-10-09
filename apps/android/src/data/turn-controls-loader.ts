@@ -7,8 +7,11 @@ import type { RpcClient } from "@codewide/sync-client";
 import { loadSkillCatalog } from "./load-skill-catalog";
 import {
   catalogHasProviderFields,
+  catalogUnavailableProviders,
   modelRowAgentProvider,
   permissionRowWithProviders,
+  withUnavailableProviderModels,
+  withUnavailableProviderPermissions,
 } from "./turnControlsAgentProviders";
 import type {
   TurnControlsLoadOptions,
@@ -189,6 +192,9 @@ export function createTurnControlsLoader({
       throw new Error("Connection is not enabled");
     }
     const operation = (async (): Promise<TurnControlsValue> => {
+      // A merged catalog that lacks a provider (not live, or its catalog failed) is
+      // incomplete: the next load refreshes it again instead of serving the cache.
+      const unavailableProviders = new Set<string>();
       try {
         resources?.putTurnControls({
           connectionId,
@@ -232,7 +238,11 @@ export function createTurnControlsLoader({
                 includeHidden: false,
                 limit: 100,
               });
-              return response.data.map((model) => ({
+              const unavailable = catalogUnavailableProviders(response);
+              for (const provider of unavailable) {
+                unavailableProviders.add(provider);
+              }
+              const models = response.data.map((model) => ({
                 defaultEffort: model.defaultReasoningEffort,
                 defaultServiceTier:
                   typeof model.defaultServiceTier === "string" ? model.defaultServiceTier : null,
@@ -244,6 +254,7 @@ export function createTurnControlsLoader({
                 serviceTiers: parseModelServiceTiers(model.serviceTiers),
                 supportsPersonality: model.supportsPersonality,
               }));
+              return withUnavailableProviderModels(models, cachedValue?.models ?? [], unavailable);
             },
             permissions: async () => {
               const response = await rpcAfterAttach<PermissionProfileListResponse>(
@@ -251,7 +262,15 @@ export function createTurnControlsLoader({
                 "permissionProfile/list",
                 { cursor: null, cwd, limit: 100 },
               );
-              return response.data.map(permissionRowWithProviders);
+              const unavailable = catalogUnavailableProviders(response);
+              for (const provider of unavailable) {
+                unavailableProviders.add(provider);
+              }
+              return withUnavailableProviderPermissions(
+                response.data.map(permissionRowWithProviders),
+                cachedValue?.permissions ?? [],
+                unavailable,
+              );
             },
             skills: async () =>
               loadSkillCatalog({
@@ -300,7 +319,7 @@ export function createTurnControlsLoader({
           status: "ready",
           value: result.value,
         });
-        if (!forceRefresh && result.errors.length === 0) {
+        if (!forceRefresh && result.errors.length === 0 && unavailableProviders.size === 0) {
           refreshedThisRuntime.add(cacheKey);
         }
         return result.value;

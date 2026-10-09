@@ -63,6 +63,7 @@ type UsageMenuView = {
 
 export function UsageMenu({
   accountSources,
+  accountsTitle,
   actions = EMPTY_USAGE_ACTIONS,
   align = "start",
   children,
@@ -73,6 +74,8 @@ export function UsageMenu({
   thread,
 }: {
   accountSources?: readonly AccountUsageSource[];
+  /** Account section title; "Accounts" when absent. */
+  accountsTitle?: string;
   actions?: UsageMenuAction[];
   align?: "start" | "center" | "end";
   children: ReactElement<PressableProps>;
@@ -125,6 +128,7 @@ export function UsageMenu({
     >
       <UsageMenuContent
         accountSources={accountSources}
+        accountsTitle={accountsTitle}
         actions={actions}
         compactionCount={compactionCount}
         hasLeadingSection={hasLeadingSection}
@@ -153,6 +157,7 @@ function projectUsageMenu(
 
 function UsageMenuContent({
   accountSources,
+  accountsTitle,
   actions,
   compactionCount,
   hasLeadingSection,
@@ -163,6 +168,7 @@ function UsageMenuContent({
   view,
 }: {
   readonly accountSources: readonly AccountUsageSource[] | undefined;
+  readonly accountsTitle: string | undefined;
   readonly actions: readonly UsageMenuAction[];
   readonly compactionCount: number | null | undefined;
   readonly hasLeadingSection: boolean;
@@ -175,7 +181,11 @@ function UsageMenuContent({
   return (
     <View style={styles.content} testID="usage-menu">
       {showThreadUsage ? <UsageContextSection context={view.context} /> : null}
-      <AccountUsageSection accountSources={accountSources} hasContext={showThreadUsage} />
+      <AccountUsageSection
+        accountSources={accountSources}
+        hasContext={showThreadUsage}
+        {...(accountsTitle === undefined ? {} : { title: accountsTitle })}
+      />
       {showThreadUsage ? (
         <SessionUsageSummary
           compactionCount={compactionCount}

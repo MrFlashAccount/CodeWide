@@ -70,6 +70,7 @@ fn neutral_capabilities() -> CapabilitySet {
     capabilities.threads_host_minted_ids = true;
     capabilities.threads_compact = true;
     capabilities.requests_user_input = true;
+    capabilities.threads_cross_provider_fork = true;
     capabilities
 }
 
@@ -78,6 +79,7 @@ struct FakeNeutral {
     calls: Mutex<Vec<String>>,
     threads: Mutex<Vec<AgentThread>>,
     turn_starts: Mutex<VecDeque<TurnStartResult>>,
+    started: Mutex<Vec<TurnStartParams>>,
     active: Mutex<bool>,
     responses: Mutex<Vec<RequestRespondParams>>,
     events: Mutex<Option<mpsc::Receiver<ProviderEvent>>>,
@@ -172,6 +174,7 @@ impl StoredMessageSearch for FakeStored {
                 error: None,
                 items: Vec::new(),
                 provenance: None,
+                usage: None,
             }],
         })
     }
@@ -186,6 +189,7 @@ impl FakeNeutral {
                 calls: Mutex::new(Vec::new()),
                 threads: Mutex::new(Vec::new()),
                 turn_starts: Mutex::new(VecDeque::new()),
+                started: Mutex::new(Vec::new()),
                 active: Mutex::new(false),
                 responses: Mutex::new(Vec::new()),
                 events: Mutex::new(Some(receiver)),
@@ -432,8 +436,12 @@ impl AgentProvider for FakeNeutral {
         Ok(())
     }
 
-    async fn turn_start(&self, _: TurnStartParams) -> Result<TurnStartResult, ProviderError> {
+    async fn turn_start(&self, params: TurnStartParams) -> Result<TurnStartResult, ProviderError> {
         self.record("turn.start");
+        self.started
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(params);
         let outcome = self
             .turn_starts
             .lock()
@@ -833,6 +841,7 @@ async fn busy_start_stays_queued_and_is_delivered_once_after_turn_completed() ->
                 error: None,
                 items: Vec::new(),
                 provenance: None,
+                usage: None,
             },
         })))
         .await?;
@@ -946,6 +955,7 @@ async fn a_provider_index_serves_its_threads_resources_and_joins_search() -> Tes
                 error: None,
                 items: Vec::new(),
                 provenance: None,
+                usage: None,
             },
         })))
         .await?;
@@ -1218,6 +1228,70 @@ async fn model_list_merges_catalogs_with_one_default() -> TestResult {
         1
     );
     assert_eq!(rows[0]["isDefault"], true);
+    assert!(
+        models["result"]
+            .get("codewideAgentProvidersUnavailable")
+            .is_none()
+    );
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_list_names_a_provider_whose_catalog_is_missing() -> TestResult {
+    let mut harness = Harness::start(default_answer, |_| Vec::new()).await?;
+    harness.fake.status.send(ProviderStatus::Reconnecting)?;
+    let models = harness
+        .rpc("models", "model/list", json!({"limit": 100}))
+        .await?;
+    let rows = models["result"]["data"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        models["result"]["codewideAgentProvidersUnavailable"],
+        json!([FAKE])
+    );
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_providers_read_lists_providers_and_journals_changes() -> TestResult {
+    let mut harness = Harness::start(default_answer, |_| Vec::new()).await?;
+    let read = harness
+        .rpc("providers", "companion/agentProviders/read", json!({}))
+        .await?;
+    let providers = read["result"]["providers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let summary = providers
+        .iter()
+        .map(|row| {
+            (
+                row["id"].clone(),
+                row["primary"].clone(),
+                row["status"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        vec![
+            (json!("codex"), json!(true), json!("live")),
+            (json!(FAKE), json!(false), json!("live")),
+        ]
+    );
+    assert_eq!(providers[1]["auth"], "unknown");
+    assert!(providers[1]["capabilities"].is_object());
+    assert_eq!(read["result"]["hostCapabilities"]["realtimeVoice"], true);
+    harness.fake.status.send(ProviderStatus::Reconnecting)?;
+    let changed = harness
+        .event_where(|payload| payload["method"] == "companion/agentProviders/changed")
+        .await?;
+    assert_eq!(changed["params"]["providers"][1]["status"], "reconnecting");
     harness.stop();
     Ok(())
 }
@@ -1460,6 +1534,213 @@ async fn real_sidecar_serves_threads_catalogs_and_degradation_without_a_turn() -
         )
         .await?;
     assert_eq!(synced["result"]["history"]["kind"], "reset", "{synced}");
+    harness.stop();
+    Ok(())
+}
+
+const CODEX_PARENT: &str = "01a12092-346f-7d32-8dc8-ef1150dced2e";
+
+/// The Codex parent thread exists with one stored turn.
+fn parent_answer(request: &Value) -> Value {
+    let parent = request["params"]["threadId"] == CODEX_PARENT;
+    match request["method"].as_str() {
+        Some("thread/read") if parent => json!({"result": {"thread": {
+            "id": CODEX_PARENT, "cwd": "/work", "model": "gpt-5.5", "preview": "",
+            "createdAt": 1, "updatedAt": 1, "status": {"type": "idle"}}}}),
+        Some("thread/turns/list") if parent => json!({"result": {"data": [{
+            "id": "turn-a", "status": "completed", "items": [
+                {"type": "userMessage", "id": "u", "content": [{"type": "text", "text": "fix the parser", "text_elements": []}]},
+                {"type": "agentMessage", "id": "a", "text": "parser fixed", "phase": "final_answer"}
+            ]}], "nextCursor": null}}),
+        _ => default_answer(request),
+    }
+}
+
+#[tokio::test]
+async fn a_codex_model_spawns_an_agent_on_another_provider_shown_as_a_subagent() -> TestResult {
+    let mut harness = Harness::start(parent_answer, |_| {
+        vec![(
+            AppThreadId::from_static(CODEX_PARENT),
+            ProviderId::from_static("codex"),
+        )]
+    })
+    .await?;
+    // Threads the companion starts on Codex declare the tools.
+    harness
+        .rpc("start", "thread/start", json!({"cwd": "/work"}))
+        .await?;
+    let start = timeout(Duration::from_secs(3), async {
+        loop {
+            if let Some(request) = harness.observed.recv().await
+                && request["method"] == "thread/start"
+            {
+                return Some(request);
+            }
+        }
+    })
+    .await?
+    .ok_or("thread/start was not forwarded")?;
+    let declared = start["params"]["dynamicTools"]
+        .as_array()
+        .ok_or("thread/start without dynamicTools")?;
+    assert!(
+        declared
+            .iter()
+            .any(|tool| tool["name"] == "codewide_spawn_agent")
+    );
+
+    harness
+        .pushed
+        .send(
+            json!({"id": "srv-1", "method": "item/tool/call", "params": {
+            "threadId": CODEX_PARENT, "turnId": "turn-p", "callId": "call-1", "namespace": null,
+            "tool": "codewide_spawn_agent",
+            "arguments": {"prompt": "review the parser", "provider": FAKE, "name": "reviewer"}}}),
+        )
+        .await?;
+    let answer = timeout(Duration::from_secs(3), async {
+        loop {
+            if let Some(message) = harness.observed.recv().await
+                && message["id"] == "srv-1"
+            {
+                return Some(message);
+            }
+        }
+    })
+    .await?
+    .ok_or("the tool call was not answered")?;
+    assert_eq!(answer["result"]["success"], true, "{answer}");
+    let text = answer["result"]["contentItems"][0]["text"]
+        .as_str()
+        .ok_or("no text result")?;
+    let spawned: Value = serde_json::from_str(text)?;
+    let child = spawned["agentThreadId"]
+        .as_str()
+        .ok_or("no agent id")?
+        .to_owned();
+    assert_eq!(spawned["provider"], FAKE);
+    assert_eq!(spawned["status"], "running");
+    let started = harness
+        .fake
+        .started
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert_eq!(started.len(), 1);
+    assert_eq!(started[0].app_thread_id.as_str(), child);
+
+    // The client sees the new thread (the adapter keeps the answered request
+    // off the client wire: `codex_tools_tests`).
+    let announced = harness
+        .event_where(|payload| payload["method"] == "thread/started")
+        .await?;
+    assert_eq!(announced["params"]["thread"]["id"], child.as_str());
+    let subagents = harness
+        .rpc(
+            "subagents",
+            "companion/threadSubagents/read",
+            json!({"threadId": CODEX_PARENT}),
+        )
+        .await?;
+    let rows = subagents["result"]["threads"]
+        .as_array()
+        .ok_or("no subagent rows")?;
+    assert_eq!(rows.len(), 1, "{subagents}");
+    assert_eq!(rows[0]["id"], child.as_str());
+    assert_eq!(rows[0]["parentThreadId"], CODEX_PARENT);
+    assert_eq!(rows[0]["agentNickname"], "reviewer");
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_fork_into_another_provider_hands_off_the_context_with_the_first_message()
+-> TestResult {
+    let mut harness = Harness::start(parent_answer, |_| {
+        vec![(
+            AppThreadId::from_static(CODEX_PARENT),
+            ProviderId::from_static("codex"),
+        )]
+    })
+    .await?;
+    let forked = harness
+        .rpc(
+            "fork",
+            "thread/fork",
+            json!({"threadId": CODEX_PARENT, "codewideAgentProvider": FAKE}),
+        )
+        .await?;
+    let thread = &forked["result"]["thread"];
+    let forked_id = thread["id"].as_str().ok_or("no forked thread")?.to_owned();
+    assert_ne!(forked_id, CODEX_PARENT);
+    assert_eq!(thread["forkedFromId"], CODEX_PARENT);
+    assert_eq!(thread["codewideAgent"]["provider"], FAKE);
+    let binding: Value = serde_json::from_slice(
+        &harness
+            .store
+            .agent_binding(&forked_id)?
+            .ok_or("the fork is not bound")?,
+    )?;
+    assert_eq!(binding["activeProvider"], FAKE);
+    // The source thread was only read.
+    let methods = harness.observed_methods();
+    assert!(
+        methods
+            .iter()
+            .all(|method| method == "thread/read" || method == "thread/turns/list"),
+        "{methods:?}"
+    );
+
+    let queued = harness
+        .rpc(
+            "put",
+            "companion/queue/put",
+            json!({"command": {
+                "commandId": "fork-message-1",
+                "remoteThreadId": forked_id,
+                "method": "turn/start",
+                "presentation": "delivery",
+                "params": {
+                    "threadId": forked_id,
+                    "clientUserMessageId": "fork-message-1",
+                    "input": [{"type": "text", "text": "now add tests", "text_elements": []}]
+                }
+            }}),
+        )
+        .await?;
+    assert!(queued.get("error").is_none(), "{queued}");
+    wait_for_state(&harness.store, "fork-message-1", OutboxState::Delivered).await?;
+    let started = harness
+        .fake
+        .started
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let input = serde_json::to_value(&started.first().ok_or("no turn")?.input)?;
+    let handoff = input[0]["text"].as_str().ok_or("no handoff")?;
+    assert!(handoff.contains("fix the parser") && handoff.contains("parser fixed"));
+    assert_eq!(input[1]["text"], "now add tests");
+
+    // A same-provider fork stays the native fork, without extension fields.
+    harness
+        .rpc(
+            "native-fork",
+            "thread/fork",
+            json!({"threadId": CODEX_PARENT, "codewideAgentProvider": "codex"}),
+        )
+        .await?;
+    let native = timeout(Duration::from_secs(3), async {
+        loop {
+            if let Some(request) = harness.observed.recv().await
+                && request["method"] == "thread/fork"
+            {
+                return Some(request);
+            }
+        }
+    })
+    .await?
+    .ok_or("the native fork was not forwarded")?;
+    assert_eq!(native["params"], json!({"threadId": CODEX_PARENT}));
     harness.stop();
     Ok(())
 }

@@ -7,7 +7,10 @@ The Rust `AgentProvider` implementation for Claude and its host storage. It owns
 ## Module jobs
 
 - `src/lib.rs` — `ClaudeProvider`: host launch and supervision, forwarding of agent calls, `nativeSession.list` / `nativeSession.read` for the indexer (`HostSessions`), provenance stamping of every turn and item it returns or emits, and the storage-backed answers: `thread.list` and `thread.turns` from the index while fresh, `thread.owns` from the index first, `message_search`, `thread_resources`, and `history.messageSearch` / `history.threadResources` added to the host's declared capabilities.
-- `src/config.rs` — validation of the `providers.claude` entry. `companion-core`'s `agent/providers/mod.rs` hands the entry to it and spawns the adapter (`spawn_with_storage` with the companion's `ProviderHost`); `registry.rs` treats the entry as opaque.
+- Health: `src/lib.rs` reports `ProviderHealth` — unavailable after a protocol version mismatch, otherwise available with the sign-in state of the `initialize` result, updated by the host's `account.updated` notifications. Only the authenticated flag and the plan label pass; neither is a credential, and the label is not logged.
+- Client tools: `src/lib.rs` sends the installed tools as `clientTools` on every `thread.create` and `turn.start` while the host declares `orchestration.tools`, and answers the host's `tool.call` requests through the installed `ClientToolHost` on the same stdio channel.
+- `src/config.rs` — validation of the `providers.claude` entry and the host child's environment (`PATH` with the runtime and `claude` directories first, optional `CLAUDE_CONFIG_DIR`) and the session store it implies for the watcher.
+- `src/preflight.rs` — offline check that the host child could start under that environment (executables, `#!` interpreters on the host `PATH`); used by `codewide-companion providers status`. `companion-core`'s `agent/providers/mod.rs` hands the entry to it and spawns the adapter (`spawn_with_storage` with the companion's `ProviderHost`); `registry.rs` treats the entry as opaque.
 - `src/store.rs` — `ClaudeStore`: the session index in the companion's index database (`state.redb`, tables `claude_sessions`, `claude_session_turns`, `claude_thread_sessions`), migrated through `companion-host`'s `DerivedIndexSchema` (`CLAUDE_INDEX_SCHEMA`, logic version `claude_index_logic_version`; a change drops and rebuilds the tables, other tables are untouched). A replacement identical to the indexed read writes nothing. A thread's history is its sessions' turns, oldest session first, one turn per id (a turn interrupted by a lost session reappears in its replacement session; the later share wins). Deleted threads are neither served nor searchable. It publishes each thread's working directory and times to the companion thread index (`HostThreadIndex`).
 - `src/watcher.rs` — change detection on Claude's session store (`$CLAUDE_CONFIG_DIR/projects` or `~/.claude/projects`, `<project>/<session id>.jsonl`): size and modification time only, a debounced rescan on filesystem events and a periodic rescan. It never opens a session record or interprets Claude's format.
 - `src/indexer.rs` — `ClaudeIndexer`: the startup backfill and every later listing pass over `nativeSession.list` (sessions whose size and modification time match the index are not read again, only their listed facts and CodeWide metadata are updated; sessions no longer listed are removed), watcher changes and finished live turns each read the session through `nativeSession.read`; a session the host no longer has (`-32600 "native session not found: <id>"`) is removed; reads the host cannot serve are retried once it is live.
@@ -19,7 +22,7 @@ The Rust `AgentProvider` implementation for Claude and its host storage. It owns
 ## Capabilities
 
 - Claude declares `threads.hostMintedIds` and `threads.externalDiscovery`: CodeWide threads are bound at `thread/start` (companion-minted UUIDv7); sessions started in a terminal or IDE are listed and discovered like Codex CLI threads (`thread.owns` answers from the index, then the host; the binding backfill pages `thread.list`, from the index once fresh).
-- `history.messageSearch` and `history.threadResources` are declared by this adapter, not the host, exactly when storage is attached.
+- `history.messageSearch` and `history.threadResources` are declared by this adapter, not the host, exactly when storage is attached; `threads.crossProviderFork` is always declared by the adapter (a companion feature over ordinary operations).
 
 ## Binding segments and provenance
 
@@ -36,9 +39,10 @@ The Rust `AgentProvider` implementation for Claude and its host storage. It owns
 ## Install and configuration contract
 
 - Config entries are absolute paths: `runtimeExecutable`, `sidecarEntry`, `claudeExecutable`; plus `journalDirectory` and `idleReleaseMinutes` (5–240, default 30). The key names stay as they are; the host accepts `--journal-directory` or `--state-directory`.
+- Optional `environment` with only `PATH` (absolute directories) and `CLAUDE_CONFIG_DIR` (absolute); any other key invalidates the entry, so no credential can be configured. The host child gets `PATH` = dirname(`runtimeExecutable`), dirname(`claudeExecutable`), then `environment.PATH` or the companion's own `PATH`; `CLAUDE_CONFIG_DIR` when configured. The watcher uses the same `CLAUDE_CONFIG_DIR`.
 - An invalid entry disables Claude with one `error` log carrying the full `err`; Codex is unaffected. Storage that cannot be opened is logged at `error`; the provider then answers from the host alone.
 - Removing `providers.claude` disables Claude: calls on Claude threads return `-32070`; bindings, the journal and the index stay.
-- `scripts/install-claude-provider.sh` installs the host and writes this config; a systemd drop-in is added only if E-HARDEN requires it, for the companion unit only (outcome recorded in [`docs/agent-providers.md`](../../docs/agent-providers.md#pending-host-evidence)).
+- `scripts/install-claude-provider.sh` (Linux and macOS; shipped in release artifacts as `codewide-install-claude-provider` with the host payload) installs the host, captures and validates the service environment, writes this config and, on Linux, installs the `claude-provider.conf` drop-in for the companion unit only (evidence in [`docs/agent-providers.md`](../../docs/agent-providers.md#systemd-hardening-linux-e-harden)).
 
 ## Supervision and failure
 

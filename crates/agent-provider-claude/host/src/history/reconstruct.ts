@@ -222,8 +222,8 @@ class SegmentReplay {
   }
 }
 
-/** Index timestamps win over the ones read from the store. */
-function withRecordTimes(turn: AgentTurn, record: TurnRecord | null): AgentTurn {
+/** Index timestamps win over the ones read from the store; the index adds the turn's usage. */
+function withRecord(turn: AgentTurn, record: TurnRecord | null): AgentTurn {
   if (record === null) {
     return turn;
   }
@@ -231,6 +231,7 @@ function withRecordTimes(turn: AgentTurn, record: TurnRecord | null): AgentTurn 
     ...turn,
     completedAt: record.completedAt ?? turn.completedAt,
     startedAt: record.startedAt,
+    ...(record.usage === null ? {} : { usage: record.usage }),
   };
 }
 
@@ -249,7 +250,7 @@ function replaySegment(
   for (const entry of consumedFirst ? rest : segment.entries) {
     replay.apply(entry);
   }
-  return withRecordTimes(replay.finish(outcomeOf(segment, record)), record);
+  return withRecord(replay.finish(outcomeOf(segment, record)), record);
 }
 
 /**

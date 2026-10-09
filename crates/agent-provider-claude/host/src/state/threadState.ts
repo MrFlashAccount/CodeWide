@@ -12,12 +12,29 @@
  * - a turn index: turn ids, origins, outcomes and the `clientMessageId` echo
  *   of each prompt, keyed by the persisted message uuids ("anchors") that
  *   identify the turn inside Claude's transcript;
- * - cumulative token usage, reported with `usage.updated`.
+ * - cumulative token usage and cost, reported with `usage.updated`, the
+ *   per-model totals last seen in the current Claude session (the baseline
+ *   a turn's usage is measured against) and each finished turn's usage.
  * The in-flight turn's snapshot is kept separately (`ActiveTurnFile`) until
  * the turn ends, so a host restart can finalize it.
  */
 
-import type { AgentTurn, ThreadSettings, TokenUsage, TurnError, TurnOrigin } from "../protocol.js";
+import {
+  NEW_SESSION_BASELINE,
+  ZERO_USAGE,
+  type ThreadCost,
+  type UsageBaseline,
+} from "../mapping/usage.js";
+import type {
+  AgentTurn,
+  ThreadSettings,
+  TokenUsage,
+  TurnError,
+  TurnOrigin,
+  TurnUsageRecord,
+} from "../protocol.js";
+
+export { ZERO_USAGE } from "../mapping/usage.js";
 
 export const THREAD_STATE_VERSION = 2;
 
@@ -52,6 +69,8 @@ export interface TurnRecord {
   readonly prompts: readonly PromptRecord[];
   readonly startedAt: number;
   readonly turnId: string;
+  /** The usage `usage.updated` reported when the turn ended; `null` when none was measured. */
+  readonly usage: TurnUsageRecord | null;
 }
 
 /** A title Claude's store cannot hold. */
@@ -90,10 +109,14 @@ export interface ThreadState {
   readonly sessionStarted: boolean;
   readonly settings: ThreadSettings;
   readonly title: TitleOverride;
+  /** Cumulative cost of the thread's turns, while every turn's cost was known. */
+  readonly totalCost: ThreadCost;
   readonly totalUsage: TokenUsage;
   readonly turns: readonly TurnRecord[];
   /** Last activity the host itself caused (turn start or end). */
   readonly updatedAt: number;
+  /** Per-model totals last seen in the current Claude session; empty for a new session. */
+  readonly usageBaseline: UsageBaseline;
   readonly version: typeof THREAD_STATE_VERSION;
 }
 
@@ -103,12 +126,11 @@ export interface ActiveTurnFile {
   readonly version: typeof THREAD_STATE_VERSION;
 }
 
-export const ZERO_USAGE: TokenUsage = {
-  cachedInputTokens: 0,
-  inputTokens: 0,
-  outputTokens: 0,
-  reasoningOutputTokens: 0,
-  totalTokens: 0,
+/** Usage state of a thread with no turns, whose session the host starts itself. */
+export const NEW_THREAD_USAGE: Pick<ThreadState, "totalCost" | "totalUsage" | "usageBaseline"> = {
+  totalCost: { type: "known", usd: 0 },
+  totalUsage: ZERO_USAGE,
+  usageBaseline: NEW_SESSION_BASELINE,
 };
 
 /** The Claude session the thread currently talks to. */

@@ -4,7 +4,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use agent_core::usage::UsagePricing;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{
     SinkExt, StreamExt,
@@ -22,7 +21,9 @@ use crate::{
             gateway::{ClientWireGateway, RpcFailure},
             history::{self as provider_history, Anchor},
         },
+        fork::{ForkRequest, ForkService},
         model::{Capability, ProviderId},
+        orchestration::OrchestrationService,
         provider::{
             HistoryPageError, NativeThreadResources, NativeThreadStore, ProviderError,
             ProviderEvent, ProviderStatus,
@@ -104,6 +105,25 @@ pub struct SyncHub {
     files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     projects: Arc<std::sync::RwLock<Option<Arc<ProjectService>>>>,
     workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
+    agents: AgentObservers,
+}
+
+/// The agent-layer services that observe every provider's client-wire
+/// events: orchestration tools (active mutation mode only) and
+/// cross-provider forks.
+#[derive(Clone)]
+struct AgentObservers {
+    orchestration: Option<Arc<OrchestrationService>>,
+    fork: Arc<ForkService>,
+}
+
+impl AgentObservers {
+    fn observe_event(&self, payload: &Value) {
+        if let Some(orchestration) = &self.orchestration {
+            orchestration.observe_event(payload);
+        }
+        self.fork.observe_event(payload);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,10 +152,12 @@ enum ResourceRoute {
 
 enum IngestInput {
     Payload(Value),
-    /// A provider payload with the resource store that observes it.
+    /// A provider payload with the resource store that observes it and the
+    /// provider whose stream carried it (its thread's usage price table).
     ProviderPayload {
         payload: Value,
         resources: ResourceRoute,
+        provider: ProviderId,
     },
     Fence(tokio::sync::oneshot::Sender<Result<u64, ProviderError>>),
     ThreadPinImport(
@@ -155,9 +177,9 @@ struct IngestContext {
     content_projector: Arc<std::sync::RwLock<Option<Arc<ContentProjector>>>>,
     /// Owner of `history.threadResources`, resolved once at build.
     resources: Option<Arc<dyn NativeThreadResources>>,
+    /// Live usage, priced by each thread's own provider table (also for
+    /// live activity estimates).
     usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
-    /// The enabled providers' price tables, for live activity estimates.
-    usage_pricing: UsagePricing,
 }
 
 struct InitialSession {
@@ -467,8 +489,22 @@ impl SyncHub {
         let projects = Arc::new(std::sync::RwLock::new(None));
         let workspaces = Arc::new(std::sync::RwLock::new(None));
         let usage_projector = Arc::new(std::sync::Mutex::new(
-            crate::usage::LiveUsageProjector::new(store.clone(), usage_pricing.clone()),
+            crate::usage::LiveUsageProjector::new(store.clone(), usage_pricing),
         ));
+        // A passive shadow never executes requests, so it declares no tools
+        // and answers no tool call.
+        let orchestration = (mutation_mode == MutationMode::Active).then(|| {
+            let service =
+                OrchestrationService::new(gateway.clone(), store.clone(), local_events.clone());
+            for provider in registry.enabled() {
+                provider.install_client_tools(service.clone());
+            }
+            service
+        });
+        let agents = AgentObservers {
+            orchestration,
+            fork: ForkService::new(gateway.clone(), store.clone(), local_events.clone()),
+        };
         // One ordered forwarder per provider; each keeps its own fence order.
         for provider in registry.enabled() {
             tokio::spawn(forward_provider_events(
@@ -478,6 +514,7 @@ impl SyncHub {
                 ordered_ingest.clone(),
                 outbox_wakeup.clone(),
                 live_channels.clone(),
+                agents.clone(),
             ));
             let owner = provider.descriptor().id;
             let request_gateway = gateway.clone();
@@ -493,6 +530,10 @@ impl SyncHub {
             ));
         }
         tokio::spawn(forward_local_events(ingest_rx, ordered_ingest.clone()));
+        crate::agent::provider_status::spawn_change_notifier(
+            registry.clone(),
+            local_events.clone(),
+        );
         // Changes written outside the companion (other App Server processes)
         // become semantic invalidations through the provider's own storage.
         for store in registry
@@ -510,7 +551,6 @@ impl SyncHub {
                 .owner(Capability::HistoryThreadResources)
                 .and_then(|provider| provider.native_surface()?.thread_resources()),
             usage_projector: usage_projector.clone(),
-            usage_pricing,
         };
         tokio::spawn(ingest_events(ordered_ingest_rx, ingest_context));
         if let Some(owner) = registry.owner(Capability::RequestsDynamicToolCall) {
@@ -535,6 +575,7 @@ impl SyncHub {
                     local_events: local_events.clone(),
                     files: files.clone(),
                     workspaces: workspaces.clone(),
+                    fork: agents.fork.clone(),
                 },
                 outbox_wakeup.clone(),
             ));
@@ -557,6 +598,7 @@ impl SyncHub {
             files,
             projects,
             workspaces,
+            agents,
         }
     }
 
@@ -770,14 +812,18 @@ impl SyncHub {
     }
 
     /// Prepares one journaled event for replay through the thread store of the
-    /// `codex.native` owner; without one the event is replayed unchanged.
+    /// `codex.native` owner; without one the event is only priced from its
+    /// stored provider-reported costs (no price table exists then).
     fn replay_event(
         thread_store: Option<&dyn NativeThreadStore>,
         payload: Value,
     ) -> Result<Value, String> {
         match thread_store {
             Some(thread_store) => thread_store.replay_event(payload),
-            None => Ok(payload),
+            None => Ok(agent_core::usage::price_replay_payload(
+                payload,
+                &agent_core::usage::UsagePricing::default(),
+            )),
         }
     }
 
@@ -1393,6 +1439,32 @@ impl SyncHub {
         {
             return Ok(());
         }
+        if method == "thread/fork" {
+            match crate::agent::fork::classify(&params) {
+                Err(failure) => return send_rpc_failure(socket, id, &failure).await,
+                Ok(ForkRequest::Native) => {}
+                Ok(ForkRequest::Provider(provider)) => {
+                    let thread_id = params
+                        .get("threadId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let source = match self.gateway.resolve_thread(thread_id, None).await {
+                        Ok(source) => source,
+                        Err(failure) => return send_rpc_failure(socket, id, &failure).await,
+                    };
+                    if source.wire.descriptor.id != provider {
+                        return provider_rpc::handle_cross_provider_fork(
+                            self, socket, &source, &provider, &params, id,
+                        )
+                        .await;
+                    }
+                    // The thread's own provider: today's native fork.
+                    if let Some(params) = request.get_mut("params") {
+                        crate::agent::fork::strip_extension_fields(params);
+                    }
+                }
+            }
+        }
         let target = match decode::route(&method, &params) {
             MethodRoute::ThreadStart => {
                 return provider_rpc::handle_thread_start(self, socket, request.take(), id).await;
@@ -1440,6 +1512,7 @@ impl SyncHub {
             }
         }
         if matches!(method.as_str(), "turn/start" | "turn/steer") {
+            let params = self.agents.fork.inject(&method, params);
             let prepared = match prepare_remote_file_inputs(&method, params, self.files()).await {
                 Ok(prepared) => prepared,
                 Err(error) => {
@@ -1467,6 +1540,7 @@ impl SyncHub {
 
     fn observers(&self, wire: &crate::agent::client_wire::WireProvider) -> RpcResultObservers {
         RpcResultObservers {
+            orchestration: self.agents.orchestration.clone(),
             thread_store: self.thread_store(Capability::CodexNative),
             pins: self.store.clone(),
             resources: self.thread_resources(),
@@ -1567,14 +1641,16 @@ impl SyncHub {
             return Ok(true);
         }
         if method == "companion/threadSubagents/read" {
-            if let Err(failure) = self
-                .gate_thread_capability(params, Capability::SubagentThreads)
-                .await
-            {
-                send_rpc_failure(socket, id.clone(), &failure).await?;
-                return Ok(true);
-            }
             self.handle_thread_subagents_rpc(socket, id, params).await?;
+            return Ok(true);
+        }
+        if method == crate::agent::provider_status::READ_METHOD {
+            send_local_rpc_result(
+                socket,
+                id,
+                crate::agent::provider_status::snapshot(self.gateway.registry()),
+            )
+            .await?;
             return Ok(true);
         }
         if DictationService::handles(method) {
@@ -1676,19 +1752,61 @@ impl SyncHub {
         }
     }
 
+    /// `companion/threadSubagents/read`: the provider's native subagents
+    /// (`subagentThreads`) followed by the agents the thread spawned with the
+    /// orchestration tools. Without spawned agents the answer is today's.
     async fn handle_thread_subagents_rpc(
         &self,
         socket: &SessionSocket,
         id: &Value,
         params: &Value,
     ) -> Result<(), ()> {
-        let Some(store) = self.thread_store(Capability::SubagentThreads) else {
-            return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE).await;
+        let gated = self
+            .gate_thread_capability(params, Capability::SubagentThreads)
+            .await;
+        let spawned = match (
+            &self.agents.orchestration,
+            params.get("threadId").and_then(Value::as_str),
+        ) {
+            (Some(orchestration), Some(thread_id)) => {
+                match orchestration.subagent_rows(thread_id).await {
+                    Ok(rows) => rows,
+                    Err(err) => {
+                        warn!(err = ?err, "spawned agent links are unreadable");
+                        return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE)
+                            .await;
+                    }
+                }
+            }
+            _ => Vec::new(),
         };
-        match store.subagent_descendants(params) {
-            Ok(result) => send_local_rpc_result(socket, id, result).await,
-            Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await,
+        let mut result = match gated {
+            Ok(()) => {
+                let Some(store) = self.thread_store(Capability::SubagentThreads) else {
+                    return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE).await;
+                };
+                match store.subagent_descendants(params) {
+                    Ok(result) => result,
+                    Err(error) => return send_rpc_error(socket, id.clone(), -32020, &error).await,
+                }
+            }
+            Err(failure) if spawned.is_empty() => {
+                return send_rpc_failure(socket, id.clone(), &failure).await;
+            }
+            Err(_) => json!({"threads": []}),
+        };
+        if let Some(rows) = result.get_mut("threads").and_then(Value::as_array_mut) {
+            let present = rows
+                .iter()
+                .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_owned))
+                .collect::<HashSet<_>>();
+            rows.extend(spawned.into_iter().filter(|row| {
+                row.get("id")
+                    .and_then(Value::as_str)
+                    .is_none_or(|id| !present.contains(id))
+            }));
         }
+        send_local_rpc_result(socket, id, result).await
     }
 
     async fn handle_workspace_rpc(
@@ -2213,6 +2331,7 @@ async fn forward_provider_events(
     ingest: tokio::sync::mpsc::Sender<IngestInput>,
     outbox_wakeup: Arc<tokio::sync::Notify>,
     live_channels: Arc<LiveChannelRegistry>,
+    agents: AgentObservers,
 ) {
     let provider_id: ProviderId = projector.provider_id().clone();
     let resources = gateway
@@ -2258,9 +2377,11 @@ async fn forward_provider_events(
                     if payload.get("method").and_then(Value::as_str) == Some("turn/completed") {
                         outbox_wakeup.notify_one();
                     }
+                    agents.observe_event(&payload);
                     let input = IngestInput::ProviderPayload {
                         payload,
                         resources: resources.clone(),
+                        provider: provider_id.clone(),
                     };
                     if ingest.send(input).await.is_err() {
                         return;
@@ -2380,7 +2501,14 @@ async fn ingest_events(
     while let Some(first) = ingest.recv().await {
         let first = match first {
             IngestInput::Payload(payload) => (payload, ResourceRoute::Owner),
-            IngestInput::ProviderPayload { payload, resources } => (payload, resources),
+            IngestInput::ProviderPayload {
+                payload,
+                resources,
+                provider,
+            } => {
+                observe_payload_provider(&context, &payload, &provider);
+                (payload, resources)
+            }
             control => {
                 if process_ingest_control(&context, control).await.is_err() {
                     break;
@@ -2400,7 +2528,12 @@ async fn ingest_events(
                 Ok(Some(IngestInput::Payload(payload))) => {
                     payloads.push((payload, ResourceRoute::Owner));
                 }
-                Ok(Some(IngestInput::ProviderPayload { payload, resources })) => {
+                Ok(Some(IngestInput::ProviderPayload {
+                    payload,
+                    resources,
+                    provider,
+                })) => {
+                    observe_payload_provider(&context, &payload, &provider);
                     payloads.push((payload, resources));
                 }
                 Ok(Some(command)) => {
@@ -2427,6 +2560,19 @@ async fn ingest_events(
 /// Thread resources observed by a payload: the owner's, none, or the
 /// provider's own store (keyed by thread id).
 type OwnResources = HashMap<String, Arc<dyn NativeThreadResources>>;
+
+/// Records the provider of a payload's thread for usage pricing. A failed
+/// read only leaves the thread priced as before; the batch's usage write
+/// reports a broken store.
+fn observe_payload_provider(context: &IngestContext, payload: &Value, provider: &ProviderId) {
+    let mut projector = match context.usage_projector.lock() {
+        Ok(projector) => projector,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Err(error) = projector.observe_provider(payload, provider) {
+        warn!(%error, "usage provider record failed");
+    }
+}
 
 fn split_resource_routes(
     batch: Vec<(Value, ResourceRoute)>,
@@ -2491,14 +2637,14 @@ async fn ingest_payload_batch(
     payloads = coalesce_stream_text_deltas(payloads);
     let mut projected_payloads = Vec::with_capacity(payloads.len());
     for payload in payloads {
-        let (usage, replay_pricing) = {
+        let (usage, replay_pricing, thread_pricing) = {
             let mut projector = match context.usage_projector.lock() {
                 Ok(projector) => projector,
                 Err(poisoned) => poisoned.into_inner(),
             };
             let usage = projector.observe(&payload);
             let replay_pricing = projector.replay_pricing(&payload);
-            (usage, replay_pricing)
+            (usage, replay_pricing, projector.thread_pricing(&payload))
         };
         let Ok(usage) = usage else {
             warn!("usage projection persistence failed");
@@ -2509,7 +2655,7 @@ async fn ingest_payload_batch(
             &context.store,
             &payload,
             usage.as_ref(),
-            &context.usage_pricing,
+            &thread_pricing,
         )
         .map_err(|_| {
             let _ = context.events.send(DurableSignal::Failed);
@@ -2847,6 +2993,7 @@ fn rpc_is_known_read(method: &str) -> bool {
     matches!(
         method,
         "account/rateLimits/read"
+            | "companion/agentProviders/read"
             | "companion/search"
             | "companion/search/context"
             | "companion/search/window"
@@ -3019,9 +3166,11 @@ mod tests {
             content_projector: Arc::new(std::sync::RwLock::new(None)),
             resources: None,
             usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(store.clone(), UsagePricing::default()),
+                crate::usage::LiveUsageProjector::new(
+                    store.clone(),
+                    agent_core::usage::UsagePricing::default(),
+                ),
             )),
-            usage_pricing: UsagePricing::default(),
         };
         let task = tokio::spawn(ingest_events(receiver, context));
         ingest

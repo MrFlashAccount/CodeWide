@@ -2,6 +2,7 @@
 //! shapes). Pure functions; the only place these shapes are produced for a
 //! non-native provider.
 
+use agent_core::usage::TurnUsageProjection;
 use serde_json::{Value, json};
 
 use super::WireProvider;
@@ -112,7 +113,7 @@ pub fn turn(turn: &AgentTurn, view: ItemsView) -> Value {
             .saturating_sub(turn.started_at)
             .saturating_mul(1_000)
     });
-    json!({
+    let mut projected = json!({
         "id": turn.turn_id.as_str(),
         "items": items,
         "itemsView": items_view(view),
@@ -126,7 +127,16 @@ pub fn turn(turn: &AgentTurn, view: ItemsView) -> Value {
         "startedAt": turn.started_at,
         "completedAt": turn.completed_at,
         "durationMs": duration_ms,
-    })
+    });
+    // A recorded turn usage becomes the same `codewide.usage` projection a
+    // Codex history read carries, so a reloaded thread keeps its usage.
+    if let Some(record) = &turn.usage
+        && let Ok(usage) = serde_json::to_value(TurnUsageProjection::from_record(record))
+        && let Some(object) = projected.as_object_mut()
+    {
+        object.insert("codewide".into(), json!({ "usage": usage }));
+    }
+    projected
 }
 
 fn user_content(content: &UserContent) -> Value {
@@ -349,5 +359,65 @@ pub fn item(item: &AgentItem) -> Value {
             "success": true,
             "durationMs": null,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::model::{
+        ProviderCost, ProviderCostBasis, TokenUsage, TurnId, TurnOrigin, TurnUsageRecord,
+    };
+
+    fn finished_turn(usage: Option<TurnUsageRecord>) -> AgentTurn {
+        AgentTurn {
+            turn_id: TurnId::from_static("turn"),
+            status: TurnStatus::Completed,
+            origin: TurnOrigin::User,
+            started_at: 1,
+            completed_at: Some(2),
+            error: None,
+            items: Vec::new(),
+            provenance: None,
+            usage,
+        }
+    }
+
+    #[test]
+    fn a_recorded_turn_usage_becomes_the_codewide_usage_projection() {
+        let counts = |input, cached, written, output| TokenUsage {
+            input_tokens: input,
+            cached_input_tokens: cached,
+            cache_write_input_tokens: Some(written),
+            output_tokens: output,
+            reasoning_output_tokens: 0,
+            total_tokens: input + output,
+        };
+        let record = TurnUsageRecord {
+            last: counts(1_500, 1_000, 400, 90),
+            turn: counts(3_000, 2_000, 600, 200),
+            total: counts(9_000, 6_000, 900, 500),
+            context_window: Some(200_000),
+            cost: Some(ProviderCost {
+                basis: ProviderCostBasis::List,
+                model: "claude-sonnet-4-6".into(),
+                turn_usd: 0.04,
+                thread_usd: Some(0.12),
+            }),
+        };
+        let projected = turn(&finished_turn(Some(record)), ItemsView::Summary);
+        let usage = &projected["codewide"]["usage"];
+        assert_eq!(usage["status"], "final");
+        assert_eq!(usage["modelContextWindow"], 200_000);
+        assert_eq!(usage["latestRequest"]["totalTokens"], 1_590);
+        assert_eq!(usage["turn"]["tokens"]["cacheWriteInputTokens"], 600);
+        assert_eq!(usage["turn"]["cost"]["basis"], "providerReported");
+        assert_eq!(usage["turn"]["cost"]["totalCostUsd"], 0.04);
+        assert_eq!(usage["turn"]["cost"]["uncachedInputTokens"], 400);
+        assert_eq!(usage["thread"]["tokens"]["totalTokens"], 9_500);
+        assert_eq!(usage["thread"]["cost"]["totalCostUsd"], 0.12);
+
+        let unrecorded = turn(&finished_turn(None), ItemsView::Summary);
+        assert!(unrecorded.get("codewide").is_none());
     }
 }

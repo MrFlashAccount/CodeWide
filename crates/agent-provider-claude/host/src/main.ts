@@ -48,6 +48,13 @@ if (parsed.status === "error") {
   const holder: { server: RpcServer | null } = { server: null };
   const service = new ThreadService({
     backgroundDeferMaxMs: BACKGROUND_DEFER_MAX_MINUTES * MS_PER_MINUTE,
+    callClientTool: async (params, signal) => {
+      const server = holder.server;
+      if (server === null) {
+        throw new Error("the RPC server is not running");
+      }
+      return server.callTool(params, signal);
+    },
     catalog: new SessionCatalog(sessionStore),
     emit: (event) => {
       holder.server?.emit(event);
@@ -85,6 +92,7 @@ if (parsed.status === "error") {
     });
   });
   lines.on("close", () => {
+    server.shutdown();
     service.shutdown();
     logger.log("info", "claude agent host stopping: stdin closed");
     // WHY: closing stdin is the companion's shutdown signal; SDK child process

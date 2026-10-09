@@ -11,8 +11,8 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
-use super::{PROFILE_PROVIDERS_FIELD, PROVIDER_FIELD, WireProvider};
-use crate::agent::model::{ModelEntry, PermissionProfileEntry};
+use super::{PROFILE_PROVIDERS_FIELD, PROVIDER_FIELD, PROVIDERS_UNAVAILABLE_FIELD, WireProvider};
+use crate::agent::model::{ModelEntry, PermissionProfileEntry, ProviderId};
 
 const MAX_MODEL_ROWS: usize = 100;
 
@@ -88,6 +88,26 @@ pub fn merge_models(
     }
     rows.truncate(MAX_MODEL_ROWS);
     lead_result
+}
+
+/// Names the providers whose rows a merged catalog answer lacks, so the
+/// client keeps retrying instead of caching an incomplete catalog. Nothing
+/// is attached when every provider answered.
+pub fn attach_unavailable(result: &mut Value, unavailable: &[ProviderId]) {
+    if unavailable.is_empty() {
+        return;
+    }
+    if let Some(object) = result.as_object_mut() {
+        object.insert(
+            PROVIDERS_UNAVAILABLE_FIELD.into(),
+            json!(
+                unavailable
+                    .iter()
+                    .map(ProviderId::as_str)
+                    .collect::<Vec<_>>()
+            ),
+        );
+    }
 }
 
 /// Annotates profile rows with the providers that offer them and appends

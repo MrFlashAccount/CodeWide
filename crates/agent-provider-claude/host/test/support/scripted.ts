@@ -7,7 +7,13 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentEvent, TurnId, UserContent } from "../../src/protocol.js";
+import type {
+  AgentEvent,
+  ToolCallParams,
+  ToolCallResult,
+  TurnId,
+  UserContent,
+} from "../../src/protocol.js";
 import type {
   ClaudeQuery,
   ClaudeRuntime,
@@ -97,8 +103,16 @@ export function scriptedRuntime(store: MemorySessionStore = new MemorySessionSto
   return { runtime, queries };
 }
 
+/** One `tool.call` the session sent, answered by the test through `answer`. */
+export interface RecordedToolCall {
+  readonly params: ToolCallParams;
+  readonly signal: AbortSignal;
+  readonly answer: (result: ToolCallResult) => void;
+}
+
 export interface Harness {
   readonly service: ThreadService;
+  readonly toolCalls: RecordedToolCall[];
   readonly store: MemorySessionStore;
   readonly events: AgentEvent[];
   readonly queries: ScriptedQuery[];
@@ -123,7 +137,16 @@ export function harness(
   const stateDirectory =
     options.stateDirectory ?? mkdtempSync(join(tmpdir(), "claude-agent-host-unit-"));
   const nowMs = (): number => clock.now;
+  const toolCalls: RecordedToolCall[] = [];
   const service = new ThreadService({
+    callClientTool: (params, signal) =>
+      new Promise((resolve) => {
+        const cancelled = (): void => {
+          resolve({ success: false, content: [{ type: "text", text: "cancelled" }] });
+        };
+        signal.addEventListener("abort", cancelled, { once: true });
+        toolCalls.push({ params, signal, answer: resolve });
+      }),
     catalog: new SessionCatalog(store),
     sessionStore: store,
     stateStore: new ThreadStateStore(stateDirectory),
@@ -136,7 +159,16 @@ export function harness(
     idleReleaseMs: options.idleReleaseMs ?? 30 * 60 * 1000,
     backgroundDeferMaxMs: 4 * 60 * 60 * 1000,
   });
-  return { service, store, events, queries, logs: logger.lines, stateDirectory, clock };
+  return {
+    service,
+    toolCalls,
+    store,
+    events,
+    queries,
+    logs: logger.lines,
+    stateDirectory,
+    clock,
+  };
 }
 
 export const THREAD = "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e";

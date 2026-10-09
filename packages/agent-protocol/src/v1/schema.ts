@@ -7,8 +7,17 @@
  * `checkMessage` returns the list of violations (empty when valid).
  */
 
-import { BOOLEAN_CAPABILITIES, START_WHILE_ACTIVE_CAPABILITY } from "./capabilities";
-import { OPERATION_NAMES, type OperationName } from "./operations";
+import {
+  ADDITIVE_BOOLEAN_CAPABILITIES,
+  BOOLEAN_CAPABILITIES,
+  START_WHILE_ACTIVE_CAPABILITY,
+} from "./capabilities";
+import {
+  OPERATION_NAMES,
+  PROVIDER_REQUEST_NAMES,
+  type OperationName,
+  type ProviderRequestName,
+} from "./operations";
 
 type Check = (value: unknown, path: string, errors: string[]) => void;
 
@@ -121,6 +130,7 @@ const emptyObject: Check = obj({});
 
 const capabilitySet: Check = obj({
   ...Object.fromEntries(BOOLEAN_CAPABILITIES.map((name) => [name, bool])),
+  ...Object.fromEntries(ADDITIVE_BOOLEAN_CAPABILITIES.map((name) => [name, optional(bool)])),
   [START_WHILE_ACTIVE_CAPABILITY]: literal("busy", "nativeJoin"),
 });
 
@@ -211,6 +221,35 @@ const item = tagged(
     },
   }),
 );
+const tokenUsage = obj({
+  cachedInputTokens: int,
+  cacheWriteInputTokens: optional(int),
+  inputTokens: int,
+  outputTokens: int,
+  reasoningOutputTokens: int,
+  totalTokens: int,
+});
+const usd: Check = (value, path, errors) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    errors.push(`${path}: expected non-negative number`);
+  }
+};
+const providerCost = obj({
+  basis: literal("list", "managed"),
+  model: str,
+  threadUsd: nullable(usd),
+  turnUsd: usd,
+});
+const turnUsage = optional(
+  obj({
+    contextWindow: nullable(int),
+    cost: optional(providerCost),
+    last: tokenUsage,
+    total: tokenUsage,
+    turn: tokenUsage,
+  }),
+);
+
 const turn = obj({
   completedAt: nullable(int),
   error: nullable(
@@ -232,6 +271,7 @@ const turn = obj({
   startedAt: int,
   status: literal("inProgress", "completed", "interrupted", "failed"),
   turnId: str,
+  usage: turnUsage,
 });
 
 const codewideMetadata = obj({
@@ -307,13 +347,6 @@ const nativeRequestId: Check = (value, path, errors) => {
     errors.push(`${path}: expected string or integer request id`);
   }
 };
-const tokenUsage = obj({
-  cachedInputTokens: int,
-  inputTokens: int,
-  outputTokens: int,
-  reasoningOutputTokens: int,
-  totalTokens: int,
-});
 const delta = tagged("kind", {
   fileChanges: { changes: arr(fileChange) },
   output: { text: str },
@@ -351,11 +384,14 @@ export const checkEvent: Check = tagged("type", {
   "usage.updated": {
     appThreadId: str,
     contextWindow: nullable(int),
+    cost: optional(providerCost),
     last: tokenUsage,
     total: tokenUsage,
     turnId: str,
   },
 });
+
+const clientTools = optional(arr(obj({ description: str, inputSchema: json, name: str })));
 
 const sortWindow = obj({
   lower: nullable(int),
@@ -364,6 +400,8 @@ const sortWindow = obj({
   upperInclusive: bool,
 });
 const sortDirection = literal("asc", "desc");
+
+const providerAccount: Check = obj({ authenticated: bool, label: nullable(str) });
 
 const operationChecks: Readonly<
   Record<OperationName, { readonly params: Check; readonly result: Check }>
@@ -401,7 +439,7 @@ const operationChecks: Readonly<
       protocolVersion: int,
     }),
     result: obj({
-      account: nullable(obj({ authenticated: bool, label: nullable(str) })),
+      account: nullable(providerAccount),
       capabilities: capabilitySet,
       protocolVersion: literal(1),
       provider: obj({ displayName: str, id: str, modelProvider: str, version: str }),
@@ -421,7 +459,7 @@ const operationChecks: Readonly<
   },
   "thread.compact": { params: obj({ appThreadId: str }), result: emptyObject },
   "thread.create": {
-    params: obj({ appThreadId: nullable(str), cwd: str, settings }),
+    params: obj({ appThreadId: nullable(str), clientTools, cwd: str, settings }),
     result: obj({ thread }),
   },
   "thread.list": {
@@ -474,7 +512,12 @@ const operationChecks: Readonly<
     result: emptyObject,
   },
   "turn.start": {
-    params: obj({ appThreadId: str, clientMessageId: nullable(str), input: arr(userContent) }),
+    params: obj({
+      appThreadId: str,
+      clientMessageId: nullable(str),
+      clientTools,
+      input: arr(userContent),
+    }),
     result: tagged("type", { busy: { activeTurnId: str }, started: { turnId: str } }),
   },
   "turn.steer": {
@@ -488,6 +531,15 @@ const operationChecks: Readonly<
   },
 };
 
+const providerRequestChecks: Readonly<
+  Record<ProviderRequestName, { readonly params: Check; readonly result: Check }>
+> = {
+  "tool.call": {
+    params: obj({ appThreadId: str, arguments: json, callId: str, tool: str, turnId: str }),
+    result: obj({ content: arr(tagged("type", { text: { text: str } })), success: bool }),
+  },
+};
+
 const rpcId: Check = (value, path, errors) => {
   if (typeof value !== "string" && !(typeof value === "number" && Number.isSafeInteger(value))) {
     errors.push(`${path}: expected string or integer id`);
@@ -497,6 +549,17 @@ const rpcId: Check = (value, path, errors) => {
 const OPERATION_NAME_SET: ReadonlySet<unknown> = new Set<unknown>(OPERATION_NAMES);
 
 const isOperationName = (value: unknown): value is OperationName => OPERATION_NAME_SET.has(value);
+
+const PROVIDER_REQUEST_NAME_SET: ReadonlySet<unknown> = new Set<unknown>(PROVIDER_REQUEST_NAMES);
+
+const isProviderRequestName = (value: unknown): value is ProviderRequestName =>
+  PROVIDER_REQUEST_NAME_SET.has(value);
+
+/** The params and result checks of an operation or a provider request. */
+const requestChecks = (
+  method: OperationName | ProviderRequestName,
+): { readonly params: Check; readonly result: Check } =>
+  isProviderRequestName(method) ? providerRequestChecks[method] : operationChecks[method];
 
 const checkRequest = (
   value: Readonly<Record<string, unknown>>,
@@ -511,10 +574,14 @@ const checkRequest = (
     obj({ method: str })(value, "$", errors);
     return errors;
   }
-  if (!isOperationName(method)) {
+  if (method === "account.updated") {
+    obj({ method: str, params: obj({ account: providerAccount }) })(value, "$", errors);
+    return errors;
+  }
+  if (!isOperationName(method) && !isProviderRequestName(method)) {
     return [`$.method: unknown operation ${String(method)}`];
   }
-  obj({ id: rpcId, method: str, params: operationChecks[method].params })(value, "$", errors);
+  obj({ id: rpcId, method: str, params: requestChecks(method).params })(value, "$", errors);
   return errors;
 };
 
@@ -529,11 +596,12 @@ const checkError: Check = obj({
 
 /**
  * Checks one protocol message. Responses are checked against the result of
- * `respondsTo`, the method of the request they answer.
+ * `respondsTo`, the method of the request they answer (an operation or a
+ * provider request).
  */
 export function checkMessage(
   value: unknown,
-  respondsTo: OperationName | null = null,
+  respondsTo: OperationName | ProviderRequestName | null = null,
 ): readonly string[] {
   const errors: string[] = [];
   if (!isRecord(value)) {
@@ -549,6 +617,6 @@ export function checkMessage(
   if (respondsTo === null) {
     return ["$: a response needs the operation it answers"];
   }
-  obj({ id: rpcId, result: operationChecks[respondsTo].result })(value, "$", errors);
+  obj({ id: rpcId, result: requestChecks(respondsTo).result })(value, "$", errors);
   return errors;
 }

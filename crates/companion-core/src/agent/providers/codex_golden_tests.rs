@@ -51,6 +51,15 @@ async fn replay(
     multi_provider: bool,
     expected: usize,
 ) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    replay_with(frames, multi_provider, expected, None).await
+}
+
+async fn replay_with(
+    frames: Vec<Value>,
+    multi_provider: bool,
+    expected: usize,
+    tools: Option<std::sync::Arc<dyn crate::agent::provider::ClientToolHost>>,
+) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let socket_path = directory.path().join("app-server.sock");
     let listener = UnixListener::bind(&socket_path)?;
@@ -77,6 +86,9 @@ async fn replay(
         Ok(())
     });
     let provider = CodexProvider::new(UpstreamHandle::spawn(socket_path));
+    if let Some(tools) = tools {
+        provider.install_client_tools(tools);
+    }
     let mut events = provider.take_events();
     let mut projector = EventProjector::new(WireProvider {
         descriptor: provider.descriptor(),
@@ -106,6 +118,42 @@ async fn single_provider_wire_is_byte_identical_to_the_app_server_stream()
     let frames = recorded_frames()?;
     assert!(frames.len() > 80);
     let projected = replay(frames.clone(), false, frames.len()).await?;
+    assert_eq!(projected.len(), frames.len());
+    for (frame, projected) in frames.iter().zip(&projected) {
+        assert_eq!(projected.to_string(), frame.to_string());
+    }
+    Ok(())
+}
+
+/// Installed orchestration tools change nothing on the client wire until the
+/// model calls one of them (the corpus' `item/tool/call` is another tool).
+#[tokio::test]
+async fn installed_orchestration_tools_keep_the_wire_byte_identical()
+-> Result<(), Box<dyn std::error::Error>> {
+    struct Unused(Vec<crate::agent::model::ClientToolSpec>);
+    #[async_trait::async_trait]
+    impl crate::agent::provider::ClientToolHost for Unused {
+        fn specs(&self) -> &[crate::agent::model::ClientToolSpec] {
+            &self.0
+        }
+        async fn call(
+            &self,
+            _: &crate::agent::model::ProviderId,
+            _: crate::agent::model::ToolCallParams,
+        ) -> crate::agent::model::ToolCallResult {
+            crate::agent::model::ToolCallResult::failure("unused".into())
+        }
+    }
+    let frames = recorded_frames()?;
+    let projected = replay_with(
+        frames.clone(),
+        false,
+        frames.len(),
+        Some(std::sync::Arc::new(Unused(
+            crate::agent::orchestration::tools::specs(),
+        ))),
+    )
+    .await?;
     assert_eq!(projected.len(), frames.len());
     for (frame, projected) in frames.iter().zip(&projected) {
         assert_eq!(projected.to_string(), frame.to_string());

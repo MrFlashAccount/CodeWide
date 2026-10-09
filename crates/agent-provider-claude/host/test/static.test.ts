@@ -1,6 +1,7 @@
 /**
  * Static boundary checks of the Claude agent host sources:
- * - only `src/claude/sdkRuntime.ts` and `src/claude/sdkSessionStore.ts` import the Agent SDK;
+ * - only the SDK adapters (`src/claude/sdkRuntime.ts`, `sdkSessionStore.ts`,
+ *   `sdkClientTools.ts`) import the Agent SDK;
  * - `@codewide/*` packages are imported type-only (dist has none);
  * - `src/mapping/` performs no I/O;
  * - no source reads `ANTHROPIC_*` values or touches `~/.claude`, CODEX_HOME
@@ -11,7 +12,15 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -43,13 +52,14 @@ const code = (text: string): string =>
   text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("source boundaries", () => {
-  it("imports the Agent SDK only from the two SDK adapters", () => {
+  it("imports the Agent SDK only from the SDK adapters", () => {
     const importers = sources.filter((path) =>
       importLines(readFileSync(path, "utf8")).some((line) =>
         line.includes("@anthropic-ai/claude-agent-sdk"),
       ),
     );
     expect(importers.map((path) => relative(root, path)).toSorted()).toEqual([
+      "src/claude/sdkClientTools.ts",
       "src/claude/sdkRuntime.ts",
       "src/claude/sdkSessionStore.ts",
     ]);
@@ -125,9 +135,43 @@ describe("thread state store", () => {
       sessionStarted: false,
       settings: { effort: null, model: "m", permissionProfile: ":workspace", serviceTier: null },
       title: { type: "none" },
-      totalUsage: ZERO_USAGE,
-      turns: [],
+      totalCost: { type: "known", usd: 0.25 },
+      totalUsage: { ...ZERO_USAGE, cacheWriteInputTokens: 7, inputTokens: 10, totalTokens: 10 },
+      turns: [
+        {
+          anchors: ["anchor"],
+          completedAt: 2,
+          origin: "user",
+          outcome: { status: "completed" },
+          prompts: [{ clientMessageId: null, role: "first", uuid: "anchor" }],
+          startedAt: 1,
+          turnId: "turn",
+          usage: {
+            contextWindow: 200_000,
+            cost: { basis: "list", model: "claude-sonnet-4-6", threadUsd: 0.25, turnUsd: 0.25 },
+            last: ZERO_USAGE,
+            total: ZERO_USAGE,
+            turn: ZERO_USAGE,
+          },
+        },
+      ],
       updatedAt: 1,
+      usageBaseline: {
+        checkpoints: [
+          [
+            {
+              cacheCreationInputTokens: 7,
+              cacheReadInputTokens: 0,
+              costUsd: 0.25,
+              inputTokens: 3,
+              model: "claude-sonnet-4-6",
+              outputTokens: 0,
+              thinkingTokens: 0,
+            },
+          ],
+        ],
+        type: "known",
+      },
       version: 2,
     };
     store.write(state);
@@ -140,6 +184,52 @@ describe("thread state store", () => {
       { activeTurn: null, state: { ...state, title: { name: "renamed", type: "pending" } } },
     ]);
     expect(() => store.write({ ...state, appThreadId: "../escape" })).toThrow();
+  });
+
+  it("reads state written before usage accounting with an unknown baseline and cost", () => {
+    const directory = join(mkdtempSync(join(tmpdir(), "claude-agent-host-state-")), "state");
+    const appThreadId = "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7f";
+    const threadDirectory = join(directory, "threads", appThreadId);
+    mkdirSync(threadDirectory, { recursive: true });
+    const used = { ...ZERO_USAGE, inputTokens: 5, totalTokens: 5 };
+    const { cacheWriteInputTokens: _absent, ...legacyUsage } = used;
+    writeFileSync(
+      join(threadDirectory, "state.json"),
+      JSON.stringify({
+        appThreadId,
+        createdAt: 1,
+        cwd: "/w",
+        origin: "created",
+        pendingSettings: null,
+        presence: { archived: false, type: "listed" },
+        recencyAt: null,
+        sessionIds: [appThreadId],
+        sessionStarted: true,
+        settings: { effort: null, model: "m", permissionProfile: ":workspace", serviceTier: null },
+        title: { type: "none" },
+        totalUsage: legacyUsage,
+        turns: [
+          {
+            anchors: [],
+            completedAt: 2,
+            origin: "user",
+            outcome: { status: "completed" },
+            prompts: [],
+            startedAt: 1,
+            turnId: "turn",
+          },
+        ],
+        updatedAt: 1,
+        version: 2,
+      }),
+    );
+    const [loaded] = new ThreadStateStore(directory).load(() => {});
+    expect(loaded?.state).toMatchObject({
+      totalCost: { type: "unknown" },
+      totalUsage: used,
+      turns: [{ turnId: "turn", usage: null }],
+      usageBaseline: { type: "unknown" },
+    });
   });
 
   it("stores no conversation content", () => {
