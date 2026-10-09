@@ -1,10 +1,15 @@
+import type { ServerIconId } from "../../data/serverIcons";
+import { normalizeDirectoryPath } from "../../data/remote-projects";
 import type { Ionicons } from "@expo/vector-icons";
-import type { RemoteProject } from "../../data/remote-projects";
-import { partitionDiscoveredProjects, projectIncludesDirectory } from "../../data/remote-projects";
 import { listRowPosition, type AppListRowProps } from "../../ui/AppListRow.types";
+import type { ProjectPickerChoice } from "./projectPickerContract";
 
+const RECENT_PROJECT_LIMIT = 8;
+
+/** Expansion keys are independent of project names and server identity. */
 export type ProjectSectionId = "other" | "recent";
-export type ProjectListItem =
+/** A render row retains its qualified choice even when names and paths collide. */
+type ProjectListItem =
   | {
       compact: boolean;
       icon: keyof typeof Ionicons.glyphMap;
@@ -13,11 +18,11 @@ export type ProjectListItem =
       text: string;
     }
   | {
+      choice: ProjectPickerChoice;
       id: string;
       kind: "project";
       pinned: boolean;
       position: AppListRowProps["position"];
-      project: RemoteProject;
     }
   | {
       count: number;
@@ -27,47 +32,74 @@ export type ProjectListItem =
       sectionId: ProjectSectionId | null;
       title: string;
     }
-  | { id: string; kind: "server-default" };
-const RECENT_PROJECT_LIMIT = 8;
-/** Project sections retain query matching, pinned classification and expansion state. */
+  | {
+      available: boolean;
+      connectionId: string;
+      iconId: ServerIconId;
+      id: string;
+      kind: "server-default";
+      serverName: string;
+    };
+
+/** Project sections retain query matching, pinned classification and expansion state across qualified servers. */
 export function useProjectPickerRows(
-  projects: readonly RemoteProject[],
-  discoveredProjects: readonly RemoteProject[],
+  choices: readonly ProjectPickerChoice[],
   normalizedQuery: string,
   expandedSections: ReadonlySet<ProjectSectionId>,
 ) {
-  const { other: otherProjects, recent: recentProjects } = partitionDiscoveredProjects(
-    projects,
-    discoveredProjects,
-    RECENT_PROJECT_LIMIT,
+  const pinned = choices.filter((choice) => choice.project.pinned);
+  const pinnedPaths = new Set(
+    pinned.map(({ project, server }) =>
+      JSON.stringify([server.id, normalizeDirectoryPath(project.path)]),
+    ),
   );
-  const unpinnedProjects = [...recentProjects, ...otherProjects];
-  const searchProjects =
-    normalizedQuery === ""
-      ? []
-      : [...projects, ...unpinnedProjects].filter((project) =>
-          `${project.name}\n${project.path}`.toLocaleLowerCase().includes(normalizedQuery),
-        );
+  const seen = new Set<string>();
+  const unpinnedProjects = choices
+    .filter(({ project, server }) => {
+      const key = JSON.stringify([server.id, normalizeDirectoryPath(project.path)]);
+      if (project.pinned || pinnedPaths.has(key) || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => right.project.lastUsedAt - left.project.lastUsedAt);
   const projectRows: ProjectListItem[] = [];
-  if (normalizedQuery !== "") {
+  const append = (
+    title: string,
+    entries: readonly ProjectPickerChoice[],
+    sectionId: ProjectSectionId | null,
+  ): void => {
+    const expanded = sectionId === null || expandedSections.has(sectionId);
     projectRows.push({
-      count: searchProjects.length,
-      expanded: true,
-      id: "section:search",
+      count: entries.length,
+      expanded,
+      id: `section:${title}`,
       kind: "section",
-      sectionId: null,
-      title: "Search results",
+      sectionId,
+      title,
     });
-    for (const [index, project] of searchProjects.entries()) {
+    if (!expanded) {
+      return;
+    }
+    for (const [index, choice] of entries.entries()) {
       projectRows.push({
-        id: `project:${project.path}`,
+        choice,
+        id: JSON.stringify([choice.server.id, choice.project.path]),
         kind: "project",
-        pinned: projects.some((candidate) => projectIncludesDirectory(candidate, project.path)),
-        position: listRowPosition(index, searchProjects.length),
-        project,
+        pinned: choice.project.pinned,
+        position: listRowPosition(index, entries.length),
       });
     }
-    if (searchProjects.length === 0) {
+  };
+  if (normalizedQuery !== "") {
+    const matches = [...pinned, ...unpinnedProjects].filter(({ project, server }) =>
+      `${project.name}\n${project.path}\n${server.name}`
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
+    );
+    append("Search results", matches, null);
+    if (matches.length === 0) {
       projectRows.push({
         compact: true,
         icon: "search-outline",
@@ -77,77 +109,15 @@ export function useProjectPickerRows(
       });
     }
   } else {
-    projectRows.push({
-      count: projects.length,
-      expanded: true,
-      id: "section:pinned",
-      kind: "section",
-      sectionId: null,
-      title: "Pinned",
-    });
-    for (const [index, project] of projects.entries()) {
-      projectRows.push({
-        id: `project:${project.path}`,
-        kind: "project",
-        pinned: true,
-        position: listRowPosition(index, projects.length),
-        project,
-      });
-    }
-    if (projects.length === 0) {
-      projectRows.push({
-        compact: true,
-        icon: "pin-outline",
-        id: "empty:pinned",
-        kind: "empty",
-        text: "Add a folder to pin it here",
-      });
+    if (pinned.length > 0) {
+      append("Pinned", pinned, null);
     }
     if (unpinnedProjects.length > 0) {
-      const recentExpanded = expandedSections.has("recent");
-      projectRows.push({
-        count: recentProjects.length,
-        expanded: recentExpanded,
-        id: "section:recent",
-        kind: "section",
-        sectionId: "recent",
-        title: "Recent",
-      });
-      if (recentExpanded) {
-        for (const [index, project] of recentProjects.entries()) {
-          projectRows.push({
-            id: `project:${project.path}`,
-            kind: "project",
-            pinned: false,
-            position: listRowPosition(index, recentProjects.length),
-            project,
-          });
-        }
-      }
-      if (otherProjects.length > 0) {
-        const otherExpanded = expandedSections.has("other");
-        projectRows.push({
-          count: otherProjects.length,
-          expanded: otherExpanded,
-          id: "section:other",
-          kind: "section",
-          sectionId: "other",
-          title: "Other",
-        });
-        if (otherExpanded) {
-          for (const [index, project] of otherProjects.entries()) {
-            projectRows.push({
-              id: `project:${project.path}`,
-              kind: "project",
-              pinned: false,
-              position: listRowPosition(index, otherProjects.length),
-              project,
-            });
-          }
-        }
-      }
+      append("Recent", unpinnedProjects.slice(0, RECENT_PROJECT_LIMIT), "recent");
     }
-    projectRows.push({ id: "server-default", kind: "server-default" });
+    if (unpinnedProjects.length > RECENT_PROJECT_LIMIT) {
+      append("Other", unpinnedProjects.slice(RECENT_PROJECT_LIMIT), "other");
+    }
   }
   return { projectRows, unpinnedProjects };
 }

@@ -1,20 +1,23 @@
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../src/components/navigation/RouteUnavailable";
-import { ProjectPickerSheet } from "../../../../src/features/projects/ProjectPickerSheet";
+import { ProjectDirectoryPicker } from "../../../../src/features/projects/ProjectDirectoryPicker";
+import { workspaceRuntime } from "../../../../src/data/workspace-runtime";
+import { useEvent } from "../../../../src/react/useEvent";
 import { workspaceFeatures as features } from "../../../../src/features/workspace/createWorkspaceFeatures";
 import { connectionIdParam } from "../../../../src/services/threads/threadRouteParams";
 import { useWorkspaceRouteResources } from "../../../../src/services/workspace/workspaceRouteResources";
 
-const EMPTY_PROJECTS: never[] = [];
-
-/** Composes one server-qualified project directory browser. */
+/** Starts folder browsing on the route server while permitting an explicit local server change. */
 export default function V1AddProjectRoute(): React.JSX.Element {
   const router = useRouter();
   const visible = useIsFocused();
   const { connectionId } = useLocalSearchParams<{ connectionId?: string | string[] }>();
   const parsed = connectionIdParam(connectionId);
   const resources = useWorkspaceRouteResources();
+  const close = useEvent(() => {
+    router.dismissTo("/projects");
+  });
   if (
     parsed.status === "invalid" ||
     !resources.connections.some((connection) => connection.id === parsed.value.value)
@@ -31,25 +34,17 @@ export default function V1AddProjectRoute(): React.JSX.Element {
   }
   const id = parsed.value.value;
   return (
-    <ProjectPickerSheet
-      browseOnly
-      busy={false}
-      cwd=""
-      discoveredProjects={EMPTY_PROJECTS}
-      error={null}
-      onAddProject={async (path) => resources.project.projectWorkspace.addSidebarProject(id, path)}
-      onClose={() => {
-        router.dismissTo("/projects");
+    <ProjectDirectoryPicker
+      connections={resources.connections}
+      initialConnectionId={id}
+      native={workspaceRuntime.native}
+      onAddProject={resources.project.projectWorkspace.addSidebarProject}
+      onClose={close}
+      remote={{
+        readDirectory: features.projects.readDirectory,
+        readProjectHome: features.projects.readProjectHome,
       }}
-      onReadDirectory={async (path) => features.projects.readDirectory(id, path)}
-      onReadHomeDirectory={async () => features.projects.readProjectHome(id)}
-      // WHY: This render-local callback must return a Promise because the picker action contract is async.
-      // oxlint-disable-next-line typescript/promise-function-async
-      onSelect={() => {
-        router.dismissTo("/projects");
-        return Promise.resolve();
-      }}
-      projects={EMPTY_PROJECTS}
+      servers={resources.list.servers}
       visible={visible}
     />
   );

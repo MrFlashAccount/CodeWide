@@ -10,14 +10,17 @@ import type { TurnControlsValue } from "../../data/workspace-resource-database";
 import { enqueueNativeCommand } from "../../native/native-transport";
 
 import type { ComposerWorkspaceCapabilities } from "./workspaceCapabilities";
+import { createComposerContinuationAdapter } from "./continuationAdapter";
 /** Converts composer intents using retained lower authorities. */
 export function createComposerWorkspaceAdapter({
+  continuationTransport,
   getThreadUiState,
   loadTurnControls,
   retryFailedMessage,
   sendText,
   startVoiceTranscription,
 }: {
+  continuationTransport: Parameters<typeof createComposerContinuationAdapter>[0];
   getThreadUiState: () => ThreadUiStateDatabase | null;
   loadTurnControls: (
     connectionId: string,
@@ -107,6 +110,7 @@ export function createComposerWorkspaceAdapter({
     );
   };
   return {
+    continueTurn: createComposerContinuationAdapter(continuationTransport),
     loadComposerPreferences,
     loadDraft,
     loadDraftAttachments,

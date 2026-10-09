@@ -54,6 +54,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       composer={{
         controlsResourceId: props.activeControlsResourceId,
         loadDraft: props.features.composer.loadDraft,
+        onContinueTurn: props.conversationActions.onContinueTurn,
         onInterrupt: props.conversationActions.onInterrupt,
         onLoadControls: props.conversationActions.onLoadControls,
         onRetryFailedMessage: props.conversationActions.onRetryFailedMessage,
@@ -70,6 +71,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       }}
       diagnostics={{ onFixUnsupportedBlock: props.onFixUnsupportedBlock }}
       goal={{
+        captureGoalLifecycle: props.conversationActions.captureGoalLifecycle,
         goalResourceId: props.activeThreadResourceId,
         onClearGoal: props.conversationActions.onClearGoal,
         onGetGoal: props.conversationActions.onGetGoal,
@@ -89,6 +91,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       }}
       projects={{
         discoveredProjects: props.activeDiscoveredProjects,
+        newChatPicker: props.newChatPicker,
         onAddProject: props.addActiveProject,
         onChangeProject: props.changeEmptyThreadProject,
         onChangeWorkspaceMode: (workspaceMode) => {

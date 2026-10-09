@@ -1,3 +1,4 @@
+import type { NewChatProjectPickerBinding } from "../projects/NewChatProjectPicker";
 import { RecoverableRenderBoundary } from "../../ui/RecoverableRenderBoundary";
 import type { useTurnChangesLoader } from "../changes/turnChanges";
 import type { useLoopbackNavigation } from "../ports/loopbackNavigation";
@@ -37,6 +38,7 @@ export function renderConversationDestinationSurface(props: {
   loadTurnChanges: ReturnType<typeof useTurnChangesLoader>["loadTurnChanges"];
   markActiveThreadRead: ReturnType<typeof useActiveThreadActions>["markActiveThreadRead"];
   native: ActiveWorkspaceConversationProps["native"];
+  newChatPicker: NewChatProjectPickerBinding | null;
   onChangeDraftWorkspaceMode: ActiveWorkspaceConversationProps["onChangeDraftWorkspaceMode"];
   onFixUnsupportedBlock: ActiveWorkspaceConversationProps["onFixUnsupportedBlock"];
   onManageProjects: ActiveWorkspaceConversationProps["onManageProjects"];
@@ -87,6 +89,7 @@ export function renderConversationDestinationSurface(props: {
               markActiveThreadRead: props.markActiveThreadRead,
               native: props.native,
               newChatDraft: props.scope.newChatDraft,
+              newChatPicker: props.newChatPicker,
               onChangeDraftWorkspaceMode: props.onChangeDraftWorkspaceMode,
               onFixUnsupportedBlock: props.onFixUnsupportedBlock,
               onManageProjects: props.onManageProjects,

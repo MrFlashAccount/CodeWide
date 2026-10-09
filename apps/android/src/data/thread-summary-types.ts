@@ -1,4 +1,5 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
+import { validPinCursor } from "./threadPinState";
 import { unknownRecord } from "./unknownRecord";
 
 type ActiveThreadStatus = Extract<Thread["status"], { type: "active" }>;
@@ -24,8 +25,12 @@ export type StoredThreadSummary = {
   /** Latest observed async question opportunity; newer user input retires it. */
   pendingQuestion?: QuestionOpportunity | null;
   pendingRequestCount: number;
+  /** Last server-owned pin cursor; absent only in retired local-pin cache rows. */
+  pinCursor?: number;
   pinned: boolean;
   preview: string;
+  /** Last material event applied to this row; absent only in older persisted summaries. */
+  projectionCursor?: number;
   /**
    * The authoritative empty shell returned by thread/start. Detail storage is
    * on-demand, so keeping the shell with the eager index prevents a new thread
@@ -54,9 +59,20 @@ export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredTh
         ? row.firstUnreadAgentTurnId
         : null,
     parentThreadId: row.parentThreadId ?? null,
+    pinCursor: validPinCursor(row.pinCursor) ? row.pinCursor : 0,
+    pinned: validPinCursor(row.pinCursor) && row.pinned,
+    projectionCursor: threadSummaryProjectionCursor(row),
     recencyAt: row.recencyAt ?? null,
     status: normalizeThreadStatus(row.status),
   };
+}
+
+/** Reads the material-event version, including persisted summaries from before this field existed. */
+export function threadSummaryProjectionCursor(row: StoredThreadSummary): number {
+  const cursor = row.projectionCursor;
+  return typeof cursor === "number" && Number.isSafeInteger(cursor) && cursor >= 0
+    ? cursor
+    : row.latestActivityCursor;
 }
 
 export function normalizeThreadStatus(value: unknown): Thread["status"] {

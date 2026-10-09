@@ -22,17 +22,37 @@ export type RemoteProjectCatalogModel = {
 };
 
 type ProjectResource = {
+  acknowledgedProjects: Map<string, AcknowledgedProject>;
   authoritativeGeneration: number | null;
   failed: boolean;
   generation: number;
   loader: (() => Promise<RemoteProject[]>) | null;
   loadingRevision: string | null;
-  mergedWhileLoading: Map<string, RemoteProject>;
   ready$: Observable<boolean> | null;
   retryAttempt: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
   revision: string;
 };
+
+type AcknowledgedProject = {
+  readonly afterGeneration: number;
+  readonly project: RemoteProject;
+};
+
+function createProjectResource(): ProjectResource {
+  return {
+    acknowledgedProjects: new Map(),
+    authoritativeGeneration: null,
+    failed: false,
+    generation: 0,
+    loader: null,
+    loadingRevision: "cache",
+    ready$: null,
+    retryAttempt: 0,
+    retryTimer: null,
+    revision: "cache",
+  };
+}
 
 type RemoteProjectCatalogCache = {
   delete?: (connectionId: string) => Promise<void>;
@@ -65,18 +85,36 @@ type ProjectDemandInput = {
 
 function mergeAcknowledgedProjects(
   projects: RemoteProject[],
-  acknowledged: ReadonlyMap<string, RemoteProject>,
+  acknowledged: ReadonlyMap<string, AcknowledgedProject>,
 ): RemoteProject[] {
   if (acknowledged.size === 0) {
     return projects;
   }
-  const resolved = projects.map((project) => acknowledged.get(project.path) ?? project);
-  for (const [path, project] of acknowledged) {
+  const resolved = projects.map((project) => acknowledged.get(project.path)?.project ?? project);
+  for (const [path, { project }] of acknowledged) {
     if (!projects.some((candidate) => candidate.path === path)) {
       resolved.push(project);
     }
   }
   return resolved;
+}
+
+function confirmAcknowledgedProjects(
+  projects: readonly RemoteProject[],
+  record: ProjectResource,
+): void {
+  for (const project of projects) {
+    const acknowledged = record.acknowledgedProjects.get(project.path);
+    if (
+      acknowledged !== undefined &&
+      record.generation > acknowledged.afterGeneration &&
+      project.pinned === acknowledged.project.pinned &&
+      project.name === acknowledged.project.name &&
+      project.lastUsedAt >= acknowledged.project.lastUsedAt
+    ) {
+      record.acknowledgedProjects.delete(project.path);
+    }
+  }
 }
 
 /**
@@ -157,9 +195,11 @@ export function createRemoteProjectCatalogModel(
         current.loadingRevision = null;
         current.retryAttempt = 0;
         current.authoritativeGeneration = generation;
-        // A pin/add acknowledgement is newer than the list read already in flight.
-        const resolvedProjects = mergeAcknowledgedProjects(projects, current.mergedWhileLoading);
-        current.mergedWhileLoading.clear();
+        // Keep confirmed mutations until a later read observes them. A stale
+        // cache/list or reconnect must not undo the acknowledgement; after
+        // confirmation, normal remote changes become authoritative again.
+        confirmAcknowledgedProjects(projects, current);
+        const resolvedProjects = mergeAcknowledgedProjects(projects, current.acknowledgedProjects);
         snapshot$.projectsByConnection.assign({ [connectionId]: resolvedProjects });
         snapshot$.errorsByConnection.assign({ [connectionId]: null });
         persistProjects(connectionId, resolvedProjects);
@@ -193,7 +233,7 @@ export function createRemoteProjectCatalogModel(
     }
     if (cached.length > 0 && record.authoritativeGeneration === null) {
       snapshot$.projectsByConnection.assign({
-        [connectionId]: mergeAcknowledgedProjects(cached, record.mergedWhileLoading),
+        [connectionId]: mergeAcknowledgedProjects(cached, record.acknowledgedProjects),
       });
     }
     if (record.loadingRevision === "cache") {
@@ -268,10 +308,12 @@ export function createRemoteProjectCatalogModel(
       await options.cache?.delete?.(connectionId);
     },
     mergeProject(connectionId, project) {
-      const resource = resources.get(connectionId);
-      if (resource !== undefined && resource.loadingRevision !== null) {
-        resource.mergedWhileLoading.set(project.path, project);
-      }
+      const resource = resources.get(connectionId) ?? createProjectResource();
+      resources.set(connectionId, resource);
+      resource.acknowledgedProjects.set(project.path, {
+        afterGeneration: resource.generation,
+        project,
+      });
       const existing = snapshot$.projectsByConnection.peek()[connectionId] ?? [];
       snapshot$.projectsByConnection.assign({
         [connectionId]: [
@@ -285,27 +327,15 @@ export function createRemoteProjectCatalogModel(
     resource(connectionId, revision, loader) {
       let record = resources.get(connectionId);
       if (record === undefined) {
-        record = {
-          authoritativeGeneration: null,
-          failed: false,
-          generation: 0,
-          loader,
-          loadingRevision: "cache",
-          mergedWhileLoading: new Map(),
-          ready$: null,
-          retryAttempt: 0,
-          retryTimer: null,
-          revision,
-        };
+        record = createProjectResource();
         resources.set(connectionId, record);
+      }
+      if (record.ready$ === null) {
         record.ready$ = observablePromise(
           beginInitialDemand(connectionId, revision, loader, record),
         );
       } else {
         updateResourceDemand({ connectionId, loader, record, revision });
-      }
-      if (record.ready$ === null) {
-        throw new Error("Project catalog readiness was not initialized");
       }
       return record.ready$;
     },

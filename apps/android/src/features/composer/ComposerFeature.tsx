@@ -25,6 +25,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
         controlError={props.controlError}
         controlsResourceId={props.controlsResourceId}
         cwd={props.cwd}
+        leadingContextChips={props.leadingContextChips}
         newChat={props.newChat}
         onLoadControls={props.onLoadControls}
         openControls={props.openControls}
@@ -174,6 +175,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 goalAttachmentVisible={props.goalAttachmentVisible}
                 handleDeliveryAction={props.handleDeliveryAction}
                 queuedComposerEditBusy={props.queuedComposerEditBusy}
+                resumeAction={props.resumeAction}
                 sendDisabled={props.sendDisabled}
                 steerComposer={props.steerComposer}
                 stopAction={props.stopAction}

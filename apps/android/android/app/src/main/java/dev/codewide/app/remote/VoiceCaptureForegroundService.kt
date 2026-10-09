@@ -17,7 +17,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import dev.codewide.app.MainActivity
@@ -48,14 +48,14 @@ class VoiceCaptureForegroundService : Service() {
     if (!force && lastDiagnosticMs != Long.MIN_VALUE && now - lastDiagnosticMs < 5_000L) return
     lastDiagnosticMs = now
     val health = captureHealth.snapshot()
-    Log.i("CodeWideVoiceState", "peer=${webRtcObserver?.peerId} ${owner?.diagnostic() ?: "owner=absent state=${orbState.wireValue}"} " +
+    NativeAppLogger.info("CodeWideVoiceState", "peer=${webRtcObserver?.peerId} ${owner?.diagnostic() ?: "owner=absent state=${orbState.wireValue}"} " +
       "${ingressDiagnostics?.snapshot()} pcmAgeMs=${health.sampleAgeMs} ${audioLevels.diagnostic()} " +
       "screenInteractive=${health.screenInteractive} wakeLockHeld=${::wakeLockOwner.isInitialized && wakeLockOwner.isHeld} " +
       "style=${orbStyle.wireValue} reducedMotion=$orbReducedMotion")
   }
 
   private fun stopWebRtcObservation() {
-    webRtcObserver?.let { Log.i("CodeWideVoiceState", "observer=closing peer=${it.peerId}") }
+    webRtcObserver?.let { NativeAppLogger.info("CodeWideVoiceState", "observer=closing peer=${it.peerId}") }
     logVoiceDiagnostic(force = true)
     webRtcObserver?.close()
     webRtcObserver = null
@@ -98,7 +98,7 @@ class VoiceCaptureForegroundService : Service() {
     override fun onReceive(context: Context?, intent: Intent?) {
       val interactive = intent?.action == Intent.ACTION_SCREEN_ON
       val snapshot = captureHealth.setScreenInteractive(interactive)
-      Log.i(
+      NativeAppLogger.info(
         LOG_TAG,
         "screenInteractive=$interactive active=${snapshot.active} " +
           "expectedCapture=${snapshot.expectedCapture} microphoneMuted=${snapshot.microphoneMuted} " +
@@ -245,7 +245,7 @@ class VoiceCaptureForegroundService : Service() {
 
   private fun acceptCaptureHealthEvent(event: GlobalVoiceCaptureHealthEvent) {
     if (!lifetime.hasOverlay()) return
-    Log.i(
+    NativeAppLogger.info(
       LOG_TAG,
       "captureHealth=${event.kind.name.lowercase()} screenInteractive=${event.screenInteractive} " +
         "audioRecordRunning=${event.audioRecordRunning} sampleAgeMs=${event.sampleAgeMs}",
@@ -350,7 +350,7 @@ class VoiceCaptureForegroundService : Service() {
             active.publishPresentation()
           },
         )
-        Log.i("CodeWideVoiceState", "observer=attached peer=$peerId")
+        NativeAppLogger.info("CodeWideVoiceState", "observer=attached peer=$peerId")
         active.publishPresentation()
         active.logVoiceDiagnostic(force = true)
         completion(true)
@@ -384,13 +384,13 @@ class VoiceCaptureForegroundService : Service() {
     fun updateWebRtcAudioRecordRunning(running: Boolean) {
       val active = instance ?: return
       active.captureHealth.setAudioRecordRunning(running)
-      Log.i(LOG_TAG, "audioRecordRunning=$running")
+      NativeAppLogger.info(LOG_TAG, "audioRecordRunning=$running")
     }
 
     internal fun reportWebRtcAudioRecordFailure(kind: GlobalVoiceAudioRecordFailureKind) {
       val active = instance ?: return
       active.captureHealth.setAudioRecordRunning(false)
-      Log.w(LOG_TAG, "audioRecordFailure=${kind.diagnosticValue}")
+      NativeAppLogger.warn(LOG_TAG, "audioRecordFailure=${kind.diagnosticValue}")
     }
 
     internal fun updateCaptureAdmission(open: Boolean) {

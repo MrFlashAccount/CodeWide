@@ -1,3 +1,4 @@
+import type { NewChatProjectPickerBinding } from "../projects/NewChatProjectPicker";
 import type { RenderBlock } from "@codewide/renderers";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { FileTransferController } from "../../data/file-transfer-controller";
@@ -48,6 +49,7 @@ export type RenderConversationWorkspaceContentProps = {
   markActiveThreadRead: ReturnType<typeof useActiveThreadActions>["markActiveThreadRead"];
   native: boolean;
   newChatDraft: NewThreadDraft | null;
+  newChatPicker: NewChatProjectPickerBinding | null;
   onChangeDraftWorkspaceMode: (draftId: string, mode: NewChatWorkspaceMode) => void;
   onFixUnsupportedBlock: (block: RenderBlock) => Promise<void>;
   onManageProjects: () => void;

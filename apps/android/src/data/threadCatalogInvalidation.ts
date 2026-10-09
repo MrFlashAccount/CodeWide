@@ -10,6 +10,7 @@ const CATALOG_REPAIR_METHODS = new Set([
   "companion/thread/invalidated",
   "thread/archived",
   "thread/unarchived",
+  "companion/thread/pin/updated",
 ]);
 
 type CatalogInvalidationPorts = {

@@ -69,11 +69,9 @@ const defaults = {
   onSelect: jest.fn(async () => undefined),
 };
 
-it("opens server Home, navigates folders and adds only the selected directory", async () => {
+it("opens the server filesystem root, navigates folders and adds only the selected directory", async () => {
   const readHome = jest.fn(async () => homePath);
-  const readDirectory = jest.fn(async (path: string) =>
-    path === homePath ? [entry("Projects")] : [],
-  );
+  const readDirectory = jest.fn(async (path: string) => (path === "/" ? [entry("Projects")] : []));
   const add = jest.fn(async (path: string) => ({
     path,
     name: "Projects",
@@ -97,13 +95,13 @@ it("opens server Home, navigates folders and adds only the selected directory", 
   const folders = view.UNSAFE_getByType(LegendList);
   expect(folders.props.getFixedItemSize(folders.props.data[0], 0)).toBe(listRowHeight.single);
   expect(view.UNSAFE_getByType(AppListRow).props.fixedHeight).toBe(listRowHeight.single);
-  expect(readDirectory).toHaveBeenCalledWith(homePath);
+  expect(readDirectory).toHaveBeenCalledWith("/");
   expect(readDirectory).not.toHaveBeenCalledWith(defaults.cwd);
   fireEvent.press(view.getByText("Projects"));
   await waitFor(() => expect(view.getByText("This folder has no subfolders")).toBeVisible());
   fireEvent.press(view.getByText("Add this folder"));
-  await waitFor(() => expect(select).toHaveBeenCalledWith(`${homePath}/Projects`));
-  expect(add).toHaveBeenCalledWith(`${homePath}/Projects`);
+  await waitFor(() => expect(select).toHaveBeenCalledWith("/Projects"));
+  expect(add).toHaveBeenCalledWith("/Projects");
   expect(readHome).toHaveBeenCalledTimes(1);
 });
 
@@ -174,14 +172,14 @@ it("keeps a discovered project's secondary Pin action independent from row selec
   expect(select).toHaveBeenCalledWith(discovered.path);
 });
 
-it("does not show an empty folder during Home loading or a failed listing, and returns Home", async () => {
+it("does not show an empty folder during root loading or a failed listing, and returns to the server root", async () => {
   let resolveHome: (path: string) => void = () => undefined;
   const readHome = () =>
     new Promise<string>((resolve) => {
       resolveHome = resolve;
     });
   const readDirectory = jest.fn(async (path: string) => {
-    if (path !== homePath) throw new Error("Folder is no longer available");
+    if (path !== "/") throw new Error("Folder is no longer available");
     return [entry("Deleted")];
   });
   const add = jest.fn(async (path: string) => ({
@@ -214,13 +212,13 @@ it("does not show an empty folder during Home loading or a failed listing, and r
   expect(view.queryByText("This folder has no subfolders")).toBeNull();
   fireEvent.press(view.getByText("Add this folder"));
   expect(add).not.toHaveBeenCalled();
-  fireEvent.press(view.getByText("Go to Home"));
+  fireEvent.press(view.getByText("Go to server root"));
   await waitFor(() => expect(view.getByText("Deleted")).toBeVisible());
   expect(view.queryByRole("alert")).toBeNull();
 });
 
-it("keeps Home separate from parent navigation and the filesystem root", async () => {
-  const readDirectory = jest.fn(async () => []);
+it("backs out of the filesystem root to servers and returns to the chosen server", async () => {
+  const readDirectory = jest.fn(async (path: string) => (path === "/" ? [entry("srv")] : []));
   const view = render(
     <ProjectPickerSheet
       {...defaults}
@@ -229,14 +227,15 @@ it("keeps Home separate from parent navigation and the filesystem root", async (
     />,
     { wrapper: TestProvider },
   );
-  await waitFor(() => expect(readDirectory).toHaveBeenLastCalledWith(homePath));
-  fireEvent.press(view.getByLabelText("Parent directory"));
+  await waitFor(() => expect(readDirectory).toHaveBeenLastCalledWith("/"));
+  fireEvent.press(view.getByText("srv"));
   await waitFor(() => expect(readDirectory).toHaveBeenLastCalledWith("/srv"));
   fireEvent.press(view.getByLabelText("Parent directory"));
-  await waitFor(() => expect(readDirectory).toHaveBeenLastCalledWith("/"));
-  expect(view.getByLabelText("Parent directory")).toBeDisabled();
-  fireEvent.press(view.getByLabelText("Home directory"));
-  await waitFor(() => expect(view.getByLabelText(`Open directory ${homePath}`)).toBeVisible());
+  await waitFor(() => expect(view.getByLabelText("Back to servers")).toBeVisible());
+  fireEvent.press(view.getByLabelText("Back to servers"));
+  await waitFor(() => expect(view.getByLabelText("Browse server: Server")).toBeVisible());
+  fireEvent.press(view.getByLabelText("Browse server: Server"));
+  await waitFor(() => expect(view.getByLabelText("Open server root: Server")).toBeVisible());
   expect(readDirectory).not.toHaveBeenCalledWith(defaults.cwd);
 });
 

@@ -40,6 +40,12 @@ const TOKEN: &str = "test-token-that-is-long-enough-for-production-shape";
 const EXTERNAL_THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
 type ClientSocket = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+fn assert_single_catalog_thread(data: &Value, id: &str, source: &str) {
+    assert_eq!(data.as_array().map(Vec::len), Some(1));
+    assert_eq!(data[0]["id"], id);
+    assert_eq!(data[0]["threadSource"], source);
+}
+
 fn resumed_thread(thread: &Value) -> Value {
     json!({
         "thread": thread,
@@ -3168,9 +3174,10 @@ async fn catalog_visibility_and_reconciliation_are_server_owned_over_rpc()
     for archived in [false, true] {
         send_json(&mut client, &json!({"type":"rpc","request":{"id":"head","method":"thread/list","params":{"archived":archived,"cursor":null,"limit":36,"cwd":"/project"}}})).await?;
         let head = receive_type(&mut client, "rpc").await?;
-        assert_eq!(
-            head["response"]["result"]["data"],
-            json!([{"id":"worker","threadSource":"codewide-global-supervisor-worker:task"}])
+        assert_single_catalog_thread(
+            &head["response"]["result"]["data"],
+            "worker",
+            "codewide-global-supervisor-worker:task",
         );
         let cursor = &head["response"]["result"]["nextCursor"];
         assert_eq!(cursor, "older");
@@ -3181,15 +3188,17 @@ async fn catalog_visibility_and_reconciliation_are_server_owned_over_rpc()
     }
     send_json(&mut client, &json!({"type":"rpc","request":{"id":"reconcile","method":"companion/supervisor/threadList","params":{"threadSource":"codewide-global-supervisor:mine","cursor":null}}})).await?;
     let supervisor = receive_type(&mut client, "rpc").await?;
-    assert_eq!(
-        supervisor["response"]["result"]["data"],
-        json!([{"id":"home","threadSource":"codewide-global-supervisor:mine"}])
+    assert_single_catalog_thread(
+        &supervisor["response"]["result"]["data"],
+        "home",
+        "codewide-global-supervisor:mine",
     );
     send_json(&mut client, &json!({"type":"rpc","request":{"id":"worker-reconcile","method":"companion/supervisor/threadList","params":{"threadSource":"codewide-global-supervisor-worker:task","cursor":null}}})).await?;
     let worker = receive_type(&mut client, "rpc").await?;
-    assert_eq!(
-        worker["response"]["result"]["data"],
-        json!([{"id":"worker","threadSource":"codewide-global-supervisor-worker:task"}])
+    assert_single_catalog_thread(
+        &worker["response"]["result"]["data"],
+        "worker",
+        "codewide-global-supervisor-worker:task",
     );
     send_json(&mut client, &json!({"type":"rpc","request":{"id":"direct-chat","method":"companion/thread/sync","params":{"threadId":"home","afterTurnId":null,"limit":36}}})).await?;
     let direct = receive_type(&mut client, "rpc").await?;
@@ -3237,4 +3246,66 @@ async fn run_catalog_visibility_app_server(
         };
         send_value(&mut socket, &json!({"id":request["id"],"result":result})).await?;
     }
+}
+
+#[tokio::test]
+async fn companion_pins_are_confirmed_durably_and_shared_by_connected_devices()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_idle_thread_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::empty(directory.path())),
+        store.clone(),
+    );
+    let hub = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store.clone(), hub).await?;
+    let url = format!("ws://{address}/v1/sync");
+    let (mut first, _) = connect_client(&url, None).await?;
+    let (mut second, _) = connect_client(&url, None).await?;
+    for pinned in [true, false, false] {
+        send_json(&mut first, &json!({"type":"rpc","request":{"id":"set","method":"companion/thread/pin/set","params":{"threadId":"chat","pinned":pinned}}})).await?;
+        let reply = receive_type(&mut first, "rpc").await?;
+        assert!(reply["response"].get("error").is_none());
+        let cursor = reply["response"]["result"]["pinCursor"]
+            .as_u64()
+            .ok_or("pin cursor missing")?;
+        // The writer replied only after its pin event became recoverable.
+        let durable = store.replay_after(Some(cursor - 1))?;
+        let event: Value = serde_json::from_slice(&durable.entries[0].1)?;
+        assert_eq!(event["params"]["pinned"], pinned);
+        let peer = receive_type(&mut second, "event").await?;
+        assert_eq!(peer["cursor"], cursor);
+        assert_eq!(peer["payload"]["params"]["pinned"], pinned);
+        send_json(&mut first, &json!({"type":"rpc","request":{"id":"pins","method":"companion/thread/pins/list","params":{}}})).await?;
+        let pins = receive_type(&mut first, "rpc").await?;
+        assert_eq!(
+            pins["response"]["result"]["threadIds"],
+            if pinned { json!(["chat"]) } else { json!([]) }
+        );
+        assert_eq!(pins["response"]["result"]["cursor"], cursor);
+    }
+    send_json(&mut first, &json!({"type":"rpc","request":{"id":"import","method":"companion/thread/pins/import","params":{"threadIds":["chat","legacy","legacy"]}}})).await?;
+    let reply = receive_type(&mut first, "rpc").await?;
+    assert!(reply["response"].get("error").is_none());
+    let cursor = reply["response"]["result"]["cursor"]
+        .as_u64()
+        .ok_or("import cursor missing")?;
+    let durable = store.replay_after(Some(cursor - 1))?;
+    let event: Value = serde_json::from_slice(&durable.entries[0].1)?;
+    assert_eq!(event["params"]["threadId"], "legacy");
+    let peer = receive_type(&mut second, "event").await?;
+    assert_eq!(peer["cursor"], cursor);
+    assert_eq!(peer["payload"]["params"]["threadId"], "legacy");
+    send_json(&mut first, &json!({"type":"rpc","request":{"id":"pins","method":"companion/thread/pins/list","params":{}}})).await?;
+    let pins = receive_type(&mut first, "rpc").await?;
+    assert_eq!(pins["response"]["result"]["threadIds"], json!(["legacy"]));
+    assert!(observed_rx.try_recv().is_err());
+    server_task.abort();
+    fake.abort();
+    Ok(())
 }

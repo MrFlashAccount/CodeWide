@@ -49,6 +49,7 @@ type CodeWideMenuProps = {
   onDismiss: () => void;
   onSelect: (id: string) => void;
   style?: StyleProp<ViewStyle>;
+  triggerSize?: { readonly height: number; readonly width: number };
 };
 
 /**
@@ -66,10 +67,16 @@ export function CodeWideMenu({
   onDismiss,
   onSelect,
   style,
+  triggerSize,
 }: CodeWideMenuProps): ReactElement {
   const dismiss = useEvent(onDismiss);
   return (
-    <Host colorScheme="dark" matchContents pointerEvents="box-none" style={style}>
+    <Host
+      colorScheme="dark"
+      matchContents={triggerSize === undefined}
+      pointerEvents="box-none"
+      style={[style, triggerSize]}
+    >
       <MenuPopup
         actions={actions}
         expanded={expanded}

@@ -56,10 +56,12 @@ it("records project-picker navigation direction without animating its initial pa
   const props = {
     browseOnly: false,
     busy: false,
-    cwd: "/workspace",
-    discoveredProjects: [],
+    current: { connectionId: "server", cwd: "/workspace" },
+    choices: [],
+    initialConnectionId: "server",
+    servers: [{ id: "server", iconId: "desktop" as const, name: "Server", available: true }],
     error: null,
-    onAddProject: jest.fn(async (path: string) => ({
+    onAddProject: jest.fn(async (_connectionId: string, path: string) => ({
       addedAt: 1,
       lastUsedAt: 1,
       name: "Project",
@@ -69,7 +71,6 @@ it("records project-picker navigation direction without animating its initial pa
     onClose: jest.fn(),
     onReadDirectory: jest.fn(async () => []),
     onSelect: jest.fn(async () => undefined),
-    projects: [],
     visible: true,
   };
   const { result } = renderHook(() => useProjectPickerSession(props));
@@ -77,7 +78,7 @@ it("records project-picker navigation direction without animating its initial pa
   expect(result.current.mode).toBe("projects");
   expect(result.current.navigationDirection).toBeNull();
 
-  act(() => result.current.openDirectoryPicker());
+  act(() => result.current.openDirectoryPicker("server"));
   expect(result.current.mode).toBe("directory");
   expect(result.current.navigationDirection).toBe("forward");
 
@@ -262,4 +263,31 @@ it("ignores project completion from a replaced conversation activation", async (
   expect(result.current.projectPickerVisible).toBe(true);
   expect(result.current.projectChangeBusy).toBe(false);
   expect(result.current.projectChangeError).toBeNull();
+});
+
+it("keeps a replacement picker's activation open after a qualified change completes", async () => {
+  const change = pending();
+  const { result, rerender } = renderHook(
+    ({ scope }) => {
+      const owner = useConversationOwner(scope);
+      return useComposerProjectSelection(scope, async () => undefined, jest.fn(), owner);
+    },
+    { initialProps: { scope: "first" } },
+  );
+  act(() => result.current.openProjectPicker());
+  let completion = Promise.resolve();
+  act(() => {
+    completion = result.current.selectQualifiedProject(
+      { connectionId: "lab", cwd: "/project" },
+      () => change.promise,
+    );
+  });
+  rerender({ scope: "second" });
+  act(() => result.current.openProjectPicker());
+  await act(async () => {
+    change.resolve();
+    await completion;
+  });
+  expect(result.current.projectPickerVisible).toBe(true);
+  expect(result.current.projectChangeBusy).toBe(false);
 });

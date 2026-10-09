@@ -22,6 +22,26 @@ function mint() {
 }
 
 describe("V1 workspace session ownership", () => {
+  it("rejects a late authorization mint after removal, including callers sharing it", async () => {
+    const pending = mint();
+    const saved = connection("https://one.example");
+    let calls = 0;
+    const sessions = createWorkspaceSession({
+      projectConnections: () => [],
+      mintNativeSession: () =>
+        ++calls === 1
+          ? pending.promise
+          : Promise.resolve({ sessionToken: "new-test-token", expiresAt: Date.now() + 60_000 }),
+      randomUUID: () => "unused",
+    });
+    const first = sessions.scopedHttpAuthorization(saved);
+    const duplicate = sessions.scopedHttpAuthorization(saved);
+    const settled = Promise.allSettled([first, duplicate]);
+    sessions.forgetHttpAuthorization(saved.id);
+    pending.resolve({ sessionToken: "removed-test-token", expiresAt: Date.now() + 60_000 });
+    expect((await settled).map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(await sessions.scopedHttpAuthorization(saved)).toBe("Bearer new-test-token");
+  });
   it("shares one credential-qualified mint and reuses its unexpired authorization", async () => {
     const pending = mint();
     const saved = connection("https://one.example");

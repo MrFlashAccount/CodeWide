@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicLong
 
-internal class NativeRpcException(val rpcCode: Int, message: String) : Exception(message)
+internal class NativeRpcException(val rpcCode: Int, message: String, val rpcData: Any? = null) : Exception(message)
 
 /**
  * Durable owner of the CodeWide sync protocol.

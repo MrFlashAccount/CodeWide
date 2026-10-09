@@ -10,6 +10,7 @@ import type { ThreadListSources } from "../../features/threadList/threadListSour
 import type { useWorkspaceListBindings } from "../../features/workspace/workspaceListBindings";
 import type { useWorkspaceProjectBindings } from "../../features/workspace/workspaceProjectBindings";
 import type { EdgeInsets } from "react-native-safe-area-context";
+import type { V1ThreadRouteParams } from "../threads/threadRouteParams";
 
 /** Mounted runtime and feature resources shared by nested V1 route organisms. */
 export type WorkspaceRouteResources = {
@@ -25,6 +26,12 @@ export type WorkspaceRouteResources = {
     url: string,
     headers?: Readonly<Record<string, string>>,
   ) => void;
+  readonly openBrowserInThread: (
+    title: string,
+    url: string,
+    thread: V1ThreadRouteParams | null,
+  ) => void;
+  readonly openBrowserTabs: (thread: V1ThreadRouteParams) => void;
   readonly openNewThread: (connectionId: string, cwd: string | null) => void;
   readonly pendingRequests: PendingServerRequest[];
   readonly project: ReturnType<typeof useWorkspaceProjectBindings>;

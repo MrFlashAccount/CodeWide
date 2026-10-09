@@ -2,9 +2,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, View, type TextInput } from "react-native";
 import Reanimated, { Easing, LinearTransition } from "react-native-reanimated";
+import { useReducedMotionPreference } from "../../rendering/reduced-motion-store";
+import { BROWSER_HOME_URL } from "../../services/browser/browserTab";
 import { colors, controlSize, iconSize, radii, spacing, typeScale } from "../../theme";
 import { AppText, AppTextInput } from "../../ui/Typography";
+import { useEvent } from "../../react/useEvent";
 import { resolveBrowserAddress } from "./browser-address";
+import { browserTabLabel } from "./browserNavigationPolicy";
 
 interface BrowserAddressBarProps {
   readonly onEditingChange?: (editing: boolean) => void;
@@ -15,29 +19,39 @@ type AddressEdit =
   | { readonly status: "view" }
   | { readonly error: string | null; readonly status: "edit"; readonly text: string };
 
+function browserDisplayAddress(url: string): string {
+  return url === "about:blank" || url === BROWSER_HOME_URL ? "" : browserTabLabel(url);
+}
+
 /** A draft survives redirects; only submit or cancel gives ownership back to the page. */
-export function BrowserAddressBar(props: BrowserAddressBarProps) {
+export function BrowserAddressBar(props: BrowserAddressBarProps): React.JSX.Element {
+  const addressTransition = useAddressTransition();
+  const displayedAddress = browserDisplayAddress(props.url);
   const [edit, setEdit] = useState<AddressEdit>({ status: "view" });
   const input = useRef<TextInput>(null);
-  const focus = () => {
+  const focus = useEvent(() => {
     if (edit.status !== "view") {
       return;
     }
-    setEdit({ error: null, status: "edit", text: props.url });
+    setEdit({
+      error: null,
+      status: "edit",
+      text: props.url === "about:blank" || props.url === BROWSER_HOME_URL ? "" : props.url,
+    });
     props.onEditingChange?.(true);
-  };
-  const change = (text: string) => {
+  });
+  const change = useEvent((text: string) => {
     setEdit({ error: null, status: "edit", text });
-  };
-  const finishEditing = () => {
+  });
+  const finishEditing = useEvent(() => {
     setEdit({ status: "view" });
     props.onEditingChange?.(false);
     input.current?.blur();
-  };
-  const cancel = () => {
+  });
+  const cancel = useEvent(() => {
     finishEditing();
-  };
-  const submit = () => {
+  });
+  const submit = useEvent(() => {
     const text = edit.status === "edit" ? edit.text : props.url;
     let errorMessage: string | null = null;
     try {
@@ -51,10 +65,10 @@ export function BrowserAddressBar(props: BrowserAddressBarProps) {
       return;
     }
     finishEditing();
-  };
+  });
   return (
     <Reanimated.View
-      layout={addressLayoutTransition}
+      layout={addressTransition}
       style={[styles.root, edit.status === "edit" && styles.rootEditing]}
     >
       <View style={[styles.row, edit.status === "edit" && styles.rowEditing]}>
@@ -72,7 +86,7 @@ export function BrowserAddressBar(props: BrowserAddressBarProps) {
           returnKeyType="go"
           selectTextOnFocus
           style={styles.input}
-          value={edit.status === "edit" ? edit.text : props.url}
+          value={edit.status === "edit" ? edit.text : displayedAddress}
           voiceInput={false}
         />
         {edit.status === "edit" && (
@@ -105,7 +119,15 @@ export function BrowserAddressBar(props: BrowserAddressBarProps) {
   );
 }
 
-const addressLayoutTransition = LinearTransition.duration(240).easing(Easing.inOut(Easing.cubic));
+const ADDRESS_TRANSITION_MS = 240;
+const addressLayoutTransition = LinearTransition.duration(ADDRESS_TRANSITION_MS).easing(
+  Easing.inOut(Easing.cubic),
+);
+const reducedAddressTransition = LinearTransition.duration(0);
+
+function useAddressTransition() {
+  return useReducedMotionPreference() ? reducedAddressTransition : addressLayoutTransition;
+}
 
 const styles = StyleSheet.create({
   button: {
@@ -126,7 +148,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    ...typeScale.label,
+    ...typeScale.body,
   },
   root: {
     flex: 1,

@@ -31,3 +31,5 @@ project/mode key across mobile route and desktop sidebar presentations. Wide pro
 changes retain the selected conversation; project navigation targets the existing catalog stack without changing conversation focus.
 
 The unread slot prioritizes a raised-hand icon for current pending requests, waiting flags and observed async questions. Opening a thread does not resolve that attention. The unread state is retained and reappears after attention clears. This owner consumes summary metadata without loading chat history for each row.
+
+Session rows and pinned project shortcuts share the UI-owned RowActionMenu and RowActionTrigger native primitives. These primitives own only transient popup anchoring, dismissal, haptics, accessibility activation and scroll-safe tap/long-press recognition. Feature-specific commands, errors, layout, selection and swipe policy stay in their respective owners. Both retain the 350 ms hold and 8 dp cancellation threshold, with no Compose host in idle rows.

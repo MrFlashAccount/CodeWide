@@ -60,6 +60,7 @@ export type ComposerFeatureProps = {
   handleComposerLargePaste: (event: LargePasteEvent) => void;
   handleComposerTextChange: (next: ComposerTextSnapshot) => void;
   handleDeliveryAction: (id: string) => void;
+  leadingContextChips?: ReactNode;
   microphoneAccess: { allowCapture: () => boolean; granted: boolean };
   microphoneButtonRef: RefObject<View | null>;
   newChat: boolean;
@@ -76,6 +77,7 @@ export type ComposerFeatureProps = {
   readOnly: boolean;
   remoteThread: Thread | null | undefined;
   removeComposerAttachment: (attachmentId: string) => void;
+  resumeAction: "Resume goal" | "Continue response" | null;
   retryVoice: () => Promise<void>;
   searchComposerSuggestions: (query: {
     readonly indicator: "/" | "@";

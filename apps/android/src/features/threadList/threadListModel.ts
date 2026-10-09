@@ -4,7 +4,7 @@ import type { ThreadListSources } from "./threadListSources";
 import { useThreadSummaryView } from "../../data/use-thread-summary-view";
 import { threadListLayout } from "../../ui/thread-list-layout";
 import { threadSelectionKey } from "../../services/threads/threadRouteParams";
-import type { SidebarProject } from "../projects/sidebarProjects";
+import type { SidebarProject, SidebarProjectActions } from "../projects/sidebarProjects";
 import { sidebarListState, type SidebarListState } from "./SidebarListFeedback";
 import type { SidebarRow } from "./sidebarRows";
 import { ThreadListProjection } from "./summaryProjection";
@@ -22,6 +22,8 @@ export type SidebarProjectsNavigation = {
   onManageProjects: () => void;
   onOpenProject: (project: SidebarProject) => void;
   project: SidebarProject | null;
+  /** Omitted by read-only list consumers and project-only routes. */
+  projectActions?: SidebarProjectActions;
   projectLimit: number;
   projects: readonly SidebarProject[];
   remote: ThreadListSources;

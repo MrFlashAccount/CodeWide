@@ -1,6 +1,6 @@
 import type { MainThreadReadCapabilities } from "./mainThreadReadCapabilities";
 import type { ConversationSurfaceCapabilities } from "./conversationSurfaceCapabilities";
-import { createElement, Fragment, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { ConversationAttachmentCapabilities } from "../attachments/conversationAttachmentCapabilities";
 import type { ComposerWorkspaceCapabilities } from "../composer/composerWorkspaceCapabilities";
 import type { useDocumentTransferAccess } from "../attachments/documentNavigation";
@@ -46,12 +46,6 @@ export function createConversationComposerContent({
   timelineRead: ReturnType<typeof useConversationTimelineRead>;
   toolsBinding: ReturnType<typeof useConversationTools>;
 }): { readonly composerContent: React.JSX.Element } {
-  const toolContextChips = createElement(
-    Fragment,
-    null,
-    goalContent,
-    toolsBinding.toolContextChips,
-  );
   const composerContent = (
     <ConversationComposerSlot state={readInputs.composerState}>
       <ComposerFeature
@@ -98,6 +92,7 @@ export function createConversationComposerContent({
           composerStateBinding.composerEditingBinding.handleComposerTextChange
         }
         handleDeliveryAction={composerDelivery.composerDeliveryBinding.handleDeliveryAction}
+        leadingContextChips={goalContent}
         microphoneAccess={composerDelivery.composerDeliveryBinding.microphoneAccess}
         microphoneButtonRef={composerStateBinding.composerVoiceStateBinding.microphoneButtonRef}
         newChat={surfaceInputs.newChat}
@@ -118,6 +113,7 @@ export function createConversationComposerContent({
         removeComposerAttachment={
           composerCommands.composerAttachmentsBinding.removeComposerAttachment
         }
+        resumeAction={composerDelivery.composerDeliveryBinding.resumeAction}
         retryVoice={composerDelivery.composerDeliveryBinding.retryVoice}
         searchComposerSuggestions={
           composerStateBinding.composerEditingBinding.searchComposerSuggestions
@@ -142,7 +138,7 @@ export function createConversationComposerContent({
         terminalEnabled={composerDelivery.composerAccessoryActionsBinding.terminalEnabled}
         threadLifecycleActive={timelineRead.conversationPresentationBinding.threadLifecycleActive}
         toggleVoice={composerDelivery.composerDeliveryBinding.toggleVoice}
-        toolContextChips={toolContextChips}
+        toolContextChips={toolsBinding.toolContextChips}
         useAnchoredComposerMenu={
           composerDelivery.composerAccessoryActionsBinding.useAnchoredComposerMenu
         }

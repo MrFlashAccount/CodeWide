@@ -174,6 +174,12 @@ impl SessionCatalog {
         Ok(path.map(PathBuf::from))
     }
 
+    /// Resolves archive membership from the canonical rollout roots.
+    pub(crate) fn thread_archived(&self, thread_id: &str) -> Result<bool, CatalogError> {
+        let path = self.resolve(thread_id)?;
+        Ok(self.roots.iter().skip(1).any(|root| path.starts_with(root)))
+    }
+
     pub(crate) fn summary(&self) -> Result<crate::catalog_summary::CatalogSummary, CatalogError> {
         Ok(crate::catalog_summary::read(&self.state_db)?)
     }

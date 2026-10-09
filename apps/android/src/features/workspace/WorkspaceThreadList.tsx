@@ -28,6 +28,7 @@ export function WorkspaceThreadList({
   openSidebarProject,
   openTerminals,
   pinnedSidebarProjects,
+  projectActions,
   projectLimit,
   refreshThreadListAccountRateLimits,
   selectedThreadKey,
@@ -71,6 +72,7 @@ export function WorkspaceThreadList({
   openSidebarProject: ThreadSidebarProps["onOpenProject"];
   openTerminals: () => void;
   pinnedSidebarProjects: ThreadSidebarProps["projects"];
+  projectActions: ThreadSidebarProps["projectActions"];
   projectLimit: ThreadSidebarProps["projectLimit"];
   refreshThreadListAccountRateLimits: NonNullable<ThreadSidebarProps["onRefreshAccountRateLimits"]>;
   selectedThreadKey: ThreadSidebarProps["selectedThreadKey"];
@@ -135,6 +137,7 @@ export function WorkspaceThreadList({
                 onToggleRead: toggleListThreadRead,
                 onUnarchive: unarchiveListThread,
                 project: sidebarProject,
+                ...(projectActions === undefined ? {} : { projectActions }),
                 projectLimit: projectLimit,
                 projects: pinnedSidebarProjects,
                 remote: threadListSources,
@@ -179,6 +182,7 @@ export function WorkspaceThreadList({
                 onToggleRead: toggleListThreadRead,
                 onUnarchive: unarchiveListThread,
                 project: sidebarProject,
+                ...(projectActions === undefined ? {} : { projectActions }),
                 projectLimit: projectLimit,
                 projects: pinnedSidebarProjects,
                 query: mobileThreadQuery,

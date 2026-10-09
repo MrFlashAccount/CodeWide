@@ -8,6 +8,11 @@ export type ComposerDeliveryCapabilities = {
   cancelQueuedComposerEdit: () => void;
   clearComposerText: () => void;
   composerScope: string;
+  continuation: {
+    readonly activate: () => void;
+    readonly disabled: boolean;
+    readonly label: "Resume goal" | "Continue response";
+  } | null;
   currentTurnId: string | null;
   discardVoice: () => Promise<void>;
   draft: string;

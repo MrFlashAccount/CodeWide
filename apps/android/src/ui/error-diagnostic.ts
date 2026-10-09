@@ -1,18 +1,14 @@
-const MAX_REPORT_CHARS = 64_000;
-const MAX_CAUSES = 6;
-const MAX_NATIVE_FRAMES = 120;
-
 /** Local, explicitly copied diagnostics only. May contain private paths; never send as telemetry. */
 export function errorDiagnostic(title: string, cause: unknown): string {
   const parts = [`CodeWide error: ${title}`, `Occurred at: ${new Date().toISOString()}`];
   const seen = new Set<unknown>();
   let current = cause;
-  for (let depth = 0; depth < MAX_CAUSES; depth += 1) {
+  for (let depth = 0; ; depth += 1) {
     if (depth > 0) {
       parts.push("Caused by:");
     }
     if (typeof current === "string") {
-      parts.push(current.slice(0, MAX_REPORT_CHARS));
+      parts.push(current);
       break;
     }
     if (current === null || typeof current !== "object") {
@@ -27,7 +23,7 @@ export function errorDiagnostic(title: string, cause: unknown): string {
     for (const key of ["name", "message", "code", "stack"] as const) {
       const value = readProperty(current, key);
       if (typeof value === "string") {
-        parts.push(`${key}: ${value.slice(0, MAX_REPORT_CHARS)}`);
+        parts.push(`${key}: ${value}`);
       } else if (typeof value === "number") {
         parts.push(`${key}: ${String(value)}`);
       }
@@ -35,8 +31,8 @@ export function errorDiagnostic(title: string, cause: unknown): string {
     const frames = readProperty(current, "nativeStackAndroid");
     if (Array.isArray(frames)) {
       parts.push("Android native stack:");
-      for (let index = 0; index < Math.min(frames.length, MAX_NATIVE_FRAMES); index += 1) {
-        const frame: unknown = frames[index];
+      const nativeFrames: readonly unknown[] = frames;
+      for (const frame of nativeFrames) {
         if (frame === null || typeof frame !== "object") {
           continue;
         }
@@ -44,29 +40,20 @@ export function errorDiagnostic(title: string, cause: unknown): string {
         for (const key of ["class", "methodName", "file", "lineNumber"] as const) {
           const value = readProperty(frame, key);
           if (typeof value === "string") {
-            fields.push(`${key}=${value.slice(0, 2000)}`);
+            fields.push(`${key}=${value}`);
           } else if (typeof value === "number") {
             fields.push(`${key}=${String(value)}`);
           }
         }
         parts.push(fields.join(" "));
       }
-      if (frames.length > MAX_NATIVE_FRAMES) {
-        parts.push("[Native stack truncated]");
-      }
     }
     current = readProperty(current, "cause");
     if (current === undefined) {
       break;
     }
-    if (depth === MAX_CAUSES - 1) {
-      parts.push("[Cause chain truncated]");
-    }
   }
-  const report = parts.join("\n\n");
-  return report.length <= MAX_REPORT_CHARS
-    ? report
-    : `${report.slice(0, MAX_REPORT_CHARS)}\n[Report truncated]`;
+  return parts.join("\n\n");
 }
 
 function readProperty(value: unknown, key: string): unknown {

@@ -1,48 +1,45 @@
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import {
-  Pressable,
-  StyleSheet,
-  type PressableStateCallbackType,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { Pressable, StyleSheet } from "react-native";
 
 import { colors, controlSize, iconSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import { threadGoalStatusLabel } from "./goalStatus";
 
 interface ThreadGoalChipProps {
+  expanded?: boolean;
   goal: ThreadGoal;
+  maxWidth?: number;
   onPress: () => void;
 }
 
+const PRESSED_OPACITY = 0.72;
+
 export function ThreadGoalChip(props: ThreadGoalChipProps): React.JSX.Element {
-  const { goal, onPress } = props;
+  const { expanded = false, goal, maxWidth, onPress } = props;
   const status = threadGoalStatusLabel(goal.status);
   return (
     <Pressable
-      accessibilityHint="Opens the goal editor"
+      accessibilityHint="Shows goal details and actions"
       accessibilityLabel={`Goal, ${status}, ${goal.objective}`}
       accessibilityRole="button"
+      accessibilityState={{ expanded }}
       onPress={onPress}
-      style={goalChipStyle}
+      style={({ pressed }) => [
+        styles.trigger,
+        maxWidth === undefined ? null : { maxWidth },
+        pressed && styles.pressed,
+      ]}
       testID="thread-goal-chip"
     >
       <Ionicons color={colors.textMuted} name="flag-outline" size={iconSize.inline} />
       <Text style={styles.title}>Goal</Text>
       <Text style={styles.divider}>·</Text>
-      <Text ellipsizeMode="tail" numberOfLines={1} style={styles.objective}>
-        {goal.objective}
+      <Text ellipsizeMode="tail" numberOfLines={1} style={styles.status}>
+        {status}
       </Text>
-      <Text style={styles.divider}>·</Text>
-      <Text style={styles.status}>{status}</Text>
     </Pressable>
   );
-}
-
-function goalChipStyle(state: PressableStateCallbackType): StyleProp<ViewStyle> {
-  return [styles.trigger, state.pressed && styles.pressed];
 }
 
 const styles = StyleSheet.create({
@@ -51,16 +48,11 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     ...typeScale.label,
   },
-  objective: {
-    color: colors.textMuted,
-    flex: 1,
-    minWidth: 0,
-    ...typeScale.label,
-  },
-  pressed: { opacity: 0.72 },
+  pressed: { opacity: PRESSED_OPACITY },
   status: {
     color: colors.textMuted,
-    flexShrink: 0,
+    flexShrink: 1,
+    minWidth: 0,
     ...typeScale.label,
   },
   title: {
@@ -75,12 +67,12 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
     borderRadius: radii.pill,
     borderWidth: 1,
-    elevation: 4,
     flexDirection: "row",
     flexShrink: 1,
     gap: spacing.xxs,
-    maxWidth: "92%",
     minHeight: controlSize.compact,
+    minWidth: 0,
+    overflow: "hidden",
     paddingHorizontal: spacing.sm,
   },
 });

@@ -1,12 +1,14 @@
+import type { NewChatProjectPickerBinding } from "./NewChatProjectPicker";
 import type { RemoteDirectoryEntry, RemoteProject } from "../../data/remote-projects";
 import type { NewChatWorkspaceMode, WorkspaceSupport } from "../../data/workspace-creation";
 /** Qualified capabilities consumed by the projects owner in conversation composition. */
 export type ProjectConversationCapabilities = {
   discoveredProjects: readonly RemoteProject[];
+  newChatPicker?: NewChatProjectPickerBinding | null;
   onAddProject: ((path: string) => Promise<RemoteProject>) | undefined;
   onChangeProject: ((cwd: string | null) => Promise<void>) | undefined;
   onChangeWorkspaceMode: ((mode: NewChatWorkspaceMode) => void) | undefined;
-  onManageProjects: (() => void) | undefined;
+  onManageProjects: ((connectionId?: string | null) => void) | undefined;
   onReadDirectory: ((path: string) => Promise<RemoteDirectoryEntry[]>) | undefined;
   projectLoadError: string | null;
   projects: readonly RemoteProject[];

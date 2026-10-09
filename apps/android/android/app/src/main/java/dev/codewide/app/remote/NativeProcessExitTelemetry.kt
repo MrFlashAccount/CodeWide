@@ -3,6 +3,9 @@ package dev.codewide.app.remote
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
+import dev.codewide.app.diagnostics.NativeDiagnosticRuntime
+import dev.codewide.app.diagnostics.AndroidTombstoneTrace
+import org.json.JSONObject
 
 internal data class NativeProcessExitRecord(
   val timestampUnixMs: Long,
@@ -102,7 +105,25 @@ internal class NativeProcessExitTelemetry(context: Context) {
       null
     }
     val records = buildList {
-      activityManager.getHistoricalProcessExitReasons(packageName, 0, MAX_EXIT_RECORDS).forEach { exit ->
+      // Android owns history retention. maxNum=0 reads every available record without an additional app cutoff.
+      activityManager.getHistoricalProcessExitReasons(packageName, 0, 0).forEach { exit ->
+        if (checkpoint == null || exit.timestamp > checkpoint) {
+          val trace = exit.traceInputStream?.use { stream ->
+            if (exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE) AndroidTombstoneTrace.read(stream)
+            else stream.bufferedReader(Charsets.UTF_8).readText()
+          }.orEmpty()
+          // Persist complete exit diagnostics before advancing the old numeric-telemetry checkpoint.
+          // The native outbox retains these reports independently of JS publication and server reachability.
+          NativeDiagnosticRuntime.append(
+            JSONObject().put("source", "process_exit").put("event", "app.previous_process_exit")
+              .put("level", if (exit.reason in arrayOf(ApplicationExitInfo.REASON_CRASH, ApplicationExitInfo.REASON_CRASH_NATIVE, ApplicationExitInfo.REASON_ANR)) "fatal" else "info")
+              .put("occurredAtUnixMs", exit.timestamp)
+              .put("err", JSONObject().put("name", "ApplicationExitInfo").put("message", exit.description.orEmpty()).put("stack", trace))
+              .put("fields", JSONObject().put("reason", processExitReasonName(exit.reason)).put("status", exit.status)
+                .put("importance", exit.importance).put("pssKb", exit.pss).put("rssKb", exit.rss)
+                .put("pid", exit.pid).put("mainProcess", exit.processName == packageName)),
+          )
+        }
         add(
           NativeProcessExitRecord(
             timestampUnixMs = exit.timestamp,
@@ -136,6 +157,5 @@ internal class NativeProcessExitTelemetry(context: Context) {
   private companion object {
     const val PREFERENCES = "codewide_process_exit_telemetry"
     const val CHECKPOINT_KEY = "reported_through_timestamp_ms"
-    const val MAX_EXIT_RECORDS = 16
   }
 }

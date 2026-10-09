@@ -9,7 +9,7 @@ import android.os.SystemClock
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.BackgroundColorSpan
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.View
@@ -185,7 +185,7 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
               gutterView.text = highlighted.gutter ?: ""
               updateCodeViewportWidth(width)
               if (BuildConfig.DEBUG) {
-                Log.d(PERF_TAG, "native_code_highlight_ms=%.1f language=%s variant=%s chars=%d".format(elapsedMs, requestedLanguage, requestedVariant, source.length))
+                NativeAppLogger.debug(PERF_TAG, "native_code_highlight_ms=%.1f language=%s variant=%s chars=%d".format(elapsedMs, requestedLanguage, requestedVariant, source.length))
               }
             }
           }

@@ -66,9 +66,61 @@ const request: ThreadSummaryViewRequest = {
   subagentLimit: 0,
 };
 
-beforeEach(() => sqlite.native.exec("DROP TABLE IF EXISTS codewide_thread_summaries"));
+beforeEach(() => sqlite.native.exec("DROP TABLE IF EXISTS codewide_thread_summaries; DROP TABLE IF EXISTS codewide_legacy_thread_pins"));
 
 describe("persisted project catalog", () => {
+  it("marks every unread project chat across pages durably, leaving other projects and servers unread", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    const projectRows = [
+      summary("first", { unread: 1, latestActivityCursor: 10 }),
+      summary("second", { unread: 1, latestActivityCursor: 11, pinned: true }),
+      summary("outside-page", { unread: 1, latestActivityCursor: 12, firstUnreadAgentTurnId: "answer" }),
+      summary("archived", { unread: 1, latestActivityCursor: 13, archived: true }),
+      summary("child", { unread: 1, latestActivityCursor: 14, parentThreadId: "first" }),
+    ];
+    const untouched = [
+      summary("same-path-other-server", { connectionId: "other", unread: 1 }),
+      summary("nested-path", { cwd: "/repo/nested", unread: 1 }),
+      summary("different-project", { cwd: "/elsewhere", unread: 1 }),
+      summary("deleted", { unread: 1, deleteCommandId: "delete" }),
+    ];
+    writer.begin();
+    for (const value of [...projectRows, ...untouched]) writer.write({ type: "insert", value });
+    await writer.commit({ durable: true });
+    await writer.close();
+    const database = createThreadSummaryDatabase();
+    await database.prepare();
+    await database.loadView({ ...request, recentLimit: 1 });
+    expect(database.projectUnread.projects$.peek()).toContain("server\u0000/repo");
+    await database.markProjectRead("server", "/repo");
+    expect(database.projectUnread.projects$.peek()).not.toContain("server\u0000/repo");
+    expect(database.model.view$({ ...request, recentLimit: 1 }).peek().recent.every((row) => row.unread === 0)).toBe(true);
+    const reopened = createThreadSummarySqlite();
+    for (const row of projectRows) {
+      const persisted = await reopened.loadRow(row.connectionId, row.remoteThreadId);
+      expect(persisted).toMatchObject({ unread: 0, lastSeenCursor: row.latestActivityCursor, firstUnreadAgentTurnId: null });
+    }
+    for (const row of untouched) expect((await reopened.loadRow(row.connectionId, row.remoteThreadId))?.unread).toBe(1);
+    // A completion arriving after the read action belongs to a new unread boundary.
+    await database.applyEvents("server", [{
+      cursor: 15,
+      payload: {
+        method: "turn/completed",
+        params: { threadId: "first" },
+        codewideThreadPatch: {
+          version: 1,
+          threadId: "first",
+          operation: { kind: "turnCompleted", summary: { activity: true, finalAgentResponse: true } },
+        },
+      },
+    }]);
+    expect((await database.get("server", "first"))?.unread).toBeGreaterThan(0);
+    expect(database.projectUnread.projects$.peek()).toContain("server\u0000/repo");
+    await reopened.close();
+    database.close();
+  });
+
   it("keeps a manual unread mark through refresh and replay until marked read", async () => {
     const writer = createThreadSummarySqlite();
     await writer.prepare();
@@ -371,4 +423,79 @@ it("updates only the answered catalog row from native events without refetch and
   const retry = await reopened.get("server", "question-thread");
   expect(retry && storedThreadToListItem(retry).needsAttention).toBe(false);
   reopened.close();
+});
+
+it("captures legacy pins before clearing their display flags and preserves unread and confirmed pins", async () => {
+  const writer = createThreadSummarySqlite();
+  await writer.prepare();
+  writer.begin();
+  writer.write({ type: "insert", value: summary("legacy", { pinCursor: undefined, pinned: true, unread: 1 }) });
+  writer.write({ type: "insert", value: summary("server-pin", { connectionId: "other", pinCursor: 7, pinned: true }) });
+  await writer.commit({ durable: true });
+  await writer.close();
+  // Emulate the retired app's persisted payload, bypassing the new writer's normalization.
+  sqlite.native.exec(`UPDATE codewide_thread_summaries SET pinned = 1,
+    __payload = json_remove(json_set(__payload, '$.pinned', json('true')), '$.pinCursor')
+    WHERE thread_id = 'legacy'`);
+  const database = createThreadSummaryDatabase();
+  await database.prepare();
+  expect(await database.get("server", "legacy")).toMatchObject({ pinned: false, unread: 1 });
+  expect(await database.loadPendingPinMigration("server")).toEqual(["legacy"]);
+  expect(await database.loadPendingPinMigration("other")).toEqual([]);
+  await database.applyPinSnapshot("server", { cursor: 10, threadIds: ["legacy"] });
+  await database.applyEvents("server", [{ cursor: 11, payload: {
+    method: "companion/thread/pin/updated", params: { threadId: "legacy", pinned: false, pinCursor: 11 },
+    codewideThreadPatch: { version: 1, threadId: "legacy", operation: { kind: "threadPinned" } },
+  } }]);
+  await database.applyPinSnapshot("server", { cursor: 10, threadIds: ["legacy"] });
+  expect(await database.get("server", "legacy")).toMatchObject({ pinned: false, pinCursor: 11, unread: 1 });
+  expect(await database.get("other", "server-pin")).toMatchObject({ pinned: true, pinCursor: 7 });
+  database.close();
+  const reopened = createThreadSummarySqlite();
+  expect(await reopened.loadRow("server", "legacy")).toMatchObject({ pinned: false, pinCursor: 11 });
+  expect(await reopened.loadPendingPinMigration("server")).toEqual(["legacy"]);
+  await reopened.acknowledgePinMigration("server", ["legacy"]);
+  await reopened.close();
+  const acknowledged = createThreadSummarySqlite();
+  expect(await acknowledged.loadPendingPinMigration("server")).toEqual([]);
+  await acknowledged.close();
+});
+
+it("rolls back legacy capture and flag clearing together when an upgrade transaction fails", async () => {
+  const writer = createThreadSummarySqlite();
+  await writer.prepare();
+  writer.begin();
+  writer.write({ type: "insert", value: summary("legacy", { unread: 1 }) });
+  await writer.commit({ durable: true });
+  await writer.close();
+  sqlite.native.exec(`UPDATE codewide_thread_summaries SET pinned = 1,
+    __payload = json_remove(json_set(__payload, '$.pinned', json('true')), '$.pinCursor')`);
+  const transaction = sqlite.database.transaction.bind(sqlite.database);
+  const failure = vi.spyOn(sqlite.database, "transaction").mockImplementationOnce(async (operation) =>
+    transaction(async (executor) => {
+      await operation(executor);
+      throw new Error("Simulated upgrade commit failure");
+    }),
+  );
+  const upgrading = createThreadSummarySqlite();
+  await expect(upgrading.prepare()).rejects.toThrow("upgrade commit failure");
+  failure.mockRestore();
+  expect(sqlite.native.prepare("SELECT thread_id FROM codewide_legacy_thread_pins").all()).toEqual([]);
+  expect(sqlite.native.prepare("SELECT pinned FROM codewide_thread_summaries").get()).toMatchObject({ pinned: 1 });
+  await upgrading.prepare();
+  expect(await upgrading.loadPendingPinMigration("server")).toEqual(["legacy"]);
+  expect(await upgrading.loadRow("server", "legacy")).toMatchObject({ pinned: false, unread: 1 });
+  await upgrading.close();
+});
+
+it("retains confirmed pins outside a bounded reconnect snapshot", async () => {
+  const database = createThreadSummaryDatabase();
+  await database.prepare();
+  await database.mergeSnapshots("server", [{ archived: false, thread: createV1TestThread("old-pin", null, 1, []) }]);
+  await database.applyPinSnapshot("server", { cursor: 10, threadIds: ["old-pin"] });
+  await database.applySnapshot("server", [{ archived: false, thread: createV1TestThread("recent", null, 2, []) }], 10);
+  expect(await database.get("server", "old-pin")).toMatchObject({ pinned: true, pinCursor: 10 });
+  await database.applyPinSnapshot("server", { cursor: 11, threadIds: [] });
+  expect(await database.get("server", "old-pin")).toMatchObject({ pinned: false, pinCursor: 11 });
+  database.close();
 });

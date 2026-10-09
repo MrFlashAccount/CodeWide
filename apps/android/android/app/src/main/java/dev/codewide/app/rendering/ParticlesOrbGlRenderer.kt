@@ -2,7 +2,7 @@ package dev.codewide.app.rendering
 
 import android.opengl.GLES30
 import android.os.SystemClock
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -225,7 +225,7 @@ internal class ParticlesOrbGlRenderer(
     val now = SystemClock.elapsedRealtime()
     if (lastDiagnosticMs != Long.MIN_VALUE && now - lastDiagnosticMs < 1_000L) return
     lastDiagnosticMs = now
-    Log.i(
+    NativeAppLogger.info(
       LOG_TAG,
       "state=${input.orbState.wireValue} reducedMotion=${input.reducedMotion} frames=$renderedFrames " +
         "input=${input.inputLevel} playback=${input.playbackLevel} level=${frame.level} " +

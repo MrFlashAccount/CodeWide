@@ -1,6 +1,9 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { GetTransferAccess, PrivateAssetSource } from "../../../data/private-transfer";
-import type { ThreadChangeDiffValue } from "../../../data/thread-resource-types";
+import type {
+  ThreadChangeDiffValue,
+  ThreadChangesVcsContext,
+} from "../../../data/thread-resource-types";
 import type {
   ThreadChangeScope,
   ThreadResourcesValue,
@@ -38,5 +41,7 @@ export type CodeReviewWorkspaceProps = {
   sourceAssets?: Readonly<Record<string, PrivateAssetSource>>;
   sourceOverrides?: Readonly<Record<string, string>>;
   thread: Thread | null;
+  /** Matches the initially supplied changes; scope loads replace both atomically. */
+  vcs?: ThreadChangesVcsContext;
   voiceRuntime: AppVoiceInputRuntime | null;
 };

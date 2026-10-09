@@ -55,3 +55,9 @@ export function sidebarProjects(
   }
   return result;
 }
+
+/** Commands for a pinned project shortcut, qualified by its owning server and path. */
+export type SidebarProjectActions = {
+  readonly markAllRead: (project: SidebarProject) => Promise<void>;
+  readonly unpin: (project: SidebarProject) => Promise<void>;
+};

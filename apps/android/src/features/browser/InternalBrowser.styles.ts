@@ -14,9 +14,13 @@ export const styles = StyleSheet.create({
   button: {
     alignItems: "center",
     borderRadius: radii.small,
-    height: controlSize.regular,
+    height: controlSize.touch,
     justifyContent: "center",
-    width: controlSize.regular,
+    width: controlSize.touch,
+  },
+  compactButton: {
+    height: controlSize.compact,
+    width: controlSize.compact,
   },
   content: {
     flex: 1,
@@ -102,6 +106,18 @@ export const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     minWidth: 0,
+  },
+  tabCount: {
+    color: colors.text,
+    textAlign: "center",
+    ...typeScale.caption,
+  },
+  tabsButton: {
+    flexDirection: "row",
+    gap: spacing.xxs,
+    minWidth: controlSize.touch,
+    paddingHorizontal: spacing.xs,
+    width: "auto",
   },
   targetPane: {
     flexShrink: 0,

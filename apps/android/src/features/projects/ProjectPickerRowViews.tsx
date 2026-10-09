@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { AppButton as Button } from "../../presentation/controls/AppButton";
-import { ActivityIndicator, View } from "react-native";
-import type { RemoteProject } from "../../data/remote-projects";
+import { View } from "react-native";
+import type { ServerIconId } from "../../data/serverIcons";
+import { ServerIcon } from "../connections/ServerIcon";
+import type { ProjectDestination, ProjectPickerChoice } from "./projectPickerContract";
 import { projectIncludesDirectory } from "../../data/remote-projects";
 import type { ComposeIconName } from "../../presentation/icons/composeIconNames";
 import { colors, iconSize } from "../../theme";
@@ -10,6 +12,17 @@ import { listRowHeight, type AppListRowProps } from "../../ui/AppListRow.types";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ProjectPickerSheet.styles";
 
+function choiceIsSelected(
+  current: ProjectDestination | null,
+  choice: ProjectPickerChoice,
+): boolean {
+  return (
+    current?.connectionId === choice.server.id &&
+    projectIncludesDirectory(choice.project, current.cwd ?? "")
+  );
+}
+
+/** Section heading and count for the virtualized picker. */
 export function SectionLabel({ count, title }: { count: number; title: string }) {
   return (
     <View style={styles.sectionLabel}>
@@ -18,26 +31,28 @@ export function SectionLabel({ count, title }: { count: number; title: string })
     </View>
   );
 }
+/** Project selection includes server identity in both its display and callback. */
 export function ProjectChoiceRow({
   busy,
-  cwd,
+  choice,
+  current,
   onPin,
   onSelect,
   pinned = false,
   pinning = false,
   position = "only",
-  project,
 }: {
   busy: boolean;
-  cwd: string;
+  choice: ProjectPickerChoice;
+  current: ProjectDestination | null;
   onPin?: (() => void) | undefined;
-  onSelect: (cwd: string | null) => void;
+  onSelect: (destination: ProjectDestination) => void;
   pinned?: boolean;
   pinning?: boolean;
   position?: AppListRowProps["position"];
-  project: RemoteProject;
 }) {
-  const selected = projectIncludesDirectory(project, cwd);
+  const { project, server } = choice;
+  const selected = choiceIsSelected(current, choice);
   return (
     <PickerRow
       action={
@@ -50,20 +65,22 @@ export function ProjectChoiceRow({
               onPress: onPin,
             }
       }
-      disabled={busy}
+      disabled={busy || !server.available}
       icon={pinned ? "pin" : "folder-outline"}
       onPress={() => {
         if (!busy && !selected) {
-          onSelect(project.path);
+          onSelect({ connectionId: server.id, cwd: project.path });
         }
       }}
       position={position}
       selected={selected}
-      subtitle={project.path}
+      serverIconId={server.iconId}
+      subtitle={`${server.name} · ${project.path}${server.available ? "" : " · Offline"}`}
       title={project.name}
     />
   );
 }
+/** Shared selection row with optional project-management action. */
 export function PickerRow({
   action,
   chevron = false,
@@ -72,6 +89,7 @@ export function PickerRow({
   onPress,
   position = "only",
   selected,
+  serverIconId,
   subtitle,
   title,
 }: {
@@ -89,13 +107,18 @@ export function PickerRow({
   onPress: () => void;
   position?: AppListRowProps["position"];
   selected: boolean;
+  serverIconId?: ServerIconId;
   subtitle?: string;
   title: string;
 }) {
   return (
     <AppListRow
       title={title}
+      {...(subtitle === undefined ? {} : { accessibilityHint: subtitle })}
       {...(subtitle === undefined ? {} : { description: subtitle })}
+      {...(serverIconId === undefined
+        ? {}
+        : { descriptionLeading: <ServerIcon iconId={serverIconId} metric="caption" /> })}
       disabled={disabled}
       fixedHeight={subtitle === undefined ? listRowHeight.single : listRowHeight.double}
       leadingIcon={{ color: colors.textMuted, name: icon, size: iconSize.action }}
@@ -113,11 +136,9 @@ export function PickerRow({
                 style={styles.rowAction}
                 variant="outline"
               >
-                {action.loading ? (
-                  <ActivityIndicator color={colors.text} size="small" />
-                ) : (
-                  action.label
-                )}
+                <Text shimmering={action.loading} style={styles.sectionTitle}>
+                  {action.label}
+                </Text>
               </Button>
             ),
           }
@@ -133,6 +154,7 @@ export function PickerRow({
     />
   );
 }
+/** Local empty or unavailable picker state. */
 export function EmptyState({
   compact = false,
   icon,

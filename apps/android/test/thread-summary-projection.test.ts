@@ -48,6 +48,29 @@ function thread(turns: unknown[] = []): Thread {
 }
 
 describe("thread summary projection", () => {
+  it("restores Running from the next rollout step after a final snapshot", () => {
+    const final = projectThreadSummaryEvent("server", {
+      params: { turn: { id: "finished", status: "completed" } },
+      codewideThreadPatch: { version: 1, threadId: "thread", operation: {
+        kind: "turnCompleted", summary: { activity: true, finalAgentResponse: true, previewText: "Answer" },
+      } },
+    }, () => ({ ...summary(), status: { type: "active", activeFlags: [] } }), 42, 1);
+    expect(final?.value?.status.type).toBe("idle");
+    const duplicateStart = projectThreadSummaryEvent("server", {
+      params: { turn: { id: "finished", status: "inProgress" } },
+      codewideThreadPatch: { version: 1, threadId: "thread", operation: { kind: "turnStarted" } },
+    }, () => final?.value ?? summary(), 43, 2);
+    expect(duplicateStart).toBeNull();
+    const next = projectThreadSummaryEvent("server", {
+      params: { turnActive: true },
+      codewideThreadPatch: { version: 1, threadId: "thread", operation: {
+        kind: "threadProgress", summary: { activity: true, conversationMessage: true, previewText: "Next question" },
+      } },
+    }, () => final?.value ?? summary(), 43, 2);
+    expect(next?.value?.status.type).toBe("active");
+    expect(next?.value?.preview).toBe("Next question");
+  });
+
   it("scopes subagent catalog replacement to one recursive descendant tree", () => {
     const rows = [
       { ...summary(), remoteThreadId: "root" },
@@ -152,7 +175,7 @@ describe("thread summary projection", () => {
     const result = projectThreadSummarySnapshot("server", { ...thread(), preview: "" }, false, summary());
 
     expect(result.preview).toBe("Latest cached answer");
-    expect(result.pinned).toBe(true);
+    expect(result.pinned).toBe(false);
   });
 
   it("uses the companion-projected list preview over a stale local preview", () => {
@@ -234,7 +257,7 @@ describe("thread summary projection", () => {
 
     expect(mutation).toEqual({
       key: threadSummaryKey("server", "thread"),
-      value: { ...current, preview: "Stream complete", updatedAt: 42, latestActivityCursor: 7, unread: 0 },
+      value: { ...current, preview: "Stream complete", updatedAt: 42, latestActivityCursor: 7, projectionCursor: 7, unread: 0 },
     });
   });
 
@@ -455,3 +478,21 @@ function semanticEvent(operation: Record<string, unknown>): Record<string, unkno
     codewideThreadPatch: { version: 1, threadId: "thread", operation },
   };
 }
+
+
+describe("Companion-owned thread pins", () => {
+  it("ignores retired local pins and reads the server pin", () => {
+    expect(projectThreadSummarySnapshot("server", thread(), false, summary()).pinned).toBe(false);
+    const pinned = { ...thread(), codewide: { threadPin: { version: 1, cursor: 8, pinned: true } } };
+    expect(projectThreadSummarySnapshot("server", pinned, false, summary())).toMatchObject({ pinned: true, pinCursor: 8 });
+  });
+  it("preserves newer pin events through stale snapshots without changing recency or unread", () => {
+    const previous = { ...summary(), pinCursor: 8, pinned: false, unread: 1 };
+    const event = { method: "companion/thread/pin/updated", params: { threadId: "thread", pinned: true, pinCursor: 9 }, codewideThreadPatch: { version: 1, threadId: "thread", operation: { kind: "threadPinned" } } };
+    const result = projectThreadSummaryEvent("server", event, () => previous, 500, 9)?.value;
+    expect(result).toMatchObject({ pinned: true, pinCursor: 9, unread: 1, updatedAt: previous.updatedAt, recencyAt: previous.recencyAt, latestActivityCursor: previous.latestActivityCursor });
+    if (!result) throw new Error("Pin event was not projected");
+    expect(projectThreadSummaryEvent("server", { ...event, params: { ...event.params, pinned: false, pinCursor: 7 } }, () => result)).toBeNull();
+    expect(projectThreadSummarySnapshot("server", thread(), false, result).pinned).toBe(true);
+  });
+});

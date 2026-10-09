@@ -24,6 +24,7 @@ type Props = Pick<
   | "openControls"
   | "selectPermissions"
   | "toolContextChips"
+  | "leadingContextChips"
 >;
 export function ComposerContextStrip({
   applyModelSettings,
@@ -31,6 +32,7 @@ export function ComposerContextStrip({
   controlError,
   controlsResourceId,
   cwd,
+  leadingContextChips,
   newChat,
   onLoadControls,
   openControls,
@@ -45,7 +47,7 @@ export function ComposerContextStrip({
   selectPermissions,
   toolContextChips,
   workspaceResources,
-}: Props) {
+}: Props): React.JSX.Element {
   return (
     <ScrollView
       contentContainerStyle={styles.composerContextContent}
@@ -54,6 +56,7 @@ export function ComposerContextStrip({
       style={styles.composerContextStrip}
       testID="composer-context-strip"
     >
+      {leadingContextChips}
       <ComposerControlChips
         cwd={cwd}
         error={controlError}

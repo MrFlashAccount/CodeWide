@@ -84,6 +84,8 @@ internal class NativeSessionCredentialsStore(context: Context) {
   }
 
   fun upsert(session: StoredNativeSession) {
+    // Register before any subsequent error can include this capability; keep the diagnostic lock outside STORE_LOCK.
+    dev.codewide.app.diagnostics.NativeDiagnosticRuntime.rememberCredential(session.token)
     synchronized(STORE_LOCK) {
       val sessions = readUnlocked().associateByTo(linkedMapOf()) { it.id }
       sessions[session.id] = session

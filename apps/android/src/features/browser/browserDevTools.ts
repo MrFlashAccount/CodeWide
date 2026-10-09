@@ -1,44 +1,35 @@
 import type { RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { WebView, WebViewMessageEvent, WebViewNavigation } from "react-native-webview";
-import {
-  startNativeBrowserDevToolsBridge,
-  stopNativeBrowserDevToolsBridge,
-  type NativeBrowserDevToolsBridge,
-} from "../../native/native-transport";
 import { appLogger } from "../../observability/logger";
+import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
 import {
   createDevToolsFailure,
   type DevToolsFailure,
   type DevToolsFailureKind,
 } from "../../ui/DevToolsErrorBoundary";
-import { captureBrowserScreenshot } from "./capture-screenshot";
 import { parseDevToolsMessage, redactDevToolsUrl, type DevToolsDockSide } from "./devToolsMessage";
-import {
-  browserLocation,
-  chromiumDevToolsUrl,
-  findInspectablePage,
-  markInspectablePage,
-  proxiedWebSocketUrl,
-  type DevToolsTarget,
-} from "./devToolsTarget";
+import { browserLocation, chromiumDevToolsUrl } from "./devToolsTarget";
+import { BrowserInspectionSession } from "./browserInspectionSession";
 
 export function useBrowserDevTools(
   webView: RefObject<WebView | null>,
   navigation: Pick<WebViewNavigation, "url">,
-  onError: ((description: string) => void) | undefined,
+  options: {
+    readonly active: boolean;
+    readonly onError: ((description: string) => void) | undefined;
+  },
 ) {
+  const { active, onError } = options;
+  const inspection = useConstant(() => new BrowserInspectionSession());
   const devToolsWebView = useRef<WebView>(null);
-  const mounted = useRef(true);
-  const bridgeStarted = useRef(false);
   const [devToolsUrl, setDevToolsUrl] = useState<string | null>(null);
   const [devToolsLoading, setDevToolsLoading] = useState(false);
   const [devToolsDocumentLoading, setDevToolsDocumentLoading] = useState(false);
   const [devToolsFailure, setDevToolsFailure] = useState<DevToolsFailure | null>(null);
   const [devToolsRevision, setDevToolsRevision] = useState(0);
   const [devToolsDockSide, setDevToolsDockSide] = useState<DevToolsDockSide>("bottom");
-  const [bridge, setBridge] = useState<NativeBrowserDevToolsBridge | null>(null);
   const reportError = useEvent((cause: unknown, fallback: string) => {
     onError?.(cause instanceof Error ? cause.message : fallback);
   });
@@ -59,57 +50,36 @@ export function useBrowserDevTools(
     },
   );
   const openDevTools = useEvent(async () => {
+    if (!inspection.isActive()) {
+      return;
+    }
     setDevToolsLoading(true);
     setDevToolsDocumentLoading(true);
     setDevToolsFailure(null);
-    try {
-      const endpoint = await startNativeBrowserDevToolsBridge();
-      bridgeStarted.current = true;
-      const marker = markInspectablePage(webView.current);
-      marker.apply();
-      const target: DevToolsTarget = await findInspectablePage(
-        endpoint,
-        navigation.url,
-        marker,
-      ).finally(marker.restore);
-      if (mounted.current) {
-        setBridge(endpoint);
-        setDevToolsUrl(chromiumDevToolsUrl(endpoint, target));
-      } else {
-        bridgeStarted.current = false;
-        stopNativeBrowserDevToolsBridge();
-      }
-    } catch (error) {
-      if (bridgeStarted.current) {
-        bridgeStarted.current = false;
-        stopNativeBrowserDevToolsBridge();
-      }
-      if (mounted.current) {
-        setBridge(null);
-        setDevToolsUrl(null);
-        // WHY: A successful bridge hands this state to the WebView ready event; only bridge failure settles it here.
-        // oxlint-disable-next-line react-doctor/no-loading-flag-reset-outside-finally
-        setDevToolsDocumentLoading(false);
-        captureDevToolsFailure(
-          "bridge",
-          error instanceof Error
-            ? error.message
-            : "Could not connect Chromium DevTools to this page",
-        );
-        reportError(error, "Could not connect Chromium DevTools to this page");
-      }
+    const result = await inspection.open(webView.current, navigation.url);
+    if (result.status === "cancelled") {
+      return;
     }
-    if (mounted.current) {
-      // WHY: React Compiler cannot lower try/finally in a hook; both success and failure reach this settlement point.
-      setDevToolsLoading(false);
+    if (result.status === "ready") {
+      setDevToolsUrl(chromiumDevToolsUrl(result.endpoint, result.target));
+    } else {
+      setDevToolsUrl(null);
+      setDevToolsDocumentLoading(false);
+      const message =
+        result.cause instanceof Error
+          ? result.cause.message
+          : "Could not connect Chromium DevTools to this page";
+      captureDevToolsFailure("bridge", message);
+      reportError(result.cause, message);
     }
+    // WHY: The inspection owner returns only current results; cancelled work is
+    // settled by close. React Compiler cannot lower finally inside this UI hook.
+    // oxlint-disable-next-line react-doctor/no-loading-flag-reset-outside-finally
+    setDevToolsLoading(false);
   });
   const closeDevTools = useEvent(() => {
-    if (bridgeStarted.current) {
-      bridgeStarted.current = false;
-      stopNativeBrowserDevToolsBridge();
-    }
-    setBridge(null);
+    inspection.close();
+    setDevToolsLoading(false);
     setDevToolsUrl(null);
     setDevToolsDocumentLoading(false);
     setDevToolsFailure(null);
@@ -118,6 +88,10 @@ export function useBrowserDevTools(
   const handleDevToolsMessage = useEvent((event: WebViewMessageEvent) => {
     const message = parseDevToolsMessage(event.nativeEvent.data);
     if (message === null) {
+      return;
+    }
+    if (message.source === "codewide-devtools-ui") {
+      closeDevTools();
       return;
     }
     if (message.source === "codewide-devtools-dock") {
@@ -152,36 +126,18 @@ export function useBrowserDevTools(
     setDevToolsRevision((revision) => revision + 1);
   });
   useEffect(() => {
-    mounted.current = true;
+    inspection.setActive(active);
+    if (!active) {
+      closeDevTools();
+    }
     return () => {
-      mounted.current = false;
-      if (bridgeStarted.current) {
-        bridgeStarted.current = false;
-        stopNativeBrowserDevToolsBridge();
-      }
+      inspection.setActive(false);
     };
-  }, []);
-  const captureScreenshot = useEvent(async (): Promise<string | null> => {
-    let endpoint = bridge;
-    if (endpoint === null) {
-      endpoint = await startNativeBrowserDevToolsBridge();
-    }
-    if (!mounted.current) {
-      if (bridge === null) {
-        stopNativeBrowserDevToolsBridge();
-      }
-      return null;
-    }
-    bridgeStarted.current = true;
-    setBridge(endpoint);
-    const marker = markInspectablePage(webView.current);
-    marker.apply();
-    const target = await findInspectablePage(endpoint, navigation.url, marker).finally(
-      marker.restore,
-    );
-    return captureBrowserScreenshot(proxiedWebSocketUrl(endpoint, target));
-  });
-  const isMounted = useEvent(() => mounted.current);
+  }, [active, closeDevTools, inspection]);
+  const captureScreenshot = useEvent(async () =>
+    inspection.capture(webView.current, navigation.url),
+  );
+  const isMounted = useEvent(() => inspection.isActive());
   return {
     captureDevToolsFailure,
     captureScreenshot,

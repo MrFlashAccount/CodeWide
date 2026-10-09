@@ -1,5 +1,6 @@
 import { ActivityIndicator, View } from "react-native";
 import { WebView } from "react-native-webview";
+import { DesktopInputSurface } from "../desktopInput/DesktopInputSurface";
 import { colors } from "../../theme";
 import { DevToolsErrorBoundary, DevToolsFailurePanel } from "../../ui/DevToolsErrorBoundary";
 import { AppText as Text } from "../../ui/Typography";
@@ -17,6 +18,7 @@ export function renderBrowserDevToolsPane(
   onError: ((description: string) => void) | undefined,
   verticalDock: boolean,
   dividerPanResponder: ReturnType<typeof useBrowserPaneLayout>["dividerPanResponder"],
+  active: boolean,
 ) {
   const devToolsUrl = devTools.devToolsUrl;
   if (devToolsUrl === null) {
@@ -49,51 +51,58 @@ export function renderBrowserDevToolsPane(
         resetKey={`${devToolsUrl}:${String(devTools.devToolsRevision)}`}
       >
         <View style={styles.devToolsPane}>
-          <WebView
-            domStorageEnabled
-            injectedJavaScript={DEVTOOLS_HEALTH_PROBE}
-            injectedJavaScriptBeforeContentLoaded={DEVTOOLS_BOOTSTRAP}
-            javaScriptEnabled
-            key={`${devToolsUrl}:${String(devTools.devToolsRevision)}`}
-            onError={(event) => {
-              devTools.setDevToolsDocumentLoading(false);
-              devTools.captureDevToolsFailure(
-                "load",
-                event.nativeEvent.description,
-                `Code: ${String(event.nativeEvent.code)}`,
-              );
-              onError?.(`Chromium DevTools: ${event.nativeEvent.description}`);
-            }}
-            onHttpError={(event) => {
-              const description = `frontend returned HTTP ${String(event.nativeEvent.statusCode)}`;
-              devTools.setDevToolsDocumentLoading(false);
-              devTools.captureDevToolsFailure("load", description);
-              onError?.(`Chromium DevTools: ${description}`);
-            }}
-            onLoadStart={() => {
-              devTools.setDevToolsDocumentLoading(true);
-              devTools.setDevToolsFailure(null);
-            }}
-            onMessage={devTools.handleDevToolsMessage}
-            onRenderProcessGone={(event) => {
-              const description = event.nativeEvent.didCrash
-                ? "Android WebView renderer crashed"
-                : "Android stopped the WebView renderer";
-              devTools.setDevToolsDocumentLoading(false);
-              devTools.captureDevToolsFailure(
-                "renderer",
-                description,
-                `didCrash: ${String(event.nativeEvent.didCrash)}`,
-              );
-              onError?.(`Chromium DevTools: ${description}`);
-            }}
-            originWhitelist={["http://127.0.0.1:*"]}
-            ref={devTools.devToolsWebView}
-            setSupportMultipleWindows={false}
-            source={{ uri: devToolsUrl }}
-            style={styles.devTools}
-            testID="chromium-devtools-webview"
-          />
+          <DesktopInputSurface
+            active={inspectorInputActive(devTools, active)}
+            defaultProfile="devtools"
+            label="DevTools"
+            sessionKey={String(devTools.devToolsRevision)}
+          >
+            <WebView
+              domStorageEnabled
+              injectedJavaScript={DEVTOOLS_HEALTH_PROBE}
+              injectedJavaScriptBeforeContentLoaded={DEVTOOLS_BOOTSTRAP}
+              javaScriptEnabled
+              key={`${devToolsUrl}:${String(devTools.devToolsRevision)}`}
+              onError={(event) => {
+                devTools.setDevToolsDocumentLoading(false);
+                devTools.captureDevToolsFailure(
+                  "load",
+                  event.nativeEvent.description,
+                  `Code: ${String(event.nativeEvent.code)}`,
+                );
+                onError?.(`Chromium DevTools: ${event.nativeEvent.description}`);
+              }}
+              onHttpError={(event) => {
+                const description = `frontend returned HTTP ${String(event.nativeEvent.statusCode)}`;
+                devTools.setDevToolsDocumentLoading(false);
+                devTools.captureDevToolsFailure("load", description);
+                onError?.(`Chromium DevTools: ${description}`);
+              }}
+              onLoadStart={() => {
+                devTools.setDevToolsDocumentLoading(true);
+                devTools.setDevToolsFailure(null);
+              }}
+              onMessage={devTools.handleDevToolsMessage}
+              onRenderProcessGone={(event) => {
+                const description = event.nativeEvent.didCrash
+                  ? "Android WebView renderer crashed"
+                  : "Android stopped the WebView renderer";
+                devTools.setDevToolsDocumentLoading(false);
+                devTools.captureDevToolsFailure(
+                  "renderer",
+                  description,
+                  `didCrash: ${String(event.nativeEvent.didCrash)}`,
+                );
+                onError?.(`Chromium DevTools: ${description}`);
+              }}
+              originWhitelist={["http://127.0.0.1:*"]}
+              ref={devTools.devToolsWebView}
+              setSupportMultipleWindows={false}
+              source={{ uri: devToolsUrl }}
+              style={styles.devTools}
+              testID="chromium-devtools-webview"
+            />
+          </DesktopInputSurface>
           {devTools.devToolsDocumentLoading && (
             <View pointerEvents="none" style={styles.devToolsLoading}>
               <ActivityIndicator color={colors.accent} />
@@ -113,4 +122,11 @@ export function renderBrowserDevToolsPane(
       </DevToolsErrorBoundary>
     </>
   );
+}
+
+function inspectorInputActive(
+  devTools: ReturnType<typeof useBrowserDevTools>,
+  active: boolean,
+): boolean {
+  return active && devTools.devToolsFailure === null && !devTools.devToolsDocumentLoading;
 }

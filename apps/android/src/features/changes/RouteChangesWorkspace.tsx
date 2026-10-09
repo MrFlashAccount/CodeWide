@@ -48,6 +48,7 @@ export function CurrentChangesRoute({
       voiceRuntime={request.voiceRuntime}
       {...loading}
       {...diff}
+      {...(presentation.vcs === undefined ? {} : { vcs: presentation.vcs })}
     />
   );
 }
@@ -57,6 +58,7 @@ function currentChangesPresentation(request: CurrentChangesRouteRequest): {
   readonly changeScope: ThreadChangeScope;
   readonly changeScopes: ThreadChangeScope[];
   readonly scope: ThreadChangeScope;
+  readonly vcs: ThreadResourcesValue["vcs"];
 } {
   const selected = selectChangePresentation(request.initialResource, request.preferences.scope);
   return {
@@ -64,6 +66,7 @@ function currentChangesPresentation(request: CurrentChangesRouteRequest): {
     changeScope: selected.scope,
     changeScopes: selected.scopes,
     scope: selected.scope,
+    vcs: selected.resource?.vcs,
   };
 }
 

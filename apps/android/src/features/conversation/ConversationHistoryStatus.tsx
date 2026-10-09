@@ -8,7 +8,6 @@ import { threadContextLabel } from "../../data/thread-projects";
 import { useThreadHistoryActivity } from "../../data/use-thread-history";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
-import { WaveText } from "../../ui/WaveText";
 import {
   connectionActivity,
   connectionStateLabel,
@@ -43,29 +42,25 @@ export function ConversationHistorySubtitle({
   const pending = pendingConnection(server);
   const delayed = activity.status === "background-retrying";
   const color = delayed ? colors.amber : colors.textMuted;
-  if (pending) {
-    return (
-      <WaveText
-        style={[styles.conversationSubtitle, { color }]}
-        testID="conversation-subtitle"
-        text={text}
-      />
-    );
-  }
-  const warning = connectionWarning(server) ?? (delayed ? "update delayed" : null);
+  const warning = pending
+    ? null
+    : (connectionWarning(server) ?? (delayed ? "update delayed" : null));
+  const displayedText = warning === null ? text : `${text} · ${warning}`;
   return (
     <Text
+      accessibilityLabel={displayedText}
       ellipsizeMode="middle"
       numberOfLines={1}
+      shimmering={pending}
       style={[styles.conversationSubtitle, { color }]}
       testID="conversation-subtitle"
     >
-      {warning === null ? text : `${text} · ${warning}`}
+      {displayedText}
     </Text>
   );
 }
 
-export function ConversationBackendRefreshIndicator({
+export function ConversationBackendRefreshWarning({
   connectionId,
   model,
   threadId,
@@ -74,28 +69,13 @@ export function ConversationBackendRefreshIndicator({
   model: ThreadChatModel | null;
   threadId: string | null;
 }) {
-  const activity = useSelector(() => {
+  const retrying = useSelector(() => {
     if (model === null || connectionId === null || threadId === null) {
-      return { refreshing: false, retrying: false };
+      return false;
     }
-    const window = model.window$(connectionId, threadId);
-    return {
-      refreshing: window.backendRefreshing.get(),
-      retrying: window.status.get() === "background-retrying",
-    };
+    return model.window$(connectionId, threadId).status.get() === "background-retrying";
   });
-  if (activity.refreshing) {
-    return (
-      <ActivityIndicator
-        accessibilityLabel="Updating conversation from server"
-        color={colors.amber}
-        size="small"
-        style={styles.conversationBackendRefreshIndicator}
-        testID="conversation-backend-refresh-indicator"
-      />
-    );
-  }
-  if (activity.retrying) {
+  if (retrying) {
     return (
       <Ionicons
         accessibilityLabel="Showing cached conversation; update delayed"

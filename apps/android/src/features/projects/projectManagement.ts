@@ -20,16 +20,29 @@ function projectCatalogVersion(projects: readonly SidebarProject[]): string {
   return version;
 }
 
-export function useProjectManagement({ errors, projects, servers }: ProjectManagementProps) {
+export function useProjectManagement({
+  errors,
+  initialConnectionId,
+  projects,
+  servers,
+}: ProjectManagementProps) {
   const [pending, setPending] = useState<string | null>(null);
   const { fontScale } = useWindowDimensions();
   const rowIconSize = inlineIconMetrics("body", fontScale).glyph;
   const [error, setError] = useState<string | null>(null);
-  const [choosingServer, setChoosingServer] = useState(false);
+  const [serverFilterId, setServerFilterId] = useState(
+    initialConnectionId ?? (servers.length === 1 ? (servers[0]?.id ?? null) : null),
+  );
+  const selectedServer = servers.find((server) => server.id === serverFilterId) ?? null;
+  const selectedServerId = selectedServer?.id ?? null;
   const [recentExpanded, setRecentExpanded] = useState(true);
   const [otherExpanded, setOtherExpanded] = useState(false);
-  const pinned = projects.filter((project) => project.pinned);
-  const discovered = projects
+  const filteredProjects =
+    selectedServerId === null
+      ? projects
+      : projects.filter((project) => project.connectionId === selectedServerId);
+  const pinned = filteredProjects.filter((project) => project.pinned);
+  const discovered = filteredProjects
     .filter((project) => !project.pinned)
     .sort((left, right) => right.lastUsedAt - left.lastUsedAt);
   const toggleRecent = useEvent(() => {
@@ -54,16 +67,6 @@ export function useProjectManagement({ errors, projects, servers }: ProjectManag
     },
   ];
   const rows: ProjectManagerItem[] = [];
-  if (choosingServer) {
-    rows.push({
-      key: "section:servers",
-      kind: "section",
-      section: { expanded: true, onToggle: undefined, projects: [], title: "Add on server" },
-    });
-    for (const server of servers) {
-      rows.push({ key: `server:${server.id}`, kind: "server", server });
-    }
-  }
   for (const section of sections) {
     if (section.projects.length === 0) {
       continue;
@@ -75,7 +78,7 @@ export function useProjectManagement({ errors, projects, servers }: ProjectManag
       }
     }
   }
-  if (projects.length === 0 && errors.length === 0) {
+  if (filteredProjects.length === 0 && errors.length === 0) {
     rows.push({
       error: false,
       key: "empty",
@@ -107,13 +110,14 @@ export function useProjectManagement({ errors, projects, servers }: ProjectManag
   });
   return {
     change,
-    choosingServer,
-    dataVersion: projectCatalogVersion(projects),
+    dataVersion: projectCatalogVersion(filteredProjects),
     pending,
     pinned,
     rowIconSize,
     rows,
-    setChoosingServer,
+    selectedServer,
+    selectedServerId,
+    setSelectedServerId: setServerFilterId,
   };
 }
 export type ProjectManagementState = ReturnType<typeof useProjectManagement>;

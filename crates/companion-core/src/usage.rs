@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::store::{IndexStore, StoreError};
 
-pub const PRICING_VERSION: &str = "openai-api-2026-09-22";
+pub const PRICING_VERSION: &str = "openai-api-2026-10-02";
 const LONG_CONTEXT_INPUT_TOKENS: u64 = 272_000;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -539,6 +539,11 @@ fn price_for(model: &str) -> Option<ModelPrice> {
             cached_input: 1.0,
             output: 50.0,
         }),
+        "gpt-6.1-sol" => Some(ModelPrice {
+            input: 2.0,
+            cached_input: 0.1,
+            output: 10.0,
+        }),
         "gpt-6-sol" => Some(ModelPrice {
             input: 2.0,
             cached_input: 0.2,
@@ -739,6 +744,15 @@ mod tests {
         };
         for (model, expected_price, expected_cost) in [
             (
+                " GPT-6.1-Sol ",
+                ModelPrice {
+                    input: 2.0,
+                    cached_input: 0.1,
+                    output: 10.0,
+                },
+                0.01105,
+            ),
+            (
                 "gpt-6-sol",
                 ModelPrice {
                     input: 2.0,
@@ -761,6 +775,43 @@ mod tests {
                 estimate_request_cost(Some(model), usage).ok_or("known model missing")?;
             assert_eq!(projection.price, expected_price);
             assert!((projection.total_cost_usd - expected_cost).abs() < 0.000_000_1);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gpt_6_1_sol_projection_prices_cache_writes_and_long_context() -> Result<(), &'static str> {
+        // Standard API rates: https://developers.openai.com/api/docs/pricing
+        // Long-context rates apply only when an individual request exceeds 272K input tokens.
+        for (input_tokens, expected_turn_cost, expected_thread_cost) in
+            [(272_000, 0.519, 0.519), (273_000, 1.037, 0.521)]
+        {
+            let usage = TokenCounts {
+                total_tokens: input_tokens + 1_000,
+                input_tokens,
+                cached_input_tokens: 20_000,
+                cache_write_input_tokens: 6_000,
+                output_tokens: 1_000,
+                ..TokenCounts::default()
+            };
+            let projection = projection_from_rollout(
+                Some("gpt-6.1-sol"),
+                TokenCounts::default(),
+                usage,
+                usage,
+                &[usage],
+                None,
+                true,
+            );
+            let turn = projection.turn.cost.ok_or("turn cost missing")?;
+            let thread = projection.thread.cost.ok_or("thread cost missing")?;
+            assert_eq!(turn.model, "gpt-6.1-sol");
+            assert_eq!(turn.basis, "apiEquivalent");
+            assert_eq!(turn.uncached_input_tokens, input_tokens - 26_000);
+            assert_eq!(turn.cached_input_tokens, 20_000);
+            assert_eq!(turn.cache_write_input_tokens, 6_000);
+            assert!((turn.total_cost_usd - expected_turn_cost).abs() < 0.000_000_1);
+            assert!((thread.total_cost_usd - expected_thread_cost).abs() < 0.000_000_1);
         }
         Ok(())
     }

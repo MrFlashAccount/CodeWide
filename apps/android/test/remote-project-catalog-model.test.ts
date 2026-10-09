@@ -16,6 +16,83 @@ afterEach(() => {
 });
 
 describe("Legend remote project catalog", () => {
+  it("keeps an acknowledgement published before the first catalog demand", async () => {
+    const model = createRemoteProjectCatalogModel({
+      cache: {
+        read: async () => [project("/repo")],
+        write: async () => undefined,
+      },
+    });
+    const pinned = { ...project("/repo"), pinned: true };
+    model.mergeProject("server", pinned);
+    await model.resource("server", "connecting", null).peek();
+    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([pinned]);
+    model.clear();
+  });
+
+  it.each([true, false])(
+    "keeps acknowledged pinned=%s through stale refreshes until synchronization confirms it",
+    async (pinned) => {
+      const write = vi.fn(async () => undefined);
+      const model = createRemoteProjectCatalogModel({ cache: { read: async () => [], write } });
+      const stale = { ...project("/repo"), pinned: !pinned };
+      await model.resource("server", "live", async () => [stale]).peek();
+      const acknowledged = { ...stale, pinned, lastUsedAt: 2 };
+      model.mergeProject("server", acknowledged);
+      for (const revision of ["syncing", "live"]) {
+        const writesBeforeRefresh = write.mock.calls.length;
+        const refresh = Promise.withResolvers<RemoteProject[]>();
+        model.resource("server", revision, async () => await refresh.promise);
+        refresh.resolve([stale, project("/other")]);
+        await vi.waitFor(() =>
+          expect(write.mock.calls.length).toBeGreaterThan(writesBeforeRefresh),
+        );
+        await vi.waitFor(() =>
+          expect(model.snapshot$.projectsByConnection.peek().server).toEqual([
+            acknowledged,
+            project("/other"),
+          ]),
+        );
+      }
+      model.resource("server", "confirmed", async () => [acknowledged]);
+      await vi.waitFor(() =>
+        expect(model.snapshot$.projectsByConnection.peek().server).toEqual([acknowledged]),
+      );
+      const external = {
+        ...acknowledged,
+        name: "Renamed elsewhere",
+        pinned: !pinned,
+        lastUsedAt: 3,
+      };
+      model.resource("server", "external", async () => [external]);
+      await vi.waitFor(() =>
+        expect(model.snapshot$.projectsByConnection.peek().server).toEqual([external]),
+      );
+      model.clear();
+    },
+  );
+
+  it("does not count a read started before the latest acknowledgement as confirmation", async () => {
+    const write = vi.fn(async () => undefined);
+    const model = createRemoteProjectCatalogModel({ cache: { read: async () => [], write } });
+    const initial = project("/repo");
+    await model.resource("server", "live", async () => [initial]).peek();
+    const pending = Promise.withResolvers<RemoteProject[]>();
+    model.resource("server", "syncing", async () => await pending.promise);
+    const pinned = { ...initial, pinned: true };
+    model.mergeProject("server", pinned);
+    model.mergeProject("server", initial);
+    const writesBeforeRefresh = write.mock.calls.length;
+    pending.resolve([initial]);
+    await vi.waitFor(() => expect(write.mock.calls.length).toBeGreaterThan(writesBeforeRefresh));
+    model.resource("server", "live", async () => [pinned]);
+    await vi.waitFor(() =>
+      expect(write.mock.calls.length).toBeGreaterThan(writesBeforeRefresh + 1),
+    );
+    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([initial]);
+    model.clear();
+  });
+
   it("forgets only the deleted server and ignores its late refresh", async () => {
     const refresh = Promise.withResolvers<RemoteProject[]>();
     const deleteCached = vi.fn(async () => undefined);

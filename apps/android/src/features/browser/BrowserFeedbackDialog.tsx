@@ -7,7 +7,6 @@ import { colors, radii, spacing, typeScale } from "../../theme";
 import { ActionMenu } from "../../ui/ActionMenu";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { useAppVoiceInputRuntime, useVoiceInputResource } from "../../ui/VoiceInputRuntime";
-import { WaveText } from "../../ui/WaveText";
 import type { BrowserFeedbackCapability, BrowserFeedbackDraft } from "./feedback";
 
 interface FeedbackDialogProps {
@@ -166,13 +165,9 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
         onPress={submit}
         style={styles.send}
       >
-        {pending ? (
-          <WaveText style={styles.label} text="Sending to chat" />
-        ) : (
-          <Text style={styles.label}>
-            {voiceBusy ? "Finish dictation before sending" : "Send to chat"}
-          </Text>
-        )}
+        <Text shimmering={pending} style={styles.label}>
+          {voiceBusy ? "Finish dictation before sending" : "Send to chat"}
+        </Text>
       </Pressable>
     </View>
   );

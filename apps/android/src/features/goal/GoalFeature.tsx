@@ -259,9 +259,3 @@ export function GoalFeature({
     />
   );
 }
-
-export function useGoalDetails(openAccessory: (action: "goal") => void) {
-  return useEvent(() => {
-    openAccessory("goal");
-  });
-}

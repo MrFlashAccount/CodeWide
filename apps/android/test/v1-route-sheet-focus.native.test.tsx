@@ -2,6 +2,7 @@ import { render, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
+import { BrowserTabsModel } from "../src/services/browser/browserTabsModel";
 import { BrowserWorkspace } from "../src/features/browser/BrowserWorkspace";
 import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
 import { AppSheet } from "../src/ui/AppSheet.android";
@@ -55,12 +56,13 @@ it("hides a retained native sheet when its owning route loses focus", async () =
 });
 
 it("lets the workspace shell own browser safe-area padding", () => {
+  const tabs = new BrowserTabsModel();
+  tabs.open({ title: "Development server", url: "http://127.0.0.1:43000/" });
   const view = render(
     <AppFullscreenOverlayProvider>
       <BrowserWorkspace
         onClose={jest.fn()}
-        title="Development server"
-        url="http://127.0.0.1:43000/"
+        tabs={tabs}
       />
     </AppFullscreenOverlayProvider>,
   );

@@ -218,6 +218,47 @@ impl HistoryService {
         self.catalog.visibility.event(payload)
     }
 
+    /// Captures membership independently of recent catalog pagination.
+    pub(crate) fn thread_pin_snapshot(&self) -> Result<Value, HistoryServiceError> {
+        let snapshot = self.store.thread_pin_snapshot()?;
+        let mut archived_thread_ids = Vec::new();
+        for id in &snapshot.thread_ids {
+            match self.catalog.thread_archived(id) {
+                Ok(true) => archived_thread_ids.push(id),
+                Ok(false) | Err(CatalogError::NotFound(_)) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(
+            json!({"cursor": snapshot.cursor, "threadIds": snapshot.thread_ids, "archivedThreadIds": archived_thread_ids}),
+        )
+    }
+
+    /// Attaches durable Companion pin metadata to thread shells and catalog pages.
+    pub(crate) fn annotate_thread_pins(
+        &self,
+        method: &str,
+        result: &mut Value,
+    ) -> Result<(), crate::store::StoreError> {
+        if let Some(thread) = result.get_mut("thread")
+            && let Some(id) = thread.get("id").and_then(Value::as_str)
+        {
+            let pin = self.store.thread_pin(id)?;
+            crate::thread_pins::annotate(thread, pin);
+        }
+        if matches!(method, "thread/list" | "companion/supervisor/threadList")
+            && let Some(threads) = result.get_mut("data").and_then(Value::as_array_mut)
+        {
+            for thread in threads {
+                if let Some(id) = thread.get("id").and_then(Value::as_str) {
+                    let pin = self.store.thread_pin(id)?;
+                    crate::thread_pins::annotate(thread, pin);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn filter_catalog_page(
         &self,
         mut result: Value,

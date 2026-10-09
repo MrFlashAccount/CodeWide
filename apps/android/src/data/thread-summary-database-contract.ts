@@ -11,6 +11,8 @@ import type { ProjectUnreadModel } from "./project-unread-model";
 
 /** Owns persisted thread summaries and derived unread projections. */
 export type ThreadSummaryDatabase = {
+  /** Clears only a legacy pin batch durably acknowledged by its owning Companion. */
+  acknowledgePinMigration: (connectionId: string, threadIds: readonly string[]) => Promise<void>;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.
   // oxlint-disable-next-line eslint/max-params
   applyCatalogPage: (
@@ -24,6 +26,17 @@ export type ThreadSummaryDatabase = {
   ) => Promise<void>;
   applyCommandDelivery: (delivery: NativeCommandDelivery) => Promise<void>;
   applyEvents: (connectionId: string, events: SyncEvent[]) => Promise<void>;
+  /** Replaces server-owned pins without overwriting newer live pin events. */
+  applyPinSnapshot: (
+    connectionId: string,
+    snapshot: { readonly cursor: number; readonly threadIds: readonly string[] },
+  ) => Promise<void>;
+  /** Atomically seeds a missing summary and replays its unacknowledged material events. */
+  applyRepairedEvents: (
+    connectionId: string,
+    snapshot: SyncSnapshotThread,
+    events: SyncEvent[],
+  ) => Promise<void>;
   applySnapshot: (
     connectionId: string,
     threads: SyncSnapshotThread[],
@@ -40,7 +53,11 @@ export type ThreadSummaryDatabase = {
     connectionId: string,
     thread: import("@codewide/codex-protocol/v0.155.1/v2").Thread,
   ) => Promise<void>;
+  /** Returns legacy pins still awaiting durable server import. */
+  loadPendingPinMigration: (connectionId: string) => Promise<readonly string[]>;
   loadView: (request: ThreadSummaryViewRequest) => Promise<void>;
+  /** Marks every persisted unread chat in the qualified project, independent of view limits. */
+  markProjectRead: (connectionId: string, projectCwd: string) => Promise<void>;
   markRead: (connectionId: string, threadId: string) => Promise<void>;
   markUnread: (connectionId: string, threadId: string) => Promise<void>;
   mergeSnapshots: (
@@ -73,7 +90,6 @@ export type ThreadSummaryDatabase = {
   }) => Promise<void>;
   updateArchived: (connectionId: string, threadId: string, archived: boolean) => Promise<void>;
   updateName: (connectionId: string, threadId: string, name: string) => Promise<void>;
-  updatePinned: (connectionId: string, threadId: string, pinned: boolean) => Promise<void>;
   viewResource: (request: ThreadSummaryViewRequest) => ThreadSummaryViewResource;
 };
 

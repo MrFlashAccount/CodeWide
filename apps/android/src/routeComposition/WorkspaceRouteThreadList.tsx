@@ -52,6 +52,7 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       openSidebarProject={props.openSidebarProject}
       openTerminals={props.openTerminals}
       pinnedSidebarProjects={project.projectWorkspace.pinnedSidebarProjects}
+      projectActions={project.projectWorkspace.sidebarProjectActions}
       projectLimit={project.projectLimit}
       refreshThreadListAccountRateLimits={props.refreshThreadListAccountRateLimits}
       selectedThreadKey={list.selectedThreadKey}

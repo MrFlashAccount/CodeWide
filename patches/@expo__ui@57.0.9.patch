@@ -11,25 +11,27 @@ index afdfadeb347dfce47194ca9b7cbfec41f4ec0775..be2a65fb4423e8535bd00b5440a16f7b
    implementation 'androidx.compose.foundation:foundation-android:1.10.6'
    implementation 'androidx.compose.ui:ui-android:1.10.6'
 diff --git a/android/src/main/java/expo/modules/ui/ExpoUIModule.kt b/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
-index 435cb67dc6c8a2a0db1602e0374f3ed07bec9dea..1863c093d42da76512ce79b9e2a4806228df6d1b 100644
+index 435cb67dc6c8a2a0db1602e0374f3ed07bec9dea..dc793a95207d68b4b69b7aaf3ecabc935df4bfb4 100644
 --- a/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
 +++ b/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
-@@ -185,9 +185,12 @@ class ExpoUIModule : Module() {
+@@ -184,10 +184,13 @@ class ExpoUIModule : Module() {
+       val hide by AsyncFunction()
        val expand by AsyncFunction()
        val partialExpand by AsyncFunction()
-       val onDismissRequest by Event<Unit>()
-+      val onBackPress by Event<Unit>()
+-      val onDismissRequest by Event<Unit>()
++      val onDismissRequest by Event<GenericEventPayload1<String>>()
++      val onBackPress by Event<GenericEventPayload1<String>>()
  
        Content { props ->
 -        ModalBottomSheetContent(props, hide, expand, partialExpand) { onDismissRequest(Unit) }
 +        ModalBottomSheetContent(props, hide, expand, partialExpand,
-+          onDismissRequest = { onDismissRequest(Unit) },
-+          onBackPress = { onBackPress(Unit) })
++          onDismissRequest = { onDismissRequest(GenericEventPayload1(props.presentationId)) },
++          onBackPress = { onBackPress(GenericEventPayload1(props.presentationId)) })
        }
      }
  
 diff --git a/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt b/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
-index e800ec2adafaa7120724b30b65ef37bfbe8a72c2..cc22565bb158a5704d94c65fd515ebfbd54d1460 100644
+index e800ec2adafaa7120724b30b65ef37bfbe8a72c2..5074e34b3a750bee6c3cfe2f01afd427815fd1d9 100644
 --- a/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
 +++ b/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
 @@ -3,6 +3,7 @@
@@ -40,25 +42,73 @@ index e800ec2adafaa7120724b30b65ef37bfbe8a72c2..cc22565bb158a5704d94c65fd515ebfb
  import androidx.compose.material3.BottomSheetDefaults
  import androidx.compose.material3.ExperimentalMaterial3Api
  import androidx.compose.material3.ModalBottomSheet
-@@ -32,6 +33,7 @@ data class ModalBottomSheetPropertiesRecord(
+@@ -11,7 +12,9 @@ import androidx.compose.material3.contentColorFor
+ import androidx.compose.material3.rememberModalBottomSheetState
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.key
+ import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.ui.unit.dp
+ import expo.modules.kotlin.records.Field
+ import expo.modules.kotlin.records.Record
+ import expo.modules.kotlin.types.OptimizedRecord
+@@ -32,6 +35,10 @@ data class ModalBottomSheetPropertiesRecord(
  data class ModalBottomSheetViewProps(
    val skipPartiallyExpanded: Boolean = false,
    val initialFullyExpanded: Boolean = false,
 +  val interceptBackPress: Boolean = false,
++  val visible: Boolean = true,
++  val maxWidth: Float? = null,
++  val presentationId: String = "",
    val containerColor: Color? = null,
    val contentColor: Color? = null,
    val scrimColor: Color? = null,
-@@ -47,7 +49,8 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
+@@ -47,7 +54,23 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
    hide: AsyncFunctionHandle<Unit>,
    expand: AsyncFunctionHandle<Unit>,
    partialExpand: AsyncFunctionHandle<Unit>,
 -  onDismissRequest: () -> Unit
 +  onDismissRequest: () -> Unit,
 +  onBackPress: () -> Unit
++) {
++  // Recreate Compose presentation state, not the React-owned RNHost children, on every opening.
++  key(props.visible, props.presentationId) {
++    ModalBottomSheetPresentationContent(props, hide, expand, partialExpand, onDismissRequest, onBackPress)
++  }
++}
++
++@Composable
++private fun FunctionalComposableScope.ModalBottomSheetPresentationContent(
++  props: ModalBottomSheetViewProps,
++  hide: AsyncFunctionHandle<Unit>,
++  expand: AsyncFunctionHandle<Unit>,
++  partialExpand: AsyncFunctionHandle<Unit>,
++  onDismissRequest: () -> Unit,
++  onBackPress: () -> Unit
  ) {
    val sheetState = rememberModalBottomSheetState(props.skipPartiallyExpanded)
    val scope = rememberCoroutineScope()
-@@ -107,11 +110,15 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
+@@ -85,6 +108,9 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
+     }
+   }
+-
++
++  // Remove only the Compose dialog, retaining the React children and their RNHost wrappers.
++  if (!props.visible) return
++
+   val resolvedContainerColor = props.containerColor.composeOrNull ?: BottomSheetDefaults.ContainerColor
+   val resolvedContentColor = props.contentColor.composeOrNull ?: contentColorFor(resolvedContainerColor)
+   val resolvedScrimColor = props.scrimColor.composeOrNull ?: BottomSheetDefaults.ScrimColor
+@@ -92,6 +118,7 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
+-
++
+   ModalBottomSheet(
+     sheetState = sheetState,
++    sheetMaxWidth = props.maxWidth?.dp ?: BottomSheetDefaults.SheetMaxWidth,
+     onDismissRequest = onDismissRequest,
+     containerColor = resolvedContainerColor,
+     contentColor = resolvedContentColor,
+@@ -107,11 +134,15 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
        else -> null
      },
      properties = ModalBottomSheetProperties(
@@ -211,15 +261,30 @@ index 05d6909108a74317ac3117327ad19b0c9661b082..7304cf6b2e24219f9eb880025873edc8
       * Optional styles to apply to the `DropdownMenu`.
       */
 diff --git a/build/jetpack-compose/ModalBottomSheet/index.d.ts b/build/jetpack-compose/ModalBottomSheet/index.d.ts
-index ddf89aa5ac11610459f6db8abd96a3673f01054f..0dc8a0350697c43d9a9cda5ee76d158e7d7fee57 100644
+index ddf89aa5ac11610459f6db8abd96a3673f01054f..bf14f12159c4d69336b8f594a50088ffcd7cae92 100644
 --- a/build/jetpack-compose/ModalBottomSheet/index.d.ts
 +++ b/build/jetpack-compose/ModalBottomSheet/index.d.ts
-@@ -44,6 +44,8 @@ export interface ModalBottomSheetProps {
+@@ -30,6 +30,12 @@ export type ModalBottomSheetProperties = {
+     shouldDismissOnClickOutside?: boolean;
+ };
+ export interface ModalBottomSheetProps {
++  /** Shows the native window without unmounting retained React children. Defaults to true. */
++  visible?: boolean;
++  /** Maximum sheet width in dp; omitted retains the Material default. */
++  maxWidth?: number;
++  /** Opaque presentation identity echoed by dismissal and Back events. */
++  presentationId?: string;
+     /**
+      * The children of the `ModalBottomSheet` component.
+      * Can include a `ModalBottomSheet.DragHandle` slot for a custom drag handle.
+@@ -43,7 +49,9 @@ export interface ModalBottomSheetProps {
+      * Callback function that is called when the user dismisses the bottom sheet
       * (via swipe, back press, or tapping outside the scrim).
       */
-     onDismissRequest: () => void;
+-    onDismissRequest: () => void;
++    onDismissRequest: (event: { nativeEvent: { value: string } }) => void;
 +    /** Handles Android Back before the native sheet hides or collapses. */
-+    onBackPress?: () => void;
++    onBackPress?: (event: { nativeEvent: { value: string } }) => void;
      /**
       * Immediately opens the bottom sheet in full screen.
       * @default false
@@ -249,35 +314,59 @@ index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..2205a126a88dcb2883e4929c82250d52
    modifiers?: ModifierConfig[];
    children?: ReactNode;
 diff --git a/src/jetpack-compose/ModalBottomSheet/index.tsx b/src/jetpack-compose/ModalBottomSheet/index.tsx
-index ea749156c15b4929ac692dc0a513d7b00430552c..0a3e903e421cc17cbd9abbeaa015f16193b3533f 100644
+index ea749156c15b4929ac692dc0a513d7b00430552c..c48c46eeb6347f6f10e0a18e2a95d5fdd0b67232 100644
 --- a/src/jetpack-compose/ModalBottomSheet/index.tsx
 +++ b/src/jetpack-compose/ModalBottomSheet/index.tsx
-@@ -57,6 +57,12 @@ export interface ModalBottomSheetProps {
+@@ -43,6 +43,12 @@ export type ModalBottomSheetProperties = {
+ };
+-
++
+ export interface ModalBottomSheetProps {
++  /** Shows the native window without unmounting retained React children. Defaults to true. */
++  visible?: boolean;
++  /** Maximum sheet width in dp; omitted retains the Material default. */
++  maxWidth?: number;
++  /** Opaque presentation identity echoed by dismissal and Back events. */
++  presentationId?: string;
+   /**
+    * The children of the `ModalBottomSheet` component.
+    * Can include a `ModalBottomSheet.DragHandle` slot for a custom drag handle.
+@@ -56,7 +62,13 @@ export interface ModalBottomSheetProps {
+    * Callback function that is called when the user dismisses the bottom sheet
     * (via swipe, back press, or tapping outside the scrim).
     */
-   onDismissRequest: () => void;
+-  onDismissRequest: () => void;
++  onDismissRequest: (event: { nativeEvent: { value: string } }) => void;
 +  /**
 +   * Handles Android Back before the native sheet hides or collapses. When omitted,
 +   * Material retains its default Back behavior. Scrim and swipe dismissal are unchanged.
 +   * @platform android
 +   */
-+  onBackPress?: () => void;
++  onBackPress?: (event: { nativeEvent: { value: string } }) => void;
    /**
     * Immediately opens the bottom sheet in full screen.
     * @default false
-@@ -102,6 +108,7 @@ export interface ModalBottomSheetProps {
+@@ -102,7 +114,8 @@ export interface ModalBottomSheetProps {
  }
  
  type NativeModalBottomSheetProps = Omit<ModalBottomSheetProps, 'onDismissRequest'> & {
+-  onDismissRequest: () => void;
 +  interceptBackPress: boolean;
-   onDismissRequest: () => void;
++  onDismissRequest: (event: { nativeEvent: { value: string } }) => void;
  };
  
-@@ -116,6 +123,7 @@ function transformProps(props: ModalBottomSheetProps): NativeModalBottomSheetPro
+ const ModalBottomSheetNativeView: ComponentType<NativeModalBottomSheetProps> = requireNativeView(
+@@ -116,10 +129,11 @@ function transformProps(props: ModalBottomSheetProps): NativeModalBottomSheetPro
      modifiers,
      ...(modifiers ? createViewModifierEventListener(modifiers) : undefined),
      ...restProps,
 +    interceptBackPress: props.onBackPress !== undefined,
      skipPartiallyExpanded: props.skipPartiallyExpanded ?? false,
      initialFullyExpanded: props.initialFullyExpanded ?? false,
-     onDismissRequest: () => {
+-    onDismissRequest: () => {
+-      onDismissRequest?.();
++    onDismissRequest: (event) => {
++      onDismissRequest?.(event);
+     },
+   };
+ }

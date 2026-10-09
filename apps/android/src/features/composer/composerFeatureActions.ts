@@ -9,6 +9,7 @@ export function useComposerFeatureActions(
   openControls: (page: ComposerMenuPage) => void,
   openGoalAttachment: () => void,
   focusComposer: () => void,
+  editGoalInComposer: () => void,
 ) {
   const dialog = useAppDialog();
   const run = useEvent((operation: () => Promise<unknown>, fallback: string): void => {
@@ -36,5 +37,9 @@ export function useComposerFeatureActions(
     }
     openControls(action);
   });
-  return { openComposerFeature };
+  const openGoalDetails = useEvent(() => {
+    editGoalInComposer();
+    requestAnimationFrame(focusComposer);
+  });
+  return { openComposerFeature, openGoalDetails };
 }

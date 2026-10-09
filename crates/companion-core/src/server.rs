@@ -69,6 +69,7 @@ pub struct CompanionServices {
     pub media: Option<Arc<MediaProxyService>>,
     pub tunnels: Option<Arc<LocalhostTunnelService>>,
     pub telemetry: Option<Arc<TelemetryStore>>,
+    pub diagnostics: Option<Arc<crate::diagnostics::DiagnosticStore>>,
     pub catalog: Option<Arc<SessionCatalog>>,
     pub app_server_socket_path: Option<PathBuf>,
     pub excluded_ports: HashSet<u16>,
@@ -248,6 +249,8 @@ fn build_router(
         .merge(images)
         .merge(media)
         .merge(telemetry)
+        .merge(diagnostic_ingress_routes())
+        .merge(diagnostic_control_routes())
         .merge(build_shelf)
         .with_state(state)
 }
@@ -398,6 +401,7 @@ fn build_secure_router(state: AppState) -> Router {
         .merge(images)
         .merge(media)
         .merge(telemetry)
+        .merge(diagnostic_ingress_routes())
         .merge(build_shelf)
         .layer(axum::middleware::from_fn_with_state(
             authorization,
@@ -443,11 +447,13 @@ fn build_control_router(state: AppState) -> Router {
         .route("/v1/relay", get(relay_status).patch(relay_enabled))
         .route("/v1/relay/pair", post(relay_pair));
     router
+        .merge(diagnostic_control_routes())
         .layer(DefaultBodyLimit::max(8 * 1024))
         .with_state(state)
 }
 
 include!("server/services.rs");
+include!("server/diagnostics.rs");
 include!("server/transport.rs");
 include!("server/auth.rs");
 include!("server/relay.rs");

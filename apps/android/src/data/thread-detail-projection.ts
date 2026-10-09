@@ -796,8 +796,10 @@ export function shouldWriteHydratedActivityRow(
 }
 
 function mergeSummaryWithActivity(summary: Turn["items"], activity: Turn["items"]): Turn["items"] {
-  const activityIds = new Set(activity.map((item) => item.id));
-  if (summary.every((item) => activityIds.has(item.id))) {
+  // Activity can be captured before the final stream tokens arrive. Matching
+  // ids prove identity, not content completeness; the sealed summary owns the
+  // chat boundary and must replace stale copies while retaining tool activity.
+  if (summary.every((item) => activity.some((candidate) => candidate === item))) {
     return activity;
   }
   return reconcileTurnItems(activity, summary);

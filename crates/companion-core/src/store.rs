@@ -27,6 +27,7 @@ const OUTBOX: TableDefinition<&str, &[u8]> = TableDefinition::new("command_outbo
 const ACTIVITY_METRICS: TableDefinition<&str, &[u8]> = TableDefinition::new("activity_metrics");
 const THREAD_USAGE: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_usage");
 const THREAD_METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_metadata");
+const THREAD_PINS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_pins");
 const THREADS_BY_PARENT: TableDefinition<&[u8], u8> = TableDefinition::new("threads_by_parent");
 const SCHEMA_VERSION: u32 = 7;
 const ROLLOUT_LOGIC_VERSION: u64 = 4;
@@ -485,6 +486,7 @@ impl IndexStore {
             write.open_table(THREAD_USAGE)?;
             write.open_table(ACTIVITY_METRICS)?;
             write.open_table(THREAD_METADATA)?;
+            write.open_table(THREAD_PINS)?;
             write.open_table(THREADS_BY_PARENT)?;
         }
         write.commit()?;
@@ -1095,38 +1097,124 @@ impl IndexStore {
             return Ok(Vec::new());
         }
         let write = self.database.begin_write()?;
-        let mut cursors = Vec::with_capacity(payloads.len());
+        let cursors = append_replay_transaction(&write, payloads, max_entries, max_bytes)?;
+        // Pin deletion shares the upstream deletion's durable publication boundary.
         {
-            let mut meta = write.open_table(META)?;
-            let mut replay = write.open_table(REPLAY)?;
-            let mut head = meta.get("replay_head")?.map_or(0, |value| value.value());
-            let mut bytes = meta.get("replay_bytes")?.map_or(0, |value| value.value());
-            for payload in payloads {
-                head = head.saturating_add(1);
-                replay.insert(head, payload.as_slice())?;
-                bytes = bytes.saturating_add(payload.len() as u64);
-                cursors.push(head);
+            let mut pins = write.open_table(THREAD_PINS)?;
+            for (bytes, cursor) in payloads.iter().zip(&cursors) {
+                if let Ok(payload) = serde_json::from_slice::<Value>(bytes)
+                    && let Some(id) = crate::thread_pins::deleted_thread_id(&payload)
+                {
+                    // A tombstone prevents a late legacy import from reviving a deleted pin.
+                    let encoded = serde_json::to_vec(&crate::thread_pins::ThreadPin {
+                        pinned: false,
+                        cursor: *cursor,
+                    })?;
+                    pins.insert(id, encoded.as_slice())?;
+                }
             }
-            let max_entries = u64::try_from(max_entries).unwrap_or(u64::MAX);
-            while replay.len()? > max_entries || bytes > max_bytes {
-                let oldest = {
-                    let mut entries = replay.iter()?;
-                    entries
-                        .next()
-                        .transpose()?
-                        .map(|(key, value)| (key.value(), value.value().len() as u64))
-                };
-                let Some((cursor, entry_bytes)) = oldest else {
-                    break;
-                };
-                replay.remove(cursor)?;
-                bytes = bytes.saturating_sub(entry_bytes);
-            }
-            meta.insert("replay_head", head)?;
-            meta.insert("replay_bytes", bytes)?;
         }
         write.commit()?;
         Ok(cursors)
+    }
+
+    /// Reads one durable pin independently of the derived rollout index.
+    pub(crate) fn thread_pin(
+        &self,
+        thread_id: &str,
+    ) -> Result<crate::thread_pins::ThreadPin, StoreError> {
+        let read = self.database.begin_read()?;
+        let pins = read.open_table(THREAD_PINS)?;
+        pins.get(thread_id)?
+            .map_or(Ok(crate::thread_pins::ThreadPin::default()), |row| {
+                Ok(serde_json::from_slice(row.value())?)
+            })
+    }
+
+    /// Captures all pinned ids and their ordering fence in one read transaction.
+    pub(crate) fn thread_pin_snapshot(
+        &self,
+    ) -> Result<crate::thread_pins::ThreadPinSnapshot, StoreError> {
+        let read = self.database.begin_read()?;
+        let cursor = read
+            .open_table(META)?
+            .get("replay_head")?
+            .map_or(0, |row| row.value());
+        let pins = read.open_table(THREAD_PINS)?;
+        let mut thread_ids = Vec::new();
+        for entry in pins.iter()? {
+            let (id, row) = entry?;
+            let pin: crate::thread_pins::ThreadPin = serde_json::from_slice(row.value())?;
+            if pin.pinned {
+                thread_ids.push(id.value().to_owned());
+            }
+        }
+        Ok(crate::thread_pins::ThreadPinSnapshot { cursor, thread_ids })
+    }
+
+    /// Commits a pin and its replay event atomically; pruning replay never deletes pin state.
+    pub(crate) fn commit_thread_pin(
+        &self,
+        request: &crate::thread_pins::ThreadPinRequest,
+        max_entries: usize,
+        max_bytes: u64,
+    ) -> Result<u64, StoreError> {
+        let write = self.database.begin_write()?;
+        let cursor = write
+            .open_table(META)?
+            .get("replay_head")?
+            .map_or(1, |row| row.value().saturating_add(1));
+        let payloads = [serde_json::to_vec(&request.notification(cursor))?];
+        append_replay_transaction(&write, &payloads, max_entries, max_bytes)?;
+        {
+            let mut pins = write.open_table(THREAD_PINS)?;
+            let pin = crate::thread_pins::ThreadPin {
+                pinned: request.pinned,
+                cursor,
+            };
+            let encoded = serde_json::to_vec(&pin)?;
+            pins.insert(request.thread_id.as_str(), encoded.as_slice())?;
+        }
+        write.commit()?;
+        Ok(cursor)
+    }
+
+    /// Imports unknown legacy pins atomically, preserving explicit unpins and deletion tombstones.
+    pub(crate) fn import_thread_pins(
+        &self,
+        request: &crate::thread_pins::ThreadPinImportRequest,
+        max_entries: usize,
+        max_bytes: u64,
+    ) -> Result<u64, StoreError> {
+        let write = self.database.begin_write()?;
+        let mut cursor = write
+            .open_table(META)?
+            .get("replay_head")?
+            .map_or(0, |row| row.value());
+        let mut payloads = Vec::new();
+        {
+            let mut pins = write.open_table(THREAD_PINS)?;
+            for id in &request.thread_ids {
+                if pins.get(id.as_str())?.is_some() {
+                    continue;
+                }
+                cursor = cursor.saturating_add(1);
+                let pin = crate::thread_pins::ThreadPin {
+                    pinned: true,
+                    cursor,
+                };
+                let encoded = serde_json::to_vec(&pin)?;
+                pins.insert(id.as_str(), encoded.as_slice())?;
+                let mutation = crate::thread_pins::ThreadPinRequest {
+                    thread_id: id.clone(),
+                    pinned: true,
+                };
+                payloads.push(serde_json::to_vec(&mutation.notification(cursor))?);
+            }
+        }
+        append_replay_transaction(&write, &payloads, max_entries, max_bytes)?;
+        write.commit()?;
+        Ok(cursor)
     }
 
     /// Reads the retained replay suffix after a client cursor.
@@ -2225,17 +2313,200 @@ fn decode_record_ref(encoded: &[u8]) -> Result<RecordRef, StoreError> {
     })
 }
 
+fn append_replay_transaction(
+    write: &redb::WriteTransaction,
+    payloads: &[Vec<u8>],
+    max_entries: usize,
+    max_bytes: u64,
+) -> Result<Vec<u64>, StoreError> {
+    let mut cursors = Vec::with_capacity(payloads.len());
+    {
+        let mut meta = write.open_table(META)?;
+        let mut replay = write.open_table(REPLAY)?;
+        let mut head = meta.get("replay_head")?.map_or(0, |value| value.value());
+        let mut bytes = meta.get("replay_bytes")?.map_or(0, |value| value.value());
+        for payload in payloads {
+            head = head.saturating_add(1);
+            replay.insert(head, payload.as_slice())?;
+            bytes = bytes.saturating_add(payload.len() as u64);
+            cursors.push(head);
+        }
+        let max_entries = u64::try_from(max_entries).unwrap_or(u64::MAX);
+        while replay.len()? > max_entries || bytes > max_bytes {
+            let oldest = {
+                let mut entries = replay.iter()?;
+                entries
+                    .next()
+                    .transpose()?
+                    .map(|(key, value)| (key.value(), value.value().len() as u64))
+            };
+            let Some((cursor, entry_bytes)) = oldest else {
+                break;
+            };
+            replay.remove(cursor)?;
+            bytes = bytes.saturating_sub(entry_bytes);
+        }
+        meta.insert("replay_head", head)?;
+        meta.insert("replay_bytes", bytes)?;
+    }
+    Ok(cursors)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Barrier};
 
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::{
         FILE_STATE_V1_BYTES, FileState, IndexStore, MAX_OUTBOX_OWNER_BYTES, OutboxClaimOutcome,
         OutboxClaimResolution, OutboxClaimResolutionOutcome, OutboxPresentation, OutboxState,
         StoreError, ensure_outbox_owner_quota, ensure_outbox_owner_replacement_quota,
     };
+
+    #[test]
+    fn pins_survive_replay_pruning_restart_and_derived_index_rebuild()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("state.redb");
+        {
+            let store = IndexStore::open(&path)?;
+            let request = crate::thread_pins::ThreadPinRequest {
+                thread_id: "old-chat".into(),
+                pinned: true,
+            };
+            let cursor = store.commit_thread_pin(&request, 10, 4096)?;
+            assert!(store.thread_pin("old-chat")?.pinned);
+            let replay = store.replay_after(Some(0))?;
+            let event: Value = serde_json::from_slice(&replay.entries[0].1)?;
+            assert_eq!(event["params"]["pinCursor"], cursor);
+            assert_eq!(
+                event["codewideThreadPatch"]["operation"]["kind"],
+                "threadPinned"
+            );
+            store.append_replay_batch(&[b"next".to_vec(), b"latest".to_vec()], 1, 4096)?;
+            assert!(store.replay_after(Some(0))?.snapshot_required);
+            assert_eq!(
+                store.replay_after(Some(store.replay_head()? - 1))?.entries[0].1,
+                b"latest"
+            );
+            let write = store.database.begin_write()?;
+            write
+                .open_table(super::META)?
+                .insert("rollout_logic_version", 0)?;
+            write.commit()?;
+        }
+        let store = IndexStore::open(&path)?;
+        assert_eq!(store.thread_pin_snapshot()?.thread_ids, ["old-chat"]);
+        let other = IndexStore::open(directory.path().join("other.redb"))?;
+        assert!(!other.thread_pin("old-chat")?.pinned);
+        let cursor = store.commit_thread_pin(
+            &crate::thread_pins::ThreadPinRequest {
+                thread_id: "old-chat".into(),
+                pinned: false,
+            },
+            10,
+            4096,
+        )?;
+        assert!(store.thread_pin_snapshot()?.thread_ids.is_empty());
+        assert_eq!(store.thread_pin("old-chat")?.cursor, cursor);
+        Ok(())
+    }
+
+    #[test]
+    fn deletion_retires_server_pin_atomically_with_replay() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let store = IndexStore::open(directory.path().join("state.redb"))?;
+        store.commit_thread_pin(
+            &crate::thread_pins::ThreadPinRequest {
+                thread_id: "chat".into(),
+                pinned: true,
+            },
+            10,
+            4096,
+        )?;
+        store.append_replay_batch(
+            &[serde_json::to_vec(
+                &serde_json::json!({"method":"thread/deleted","params":{"threadId":"chat"}}),
+            )?],
+            10,
+            4096,
+        )?;
+        assert!(store.thread_pin_snapshot()?.thread_ids.is_empty());
+        assert_eq!(store.replay_after(Some(0))?.entries.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_import_is_retry_safe_and_preserves_server_decisions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("state.redb");
+        let request = crate::thread_pins::ThreadPinImportRequest {
+            thread_ids: vec![
+                "legacy".into(),
+                "unpin".into(),
+                "deleted".into(),
+                "legacy".into(),
+            ],
+        };
+        let imported_cursor;
+        {
+            let store = IndexStore::open(&path)?;
+            store.commit_thread_pin(
+                &crate::thread_pins::ThreadPinRequest {
+                    thread_id: "unpin".into(),
+                    pinned: false,
+                },
+                10,
+                4096,
+            )?;
+            store.append_replay_batch(
+                &[serde_json::to_vec(&json!({
+                    "method":"thread/deleted", "params":{"threadId":"deleted"}
+                }))?],
+                10,
+                4096,
+            )?;
+            let before = store.replay_head()?;
+            imported_cursor = store.import_thread_pins(&request, 10, 4096)?;
+            assert_eq!(store.thread_pin_snapshot()?.thread_ids, ["legacy"]);
+            let replay = store.replay_after(Some(before))?;
+            assert_eq!(replay.entries.len(), 1);
+            let event: Value = serde_json::from_slice(&replay.entries[0].1)?;
+            assert_eq!(event["params"]["threadId"], "legacy");
+            assert_eq!(event["params"]["pinCursor"], imported_cursor);
+            assert_eq!(
+                store.import_thread_pins(&request, 10, 4096)?,
+                imported_cursor
+            );
+            assert!(
+                store
+                    .replay_after(Some(imported_cursor))?
+                    .entries
+                    .is_empty()
+            );
+        }
+        let store = IndexStore::open(&path)?;
+        assert_eq!(
+            store.import_thread_pins(&request, 10, 4096)?,
+            imported_cursor
+        );
+        store.commit_thread_pin(
+            &crate::thread_pins::ThreadPinRequest {
+                thread_id: "legacy".into(),
+                pinned: false,
+            },
+            1,
+            4096,
+        )?;
+        store.import_thread_pins(&request, 1, 4096)?;
+        assert!(store.thread_pin_snapshot()?.thread_ids.is_empty());
+        let other = IndexStore::open(directory.path().join("other.redb"))?;
+        assert!(other.thread_pin_snapshot()?.thread_ids.is_empty());
+        Ok(())
+    }
 
     fn put_queued(store: &IndexStore, command_id: &str) -> Result<(), super::StoreError> {
         store.outbox_put_turn_start_with_presentation(

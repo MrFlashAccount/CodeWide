@@ -36,6 +36,7 @@ export function createConnectionsWorkspaceAdapter({
   getProfiles,
   getSession,
   invalidateCatalog,
+  invalidateDeletedConnectionBindings,
 }: {
   closeCatalogWindows: (connectionId: string) => void;
   currentConnections: () => StoredConnection[];
@@ -47,6 +48,7 @@ export function createConnectionsWorkspaceAdapter({
   getProfiles: () => ConnectionProfileDatabase | null;
   getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   invalidateCatalog: (connectionId: string) => void;
+  invalidateDeletedConnectionBindings: () => Promise<void>;
 }): ConnectionsWorkspaceCapabilities {
   const refreshConnectionProfiles = async (): Promise<StoredConnection[]> =>
     requireConnectionProfileDatabase(getProfiles()).hydrate();
@@ -110,7 +112,10 @@ export function createConnectionsWorkspaceAdapter({
   };
 
   const deleteConnection = async (connectionId: string) => {
-    await revokeRemoteConnection(connectionId);
+    const profiles = requireConnectionProfileDatabase(getProfiles());
+    // Start the device-removal intent while native credentials still exist.
+    // Remote failure or an unresolved response must not delay local deletion.
+    void revokeRemoteConnection(connectionId).catch(() => undefined);
     composerUploads.deleteConnection(connectionId);
     getSession(connectionId)?.stop();
     forgetHttpAuthorization(connectionId);
@@ -119,7 +124,8 @@ export function createConnectionsWorkspaceAdapter({
     await deleteLocalConnectionData(connectionId);
     await forgetProjectCatalog(connectionId);
     await deleteNativeConnection(connectionId);
-    await requireConnectionProfileDatabase(getProfiles()).delete(connectionId);
+    await profiles.delete(connectionId);
+    await invalidateDeletedConnectionBindings();
     await refreshConnectionProfiles();
     getConnectionState()?.remove(connectionId);
   };

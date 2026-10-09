@@ -17,6 +17,7 @@ import { threadPatchRequiresAuthoritativeRefresh } from "./thread-detail-refresh
 import type { ThreadProjectionStore } from "./thread-projection-store";
 import { createThreadProjectionStore } from "./thread-projection-store";
 import { createThreadCatalogInvalidation } from "./threadCatalogInvalidation";
+import { createThreadSummaryRepair } from "./threadSummaryRepair";
 import { projectThreadResourcePatch } from "./thread-resource-projection";
 import type { ThreadSummaryDatabase } from "./thread-summary-database";
 import type { createThreadSyncRuntime } from "./thread-sync-runtime";
@@ -39,6 +40,10 @@ export function createThreadSyncProjection({
   sync: ReturnType<typeof createThreadSyncRuntime>;
 }): ThreadProjectionStore {
   const projection = createThreadProjectionStore({ details, summaries });
+  const repairSummaries = createThreadSummaryRepair({
+    readMetadata: catalog.readThreadSummary,
+    summaries,
+  });
   const refreshCatalogForEvents = createThreadCatalogInvalidation({
     readSummary: summaries.get,
     refresh: catalog.refreshConnectionWindows,
@@ -46,6 +51,8 @@ export function createThreadSyncProjection({
   return {
     async applyEvents(connectionId, events) {
       const projected = await projection.applyEvents(connectionId, events);
+      const summaryCheckpoint = repairSummaries(connectionId, events);
+      void summaryCheckpoint.catch(() => undefined);
       const projectedThreads = projected.threads;
       const receiptThreadIds = new Set<string>();
       const deliveredReceiptThreads = new Set<string>();
@@ -179,12 +186,20 @@ export function createThreadSyncProjection({
           });
         });
       }
-      return projected;
+      const checkpoint = Promise.all([projected.checkpoint, summaryCheckpoint]).then(
+        () => undefined,
+      );
+      void checkpoint.catch(() => undefined);
+      return {
+        checkpoint,
+        threads: projected.threads,
+      };
     },
     async applySnapshot(connectionId, snapshots, cursor) {
       sync.invalidateHistoryReads(connectionId);
       details.invalidateHistoryExhaustion(connectionId);
       await projection.applySnapshot(connectionId, snapshots, cursor);
+      await catalog.refreshThreadPins(connectionId);
       catalog.markRefreshed(connectionId);
       // Catalog snapshots persist receipt evidence, but not canonical turn
       // content. Retain the native receipt until detail persistence takes over.

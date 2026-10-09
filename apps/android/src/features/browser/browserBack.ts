@@ -10,9 +10,10 @@ export function useBrowserBack(
   closeDevTools: () => void,
   canGoBack: boolean,
   webView: RefObject<WebView | null>,
+  active = true,
 ) {
   useEffect(() => {
-    if (Platform.OS !== "android" || header === undefined) {
+    if (Platform.OS !== "android" || header === undefined || !active) {
       return undefined;
     }
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -28,5 +29,5 @@ export function useBrowserBack(
     return () => {
       subscription.remove();
     };
-  }, [closeDevTools, devToolsUrl, header, canGoBack, webView]);
+  }, [active, closeDevTools, devToolsUrl, header, canGoBack, webView]);
 }

@@ -3,6 +3,9 @@ import { WorkspacePaneLayout, WorkspaceScreenLayout } from "./WorkspacePaneLayou
 import { View } from "react-native";
 
 import { workspaceRuntime } from "../data/workspace-runtime";
+import { BrowserWorkspaceHost } from "../features/browser/BrowserWorkspaceHost";
+import { BrowserTabsNavigationContext } from "../features/browser/BrowserTabsNavigationContext";
+import { BrowserHomePorts } from "../features/ports/BrowserHomePorts";
 import { useNavigationPerformanceHudInset } from "../features/diagnostics/navigationPerformanceHudLayout";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import {
@@ -13,6 +16,7 @@ import { RenderRecoveryProvider } from "../ui/RecoverableRenderBoundary";
 import { WorkspaceVoiceAura } from "../ui/WorkspaceVoiceAura";
 import {
   v1FullscreenScreenOptions,
+  v1BrowserScreenOptions,
   v1DesktopRouteScreenOptions,
   v1ListScreenOptions,
   v1MobileRouteScreenOptions,
@@ -30,7 +34,9 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
   const { resources } = props;
   return (
     <WorkspaceRouteResourcesContext.Provider value={resources}>
-      <V1WorkspaceRecovery {...props} />
+      <BrowserTabsNavigationContext.Provider value={resources.openBrowserTabs}>
+        <V1WorkspaceRecovery {...props} />
+      </BrowserTabsNavigationContext.Provider>
     </WorkspaceRouteResourcesContext.Provider>
   );
 }
@@ -61,14 +67,35 @@ function V1WorkspaceChrome(props: WorkspaceShellProps): React.JSX.Element {
         ]}
         testID="v1-workspace-shell"
       >
-        <V1WorkspaceDestinations {...props} />
+        <V1WorkspaceScenes {...props} />
+        <BrowserWorkspaceHost
+          bottomInset={resources.insets.bottom}
+          feedback={resources.browserFeedback}
+          renderHome={renderBrowserHome}
+          topInset={resources.insets.top + diagnosticsInset}
+        />
       </View>
     </WorkspaceVoiceAura>
   );
 }
 
+function renderBrowserHome(
+  connectionId: string | null,
+  onNavigate: (url: string) => void,
+): React.JSX.Element {
+  return <BrowserHomePorts connectionId={connectionId} onNavigate={onNavigate} />;
+}
+
 function V1WorkspaceDestinations(props: WorkspaceShellProps): React.JSX.Element {
   return <V1WorkspaceDestinationStack desktop={props.resources.desktop} />;
+}
+
+function V1WorkspaceScenes(props: WorkspaceShellProps): React.JSX.Element {
+  return (
+    <View collapsable={false} style={styles.scenes} testID="workspace-scenes">
+      <V1WorkspaceDestinations {...props} />
+    </View>
+  );
 }
 
 function V1WorkspaceDestinationStack({
@@ -89,7 +116,7 @@ function V1WorkspaceDestinationStack({
       screenOptions={routeScreenOptions}
     >
       <Stack.Screen name="(lists)" options={v1ListScreenOptions} />
-      <Stack.Screen name="browser/[sessionId]" options={v1FullscreenScreenOptions} />
+      <Stack.Screen name="browser/[sessionId]" options={v1BrowserScreenOptions} />
       <Stack.Screen name="drawing/[sessionId]" options={v1FullscreenScreenOptions} />
       <Stack.Screen name="projects/add/[connectionId]" options={v1SheetScreenOptions} />
       <Stack.Screen name="projects/index" options={v1SheetScreenOptions} />

@@ -22,6 +22,11 @@ export const v1WorkspaceShellStyles = StyleSheet.create({
     backgroundColor: colors.background,
     flex: 1,
   },
+  scenes: {
+    flex: 1,
+    overflow: "hidden",
+    zIndex: 0,
+  },
 });
 
 /** Stable scene geometry for every V1 destination owned by the inner workspace stack. */
@@ -65,6 +70,12 @@ export const v1SheetScreenOptions = {
   contentStyle: { backgroundColor: "transparent" },
   headerShown: false,
   presentation: "transparentModal",
+} as const;
+
+/** Only the browser grip owns sheet dragging; the browser route reveals the retained app below. */
+export const v1BrowserScreenOptions = {
+  ...v1SheetScreenOptions,
+  gestureEnabled: false,
 } as const;
 
 /**

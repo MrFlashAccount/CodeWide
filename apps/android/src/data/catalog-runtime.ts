@@ -1,4 +1,6 @@
 import type { RpcClient } from "@codewide/sync-client";
+import { createThreadPinsCatalog } from "./threadPinsCatalog";
+import { createThreadSummaryMetadataReader } from "./threadSummaryMetadata";
 import { appLogger } from "../observability/logger";
 import { createCatalogLifecycle } from "./catalog-lifecycle";
 import { catalogSummaryModel } from "./catalog-summary-model";
@@ -25,6 +27,8 @@ export function createCatalogRuntime({
   getSummaries,
   readThread,
 }: CatalogRuntimeAuthority) {
+  const pins = createThreadPinsCatalog({ getSession, getSummaries });
+  const readThreadSummary = createThreadSummaryMetadataReader(getSession);
   const threadInvalidationArchived = new Map<string, boolean>();
   const threadCatalogRefreshInFlight = new Map<string, Promise<void>>();
   const threadCatalogWindows = new Map<string, ThreadCatalogWindow>();
@@ -64,7 +68,7 @@ export function createCatalogRuntime({
           refreshes.push(window.refresh());
         }
       }
-      await Promise.all(refreshes);
+      await Promise.all([...refreshes, pins.ensure(connectionId, true)]);
       threadCatalogRefreshedAt.set(connectionId, Date.now());
     })().finally(() => {
       if (threadCatalogRefreshInFlight.get(connectionId) === operation) {
@@ -251,6 +255,7 @@ export function createCatalogRuntime({
         request.connectionId === null ? enabledConnectionIds() : [request.connectionId];
       const continuations = await Promise.all(
         connectionIds.map(async (connectionId) => {
+          await pins.ensure(connectionId);
           const windows: Promise<boolean>[] = [];
           if (request.recentLimit > 0) {
             windows.push(
@@ -273,11 +278,14 @@ export function createCatalogRuntime({
   const clearInvalidationArchived = (key: string) => {
     threadInvalidationArchived.delete(key);
   };
+  const refreshThreadPins = async (connectionId: string): Promise<void> =>
+    pins.ensure(connectionId, true);
   const markRefreshed = (connectionId: string) => {
     threadCatalogRefreshedAt.set(connectionId, Date.now());
   };
   const registerLifecycle = createCatalogLifecycle({ enabledConnectionIds, refreshThreadCatalog });
   function invalidateConnection(connectionId: string): void {
+    pins.invalidate(connectionId);
     threadCatalogRefreshedAt.delete(connectionId);
     closeCatalogWindows(connectionId);
     for (const key of subagentRefreshedAt.keys()) {
@@ -287,6 +295,9 @@ export function createCatalogRuntime({
     }
   }
   function refreshConnectionWindows(connectionId: string): void {
+    void pins.ensure(connectionId, true).catch((error: unknown) => {
+      appLogger.warnCaught({ error, event: "thread_pins.refresh.failed" });
+    });
     catalogSummaryModel.invalidate(connectionId);
     const summaries = getSummaries();
     if (summaries === null) {
@@ -306,10 +317,12 @@ export function createCatalogRuntime({
     invalidateConnection,
     markRefreshed,
     readInvalidationArchived,
+    readThreadSummary,
     refreshConnectionWindows,
     refreshInvalidatedThread,
     refreshSubagents,
     refreshThreadCatalog,
+    refreshThreadPins,
     registerLifecycle,
   };
 }

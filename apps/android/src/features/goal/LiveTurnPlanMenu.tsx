@@ -17,7 +17,6 @@ import {
   typeWeight,
 } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
-import { WaveText } from "../../ui/WaveText";
 
 const MENU_MIN_DIMENSION = 1;
 const MENU_MAX_WIDTH = 400;
@@ -117,15 +116,14 @@ function LiveTurnPlanCurrent({
   readonly running: boolean;
   readonly text: string;
 }): React.JSX.Element {
-  return running ? (
-    <WaveText
-      containerStyle={styles.triggerCurrentShell}
+  return (
+    <Text
+      ellipsizeMode="tail"
+      numberOfLines={1}
+      shimmering={running}
       style={styles.triggerCurrent}
       testID="live-plan-chip-current"
-      text={text}
-    />
-  ) : (
-    <Text ellipsizeMode="tail" numberOfLines={1} style={styles.triggerCurrent}>
+    >
       {text}
     </Text>
   );
@@ -278,15 +276,12 @@ function LiveTurnPlanStepText({
   readonly presentation: PlanStepPresentation;
   readonly step: PlanStep;
 }): React.JSX.Element {
-  return presentation.running ? (
-    <WaveText
-      containerStyle={styles.stepTextShell}
-      style={styles.stepText}
+  return (
+    <Text
+      shimmering={presentation.running}
+      style={[styles.stepText, presentation.completed && styles.completedStep]}
       testID={`live-plan-step-${String(index)}`}
-      text={step.step}
-    />
-  ) : (
-    <Text style={[styles.stepText, presentation.completed && styles.completedStep]}>
+    >
       {step.step}
     </Text>
   );
@@ -338,11 +333,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
     ...typeScale.body,
   },
-  stepTextShell: {
-    alignSelf: "flex-start",
-    flex: 1,
-    minWidth: 0,
-  },
   title: {
     color: colors.text,
     flex: 1,
@@ -367,11 +357,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     ...typeScale.label,
-  },
-  triggerCurrentShell: {
-    alignSelf: "center",
-    flex: 1,
-    minWidth: 0,
   },
   triggerDivider: {
     color: colors.textDim,

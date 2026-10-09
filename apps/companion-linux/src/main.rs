@@ -170,6 +170,7 @@ enum Command {
     },
     Relay(RelayOptions),
     Telemetry(Box<TelemetryOptions>),
+    Diagnostics(DiagnosticOptions),
     Vcs(VcsOptions),
 }
 
@@ -177,6 +178,26 @@ enum Command {
 struct TelemetryOptions {
     #[command(subcommand)]
     command: TelemetryCommand,
+}
+
+#[derive(Debug, Args)]
+struct DiagnosticOptions {
+    #[command(subcommand)]
+    command: DiagnosticCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum DiagnosticCommand {
+    List {
+        #[command(flatten)]
+        control: ControlOptions,
+    },
+    Read {
+        device_id: String,
+        report_id: String,
+        #[command(flatten)]
+        control: ControlOptions,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -325,7 +346,10 @@ enum RelayCommand {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("codewide_companion=info,companion_core=warn")),
+        )
         .with_target(false)
         .compact()
         .init();
@@ -605,6 +629,31 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{body}");
             }
         },
+        Command::Diagnostics(options) => {
+            let (path, control) = match options.command {
+                DiagnosticCommand::List { control } => {
+                    ("/v1/diagnostics/reports".to_owned(), control)
+                }
+                DiagnosticCommand::Read {
+                    device_id,
+                    report_id,
+                    control,
+                } => {
+                    let mut query = url::form_urlencoded::Serializer::new(String::new());
+                    query.append_pair("deviceId", &device_id);
+                    let id = percent_encoding::utf8_percent_encode(
+                        &report_id,
+                        percent_encoding::NON_ALPHANUMERIC,
+                    );
+                    (
+                        format!("/v1/diagnostics/reports/{id}?{}", query.finish()),
+                        control,
+                    )
+                }
+            };
+            let body = control_request(reqwest::Method::GET, &path, None, control).await?;
+            println!("{body}");
+        }
         Command::Vcs(options) => match options.command {
             VcsCommand::Changes {
                 workspace,
@@ -1229,6 +1278,11 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         media: Some(media),
         tunnels: Some(tunnels),
         telemetry: Some(telemetry),
+        diagnostics: Some(Arc::new(
+            codewide_companion::diagnostics::DiagnosticStore::open(
+                state_directory.join("diagnostic-reports"),
+            )?,
+        )),
         catalog: Some(catalog),
         app_server_socket_path: Some(app_server_socket),
         excluded_ports,

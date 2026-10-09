@@ -1,17 +1,19 @@
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { useConversationOwner } from "../../ui/use-conversation-owner";
 import type { ConversationGoalCapabilities } from "../goal/conversationGoalCapabilities";
-import { useGoalDetails } from "../goal/GoalFeature";
-import { useEvent } from "../../react/useEvent";
+import type { ThreadCurrentOutcome } from "../../data/thread-current-outcome";
+import { selectComposerContinuation, useComposerContinuation } from "./composerContinuation";
 import type { QueueWorkspaceCapabilities } from "../queue/queueWorkspaceCapabilities";
 import { useComposerAccessoryActions } from "./ComposerAccessoryTray";
 import type { useComposerCommands } from "./composerCommands";
 import { useComposerDelivery } from "./composerDelivery";
 import { useComposerFeatureActions } from "./composerFeatureActions";
+import { createComposerGoalSubmission } from "./composerGoalSubmission";
 import type { useComposerState } from "./composerState";
 import type { ComposerWorkspaceCapabilities } from "./composerWorkspaceCapabilities";
 
 export function useComposerInteractions({
+  captureGoalLifecycle,
   composerCommands,
   composerInputs,
   composerScope,
@@ -19,11 +21,11 @@ export function useComposerInteractions({
   conversationOwner,
   createAndOpenTerminal,
   currentGoal,
+  currentOutcome,
   currentTurnId,
   draftConnectionId,
   draftThreadId,
   onSetGoal,
-  onSetGoalStatus,
   openDrawing,
   queueInputs,
   remoteThread,
@@ -31,6 +33,7 @@ export function useComposerInteractions({
   threadLifecycleActive,
   voiceController,
 }: {
+  captureGoalLifecycle: ConversationGoalCapabilities["captureGoalLifecycle"];
   composerCommands: ReturnType<typeof useComposerCommands>;
   composerInputs: ComposerWorkspaceCapabilities;
   composerScope: string;
@@ -38,11 +41,11 @@ export function useComposerInteractions({
   conversationOwner: ReturnType<typeof useConversationOwner>;
   createAndOpenTerminal: Parameters<typeof useComposerFeatureActions>[2];
   currentGoal: ThreadGoal | null;
+  currentOutcome: ThreadCurrentOutcome | null;
   currentTurnId: string | null;
   draftConnectionId: string | null;
   draftThreadId: string | null;
   onSetGoal: ConversationGoalCapabilities["onSetGoal"];
-  onSetGoalStatus: ConversationGoalCapabilities["onSetGoalStatus"];
   openDrawing: Parameters<typeof useComposerFeatureActions>[1];
   queueInputs: QueueWorkspaceCapabilities;
   remoteThread: Parameters<typeof useComposerDelivery>[0]["remoteThread"];
@@ -59,6 +62,11 @@ export function useComposerInteractions({
     () => {
       composerStateBinding.composerEditingBinding.composerInputRef.current?.focus();
     },
+    () => {
+      if (currentGoal !== null) {
+        composerStateBinding.composerMenuStateBinding.openGoalEdit(currentGoal);
+      }
+    },
   );
   const composerAccessoryActionsBinding = useComposerAccessoryActions({
     fileAttachmentEnabled: composerCommands.composerAttachmentsBinding.fileAttachmentEnabled,
@@ -67,23 +75,34 @@ export function useComposerInteractions({
     setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
     terminalEnabled,
   });
-  const openGoalDetails = useGoalDetails(composerAccessoryActionsBinding.openAccessoryAction);
-  const goalSubmission =
-    composerStateBinding.composerMenuStateBinding.goalAttachmentVisible && onSetGoal !== undefined
-      ? {
-          close: composerStateBinding.composerMenuStateBinding.closeGoalAttachment,
-          submit: async (objective: string): Promise<void> => {
-            await onSetGoal({ objective, status: "active" });
-          },
-        }
-      : null;
-  const pauseActiveGoal = useEvent(async (): Promise<void> => {
-    if (currentGoal?.status === "active" && onSetGoalStatus !== undefined) {
-      await onSetGoalStatus("paused");
-    }
-  });
+  const goalSubmission = createComposerGoalSubmission(
+    composerStateBinding.composerMenuStateBinding,
+    currentGoal,
+    onSetGoal,
+  );
   const pauseGoalBeforeInterrupt =
-    currentGoal?.status === "active" && onSetGoalStatus !== undefined ? pauseActiveGoal : undefined;
+    currentGoal?.status === "active"
+      ? async (): Promise<void> => {
+          if (captureGoalLifecycle === undefined) {
+            throw new Error("Goal pause is unavailable");
+          }
+          const commands = captureGoalLifecycle();
+          await commands.setStatus("paused");
+        }
+      : undefined;
+  const continuation = selectComposerContinuation({
+    acceptsInput: remoteThread?.canAcceptDirectInput === true,
+    captureGoalLifecycle,
+    currentGoal,
+    currentOutcome,
+    onContinueTurn: composerInputs.onContinueTurn,
+    threadLifecycleActive,
+  });
+  const continuationBinding = useComposerContinuation(
+    composerScope,
+    conversationOwner,
+    continuation,
+  );
   const composerDeliveryBinding = useComposerDelivery({
     attachments: composerStateBinding.composerEditingBinding.attachments,
     cancelQueuedComposerEdit: composerCommands.queueEditActionsBinding.cancelQueuedComposerEdit,
@@ -99,6 +118,14 @@ export function useComposerInteractions({
     composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
     contentReviewAttachmentId:
       composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
+    continuation:
+      continuation === null
+        ? null
+        : {
+            activate: continuationBinding.activate,
+            disabled: continuationBinding.disabled,
+            label: continuation.label,
+          },
     conversationOwner,
     currentTurnId: currentTurnId,
     draft: composerStateBinding.composerEditingBinding.draft,
@@ -133,5 +160,9 @@ export function useComposerInteractions({
     voicePhase: composerStateBinding.composerVoiceStateBinding.voicePhase,
     voiceRetryAvailable: composerStateBinding.composerVoiceStateBinding.voiceRetryAvailable,
   });
-  return { composerAccessoryActionsBinding, composerDeliveryBinding, openGoalDetails };
+  return {
+    composerAccessoryActionsBinding,
+    composerDeliveryBinding,
+    openGoalDetails: composerFeatureActionsBinding.openGoalDetails,
+  };
 }

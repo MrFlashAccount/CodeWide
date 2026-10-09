@@ -46,6 +46,7 @@ export function useComposerSubmission({
   selectedServiceTier,
   threadLifecycleActive,
 }: ComposerSubmissionCapabilities) {
+  const dialog = useAppDialog();
   const captureSend = useEvent(() => {
     const session = composerSession.capture();
     const capturedSession = session.read();
@@ -158,7 +159,7 @@ export function useComposerSubmission({
       // replace the range underneath an already measured list.
       void operation
         .then(() => {
-          if (goalSubmission !== null) {
+          if (goalSubmission !== null && session.read().plainText === "") {
             goalSubmission.close();
           } else if (sentContentReviewAttachmentId !== null) {
             clearContentReviewAttachmentId(scope, sentContentReviewAttachmentId);
@@ -167,7 +168,13 @@ export function useComposerSubmission({
             void onListQueue().catch(() => undefined);
           }
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          if (goalSubmission !== null && conversationOwner.isCurrent()) {
+            dialog.alert(
+              "Could not update goal",
+              error instanceof Error ? error.message : "Could not update goal",
+            );
+          }
           // Native persistence failed before Kotlin accepted ownership. Restore
           // the composer; successful submissions are rendered exclusively from
           // the Legend delivery/queue projection.
@@ -196,7 +203,12 @@ export function useComposerSubmission({
           const recoveredDraft = mergeFailedComposerText(current.plainText, text);
           session.updateText({ markdown: recoveredDraft, plainText: recoveredDraft });
           restoreSentSkillPaths();
-          if (saveDraft !== undefined && draftConnectionId !== null && draftThreadId !== null) {
+          if (
+            goalSubmission === null &&
+            saveDraft !== undefined &&
+            draftConnectionId !== null &&
+            draftThreadId !== null
+          ) {
             void saveDraft(draftConnectionId, draftThreadId, recoveredDraft).catch(() => undefined);
           }
           const recoveredAttachments = mergeFailedComposerAttachments(
@@ -205,6 +217,7 @@ export function useComposerSubmission({
           );
           session.updateAttachments(recoveredAttachments);
           if (
+            goalSubmission === null &&
             saveDraftAttachments !== undefined &&
             draftConnectionId !== null &&
             draftThreadId !== null
@@ -256,6 +269,7 @@ export function useComposerDeliveryActions({
   cancelQueuedComposerEdit,
   clearComposerText,
   composerScope,
+  continuation,
   currentTurnId,
   discardVoice,
   draft,
@@ -370,13 +384,16 @@ export function useComposerDeliveryActions({
 
   const editingQueuedMessage = queuedComposerEdit !== null;
 
-  const stoppingResponse =
-    !editingQueuedMessage &&
-    !goalSubmissionActive &&
-    currentTurnId !== null &&
-    voicePhase === "idle" &&
-    draft.trim() === "" &&
-    attachments.length === 0;
+  const emptyAction = isEmptyComposerAction({
+    attachments,
+    draft,
+    editingQueuedMessage,
+    goalSubmissionActive,
+    voicePhase,
+  });
+  const stoppingResponse = emptyAction && currentTurnId !== null;
+  const resumingResponse =
+    emptyAction && !threadLifecycleActive && currentTurnId === null && continuation !== null;
   const interruptAlreadyRequested =
     stoppingResponse &&
     interruptRequest.status === "requested" &&
@@ -385,6 +402,7 @@ export function useComposerDeliveryActions({
   const sendDisabled =
     actionPending ||
     interruptAlreadyRequested ||
+    (resumingResponse && continuation.disabled) ||
     voicePhase === "finishing" ||
     queuedComposerEditBusy ||
     (editingQueuedMessage && onEditQueued === undefined) ||
@@ -392,6 +410,7 @@ export function useComposerDeliveryActions({
     uploadsBlockSend ||
     (voicePhase === "idle" &&
       !stoppingResponse &&
+      !resumingResponse &&
       (goalSubmissionActive
         ? draft.trim() === ""
         : draft.trim() === "" && attachments.length === 0));
@@ -414,20 +433,19 @@ export function useComposerDeliveryActions({
   });
 
   const activatePrimaryAction = useEvent(() => {
+    if (sendDisabled) {
+      return;
+    }
     if (editingQueuedMessage) {
       saveQueuedComposerEdit();
     } else if (voicePhase !== "idle") {
       runVoiceAction(async () => {
         await finishVoice(true);
       }, "Could not finish voice input");
-    } else if (
-      currentTurnId !== null &&
-      !goalSubmissionActive &&
-      onInterrupt !== undefined &&
-      draft.trim() === "" &&
-      attachments.length === 0
-    ) {
+    } else if (stoppingResponse && onInterrupt !== undefined) {
       requestInterrupt(currentTurnId, onInterrupt, pauseGoalBeforeInterrupt);
+    } else if (resumingResponse) {
+      continuation.activate();
     } else {
       runAction(async () => {
         await send();
@@ -459,8 +477,30 @@ export function useComposerDeliveryActions({
     discardComposer,
     editingQueuedMessage,
     handleDeliveryAction,
+    resumeAction: resumingResponse ? continuation.label : null,
     sendDisabled,
     steerComposer,
     stopAction,
   };
+}
+
+function isEmptyComposerAction({
+  attachments,
+  draft,
+  editingQueuedMessage,
+  goalSubmissionActive,
+  voicePhase,
+}: Pick<
+  ComposerDeliveryCapabilities,
+  "attachments" | "draft" | "goalSubmissionActive" | "voicePhase"
+> & {
+  readonly editingQueuedMessage: boolean;
+}): boolean {
+  return (
+    !editingQueuedMessage &&
+    !goalSubmissionActive &&
+    voicePhase === "idle" &&
+    draft.trim() === "" &&
+    attachments.length === 0
+  );
 }

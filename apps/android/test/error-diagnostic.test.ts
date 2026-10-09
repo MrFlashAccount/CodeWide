@@ -33,11 +33,13 @@ describe("explicit local error reports", () => {
     expect(report).not.toContain("Getter failed");
   });
 
-  it("accepts native plain-object failures and explicitly marks truncation", () => {
+  it("accepts native plain-object failures and retains long reports in full", () => {
     expect(errorDiagnostic("Save", { message: "EBADF", code: 9 })).toContain("code: 9");
-    const report = errorDiagnostic("Save", new Error("x".repeat(100_000)));
-    expect(report.length).toBeLessThan(65_000);
-    expect(report).toContain("[Report truncated]");
+    const failure = new Error("x".repeat(100_000));
+    const report = errorDiagnostic("Save", failure);
+    expect(report).toContain(failure.message);
+    expect(report).toContain(failure.stack);
+    expect(report).not.toContain("truncated");
     expect(errorDiagnostic("Save", "Provider failed")).toContain("Provider failed");
     expect(errorDiagnostic("Save", undefined)).toContain("No error details available");
   });

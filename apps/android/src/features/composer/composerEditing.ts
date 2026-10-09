@@ -10,6 +10,7 @@ export function useComposerEditing({
   cwd,
   draftConnectionId,
   draftThreadId,
+  editingGoal,
   newChat,
   onLoadControls,
   onUpdateSettings,
@@ -27,6 +28,7 @@ export function useComposerEditing({
   cwd: Parameters<typeof useComposerSuggestions>[0]["cwd"];
   draftConnectionId: Parameters<typeof useComposerDraftCommands>[0]["draftConnectionId"];
   draftThreadId: Parameters<typeof useComposerDraftCommands>[0]["draftThreadId"];
+  editingGoal: Exclude<Parameters<typeof useComposerDraftState>[3], undefined>;
   newChat: Parameters<typeof useComposerSettings>[0]["newChat"];
   onLoadControls: Parameters<typeof useComposerSuggestions>[0]["onLoadControls"];
   onUpdateSettings: Parameters<typeof useComposerSettings>[0]["onUpdateSettings"];
@@ -47,7 +49,7 @@ export function useComposerEditing({
     draft,
     draftSelectionRef,
     uploadsBlockSend,
-  } = useComposerDraftState(composerScope, composerState, queuedComposerEdit);
+  } = useComposerDraftState(composerScope, composerState, queuedComposerEdit, editingGoal);
   const {
     applyModelSettings,
     captureControlsResource,
@@ -86,6 +88,7 @@ export function useComposerEditing({
       composerSession,
       draftConnectionId,
       draftThreadId,
+      editingGoal,
       queuedComposerEdit,
       saveDraft,
       saveDraftAttachments,

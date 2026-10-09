@@ -18,7 +18,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import androidx.core.app.NotificationCompat
 import dev.codewide.app.MainActivity
 import dev.codewide.app.R
@@ -42,6 +42,7 @@ class CodexConnectionService : Service() {
   private lateinit var terminalSessionManager: NativeTerminalSessionManager
   private lateinit var companionHttpProxy: NativeCompanionHttpProxy
   private lateinit var processExitTelemetry: NativeProcessExitTelemetry
+  private lateinit var diagnosticUploader: NativeDiagnosticUploader
   private lateinit var connectivityManager: ConnectivityManager
   private val handler = Handler(Looper.getMainLooper())
   private val recoveryWorker = NativeRecoveryWorker()
@@ -107,6 +108,8 @@ class CodexConnectionService : Service() {
     frameStore = NativeFrameStore(this)
     commandStore = NativeCommandStore(this)
     credentialsStore = NativeSessionCredentialsStore(this)
+    diagnosticUploader = NativeDiagnosticUploader(credentialsStore)
+    diagnosticUploader.start()
     portForwardManager = NativePortForwardManager(this, credentialsStore, httpClient)
     terminalSessionManager = NativeTerminalSessionManager(credentialsStore, credentialHttpClient, httpClient, cacheDir)
     companionHttpProxy = NativeCompanionHttpProxy(credentialsStore)
@@ -153,6 +156,7 @@ class CodexConnectionService : Service() {
     processNativeAuthorityLifecycle.access {
       synchronized(this) {
         destroyed = true
+        diagnosticUploader.close()
         recoveryWorker.close()
         handler.removeCallbacksAndMessages(null)
         sessions.values.forEach { it.close("service_destroyed") }
@@ -314,7 +318,13 @@ class CodexConnectionService : Service() {
     if (processExitTelemetryCollectionStarted) return
     processExitTelemetryCollectionStarted = true
     journalHandler.post {
-      val batch = runCatching { processExitTelemetry.collect() }.getOrNull() ?: return@post
+      val collection = runCatching { processExitTelemetry.collect() }
+      if (collection.isFailure) {
+        NativeAppLogger.warn(LOG_TAG, "Could not collect previous process exits; retrying", collection.exceptionOrNull(), session.id)
+        handler.post { retryProcessExitCollection(session) }
+        return@post
+      }
+      val batch = collection.getOrNull() ?: return@post
       handler.post {
         synchronized(this@CodexConnectionService) {
           if (destroyed) return@synchronized
@@ -323,10 +333,23 @@ class CodexConnectionService : Service() {
             return@synchronized
           }
           batch.metrics.forEach(session::publishProcessExitTelemetry)
-          journalHandler.post { processExitTelemetry.acknowledge(batch.checkpointTimestampUnixMs) }
+          journalHandler.post {
+            if (!processExitTelemetry.acknowledge(batch.checkpointTimestampUnixMs)) {
+              handler.post { retryProcessExitCollection(session) }
+            }
+          }
         }
       }
     }
+  }
+
+  private fun retryProcessExitCollection(session: Session) {
+    processExitTelemetryCollectionStarted = false
+    handler.postDelayed({
+      synchronized(this@CodexConnectionService) {
+        if (!destroyed && sessions[session.id] === session) collectPreviousProcessExit(session)
+      }
+    }, 30_000)
   }
 
   fun rpc(connectionId: String, method: String, params: Any?, completion: (Result<Any?>) -> Unit) {
@@ -839,7 +862,7 @@ class CodexConnectionService : Service() {
           connecting = false
           cancelConnectWatchdog()
           protocolEngine.onSocketClosed(throwable.javaClass.simpleName)
-          Log.w(LOG_TAG, "websocket failure ${throwable.javaClass.simpleName} id=${safeConnectionId(id)}")
+          NativeAppLogger.warn(LOG_TAG, "websocket failure id=${safeConnectionId(id)}", throwable, id)
           val openedAt = openedAtMs
           if (openedAt == null) {
             emitTelemetry(NativeTelemetryMetric(
@@ -1233,7 +1256,7 @@ class CodexConnectionService : Service() {
 
     @Synchronized fun resetTransport(reason: String) {
       if (closed) return
-      Log.w(LOG_TAG, "reset transport reason=${reason.take(120)} id=${safeConnectionId(id)}")
+      NativeAppLogger.warn(LOG_TAG, "reset transport reason=${reason} id=${safeConnectionId(id)}", connectionId = id)
       emitTelemetry(NativeTelemetryMetric(
         "connection.transport_reset",
         values = mapOf(

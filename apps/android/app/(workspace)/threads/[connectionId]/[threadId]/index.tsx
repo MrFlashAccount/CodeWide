@@ -138,6 +138,7 @@ export default function V1ThreadRoute(): React.JSX.Element {
           router.push("/projects");
         }}
         onOpenBrowser={resources.openBrowser}
+        onOpenBrowserInThread={resources.openBrowserInThread}
         onSelectThread={resources.list.selectThread}
         onShowActiveThreads={() => {
           resources.list.listState.setThreadListMode("active");

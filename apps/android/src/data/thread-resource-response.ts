@@ -1,4 +1,4 @@
-import type { ThreadChangeDiffValue } from "./thread-resource-types";
+import type { ThreadChangeDiffValue, ThreadChangesVcsContext } from "./thread-resource-types";
 import type { ThreadChangeScope, ThreadResourcesValue } from "./workspace-resource-database";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -14,6 +14,7 @@ export type ThreadResourcesPatch = Pick<ThreadResourcesValue, "threadId" | "revi
   changes: ThreadResourcesValue["changes"] | undefined;
   changeScope: ThreadResourcesValue["changeScope"] | undefined;
   changeScopes: ThreadResourcesValue["changeScopes"] | undefined;
+  vcs: ThreadChangesVcsContext | undefined;
 };
 
 export function parseThreadResourcesPatch(
@@ -120,6 +121,7 @@ export function parseThreadResourcesPatch(
     changeScopes: changeScopes ?? undefined,
     revision: source.revision,
     threadId: expectedThreadId,
+    vcs: kind === "attachments" ? undefined : parseChangesVcsContext(source.vcs),
   };
 }
 
@@ -127,6 +129,8 @@ export function mergeThreadResources(
   previous: ThreadResourcesValue | null,
   patch: ThreadResourcesPatch,
 ): ThreadResourcesValue {
+  // Attachment-only refreshes cannot replace the VCS identity of the displayed changes.
+  const vcs = patch.changes === undefined ? previous?.vcs : patch.vcs;
   return {
     attachments: patch.attachments ?? previous?.attachments ?? [],
     changes: patch.changes ?? previous?.changes ?? [],
@@ -134,7 +138,22 @@ export function mergeThreadResources(
     changeScopes: patch.changeScopes ?? previous?.changeScopes ?? [patch.changeScope ?? "session"],
     revision: patch.revision,
     threadId: patch.threadId,
+    ...(vcs === undefined ? {} : { vcs }),
   };
+}
+
+function parseChangesVcsContext(value: unknown): ThreadChangesVcsContext | undefined {
+  const source = asRecord(value);
+  if (source === null || typeof source.provider !== "string" || source.provider.trim() === "") {
+    return undefined;
+  }
+  if (
+    source.branch !== null &&
+    (typeof source.branch !== "string" || source.branch.trim() === "")
+  ) {
+    return undefined;
+  }
+  return { branch: source.branch, provider: source.provider };
 }
 
 export function parseThreadChangeDiff(

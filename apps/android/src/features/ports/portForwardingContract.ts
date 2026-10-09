@@ -81,15 +81,18 @@ export type PortForwardingManagerProps = {
 /** Visible service-list segment selected by the user. */
 export type ServiceSegment = "active" | "available" | "excluded";
 
+/** Configured service after it has been matched to the current discovery inventory. */
+export type ProfileServiceEntry<Profile extends PortForwardingProfile = PortForwardingProfile> = {
+  group: string;
+  kind: PortForwardingCandidate["kind"];
+  profile: Profile;
+  type: "profile";
+};
+
 /** Candidate or configured service rendered within a service segment. */
 export type ServiceEntry =
   | { candidate: PortForwardingCandidate; group: string; type: "candidate" }
-  | {
-      group: string;
-      kind: PortForwardingCandidate["kind"];
-      profile: PortForwardingProfile;
-      type: "profile";
-    };
+  | ProfileServiceEntry;
 
 /** Renderable service row, including group separators. */
 export type ServiceListRow = ServiceEntry | { group: string; type: "group" };

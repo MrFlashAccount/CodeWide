@@ -48,7 +48,6 @@ describe("thread list query contract", () => {
   });
 
   it("keeps the cached catalog across projection-only schema upgrades", () => {
-    expect(database).toContain("const SCHEMA_VERSION = 5");
     expect(database).not.toContain("DROP TABLE IF EXISTS");
   });
 

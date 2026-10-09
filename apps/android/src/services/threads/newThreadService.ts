@@ -41,6 +41,22 @@ export class NewThreadService {
     this.draft$.set({ ...draft, cwd, workspaceMode: "current" });
   }
 
+  /** Changes an explicitly chosen destination while retaining the local draft identity. */
+  changeDestination(
+    expected: NewThreadDraft,
+    destination: { readonly connectionId: string; readonly cwd: string | null },
+  ): void {
+    if (this.draft$.peek() !== expected) {
+      return;
+    }
+    this.draft$.set({
+      connectionId: destination.connectionId,
+      cwd: destination.cwd,
+      id: expected.id,
+      workspaceMode: "current",
+    });
+  }
+
   changeWorkspaceMode(draftId: string, workspaceMode: NewChatWorkspaceMode): void {
     const draft = this.draft$.peek();
     if (draft === null || draft.id !== draftId) {

@@ -2,7 +2,7 @@ package dev.codewide.app.remote
 
 import android.app.Activity
 import android.graphics.PixelFormat
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import android.view.Gravity
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -122,7 +122,7 @@ class AppNoticeWindowModule(
     } catch (error: RuntimeException) {
       if (view.isAttachedToWindow) windowManager.removeViewImmediate(view)
       nextSurface.stop()
-      Log.e(LOG_TAG, "Could not attach application notice window", error)
+      NativeAppLogger.error(LOG_TAG, "Could not attach application notice window", error)
     }
   }
 
@@ -136,7 +136,7 @@ class AppNoticeWindowModule(
       try {
         windowManager.removeViewImmediate(view)
       } catch (error: RuntimeException) {
-        Log.e(LOG_TAG, "Could not remove application notice window", error)
+        NativeAppLogger.error(LOG_TAG, "Could not remove application notice window", error)
       }
     }
     surface?.stop()

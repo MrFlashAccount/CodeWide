@@ -1,6 +1,6 @@
 import { QuestionConversationProvider } from "../requests/QuestionFeature";
 import { useComposerInteractions } from "../composer/composerInteractions";
-import { ThreadGoalChip } from "../goal/ThreadGoalChip";
+import { ThreadGoalMenu } from "../goal/ThreadGoalMenu";
 import { projectInlineQueue } from "../queue/QueueFeature";
 import { useConversationRequestPrompts } from "../requests/ConversationRequestPrompts";
 import type { ConversationCompositionCapabilities } from "./conversationCompositionCapabilities";
@@ -131,6 +131,7 @@ export function ConversationComposition(
     timelineDateLabels: timelineRead.timelineDateLabels,
   });
   const composerDelivery = useComposerInteractions({
+    captureGoalLifecycle: props.goal.captureGoalLifecycle,
     composerCommands,
     composerInputs: props.composer,
     composerScope: scoped.activation.composerScope,
@@ -138,11 +139,11 @@ export function ConversationComposition(
     conversationOwner: scoped.activation.conversationOwner,
     createAndOpenTerminal: toolsBinding.terminalActionsBinding.createAndOpenTerminal,
     currentGoal,
+    currentOutcome: props.read.currentOutcome,
     currentTurnId: timelineRead.conversationPresentationBinding.currentTurnId,
     draftConnectionId: scoped.activation.draftConnectionId,
     draftThreadId: scoped.activation.draftThreadId,
     onSetGoal: props.goal.onSetGoal,
-    onSetGoalStatus: props.goal.onSetGoalStatus,
     openDrawing: toolsBinding.drawingFeatureBinding.openDrawing,
     queueInputs: props.queue,
     remoteThread: props.read.remoteThread,
@@ -155,7 +156,15 @@ export function ConversationComposition(
   });
   const goalContent =
     currentGoal === null ? null : (
-      <ThreadGoalChip goal={currentGoal} onPress={composerDelivery.openGoalDetails} />
+      <ThreadGoalMenu
+        captureGoalLifecycle={props.goal.captureGoalLifecycle}
+        currentTurnId={timelineRead.conversationPresentationBinding.currentTurnId}
+        goal={currentGoal}
+        key={scoped.activation.composerScope}
+        onBeforeOpen={scoped.overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay}
+        onEdit={composerDelivery.openGoalDetails}
+        onInterrupt={props.composer.onInterrupt}
+      />
     );
 
   if (props.surface.thread === null) {

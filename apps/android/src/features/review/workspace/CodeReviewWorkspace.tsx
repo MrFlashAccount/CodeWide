@@ -5,7 +5,7 @@ import { useCodeReviewState } from "./codeReviewState";
 import { styles } from "./CodeReviewWorkspace.styles";
 import { shortPath } from "../resources/reviewLocation";
 
-import { changeScopeTitle } from "../../../rendering/change-menu";
+import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
 import { CodeReviewEditor } from "../editor/CodeReviewEditor";
 import { colors, iconSize } from "../../../theme";
@@ -48,10 +48,12 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
     setWorkspaceWidth,
     sidebarOpen,
     updateCommentDraft,
+    vcs,
     voiceResource,
     workspaceRevision,
     wrapLines,
   } = useCodeReviewState(props);
+  const scopeDisplay = changeScopeDisplay(changeScope, vcs);
 
   return (
     <View
@@ -81,9 +83,12 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
               : changedFileDisplayPath(effectiveSelectedPath, cwd, 72)}
           </Text>
           <View style={styles.subtitleRow}>
+            {changeScope === "branch" && (
+              <Ionicons color={colors.textMuted} name={scopeDisplay.icon} size={iconSize.inline} />
+            )}
             <Text numberOfLines={1} style={styles.subtitle}>
-              {scopeLabel ?? changeScopeTitle(changeScope)} · {changes.length} files ·{" "}
-              {comments.length} comments
+              {scopeLabel ?? scopeDisplay.title} · {changes.length} files · {comments.length}{" "}
+              comments
             </Text>
             {documentStatus !== null && (
               <Text
@@ -95,6 +100,18 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
               </Text>
             )}
           </View>
+          {changeScope === "uncommitted" && (
+            <Text
+              accessibilityLabel={`Current VCS branch: ${vcs?.branch ?? "unavailable"}`}
+              ellipsizeMode="middle"
+              numberOfLines={1}
+              style={styles.subtitle}
+            >
+              {vcs?.branch === undefined || vcs.branch === null
+                ? "Branch unavailable"
+                : `Branch: ${vcs.branch}`}
+            </Text>
+          )}
         </View>
         <ActionMenu
           accessibilityLabel="Changes options"

@@ -1,3 +1,8 @@
+// WHY: This shared layout suite has no Expo runtime. The V1 row-menu suite runs
+// the real native popup; here retain the row without loading Android Compose.
+jest.mock("../src/ui/RowActionMenu", () => jest.requireActual("../src/ui/RowActionMenu.tsx"));
+jest.mock("../src/ui/RowActionTrigger", () => jest.requireActual("../src/ui/RowActionTrigger.web.tsx"));
+
 import { LegendList } from "@legendapp/list/react-native";
 import { act, fireEvent, within } from "@testing-library/react-native";
 import type { ReactNode } from "react";
@@ -379,7 +384,12 @@ it("browses the chosen server without changing the active conversation project",
     />,
   );
   fireEvent.press(view.getByLabelText("Add project"));
-  expect(browse).not.toHaveBeenCalled();
-  fireEvent.press(view.getByLabelText("Add project on Beta"));
-  expect(browse).toHaveBeenCalledWith("b");
+  expect(browse).toHaveBeenLastCalledWith(null);
+  fireEvent.press(view.getByLabelText("Filter projects: Alpha"));
+  fireEvent.press(view.getByLabelText("Add project"));
+  expect(browse).toHaveBeenLastCalledWith("a");
+  expect(view.queryByText("Add on server")).toBeNull();
+  fireEvent.press(view.getByLabelText("Filter projects: Beta"));
+  fireEvent.press(view.getByLabelText("Add project"));
+  expect(browse).toHaveBeenLastCalledWith("b");
 });

@@ -1,10 +1,10 @@
 import { useSelector } from "@legendapp/state/react";
-import { useIsFocused, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 
 import { workspaceRuntime } from "../../../src/data/workspace-runtime";
 import { ActiveWorkspaceConversation } from "../../../src/features/conversation/ConversationWorkspace";
 import { ConversationRouteNavigationContext } from "../../../src/features/conversation/conversationRouteNavigation";
-import { NewThreadServerSheet } from "../../../src/features/projects/NewThreadServerSheet";
+import { RouteUnavailable } from "../../../src/components/navigation/RouteUnavailable";
 import { workspaceFeatures as features } from "../../../src/features/workspace/createWorkspaceFeatures";
 import { WorkspaceConversationProviders } from "../../../src/features/workspace/WorkspaceConversationProviders";
 import { newThreadService } from "../../../src/services/threads/newThreadService";
@@ -20,10 +20,9 @@ import { draftRouteSessionOwner } from "../../../src/services/threads/threadRout
 
 const ignoreRoute = (): void => undefined;
 
-/** Composes the private V1 draft resource or asks for its server qualification. */
+/** Composes the retained V1 draft; project selection is an explicit composer action. */
 export default function V1NewThreadRoute(): React.JSX.Element {
   const router = useRouter();
-  const visible = useIsFocused();
   const resources = useWorkspaceRouteResources();
   const draft = useSelector(() => newThreadService.draft$.get());
   const owner = draft === null ? null : draftRouteSessionOwner(draft.id);
@@ -97,21 +96,12 @@ export default function V1NewThreadRoute(): React.JSX.Element {
   const destination = draft === null ? null : { draft, kind: "draft" as const };
   if (draft === null) {
     return (
-      <NewThreadServerSheet
-        onClose={() => {
+      <RouteUnavailable
+        message="Open a new chat to start a draft."
+        onBack={() => {
           router.dismissTo("/");
         }}
-        // WHY: This render-local callback must return a Promise because the picker action contract is async.
-        // oxlint-disable-next-line typescript/promise-function-async
-        onSelect={(connectionId) => {
-          resources.openNewThread(
-            connectionId,
-            resources.project.projectWorkspace.defaultProjectCwd(connectionId),
-          );
-          return Promise.resolve();
-        }}
-        servers={resources.list.servers}
-        visible={visible}
+        title="Draft unavailable"
       />
     );
   }
@@ -153,10 +143,14 @@ export default function V1NewThreadRoute(): React.JSX.Element {
           onDraftAdmitted={closeDraft}
           onExitSearchHistory={close}
           onFixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-          onManageProjects={() => {
-            router.push("/projects");
+          onManageProjects={(connectionId?: string | null) => {
+            router.push({
+              params: { connectionId: connectionId ?? draft.connectionId },
+              pathname: "/projects",
+            });
           }}
           onOpenBrowser={resources.openBrowser}
+          onOpenBrowserInThread={resources.openBrowserInThread}
           onSelectThread={resources.list.selectThread}
           onShowActiveThreads={() => {
             resources.list.listState.setThreadListMode("active");

@@ -1,21 +1,14 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { Pressable, StyleSheet, View, type GestureResponderEvent } from "react-native";
 
-import { colors, iconSize } from "../theme";
+import { colors, iconSize, typeScale, typeWeight } from "../theme";
 import type { AppNoticeRequest } from "./appNoticeContext";
 import { AppText as Text } from "./Typography";
 
 const ACTION_RADIUS = 10;
 const ACTION_PADDING_X = 13;
 const ACTION_PADDING_Y = 7;
-const ACTION_FONT_SIZE = 13;
 const BODY_GAP = 3;
-const DESCRIPTION_FONT_SIZE = 13;
-const DESCRIPTION_LINE_HEIGHT = 18;
-const TITLE_FONT_SIZE = 14;
-const TITLE_LINE_HEIGHT = 19;
-const WEIGHT_BOLD = "700";
-const WEIGHT_MEDIUM = "500";
 
 const variantIcons = {
   default: null,
@@ -98,8 +91,8 @@ const styles = StyleSheet.create({
   },
   actionLabel: {
     color: colors.surface,
-    fontSize: ACTION_FONT_SIZE,
-    fontWeight: WEIGHT_BOLD,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
   },
   content: {
     flex: 1,
@@ -108,9 +101,7 @@ const styles = StyleSheet.create({
   },
   description: {
     color: colors.textMuted,
-    fontSize: DESCRIPTION_FONT_SIZE,
-    fontWeight: WEIGHT_MEDIUM,
-    lineHeight: DESCRIPTION_LINE_HEIGHT,
+    ...typeScale.body,
   },
   icon: {
     alignItems: "center",
@@ -118,8 +109,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: TITLE_FONT_SIZE,
-    fontWeight: WEIGHT_BOLD,
-    lineHeight: TITLE_LINE_HEIGHT,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
   },
 });

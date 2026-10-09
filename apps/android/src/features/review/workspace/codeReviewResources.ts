@@ -76,6 +76,7 @@ export function useCodeReviewResources(
             : change,
         );
   const changeScope = loadedScope?.changeScope ?? initialChangeScope;
+  const vcs = loadedScope === null ? props.vcs : loadedScope.vcs;
   const changes = effectiveThreadChanges(scopeChanges, changeScope);
   const changeScopes = loadedScope?.changeScopes ?? initialChangeScopes;
   const scopeLoading = scopeResource.status === "loading";
@@ -167,6 +168,7 @@ export function useCodeReviewResources(
     revealReference,
     reviewFiles,
     scopeLoading,
+    vcs,
     workspaceRevision,
   };
 }

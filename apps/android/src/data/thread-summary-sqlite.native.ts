@@ -4,6 +4,11 @@ import { appLogger } from "../observability/logger";
 import { threadSummaryKey } from "./thread-summary-projection";
 import type { ThreadSummaryViewRequest, LoadedThreadSummaryView } from "./thread-summary-model";
 import { normalizeStoredThreadSummary, type StoredThreadSummary } from "./thread-summary-types";
+import {
+  acknowledgeLegacyThreadPins,
+  captureLegacyThreadPins,
+  loadLegacyThreadPins,
+} from "./threadPinMigrationSqlite";
 import { sqliteRows } from "./sqliteResult";
 import { unknownRecord } from "./unknownRecord";
 import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
@@ -11,7 +16,7 @@ import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 const TABLE = "codewide_thread_summaries";
 const META_TABLE = "__tanstack_db_sqlite_meta";
 const RUNTIME_ID = "thread-summaries-v2";
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const CHECKPOINT_DELAY_MS = 250;
 const CHECKPOINT_ATTEMPTS = 3;
 
@@ -25,6 +30,7 @@ type PendingCheckpoint = {
 };
 
 export type ThreadSummarySqlite = {
+  acknowledgePinMigration: (connectionId: string, threadIds: readonly string[]) => Promise<void>;
   begin: () => void;
   close: () => Promise<void>;
   commit: (options?: { durable?: boolean }) => Promise<void>;
@@ -32,6 +38,8 @@ export type ThreadSummarySqlite = {
   hasMoreViewRows: (request: ThreadSummaryViewRequest) => Promise<boolean>;
   loadAll: () => Promise<StoredThreadSummary[]>;
   loadConnectionRows: (connectionId: string) => Promise<StoredThreadSummary[]>;
+  loadPendingPinMigration: (connectionId: string) => Promise<readonly string[]>;
+  loadProjectUnread: (connectionId: string, projectCwd: string) => Promise<StoredThreadSummary[]>;
   loadRow: (connectionId: string, threadId: string) => Promise<StoredThreadSummary | null>;
   loadRows: (connectionId: string, threadIds: readonly string[]) => Promise<StoredThreadSummary[]>;
   loadUnread: () => Promise<StoredThreadSummary[]>;
@@ -159,6 +167,11 @@ export function createThreadSummarySqlite(): ThreadSummarySqlite {
   ): Promise<StoredThreadSummary[]> => read(async (executor) => executeRows(executor, sql, params));
 
   return {
+    async acknowledgePinMigration(connectionId, threadIds) {
+      await read(async (executor) =>
+        acknowledgeLegacyThreadPins(executor, connectionId, threadIds),
+      );
+    },
     begin() {
       if (currentChanges !== null) {
         throw new Error("Thread summary SQLite transaction is already open");
@@ -214,6 +227,15 @@ export function createThreadSummarySqlite(): ThreadSummarySqlite {
     },
     async loadConnectionRows(connectionId) {
       return readRows(`SELECT __payload FROM ${TABLE} WHERE connection_id = ?`, [connectionId]);
+    },
+    async loadPendingPinMigration(connectionId) {
+      return read(async (executor) => loadLegacyThreadPins(executor, connectionId));
+    },
+    async loadProjectUnread(connectionId, projectCwd) {
+      return readRows(
+        `SELECT __payload FROM ${TABLE} WHERE connection_id = ? AND json_extract(__payload, '$.cwd') = ? AND delete_command_id IS NULL AND json_extract(__payload, '$.unread') > 0`,
+        [connectionId, projectCwd],
+      );
     },
     async loadRow(connectionId, threadId) {
       return (
@@ -322,7 +344,13 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
     for (const suffix of ["0", "root_connection", "root_global", "subagents", "project"]) {
       await executor.execute(`DROP INDEX IF EXISTS ${TABLE}__idx_${suffix}`);
     }
-    // v4 and v5 have the same physical schema. The version marks projection
+    // Capture before clearing in this same transaction: offline updates must not
+    // lose the import queue, and confirmed Companion pins must remain untouched.
+    await captureLegacyThreadPins(executor);
+    await executor.execute(`UPDATE ${TABLE} SET pinned = 0,
+      __payload = json_set(__payload, '$.pinned', json('false'), '$.pinCursor', 0)
+      WHERE json_type(__payload, '$.pinCursor') IS NULL`);
+    // v4, v5 and v6 have the same physical schema. The version marks projection
     // semantics, not disposable user-visible contents, so upgrading must keep
     // the locally available thread catalog until the repaired snapshot lands.
     await executor.execute(

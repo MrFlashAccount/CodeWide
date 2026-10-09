@@ -1,5 +1,6 @@
 import type { ThreadUiStateDatabase } from "../../data/thread-ui-state-database";
 import { getOrCreateThreadUiState } from "../../data/thread-ui-state-initialization";
+import type { createThreadSummaryMetadataReader } from "../../data/threadSummaryMetadata";
 
 import type { ConversationWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts conversation intents using retained lower authorities. */
@@ -8,11 +9,13 @@ export function createConversationWorkspaceAdapter({
   loadTurnItems,
   observeThread,
   readThread,
+  readThreadSummary,
 }: {
   getThreadUiState: () => ThreadUiStateDatabase | null;
   loadTurnItems: ConversationWorkspaceCapabilities["loadTurnItems"];
   observeThread: ConversationWorkspaceCapabilities["observeThread"];
   readThread: ConversationWorkspaceCapabilities["readThread"];
+  readThreadSummary: ReturnType<typeof createThreadSummaryMetadataReader>;
 }): ConversationWorkspaceCapabilities {
   const loadScrollOffset = async (connectionId: string, threadId: string): Promise<number | null> =>
     (await getOrCreateThreadUiState(connectionId, threadId, getThreadUiState())).scrollOffset;
@@ -32,7 +35,18 @@ export function createConversationWorkspaceAdapter({
       historyAnchorOffsetPx,
     );
   };
-  return { loadScrollOffset, loadTurnItems, observeThread, readThread, saveScrollOffset };
+  const readThreadMetadata: ConversationWorkspaceCapabilities["readThreadMetadata"] = async (
+    connectionId,
+    threadId,
+  ) => (await readThreadSummary(connectionId, threadId)).thread;
+  return {
+    loadScrollOffset,
+    loadTurnItems,
+    observeThread,
+    readThread,
+    readThreadMetadata,
+    saveScrollOffset,
+  };
 }
 function requireThreadUiStateDatabase(
   database: ThreadUiStateDatabase | null,

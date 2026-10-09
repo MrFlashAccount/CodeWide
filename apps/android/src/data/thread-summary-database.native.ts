@@ -9,10 +9,19 @@ import type {
 } from "./thread-summary-database-contract";
 
 export type { ThreadSummaryDatabase } from "./thread-summary-database-contract";
-import { threadIdFromEvent, type SyncSnapshotThread } from "@codewide/sync-client";
+import {
+  threadIdFromEvent,
+  threadProjectionPatchFromEvent,
+  type SyncEvent,
+  type SyncSnapshotThread,
+} from "@codewide/sync-client";
 
 import type { NativeCommandDelivery } from "../native/native-transport";
-import { normalizeStoredThreadSummary, type StoredThreadSummary } from "./thread-summary-types";
+import {
+  normalizeStoredThreadSummary,
+  threadSummaryProjectionCursor,
+  type StoredThreadSummary,
+} from "./thread-summary-types";
 import {
   projectThreadSummaryEvent,
   projectThreadSummarySnapshot,
@@ -22,6 +31,7 @@ import {
 } from "./thread-summary-projection";
 import { SerialTaskQueue } from "./serial-task-queue";
 import { createThreadSummaryModel, type ThreadSummaryViewRequest } from "./thread-summary-model";
+import type { ThreadSummaryChange } from "./thread-summary-sqlite.native";
 import { createThreadSummarySqlite } from "./thread-summary-sqlite.native";
 import { ThreadCatalogReads } from "./thread-catalog-read";
 import { THREAD_CATALOG_PAGE_SIZE } from "./thread-catalog-loader";
@@ -128,12 +138,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       ) {
         return;
       }
-      const next = {
-        ...row,
-        firstUnreadAgentTurnId: readStateAgentBoundary(row, unread),
-        lastSeenCursor: unread ? row.lastSeenCursor : row.latestActivityCursor,
-        unread: unread ? 1 : 0,
-      };
+      const next = readStateSummary(row, unread);
       storage.begin();
       storage.write({ type: "update", value: next });
       const checkpoint = storage.commit({ durable: true });
@@ -202,7 +207,10 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   const replaceSnapshotRows = async (
     connectionId: string,
     snapshots: SyncSnapshotThread[],
-    missingScope: (current: readonly StoredThreadSummary[]) => ReadonlySet<string>,
+    options: {
+      missingScope: (current: readonly StoredThreadSummary[]) => ReadonlySet<string>;
+      throughCursor: number | undefined;
+    },
   ): Promise<void> => {
     await writes.run(async () => {
       if (disposed) {
@@ -216,22 +224,39 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       const excludedKeys = new Set<string>();
       for (const snapshot of snapshots) {
         const key = threadSummaryKey(connectionId, snapshot.thread.id);
+        const previous = current.get(key);
+        if (
+          previous !== undefined &&
+          options.throughCursor !== undefined &&
+          threadSummaryProjectionCursor(previous) > options.throughCursor
+        ) {
+          next.set(key, previous);
+          continue;
+        }
         if (isCatalogExcluded(snapshot.thread)) {
           excludedKeys.add(key);
           continue;
         }
-        next.set(
-          key,
-          projectThreadSummarySnapshot(
-            connectionId,
-            snapshot.thread,
-            snapshot.archived,
-            current.get(key),
-          ),
+        const row = projectThreadSummarySnapshot(
+          connectionId,
+          snapshot.thread,
+          snapshot.archived,
+          previous,
         );
+        row.projectionCursor = Math.max(
+          threadSummaryProjectionCursor(row),
+          options.throughCursor ?? 0,
+        );
+        next.set(key, row);
       }
-      const removableKeys = new Set([...missingScope(currentRows), ...excludedKeys]);
-      const removed = [...current].filter(([key]) => !next.has(key) && removableKeys.has(key));
+      const removableKeys = new Set([...options.missingScope(currentRows), ...excludedKeys]);
+      const removed = [...current].filter(
+        ([key, row]) =>
+          !next.has(key) &&
+          removableKeys.has(key) &&
+          (options.throughCursor === undefined ||
+            threadSummaryProjectionCursor(row) <= options.throughCursor),
+      );
       const changed = [...next].filter(([key, row]) => {
         const previous = current.get(key);
         return previous === undefined || !sameThreadSummary(previous, row);
@@ -265,7 +290,94 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     });
   };
 
+  const applyEventBatch = async (
+    connectionId: string,
+    events: SyncEvent[],
+    seeds: readonly SyncSnapshotThread[],
+  ): Promise<void> => {
+    await writes.run(async () => {
+      if (disposed || events.length === 0) {
+        return;
+      }
+      const threadIds = [
+        ...new Set(
+          events.flatMap((event) => {
+            const threadId = threadIdFromEvent(event.payload);
+            return threadId === null ? [] : [threadId];
+          }),
+        ),
+      ];
+      const existing = await loadRows(connectionId, threadIds);
+      const current = new Map(
+        existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
+      );
+      const changed = new Map<string, StoredThreadSummary | null>();
+      const excludedSeeds = new Set<string>();
+      for (const snapshot of seeds) {
+        const key = threadSummaryKey(connectionId, snapshot.thread.id);
+        if (isCatalogExcluded(snapshot.thread)) {
+          excludedSeeds.add(snapshot.thread.id);
+          changed.set(key, null);
+        } else if (!current.has(key)) {
+          changed.set(key, seedThreadSummaryFromEvents(connectionId, snapshot, events));
+        }
+      }
+      for (const event of events) {
+        const threadId = threadIdFromEvent(event.payload);
+        if (
+          threadId !== null &&
+          (excludedSeeds.has(threadId) || isCatalogExcluded(event.payload))
+        ) {
+          changed.set(threadSummaryKey(connectionId, threadId), null);
+          continue;
+        }
+        const mutation = projectThreadSummaryEvent(
+          connectionId,
+          event.payload,
+          (threadId) => {
+            const key = threadSummaryKey(connectionId, threadId);
+            return changed.has(key) ? (changed.get(key) ?? undefined) : current.get(key);
+          },
+          undefined,
+          event.cursor,
+        );
+        if (mutation !== null) {
+          changed.set(mutation.key, mutation.value);
+        }
+      }
+      if (changed.size === 0) {
+        return;
+      }
+      storage.begin();
+      for (const [key, row] of changed) {
+        if (row === null) {
+          storage.write({ key, type: "delete" });
+        } else {
+          const previous = current.get(key);
+          storage.write({ type: previous === undefined ? "insert" : "update", value: row });
+        }
+      }
+      const checkpoint = storage.commit({ durable: true });
+      publishModelChanges(
+        [...changed].map(([key, row]) =>
+          row === null
+            ? { key, type: "delete" as const }
+            : { type: current.has(key) ? ("update" as const) : ("insert" as const), value: row },
+        ),
+        [...changed].some(([key, row]) => {
+          if (row === null) {
+            return true;
+          }
+          const previous = current.get(key);
+          return previous !== undefined && summaryViewMembershipChanged(previous, row);
+        }),
+      );
+      await checkpoint;
+    });
+  };
+
   return {
+    acknowledgePinMigration: storage.acknowledgePinMigration,
     async applyCatalogPage(
       connectionId,
       snapshots,
@@ -298,7 +410,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         ]);
         const visibleWindow = window;
         const current = new Map(existing.map((row) => [row.remoteThreadId, row]));
-        const changes: import("./thread-summary-sqlite.native").ThreadSummaryChange[] = [];
+        const changes: ThreadSummaryChange[] = [];
         for (const row of replaceHead
           ? archived
             ? visibleWindow.archived
@@ -359,88 +471,51 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       await applyQuestionDelivery(delivery);
     },
     async applyEvents(connectionId, events) {
+      await applyEventBatch(connectionId, events, []);
+    },
+    async applyPinSnapshot(connectionId, snapshot) {
       await writes.run(async () => {
-        if (disposed || events.length === 0) {
+        if (disposed) {
           return;
         }
-        const threadIds = [
-          ...new Set(
-            events.flatMap((event) => {
-              const threadId = threadIdFromEvent(event.payload);
-              return threadId === null ? [] : [threadId];
-            }),
-          ),
-        ];
-        const existing = await loadRows(connectionId, threadIds);
-        const current = new Map(
-          existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
-        );
-        const changed = new Map<string, StoredThreadSummary | null>();
-        for (const event of events) {
-          const threadId = threadIdFromEvent(event.payload);
-          if (isCatalogExcluded(event.payload) && threadId !== null) {
-            changed.set(threadSummaryKey(connectionId, threadId), null);
+        const rows = await loadConnectionRows(connectionId);
+        const pinnedIds = new Set(snapshot.threadIds);
+        const changes: ThreadSummaryChange[] = [];
+        storage.begin();
+        for (const row of rows) {
+          if ((row.pinCursor ?? 0) > snapshot.cursor) {
             continue;
           }
-          const mutation = projectThreadSummaryEvent(
-            connectionId,
-            event.payload,
-            (threadId) => {
-              const key = threadSummaryKey(connectionId, threadId);
-              return changed.get(key) ?? current.get(key) ?? undefined;
-            },
-            undefined,
-            event.cursor,
-          );
-          if (mutation !== null) {
-            if (mutation.value === null) {
-              changed.set(mutation.key, null);
-              continue;
-            }
-            changed.set(mutation.key, mutation.value);
+          const value = {
+            ...row,
+            pinCursor: snapshot.cursor,
+            pinned: pinnedIds.has(row.remoteThreadId),
+          };
+          if (sameThreadSummary(row, value)) {
+            continue;
           }
-        }
-        if (changed.size === 0) {
-          return;
-        }
-        storage.begin();
-        for (const [key, row] of changed) {
-          if (row === null) {
-            storage.write({ key, type: "delete" });
-          } else {
-            const previous = current.get(key);
-            storage.write({ type: previous === undefined ? "insert" : "update", value: row });
-          }
+          const change = { type: "update" as const, value };
+          storage.write(change);
+          changes.push(change);
         }
         const checkpoint = storage.commit({ durable: true });
-        publishModelChanges(
-          [...changed].map(([key, row]) =>
-            row === null
-              ? { key, type: "delete" as const }
-              : { type: current.has(key) ? ("update" as const) : ("insert" as const), value: row },
-          ),
-          [...changed].some(([key, row]) => {
-            if (row === null) {
-              return true;
-            }
-            const previous = current.get(key);
-            return previous !== undefined && summaryViewMembershipChanged(previous, row);
-          }),
-        );
+        publishModelChanges(changes, changes.length > 0);
         await checkpoint;
       });
     },
-    async applySnapshot(connectionId, snapshots) {
-      await replaceSnapshotRows(
-        connectionId,
-        snapshots,
-        (current) =>
+    async applyRepairedEvents(connectionId, snapshot, events) {
+      await applyEventBatch(connectionId, events, [snapshot]);
+    },
+    async applySnapshot(connectionId, snapshots, cursor) {
+      await replaceSnapshotRows(connectionId, snapshots, {
+        missingScope: (current) =>
           new Set(
             current
               .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
               .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
           ),
-      );
+        throughCursor: cursor,
+      });
     },
     beginCatalogRead: (connectionId) => catalogReads.begin(connectionId),
     async beginDelete(connectionId, threadId, commandId) {
@@ -507,7 +582,36 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         await publish(mutation.value);
       }
     },
+    loadPendingPinMigration: storage.loadPendingPinMigration,
     loadView,
+    async markProjectRead(connectionId, projectCwd) {
+      await writes.run(async () => {
+        if (disposed) {
+          return;
+        }
+        const rows = await storage.loadProjectUnread(connectionId, projectCwd);
+        if (rows.length === 0) {
+          return;
+        }
+        // The write queue captures each chat's current activity boundary. Events
+        // queued after this action remain unread, including in running chats.
+        const changes = rows.map((row) => ({
+          type: "update" as const,
+          value: {
+            ...row,
+            firstUnreadAgentTurnId: null,
+            lastSeenCursor: row.latestActivityCursor,
+            unread: 0,
+          },
+        }));
+        storage.begin();
+        for (const change of changes) {
+          storage.write(change);
+        }
+        await storage.commit({ durable: true });
+        publishModelChanges(changes);
+      });
+    },
     async markRead(connectionId, threadId) {
       await setReadState(connectionId, threadId, false);
     },
@@ -541,7 +645,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           if (
             previous !== undefined &&
             throughCursor !== undefined &&
-            previous.latestActivityCursor > throughCursor
+            threadSummaryProjectionCursor(previous) > throughCursor
           ) {
             continue;
           }
@@ -551,6 +655,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
             snapshot.archived,
             previous,
           );
+          row.projectionCursor = Math.max(row.projectionCursor ?? 0, throughCursor ?? 0);
           if (previous === undefined || !sameThreadSummary(previous, row)) {
             changed.set(key, row);
           }
@@ -638,22 +743,22 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       });
     },
     async replaceCatalog(connectionId, snapshots) {
-      await replaceSnapshotRows(
-        connectionId,
-        snapshots,
-        (current) =>
+      await replaceSnapshotRows(connectionId, snapshots, {
+        missingScope: (current) =>
           new Set(
             current
               .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
               .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
           ),
-      );
+        throughCursor: undefined,
+      });
     },
     async replaceSubagentCatalog(connectionId, rootThreadId, snapshots) {
       const projected = snapshots.filter(({ thread }) => thread.parentThreadId !== null);
-      await replaceSnapshotRows(connectionId, projected, (current) =>
-        threadSummaryDescendantKeys(current, rootThreadId),
-      );
+      await replaceSnapshotRows(connectionId, projected, {
+        missingScope: (current) => threadSummaryDescendantKeys(current, rootThreadId),
+        throughCursor: undefined,
+      });
     },
     async rollbackDelete(connectionId, threadId, commandId) {
       const row = await loadRow(connectionId, threadId);
@@ -723,12 +828,6 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         await publish({ ...row, name });
       }
     },
-    async updatePinned(connectionId, threadId, pinned) {
-      const row = await loadRow(connectionId, threadId);
-      if (row !== undefined) {
-        await publish({ ...row, pinned });
-      }
-    },
     viewResource(request) {
       return model.resource(request, async () => {
         const cached = await storage.loadView(request);
@@ -749,6 +848,21 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   };
 }
 
+function seedThreadSummaryFromEvents(
+  connectionId: string,
+  snapshot: SyncSnapshotThread,
+  events: readonly SyncEvent[],
+): StoredThreadSummary {
+  let archived = snapshot.archived;
+  for (const event of events) {
+    const patch = threadProjectionPatchFromEvent(event.payload);
+    if (patch?.threadId === snapshot.thread.id && typeof patch.operation.archived === "boolean") {
+      archived = patch.operation.archived;
+    }
+  }
+  return projectThreadSummarySnapshot(connectionId, snapshot.thread, archived);
+}
+
 function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary): boolean {
   return (
     left.connectionId === right.connectionId &&
@@ -764,6 +878,7 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
     left.recencyAt === right.recencyAt &&
     left.status.type === right.status.type &&
     left.pinned === right.pinned &&
+    left.pinCursor === right.pinCursor &&
     left.archived === right.archived &&
     left.pendingRequestCount === right.pendingRequestCount &&
     left.closedQuestionTurnId === right.closedQuestionTurnId &&
@@ -777,6 +892,7 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
           (flag, index) =>
             right.status.type === "active" && flag === right.status.activeFlags[index],
         ))) &&
+    left.projectionCursor === right.projectionCursor &&
     left.latestActivityCursor === right.latestActivityCursor &&
     left.lastSeenCursor === right.lastSeenCursor &&
     (left.firstUnreadAgentTurnId ?? null) === (right.firstUnreadAgentTurnId ?? null) &&
@@ -829,4 +945,13 @@ function sameQuestionOpportunity(
     left.itemIds.length === right.itemIds.length &&
     left.itemIds.every((id, index) => id === right.itemIds[index])
   );
+}
+
+function readStateSummary(row: StoredThreadSummary, unread: boolean): StoredThreadSummary {
+  return {
+    ...row,
+    firstUnreadAgentTurnId: readStateAgentBoundary(row, unread),
+    lastSeenCursor: unread ? row.lastSeenCursor : row.latestActivityCursor,
+    unread: unread ? 1 : 0,
+  };
 }

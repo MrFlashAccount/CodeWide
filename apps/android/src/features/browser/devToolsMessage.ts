@@ -2,6 +2,7 @@ export type DevToolsDockSide = "bottom" | "left" | "right" | "undocked";
 
 /** Validated message accepted from the embedded browser DevTools surface. */
 export type DevToolsMessage =
+  | { action: "close"; source: "codewide-devtools-ui" }
   | { message?: string; source: "codewide-devtools-health"; state: "ready" | "error" }
   | { side: DevToolsDockSide; source: "codewide-devtools-dock" }
   | {
@@ -18,6 +19,9 @@ export function parseDevToolsMessage(value: string): DevToolsMessage | null {
       return null;
     }
     const source = "source" in parsed ? parsed.source : undefined;
+    if (source === "codewide-devtools-ui") {
+      return "action" in parsed && parsed.action === "close" ? { action: "close", source } : null;
+    }
     if (source === "codewide-devtools-dock") {
       const side = "side" in parsed ? parsed.side : undefined;
       return isDevToolsDockSide(side) ? { side, source } : null;

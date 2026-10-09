@@ -8,6 +8,10 @@ const browser = readFileSync(
   new URL("../src/features/browser/InternalBrowser.native.tsx", import.meta.url),
   "utf8",
 );
+const browserToolbar = readFileSync(
+  new URL("../src/features/browser/BrowserToolbar.tsx", import.meta.url),
+  "utf8",
+);
 const devToolsBoundary = readFileSync(
   new URL("../src/ui/DevToolsErrorBoundary.tsx", import.meta.url),
   "utf8",
@@ -82,17 +86,15 @@ describe("internal browser", () => {
   it("owns navigation and Chromium developer tools independently of localhost tunnels", () => {
     expect(browser).toContain('const DEFAULT_ORIGIN_WHITELIST = ["http://*", "https://*"]');
     expect(browser).toContain("originWhitelist = DEFAULT_ORIGIN_WHITELIST");
-    expect(browser).toContain(
-      'accessibilityLabel={devToolsOpen ? "Close Chromium DevTools" : "Open Chromium DevTools"}',
-    );
-    expect(ownerBrowserDevTools).toContain("startNativeBrowserDevToolsBridge()");
+    expect(browserToolbar).toContain('"Close Chromium DevTools"');
+    expect(browserToolbar).toContain('"Open Chromium DevTools"');
+    expect(ownerBrowserDevTools).toContain("new BrowserInspectionSession()");
     expect(ownerBrowserBack).toContain('BackHandler.addEventListener("hardwareBackPress"');
     expect(ownerBrowserBack).toContain("devToolsUrl !== null");
     expect(ownerBrowserBack).toContain("closeDevTools()");
     expect(ownerBrowserBack).toContain("canGoBack");
     expect(ownerBrowserBack).toContain("webView.current?.goBack()");
     expect(ownerBrowserBack).toContain("header.onClose()");
-    expect(ownerBrowserDevTools).toContain("if (bridgeStarted.current)");
     expect(ownerBrowserDevToolsPaneNative).toContain('testID="chromium-devtools-webview"');
     expect(browser).not.toContain("startNativeBrowserTracing()");
     expect(browser).not.toContain("webviewDebuggingEnabled");
@@ -117,25 +119,27 @@ describe("internal browser", () => {
     expect(portForwarding).not.toContain("Linking.openURL");
     expect(ownerBrowserWorkspace).toContain('testID="browser-workspace"');
     expect(ownerLoopbackNavigation).toContain(
-      "openBrowser(profile.label, forwardedLoopbackUrl(target, profile))",
+      "browser.openBrowserInThread(profile.label, url, browser.thread)",
     );
     expect(
-      sourceHasJsxElement(ownerBrowserWorkspace, "InternalBrowser", [
-        'closeLabel: "Close browser"',
-        "title",
-        "onClose",
-      ]),
+      sourceHasJsxElement(ownerBrowserWorkspace, "BrowserTabSurface", ["onClose", "tabs", "tab"]),
     ).toBe(true);
     expect(screen).not.toContain("Linking.openURL(forwardedLoopbackUrl");
   });
 
   it("merges fullscreen identity and browser navigation into one toolbar", () => {
     expect(browser).toContain("header?: InternalBrowserHeader");
-    expect(browser).toContain("accessibilityLabel={header.closeLabel}");
-    expect(sourceHasJsxElement(browser, "Ionicons", ['name="close"'])).toBe(true);
-    expect(sourceHasJsxElement(browser, "BrowserButton", ['label="Back"'])).toBe(true);
-    expect(sourceHasJsxElement(browser, "BrowserButton", ['label="Reload"'])).toBe(true);
-    expect(browser).toContain("<BrowserAddressBar");
+    expect(
+      sourceHasJsxElement(browser, "BrowserToolbar", [
+        "header={header}",
+        "onBack={pageSession.back}",
+        "onReload={pageSession.retry}",
+      ]),
+    ).toBe(true);
+    expect(browserToolbar).toContain("label={props.header.closeLabel}");
+    expect(sourceHasJsxElement(browserToolbar, "BrowserButton", ['label="Back"'])).toBe(true);
+    expect(browserToolbar).toContain('"Reload"');
+    expect(browserToolbar).toContain("<BrowserAddressBar");
     expect(browser).toContain("onEditingChange={setAddressEditing}");
     expect(browser).not.toContain("locationTitle");
     expect(ownerBrowserWorkspace).not.toContain("styles.previewHeader");
@@ -158,7 +162,7 @@ describe("internal browser", () => {
       "/browser-devtools/${endpoint.token}/front_end/inspector.html",
     );
     expect(ownerBrowserDevToolsPaneNative).toContain("DEVTOOLS_HEALTH_PROBE");
-    expect(ownerBrowserDevTools).toContain("markInspectablePage(webView.current)");
+    expect(ownerBrowserDevTools).toContain("inspection.open(webView.current, navigation.url)");
     expect(ownerDevToolsTarget).toContain('method: "Runtime.evaluate"');
     expect(ownerDevToolsTarget).toContain(
       'expression: "globalThis.__codewideDevToolsTargetMarker || null"',

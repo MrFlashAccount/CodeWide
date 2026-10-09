@@ -5,6 +5,9 @@ import { State } from "react-native-gesture-handler";
 import { fireGestureHandler, getByGestureTestId } from "react-native-gesture-handler/jest-utils";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 
+import { SidebarProjectRow } from "../src/features/projects/SidebarProjectViews";
+import type { SidebarProject, SidebarProjectActions } from "../src/features/projects/sidebarProjects";
+import { getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
 import { ThreadRow } from "../src/features/threadList/ThreadRow";
 import type { ThreadListItem } from "../src/features/threadList/threadListTypes";
 import { AppNoticeContext } from "../src/ui/appNoticeContext";
@@ -256,4 +259,112 @@ it("rejects scroll displacement and cancelled taps, but retains accessible activ
   fireEvent(trigger, "accessibilityAction", { nativeEvent: { actionName: "longpress" } });
   expect(view.getByTestId("native-popup")).toBeTruthy();
   expect(press).toHaveBeenCalledTimes(2);
+});
+
+const project: SidebarProject = {
+  connectionId: "server",
+  key: "server\u0000/repo",
+  lastUsedAt: 1,
+  name: "Repo",
+  path: "/repo",
+  pinned: true,
+  serverLabel: null,
+  subtitle: "/repo",
+  unread: true,
+};
+
+it("opens the same transient native menu for a project, with exactly unpin and mark all as read", async () => {
+  const actions: SidebarProjectActions = {
+    markAllRead: jest.fn(async () => undefined),
+    unpin: jest.fn(async () => undefined),
+  };
+  const view = render(<SidebarProjectRow actions={actions} onPress={press} project={project} />);
+  const trigger = view.getByRole("button", { name: "Open project Repo, unread chats" });
+  expect(view.queryByTestId("compose-host")).toBeNull();
+  act(() => fireGestureHandler(getByGestureTestId("project-row-tap"), [{ state: State.END }]));
+  expect(press).toHaveBeenCalledTimes(1);
+  act(() => fireGestureHandler(getByGestureTestId("project-row-long-press"), [{ state: State.ACTIVE }]));
+  expect(press).toHaveBeenCalledTimes(1);
+  expect(view.getAllByRole("menuitem")).toHaveLength(2);
+  await act(async () => fireEvent.press(view.getByRole("menuitem", { name: "Mark all as read" })));
+  expect(actions.markAllRead).toHaveBeenCalledWith(project);
+  expect(actions.unpin).not.toHaveBeenCalled();
+  expect(view.queryByTestId("compose-host")).toBeNull();
+  act(() => fireGestureHandler(getByGestureTestId("project-row-long-press"), [{ state: State.ACTIVE }]));
+  await act(async () => fireEvent.press(view.getByRole("menuitem", { name: "Unpin" })));
+  expect(actions.unpin).toHaveBeenCalledWith(project);
+});
+
+it("retires a project menu when its row is recycled for the same path on another server", () => {
+  const actions: SidebarProjectActions = {
+    markAllRead: jest.fn(async () => undefined),
+    unpin: jest.fn(async () => undefined),
+  };
+  const view = render(<SidebarProjectRow actions={actions} onPress={press} project={project} />);
+  act(() => fireGestureHandler(getByGestureTestId("project-row-long-press"), [{ state: State.ACTIVE }]));
+  const staleItem = view.getByRole("menuitem", { name: "Unpin" });
+  view.rerender(<SidebarProjectRow actions={actions} onPress={press} project={{ ...project, connectionId: "other", key: "other\u0000/repo" }} />);
+  expect(view.queryByTestId("compose-host")).toBeNull();
+  view.rerender(<SidebarProjectRow actions={actions} onPress={press} project={project} />);
+  expect(view.queryByTestId("compose-host")).toBeNull();
+  fireEvent.press(staleItem);
+  expect(actions.unpin).not.toHaveBeenCalled();
+});
+
+it("reports a failed project command without clearing unread or hiding the shortcut", async () => {
+  resetAppDialog();
+  const actions: SidebarProjectActions = {
+    markAllRead: async () => { throw new Error("Read checkpoint failed"); },
+    unpin: async () => undefined,
+  };
+  const view = render(<SidebarProjectRow actions={actions} onPress={press} project={project} />);
+  act(() => fireGestureHandler(getByGestureTestId("project-row-long-press"), [{ state: State.ACTIVE }]));
+  await act(async () => fireEvent.press(view.getByRole("menuitem", { name: "Mark all as read" })));
+  expect(getAppDialogRequest()?.message).toBe("Read checkpoint failed");
+  expect(view.getByTestId(`project-unread:${project.key}`)).toBeVisible();
+});
+
+it("gives project and session rows identical long-press thresholds and scroll cancellation", () => {
+  const actions: SidebarProjectActions = {
+    markAllRead: jest.fn(async () => undefined),
+    unpin: jest.fn(async () => undefined),
+  };
+  const view = render(<View>{row()}<SidebarProjectRow actions={actions} onPress={press} project={project} /></View>);
+  const sessionTap = getByGestureTestId("thread-row-tap");
+  const projectTap = getByGestureTestId("project-row-tap");
+  const sessionHold = getByGestureTestId("thread-row-long-press");
+  const projectHold = getByGestureTestId("project-row-long-press");
+  expect(projectTap.config.maxDist).toBe(sessionTap.config.maxDist);
+  expect(projectHold.config.maxDist).toBe(sessionHold.config.maxDist);
+  expect(projectHold.config.minDurationMs).toBe(sessionHold.config.minDurationMs);
+  expect(projectHold.config.minDurationMs).toBe(350);
+  act(() => fireGestureHandler(projectTap, [{ state: State.FAILED, x: 0, y: 12 }]));
+  expect(press).not.toHaveBeenCalled();
+  expect(view.queryByTestId("compose-host")).toBeNull();
+  const projectTrigger = view.getByRole("button", { name: "Open project Repo, unread chats" });
+  fireEvent(projectTrigger, "accessibilityAction", { nativeEvent: { actionName: "activate" } });
+  expect(press).toHaveBeenCalledTimes(1);
+  fireEvent(projectTrigger, "accessibilityAction", { nativeEvent: { actionName: "longpress" } });
+  expect(view.getByTestId("native-popup")).toBeVisible();
+});
+
+it("keeps the project title while a command is pending and blocks duplicate selections", async () => {
+  const pending = Promise.withResolvers<void>();
+  const actions: SidebarProjectActions = {
+    markAllRead: jest.fn(() => pending.promise),
+    unpin: jest.fn(async () => undefined),
+  };
+  const view = render(<SidebarProjectRow actions={actions} onPress={press} project={project} />);
+  const title = view.getByText("Repo");
+  act(() => fireGestureHandler(getByGestureTestId("project-row-long-press"), [{ state: State.ACTIVE }]));
+  fireEvent.press(view.getByRole("menuitem", { name: "Mark all as read" }));
+  expect(view.getByText("Repo")).toBe(title);
+  act(() => fireGestureHandler(getByGestureTestId("project-row-long-press"), [{ state: State.ACTIVE }]));
+  fireEvent.press(view.getByRole("menuitem", { name: "Mark all as read" }));
+  fireEvent.press(view.getByRole("menuitem", { name: "Unpin" }));
+  expect(actions.markAllRead).toHaveBeenCalledTimes(1);
+  expect(actions.unpin).not.toHaveBeenCalled();
+  await act(async () => pending.resolve());
+  fireEvent(view.getByTestId("native-popup"), "touchCancel");
+  expect(view.getByText("Repo")).toBe(title);
 });

@@ -163,7 +163,9 @@ async function setup(
   const session = (connectionId: string) =>
     ({
       rpc: (method: string, params: { cursor: string | null; archived: boolean }) =>
-        rpc(method, params, connectionId),
+        method === "companion/thread/pins/list"
+          ? Promise.resolve({ archivedThreadIds: [], cursor: 0, threadIds: [] })
+          : rpc(method, params, connectionId),
     }) as unknown as RpcClient;
   const runtime = createCatalogRuntime({
     desiredThreadId: () => undefined,

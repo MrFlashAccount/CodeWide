@@ -198,6 +198,7 @@ internal object SessionCredentialClient {
               ),
               tags = mapOf("phase" to "completed"),
             ))
+            dev.codewide.app.diagnostics.NativeDiagnosticRuntime.rememberCredential(token)
             callback(Result.success(MintedSessionCredential(token, expiresAt)))
           } catch (error: Throwable) {
             telemetry.record(NativeTelemetryMetric(

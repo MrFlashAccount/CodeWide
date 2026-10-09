@@ -1,13 +1,13 @@
-import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, Pressable, View } from "react-native";
+import { View } from "react-native";
+import { DesktopInputSurface } from "../desktopInput/DesktopInputSurface";
 import { WebView } from "react-native-webview";
-import { colors, iconSize } from "../../theme";
+import { useEvent } from "../../react/useEvent";
 import { AppText as Text } from "../../ui/Typography";
 import { browserAddressKeepsOrigin } from "./browser-address";
-import { BrowserAddressBar } from "./BrowserAddressBar";
 import { useBrowserBack } from "./browserBack";
-import { BrowserButton } from "./BrowserButton";
-import type { InternalBrowserHeader } from "./browserContract";
+import type { BrowserTabsControl, InternalBrowserHeader } from "./browserContract";
+import { BrowserToolbar } from "./BrowserToolbar";
+import { BrowserLoadingBar } from "./BrowserLoadingBar";
 import { useBrowserDevTools } from "./browserDevTools";
 import { renderBrowserDevToolsPane } from "./BrowserDevToolsPane";
 import { useBrowserFeedbackSession } from "./browserFeedbackSession";
@@ -15,25 +15,48 @@ import { useBrowserNavigationState } from "./browserNavigationState";
 import { useBrowserPaneLayout } from "./browserPaneLayout";
 import { BROWSER_FEEDBACK_BOOTSTRAP, type BrowserFeedbackCapability } from "./feedback";
 import { styles } from "./InternalBrowser.styles";
+import { BrowserPageFeedback } from "./BrowserPageFeedback";
+import { useBrowserPageSession } from "./browserPageSession";
+import { useBrowserFavicon } from "./useBrowserFavicon";
 
 const DEFAULT_ORIGIN_WHITELIST = ["http://*", "https://*"];
 
 export function InternalBrowser({
+  active = true,
+  credentialOrigin,
   feedback: suppliedFeedback,
   header,
   headers,
   onError,
+  onFavicon,
   onHttpError,
+  onNavigation,
+  onOpenWindow,
   originWhitelist = DEFAULT_ORIGIN_WHITELIST,
+  showCloseButton = true,
+  tabsControl,
   url,
+  wide = true,
 }: {
+  active?: boolean;
+  credentialOrigin?: string;
   feedback?: BrowserFeedbackCapability;
   header?: InternalBrowserHeader;
   headers?: Readonly<Record<string, string>>;
   onError?: (description: string) => void;
+  onFavicon?: (icon: string | null) => void;
   onHttpError?: (statusCode: number) => void;
+  onNavigation?: (metadata: {
+    readonly loading: boolean;
+    readonly title: string;
+    readonly url: string;
+  }) => void;
+  onOpenWindow?: (url: string) => boolean;
   originWhitelist?: string[];
+  showCloseButton?: boolean;
+  tabsControl?: BrowserTabsControl;
   url: string;
+  wide?: boolean;
 }) {
   const {
     addressEditing,
@@ -44,13 +67,33 @@ export function InternalBrowser({
     updateNavigation,
     webView,
   } = useBrowserNavigationState(url);
-  const devTools = useBrowserDevTools(webView, navigation, onError);
+  const favicon = useBrowserFavicon(onFavicon);
+  const pageSession = useBrowserPageSession({
+    active,
+    favicon,
+    navigateAddress,
+    navigation,
+    onClose: header?.onClose,
+    onError,
+    onHttpError,
+    onNavigation,
+    onOpenWindow,
+    originWhitelist,
+    updateNavigation,
+    webView,
+  });
+  const reportToolError = useEvent((message: string) => {
+    pageSession.showNotice("Developer tools are unavailable for this page");
+    onError?.(message);
+  });
+  const devTools = useBrowserDevTools(webView, navigation, { active, onError: reportToolError });
   const { captureFeedback, feedback, feedbackCapturing, feedbackSelecting, selectFeedbackElement } =
     useBrowserFeedbackSession(
       suppliedFeedback,
       webView,
       devTools.captureScreenshot,
       devTools.isMounted,
+      active,
     );
   const devToolsOpen = devTools.devToolsUrl !== null;
   const { dividerPanResponder, onContentLayout, targetPaneStyle, verticalDock } =
@@ -61,115 +104,42 @@ export function InternalBrowser({
     devTools.closeDevTools,
     navigation.canGoBack,
     webView,
+    active,
   );
+  const toggleDevTools = useEvent(() => {
+    if (devToolsOpen) {
+      devTools.closeDevTools();
+    } else {
+      void devTools.openDevTools().catch(() => {
+        reportToolError("Could not open Chromium DevTools");
+      });
+    }
+  });
   return (
     <View style={styles.root}>
-      <View style={[styles.toolbar, addressEditing && styles.toolbarEditing]}>
-        {!addressEditing && header !== undefined && (
-          <Pressable
-            accessibilityLabel={header.closeLabel}
-            accessibilityRole="button"
-            onPress={header.onClose}
-            style={({ pressed }) => [styles.button, pressed && styles.pressed]}
-          >
-            <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
-          </Pressable>
-        )}
-        {!addressEditing && (
-          <BrowserButton
-            disabled={!navigation.canGoBack}
-            icon="chevron-back"
-            label="Back"
-            onPress={() => webView.current?.goBack()}
-          />
-        )}
-        {!addressEditing && (
-          <BrowserButton
-            disabled={!navigation.canGoForward}
-            icon="chevron-forward"
-            label="Forward"
-            onPress={() => webView.current?.goForward()}
-          />
-        )}
-        {!addressEditing &&
-          (navigation.loading ? (
-            <BrowserButton
-              icon="close"
-              label="Stop loading"
-              onPress={() => webView.current?.stopLoading()}
-            />
-          ) : (
-            <BrowserButton
-              icon="refresh"
-              label="Reload"
-              onPress={() => webView.current?.reload()}
-            />
-          ))}
-        <BrowserAddressBar
-          key={url}
-          onEditingChange={setAddressEditing}
-          onNavigate={navigateAddress}
-          url={navigation.url}
-        />
-        {!addressEditing && feedback !== undefined && (
-          <Pressable
-            accessibilityLabel={
-              feedbackSelecting ? "Cancel element selection" : "Select element to fix"
-            }
-            accessibilityRole="button"
-            disabled={feedbackCapturing}
-            onPress={selectFeedbackElement}
-            style={styles.button}
-          >
-            {feedbackCapturing ? (
-              <ActivityIndicator color={colors.text} size="small" />
-            ) : (
-              <Ionicons
-                color={feedbackSelecting ? colors.success : colors.textMuted}
-                name="locate-outline"
-                size={iconSize.action}
-              />
-            )}
-          </Pressable>
-        )}
-        {!addressEditing && (
-          <Pressable
-            accessibilityLabel={devToolsOpen ? "Close Chromium DevTools" : "Open Chromium DevTools"}
-            accessibilityRole="button"
-            accessibilityState={{
-              busy: devTools.devToolsLoading || devTools.devToolsDocumentLoading,
-              selected: devToolsOpen,
-            }}
-            disabled={devTools.devToolsLoading}
-            onPress={() => {
-              if (devToolsOpen) {
-                devTools.closeDevTools();
-              } else {
-                devTools.openDevTools().catch((error: unknown) => {
-                  onError?.(
-                    error instanceof Error ? error.message : "Could not open Chromium DevTools",
-                  );
-                });
-              }
-            }}
-            style={({ pressed }) => [
-              styles.button,
-              devToolsOpen && styles.activeButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            {devTools.devToolsLoading ? (
-              <ActivityIndicator color={colors.text} size="small" />
-            ) : (
-              <Ionicons
-                color={devToolsOpen ? colors.accent : colors.textMuted}
-                name="code-slash"
-                size={iconSize.action}
-              />
-            )}
-          </Pressable>
-        )}
-      </View>
+      <BrowserToolbar
+        addressEditing={addressEditing}
+        devToolsBusy={devTools.devToolsLoading || devTools.devToolsDocumentLoading}
+        devToolsOpen={devToolsOpen}
+        feedbackCapturing={feedbackCapturing}
+        feedbackEnabled={feedback !== undefined}
+        feedbackSelecting={feedbackSelecting}
+        header={header}
+        initialUrl={url}
+        navigation={navigation}
+        onBack={pageSession.back}
+        onEditingChange={setAddressEditing}
+        onForward={pageSession.goForward}
+        onNavigate={pageSession.navigate}
+        onReload={pageSession.retry}
+        onSelectFeedback={selectFeedbackElement}
+        onStop={pageSession.stopLoading}
+        onToggleDevTools={toggleDevTools}
+        showCloseButton={showCloseButton}
+        tabsControl={tabsControl}
+        wide={wide}
+      />
+      <BrowserLoadingBar loading={navigation.loading} progress={pageSession.progress} />
       {feedbackSelecting && (
         <Text style={styles.browserNotice}>Tap an element to describe what should change</Text>
       )}
@@ -182,32 +152,58 @@ export function InternalBrowser({
         ]}
       >
         <View style={targetPaneStyle}>
-          <WebView
-            domStorageEnabled
-            javaScriptEnabled
-            originWhitelist={originWhitelist}
-            ref={webView}
-            sharedCookiesEnabled
-            source={{
-              uri: addressSource.uri,
-              ...(headers === undefined || !browserAddressKeepsOrigin(url, addressSource.uri)
+          <DesktopInputSurface
+            active={
+              active &&
+              !feedbackSelecting &&
+              !navigation.loading &&
+              pageSession.status.kind === "ready"
+            }
+            defaultProfile="general"
+            label="Page"
+            sessionKey={String(pageSession.revision)}
+          >
+            <WebView
+              domStorageEnabled
+              javaScriptCanOpenWindowsAutomatically={false}
+              javaScriptEnabled
+              key={pageSession.revision}
+              originWhitelist={["*"]}
+              ref={webView}
+              setSupportMultipleWindows
+              sharedCookiesEnabled
+              source={{
+                uri: addressSource.uri,
+                ...(headers === undefined ||
+                !browserAddressKeepsOrigin(credentialOrigin ?? url, addressSource.uri)
+                  ? {}
+                  : { headers }),
+              }}
+              style={styles.webView}
+              thirdPartyCookiesEnabled={false}
+              {...(feedback === undefined
                 ? {}
-                : { headers }),
-            }}
-            style={styles.webView}
-            thirdPartyCookiesEnabled={false}
-            {...(feedback === undefined
-              ? {}
-              : {
-                  injectedJavaScriptBeforeContentLoaded: BROWSER_FEEDBACK_BOOTSTRAP,
-                  onMessage: captureFeedback,
-                })}
-            onError={(event) => onError?.(event.nativeEvent.description)}
-            onHttpError={(event) => onHttpError?.(event.nativeEvent.statusCode)}
-            onNavigationStateChange={updateNavigation}
-            renderLoading={() => <ActivityIndicator color={colors.accent} style={styles.loading} />}
-            startInLoadingState
-          />
+                : {
+                    injectedJavaScriptBeforeContentLoaded: BROWSER_FEEDBACK_BOOTSTRAP,
+                    onMessage: captureFeedback,
+                  })}
+              onError={pageSession.pageFailed}
+              onHttpError={pageSession.httpFailed}
+              onLoadProgress={pageSession.progressChanged}
+              onLoadStart={pageSession.loadingStarted}
+              onNavigationStateChange={pageSession.navigationChanged}
+              onOpenWindow={pageSession.newWindow}
+              onRenderProcessGone={pageSession.rendererGone}
+              onShouldStartLoadWithRequest={pageSession.shouldNavigate}
+            />
+          </DesktopInputSurface>
+          {pageSession.status.kind === "notice" && (
+            <BrowserPageFeedback
+              onBack={pageSession.back}
+              onRetry={pageSession.retry}
+              status={pageSession.status}
+            />
+          )}
         </View>
         {renderBrowserDevToolsPane(
           devTools,
@@ -215,6 +211,7 @@ export function InternalBrowser({
           onError,
           verticalDock,
           dividerPanResponder,
+          active,
         )}
       </View>
     </View>

@@ -423,6 +423,17 @@ const globalSupervisorAttention = createGlobalSupervisorAttentionOwner({
   storage: createGlobalSupervisorAttentionStorage(),
 });
 
+/** Settles the existing home-deletion contract against the saved local profiles. */
+export async function invalidateDeletedConnectionBindings(): Promise<void> {
+  const binding = workspaceRuntime.globalSupervisorBinding;
+  if (binding === null) {
+    throw new Error("Global Voice binding is not ready");
+  }
+  await binding.invalidateDeletedConnections(
+    new Set(currentConnections().map((profile) => profile.id)),
+  );
+}
+
 /** Erases the removed connection's local data before its saved profile disappears. */
 export async function deleteLocalConnectionData(connectionId: string): Promise<void> {
   const snapshot = workspaceRuntime.snapshot;

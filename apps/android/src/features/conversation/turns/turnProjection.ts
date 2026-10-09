@@ -395,8 +395,14 @@ function prepareTurnPresentation(turn: TurnRow) {
         item.delivery === "async" &&
         (item.questions?.length ?? 0) > 0,
     );
+  // Explicit compaction completes successfully without generating an answer.
+  // Its lifecycle row is the result; failed/interrupted turns still need their warning.
+  const completedCompaction =
+    rawTurn.status === "completed" &&
+    rawTurn.items.some((item) => item.type === "contextCompaction");
   const showEmptyResponsePlaceholder =
     !hasQuestions &&
+    !completedCompaction &&
     rawTurn.status !== "inProgress" &&
     !hasGeneratedAgentResponse &&
     artifacts.length === 0;

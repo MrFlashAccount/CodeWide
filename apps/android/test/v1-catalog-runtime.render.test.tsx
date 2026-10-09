@@ -16,10 +16,10 @@ const archivedRequest: ThreadSummaryViewRequest = {
 };
 
 it("refreshes the archive only while an archive view requests it", async () => {
-  const rpc = jest.fn(async () => ({ data: [], nextCursor: null }));
+  const rpc = jest.fn(async (_method: string, _params: unknown) => ({ data: [], nextCursor: null }));
   // WHY: RpcClient has a caller-selected generic result. This fixture supplies
   // the validated thread/list wire shape consumed by the real catalog adapter.
-  const session = { rpc } as unknown as RpcClient;
+  const session = { rpc: (method: string, params: unknown) => method === "companion/thread/pins/list" ? Promise.resolve({ archivedThreadIds: [], cursor: 0, threadIds: [] }) : rpc(method, params) } as unknown as RpcClient;
   let requests: readonly ThreadSummaryViewRequest[] = [archivedRequest];
   let loadCatalog: ((request: ThreadSummaryViewRequest) => Promise<boolean>) | undefined;
   const release = jest.fn();
@@ -27,6 +27,9 @@ it("refreshes the archive only while an archive view requests it", async () => {
   // this behavior test intentionally supplies only the catalog-facing methods.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const summaries = {
+    loadPendingPinMigration: jest.fn(async () => []),
+    applyPinSnapshot: jest.fn(async () => undefined),
+    mergeSnapshots: jest.fn(async () => undefined),
     removeCatalogEntries: jest.fn(async () => undefined),
     applyCatalogPage: jest.fn(async () => undefined),
     beginCatalogRead: () => ({ changed: new Set<string>(), release }),

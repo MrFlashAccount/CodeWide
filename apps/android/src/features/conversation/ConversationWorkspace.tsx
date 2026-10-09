@@ -3,10 +3,12 @@ import {
   tunnelResourceKey,
   turnControlsResourceKey,
 } from "../../data/workspace-resource-keys";
+import { v1ThreadRouteParams } from "../../services/threads/threadRouteParams";
 import { useTurnChangesLoader } from "../changes/turnChanges";
 import { useGoalCommands } from "../goal/goalCommands";
 import { useLoopbackNavigation } from "../ports/loopbackNavigation";
 import { useActiveProjectSelection } from "../projects/activeProjectSelection";
+import { changeNewChatDestination } from "../projects/newChatProjectSelection";
 import { createNewChatSubmission } from "../projects/newChatSubmission";
 import { useQueueCommands } from "../queue/queueCommands";
 import { useActiveThreadActions, useThreadMutationActions } from "../turnActions/turnActions";
@@ -170,11 +172,13 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     goalCommands,
   );
 
-  const openActiveLoopbackLink = useLoopbackNavigation(
-    props.native,
-    scope.activeConnectionId,
-    props.onOpenBrowser,
-  );
+  const openActiveLoopbackLink = useLoopbackNavigation(props.native, scope.activeConnectionId, {
+    openBrowser: props.onOpenBrowser,
+    ...(props.onOpenBrowserInThread === undefined
+      ? {}
+      : { openBrowserInThread: props.onOpenBrowserInThread }),
+    thread: props.destination.kind === "thread" ? validatedBrowserThread(props.destination) : null,
+  });
 
   return renderConversationDestinationSurface({
     activeControlsResourceId,
@@ -198,6 +202,26 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     loadTurnChanges,
     markActiveThreadRead,
     native: props.native,
+    newChatPicker:
+      scope.newChatDraft === null
+        ? null
+        : {
+            connections: props.connections,
+            current: { connectionId: scope.newChatDraft.connectionId, cwd: scope.newChatDraft.cwd },
+            initialConnectionId: scope.newChatDraft.connectionId,
+            native: props.native,
+            onSelect: async (destination) => {
+              if (scope.newChatDraft !== null) {
+                await changeNewChatDestination({
+                  composer: props.features.composer,
+                  destination,
+                  draft: scope.newChatDraft,
+                });
+              }
+            },
+            remote: props.features.projects,
+            servers: props.servers,
+          },
     onChangeDraftWorkspaceMode: props.onChangeDraftWorkspaceMode,
     onFixUnsupportedBlock: props.onFixUnsupportedBlock,
     onManageProjects: props.onManageProjects,
@@ -210,4 +234,12 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     threadMutationActions,
     voiceController: props.voiceController,
   });
+}
+
+function validatedBrowserThread(input: {
+  readonly connectionId: string;
+  readonly threadId: string;
+}) {
+  const parsed = v1ThreadRouteParams(input);
+  return parsed.status === "valid" ? parsed.value : null;
 }

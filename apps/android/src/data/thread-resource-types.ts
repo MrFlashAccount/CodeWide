@@ -33,6 +33,12 @@ export type ThreadAttachmentResource = {
   url: string | null;
 };
 
+/** VCS identity from the exact changes snapshot, not Android's local checkout. */
+export type ThreadChangesVcsContext = {
+  readonly branch: string | null;
+  readonly provider: string;
+};
+
 export type ThreadResourcesValue = {
   attachments: ThreadAttachmentResource[];
   changes: ThreadChangeResource[];
@@ -40,6 +46,7 @@ export type ThreadResourcesValue = {
   changeScopes: ThreadChangeScope[];
   revision: string;
   threadId: string;
+  vcs?: ThreadChangesVcsContext;
 };
 
 export type ThreadResourcesRow = {

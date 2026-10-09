@@ -1,41 +1,67 @@
 import { Ionicons } from "@expo/vector-icons";
 import { AppButton as Button } from "../../presentation/controls/AppButton";
-import { ScrollView, View } from "react-native";
-import { directoryCrumbs } from "../../data/remote-projects";
+import { View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
-import type { ProjectPickerProps } from "./projectPickerContract";
+import type { ScopedProjectPickerProps } from "./projectPickerContract";
 import type { ProjectPickerSession } from "./projectPickerSession";
+import { ProjectFolderServerControl } from "./ProjectFolderServerControl";
+import { ProjectServerFilters } from "./ProjectServerFilters";
 import { styles } from "./ProjectPickerSheet.styles";
+import { useEvent } from "../../react/useEvent";
 
+function ManageProjectsButton({
+  onManage,
+  serverFilter,
+}: {
+  readonly onManage: (connectionId: string | null) => void;
+  readonly serverFilter: string | null;
+}): React.JSX.Element {
+  const manageProjects = useEvent(() => {
+    onManage(serverFilter);
+  });
+  return (
+    <Button accessibilityLabel="Manage Projects" onPress={manageProjects} size="sm" variant="ghost">
+      Manage Projects
+    </Button>
+  );
+}
+
+/** Project selection owns server filters; folder browsing owns hierarchical navigation. */
 export function ProjectPickerHeader({
   onBack,
   props,
   state,
 }: {
   onBack: () => void;
-  props: ProjectPickerProps;
+  props: ScopedProjectPickerProps;
   state: ProjectPickerSession;
-}) {
-  const { onAddProject, onManageProjects, onReadDirectory, onReadHomeDirectory, projects } = props;
+}): React.JSX.Element {
+  const { browseOnly = false, busy, onManageProjects, servers } = props;
   const {
     adding,
-    breadcrumbScroll,
-    directoryPath,
-    home,
+    directoryServer,
+    filteredChoices,
     mode,
-    navigate,
-    openDirectoryPicker,
     parentPath,
-    scrollToCurrentFolder,
+    serverFilter,
     unpinnedProjects,
   } = state;
+  const backLabel =
+    mode === "directory"
+      ? parentPath === null
+        ? "Back to servers"
+        : "Parent directory"
+      : browseOnly
+        ? "Back to Manage Projects"
+        : "Back to projects";
   return (
     <>
       <View style={styles.header}>
-        {mode === "directory" ? (
+        {mode !== "projects" ? (
           <Button
-            accessibilityLabel="Back to projects"
+            accessibilityLabel={backLabel}
+            isDisabled={busy || adding}
             isIconOnly
             onPress={onBack}
             size="sm"
@@ -45,114 +71,30 @@ export function ProjectPickerHeader({
           </Button>
         ) : null}
         <View style={styles.titleBlock}>
-          <Text style={styles.title}>{mode === "projects" ? "Choose project" : "Add project"}</Text>
+          <Text style={styles.title}>
+            {mode === "projects" ? "Choose project" : browseOnly ? "Add project" : "Choose folder"}
+          </Text>
           <Text numberOfLines={1} style={styles.subtitle}>
             {mode === "projects"
-              ? `${String(projects.length)} pinned · ${String(unpinnedProjects.length)} from history`
-              : "Choose a folder on this server"}
+              ? `${String(filteredChoices.filter((choice) => choice.project.pinned).length)} pinned · ${String(unpinnedProjects.length)} from history`
+              : mode === "servers"
+                ? "Choose a server"
+                : `Folders on ${directoryServer?.name ?? "Server"}`}
           </Text>
         </View>
         {mode === "projects" && onManageProjects !== undefined ? (
-          <Button
-            accessibilityLabel="Manage Projects"
-            onPress={onManageProjects}
-            size="sm"
-            variant="ghost"
-          >
-            Manage Projects
-          </Button>
-        ) : null}
-        {mode === "projects" &&
-        onManageProjects === undefined &&
-        onReadDirectory !== undefined &&
-        onAddProject !== undefined ? (
-          <Button
-            accessibilityLabel="Add project"
-            isIconOnly
-            onPress={openDirectoryPicker}
-            size="sm"
-            variant="secondary"
-          >
-            <Ionicons color={colors.text} name="add" size={iconSize.navigation} />
-          </Button>
+          <ManageProjectsButton onManage={onManageProjects} serverFilter={serverFilter} />
         ) : null}
       </View>
-
-      {mode === "directory" ? (
-        <View style={styles.pathPanel}>
-          <View style={styles.pathActions}>
-            {onReadHomeDirectory !== undefined ? (
-              <Button
-                accessibilityLabel="Home directory"
-                isDisabled={adding}
-                isIconOnly
-                onPress={() => {
-                  navigate(null);
-                }}
-                size="sm"
-                variant="ghost"
-              >
-                <Ionicons color={colors.textMuted} name="home-outline" size={iconSize.action} />
-              </Button>
-            ) : null}
-            <Button
-              accessibilityLabel="Parent directory"
-              isDisabled={parentPath === null || adding}
-              isIconOnly
-              onPress={() => {
-                if (parentPath !== null) {
-                  navigate(parentPath);
-                }
-              }}
-              size="sm"
-              variant="ghost"
-            >
-              <Ionicons
-                color={parentPath === null ? colors.textDim : colors.text}
-                name="arrow-up"
-                size={iconSize.action}
-              />
-            </Button>
-            <ScrollView
-              contentContainerStyle={styles.breadcrumbs}
-              horizontal
-              onContentSizeChange={scrollToCurrentFolder}
-              ref={breadcrumbScroll}
-              showsHorizontalScrollIndicator={false}
-              style={styles.breadcrumbViewport}
-            >
-              {directoryCrumbs(directoryPath, home.value).map((crumb, index, crumbs) => (
-                <View key={crumb.path} style={styles.crumbGroup}>
-                  {index > 0 ? (
-                    <Ionicons
-                      color={colors.textDim}
-                      name="chevron-forward"
-                      size={iconSize.inline}
-                    />
-                  ) : null}
-                  <Button
-                    accessibilityLabel={`Open directory ${crumb.path}`}
-                    isDisabled={adding}
-                    onPress={() => {
-                      navigate(crumb.path);
-                    }}
-                    size="sm"
-                    style={styles.crumbButton}
-                    variant="ghost"
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.crumbText, index === crumbs.length - 1 && styles.currentCrumb]}
-                    >
-                      {crumb.label}
-                    </Text>
-                  </Button>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
+      {mode === "projects" && servers.length > 1 ? (
+        <ProjectServerFilters
+          busy={busy || adding}
+          onSelect={state.selectServer}
+          selected={serverFilter}
+          servers={servers}
+        />
       ) : null}
+      {mode === "directory" ? <ProjectFolderServerControl props={props} state={state} /> : null}
     </>
   );
 }

@@ -5,7 +5,7 @@ import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import { ThreadGoalChip as LegacyThreadGoalChip } from "../src/features/goal/ThreadGoalChip";
 
 describe("thread goal chip", () => {
-  it("renders the objective and authoritative status and opens the editor", () => {
+  it("keeps the chip compact, announces its objective and opens goal details", () => {
     const openLegacy = jest.fn();
     render(
       <>
@@ -19,7 +19,7 @@ describe("thread goal chip", () => {
 
     expect(openLegacy).toHaveBeenCalledTimes(1);
     expect(within(chips[0]!).getByText("Goal")).toBeTruthy();
-    expect(within(chips[0]!).getByText("Ship goal UI")).toBeTruthy();
+    expect(within(chips[0]!).queryByText("Ship goal UI")).toBeNull();
     expect(within(chips[0]!).getByText("Active")).toBeTruthy();
     expect(within(chips[0]!).queryByText("1m 30s")).toBeNull();
     expect(chips[0]!.props.accessibilityLabel).toBe("Goal, Active, Ship goal UI");

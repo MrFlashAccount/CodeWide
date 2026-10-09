@@ -3,6 +3,7 @@ import { colors } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
+import { ServerIcon } from "../connections/ServerIcon";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text } from "../../ui/Typography";
 import { SECTION_HEIGHT, styles } from "./SidebarProjects.styles";
@@ -16,8 +17,6 @@ function projectManagerItemHeight(item: ProjectManagerItem): number | undefined 
       return SECTION_HEIGHT;
     case "project":
       return listRowHeight.double;
-    case "server":
-      return listRowHeight.single;
     case "message":
       return undefined;
     default:
@@ -71,8 +70,8 @@ export function ProjectManagementRow({
   props: ProjectManagementProps;
   state: ProjectManagementState;
 }) {
-  const { onBrowse, onMove, onToggle, servers } = props;
-  const { change, pending, pinned, rowIconSize, rows, setChoosingServer } = state;
+  const { onMove, onToggle, servers } = props;
+  const { change, pending, pinned, rowIconSize, rows } = state;
 
   const previousSameKind = rows[index - 1]?.kind === item.kind;
   const nextSameKind = rows[index + 1]?.kind === item.kind;
@@ -91,22 +90,6 @@ export function ProjectManagementRow({
       >
         {item.message}
       </Text>
-    );
-  }
-  if (item.kind === "server") {
-    const { server } = item;
-    return (
-      <AppListRow
-        accessibilityLabel={`Add project on ${server.name}`}
-        fixedHeight={listRowHeight.single}
-        leadingIcon={{ color: colors.textMuted, name: "server-outline", size: rowIconSize }}
-        onPress={() => {
-          setChoosingServer(false);
-          onBrowse(server.id);
-        }}
-        position={position}
-        title={server.name}
-      />
     );
   }
   if (item.kind === "section") {
@@ -171,6 +154,14 @@ export function ProjectManagementRow({
             ? servers.find((server) => server.id === project.connectionId)?.name
             : undefined,
         )}
+        descriptionLeading={
+          <ServerIcon
+            iconId={
+              servers.find((server) => server.id === project.connectionId)?.iconId ?? "desktop"
+            }
+            metric="caption"
+          />
+        }
         disabled={pending !== null}
         fixedHeight={listRowHeight.double}
         leadingIcon={{ color: colors.textMuted, name: "folder-outline", size: rowIconSize }}

@@ -5,19 +5,15 @@ import type {
   ServiceSegment,
 } from "./portForwardingContract";
 import { groupEntries, serviceEntryMatches } from "./portForwardingList";
+import { projectPortProfileEntries } from "./portProfileProjection";
 
 export function projectPortList(
   props: Pick<PortForwardingManagerProps, "profiles" | "discoveredPorts">,
   segment: ServiceSegment,
   query: string,
 ) {
-  const currentProfiles = props.profiles.filter((profile) =>
-    props.discoveredPorts.some(
-      (candidate) =>
-        profile.serviceKey === candidate.forwardingKey ||
-        (profile.serviceKey === null && profile.remotePort === candidate.port),
-    ),
-  );
+  const currentProfileEntries = projectPortProfileEntries(props.discoveredPorts, props.profiles);
+  const currentProfiles = currentProfileEntries.map((entry) => entry.profile);
   const configuredKeys = new Set(
     currentProfiles
       .map((profile) => profile.serviceKey)
@@ -30,10 +26,12 @@ export function projectPortList(
       !configuredKeys.has(candidate.forwardingKey) &&
       !configuredPorts.has(candidate.port),
   );
-  const activeProfiles = currentProfiles.filter(
-    (profile) => profile.preference !== "excluded" && profile.status !== "unavailable",
+  const activeEntries = currentProfileEntries.filter(
+    ({ profile }) => profile.preference !== "excluded" && profile.status !== "unavailable",
   );
-  const excludedProfiles = currentProfiles.filter((profile) => profile.preference === "excluded");
+  const excludedEntries = currentProfileEntries.filter(
+    ({ profile }) => profile.preference === "excluded",
+  );
   const entries: ServiceEntry[] =
     segment === "available"
       ? availableCandidates.map((candidate) => ({
@@ -41,24 +39,9 @@ export function projectPortList(
           group: candidate.group,
           type: "candidate",
         }))
-      : (segment === "active" ? activeProfiles : excludedProfiles).flatMap((profile) => {
-          const candidate = props.discoveredPorts.find(
-            (value) =>
-              value.forwardingKey === profile.serviceKey ||
-              (profile.serviceKey === null && value.port === profile.remotePort),
-          );
-          if (candidate === undefined) {
-            return [];
-          }
-          return [
-            {
-              group: candidate.group,
-              kind: candidate.kind,
-              profile,
-              type: "profile" as const,
-            },
-          ];
-        });
+      : segment === "active"
+        ? activeEntries
+        : excludedEntries;
   const needle = query.trim().toLocaleLowerCase();
   const groups = groupEntries(entries.filter((entry) => serviceEntryMatches(entry, needle)));
   const rows: ServiceListRow[] = [];
@@ -69,9 +52,9 @@ export function projectPortList(
     }
   }
   const counts: Record<ServiceSegment, number> = {
-    active: activeProfiles.length,
+    active: activeEntries.length,
     available: availableCandidates.length,
-    excluded: excludedProfiles.length,
+    excluded: excludedEntries.length,
   };
   return { counts, groups, rows };
 }

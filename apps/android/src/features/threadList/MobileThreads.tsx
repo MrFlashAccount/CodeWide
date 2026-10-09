@@ -49,6 +49,7 @@ export function MobileThreads(props: MobileThreadsProps) {
     onToggleRead,
     onUnarchive,
     project,
+    projectActions,
     projectLimit,
     projects,
     query,
@@ -151,6 +152,7 @@ export function MobileThreads(props: MobileThreadsProps) {
                       <SidebarSectionHeader title={item.title} />
                     ) : item.kind === "project" ? (
                       <SidebarProjectRow
+                        actions={projectActions}
                         onPress={() => {
                           onOpenProject(item.project);
                         }}

@@ -33,14 +33,35 @@ export function compactNumber(value: number): string {
   return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}m`;
 }
 
+const MILLISECONDS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const SECONDS_PER_HOUR = 3600;
+const SECONDS_PER_DAY = 86_400;
+const DURATION_UNITS = [
+  { seconds: SECONDS_PER_DAY, suffix: "d" },
+  { seconds: SECONDS_PER_HOUR, suffix: "h" },
+  { seconds: SECONDS_PER_MINUTE, suffix: "m" },
+  { seconds: 1, suffix: "s" },
+] as const;
+
+/** Formats elapsed time with nonzero day/hour/minute/second units and subminute precision. */
 export function formatDuration(milliseconds: number): string {
-  if (milliseconds < 1000) {
+  if (milliseconds < MILLISECONDS_PER_SECOND) {
     return `${String(milliseconds)} ms`;
   }
-  if (milliseconds >= 60_000) {
-    const minutes = Math.floor(milliseconds / 60_000);
-    const seconds = Math.round((milliseconds % 60_000) / 1000);
-    return `${String(minutes)}m ${String(seconds)}s`;
+  const shortSeconds = (milliseconds / MILLISECONDS_PER_SECOND).toFixed(1);
+  if (Number(shortSeconds) < SECONDS_PER_MINUTE) {
+    return `${shortSeconds} s`;
   }
-  return `${(milliseconds / 1000).toFixed(1)} s`;
+  // Round before decomposition so seconds carry into minutes, hours and days.
+  let remainingSeconds = Math.round(milliseconds / MILLISECONDS_PER_SECOND);
+  const parts: string[] = [];
+  for (const unit of DURATION_UNITS) {
+    const count = Math.floor(remainingSeconds / unit.seconds);
+    remainingSeconds %= unit.seconds;
+    if (count > 0) {
+      parts.push(`${String(count)}${unit.suffix}`);
+    }
+  }
+  return parts.join(" ");
 }

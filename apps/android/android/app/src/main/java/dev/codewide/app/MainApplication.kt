@@ -20,6 +20,7 @@ import com.facebook.react.modules.fresco.FrescoModule
 import com.oney.WebRTCModule.WebRTCModuleOptions
 
 import dev.codewide.app.remote.CodeWidePackage
+import dev.codewide.app.diagnostics.NativeDiagnosticRuntime
 import dev.codewide.app.remote.GlobalVoiceAudioRouteRuntime
 import dev.codewide.app.remote.GlobalVoiceAudioRecordFailureKind
 import dev.codewide.app.remote.NativeStartupTrace
@@ -46,6 +47,7 @@ class MainApplication : Application(), ReactApplication {
   override fun onCreate() {
     NativeStartupTrace.markApplicationStarted()
     super.onCreate()
+    NativeDiagnosticRuntime.install(this)
     PersonalVoiceFilterRuntime.install(this)
     configureWebRtcAudioDeviceModule()
     DefaultNewArchitectureEntryPoint.releaseLevel = try {

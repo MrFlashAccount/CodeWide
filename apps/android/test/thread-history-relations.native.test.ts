@@ -353,6 +353,7 @@ describe("sidebar access paths", () => {
       updatedAt: 10,
       recencyAt: 10,
       status: { type: "idle" },
+      pinCursor: 0,
       pinned: false,
       archived: false,
       pendingRequestCount: 0,

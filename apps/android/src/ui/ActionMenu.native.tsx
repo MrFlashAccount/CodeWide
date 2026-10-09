@@ -29,6 +29,7 @@ export function ActionMenu({
   onSelect,
   style,
   trigger = "press",
+  triggerSize,
 }: ActionMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const { width } = useWindowDimensions();
@@ -80,6 +81,7 @@ export function ActionMenu({
           setOpen(false);
         }}
         onSelect={select}
+        {...(triggerSize === undefined ? {} : { triggerSize })}
       >
         {triggerElement}
       </CodeWideMenu>

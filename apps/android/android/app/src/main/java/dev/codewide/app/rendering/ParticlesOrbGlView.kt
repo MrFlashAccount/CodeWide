@@ -9,7 +9,7 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import android.view.Choreographer
 import android.view.Surface
 import android.view.TextureView
@@ -129,7 +129,7 @@ private class ParticlesOrbRenderThread(
             }
             frameClock.postFrameCallback(this)
           } catch (error: RuntimeException) {
-            Log.e(LOG_TAG, "Particles GL frame failed", error)
+            NativeAppLogger.error(LOG_TAG, "Particles GL frame failed", error)
             stopRequested.set(true)
             threadLooper.quitSafely()
           }
@@ -140,7 +140,7 @@ private class ParticlesOrbRenderThread(
       frameClock.postFrameCallback(callback)
       Looper.loop()
     } catch (error: RuntimeException) {
-      Log.e(LOG_TAG, "Particles GL renderer failed to start", error)
+      NativeAppLogger.error(LOG_TAG, "Particles GL renderer failed to start", error)
       ready.countDown()
     } finally {
       frameCallback?.let { callback -> choreographer?.removeFrameCallback(callback) }
@@ -164,7 +164,7 @@ private class ParticlesOrbRenderThread(
       join()
     } catch (error: InterruptedException) {
       currentThread().interrupt()
-      Log.w(LOG_TAG, "Interrupted while stopping Particles GL renderer", error)
+      NativeAppLogger.warn(LOG_TAG, "Interrupted while stopping Particles GL renderer", error)
     }
   }
 

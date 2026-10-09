@@ -15,6 +15,7 @@ import type {
 import type { VoiceTranscriptionListener } from "../../data/voice-transport";
 /** Qualified composer operations; transport and persisted state stay with their existing lower owners. */
 export type ComposerWorkspaceCapabilities = {
+  continueTurn: (connectionId: string, threadId: string, sourceTurnId: string) => Promise<void>;
   loadComposerPreferences: (
     connectionId: string,
     threadId: string,

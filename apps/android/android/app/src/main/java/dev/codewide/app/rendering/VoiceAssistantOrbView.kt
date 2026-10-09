@@ -2,7 +2,7 @@ package dev.codewide.app.rendering
 
 import android.content.Context
 import android.os.SystemClock
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import android.graphics.Canvas
 import android.view.Choreographer
 import android.widget.FrameLayout
@@ -66,7 +66,7 @@ abstract class VoiceAssistantOrbView(context: Context) : FrameLayout(context), C
     val now = SystemClock.elapsedRealtime()
     if (lastDiagnosticMs != Long.MIN_VALUE && now - lastDiagnosticMs < 1_000L) return
     lastDiagnosticMs = now
-    Log.i("CodeWideVoiceRender", "renderer=${System.identityHashCode(this)} state=${orbState.wireValue} " +
+    NativeAppLogger.info("CodeWideVoiceRender", "renderer=${System.identityHashCode(this)} state=${orbState.wireValue} " +
       "reducedMotion=$reducedMotion frames=$renderedFrames animationFrames=$animationFrames rawInput=$diagnosticInput " +
       "rawPlayback=$diagnosticPlayback ${rendererDiagnostic()}")
   }

@@ -5,6 +5,7 @@ import {
   deleteLocalConnectionData,
   forgetHttpAuthorization,
   globalSupervisorRuntime,
+  invalidateDeletedConnectionBindings,
   loadTurnControls,
   refreshAccountRateLimits,
   rpcAfterAttach,
@@ -53,6 +54,7 @@ function createWorkspaceFeatures() {
     getProfiles: () => workspaceRuntime.snapshot.connectionProfiles,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     invalidateCatalog: workspaceCatalog.invalidateConnection,
+    invalidateDeletedConnectionBindings,
   });
   const search = createSearchWorkspaceAdapter({
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
@@ -68,6 +70,10 @@ function createWorkspaceFeatures() {
     rpcAfterAttach: rpcAfterAttach,
   });
   const composer = createComposerWorkspaceAdapter({
+    continuationTransport: {
+      getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+      rpcAfterAttach,
+    },
     getThreadUiState: () => workspaceRuntime.snapshot.threadUiState,
     loadTurnControls: loadTurnControls,
     retryFailedMessage: commandDelivery.retryFailedMessage,
@@ -79,6 +85,7 @@ function createWorkspaceFeatures() {
     loadTurnItems: workspaceThreadSync.loadTurnItems,
     observeThread: workspaceThreadSync.observeThread,
     readThread: workspaceThreadSync.readThread,
+    readThreadSummary: workspaceCatalog.readThreadSummary,
   });
   const queue = createQueueWorkspaceAdapter({
     getDetails: () => workspaceRuntime.snapshot.threadDetails,

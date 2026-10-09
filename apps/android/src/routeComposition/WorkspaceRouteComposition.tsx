@@ -2,6 +2,7 @@ import { useSelector } from "@legendapp/state/react";
 import { createElement, useEffect, useState, useSyncExternalStore } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { newChatDefaultServer } from "../features/projects/newChatEntry";
 import { RouteUnavailable } from "../components/navigation/RouteUnavailable";
 import {
   closeInteractiveTerminalSession,
@@ -16,7 +17,6 @@ import { useRenderRecovery } from "../features/diagnostics/renderRecovery";
 import { globalSupervisorToggleState } from "../features/globalSupervisor/globalSupervisorToggle";
 import { globalVoiceOrbStateForPhase } from "../features/globalSupervisor/globalVoiceOrbState";
 import { useBrowserFeedbackSubmission } from "../features/browser/feedbackSubmission";
-import { resolveNewThreadRoute } from "../features/projects/newThreadRouting";
 import { usePendingRequests } from "../features/requests/pendingRequests";
 import { GlobalSearchScreen } from "../features/search/GlobalSearchScreen";
 import { ManageTerminalsSheet } from "../features/terminal/ManageTerminalsSheet";
@@ -44,6 +44,7 @@ import { useWorkspaceProjectNavigation } from "./workspaceProjectNavigation";
 import type { SidebarProject } from "../features/projects/sidebarProjects";
 import {
   v1ThreadRouteParams,
+  type V1ThreadRouteParams,
   threadRouteSessionOwner,
   workspaceRouteSessionOwner,
 } from "../services/threads/threadRouteParams";
@@ -240,11 +241,14 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     workspaceCapabilities.refreshAccountRateLimits,
   );
   const openNewThread = useEvent((connectionId: string, cwd: string | null): void => {
-    const draft = newThreadService.resumeOrOpen(connectionId, cwd);
-    list.selectServer({ connectionId: draft.connectionId, kind: "connection" });
+    newThreadService.resumeOrOpen(connectionId, cwd);
     ensureV1NewThreadRoute(route.router, route.pathname, route.projectListSessionId);
   });
   const createSidebarThread = (): void => {
+    if (newThreadService.current() !== null) {
+      ensureV1NewThreadRoute(route.router, route.pathname);
+      return;
+    }
     if (list.projectSelection.sidebarProject !== null) {
       openNewThread(
         list.projectSelection.sidebarProject.connectionId,
@@ -252,22 +256,18 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
       );
       return;
     }
-    const destination = resolveNewThreadRoute({
-      serverIds: list.servers.map((server) => server.id),
-      serverScope: list.serverScope,
-    });
-    if (destination.type === "connect-server") {
+    if (list.servers.length === 0) {
       route.router.push("/settings/servers/new");
       return;
     }
-    if (destination.type === "choose-server") {
-      ensureV1NewThreadRoute(route.router, route.pathname);
-      return;
+    const preferredId =
+      list.serverScope.kind === "connection"
+        ? list.serverScope.connectionId
+        : route.currentThread?.connectionId.value;
+    const connectionId = newChatDefaultServer(preferredId ?? null, list.servers);
+    if (connectionId !== null) {
+      openNewThread(connectionId, project.projectWorkspace.defaultProjectCwd(connectionId));
     }
-    openNewThread(
-      destination.serverId,
-      project.projectWorkspace.defaultProjectCwd(destination.serverId),
-    );
   };
   const openSidebarProject = useEvent((selectedProject: SidebarProject): void => {
     list.listState.setMobileThreadQuery("");
@@ -308,21 +308,24 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
   const closeTerminal = useEvent((sessionId: string): void => {
     closeInteractiveTerminalSession(sessionId);
   });
-  const openBrowser = useEvent(
-    (title: string, url: string, headers?: Readonly<Record<string, string>>): void => {
-      const session = browserRouteSessions.open(workspaceRouteSessionOwner, {
-        ...(headers === undefined ? {} : { headers }),
-        title,
-        url,
-      });
+  const presentBrowserPage = useEvent(
+    (
+      destination: {
+        readonly headers?: Readonly<Record<string, string>>;
+        readonly title: string;
+        readonly url: string;
+      },
+      thread: V1ThreadRouteParams | null,
+    ) => {
+      const session = browserRouteSessions.open(workspaceRouteSessionOwner, destination, thread);
       route.router.push({
         params: {
           sessionId: session.id,
-          ...(route.currentThread === null
+          ...(thread === null
             ? {}
             : {
-                connectionId: route.currentThread.connectionId.value,
-                threadId: route.currentThread.threadId.value,
+                connectionId: thread.connectionId.value,
+                threadId: thread.threadId.value,
               }),
           ...(route.globalSearchSessionId === null
             ? {}
@@ -332,6 +335,31 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
       });
     },
   );
+  const openBrowser = useEvent<WorkspaceRouteResources["openBrowser"]>((title, url, headers) => {
+    presentBrowserPage(
+      { ...(headers === undefined ? {} : { headers }), title, url },
+      route.currentThread,
+    );
+  });
+  const openBrowserInThread = useEvent<WorkspaceRouteResources["openBrowserInThread"]>(
+    (title, url, thread) => {
+      presentBrowserPage({ title, url }, thread);
+    },
+  );
+  const openBrowserTabs = useEvent<WorkspaceRouteResources["openBrowserTabs"]>((thread) => {
+    const session = browserRouteSessions.resume(workspaceRouteSessionOwner, thread);
+    route.router.push({
+      params: {
+        connectionId: thread.connectionId.value,
+        sessionId: session.id,
+        threadId: thread.threadId.value,
+        ...(route.globalSearchSessionId === null
+          ? {}
+          : { globalSearchSessionId: route.globalSearchSessionId }),
+      },
+      pathname: "/browser/[sessionId]",
+    });
+  });
   const openPairingRoute = useEvent((initialCode: string): void => {
     const session = pairingRouteSessions.open(initialCode);
     route.router.push({
@@ -370,6 +398,8 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     list,
     listActions,
     openBrowser,
+    openBrowserInThread,
+    openBrowserTabs,
     openNewThread,
     pendingRequests,
     project,

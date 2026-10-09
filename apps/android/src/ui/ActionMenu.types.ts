@@ -38,4 +38,6 @@ export type ActionMenuProps = {
   placement?: "top" | "bottom" | "left" | "right";
   style?: StyleProp<ViewStyle>;
   trigger?: "press" | "long-press";
+  /** Known control bounds keep a native popup's content out of the trigger's intrinsic layout. */
+  triggerSize?: { readonly height: number; readonly width: number };
 };

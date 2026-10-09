@@ -117,7 +117,7 @@ export function ConnectionRowEditor({
     } else if (id === "delete") {
       dialog.alert(
         "Delete server?",
-        `Delete ${connection.displayName} and its data from this phone, and revoke this phone on Companion? Companion must be reachable.`,
+        `Delete ${connection.displayName} and its local data from this phone? We’ll also try to remove this phone from Companion’s device list. History on the server is kept.`,
         [
           { style: "cancel", text: "Cancel" },
           {

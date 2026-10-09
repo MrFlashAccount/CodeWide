@@ -1,92 +1,89 @@
 import { useId, useRef, useState } from "react";
+import { useConversationOwner } from "../../ui/use-conversation-owner";
 import type { ScrollView } from "react-native";
-import type { RemoteDirectoryEntry, RemoteProject } from "../../data/remote-projects";
-import { normalizeDirectoryPath, parentDirectoryPath } from "../../data/remote-projects";
+import { parentDirectoryPath } from "../../data/remote-projects";
 import { useEvent } from "../../react/useEvent";
-import { useAsyncResource } from "../../rendering/async-resource-store";
-import type { ProjectPickerProps } from "./projectPickerContract";
+import type { ScopedProjectPickerProps, ProjectPickerChoice } from "./projectPickerContract";
 import { useProjectPickerRows, type ProjectSectionId } from "./projectPickerRows";
+import { useProjectDirectoryResource } from "./projectDirectoryResource";
 
-type PickerMode = "projects" | "directory";
-export function useProjectPickerSession({
-  browseOnly = false,
-  busy,
-  cwd,
-  discoveredProjects,
-  onAddProject,
-  onReadDirectory,
-  onReadHomeDirectory,
-  onSelect,
-  projects,
-  visible,
-}: ProjectPickerProps) {
-  const [mode, setMode] = useState<PickerMode>(browseOnly ? "directory" : "projects");
-  const [navigationDirection, setNavigationDirection] = useState<"back" | "forward" | null>(null);
+import { canAddDirectory } from "./projectDirectorySelection";
+
+import { useProjectPickerNavigation } from "./projectPickerNavigation";
+import { directorySelectionPath } from "./projectDirectoryConfirmation";
+/** Owns local picker navigation, qualified actions and expansion, independently of the sidebar filter. */
+function usePickerSession(argumentsProps: ScopedProjectPickerProps) {
+  const {
+    busy,
+    choices,
+    initialConnectionId,
+    onAddProject,
+    onReadDirectory,
+    onReadHomeDirectory,
+    onSelect,
+    servers,
+    visible,
+  } = argumentsProps;
   const [query, setQuery] = useState("");
-  const cwdDirectory = normalizeDirectoryPath(cwd);
-  const initialDirectory =
-    cwdDirectory !== "" ? cwdDirectory : (projects[0]?.path ?? discoveredProjects[0]?.path ?? "/");
-  const [requestedDirectory, setRequestedDirectory] = useState<string | null>(
-    onReadHomeDirectory === undefined ? initialDirectory : null,
-  );
+  const validInitial = servers.some((server) => server.id === initialConnectionId)
+    ? initialConnectionId
+    : null;
+  const onlyServer = servers.length === 1 ? (servers[0]?.id ?? null) : null;
+  const [serverFilter, setServerFilter] = useState<string | null>(validInitial ?? onlyServer);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const navigation = useProjectPickerNavigation(argumentsProps, busy || adding);
+  const { folderConnectionId, mode, navigationDirection, requestedDirectory } = navigation;
+  const directoryServer = servers.find((server) => server.id === folderConnectionId) ?? null;
   const [pinningPath, setPinningPath] = useState<string | null>(null);
   const [projectActionError, setProjectActionError] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<ReadonlySet<ProjectSectionId>>(
     () => new Set(["recent"]),
   );
   const pickerId = useId();
+  const pickerOwner = useConversationOwner(pickerId);
   const breadcrumbScroll = useRef<ScrollView>(null);
   const scrollToCurrentFolder = useEvent(() =>
     breadcrumbScroll.current?.scrollToEnd({ animated: false }),
   );
-  const readHome = useEvent(async () => {
-    if (onReadHomeDirectory === undefined) {
-      throw new Error("Server home directory is unavailable");
-    }
-    return onReadHomeDirectory();
-  });
-  const home = useAsyncResource<string>(
-    visible && mode === "directory" && onReadHomeDirectory !== undefined
-      ? `${pickerId}:home`
-      : null,
-    0,
-    readHome,
-  );
-  const directoryPath = requestedDirectory ?? home.value ?? "";
-  const readDirectory = useEvent(async (path: string) => (await onReadDirectory?.(path)) ?? []);
-  const directory = useAsyncResource<RemoteDirectoryEntry[]>(
-    visible && mode === "directory" && directoryPath !== "" && onReadDirectory !== undefined
-      ? `${pickerId}:${directoryPath}`
-      : null,
-    0,
-    async () => {
-      const entries = await readDirectory(directoryPath);
-      return entries
-        .filter((entry) => entry.isDirectory)
-        .sort((left, right) =>
-          left.fileName.localeCompare(right.fileName, undefined, {
-            numeric: true,
-            sensitivity: "base",
-          }),
-        );
-    },
-  );
-  const directoryEntries = directory.value ?? [];
-  const homeError = requestedDirectory === null ? home.error : null;
-  const readError = homeError ?? directory.error;
-  const directoryLoading =
-    directory.status === "loading" || (requestedDirectory === null && home.status === "loading");
+  const { directory, directoryEntries, directoryLoading, directoryPath, home, readError } =
+    useProjectDirectoryResource({
+      connectionId: folderConnectionId,
+      enabled: visible && mode === "directory" && directoryServer?.available === true,
+      pickerId,
+      props: { onReadDirectory, onReadHomeDirectory },
+      requestedDirectory,
+    });
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filteredChoices =
+    serverFilter === null ? choices : choices.filter((choice) => choice.server.id === serverFilter);
   const { projectRows, unpinnedProjects } = useProjectPickerRows(
-    projects,
-    discoveredProjects,
+    filteredChoices,
     normalizedQuery,
     expandedSections,
   );
 
+  if (normalizedQuery === "") {
+    for (const server of servers) {
+      if (serverFilter !== null && server.id !== serverFilter) {
+        continue;
+      }
+      projectRows.push({
+        available: server.available,
+        connectionId: server.id,
+        iconId: server.iconId,
+        id: `server-default:${server.id}`,
+        kind: "server-default",
+        serverName: server.name,
+      });
+    }
+  }
+  const selectServer = useEvent((connectionId: string | null) => {
+    if (!busy && !adding) {
+      setServerFilter(connectionId);
+    }
+  });
   const visibleDirectories =
     normalizedQuery === ""
       ? directoryEntries
@@ -111,38 +108,48 @@ export function useProjectPickerSession({
       return;
     }
     setQuery("");
-    setRequestedDirectory(path);
+    navigation.navigate(path);
     setDirectoryError(null);
   });
-  const openDirectoryPicker = useEvent(() => {
-    if (onReadDirectory === undefined || onAddProject === undefined) {
+  const openDirectoryPicker = useEvent((connectionId: string | null) => {
+    if (busy || adding) {
       return;
     }
     setQuery("");
     setDirectoryError(null);
-    setRequestedDirectory(onReadHomeDirectory === undefined ? initialDirectory : null);
-    setNavigationDirection("forward");
-    setMode("directory");
+    navigation.openDirectoryPicker(connectionId);
+  });
+  const showServers = useEvent(() => {
+    setQuery("");
+    setDirectoryError(null);
+    navigation.showServers();
   });
   const showProjects = useEvent(() => {
-    setNavigationDirection("back");
-    setMode("projects");
+    navigation.showProjects();
+    setQuery("");
   });
   const runAddCurrentDirectory = useEvent(async () => {
     if (
-      onAddProject === undefined ||
-      adding ||
-      busy ||
-      directory.status !== "ready" ||
-      directoryPath === ""
+      directoryServer === null ||
+      !canAddDirectory({
+        adding,
+        busy,
+        directoryPath,
+        directoryServer,
+        directoryStatus: directory.status,
+        readError,
+      })
     ) {
       return;
     }
     setAdding(true);
     setDirectoryError(null);
     try {
-      const project = await onAddProject(directoryPath);
-      await onSelect(project.path);
+      const path = await directorySelectionPath(argumentsProps, directoryServer.id, directoryPath);
+      if (!pickerOwner.isCurrent()) {
+        return;
+      }
+      await onSelect({ connectionId: directoryServer.id, cwd: path });
     } catch (error) {
       setDirectoryError(error instanceof Error ? error.message : "Could not add project");
     }
@@ -154,14 +161,14 @@ export function useProjectPickerSession({
       setDirectoryError(error instanceof Error ? error.message : "Could not add project");
     });
   });
-  const pinProject = useEvent(async (project: RemoteProject) => {
+  const pinProject = useEvent(async (choice: ProjectPickerChoice) => {
     if (onAddProject === undefined || pinningPath !== null || busy) {
       return;
     }
-    setPinningPath(project.path);
+    setPinningPath(JSON.stringify([choice.server.id, choice.project.path]));
     setProjectActionError(null);
     try {
-      await onAddProject(project.path);
+      await onAddProject(choice.server.id, choice.project.path);
     } catch (error) {
       setProjectActionError(error instanceof Error ? error.message : "Could not pin project");
     }
@@ -176,7 +183,11 @@ export function useProjectPickerSession({
     directoryError,
     directoryLoading,
     directoryPath,
+    directoryServer,
+    filteredChoices,
+    folderConnectionId,
     home,
+    isCurrent: pickerOwner.isCurrent,
     mode,
     navigate,
     navigationDirection,
@@ -191,12 +202,21 @@ export function useProjectPickerSession({
     readError,
     requestedDirectory,
     scrollToCurrentFolder,
+    selectServer,
+    serverFilter,
     setQuery,
     showProjects,
+    showServers,
     toggleProjectSection,
     unpinnedProjects,
     visibleDirectories,
   };
 }
+/** Owns local picker navigation, qualified actions and expansion, independently of the sidebar filter. */
+export function useProjectPickerSession(
+  props: ScopedProjectPickerProps,
+): ReturnType<typeof usePickerSession> {
+  return usePickerSession(props);
+}
 /** State machine returned by the project-picker session hook. */
-export type ProjectPickerSession = ReturnType<typeof useProjectPickerSession>;
+export type ProjectPickerSession = ReturnType<typeof usePickerSession>;

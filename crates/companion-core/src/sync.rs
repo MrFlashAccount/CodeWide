@@ -72,6 +72,7 @@ pub struct SyncHub {
     thread_view: ThreadViewService,
     events: tokio::sync::broadcast::Sender<DurableSignal>,
     local_events: tokio::sync::mpsc::Sender<Value>,
+    ordered_ingest: tokio::sync::mpsc::Sender<IngestInput>,
     server_requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
     live_channels: Arc<LiveChannelRegistry>,
     recent_turn_starts: Arc<tokio::sync::Mutex<RecentTurnStarts>>,
@@ -101,6 +102,14 @@ enum DurableSignal {
 enum IngestInput {
     Payload(Value),
     Fence(tokio::sync::oneshot::Sender<Result<u64, UpstreamError>>),
+    ThreadPinImport(
+        crate::thread_pins::ThreadPinImportRequest,
+        tokio::sync::oneshot::Sender<Result<u64, String>>,
+    ),
+    ThreadPin(
+        crate::thread_pins::ThreadPinRequest,
+        tokio::sync::oneshot::Sender<Result<u64, String>>,
+    ),
 }
 
 struct IngestContext {
@@ -447,7 +456,7 @@ impl SyncHub {
             outbox_wakeup.clone(),
             live_channels.clone(),
         ));
-        tokio::spawn(forward_local_events(ingest_rx, ordered_ingest));
+        tokio::spawn(forward_local_events(ingest_rx, ordered_ingest.clone()));
         match history.spawn_rollout_monitor() {
             Ok(changes) => {
                 tokio::spawn(forward_rollout_changes(
@@ -498,6 +507,7 @@ impl SyncHub {
             thread_view,
             events,
             local_events,
+            ordered_ingest,
             server_requests,
             live_channels,
             recent_turn_starts,
@@ -1379,6 +1389,65 @@ impl SyncHub {
         .await
     }
 
+    async fn handle_thread_pin_import_rpc(
+        &self,
+        socket: &SessionSocket,
+        id: &Value,
+        params: &Value,
+    ) -> Result<(), ()> {
+        let Some(request) = crate::thread_pins::ThreadPinImportRequest::parse(params) else {
+            return send_rpc_error(socket, id.clone(), -32602, "Invalid thread pin import").await;
+        };
+        let (completion, committed) = tokio::sync::oneshot::channel();
+        if self
+            .ordered_ingest
+            .send(IngestInput::ThreadPinImport(request, completion))
+            .await
+            .is_err()
+        {
+            return send_rpc_error(socket, id.clone(), -32020, "Thread pin writer unavailable")
+                .await;
+        }
+        match committed.await {
+            Ok(Ok(cursor)) => send_local_rpc_result(socket, id, json!({"cursor": cursor})).await,
+            _ => send_rpc_error(socket, id.clone(), -32020, "Thread pin import failed").await,
+        }
+    }
+
+    async fn handle_thread_pin_rpc(
+        &self,
+        socket: &SessionSocket,
+        id: &Value,
+        params: &Value,
+    ) -> Result<(), ()> {
+        let Some(request) = crate::thread_pins::ThreadPinRequest::parse(params) else {
+            return send_rpc_error(socket, id.clone(), -32602, "Invalid thread pin request").await;
+        };
+        let thread_id = request.thread_id.clone();
+        let pinned = request.pinned;
+        let (completion, committed) = tokio::sync::oneshot::channel();
+        if self
+            .ordered_ingest
+            .send(IngestInput::ThreadPin(request, completion))
+            .await
+            .is_err()
+        {
+            return send_rpc_error(socket, id.clone(), -32020, "Thread pin writer unavailable")
+                .await;
+        }
+        match committed.await {
+            Ok(Ok(cursor)) => {
+                send_local_rpc_result(
+                    socket,
+                    id,
+                    json!({"threadId": thread_id, "pinned": pinned, "pinCursor": cursor}),
+                )
+                .await
+            }
+            _ => send_rpc_error(socket, id.clone(), -32020, "Thread pin commit failed").await,
+        }
+    }
+
     async fn try_handle_local_service_rpc(
         &self,
         socket: &SessionSocket,
@@ -1387,6 +1456,31 @@ impl SyncHub {
         params: &Value,
         authorization: &AuthorizationContext,
     ) -> Result<bool, ()> {
+        if method == "companion/thread/pins/import" {
+            self.handle_thread_pin_import_rpc(socket, id, params)
+                .await?;
+            return Ok(true);
+        }
+        if method == "companion/thread/pin/set" {
+            self.handle_thread_pin_rpc(socket, id, params).await?;
+            return Ok(true);
+        }
+        if method == "companion/thread/pins/list" {
+            let history = self.history.clone();
+            match tokio::task::spawn_blocking(move || history.thread_pin_snapshot()).await {
+                Ok(Ok(snapshot)) => send_local_rpc_result(socket, id, json!(snapshot)).await?,
+                _ => {
+                    send_rpc_error(
+                        socket,
+                        id.clone(),
+                        -32020,
+                        "Thread pin snapshot unavailable",
+                    )
+                    .await?;
+                }
+            }
+            return Ok(true);
+        }
         if method == "companion/threadSubagents/read" {
             self.handle_thread_subagents_rpc(socket, id, params).await?;
             return Ok(true);
@@ -1621,6 +1715,16 @@ impl SyncHub {
             // Catalog exclusion controls discovery only. A direct thread route
             // reads the same bounded history as any other thread.
             crate::catalog_visibility::annotate_thread(thread);
+        }
+        if let Err(error) = self.history.annotate_thread_pins(method, &mut result) {
+            warn!(err = ?error, "thread pin projection failed");
+            return send_rpc_error(
+                socket,
+                id.clone(),
+                -32020,
+                "Thread pin projection unavailable",
+            )
+            .await;
         }
         if let Some(resources) = self.resources() {
             resources.observe_rpc_result(method, &result).await;
@@ -2033,21 +2137,69 @@ async fn forward_account_pool_events(
     }
 }
 
+fn complete_pin_commit(
+    context: &IngestContext,
+    completion: tokio::sync::oneshot::Sender<Result<u64, String>>,
+    result: Result<Result<u64, crate::store::StoreError>, tokio::task::JoinError>,
+) -> Result<(), ()> {
+    match result {
+        Ok(Ok(cursor)) => {
+            let _ = context.events.send(DurableSignal::Committed(cursor));
+            let _ = completion.send(Ok(cursor));
+            Ok(())
+        }
+        error => {
+            warn!(err = ?error, "durable thread pin commit failed");
+            let _ = completion.send(Err("Thread pin storage unavailable".into()));
+            let _ = context.events.send(DurableSignal::Failed);
+            Err(())
+        }
+    }
+}
+
+async fn process_ingest_control(context: &IngestContext, control: IngestInput) -> Result<(), ()> {
+    match control {
+        IngestInput::Fence(fence) => {
+            resolve_replay_fence(&context.store, fence).await;
+            Ok(())
+        }
+        IngestInput::ThreadPinImport(request, completion) => {
+            let store = context.store.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                store.import_thread_pins(&request, MAX_REPLAY_ENTRIES, MAX_REPLAY_BYTES)
+            })
+            .await;
+            complete_pin_commit(context, completion, result)
+        }
+        IngestInput::ThreadPin(request, completion) => {
+            let store = context.store.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                store.commit_thread_pin(&request, MAX_REPLAY_ENTRIES, MAX_REPLAY_BYTES)
+            })
+            .await;
+            complete_pin_commit(context, completion, result)
+        }
+        IngestInput::Payload(_) => Err(()),
+    }
+}
+
 async fn ingest_events(
     mut ingest: tokio::sync::mpsc::Receiver<IngestInput>,
     context: IngestContext,
 ) {
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     while let Some(first) = ingest.recv().await {
-        let IngestInput::Payload(first) = first else {
-            let IngestInput::Fence(fence) = first else {
-                unreachable!("ingest input has exactly two variants");
-            };
-            resolve_replay_fence(&context.store, fence).await;
-            continue;
+        let first = match first {
+            IngestInput::Payload(payload) => payload,
+            control => {
+                if process_ingest_control(&context, control).await.is_err() {
+                    break;
+                }
+                continue;
+            }
         };
         let mut payloads = vec![first];
-        let mut fence = None;
+        let mut control = None;
         let deadline = tokio::time::Instant::now() + REPLAY_BATCH_DELAY;
         while payloads.len() < MAX_REPLAY_BATCH_ENTRIES {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -2056,8 +2208,8 @@ async fn ingest_events(
             }
             match tokio::time::timeout(remaining, ingest.recv()).await {
                 Ok(Some(IngestInput::Payload(payload))) => payloads.push(payload),
-                Ok(Some(IngestInput::Fence(completion))) => {
-                    fence = Some(completion);
+                Ok(Some(command)) => {
+                    control = Some(command);
                     break;
                 }
                 Ok(None) | Err(_) => break,
@@ -2069,8 +2221,10 @@ async fn ingest_events(
         {
             break;
         }
-        if let Some(fence) = fence {
-            resolve_replay_fence(&context.store, fence).await;
+        if let Some(control) = control
+            && process_ingest_control(&context, control).await.is_err()
+        {
+            break;
         }
     }
 }
@@ -2618,6 +2772,12 @@ async fn forward_rpc_response(
         && let Some(result) = response.get_mut("result")
     {
         *result = history.enrich_thread_list(result.take()).await;
+    }
+    if let Some(result) = response.get_mut("result")
+        && let Err(error) = history.annotate_thread_pins(method, result)
+    {
+        warn!(err = ?error, "thread pin projection failed");
+        return send_rpc_error(socket, id, -32020, "Thread pin projection unavailable").await;
     }
     if let (Some(projects), Some(result)) = (observers.projects, response.get("result")) {
         projects.observe_rpc_result(method, result).await;
@@ -3752,6 +3912,7 @@ fn rpc_is_known_read(method: &str) -> bool {
             | "companion/search/window"
             | "companion/project/home"
             | "companion/thread/sync"
+            | "companion/thread/pins/list"
             | "companion/thread/history/after"
             | "companion/thread/history/before"
             | "companion/threadSubagents/read"

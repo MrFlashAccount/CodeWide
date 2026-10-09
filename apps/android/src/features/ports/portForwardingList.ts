@@ -23,10 +23,17 @@ export function hasProfileError(profile: PortForwardingProfile): boolean {
   return (profile.status === "error" || profile.status === "unavailable") && profile.error !== null;
 }
 
-export function groupEntries(entries: readonly ServiceEntry[]): Array<[string, ServiceEntry[]]> {
-  const groups = new Map<string, ServiceEntry[]>();
+export function groupEntries<Entry extends ServiceEntry>(
+  entries: readonly Entry[],
+): Array<[string, Entry[]]> {
+  const groups = new Map<string, Entry[]>();
   for (const entry of entries) {
-    groups.set(entry.group, [...(groups.get(entry.group) ?? []), entry]);
+    const group = groups.get(entry.group);
+    if (group === undefined) {
+      groups.set(entry.group, [entry]);
+    } else {
+      group.push(entry);
+    }
   }
   return [...groups].sort(([left], [right]) => left.localeCompare(right));
 }

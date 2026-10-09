@@ -23,7 +23,11 @@ export function createTurnActionsWorkspaceAdapter({
   rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): TurnActionsWorkspaceCapabilities {
   const setThreadPinned = async (connectionId: string, threadId: string, pinned: boolean) => {
-    await requireThreadSummaryDatabase(getSummaries()).updatePinned(connectionId, threadId, pinned);
+    const session = getSession(connectionId);
+    if (session === undefined) {
+      throw new Error("Connection is not enabled");
+    }
+    await rpcAfterAttach(session, "companion/thread/pin/set", { pinned, threadId });
   };
 
   const renameThread = async (

@@ -1,6 +1,13 @@
 export const DEVTOOLS_BOOTSTRAP = `
   (() => {
     const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+    const closeFrontend = () => post({ source: "codewide-devtools-ui", action: "close" });
+    const connectHostClose = () => {
+      // The bundled frontend creates its host after this document-start injection.
+      // Patch the same retained host instance, leaving its other embedder methods intact.
+      const host = globalThis.InspectorFrontendHost;
+      if (host && host.closeWindow !== closeFrontend) host.closeWindow = closeFrontend;
+    };
     try {
       const defaultAppliedKey = "codewideDockDefaultV1";
       if (window.localStorage.getItem(defaultAppliedKey) !== "applied") {
@@ -23,6 +30,7 @@ export const DEVTOOLS_BOOTSTRAP = `
       } catch (_) {}
     };
     const reportDockSide = () => {
+      connectHostClose();
       let side = "bottom";
       try {
         const stored = JSON.parse(window.localStorage.getItem("currentDockState") || '"bottom"');

@@ -1,5 +1,13 @@
 import { StyleSheet } from "react-native";
-import { colors, controlSize, layoutSize, radii, spacing, typeScale } from "../../theme";
+import {
+  colors,
+  controlSize,
+  layoutSize,
+  radii,
+  spacing,
+  typeScale,
+  typeWeight,
+} from "../../theme";
 
 const SEARCH_FOCUS_BORDER_WIDTH = 1.5;
 
@@ -47,16 +55,33 @@ export const styles = StyleSheet.create({
     ...typeScale.body,
     color: colors.red,
   },
+  folderEntry: {
+    alignSelf: "flex-start",
+    gap: spacing.xs,
+  },
+  folderEntryLabel: {
+    ...typeScale.body,
+    color: colors.text,
+    fontWeight: typeWeight.medium,
+  },
+  folderServerControl: {
+    alignSelf: "flex-start",
+    gap: spacing.xs,
+    maxWidth: "100%",
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
   footer: {
     flexShrink: 0,
     gap: spacing.sm,
     paddingTop: spacing.sm,
   },
   footerStatus: {
-    alignItems: "center",
-    flexDirection: "row",
+    flexShrink: 0,
     gap: spacing.xs,
     minHeight: spacing.sm,
+    paddingBottom: spacing.xs,
+    paddingTop: spacing.xs,
   },
   header: {
     alignItems: "center",
@@ -76,10 +101,17 @@ export const styles = StyleSheet.create({
     minWidth: 0,
   },
   pathPanel: {
+    alignItems: "center",
     backgroundColor: colors.surfaceRaised,
     borderRadius: radii.medium,
+    flexDirection: "row",
     marginTop: spacing.xs,
     padding: spacing.xs,
+  },
+  primaryActionLabel: {
+    ...typeScale.body,
+    color: colors.onPrimary,
+    fontWeight: typeWeight.medium,
   },
   projectScroll: {
     flex: 1,
@@ -146,6 +178,11 @@ export const styles = StyleSheet.create({
   sectionTitle: {
     ...typeScale.body,
     color: colors.text,
+  },
+  serverCaption: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
   },
   serverDefault: {
     paddingTop: spacing.md,

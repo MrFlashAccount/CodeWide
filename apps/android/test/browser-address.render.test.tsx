@@ -16,11 +16,21 @@ it("tracks back/forward URLs outside editing and cancels a draft", () => {
   const navigate = jest.fn();
   const view = render(<BrowserAddressBar url="https://example.com/first" onNavigate={navigate} />);
   view.rerender(<BrowserAddressBar url="https://example.com/second" onNavigate={navigate} />);
-  expect(view.getByDisplayValue("https://example.com/second")).toBeTruthy();
+  expect(view.getByDisplayValue("example.com")).toBeTruthy();
   fireEvent.changeText(view.getByLabelText("Browser address"), "wrong address");
   fireEvent.press(view.getByLabelText("Cancel address editing"));
-  expect(view.getByDisplayValue("https://example.com/second")).toBeTruthy();
+  expect(view.getByDisplayValue("example.com")).toBeTruthy();
   expect(navigate).not.toHaveBeenCalled();
+});
+
+it("displays the site and port while retaining the complete address for editing", () => {
+  const url = "http://127.0.0.1:43000/preview?token=private#section";
+  const view = render(<BrowserAddressBar url={url} onNavigate={jest.fn()} />);
+  expect(view.getByDisplayValue("127.0.0.1:43000")).toBeTruthy();
+  fireEvent(view.getByLabelText("Browser address"), "focus");
+  expect(view.getByDisplayValue(url)).toBeTruthy();
+  fireEvent.press(view.getByLabelText("Cancel address editing"));
+  expect(view.getByDisplayValue("127.0.0.1:43000")).toBeTruthy();
 });
 
 it("keeps invalid text for correction and submits valid text with the keyboard", () => {

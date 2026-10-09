@@ -1,52 +1,41 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LegendList } from "@legendapp/list/react-native";
-import { AppButton as Button } from "../../presentation/controls/AppButton";
-import { ActivityIndicator, Pressable, View } from "react-native";
-import { joinDirectoryPath } from "../../data/remote-projects";
+import { Pressable, View } from "react-native";
 import { useEvent } from "../../react/useEvent";
 import { colors, controlSize, iconSize, spacing } from "../../theme";
-import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
+import { listRowHeight } from "../../ui/AppListRow.types";
 import { AppSheetScrollView } from "../../ui/AppSheet";
 import { useAppDialog } from "../../ui/AppDialog";
 import { AppText as Text } from "../../ui/Typography";
-import type { ProjectPickerProps } from "./projectPickerContract";
+import type { ScopedProjectPickerProps, ProjectDestination } from "./projectPickerContract";
 import { EmptyState, PickerRow, ProjectChoiceRow, SectionLabel } from "./ProjectPickerRowViews";
 import type { ProjectPickerSession } from "./projectPickerSession";
+import { ProjectServerContent } from "./ProjectServerContent";
+import { ProjectDirectoryContent } from "./ProjectDirectoryContent";
 import { styles } from "./ProjectPickerSheet.styles";
 
+/** Virtualized project and directory lists preserve qualified selection and local errors. */
 export function ProjectPickerContent({
   props,
   state,
 }: {
-  props: ProjectPickerProps;
+  props: ScopedProjectPickerProps;
   state: ProjectPickerSession;
 }) {
-  const { busy, cwd, onAddProject, onManageProjects, onReadHomeDirectory, onSelect } = props;
+  const { busy, current, onAddProject, onManageProjects, onSelect } = props;
   const dialog = useAppDialog();
-  const selectProject = useEvent((path: string | null): void => {
-    onSelect(path).catch((error: unknown) => {
+  const selectProject = useEvent((destination: ProjectDestination): void => {
+    onSelect(destination).catch((error: unknown) => {
+      if (!state.isCurrent()) {
+        return;
+      }
       dialog.alert(
         "Could not open project",
         error instanceof Error ? error.message : "Could not open project",
       );
     });
   });
-  const {
-    adding,
-    directory,
-    directoryLoading,
-    directoryPath,
-    mode,
-    navigate,
-    normalizedQuery,
-    pinningPath,
-    pinProject,
-    projectRows,
-    readError,
-    requestedDirectory,
-    toggleProjectSection,
-    visibleDirectories,
-  } = state;
+  const { mode, pinningPath, pinProject, projectRows, toggleProjectSection } = state;
   return (
     <View style={styles.listFrame}>
       {mode === "projects" ? (
@@ -65,6 +54,7 @@ export function ProjectPickerContent({
                     ? 92
                     : 150
           }
+          key={state.serverFilter ?? "all"}
           keyboardShouldPersistTaps="handled"
           keyExtractor={(item) => item.id}
           recycleItems
@@ -103,16 +93,21 @@ export function ProjectPickerContent({
               return (
                 <View style={styles.serverDefault}>
                   <PickerRow
-                    disabled={busy}
+                    disabled={busy || !item.available}
                     icon="server-outline"
                     onPress={() => {
                       if (!busy) {
-                        selectProject(null);
+                        selectProject({ connectionId: item.connectionId, cwd: null });
                       }
                     }}
                     selected={false}
-                    subtitle="Let Codex choose the working directory"
-                    title="Server default"
+                    serverIconId={item.iconId}
+                    subtitle={`${item.serverName}${item.available ? "" : " · Offline"} · Let Codex choose the working directory`}
+                    title={
+                      state.serverFilter === null && props.servers.length > 1
+                        ? `${item.serverName} defaults`
+                        : "Server default"
+                    }
                   />
                 </View>
               );
@@ -122,79 +117,23 @@ export function ProjectPickerContent({
             return (
               <ProjectChoiceRow
                 busy={busy || pinningPath !== null}
-                cwd={cwd}
-                onPin={canPin ? () => void pinProject(item.project) : undefined}
+                choice={item.choice}
+                current={current}
+                onPin={canPin ? () => void pinProject(item.choice) : undefined}
                 onSelect={selectProject}
                 pinned={item.pinned}
-                pinning={pinningPath === item.project.path}
+                pinning={pinningPath === item.id}
                 position={item.position}
-                project={item.project}
               />
             );
           }}
           renderScrollComponent={AppSheetScrollView}
           style={styles.projectScroll}
         />
-      ) : readError !== null ? (
-        <View style={styles.centerState}>
-          <Ionicons
-            color={colors.textDim}
-            name="folder-open-outline"
-            size={iconSize.illustration}
-          />
-          <Text style={styles.stateText}>Could not open this folder</Text>
-          <Text accessibilityRole="alert" style={styles.errorText}>
-            {readError}
-          </Text>
-          {onReadHomeDirectory !== undefined && requestedDirectory !== null ? (
-            <Button
-              onPress={() => {
-                navigate(null);
-              }}
-              variant="secondary"
-            >
-              Go to Home
-            </Button>
-          ) : null}
-        </View>
-      ) : directoryLoading || directory.status !== "ready" ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator color={colors.accent} size="small" />
-          <Text style={styles.stateText}>Opening folder…</Text>
-        </View>
+      ) : mode === "servers" ? (
+        <ProjectServerContent props={props} state={state} />
       ) : (
-        <LegendList
-          contentContainerStyle={styles.listContent}
-          data={visibleDirectories}
-          drawDistance={360}
-          getFixedItemSize={() => listRowHeight.single}
-          keyboardShouldPersistTaps="handled"
-          keyExtractor={(entry) => entry.fileName}
-          ListEmptyComponent={
-            <EmptyState
-              icon="folder-open-outline"
-              text={
-                normalizedQuery === "" ? "This folder has no subfolders" : "No matching folders"
-              }
-            />
-          }
-          recycleItems
-          renderItem={({ index, item }) => (
-            <PickerRow
-              chevron
-              disabled={adding}
-              icon="folder"
-              onPress={() => {
-                navigate(joinDirectoryPath(directoryPath, item.fileName));
-              }}
-              position={listRowPosition(index, visibleDirectories.length)}
-              selected={false}
-              title={item.fileName}
-            />
-          )}
-          renderScrollComponent={AppSheetScrollView}
-          style={styles.projectScroll}
-        />
+        <ProjectDirectoryContent props={props} state={state} />
       )}
     </View>
   );

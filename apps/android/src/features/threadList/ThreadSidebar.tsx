@@ -50,6 +50,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     onToggleRead,
     onUnarchive,
     project,
+    projectActions,
     projectLimit,
     projects,
     remote,
@@ -155,6 +156,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                       <SidebarSectionHeader title={item.title} />
                     ) : item.kind === "project" ? (
                       <SidebarProjectRow
+                        actions={projectActions}
                         onPress={() => {
                           setQuery("");
                           onOpenProject(item.project);

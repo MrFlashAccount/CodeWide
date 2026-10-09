@@ -6,7 +6,11 @@ import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
 import { serverScopeIncludes, type ServerScope } from "../../services/servers/serverScope";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import { orderSidebarProjects } from "./sidebarProjectOrder";
-import { sidebarProjects, type SidebarProject } from "./sidebarProjects";
+import {
+  sidebarProjects,
+  type SidebarProject,
+  type SidebarProjectActions,
+} from "./sidebarProjects";
 import { useRemoteProjectCatalog } from "./useRemoteProjectCatalog";
 import { useSidebarProjectOrder } from "./useSidebarProjectOrder";
 /** Existing project reads and mutations with the catalog's unread projection. */
@@ -93,6 +97,27 @@ export function useProjectWorkspace(
     projectCatalog.mergeProject(project.connectionId, updated);
   });
 
+  const unpinSidebarProject = useEvent(async (project: SidebarProject): Promise<void> => {
+    const updated = await remote.setProjectPinned(
+      project.connectionId,
+      project.path,
+      project.name,
+      false,
+    );
+    projectCatalog.mergeProject(project.connectionId, updated);
+  });
+  const markAllProjectChatsRead = useEvent(async (project: SidebarProject): Promise<void> => {
+    const database = remote.threadSummaryDatabase;
+    if (database === null) {
+      throw new Error("The thread database is unavailable");
+    }
+    await database.markProjectRead(project.connectionId, project.path);
+  });
+  const sidebarProjectActions: SidebarProjectActions = {
+    markAllRead: markAllProjectChatsRead,
+    unpin: unpinSidebarProject,
+  };
+
   const moveSidebarProject = useEvent(async (project: SidebarProject, direction: -1 | 1) => {
     await projectOrder.move(
       pinnedSidebarProjects.map((entry) => entry.key),
@@ -118,6 +143,7 @@ export function useProjectWorkspace(
     pinnedSidebarProjects,
     projectsByConnection,
     searchProjects,
+    sidebarProjectActions,
     sidebarProjectErrors,
     sidebarServers,
     toggleSidebarProject,

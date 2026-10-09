@@ -31,6 +31,7 @@ export function createWorkspaceSession({
     string,
     { credentialKey: string; promise: Promise<{ expiresAt: number; sessionToken: string }> }
   >();
+  const httpAuthorizationEpochs = new Map<string, symbol>();
 
   function currentConnections(): StoredConnection[] {
     return projectConnections();
@@ -38,12 +39,22 @@ export function createWorkspaceSession({
 
   function forgetHttpAuthorization(connectionId: string): void {
     httpSessions.delete(connectionId);
+    httpSessionMintInFlight.delete(connectionId);
+    httpAuthorizationEpochs.delete(connectionId);
+  }
+
+  function requireCurrentHttpAuthorization(connectionId: string, epoch: symbol): void {
+    if (httpAuthorizationEpochs.get(connectionId) !== epoch) {
+      throw new Error("Connection authorization was invalidated");
+    }
   }
 
   async function scopedHttpAuthorization(
     connection: StoredConnection,
     forceRefresh = false,
   ): Promise<string> {
+    const epoch = httpAuthorizationEpochs.get(connection.id) ?? Symbol("http-authorization");
+    httpAuthorizationEpochs.set(connection.id, epoch);
     const cached = httpSessions.get(connection.id);
     const credentialKey = `${connection.endpoint}\u0000${connection.tlsPinSha256 ?? ""}`;
     if (
@@ -60,7 +71,9 @@ export function createWorkspaceSession({
       existingMint !== undefined &&
       existingMint.credentialKey === credentialKey
     ) {
-      return `Bearer ${(await existingMint.promise).sessionToken}`;
+      const minted = await existingMint.promise;
+      requireCurrentHttpAuthorization(connection.id, epoch);
+      return `Bearer ${minted.sessionToken}`;
     }
     if (forceRefresh) {
       httpSessions.delete(connection.id);
@@ -70,7 +83,12 @@ export function createWorkspaceSession({
     httpSessionMintInFlight.set(connection.id, pending);
     try {
       const minted = await promise;
-      httpSessions.set(connection.id, { credentialKey, ...minted });
+      // Removal/profile changes revoke the lifetime of every mint, including
+      // superseded force-refresh requests. Late replies cannot restore it.
+      requireCurrentHttpAuthorization(connection.id, epoch);
+      if (httpSessionMintInFlight.get(connection.id) === pending) {
+        httpSessions.set(connection.id, { credentialKey, ...minted });
+      }
       return `Bearer ${minted.sessionToken}`;
     } finally {
       if (httpSessionMintInFlight.get(connection.id) === pending) {

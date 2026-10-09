@@ -43,6 +43,7 @@ pub fn compile_thread_patch(payload: &Value) -> Option<Value> {
         "thread/name/updated" => operation("threadName"),
         "thread/deleted" => operation("threadDeleted"),
         "thread/settings/updated" => operation("threadSettings"),
+        "companion/thread/pin/updated" => operation("threadPinned"),
         "thread/started" => operation("threadStarted"),
         "thread/archived" => with_bool(operation("threadArchived"), "archived", true),
         "thread/unarchived" => with_bool(operation("threadArchived"), "archived", false),

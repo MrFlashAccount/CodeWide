@@ -8,11 +8,8 @@ import type {
   ThreadChangeScope,
   ThreadResourcesValue,
 } from "../../data/workspace-resource-database";
-import {
-  changeScopeMenuActions,
-  changeScopeTitle,
-  isSelectableChangeScope,
-} from "../../rendering/change-menu";
+import { changeScopeMenuActions, isSelectableChangeScope } from "../../rendering/change-menu";
+import { changeScopeDisplay } from "../../rendering/changeScopeDisplay";
 import { colors } from "../../theme";
 import { ActionMenu } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
@@ -91,7 +88,8 @@ export function ThreadResourceContextChips({
   const changeScope = presentation.scope;
   const changesEmpty = changesReady && changeCount === 0;
   const attachmentsEmpty = attachmentsReady && attachmentCount === 0;
-  const scopeTitle = changeScopeTitle(changeScope);
+  const scopeDisplay = changeScopeDisplay(changeScope, presentation.resource?.vcs);
+  const scopeTitle = scopeDisplay.title;
   const changesLabel = changesInitialLoading
     ? "Loading changes…"
     : changesUnavailable
@@ -151,7 +149,7 @@ export function ThreadResourceContextChips({
             color={
               changesError !== null ? colors.red : changesEmpty ? colors.textDim : colors.textMuted
             }
-            name="git-compare-outline"
+            name={scopeDisplay.icon}
             role="label"
           />
           {changesUnavailable ? (

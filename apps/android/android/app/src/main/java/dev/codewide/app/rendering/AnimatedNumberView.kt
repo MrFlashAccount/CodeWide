@@ -113,6 +113,11 @@ class AnimatedNumberView(context: Context) : View(context) {
 
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
+    drawGlyphs(canvas)
+  }
+
+  /** Reuse the current digit frame for decoration without changing animation state. */
+  internal fun drawGlyphs(canvas: Canvas) {
     if (targetText.isEmpty()) return
     // Window density can change without a React prop transaction. Read this
     // view's metrics at draw time; process-global RN screen metrics can be stale.

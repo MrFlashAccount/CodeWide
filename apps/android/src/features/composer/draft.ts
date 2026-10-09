@@ -1,5 +1,6 @@
 /** V1 draft owner, extracted without changing interaction or resource lifetime. */
 import type { StoredComposerPreferences } from "../../data/thread-ui-state-types";
+import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { StoredDraftAttachment } from "../../data/thread-ui-state-types";
 
 export const EMPTY_COMPOSER_PREFERENCES: StoredComposerPreferences = {
@@ -27,6 +28,7 @@ export function useComposerDraftState(
   composerScope: string,
   composerState: ThreadUiStateRead,
   queuedComposerEdit: QueuedComposerEdit | null,
+  editingGoal: ThreadGoal | null = null,
 ) {
   const readyState = composerState.status === "ready" ? composerState.value : null;
   const storedDraft = readyState?.draftText ?? "";
@@ -35,22 +37,35 @@ export function useComposerDraftState(
 
   const composerUploadScope =
     queuedComposerEdit === null
-      ? composerScope
+      ? editingGoal === null
+        ? composerScope
+        : `${composerScope}\u0000goal-edit`
       : `${composerScope}\u0000queue-edit:${queuedComposerEdit.commandId}`;
 
-  const draft = queuedComposerEdit?.initialText ?? storedDraft;
+  const draft = queuedComposerEdit?.initialText ?? editingGoal?.objective ?? storedDraft;
 
-  const attachments = queuedComposerEdit?.initialAttachments ?? storedAttachments;
+  const attachments =
+    queuedComposerEdit?.initialAttachments ??
+    (editingGoal === null ? storedAttachments : EMPTY_COMPOSER_ATTACHMENTS);
 
   const uploadsBlockSend = useSelector(() => composerUploads.blocksSend(composerUploadScope));
 
   const composerPreferences = readyState?.preferences ?? EMPTY_COMPOSER_PREFERENCES;
 
-  const composerSession = useComposerSession(composerUploadScope, {
+  // The resident message draft keeps its live owner while a goal uses the same
+  // native editor. Cancelling an edit must not depend on persistence catching up.
+  const messageSession = useComposerSession(composerScope, {
+    attachments: storedAttachments,
+    plainText: storedDraft,
+    preferences: composerPreferences,
+  });
+  const editSession = useComposerSession(`${composerUploadScope}\u0000edit-session`, {
     attachments,
     plainText: draft,
     preferences: composerPreferences,
   });
+  const composerSession =
+    queuedComposerEdit === null && editingGoal === null ? messageSession : editSession;
 
   const attachmentCount = useSelector(() =>
     composerUploads.count(composerUploadScope, composerSession.snapshot.attachments),
@@ -85,6 +100,7 @@ type DraftMutationCapabilities = {
   composerSession: ReturnType<typeof useComposerSession>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  editingGoal?: ThreadGoal | null;
   queuedComposerEdit: QueuedComposerEdit | null;
   saveDraft: ((connectionId: string, threadId: string, text: string) => Promise<void>) | undefined;
   saveDraftAttachments:
@@ -100,6 +116,7 @@ export function useComposerDraftCommands({
   composerSession,
   draftConnectionId,
   draftThreadId,
+  editingGoal = null,
   queuedComposerEdit,
   saveDraft,
   saveDraftAttachments,
@@ -113,7 +130,7 @@ export function useComposerDraftCommands({
     if (previous.plainText === text.plainText) {
       return;
     }
-    if (queuedComposerEdit !== null) {
+    if (queuedComposerEdit !== null || editingGoal !== null) {
       return;
     }
     if (saveDraft === undefined || draftConnectionId === null || draftThreadId === null) {
@@ -135,7 +152,7 @@ export function useComposerDraftCommands({
     next: StoredDraftAttachment[],
   ): Promise<void> => {
     owner.updateAttachments(next);
-    if (queuedComposerEdit !== null) {
+    if (queuedComposerEdit !== null || editingGoal !== null) {
       return;
     }
     if (

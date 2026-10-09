@@ -5,3 +5,10 @@ export type InternalBrowserHeader = {
   status?: string;
   title: string;
 };
+
+/** A tab count and its manager action come from the same browser catalog. */
+export type BrowserTabsControl = {
+  readonly count: number;
+  readonly onNewTab?: () => void;
+  readonly onOpen: () => void;
+};

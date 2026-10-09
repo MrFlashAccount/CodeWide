@@ -1,3 +1,4 @@
+import type { ProjectDestination } from "./projectPickerContract";
 import { useEvent } from "../../react/useEvent";
 import type { ConversationOwner } from "../../ui/use-conversation-owner";
 import { useConversationState } from "../../ui/use-conversation-scope";
@@ -57,6 +58,35 @@ export function useComposerProjectSelection(
       setProjectChangeError(cause instanceof Error ? cause.message : "Could not change project");
     }
   });
+  const selectQualifiedProject = useEvent(
+    async (
+      destination: ProjectDestination,
+      change: (destination: ProjectDestination) => Promise<void>,
+    ) => {
+      if (projectChangeBusy) {
+        return;
+      }
+      setProjectChangeBusy(true);
+      setProjectChangeError(null);
+      try {
+        await change(destination);
+        if (conversationOwner.isCurrent()) {
+          closeProjectPicker();
+        }
+      } catch (error) {
+        if (conversationOwner.isCurrent()) {
+          setProjectChangeBusy(false);
+          setProjectChangeError(
+            error instanceof Error ? error.message : "Could not change project",
+          );
+        }
+        throw error;
+      }
+      if (conversationOwner.isCurrent()) {
+        setProjectChangeBusy(false);
+      }
+    },
+  );
   return {
     closeProjectPicker,
     openProjectPicker,
@@ -64,5 +94,6 @@ export function useComposerProjectSelection(
     projectChangeError,
     projectPickerVisible,
     selectProject,
+    selectQualifiedProject,
   };
 }

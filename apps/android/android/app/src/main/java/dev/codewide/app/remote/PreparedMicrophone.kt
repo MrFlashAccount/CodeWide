@@ -7,7 +7,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.SystemClock
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.ReactApplicationContext
 import java.util.concurrent.CompletableFuture
@@ -40,7 +40,7 @@ internal class PreparedMicrophone(private val context: ReactApplicationContext) 
 
   private val effectsFactory = PreparedMicrophoneEffectsFactory(
     AndroidMicrophoneEffectsPlatform,
-  ) { name, error -> Log.w(TAG, "$name unavailable", error) }
+  ) { name, error -> NativeAppLogger.warn(TAG, "$name unavailable", error) }
 
   private val executor = Executors.newSingleThreadExecutor { task -> Thread(task, "CodeWideMicPrepare").apply { isDaemon = true } }
   private var pending: CompletableFuture<Session>? = null
@@ -76,16 +76,16 @@ internal class PreparedMicrophone(private val context: ReactApplicationContext) 
       value
     }
     val candidate = try { prepared?.get() } catch (error: Exception) {
-      Log.w(TAG, "Microphone preparation failed; retrying capture", error)
+      NativeAppLogger.warn(TAG, "Microphone preparation failed; retrying capture", error)
       null
     }
     if (candidate != null) {
       try {
         candidate.recorder.startRecording()
-        Log.i(TAG, "Microphone start prepared=true durationMs=${SystemClock.elapsedRealtime() - startedAt}")
+        NativeAppLogger.info(TAG, "Microphone start prepared=true durationMs=${SystemClock.elapsedRealtime() - startedAt}")
         return candidate
       } catch (error: Exception) {
-        Log.w(TAG, "Prepared microphone could not start; probing capture sources", error)
+        NativeAppLogger.warn(TAG, "Prepared microphone could not start; probing capture sources", error)
         candidate.release()
       }
     }
@@ -94,11 +94,11 @@ internal class PreparedMicrophone(private val context: ReactApplicationContext) 
       try {
         session = build(source)
         session.recorder.startRecording()
-        Log.i(TAG, "Microphone start prepared=false durationMs=${SystemClock.elapsedRealtime() - startedAt}")
+        NativeAppLogger.info(TAG, "Microphone start prepared=false durationMs=${SystemClock.elapsedRealtime() - startedAt}")
         return session
       } catch (error: Exception) {
         session?.release()
-        Log.w(TAG, "Microphone source ${source.label} unavailable", error)
+        NativeAppLogger.warn(TAG, "Microphone source ${source.label} unavailable", error)
       }
     }
     synchronized(this) { activeCaptures -= 1 }
@@ -121,7 +121,7 @@ internal class PreparedMicrophone(private val context: ReactApplicationContext) 
   private fun buildFirstAvailable(): Session {
     for (source in SOURCES) {
       try { return build(source) } catch (error: Exception) {
-        Log.w(TAG, "Microphone source ${source.label} could not prepare", error)
+        NativeAppLogger.warn(TAG, "Microphone source ${source.label} could not prepare", error)
       }
     }
     error("No supported microphone capture source")
@@ -139,7 +139,7 @@ internal class PreparedMicrophone(private val context: ReactApplicationContext) 
     try {
       check(recorder.state == AudioRecord.STATE_INITIALIZED) { "Microphone could not be initialized" }
       val effects = effectsFactory.create(recorder.audioSessionId)
-      Log.i(TAG, "Microphone prepare source=${source.label} durationMs=${SystemClock.elapsedRealtime() - startedAt}")
+      NativeAppLogger.info(TAG, "Microphone prepare source=${source.label} durationMs=${SystemClock.elapsedRealtime() - startedAt}")
       return Session(recorder, source, recorder.sampleRate, effects)
     } catch (error: Exception) {
       recorder.release()

@@ -14,6 +14,7 @@ export function useComposerDelivery({
   composerSession,
   composerUploadScope,
   contentReviewAttachmentId,
+  continuation,
   conversationOwner,
   currentTurnId,
   draft,
@@ -65,6 +66,7 @@ export function useComposerDelivery({
   contentReviewAttachmentId: Parameters<
     typeof useComposerSubmission
   >[0]["contentReviewAttachmentId"];
+  continuation: Parameters<typeof useComposerDeliveryActions>[0]["continuation"];
   conversationOwner: Parameters<typeof useComposerSubmission>[0]["conversationOwner"];
   currentTurnId: Parameters<typeof useComposerDeliveryActions>[0]["currentTurnId"];
   draft: Parameters<typeof useComposerDeliveryActions>[0]["draft"];
@@ -153,6 +155,7 @@ export function useComposerDelivery({
     discardComposer,
     editingQueuedMessage,
     handleDeliveryAction,
+    resumeAction,
     sendDisabled,
     steerComposer,
     stopAction,
@@ -161,6 +164,7 @@ export function useComposerDelivery({
     cancelQueuedComposerEdit,
     clearComposerText,
     composerScope: composerUploadScope,
+    continuation,
     currentTurnId,
     discardVoice,
     draft,
@@ -189,6 +193,7 @@ export function useComposerDelivery({
     finishVoice,
     handleDeliveryAction,
     microphoneAccess,
+    resumeAction,
     retryVoice,
     sendDisabled,
     steerComposer,

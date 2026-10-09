@@ -1,8 +1,10 @@
+import { persistDiagnosticLog } from "./diagnosticSink";
+
 type LogFieldValue = boolean | number | string | null;
 
 type LogFields = Readonly<Record<string, LogFieldValue>>;
 
-type LogLevel = "debug" | "error" | "info" | "warn";
+type LogLevel = "debug" | "error" | "fatal" | "info" | "warn";
 
 export type LogRecord = {
   readonly err: Error | null;
@@ -32,6 +34,7 @@ export type Logger = {
   readonly debug: (input: LogInput) => void;
   readonly error: (input: ErrorLogInput) => void;
   readonly errorCaught: (input: CaughtLogInput) => void;
+  readonly fatal: (input: ErrorLogInput) => void;
   readonly info: (input: LogInput) => void;
   readonly warn: (input: LogInput) => void;
   readonly warnCaught: (input: CaughtLogInput) => void;
@@ -67,6 +70,9 @@ export function createLogger(sink: LogSink, now: () => number = Date.now): Logge
     errorCaught: (input) => {
       writeCaught("error", input);
     },
+    fatal: (input) => {
+      write("fatal", input, input.err);
+    },
     info: (input) => {
       write("info", input, null);
     },
@@ -80,7 +86,7 @@ export function createLogger(sink: LogSink, now: () => number = Date.now): Logge
 }
 
 function consoleSink(record: LogRecord): void {
-  if (record.level === "error") {
+  if (record.level === "error" || record.level === "fatal") {
     // WHY: This is the single platform sink that exposes structured application errors to Metro and logcat.
     // oxlint-disable-next-line no-console
     console.error(record);
@@ -103,5 +109,10 @@ function consoleSink(record: LogRecord): void {
   console.debug(record);
 }
 
-/** Application logger for local structured diagnostics. */
-export const appLogger = createLogger(consoleSink);
+function applicationSink(record: LogRecord): void {
+  persistDiagnosticLog(record);
+  consoleSink(record);
+}
+
+/** Application logger with synchronous Android durability and local console diagnostics. */
+export const appLogger = createLogger(applicationSink);

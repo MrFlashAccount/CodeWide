@@ -1,17 +1,23 @@
 import { StyleSheet } from "react-native";
-import { colors, spacing, typeScale } from "../../theme";
+import { colors } from "../../theme";
 
 export const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  previewError: {
-    backgroundColor: colors.errorContainer,
-    color: colors.red,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    ...typeScale.label,
+  hiddenPage: { display: "none" },
+  page: {
+    flex: 1,
+    minHeight: 0,
+  },
+  pages: {
+    flex: 1,
+    minHeight: 0,
   },
   root: {
     backgroundColor: colors.background,
     flex: 1,
+  },
+  tabBar: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    flexDirection: "row",
   },
 });

@@ -70,6 +70,7 @@ export function useCodeReviewState(props: CodeReviewWorkspaceProps) {
     revealReference,
     reviewFiles,
     scopeLoading,
+    vcs,
     workspaceRevision,
   } = useCodeReviewResources(props, resourceOwnerId, requestedScope, scopeRevision, selectedPath);
 
@@ -203,6 +204,7 @@ export function useCodeReviewState(props: CodeReviewWorkspaceProps) {
     setWorkspaceWidth,
     sidebarOpen,
     updateCommentDraft,
+    vcs,
     voiceResource,
     workspaceRevision,
     wrapLines,

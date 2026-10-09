@@ -7,7 +7,10 @@ import type { VoiceInputController } from "../../data/voice-input-controller";
 import type { NewChatWorkspaceMode } from "../../data/workspace-creation";
 import type { WorkspaceRuntimeSnapshot } from "../../data/workspace-runtime";
 import type { NewThreadDraft } from "../../services/threads/newThreadService";
-import type { SelectWorkspaceThread } from "../../services/threads/threadRouteParams";
+import type {
+  V1ThreadRouteParams,
+  SelectWorkspaceThread,
+} from "../../services/threads/threadRouteParams";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { SearchConversationWindow } from "../search/search-conversation-window";
 import type { ThreadListItem } from "../threadList/threadListTypes";
@@ -37,6 +40,7 @@ export type ActiveWorkspaceConversationProps = {
   onFixUnsupportedBlock: (block: RenderBlock) => Promise<void>;
   onManageProjects: () => void;
   onOpenBrowser: (title: string, url: string) => void;
+  onOpenBrowserInThread?: (title: string, url: string, thread: V1ThreadRouteParams | null) => void;
   onSelectThread: SelectWorkspaceThread;
   onShowActiveThreads: () => void;
   pendingRequests: PendingServerRequest[];

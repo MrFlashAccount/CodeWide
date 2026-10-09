@@ -49,6 +49,7 @@ export function useComposerState({
     cwd,
     draftConnectionId,
     draftThreadId,
+    editingGoal: composerMenuStateBinding.editingGoal,
     newChat,
     onLoadControls: composerInputs.onLoadControls,
     onUpdateSettings: composerInputs.onUpdateSettings,

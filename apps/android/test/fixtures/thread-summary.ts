@@ -14,6 +14,7 @@ export function summary(
     updatedAt: 1,
     recencyAt: 1,
     status: { type: "idle" },
+    pinCursor: 0,
     pinned: false,
     archived: false,
     pendingRequestCount: 0,

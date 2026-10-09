@@ -1,3 +1,4 @@
+import { threadPinFromSnapshot, validPinCursor } from "./threadPinState";
 import {
   closesAsyncQuestions,
   isFinalQuestionTurnMessage,
@@ -15,11 +16,23 @@ import {
 
 import {
   normalizeThreadStatus,
+  threadSummaryProjectionCursor,
   type QuestionOpportunity,
   type StoredThreadSummary,
 } from "./thread-summary-types";
 import { subagentOwnTurns } from "./subagent-projection";
 import { latestThreadMessagePreview, plainThreadPreview } from "./thread-cache";
+
+function isClosedTurnStart(
+  operation: ThreadProjectionPatchV1["operation"],
+  summary: StoredThreadSummary,
+): boolean {
+  if (operation.kind !== "turnStarted") {
+    return false;
+  }
+  const turnId = unknownRecord(operation.turn)?.id;
+  return typeof turnId === "string" && turnId === summary.closedQuestionTurnId;
+}
 
 export type ThreadSummaryMutation = {
   key: string;
@@ -34,7 +47,13 @@ export function retainThreadSummaryMissingFromSnapshot(summary: StoredThreadSumm
   // The global interactive-thread snapshot does not contain descendants.
   // Those rows come from the Companion parent index and must survive later
   // reconnect snapshots; explicit thread/deleted events still remove them.
-  return isThread(summary.provisionalThread) || typeof summary.parentThreadId === "string";
+  // Pinned roots also live outside the bounded recent snapshot and are
+  // reconciled by the separate complete Companion pin membership.
+  return (
+    (summary.pinned && (summary.pinCursor ?? 0) > 0) ||
+    isThread(summary.provisionalThread) ||
+    typeof summary.parentThreadId === "string"
+  );
 }
 
 export function threadSummaryDescendantKeys(
@@ -59,6 +78,7 @@ export function projectThreadSummarySnapshot(
   const snapshotPreview =
     previewThread.turns.length > 0 ? latestThreadMessagePreview(previewThread) : "";
   const listedPreview = plainThreadPreview(thread.preview);
+  const pin = threadPinFromSnapshot(thread);
   return {
     agentNickname: thread.agentNickname,
     agentRole: thread.agentRole,
@@ -85,12 +105,14 @@ export function projectThreadSummarySnapshot(
           ? (previous.pendingQuestion ?? null)
           : null,
     pendingRequestCount: previous?.pendingRequestCount ?? 0,
-    pinned: previous?.pinned ?? false,
+    pinCursor: Math.max(previous?.pinCursor ?? 0, pin.cursor),
+    pinned: (previous?.pinCursor ?? 0) > pin.cursor ? (previous?.pinned ?? false) : pin.pinned,
     preview: selectPreview(
       snapshotPreview,
       listedPreview,
       isSubagent && (previous?.latestActivityCursor ?? 0) <= 0 ? undefined : previous?.preview,
     ),
+    projectionCursor: previous === undefined ? 0 : threadSummaryProjectionCursor(previous),
     recencyAt: thread.recencyAt,
     skippedQuestions: previous?.skippedQuestions ?? null,
     status: normalizeThreadStatus(thread.status),
@@ -130,8 +152,48 @@ export function projectThreadSummaryEvent(
   if (patch === null || isHighFrequencySummaryPatch(patch.operation.kind)) {
     return null;
   }
-  return projectThreadSummaryPatch(connectionId, patch, previousFor, nowSeconds, cursor);
+  const previous = previousFor(patch.threadId);
+  const previousCursor = previous === undefined ? 0 : threadSummaryProjectionCursor(previous);
+  if (summaryCursorAlreadyApplied(cursor, previousCursor)) {
+    return null;
+  }
+  const mutation = projectThreadSummaryPatch(connectionId, patch, previousFor, nowSeconds, cursor);
+  if (mutation !== null) {
+    advanceMutationCursor(mutation, cursor);
+  }
+  return mutation;
 }
+
+function summaryCursorAlreadyApplied(cursor: number, previousCursor: number): boolean {
+  return cursor > 0 && cursor <= previousCursor;
+}
+
+function advanceMutationCursor(mutation: ThreadSummaryMutation, cursor: number): void {
+  if (mutation.value !== null) {
+    mutation.value.projectionCursor = Math.max(
+      threadSummaryProjectionCursor(mutation.value),
+      cursor,
+    );
+  }
+}
+
+/** Identifies material summary events whose missing row needs authoritative metadata. */
+export function threadSummaryEventNeedsMetadata(payload: Record<string, unknown>): boolean {
+  const patch = threadProjectionPatchFromEvent(payload);
+  return patch !== null && METADATA_SUMMARY_PATCHES.has(patch.operation.kind);
+}
+
+const METADATA_SUMMARY_PATCHES = new Set([
+  "threadName",
+  "threadStatus",
+  "threadArchived",
+  "threadPinned",
+  "turnStarted",
+  "turnCompleted",
+  "threadProgress",
+  "threadInvalidated",
+  "itemUpsert",
+]);
 
 const HIGH_FREQUENCY_SUMMARY_PATCHES = new Set([
   "itemTextDelta",
@@ -178,6 +240,9 @@ function projectThreadSummaryPatch(
   if (previous === undefined) {
     return null;
   }
+  if (isClosedTurnStart(operation, previous)) {
+    return null;
+  }
   const next: StoredThreadSummary = { ...previous };
   if (
     operation.kind === "turnStarted" ||
@@ -218,6 +283,18 @@ function projectThreadSummaryPatch(
   const attentionChanged =
     next.pendingQuestion !== previous.pendingQuestion ||
     next.closedQuestionTurnId !== previous.closedQuestionTurnId;
+  if (operation.kind === "threadPinned") {
+    if (
+      typeof operation.pinned !== "boolean" ||
+      !validPinCursor(operation.pinCursor) ||
+      operation.pinCursor < (next.pinCursor ?? 0)
+    ) {
+      return null;
+    }
+    next.pinCursor = operation.pinCursor;
+    next.pinned = operation.pinned;
+    return { key, value: next };
+  }
   if (operation.kind === "threadName") {
     next.name = typeof operation.threadName === "string" ? operation.threadName : null;
   } else if (operation.kind === "threadStatus" && object(operation.status) !== null) {
@@ -231,6 +308,10 @@ function projectThreadSummaryPatch(
     if (operation.kind === "threadInvalidated" && operation.turnActive === false) {
       if (next.status.type === "active") {
         next.status = { type: "idle" };
+      }
+    } else if (operation.kind === "threadProgress" && operation.turnActive === true) {
+      if (next.status.type !== "active") {
+        next.status = { activeFlags: [], type: "active" };
       }
     }
     const lifecycleChanged =

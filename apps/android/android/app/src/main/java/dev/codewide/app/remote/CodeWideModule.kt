@@ -18,7 +18,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.text.format.DateFormat
 import android.util.Base64
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import android.view.View
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
@@ -63,6 +63,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   private var audioCaptureThread: Thread? = null
   private val voiceAura = VoiceAuraOverlay(context)
   private val browserDevTools = BrowserDevToolsBridge(context)
+  private val browserFavicon = BrowserFaviconBridge(context)
   private val mainHandler = Handler(Looper.getMainLooper())
   @Volatile private var invalidated = false
 
@@ -94,6 +95,21 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   override fun getName(): String = "CodeWideNative"
+
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun persistDiagnosticReport(payload: String): Boolean {
+    return try {
+      dev.codewide.app.diagnostics.NativeDiagnosticRuntime.append(JSONObject(payload))
+    } catch (_: Exception) {
+      dev.codewide.app.diagnostics.NativeDiagnosticRuntime.recordCaptureFailure()
+      false
+    }
+  }
+
+  @ReactMethod
+  fun readBrowserFavicon(viewTag: Double, expectedUrl: String, promise: Promise) {
+    browserFavicon.read(viewTag, expectedUrl, promise)
+  }
 
   override fun getConstants(): MutableMap<String, Any> = mutableMapOf(
     "localeTag" to (context.resources.configuration.locales[0] ?: Locale.getDefault()).toLanguageTag(),
@@ -561,7 +577,10 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     service.rpc(connectionId, method, params) { result ->
       result.fold(
         onSuccess = { value -> promise.resolve(JSONObject().put("ok", true).put("result", value ?: JSONObject.NULL).toString()) },
-        onFailure = { error -> promise.resolve(engineFailure(error.message ?: "Remote operation failed", (error as? NativeRpcException)?.rpcCode)) },
+        onFailure = { error ->
+          val rpc = error as? NativeRpcException
+          promise.resolve(engineFailure(error.message ?: "Remote operation failed", rpc?.rpcCode, rpc?.rpcData))
+        },
       )
     }
   }
@@ -1034,7 +1053,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         voiceAura.update(active, level, reducedMotion)
       } catch (error: Throwable) {
         voiceAura.clear()
-        Log.e(VOICE_AURA_LOG_TAG, "Could not update live voice aura", error)
+        NativeAppLogger.error(VOICE_AURA_LOG_TAG, "Could not update live voice aura", error)
       }
     }
   }
@@ -1054,7 +1073,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           )
         }
       } catch (error: Throwable) {
-        Log.e("CodeWideFullscreen", "Could not configure fullscreen window", error)
+        NativeAppLogger.error("CodeWideFullscreen", "Could not configure fullscreen window", error)
       }
     }
   }
@@ -1070,7 +1089,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         voiceAura.setOrigin(view)
       } catch (error: Throwable) {
         voiceAura.setOrigin(null)
-        Log.e(VOICE_AURA_LOG_TAG, "Could not locate voice aura origin", error)
+        NativeAppLogger.error(VOICE_AURA_LOG_TAG, "Could not locate voice aura origin", error)
       }
     }
   }
@@ -1142,7 +1161,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         audioRecord = recorder
         audioCaptureGeneration
       }
-      Log.i(
+      NativeAppLogger.info(
         AUDIO_LOG_TAG,
         "PCM capture source=${activeCapture.source.label} sampleRate=$sampleRate channels=${recorder.channelCount} " +
           "bufferFrames=${recorder.bufferSizeInFrames} aecSupported=${effects.acousticEchoCancelerSupported} " +
@@ -1181,7 +1200,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           try {
             abandoned.release()
           } catch (cleanupError: Throwable) {
-            Log.w(AUDIO_LOG_TAG, "PCM capture startup cleanup failed", cleanupError)
+            NativeAppLogger.warn(AUDIO_LOG_TAG, "PCM capture startup cleanup failed", cleanupError)
           } finally {
             microphone.captureReleased()
           }
@@ -1501,10 +1520,11 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       }
     }
 
-    private fun engineFailure(message: String, code: Int?): String = JSONObject()
+    private fun engineFailure(message: String, code: Int?, data: Any? = null): String = JSONObject()
       .put("ok", false)
       .put("message", message.take(1_000))
       .apply { if (code != null) put("code", code) }
+      .apply { if (data != null) put("data", data) }
       .toString()
   }
 }

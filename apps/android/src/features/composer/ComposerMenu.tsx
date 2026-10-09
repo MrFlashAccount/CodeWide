@@ -208,28 +208,22 @@ export function pageTitle(page: ComposerMenuPage): string {
 export type ComposerMenuProps = Parameters<typeof ComposerMenu>[0];
 
 import { useConversationState } from "../../ui/use-conversation-scope";
+import { useComposerGoalMode } from "./composerGoalMode";
 
 export function useComposerMenuState(composerScope: string) {
   const [composerTrayVisible, setComposerTrayVisible] = useConversationState(
     composerScope,
     () => false,
   );
-  const [goalAttachmentVisible, setGoalAttachmentVisible] = useConversationState(
-    `${composerScope}\u0000goal-attachment`,
-    () => false,
-  );
-  const closeGoalAttachment = useEvent(() => {
-    setGoalAttachmentVisible(false);
-  });
+  const goalMode = useComposerGoalMode(composerScope);
   const openGoalAttachment = useEvent(() => {
     setComposerTrayVisible(false);
-    setGoalAttachmentVisible(true);
+    goalMode.openGoalAttachment();
   });
 
   return {
-    closeGoalAttachment,
+    ...goalMode,
     composerTrayVisible,
-    goalAttachmentVisible,
     openGoalAttachment,
     setComposerTrayVisible,
   };

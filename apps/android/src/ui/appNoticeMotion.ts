@@ -6,9 +6,8 @@ import { scheduleOnRN } from "react-native-worklets";
 
 import { useConstant } from "../react/useConstant";
 import { useEvent } from "../react/useEvent";
+import { resolveNoticeSwipeExit } from "./appNoticeSwipeExit";
 
-const SWIPE_THRESHOLD = 45;
-const SWIPE_VELOCITY = 300;
 const EXIT_DURATION_MS = 200;
 const GLIDE_DAMPING = 32;
 const GLIDE_STIFFNESS = 170;
@@ -36,37 +35,6 @@ const releaseSpring = {
   mass: RELEASE_MASS,
   stiffness: RELEASE_STIFFNESS,
 };
-
-type SwipeExit =
-  | { readonly direction: number; readonly kind: "horizontal" }
-  | { readonly kind: "up" }
-  | { readonly kind: "none" };
-
-function resolveSwipeExit(motion: {
-  readonly velocityX: number;
-  readonly velocityY: number;
-  readonly x: number;
-  readonly y: number;
-}): SwipeExit {
-  if (Math.abs(motion.x) > Math.abs(motion.y)) {
-    return resolveHorizontalSwipeExit(motion.x, motion.velocityX);
-  }
-  if (
-    motion.y < 0 &&
-    (Math.abs(motion.y) >= SWIPE_THRESHOLD || motion.velocityY <= -SWIPE_VELOCITY)
-  ) {
-    return { kind: "up" };
-  }
-  return { kind: "none" };
-}
-
-function resolveHorizontalSwipeExit(x: number, velocityX: number): SwipeExit {
-  if (Math.abs(x) < SWIPE_THRESHOLD && Math.abs(velocityX) < SWIPE_VELOCITY) {
-    return { kind: "none" };
-  }
-  const direction = Math.sign(x === 0 ? velocityX : x);
-  return { direction: direction === 0 ? 1 : direction, kind: "horizontal" };
-}
 
 function collapsedScale(index: number): number {
   return Math.max(COLLAPSED_SCALE_MIN, 1 - index * COLLAPSED_SCALE_STEP);
@@ -107,6 +75,7 @@ export function useAppNoticeMotion({
   const dismissWidth = useSharedValue(screenWidth);
   const dismissHeight = useSharedValue(screenHeight);
   const swipeDismiss = useEvent(onSwipeDismiss);
+  const interactingChange = useEvent(onInteractingChange);
 
   const close = useEvent((): boolean => {
     if (closing.current) {
@@ -177,7 +146,7 @@ export function useAppNoticeMotion({
       .activeOffsetX([-SWIPE_ACTIVATION, SWIPE_ACTIVATION])
       .activeOffsetY([-SWIPE_ACTIVATION, SWIPE_ACTIVATION])
       .onBegin(() => {
-        scheduleOnRN(onInteractingChange, true);
+        scheduleOnRN(interactingChange, true);
       })
       .onUpdate((event) => {
         if (lockedAxis.get() === 0) {
@@ -197,8 +166,13 @@ export function useAppNoticeMotion({
           );
         }
       })
-      .onEnd((event) => {
-        const exit = resolveSwipeExit({
+      .onEnd((event, success) => {
+        if (!success) {
+          dragX.set(withSpring(0, releaseSpring));
+          dragY.set(withSpring(0, releaseSpring));
+          return;
+        }
+        const exit = resolveNoticeSwipeExit({
           velocityX: event.velocityX,
           velocityY: event.velocityY,
           x: dragX.get(),
@@ -235,7 +209,7 @@ export function useAppNoticeMotion({
       })
       .onFinalize(() => {
         lockedAxis.set(0);
-        scheduleOnRN(onInteractingChange, false);
+        scheduleOnRN(interactingChange, false);
       }),
   );
   return { close, pan, style };

@@ -9,7 +9,7 @@ import { ContextRing } from "../../accounts/UsageMenu";
 import { WorkspaceAccountUsageMenu } from "../../accounts/WorkspaceAccountUsageMenu";
 import { ThreadHeaderMenu } from "../../turnActions/ThreadActions";
 import {
-  ConversationBackendRefreshIndicator,
+  ConversationBackendRefreshWarning,
   ConversationHistorySubtitle,
 } from "../ConversationHistoryStatus";
 import { styles } from "./ConversationHeader.styles";
@@ -67,7 +67,7 @@ export function ConversationHeader({
           >
             {thread.title.slice(leadingEmoji(thread.title)?.length ?? 0).trimStart()}
           </Text>
-          <ConversationBackendRefreshIndicator
+          <ConversationBackendRefreshWarning
             connectionId={draftConnectionId}
             model={threadChatModel}
             threadId={draftThreadId}

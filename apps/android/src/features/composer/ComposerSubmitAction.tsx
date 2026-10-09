@@ -8,6 +8,7 @@ type Props = Pick<
   ComposerFeatureProps,
   | "editingQueuedMessage"
   | "sendDisabled"
+  | "resumeAction"
   | "composerDiscardEnabled"
   | "queuedComposerEditBusy"
   | "discardComposer"
@@ -33,6 +34,7 @@ export function ComposerSubmitAction({
   goalAttachmentVisible,
   handleDeliveryAction,
   queuedComposerEditBusy,
+  resumeAction,
   sendDisabled,
   steerComposer,
   stopAction,
@@ -69,13 +71,19 @@ export function ComposerSubmitAction({
               ? "Pause goal and stop response"
               : stopAction === "response"
                 ? "Stop response"
-                : "Send message"
+                : (resumeAction ?? "Send message")
       }
       disabled={sendDisabled}
       disabledStyle={styles.disabled}
       discardEnabled={composerDiscardEnabled}
       icon={
-        voicePhase === "finishing" ? "hourglass-outline" : stoppingResponse ? "stop" : "arrow-up"
+        voicePhase === "finishing"
+          ? "hourglass-outline"
+          : stoppingResponse
+            ? "stop"
+            : resumeAction !== null
+              ? "play"
+              : "arrow-up"
       }
       iconColor={stoppingResponse ? "#ffffff" : colors.onPrimary}
       onDiscard={discardComposer}
@@ -88,7 +96,7 @@ export function ComposerSubmitAction({
       style={[styles.sendButton, stoppingResponse && styles.stopButton]}
     />
   );
-  if (goalAttachmentVisible) {
+  if (goalAttachmentVisible || resumeAction !== null) {
     return action;
   }
   return (

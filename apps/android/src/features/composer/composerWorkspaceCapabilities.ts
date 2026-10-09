@@ -13,6 +13,7 @@ import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-da
 export type ComposerWorkspaceCapabilities = {
   controlsResourceId: string | null;
   loadDraft: ((connectionId: string, threadId: string) => Promise<string>) | undefined;
+  onContinueTurn: ((sourceTurnId: string) => Promise<void>) | undefined;
   onInterrupt: ((turnId: string) => Promise<void>) | undefined;
   onLoadControls: LoadTurnControls | undefined;
   onRetryFailedMessage: ((commandId: string) => Promise<void>) | undefined;

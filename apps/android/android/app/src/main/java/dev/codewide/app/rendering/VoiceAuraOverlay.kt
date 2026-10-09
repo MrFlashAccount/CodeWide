@@ -12,7 +12,7 @@ import android.graphics.RuntimeShader
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import dev.codewide.app.diagnostics.NativeAppLogger
 import android.view.Choreographer
 import android.view.Gravity
 import android.view.View
@@ -271,7 +271,7 @@ class VoiceAuraOverlay(
     try {
       manager.addView(view, createLayoutParams(token))
     } catch (error: RuntimeException) {
-      Log.w(LOG_TAG, "Could not attach application voice aura overlay", error)
+      NativeAppLogger.warn(LOG_TAG, "Could not attach application voice aura overlay", error)
       return null
     }
     activity = WeakReference(currentActivity)
@@ -290,7 +290,7 @@ class VoiceAuraOverlay(
       try {
         manager.removeViewImmediate(view)
       } catch (error: RuntimeException) {
-        Log.w(LOG_TAG, "Could not remove application voice aura overlay", error)
+        NativeAppLogger.warn(LOG_TAG, "Could not remove application voice aura overlay", error)
       }
     }
     shader = null
