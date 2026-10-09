@@ -45,8 +45,13 @@ on:
       request_id:
         required: false
         type: string
+      host_update_key_id:
+        required: true
+        type: string
     secrets:
       HOMEBREW_TAP_DEPLOY_KEY:
+        required: true
+      HOST_UPDATE_P256_PUBLIC_KEY_SPKI:
         required: true
 
 permissions:
@@ -115,11 +120,16 @@ jobs:
           echo "CODEWIDE_VERSION=$version" >> "$GITHUB_ENV"
           echo "CODEWIDE_COMPANION_VERSION=$version" >> "$GITHUB_ENV"
           echo "CODEWIDE_CORE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "CODEWIDE_COMPANION_BUILD=$(printf '%.12s' "$GITHUB_SHA")" >> "$GITHUB_ENV"
+          echo "CODEWIDE_COMPANION_SOURCE_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=companion-linux-v$version" >> "$GITHUB_ENV"
           echo "ASSET=dist/companion-linux/codewide-companion-$version-x86_64-unknown-linux-musl.tar.gz" >> "$GITHUB_ENV"
 
       - name: Build portable bundle
         id: build
+        env:
+          CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI: ${{ secrets.HOST_UPDATE_P256_PUBLIC_KEY_SPKI }}
+          CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID: ${{ inputs.host_update_key_id || vars.HOST_UPDATE_SIGNING_KEY_ID || 'host-update-v1' }}
         run: ./scripts/build-companion-linux
 
       - name: Save completed Linux build before installer validation

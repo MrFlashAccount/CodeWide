@@ -7,6 +7,39 @@ dist_root=${CODEWIDE_COMPANION_DIST_DIR:-"$repo_root/dist/companion-linux"}
 build_image=${CODEWIDE_COMPANION_BUILD_IMAGE:-rust:1.97-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900}
 target_volume=${CODEWIDE_COMPANION_TARGET_VOLUME:-codewide-companion-musl-target}
 tmp_root=${TMPDIR:-/tmp}
+host_update_public_key=${CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI:-}
+host_update_key_id=${CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID:-}
+companion_version=${CODEWIDE_COMPANION_VERSION:-}
+companion_build=${CODEWIDE_COMPANION_BUILD:-}
+companion_source_revision=${CODEWIDE_COMPANION_SOURCE_REVISION:-}
+
+case "$host_update_key_id" in
+  ''|*[!0-9A-Za-z_-]*) printf '%s\n' 'CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID is required.' >&2; exit 2 ;;
+esac
+case "$host_update_public_key" in
+  ''|*[!0-9A-Za-z+/=]*) printf '%s\n' 'CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI must be base64 DER.' >&2; exit 2 ;;
+esac
+case "$companion_version" in
+  ''|*[!0-9A-Za-z._-]*) printf '%s\n' 'CODEWIDE_COMPANION_VERSION is required.' >&2; exit 2 ;;
+esac
+case "$companion_build" in
+  ????????????) ;;
+  *) printf '%s\n' 'CODEWIDE_COMPANION_BUILD must be the 12-character source revision prefix.' >&2; exit 2 ;;
+esac
+case "$companion_build" in
+  *[!0-9a-f]*) printf '%s\n' 'CODEWIDE_COMPANION_BUILD must be lowercase hexadecimal.' >&2; exit 2 ;;
+esac
+case "$companion_source_revision" in
+  ????????????????????????????????????????) ;;
+  *) printf '%s\n' 'CODEWIDE_COMPANION_SOURCE_REVISION must be a full Git SHA.' >&2; exit 2 ;;
+esac
+case "$companion_source_revision" in
+  *[!0-9a-f]*) printf '%s\n' 'CODEWIDE_COMPANION_SOURCE_REVISION must be lowercase hexadecimal.' >&2; exit 2 ;;
+esac
+if [ "$(printf '%.12s' "$companion_source_revision")" != "$companion_build" ]; then
+  printf '%s\n' 'CODEWIDE_COMPANION_BUILD does not match CODEWIDE_COMPANION_SOURCE_REVISION.' >&2
+  exit 2
+fi
 
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
   printf '%s\n' 'The current Companion release build requires Linux x86_64.' >&2
@@ -58,7 +91,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-mkdir -p "$bundle_root/bin" "$bundle_root/libexec" "$bundle_root/systemd/user"
+mkdir -p "$bundle_root/bin" "$bundle_root/bootstrap" "$bundle_root/libexec" "$bundle_root/systemd/user"
 docker run --rm \
   --volume "$repo_root:/workspace:ro" \
   --volume "$build_root:/output" \
@@ -76,8 +109,10 @@ docker run --rm \
     cargo build --locked --release -p codewide-companion --bins --target x86_64-unknown-linux-musl
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-companion /output/codewide-companion-x86_64-unknown-linux-musl/bin/codewide-companion
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-vcs-git /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
+    install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-companion-update-guardian /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-companion-update-guardian
     strip /output/codewide-companion-x86_64-unknown-linux-musl/bin/codewide-companion
     strip /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
+    strip /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-companion-update-guardian
     # The GitHub cache archiver runs as the host user, not container root.
     if [ -n "$CODEWIDE_CACHE_OWNER" ]; then
       chown -R "$CODEWIDE_CACHE_OWNER" /usr/local/cargo/registry /usr/local/cargo/git /build-target
@@ -87,11 +122,19 @@ docker run --rm \
 install -m 0755 "$repo_root/apps/companion-linux/deploy/install.sh" "$bundle_root/install.sh"
 install -m 0755 "$repo_root/apps/companion-linux/deploy/memory-watch.sh" "$bundle_root/libexec/codewide-companion-memory-watch"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion.service" "$bundle_root/systemd/user/codewide-companion.service"
+install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-update.service" "$bundle_root/systemd/user/codewide-companion-update.service"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service" "$bundle_root/systemd/user/codewide-companion-memory-watch.service"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer" "$bundle_root/systemd/user/codewide-companion-memory-watch.timer"
 install -m 0755 "$repo_root/scripts/install-claude-provider.sh" "$bundle_root/libexec/codewide-install-claude-provider"
+printf '{"schemaVersion":1,"keyId":"%s","publicKeySpki":"%s","manifestUrl":"https://github.com/MrFlashAccount/CodeWide/releases/latest/download/release-manifest.json"}\n' \
+  "$host_update_key_id" "$host_update_public_key" >"$bundle_root/bootstrap/config.json"
+chmod 0644 "$bundle_root/bootstrap/config.json"
+printf '{"schemaVersion":1,"version":"%s","build":"%s","sourceRevision":"%s"}\n' \
+  "$companion_version" "$companion_build" "$companion_source_revision" \
+  >"$bundle_root/bootstrap/generation.json"
+chmod 0644 "$bundle_root/bootstrap/generation.json"
 
-for binary in "$bundle_root/bin/codewide-companion" "$bundle_root/libexec/codewide-vcs-git"; do
+for binary in "$bundle_root/bin/codewide-companion" "$bundle_root/libexec/codewide-vcs-git" "$bundle_root/libexec/codewide-companion-update-guardian"; do
   file "$binary" | grep -E 'statically linked|static-pie linked' >/dev/null || {
     printf 'Companion release binary is not statically linked: %s\n' "$binary" >&2
     exit 1
@@ -100,6 +143,11 @@ done
 
 version=$($bundle_root/bin/codewide-companion --version | awk '{print $2}')
 test -n "$version"
+if [ "$version" != "$companion_version" ]; then
+  printf 'Companion binary version does not match release provenance: %s != %s\n' \
+    "$version" "$companion_version" >&2
+  exit 1
+fi
 # The Claude agent host ships with the companion build it was tested with;
 # its npm dependencies (the Claude Agent SDK) are installed on the host.
 "$repo_root/scripts/stage-claude-agent-host" "$bundle_root/share/claude-agent-host" "$version" >/dev/null

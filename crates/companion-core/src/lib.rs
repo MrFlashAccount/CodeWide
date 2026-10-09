@@ -12,6 +12,7 @@ pub mod file_uploads;
 pub mod files;
 pub mod global_supervisor_limits;
 pub mod host_identity;
+pub mod host_update;
 pub mod identity;
 pub mod image_previews;
 pub mod log_filter;

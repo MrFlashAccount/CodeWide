@@ -4,7 +4,7 @@ After=codewide-companion.service
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/lib/codewide/codewide-companion-memory-watch
+ExecStart=%h/.local/lib/codewide/current/libexec/codewide-companion-memory-watch
 NoNewPrivileges=true
 PrivateTmp=false
 ProtectSystem=full

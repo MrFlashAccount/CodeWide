@@ -49,6 +49,15 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         }
     }
 
+    func stopForGuardianUpdate(
+        withReply reply: @escaping @Sendable (Bool, NSError?) -> Void
+    ) {
+        reply(true, nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            exit(EXIT_SUCCESS)
+        }
+    }
+
     func appServer(
         withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
     ) {
@@ -124,6 +133,44 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
     ) {
         do {
             reply(relayPayload(from: try core.relayStatus()), nil)
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
+    func relayUpdateStatus(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(try core.relayUpdateStatusJson(), nil)
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
+    func checkRelayUpdate(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(try core.checkRelayUpdateJson(), nil)
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
+    func applyRelayUpdate(
+        targetFingerprint: String,
+        idempotencyKey: String,
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(
+                try core.applyRelayUpdateJson(
+                    targetFingerprint: targetFingerprint,
+                    idempotencyKey: idempotencyKey
+                ),
+                nil
+            )
         } catch {
             reply(nil, Self.xpcError(error))
         }

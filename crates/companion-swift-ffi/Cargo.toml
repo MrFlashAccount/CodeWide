@@ -14,8 +14,12 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
+async-trait = "0.1.89"
 companion-core = { path = "../companion-core" }
+rand = "0.9.2"
 semver = "1.0.27"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 thiserror = "2.0.16"
 tokio = { version = "1.47.1", features = ["process", "rt-multi-thread", "time"] }
 tracing = "0.1.41"

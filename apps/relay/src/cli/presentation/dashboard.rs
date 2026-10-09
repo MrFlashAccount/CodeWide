@@ -36,7 +36,7 @@ enum ComputerMode {
 impl Model {
     fn update(&mut self, reply: Reply) -> Result<()> {
         match reply {
-            Reply::Status { port, routes } => {
+            Reply::Status { port, routes, .. } => {
                 self.port = port;
                 self.routes = routes;
                 self.offset = self.offset.min(self.routes.len().saturating_sub(1));

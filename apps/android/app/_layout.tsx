@@ -10,6 +10,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { startOtaPrefetchRuntime } from "../src/data/use-ota-prefetch";
+import { startAndroidReleaseCheckRuntime } from "../src/data/androidReleaseAvailability";
 import { PerformanceExperimentProvider } from "../src/data/performance-experiments";
 import { AppErrorBoundary, GlobalErrorBoundaryHost, RootFailure } from "../src/ui/AppErrorBoundary";
 import { installGlobalErrorHandler, reportGlobalError } from "../src/ui/global-error-store";
@@ -19,6 +20,7 @@ import { NavigationPerformanceHud } from "../src/ui/NavigationPerformanceHud";
 import { AndroidKeyboardGeometrySync } from "../src/ui/AndroidKeyboardGeometrySync";
 
 installGlobalErrorHandler();
+startAndroidReleaseCheckRuntime();
 try {
   startOtaPrefetchRuntime();
 } catch (error) {

@@ -80,6 +80,9 @@ struct CompanionPanel: View {
         if let error = actionError {
             value.noticeTitle = "Action couldn't finish"
             value.notice = error
+        } else if let error = runtime.relayUpdateError {
+            value.noticeTitle = "Relay update couldn't finish"
+            value.notice = error
         } else if let error = runtime.lastError {
             value.noticeTitle = "Connection needs attention"
             value.notice = error
@@ -167,6 +170,38 @@ struct CompanionPanel: View {
                     runAction { try await runtime.setRelayEnabled(runtime.relay?.enabled != true) }
                 }
                 .disabled(actionInProgress)
+                Divider()
+                if let update = runtime.relayUpdate {
+                    Text("Relay \(update.currentVersion)")
+                    if let operation = update.activeOperation, update.isBusy {
+                        Text("Updating to \(operation.targetVersion)…")
+                    } else if let target = update.availableTarget {
+                        Button("Update Relay to \(target.version)") {
+                            runAction { try await runtime.applyRelayUpdate() }
+                        }
+                        .disabled(
+                            actionInProgress
+                                || runtime.isRelayUpdateWorking
+                                || !update.capability.applySupported
+                        )
+                    } else {
+                        Text("Relay is up to date")
+                    }
+                    Button("Check Relay Update") {
+                        runAction { try await runtime.checkRelayUpdate() }
+                    }
+                    .disabled(
+                        actionInProgress
+                            || runtime.isRelayUpdateWorking
+                            || update.isBusy
+                            || !update.capability.applySupported
+                    )
+                } else {
+                    Button("Check Relay Update") {
+                        runAction { try await runtime.checkRelayUpdate() }
+                    }
+                    .disabled(actionInProgress || runtime.isRelayUpdateWorking)
+                }
             }
         }
         Divider()

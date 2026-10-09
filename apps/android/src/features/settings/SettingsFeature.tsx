@@ -4,24 +4,22 @@ import { useSelector } from "@legendapp/state/react";
 import { useLiveQuery } from "@tanstack/react-db";
 import Constants from "expo-constants";
 import { useState } from "react";
-import { ActivityIndicator, Platform, Switch, View } from "react-native";
+import { Platform } from "react-native";
 import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
 import type { AccountRateLimitsRow } from "../../data/account-rate-limits";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
 import type { AgentProvidersResource } from "../../data/agentProvidersResource";
+import { androidReleaseAvailability } from "../../data/androidReleaseAvailability";
+import { availableAndroidRelease } from "../../data/androidReleaseContract";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { ConnectionUpdateInput } from "../../data/connection-validation";
+import type { HostUpdateView } from "../connections/connectionSettingsContract";
 import type { GlobalVoiceName } from "../../data/globalVoicePreferences";
 import type { VoiceAssistantModelCatalog } from "../../data/voiceAssistantModelCatalog";
 import { hasCustomVoiceAssistantPersonality } from "../../data/voiceAssistantPersonality";
 import { useEvent } from "../../react/useEvent";
-import { colors, iconSize } from "../../theme";
-import { AppListRow } from "../../ui/AppListRow";
-import { listRowHeight } from "../../ui/AppListRow.types";
-import { useAppLockSettings } from "../../ui/AppLockGate";
 import { PerformanceDiagnostics } from "../diagnostics/PerformanceDiagnostics";
-import { AppText as Text } from "../../ui/Typography";
-import { styles } from "./SettingsFeature.styles";
+import { SecuritySettings } from "./SecuritySettings";
 import { SettingsSection, SettingsSheet } from "./SettingsSheet";
 import { SettingsVersion } from "./SettingsVersion";
 import { TimelineRowMeasurementSettings } from "./TimelineRowMeasurementSettings";
@@ -52,9 +50,14 @@ export function ConnectionSettings({
   connections,
   entryPage = "overview",
   entryRequest,
+  hostUpdates,
   onActivateAccountProfile,
   onAddServer,
+  onApplyHostUpdate,
+  onApplyRelayUpdate,
   onCancelAccountLogin,
+  onCheckHostUpdate,
+  onCheckRelayUpdate,
   onClose,
   onConsumeAccountResetCredit,
   onDelete,
@@ -66,6 +69,7 @@ export function ConnectionSettings({
   onToggle,
   onUpdate,
   onUpdateAccountProfile,
+  relayUpdates,
   visible,
   voiceAssistantModelCatalog,
 }: {
@@ -74,12 +78,17 @@ export function ConnectionSettings({
   connections: StoredConnection[];
   entryPage?: "overview" | "voiceAssistant";
   entryRequest?: string;
+  hostUpdates: Readonly<Record<string, HostUpdateView>>;
   onActivateAccountProfile?: (
     connectionId: string,
     profileId: string,
   ) => Promise<AccountPoolSnapshot>;
   onAddServer: () => void;
+  onApplyHostUpdate: (connectionId: string, targetFingerprint: string) => Promise<void>;
+  onApplyRelayUpdate: (connectionId: string, targetFingerprint: string) => Promise<void>;
   onCancelAccountLogin?: (connectionId: string, loginId: string) => Promise<void>;
+  onCheckHostUpdate: (connectionId: string) => Promise<void>;
+  onCheckRelayUpdate: (connectionId: string) => Promise<void>;
   onClose: () => void;
   onConsumeAccountResetCredit?: (
     connectionId: string,
@@ -104,33 +113,20 @@ export function ConnectionSettings({
     profileId: string,
     update: { enabled?: boolean; priority?: number },
   ) => Promise<AccountPoolSnapshot>;
+  relayUpdates: Readonly<Record<string, HostUpdateView>>;
   visible: boolean;
   voiceAssistantModelCatalog: VoiceAssistantModelCatalog;
 }) {
-  const appLock = useAppLockSettings();
-  const [appLockSaving, setAppLockSaving] = useState(false);
-  const [appLockError, setAppLockError] = useState<string | null>(null);
   const voicePreference = useGlobalVoicePreference();
   const voiceOrbStyle = useGlobalVoiceOrbStyle();
   const voiceAssistantPersonality = useVoiceAssistantPersonality();
   const voiceAssistantModels = useSelector(() => voiceAssistantModelCatalog.snapshot$.value.get());
+  const androidRelease = useSelector(() => androidReleaseAvailability.snapshot$.value.get());
+  const applicationVersion = Constants.expoConfig?.version ?? "unknown";
   const voiceAssistantBackgroundModel = useVoiceAssistantBackgroundModel(voiceAssistantModels);
   const personalVoiceFilter = usePersonalVoiceFilter();
   const openVoiceAssistantSettings = useEvent(() => {
     voiceAssistantModelCatalog.refresh().catch(() => undefined);
-  });
-  const changeAppLock = useEvent(async (enabled: boolean) => {
-    if (appLockSaving) {
-      return;
-    }
-    setAppLockSaving(true);
-    setAppLockError(null);
-    try {
-      await appLock.setEnabled(enabled);
-    } catch (error) {
-      setAppLockError(error instanceof Error ? error.message : "Could not update app lock");
-    }
-    setAppLockSaving(false);
   });
   return (
     <SettingsSheet
@@ -148,42 +144,21 @@ export function ConnectionSettings({
       }
       onAddServer={onAddServer}
       onClose={onClose}
-      security={
-        Platform.OS === "web" ? null : (
-          <View testID="app-lock-setting">
-            <AppListRow
-              description="Use fingerprint, face or device authentication"
-              fixedHeight={listRowHeight.double}
-              leadingIcon={{ color: colors.textMuted, name: "finger-print", size: iconSize.action }}
-              title="Biometric Lock"
-              trailing={
-                <>
-                  {appLockSaving && <ActivityIndicator color={colors.textMuted} size="small" />}
-                  <Switch
-                    accessibilityLabel="Biometric app lock"
-                    disabled={appLockSaving}
-                    onValueChange={changeAppLock}
-                    value={appLock.enabled}
-                  />
-                </>
-              }
-            />
-            {appLockError !== null && (
-              <Text accessibilityLiveRegion="polite" style={styles.errorText}>
-                {appLockError}
-              </Text>
-            )}
-          </View>
-        )
-      }
+      security={Platform.OS === "web" ? null : <SecuritySettings />}
       servers={connectionSettingsSections({
         accountRateLimits,
         ...(agentProviders === undefined ? {} : { agentProviders }),
         connections,
+        hostUpdates,
+        onApplyHostUpdate,
+        onApplyRelayUpdate,
+        onCheckHostUpdate,
+        onCheckRelayUpdate,
         onDelete,
         onReconnect,
         onToggle,
         onUpdate,
+        relayUpdates,
         ...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool }),
         ...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin }),
         ...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin }),
@@ -192,7 +167,12 @@ export function ConnectionSettings({
         ...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile }),
         ...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile }),
       })}
-      version={<SettingsVersion version={Constants.expoConfig?.version ?? "unknown"} />}
+      version={
+        <SettingsVersion
+          update={availableAndroidRelease(applicationVersion, androidRelease)}
+          version={applicationVersion}
+        />
+      }
       visible={visible}
       voiceAssistant={{
         content: (

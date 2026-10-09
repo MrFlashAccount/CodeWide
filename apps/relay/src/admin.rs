@@ -39,6 +39,7 @@ pub enum Request {
 #[serde(tag = "event", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Reply {
     Status {
+        version: String,
         port: u16,
         routes: Vec<RouteSummary>,
     },
@@ -159,6 +160,7 @@ async fn handle(
     let request = tokio::time::timeout(Duration::from_secs(5), read_frame(socket)).await??;
     let reply = match request {
         Request::Status => Reply::Status {
+            version: env!("CODEWIDE_RELAY_VERSION").to_owned(),
             port,
             routes: registry.summaries()?,
         },

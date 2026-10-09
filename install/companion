@@ -157,6 +157,25 @@ restore_target() {
   fi
 }
 
+backup_current_link() {
+  if [ -L "$install_root/current" ]; then
+    readlink "$install_root/current" >"$backup_root/current.link"
+  else
+    : >"$backup_root/current.missing"
+  fi
+}
+
+restore_current_link() {
+  rm -f -- "$install_root/.current-restore"
+  if [ -f "$backup_root/current.link" ]; then
+    previous_link=$(cat "$backup_root/current.link")
+    ln -s "$previous_link" "$install_root/.current-restore"
+    mv -f -- "$install_root/.current-restore" "$install_root/current"
+  elif [ -f "$backup_root/current.missing" ]; then
+    rm -f -- "$install_root/current"
+  fi
+}
+
 finish() {
   status=$?
   trap - EXIT HUP INT TERM
@@ -165,12 +184,13 @@ finish() {
     if [ "$activate" -eq 1 ]; then
       systemctl --user stop codewide-companion.service 2>/dev/null || true
     fi
-    restore_target companion "$install_root/codewide-companion" 0755
-    restore_target vcs-git "$install_root/plugins/codewide-vcs-git" 0755
-    restore_target memory-watch "$install_root/codewide-companion-memory-watch" 0755
     restore_target unit "$unit_root/codewide-companion.service" 0644
     restore_target memory-watch-unit "$unit_root/codewide-companion-memory-watch.service" 0644
     restore_target memory-watch-timer "$unit_root/codewide-companion-memory-watch.timer" 0644
+    restore_target update-unit "$unit_root/codewide-companion-update.service" 0644
+    restore_target update-guardian "$install_root/bootstrap/codewide-companion-update-guardian" 0755
+    restore_target update-config "$install_root/bootstrap/config.json" 0600
+    restore_current_link
     if [ "$activate" -eq 1 ]; then
       systemctl --user daemon-reload || true
       if [ "$service_was_active" -eq 1 ]; then
@@ -235,11 +255,33 @@ tar -xzf "$archive" -C "$temporary_root"
 payload="$temporary_root/$bundle_name"
 test -x "$payload/bin/codewide-companion"
 test -x "$payload/libexec/codewide-vcs-git"
+test -x "$payload/libexec/codewide-companion-update-guardian"
 test -x "$payload/libexec/codewide-companion-memory-watch"
 test -x "$payload/install.sh"
+test -r "$payload/bootstrap/config.json"
+test -r "$payload/bootstrap/generation.json"
 test -r "$payload/systemd/user/codewide-companion.service"
+test -r "$payload/systemd/user/codewide-companion-update.service"
 test -r "$payload/systemd/user/codewide-companion-memory-watch.service"
 test -r "$payload/systemd/user/codewide-companion-memory-watch.timer"
+
+host_update_trust=$(cat "$payload/bootstrap/config.json")
+host_update_key_id=$(printf '%s\n' "$host_update_trust" | sed -n 's/^{"schemaVersion":1,"keyId":"\([0-9A-Za-z_-]*\)","publicKeySpki":"[0-9A-Za-z+\/=]*","manifestUrl":"https:\/\/github.com\/MrFlashAccount\/CodeWide\/releases\/latest\/download\/release-manifest.json"}$/\1/p')
+host_update_public_key=$(printf '%s\n' "$host_update_trust" | sed -n 's/^{"schemaVersion":1,"keyId":"[0-9A-Za-z_-]*","publicKeySpki":"\([0-9A-Za-z+\/=]*\)","manifestUrl":"https:\/\/github.com\/MrFlashAccount\/CodeWide\/releases\/latest\/download\/release-manifest.json"}$/\1/p')
+if [ -z "$host_update_key_id" ] || [ -z "$host_update_public_key" ]; then
+  printf '%s\n' 'Companion bundle has invalid host-update trust.' >&2
+  exit 1
+fi
+generation_metadata=$(cat "$payload/bootstrap/generation.json")
+generation_version=$(printf '%s\n' "$generation_metadata" | sed -n 's/^{"schemaVersion":1,"version":"\([0-9A-Za-z._-]*\)","build":"[0-9a-f]\{12\}","sourceRevision":"[0-9a-f]\{40\}"}$/\1/p')
+generation_build=$(printf '%s\n' "$generation_metadata" | sed -n 's/^{"schemaVersion":1,"version":"[0-9A-Za-z._-]*","build":"\([0-9a-f]\{12\}\)","sourceRevision":"[0-9a-f]\{40\}"}$/\1/p')
+generation_source_revision=$(printf '%s\n' "$generation_metadata" | sed -n 's/^{"schemaVersion":1,"version":"[0-9A-Za-z._-]*","build":"[0-9a-f]\{12\}","sourceRevision":"\([0-9a-f]\{40\}\)"}$/\1/p')
+if [ "$generation_version" != "$version" ] || \
+   [ -z "$generation_build" ] || \
+   [ "$(printf '%.12s' "$generation_source_revision")" != "$generation_build" ]; then
+  printf '%s\n' 'Companion bundle has invalid generation provenance.' >&2
+  exit 1
+fi
 
 reported_version=$($payload/bin/codewide-companion --version)
 if [ "$reported_version" != "codewide-companion $version" ]; then
@@ -251,12 +293,13 @@ mkdir -p "$backup_root"
 if [ "$activate" -eq 1 ] && systemctl --user is-active --quiet codewide-companion.service; then
   service_was_active=1
 fi
-backup_target "$install_root/codewide-companion" companion
-backup_target "$install_root/plugins/codewide-vcs-git" vcs-git
-backup_target "$install_root/codewide-companion-memory-watch" memory-watch
 backup_target "$unit_root/codewide-companion.service" unit
 backup_target "$unit_root/codewide-companion-memory-watch.service" memory-watch-unit
 backup_target "$unit_root/codewide-companion-memory-watch.timer" memory-watch-timer
+backup_target "$unit_root/codewide-companion-update.service" update-unit
+backup_target "$install_root/bootstrap/codewide-companion-update-guardian" update-guardian
+backup_target "$install_root/bootstrap/config.json" update-config
+backup_current_link
 
 claude_host_payload=
 claude_installer_source=
@@ -268,21 +311,28 @@ fi
 deployment_started=1
 CODEWIDE_COMPANION_BINARY="$payload/bin/codewide-companion" \
 CODEWIDE_COMPANION_GIT_PLUGIN_BINARY="$payload/libexec/codewide-vcs-git" \
+CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY="$payload/libexec/codewide-companion-update-guardian" \
 CODEWIDE_COMPANION_MEMORY_WATCH_SOURCE="$payload/libexec/codewide-companion-memory-watch" \
 CODEWIDE_COMPANION_UNIT_SOURCE="$payload/systemd/user/codewide-companion.service" \
+CODEWIDE_COMPANION_UPDATE_UNIT_SOURCE="$payload/systemd/user/codewide-companion-update.service" \
 CODEWIDE_COMPANION_MEMORY_WATCH_SERVICE_SOURCE="$payload/systemd/user/codewide-companion-memory-watch.service" \
 CODEWIDE_COMPANION_MEMORY_WATCH_TIMER_SOURCE="$payload/systemd/user/codewide-companion-memory-watch.timer" \
 CODEWIDE_COMPANION_CLAUDE_HOST_PAYLOAD="$claude_host_payload" \
 CODEWIDE_COMPANION_CLAUDE_INSTALLER_SOURCE="$claude_installer_source" \
 CODEWIDE_COMPANION_INSTALL_ROOT="$install_root" \
 CODEWIDE_COMPANION_UNIT_ROOT="$unit_root" \
+CODEWIDE_COMPANION_ARTIFACT_DIGEST="$expected" \
+CODEWIDE_COMPANION_BUILD="$generation_build" \
+CODEWIDE_COMPANION_SOURCE_REVISION="$generation_source_revision" \
+CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI="$host_update_public_key" \
+CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID="$host_update_key_id" \
 CODEWIDE_COMPANION_ACTIVATE="$activate" \
   "$payload/install.sh"
 deployment_started=0
 
-printf 'Installed codewide-companion %s to %s/codewide-companion\n' "$version" "$install_root"
+printf 'Installed codewide-companion %s as immutable generation %s\n' "$version" "$expected"
 if [ -n "$claude_installer_source" ]; then
-  printf 'To enable the Claude provider: %s/libexec/codewide-install-claude-provider\n' "$install_root"
+  printf 'To enable the Claude provider: %s/current/libexec/codewide-install-claude-provider\n' "$install_root"
 fi
 if [ "$activate" -eq 1 ]; then
   printf '%s\n' 'Started codewide-companion.service and its memory monitor.'

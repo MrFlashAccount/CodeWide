@@ -50,13 +50,69 @@ launch.
 Sparkle 2.10.0 silently checks for update information when the menu opens, at
 most once per hour. An available version adds a dot to More Actions and an
 Install item; checking or installing manually opens the standard Sparkle UI.
-The app does not automatically download or install updates. No-update results
-and cancellation do not appear as errors or reconnect a healthy runtime.
-Both the appcast and archive are protected by Sparkle Ed25519 signatures. Before installation, the
-app asks the runtime over XPC to atomically persist an update checkpoint and
-exit successfully. On the first launch of the new helper, `companion-core`
-migrates state, preserves a schema-versioned backup, and reports app, host, core,
-schema, PID, launch count, and update result.
+The app does not automatically install local checks. No-update results and
+cancellation do not appear as errors or reconnect a healthy runtime. Both the
+appcast and archive are protected by Sparkle Ed25519 signatures.
+
+Phone-confirmed updates use a separate guardian transaction. The first signed
+app installs an immutable V1 executable and trust record outside the payload:
+
+- `~/Library/Application Support/CodeWide/Updater/bootstrap-v1/` contains the
+  guardian executable, pinned P-256 release key and canonical app location;
+- `~/Library/Application Support/CodeWide/Updater/v1/` contains the private
+  request spool, guardian-owned journal, terminal outcomes and runtime
+  observations;
+- `~/Library/LaunchAgents/dev.codewide.update-guardian.plist` keeps the
+  guardian available after an app crash, logout or login.
+
+The payload never replaces bootstrap code or trust. If bootstrap is missing,
+partial, moved, not private/user-owned, or contract-incompatible, remote apply
+stays disabled with `manual_bootstrap_required`. A capability receipt is
+published only after the guardian verifies signed release metadata, downloads
+the current release DMG, checks its SHA-256 and code signature, mounts it
+read-only, and proves its deterministic bundle tree equals the installed app.
+The tree digest includes normalized relative NFC paths, entry kind, symlink
+target, POSIX mode and regular-file bytes. It excludes the bundle root name,
+filesystem inode/timestamps/owner/group, extended attributes and quarantine.
+Unreadable or unsupported entries fail closed.
+
+Before acknowledging apply, the guardian checks target freshness, exact
+rollback digest and state epoch, live runtime/upstream/Relay prerequisites, and
+performs a real reversible sibling rename probe. It then fsyncs context,
+journal and idempotency records. The guardian copies and fsyncs an exact
+same-filesystem sibling `.app` snapshot before asking the canonical LSUIElement
+app to run the exact-target Sparkle flow. Sparkle remains the only forward
+installer. A custom `SPUUserDriver` chooses Install only when the selected
+version/build and Sparkle signature status match the phone-confirmed target;
+neither the menu app nor Sparkle owns the rollback snapshot.
+The runtime exits through a guardian-specific XPC stop that does not write the
+legacy `pending_update`/`last_update` checkpoint, so those fields remain local
+manual-Sparkle diagnostics and never compete with the guardian journal.
+
+After relaunch, the guardian verifies the installed code signature, exact
+version/build/source revision/tree, running core and upstream, unchanged
+identity and device registry, and Relay recovery when Relay was live before the
+update. Commit requires a fresh reconnect receipt from the initiating device
+for that operation. The registry proof canonicalizes device order and excludes
+only `lastSeenAt` plus unclaimed pairing challenges, which legitimately change
+during reconnect; device ids, names, credential hashes, public keys, creation
+times and any future stable fields remain protected. The durable `committed`
+journal transition precedes idempotent receipt publication, so a crash cannot
+overwrite the rollback receipt while the operation is still rollback-eligible.
+Install, launch, health, Relay or reconnect timeout enters
+rollback. Rollback fences the app/runtime and waits for Sparkle/installer bundle
+ownership to end, atomically restores the sibling snapshot, fsyncs its parent,
+launches that exact URL, re-registers the runtime, and verifies old runtime,
+upstream, identity and Relay health before recording `rolledBack`. Late
+receipts cannot commit after rollback starts. Only the application bundle is
+restored: Companion state, keys, devices, Relay configuration and Codex
+selection are never rolled back. Terminal results survive app and guardian
+restart and remain readable by the restored app.
+
+The existing manual Sparkle button remains a local Sparkle operation. It still
+uses the runtime checkpoint, but it is intentionally not represented as a
+guardian-owned remote transaction and does not rely on undocumented Sparkle
+backup retention.
 
 The release workflow builds an ad-hoc universal bundle on macOS 26, generates a
 signed appcast, then performs a real Sparkle update from a disposable baseline
@@ -135,9 +191,9 @@ actual sync WebSockets; the final disconnect updates durable last-seen
 state. Revoke removes authorization, closes subscribed live transports, and
 purges device-owned transient runtime state.
 
-There is no implicit binary downgrade. A failed feed signature or download
-leaves the old app running. A failed pre-install checkpoint stalls installation.
-A bad published build is recovered with a newer signed build number.
+There is no implicit user-requested downgrade. A remote transaction may restore
+only its exact guardian-certified predecessor bundle; unrelated downgrade and
+state restoration remain forbidden.
 
 ## Build
 
@@ -145,11 +201,15 @@ Required release secrets:
 
 - `SPARKLE_ED25519_PUBLIC_KEY`
 - `SPARKLE_ED25519_PRIVATE_KEY`
+- `HOST_UPDATE_P256_PUBLIC_KEY_SPKI`
+- `HOST_UPDATE_KEY_ID`
 
 Local macOS 26 build:
 
 ```sh
 export CODEWIDE_SPARKLE_PUBLIC_KEY='...'
+export CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI='...'
+export CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID='...'
 apps/companion-macos/scripts/generate-swift-bindings.sh
 apps/companion-macos/scripts/build-app.sh
 apps/companion-macos/scripts/build-dmg.sh 0.1.0

@@ -1,5 +1,6 @@
 const COMPANION_UNIT: &str = include_str!("../deploy/codewide-companion.service");
 const MEMORY_WATCH_UNIT: &str = include_str!("../deploy/codewide-companion-memory-watch.service");
+const UPDATE_UNIT: &str = include_str!("../deploy/codewide-companion-update.service");
 const INSTALL_SCRIPT: &str = include_str!("../deploy/install.sh");
 const VERIFY_SCRIPT: &str = include_str!("../deploy/verify.sh");
 const RELEASE_SCRIPT: &str = include_str!("../../../scripts/release-companion");
@@ -81,7 +82,31 @@ fn default_distribution_installs_and_registers_git_plugin() {
     assert!(INSTALL_SCRIPT.contains("vcs plugin install"));
     assert!(INSTALL_SCRIPT.contains("--id git"));
     assert!(INSTALL_SCRIPT.contains("--priority=-1000"));
-    assert!(VERIFY_SCRIPT.contains("plugins/codewide-vcs-git"));
+    assert!(VERIFY_SCRIPT.contains("current/libexec/codewide-vcs-git"));
+}
+
+#[test]
+fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
+    assert!(COMPANION_UNIT.contains("current/bin/codewide-companion serve"));
+    assert!(INSTALL_SCRIPT.contains("generations/$artifact_digest"));
+    assert!(INSTALL_SCRIPT.contains("mv -f \"$install_root/.current-new\""));
+    assert!(!INSTALL_SCRIPT.contains("$install_root/codewide-companion\""));
+    assert!(UPDATE_UNIT.contains("bootstrap/codewide-companion-update-guardian"));
+    assert!(!UPDATE_UNIT.contains("current/"));
+    assert!(UPDATE_UNIT.contains("--state-root %h/.local/state/codewide/host-update"));
+    assert!(UPDATE_UNIT.contains("ReadOnlyPaths=%h/.local/lib/codewide/bootstrap"));
+    assert!(COMPANION_UNIT.contains("ReadOnlyPaths=%h/.local/lib/codewide/generations"));
+    assert!(INSTALL_SCRIPT.contains("CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY"));
+}
+
+#[test]
+fn remote_runner_has_no_caller_controlled_download_or_state_restore() {
+    let guardian = include_str!("../src/host_update.rs");
+    let runner = include_str!("../src/host_update/runner.rs");
+    assert!(guardian.contains("cached.available.target"));
+    assert!(runner.contains("operation.target.artifact_url"));
+    assert!(!runner.contains("ApplyHostUpdateCommand"));
+    assert!(!runner.contains("restore_state"));
 }
 
 #[test]

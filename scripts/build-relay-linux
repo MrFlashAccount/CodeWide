@@ -7,11 +7,6 @@ DIST_ROOT=${CODEWIDE_RELAY_DIST_DIR:-"$REPO_ROOT/dist/relay"}
 BUILD_IMAGE=${CODEWIDE_RELAY_BUILD_IMAGE:-rust:1.97-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900}
 TMP_ROOT=${TMPDIR:-/tmp}
 
-if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
-  printf '%s\n' 'The current Relay release build requires Linux x86_64.' >&2
-  exit 2
-fi
-
 case "$DIST_ROOT" in
   /*) ;;
   *) DIST_ROOT="$REPO_ROOT/$DIST_ROOT" ;;
@@ -42,12 +37,18 @@ fi
 artifact_name="codewide-relay-$TARGET"
 artifact="$DIST_ROOT/$artifact_name"
 checksum="$artifact.sha256"
+updater_name="codewide-relay-updater-$TARGET"
+updater="$DIST_ROOT/$updater_name"
+updater_checksum="$updater.sha256"
+source_revision=$(git -C "$REPO_ROOT" rev-parse HEAD)
 mkdir -p "$DIST_ROOT"
 build_root=$(mktemp -d "$TMP_ROOT/codewide-relay-linux-build.XXXXXX")
 
 temporary=$(mktemp "$DIST_ROOT/.codewide-relay.XXXXXX")
+updater_temporary=
 cleanup() {
   rm -f -- "$temporary"
+  if [ -n "$updater_temporary" ]; then rm -f -- "$updater_temporary"; fi
   case "$build_root" in
     "$TMP_ROOT"/codewide-relay-linux-build.*) rm -rf -- "$build_root" ;;
     *) printf 'Refusing to remove unexpected directory: %s\n' "$build_root" >&2 ;;
@@ -56,6 +57,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 docker run --rm \
+  --platform linux/amd64 \
   --volume "$REPO_ROOT:/workspace:ro" \
   --volume "$build_root:/output" \
   --volume "$registry_volume:/usr/local/cargo/registry" \
@@ -65,10 +67,18 @@ docker run --rm \
   --env CARGO_TARGET_DIR=/build-target \
   --env CODEWIDE_CACHE_OWNER="$cache_owner" \
   --env CODEWIDE_RELAY_VERSION \
+  --env CODEWIDE_RELAY_SOURCE_REVISION="$source_revision" \
+  --env CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID \
+  --env CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI \
   "$BUILD_IMAGE" \
   sh -eu -c '
-    cargo build --locked --release -p codewide-relay --target x86_64-unknown-linux-musl
+    cargo build --locked --release -p codewide-relay --bins --target x86_64-unknown-linux-musl
+    /build-target/x86_64-unknown-linux-musl/release/codewide-relay --version > /output/relay-version
+    if [ -n "${CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID:-}" ] || [ -n "${CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI:-}" ]; then
+      /build-target/x86_64-unknown-linux-musl/release/codewide-relay-updater --print-trust >/dev/null
+    fi
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-relay /output/codewide-relay
+    install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-relay-updater /output/codewide-relay-updater
     # The GitHub cache archiver runs as the host user, not container root.
     if [ -n "$CODEWIDE_CACHE_OWNER" ]; then
       chown -R "$CODEWIDE_CACHE_OWNER" /usr/local/cargo/registry /usr/local/cargo/git /build-target
@@ -76,20 +86,29 @@ docker run --rm \
   '
 
 install -m 0755 "$build_root/codewide-relay" "$temporary"
+updater_temporary=$(mktemp "$DIST_ROOT/.codewide-relay-updater.XXXXXX")
 if ! file "$temporary" | grep -E 'statically linked|static-pie linked' >/dev/null; then
   printf '%s\n' 'Relay release artifact is not statically linked.' >&2
   exit 1
 fi
-"$temporary" --version >/dev/null
+install -m 0755 "$build_root/codewide-relay-updater" "$updater_temporary"
 mv -f -- "$temporary" "$artifact"
 temporary=
+mv -f -- "$updater_temporary" "$updater"
+updater_temporary=
 
 (
   cd "$DIST_ROOT"
   sha256sum "$artifact_name" >"$artifact_name.sha256"
+  sha256sum "$updater_name" >"$updater_name.sha256"
 )
 
-binary_version=$($artifact --version | awk '{print $2}')
+reported_version=$(cat "$build_root/relay-version")
+case "$reported_version" in
+  'codewide-relay '*) binary_version=${reported_version#codewide-relay } ;;
+  *) printf '%s\n' 'Relay release artifact reported an invalid version.' >&2; exit 1 ;;
+esac
 binary_sha256=$(awk '{print $1}' "$checksum")
-printf '{"artifact":"%s","target":"%s","version":"%s","sha256":"%s"}\n' \
-  "$artifact" "$TARGET" "$binary_version" "$binary_sha256"
+updater_sha256=$(awk '{print $1}' "$updater_checksum")
+printf '{"artifact":"%s","updaterArtifact":"%s","target":"%s","version":"%s","sourceRevision":"%s","sha256":"%s","updaterSha256":"%s"}\n' \
+  "$artifact" "$updater" "$TARGET" "$binary_version" "$source_revision" "$binary_sha256" "$updater_sha256"

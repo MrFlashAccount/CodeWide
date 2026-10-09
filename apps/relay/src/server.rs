@@ -4,6 +4,7 @@ use crate::{
     enrollment::{ChannelBinding, EXPORTER_LABEL, Enrollment},
     pairing::{PairRequest, PairResponse},
     registry::{AuthorizedSession, Registry, validate_route_id},
+    update::{ApplyRelayUpdateRequest, RelayUpdateError, RelayUpdater},
     wire::{self, Control, DEADLINE, Target},
 };
 use axum::{
@@ -54,6 +55,7 @@ struct Inner {
     pending: Mutex<HashMap<String, Pending>>,
     capacity: Arc<Semaphore>,
     shutdown: CancellationToken,
+    updater: Option<RelayUpdater>,
 }
 
 #[derive(Clone)]
@@ -70,6 +72,20 @@ impl Relay {
             pending: Mutex::new(HashMap::new()),
             capacity: Arc::new(Semaphore::new(512)),
             shutdown: CancellationToken::new(),
+            updater: None,
+        }))
+    }
+
+    #[must_use]
+    pub fn with_updater(self, updater: RelayUpdater) -> Self {
+        Self(Arc::new(Inner {
+            registry: self.0.registry.clone(),
+            enrollment: self.0.enrollment.clone(),
+            upstreams: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+            capacity: self.0.capacity.clone(),
+            shutdown: self.0.shutdown.clone(),
+            updater: Some(updater),
         }))
     }
 
@@ -97,6 +113,17 @@ impl Relay {
             .route(crate::enrollment::ENDPOINT, get(enroll))
             .route("/relay/control/{route_id}", get(control))
             .route("/relay/attach/{route_id}/{ticket}", get(attach))
+            .route("/relay/update/{route_id}", get(update_status))
+            .route("/relay/update/{route_id}/check", post(update_check))
+            .route("/relay/update/{route_id}/apply", post(update_apply))
+            .route(
+                "/relay/update/{route_id}/operations/{operation_id}",
+                get(update_operation),
+            )
+            .route(
+                "/relay/update/{route_id}/operations/{operation_id}/reconnect",
+                post(update_reconnect),
+            )
             .route("/v1/e2ee-tunnel", get(pinned_device))
             .route("/v1/e2ee-bootstrap-tunnel", get(pinned_pairing))
             .layer(DefaultBodyLimit::max(4096))
@@ -150,6 +177,12 @@ impl Relay {
         )
         .await??;
         self.0.enrollment.connected(&session.route_id);
+        if let Some(updater) = self.0.updater.clone() {
+            let route_id = session.route_id.clone();
+            tokio::spawn(async move {
+                updater.observe_route_reconnect(&route_id).await;
+            });
+        }
         let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
         loop {
             tokio::select! {
@@ -288,6 +321,117 @@ impl Relay {
             active.cancel.cancel();
         }
     }
+}
+
+fn update_authorized(
+    relay: &Relay,
+    route_id: &str,
+    headers: &HeaderMap,
+) -> std::result::Result<RelayUpdater, Box<Response>> {
+    relay
+        .authenticate(route_id, headers)
+        .map_err(|_| Box::new(StatusCode::UNAUTHORIZED.into_response()))?;
+    relay
+        .0
+        .updater
+        .clone()
+        .ok_or_else(|| Box::new(StatusCode::NOT_FOUND.into_response()))
+}
+
+fn update_error(error: &RelayUpdateError) -> Response {
+    let status = match error.code {
+        "operation_not_found" => StatusCode::NOT_FOUND,
+        "update_locked" => StatusCode::LOCKED,
+        "invalid_request" => StatusCode::BAD_REQUEST,
+        "precondition_failed" | "manual_update_required" | "release_not_admissible" => {
+            StatusCode::PRECONDITION_FAILED
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(serde_json::json!({"error": error.code, "message": error.message})),
+    )
+        .into_response()
+}
+
+async fn update_status(
+    State(relay): State<Relay>,
+    Path(route_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let updater = match update_authorized(&relay, &route_id, &headers) {
+        Ok(updater) => updater,
+        Err(response) => return *response,
+    };
+    updater.status().await.map_or_else(
+        |error| update_error(&error),
+        |status| Json(status).into_response(),
+    )
+}
+
+async fn update_check(
+    State(relay): State<Relay>,
+    Path(route_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let updater = match update_authorized(&relay, &route_id, &headers) {
+        Ok(updater) => updater,
+        Err(response) => return *response,
+    };
+    updater.check().await.map_or_else(
+        |error| update_error(&error),
+        |status| Json(status).into_response(),
+    )
+}
+
+async fn update_apply(
+    State(relay): State<Relay>,
+    Path(route_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<ApplyRelayUpdateRequest>,
+) -> Response {
+    let updater = match update_authorized(&relay, &route_id, &headers) {
+        Ok(updater) => updater,
+        Err(response) => return *response,
+    };
+    updater.apply(&route_id, request).await.map_or_else(
+        |error| update_error(&error),
+        |accepted| (StatusCode::ACCEPTED, Json(accepted)).into_response(),
+    )
+}
+
+async fn update_operation(
+    State(relay): State<Relay>,
+    Path((route_id, operation_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let updater = match update_authorized(&relay, &route_id, &headers) {
+        Ok(updater) => updater,
+        Err(response) => return *response,
+    };
+    updater.operation(&operation_id).await.map_or_else(
+        |error| update_error(&error),
+        |operation| Json(operation).into_response(),
+    )
+}
+
+async fn update_reconnect(
+    State(relay): State<Relay>,
+    Path((route_id, operation_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let updater = match update_authorized(&relay, &route_id, &headers) {
+        Ok(updater) => updater,
+        Err(response) => return *response,
+    };
+    updater
+        .reconnect(&route_id, &operation_id)
+        .await
+        .map_or_else(
+            |error| update_error(&error),
+            |operation| Json(operation).into_response(),
+        )
 }
 
 struct UpstreamGuard {

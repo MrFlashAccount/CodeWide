@@ -15,6 +15,7 @@ require IPC between a host and the core.
   contracts under `contract/`;
 - runtime state locking, migration, health, and update checkpoints used by
   platform hosts;
+- host-update HTTP/release/journal contracts and fenced phase validation;
 - the existing device-facing server implementation used by the Linux host.
 
 The crate was extracted from the original Linux Companion without changing its
@@ -37,6 +38,12 @@ runtime ownership here; it does not yet mean a transport-free domain library.
 - relay deployment or public routing policy;
 - Android client projection and persistence.
 
+Remote host replacement is deliberately split at `host_update::HostUpdateGuardian`.
+The core is a stateless authenticated facade; the out-of-process platform
+guardian exclusively owns the fsynced journal, activation, health proof,
+rollback, and terminal result. Absence of a compatible guardian keeps remote
+apply disabled and requires a manual update.
+
 Host-specific lifecycle belongs in the platform host. In particular, the
 macOS app must not embed the Linux CLI or expose a local HTTP management
 endpoint.
@@ -51,6 +58,8 @@ endpoint.
 
 - `contract/v1.json` owns the V1 machine-readable limits and compatibility
   surface.
+- `contract/host-update-v1.json` owns the additive host-update API, guardian,
+  journal, phase, release-target, and error contracts.
 - `contract/v2.json` owns the V2 device wire contract.
 - `runtime_host` owns the platform-host state lock, update checkpoint, and
   transport-neutral runtime health proof. These lifecycle values live here

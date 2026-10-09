@@ -8,6 +8,7 @@ import {
   workspaceRuntime,
 } from "../../../src/data/workspace-runtime";
 import { SubscribedConnectionSettings } from "../../../src/features/settings/SettingsFeature";
+import { useHostUpdateProjection } from "../../../src/features/connections/useHostUpdateProjection";
 import { workspaceFeatures as features } from "../../../src/features/workspace/createWorkspaceFeatures";
 import { useWorkspaceRouteResources } from "../../../src/services/workspace/workspaceRouteResources";
 
@@ -28,6 +29,14 @@ export default function V1SettingsRoute(): React.JSX.Element {
   const visible = useIsFocused();
   const params = useLocalSearchParams<{ request?: string; section?: string }>();
   const resources = useWorkspaceRouteResources();
+  const hostUpdates = useHostUpdateProjection(
+    resources.list.settingsConnections,
+    features.connections.hostUpdates,
+  );
+  const relayUpdates = useHostUpdateProjection(
+    resources.list.settingsConnections,
+    features.connections.relayUpdates,
+  );
   return (
     <SubscribedConnectionSettings
       accountRateLimitsDatabase={resources.runtime.accountRateLimits}
@@ -35,9 +44,14 @@ export default function V1SettingsRoute(): React.JSX.Element {
       connections={resources.list.settingsConnections}
       entryPage={params.section === "voice-assistant" ? "voiceAssistant" : "overview"}
       {...(params.request === undefined ? {} : { entryRequest: params.request })}
+      hostUpdates={hostUpdates}
       onAddServer={() => {
         router.push("/settings/servers/new");
       }}
+      onApplyHostUpdate={features.connections.hostUpdates.apply}
+      onApplyRelayUpdate={features.connections.relayUpdates.apply}
+      onCheckHostUpdate={features.connections.hostUpdates.check}
+      onCheckRelayUpdate={features.connections.relayUpdates.check}
       onClose={() => {
         recoverUnavailableRoute(router, "/");
       }}
@@ -47,6 +61,7 @@ export default function V1SettingsRoute(): React.JSX.Element {
       onToggle={resources.connectionActions.toggleConnection}
       onUpdate={resources.connectionActions.updateSavedConnection}
       {...(workspaceRuntime.native ? ACCOUNT_ACTIONS : NO_ACCOUNT_ACTIONS)}
+      relayUpdates={relayUpdates}
       visible={visible}
       voiceAssistantModelCatalog={globalVoiceModelCatalog}
     />

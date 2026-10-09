@@ -1,0 +1,85 @@
+{
+  "apiVersion": 1,
+  "guardianContractVersion": 1,
+  "journalVersion": 1,
+  "bootstrapVersion": 1,
+  "releaseSchemaVersion": 1,
+  "journalTimeUnit": "unixMilliseconds",
+  "releaseTimeUnit": "unixSeconds",
+  "releaseEnvelope": {
+    "algorithm": "ES256",
+    "payloadEncoding": "base64url-no-padding",
+    "signatureEncoding": "base64-der",
+    "trustAnchor": "pinned-key-id-and-spki"
+  },
+  "platforms": ["linux-x86-64", "macos-universal"],
+  "phases": [
+    "accepted",
+    "installing",
+    "targetReady",
+    "awaitingReconnect",
+    "committed",
+    "rollingBack",
+    "rolledBack",
+    "failed"
+  ],
+  "transitions": [
+    ["accepted", "installing"],
+    ["installing", "targetReady"],
+    ["targetReady", "awaitingReconnect"],
+    ["awaitingReconnect", "committed"],
+    ["accepted", "rollingBack"],
+    ["installing", "rollingBack"],
+    ["targetReady", "rollingBack"],
+    ["awaitingReconnect", "rollingBack"],
+    ["rollingBack", "rolledBack"],
+    ["rollingBack", "failed"],
+    ["accepted", "failed"],
+    ["installing", "failed"]
+  ],
+  "journalRequiredBeforeAccepted": [
+    "operationId",
+    "nonce",
+    "initiatingDeviceId",
+    "currentDigest",
+    "targetDigest",
+    "targetFingerprint",
+    "preUpdateRelay",
+    "deadlines",
+    "phase",
+    "startedAt",
+    "updatedAt"
+  ],
+  "terminalPhases": ["committed", "rolledBack", "failed"],
+  "releaseRequiredFields": [
+    "platform",
+    "version",
+    "build",
+    "sourceRevision",
+    "artifactUrl",
+    "sha256",
+    "bootstrapVersion",
+    "journalVersion",
+    "stateEpoch",
+    "rollbackCompatibleFrom"
+  ],
+  "availableTargetFields": [
+    "target",
+    "targetFingerprint",
+    "releaseSequence",
+    "expiresAt"
+  ],
+  "httpRoutes": [
+    "GET /v1/host-update",
+    "POST /v1/host-update/check",
+    "POST /v1/host-update/apply",
+    "GET /v1/host-update/operations/{operationId}",
+    "POST /v1/host-update/operations/{operationId}/reconnect"
+  ],
+  "errors": {
+    "404": ["operation_not_found"],
+    "409": ["idempotency_conflict", "operation_conflict"],
+    "412": ["manual_update_required", "precondition_failed", "invalid_reconnect_receipt"],
+    "423": ["update_locked"]
+  }
+}

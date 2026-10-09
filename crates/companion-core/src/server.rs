@@ -20,6 +20,7 @@ use crate::{
     device_tls::DeviceTlsConnectInfo,
     file_uploads::WorkspaceUploadStore,
     files::{FileQuery, FileService, FileTextQuery},
+    host_update::SharedHostUpdateGuardian,
     identity::TransportIdentity,
     image_previews::{ImagePreviewError, ImagePreviewQuery, ImagePreviewService, ImageVariant},
     media::MediaProxyService,
@@ -48,6 +49,7 @@ pub(crate) struct AppState {
     pub(crate) services: CompanionServices,
     pub(crate) allow_admin_data_plane: bool,
     pub(crate) terminals: terminal::TerminalRegistry,
+    pub(crate) host_update_guardian: Option<SharedHostUpdateGuardian>,
 }
 
 /// Separates the remotely reachable authenticated data plane from the
@@ -151,6 +153,18 @@ pub fn split_routers_with_registry_and_services(
     sync: SyncHub,
     services: CompanionServices,
 ) -> CompanionRouters {
+    split_routers_with_registry_services_and_host_update(store, registry, sync, services, None)
+}
+
+/// Builds production routers with an external host-update guardian. The
+/// guardian remains the exclusive durable journal and activation owner.
+pub fn split_routers_with_registry_services_and_host_update(
+    store: Arc<IndexStore>,
+    registry: Arc<DeviceRegistry>,
+    sync: SyncHub,
+    services: CompanionServices,
+    host_update_guardian: Option<SharedHostUpdateGuardian>,
+) -> CompanionRouters {
     let inventory = crate::port_inventory::PortInventory::new(services.excluded_ports.clone());
     let sync = sync.with_port_inventory(inventory);
     let state = AppState {
@@ -160,6 +174,7 @@ pub fn split_routers_with_registry_and_services(
         services,
         allow_admin_data_plane: false,
         terminals: terminal::TerminalRegistry::new(8),
+        host_update_guardian,
     };
     CompanionRouters {
         public: build_outer_router(state.clone()),
@@ -184,6 +199,7 @@ fn build_router(
         services,
         allow_admin_data_plane: true,
         terminals: terminal::TerminalRegistry::new(8),
+        host_update_guardian: None,
     };
     let core = Router::new()
         .route("/healthz", get(health))
@@ -353,6 +369,28 @@ fn build_secure_router(state: AppState) -> Router {
     let transport = Router::new()
         .route("/v1/auth", post(authenticate))
         .route("/v1/device", delete(device_self_revoke))
+        .route("/v1/host-update", get(host_update_status))
+        .route("/v1/host-update/check", post(host_update_check))
+        .route("/v1/host-update/apply", post(host_update_apply))
+        .route("/v1/relay-update", get(relay_update_status))
+        .route("/v1/relay-update/check", post(relay_update_check))
+        .route("/v1/relay-update/apply", post(relay_update_apply))
+        .route(
+            "/v1/relay-update/operations/{operation_id}",
+            get(relay_update_operation),
+        )
+        .route(
+            "/v1/relay-update/operations/{operation_id}/reconnect",
+            post(relay_update_reconnect),
+        )
+        .route(
+            "/v1/host-update/operations/{operation_id}",
+            get(host_update_operation),
+        )
+        .route(
+            "/v1/host-update/operations/{operation_id}/reconnect",
+            post(host_update_reconnect),
+        )
         .route("/v1/sync", get(sync_upgrade))
         .route("/v1/port-forwards/discovery", get(port_discovery))
         .route("/v1/port-forwards/{port}", get(port_forward_upgrade))
@@ -456,6 +494,7 @@ include!("server/services.rs");
 include!("server/diagnostics.rs");
 include!("server/transport.rs");
 include!("server/auth.rs");
+include!("server/host_update.rs");
 include!("server/relay.rs");
 
 async fn health(State(state): State<AppState>) -> Json<Health> {

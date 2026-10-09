@@ -22,6 +22,11 @@ archive=$(find "$dist_root" -maxdepth 1 -name 'codewide-companion-*-x86_64-unkno
 asset=$(basename "$archive")
 version=${asset#codewide-companion-}
 version=${version%-x86_64-unknown-linux-musl.tar.gz}
+bundle_name=codewide-companion-x86_64-unknown-linux-musl
+bundled_trust="$test_root/bundled-trust.json"
+tar -xOzf "$archive" "$bundle_name/bootstrap/config.json" >"$bundled_trust"
+bundled_generation="$test_root/bundled-generation.json"
+tar -xOzf "$archive" "$bundle_name/bootstrap/generation.json" >"$bundled_generation"
 install_root="$test_root/install"
 unit_root="$test_root/systemd"
 test_home="$test_root/home"
@@ -38,10 +43,27 @@ CODEWIDE_COMPANION_ALLOW_INSECURE_DOWNLOAD=1 \
     --download-base-url "file://$dist_root" \
     --no-start >/dev/null
 
-test "$("$install_root/codewide-companion" --version)" = "codewide-companion $version"
-test -x "$install_root/plugins/codewide-vcs-git"
-test -x "$install_root/codewide-companion-memory-watch"
+bundle_digest=$(awk 'NR == 1 { print $1 }' "$archive.sha256")
+test -L "$install_root/current"
+test "$(readlink "$install_root/current")" = "generations/$bundle_digest"
+test -d "$install_root/generations/$bundle_digest"
+test "$("$install_root/current/bin/codewide-companion" --version)" = "codewide-companion $version"
+test -x "$install_root/current/libexec/codewide-vcs-git"
+test -x "$install_root/current/libexec/codewide-companion-memory-watch"
+grep -F '"artifactDigest":"'"$bundle_digest"'"' \
+  "$install_root/current/metadata.json" >/dev/null
+test -x "$install_root/bootstrap/codewide-companion-update-guardian"
+test ! -e "$install_root/current/libexec/codewide-companion-update-guardian"
+cmp "$bundled_trust" "$install_root/bootstrap/config.json"
+expected_build=$(sed -n 's/.*"build":"\([0-9a-f]*\)".*/\1/p' "$bundled_generation")
+expected_source_revision=$(sed -n 's/.*"sourceRevision":"\([0-9a-f]*\)".*/\1/p' "$bundled_generation")
+test -n "$expected_build"
+test -n "$expected_source_revision"
+grep -F '"build":"'"$expected_build"'"' "$install_root/current/metadata.json" >/dev/null
+grep -F '"sourceRevision":"'"$expected_source_revision"'"' \
+  "$install_root/current/metadata.json" >/dev/null
 test -r "$unit_root/codewide-companion.service"
+test -r "$unit_root/codewide-companion-update.service"
 test -r "$unit_root/codewide-companion-memory-watch.service"
 test -r "$unit_root/codewide-companion-memory-watch.timer"
 test -s "$test_home/.codewide/host.token"
@@ -54,7 +76,7 @@ test ! -e "$test_home/.local/state/codewide/companion/agent-providers.json"
 HOME="$test_home" "$install_root/libexec/codewide-install-claude-provider" --dry-run \
   --node "$(command -v node)" --claude "$(command -v node)" --service-path /usr/bin:/bin >/dev/null
 
-installed_sha256=$(sha256sum "$install_root/codewide-companion" | awk '{print $1}')
+installed_sha256=$(sha256sum "$install_root/current/bin/codewide-companion" | awk '{print $1}')
 tampered_root="$test_root/tampered"
 mkdir -p "$tampered_root"
 cp "$archive" "$tampered_root/$asset"
@@ -75,7 +97,8 @@ if HOME="$test_home" \
   exit 1
 fi
 
-test "$(sha256sum "$install_root/codewide-companion" | awk '{print $1}')" = "$installed_sha256"
+test "$(readlink "$install_root/current")" = "generations/$bundle_digest"
+test "$(sha256sum "$install_root/current/bin/codewide-companion" | awk '{print $1}')" = "$installed_sha256"
 
 legacy_home="$test_root/legacy-home"
 legacy_install_root="$test_root/legacy-install"

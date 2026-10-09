@@ -10,6 +10,12 @@ import Foundation
         withReply reply: @escaping @Sendable (RuntimeHealthPayload?, NSError?) -> Void
     )
 
+    /// Stops the runtime for a guardian-owned transaction without creating a
+    /// second pending/last-update authority in RuntimeHost state.
+    func stopForGuardianUpdate(
+        withReply reply: @escaping @Sendable (Bool, NSError?) -> Void
+    )
+
     func appServer(
         withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
     )
@@ -30,6 +36,20 @@ import Foundation
 
     func relayStatus(
         withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void
+    )
+
+    func relayUpdateStatus(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    )
+
+    func checkRelayUpdate(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    )
+
+    func applyRelayUpdate(
+        targetFingerprint: String,
+        idempotencyKey: String,
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
     )
 
     func pairRelay(

@@ -55,6 +55,7 @@ function createWorkspaceFeatures() {
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     invalidateCatalog: workspaceCatalog.invalidateConnection,
     invalidateDeletedConnectionBindings,
+    scopedHttpAuthorization: scopedHttpAuthorization,
   });
   const search = createSearchWorkspaceAdapter({
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
