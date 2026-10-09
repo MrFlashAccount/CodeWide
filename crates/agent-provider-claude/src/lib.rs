@@ -32,7 +32,8 @@ use agent_core::{
         CapabilityInvokeParams, CapabilitySet, Empty, InitializeResult, ModelCatalog,
         NativeSessionListParams, NativeSessionListResult, NativeSessionReadParams,
         NativeSessionReadResult, PROTOCOL_NAME, PROTOCOL_VERSION, PermissionProfileCatalog,
-        Provenance, ProviderAccount, ProviderDescriptor, ProviderId, ProviderThreadRef,
+        Provenance, ProviderAccount, ProviderDescriptor, ProviderId, ProviderRateLimits,
+        ProviderThreadRef, RATE_LIMITS_UPDATED_NOTIFICATION, RateLimitsUpdatedParams,
         RequestRespondParams, RpcError, RpcErrorData, StartWhileActiveMode, ThreadCreateParams,
         ThreadListParams, ThreadListResult, ThreadOwnsResult, ThreadReadResult, ThreadRef,
         ThreadResult, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
@@ -116,6 +117,9 @@ pub struct ClaudeProvider {
     /// Health and sign-in state: written by the negotiation tracker and by
     /// the host's `account.updated` notifications.
     health: Arc<watch::Sender<ProviderHealth>>,
+    /// Latest subscription limits from the host's `rateLimits.updated`;
+    /// `None` until the first report.
+    rate_limits: Arc<watch::Sender<Option<ProviderRateLimits>>>,
 }
 
 impl ClaudeProvider {
@@ -197,6 +201,7 @@ impl ClaudeProvider {
             storage: None,
             client_tools: Arc::new(OnceLock::new()),
             health,
+            rate_limits: Arc::new(watch::Sender::new(None)),
         }
     }
 
@@ -369,6 +374,7 @@ fn provider_auth(account: Option<&ProviderAccount>) -> ProviderAuth {
         None => ProviderAuth::Unknown,
         Some(account) if account.authenticated => ProviderAuth::Authenticated {
             plan_label: account.label.clone(),
+            account_label: account.account_label.clone(),
         },
         Some(_) => ProviderAuth::Unauthenticated,
     }
@@ -376,7 +382,7 @@ fn provider_auth(account: Option<&ProviderAccount>) -> ProviderAuth {
 
 /// Applies the host's `account.updated` notification. An unavailable
 /// provider stays unavailable; a malformed notification is logged and
-/// ignored. The label is an opaque plan name and is not logged.
+/// ignored. Neither the plan label nor the account label is logged.
 fn apply_account_update(health: &watch::Sender<ProviderHealth>, payload: &Value) {
     let params = payload
         .get("params")
@@ -404,6 +410,37 @@ fn apply_account_update(health: &watch::Sender<ProviderHealth>, payload: &Value)
             true
         }
         ProviderHealth::Available(_) | ProviderHealth::Unavailable => false,
+    });
+}
+
+/// Applies the host's `rateLimits.updated` notification: its params carry the
+/// full merged snapshot, which replaces the previous one. A malformed
+/// notification is logged (without its payload) and ignored.
+fn apply_rate_limits_update(
+    rate_limits: &watch::Sender<Option<ProviderRateLimits>>,
+    payload: &Value,
+) {
+    let params = payload
+        .get("params")
+        .cloned()
+        .map(serde_json::from_value::<RateLimitsUpdatedParams>);
+    let next = match params {
+        Some(Ok(params)) => params.rate_limits,
+        Some(Err(err)) => {
+            warn!(err = %err, "Claude host sent an invalid rateLimits.updated notification");
+            return;
+        }
+        None => {
+            warn!("Claude host sent rateLimits.updated without params");
+            return;
+        }
+    };
+    rate_limits.send_if_modified(|current| {
+        if current.as_ref() == Some(&next) {
+            return false;
+        }
+        *current = Some(next);
+        true
     });
 }
 
@@ -532,6 +569,7 @@ async fn forward_events(
     storage: Option<Arc<ClaudeStorage>>,
     tool_calls: ToolCalls,
     health: Arc<watch::Sender<ProviderHealth>>,
+    rate_limits: Arc<watch::Sender<Option<ProviderRateLimits>>>,
 ) {
     let provider = tool_calls.provider.clone();
     while let Some(event) = transport.recv().await {
@@ -547,6 +585,12 @@ async fn forward_events(
                     == Some(ACCOUNT_UPDATED_NOTIFICATION)
                 {
                     apply_account_update(&health, &payload);
+                    continue;
+                }
+                if payload.get("method").and_then(Value::as_str)
+                    == Some(RATE_LIMITS_UPDATED_NOTIFICATION)
+                {
+                    apply_rate_limits_update(&rate_limits, &payload);
                     continue;
                 }
                 if payload.get("method").and_then(Value::as_str) != Some("event") {
@@ -641,6 +685,10 @@ impl AgentProvider for ClaudeProvider {
         Some(self.health.subscribe())
     }
 
+    fn subscribe_rate_limits(&self) -> Option<watch::Receiver<Option<ProviderRateLimits>>> {
+        Some(self.rate_limits.subscribe())
+    }
+
     fn take_events(&self) -> mpsc::Receiver<ProviderEvent> {
         let (sender, receiver) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
         let transport = self.transport.take_ordered_events();
@@ -656,6 +704,7 @@ impl AgentProvider for ClaudeProvider {
             storage,
             tool_calls,
             self.health.clone(),
+            self.rate_limits.clone(),
         ));
         receiver
     }
@@ -1099,7 +1148,9 @@ sleep 5
 cat '{init}'
 IFS= read -r initialized
 IFS= read -r go
-printf '%s\n' '{{"method":"account.updated","params":{{"account":{{"authenticated":true,"label":"max"}}}}}}'
+printf '%s\n' '{{"method":"account.updated","params":{{"account":{{"accountLabel":"user@example.com","authenticated":true,"label":"max"}}}}}}'
+printf '%s\n' '{{"method":"rateLimits.updated","params":{{"rateLimits":{{"updatedAt":1760000000,"windows":[{{"id":"five_hour","kind":"session","label":"Session","resetsAt":1760010000,"status":"allowed","usedPercent":42,"windowDurationMins":300}}]}}}}}}'
+printf '%s\n' '{{"method":"rateLimits.updated","params":{{"rateLimits":{{"updatedAt":"later"}}}}}}'
 sleep 5
 "#,
                 init = init_path.display(),
@@ -1117,6 +1168,10 @@ sleep 5
         let mut health = provider
             .subscribe_health()
             .ok_or("the Claude adapter reports health")?;
+        let mut rate_limits = provider
+            .subscribe_rate_limits()
+            .ok_or("the Claude adapter reports rate limits")?;
+        assert!(rate_limits.borrow().is_none());
         wait_live(&provider).await?;
         tokio::time::timeout(Duration::from_secs(5), async {
             while *health.borrow() != ProviderHealth::Available(ProviderAuth::Unauthenticated) {
@@ -1133,6 +1188,7 @@ sleep 5
             .map_err(|error| error.to_string())?;
         let signed_in = ProviderHealth::Available(ProviderAuth::Authenticated {
             plan_label: Some("max".into()),
+            account_label: Some("user@example.com".into()),
         });
         tokio::time::timeout(Duration::from_secs(5), async {
             while *health.borrow() != signed_in {
@@ -1142,6 +1198,21 @@ sleep 5
         })
         .await??;
         assert_eq!(provider.health(), signed_in);
+        let limits = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(limits) = rate_limits.borrow_and_update().clone() {
+                    return Ok::<_, Box<dyn std::error::Error>>(limits);
+                }
+                rate_limits.changed().await?;
+            }
+        })
+        .await??;
+        assert_eq!(limits.windows.len(), 1);
+        assert_eq!(limits.windows[0].id, "five_hour");
+        assert_eq!(limits.windows[0].used_percent, Some(42));
+        // The malformed update that follows is ignored.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(rate_limits.borrow().as_ref(), Some(&limits));
         Ok(())
     }
 

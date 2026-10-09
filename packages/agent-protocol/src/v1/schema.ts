@@ -401,7 +401,26 @@ const sortWindow = obj({
 });
 const sortDirection = literal("asc", "desc");
 
-const providerAccount: Check = obj({ authenticated: bool, label: nullable(str) });
+const providerAccount: Check = obj({
+  accountLabel: optional(str),
+  authenticated: bool,
+  label: nullable(str),
+});
+
+const providerRateLimits: Check = obj({
+  updatedAt: int,
+  windows: arr(
+    obj({
+      id: str,
+      kind: literal("session", "weekly", "other"),
+      label: str,
+      resetsAt: nullable(int),
+      status: nullable(literal("allowed", "warning", "rejected")),
+      usedPercent: nullable(int),
+      windowDurationMins: nullable(int),
+    }),
+  ),
+});
 
 const operationChecks: Readonly<
   Record<OperationName, { readonly params: Check; readonly result: Check }>
@@ -576,6 +595,10 @@ const checkRequest = (
   }
   if (method === "account.updated") {
     obj({ method: str, params: obj({ account: providerAccount }) })(value, "$", errors);
+    return errors;
+  }
+  if (method === "rateLimits.updated") {
+    obj({ method: str, params: obj({ rateLimits: providerRateLimits }) })(value, "$", errors);
     return errors;
   }
   if (!isOperationName(method) && !isProviderRequestName(method)) {

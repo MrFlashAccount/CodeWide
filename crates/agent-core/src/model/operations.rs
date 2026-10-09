@@ -60,7 +60,15 @@ pub struct ProviderDescriptor {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProviderAccount {
+    /// The signed-in account (email, else organization); never logged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "accountLabel"
+    )]
+    pub account_label: Option<String>,
     pub authenticated: bool,
+    /// Opaque plan label such as `max`.
     pub label: Option<String>,
 }
 
@@ -79,6 +87,67 @@ pub struct AccountUpdatedParams {
 pub struct AccountUpdatedNotification {
     pub method: String,
     pub params: AccountUpdatedParams,
+}
+
+/// Provider → companion notification method: the provider's subscription
+/// limits changed. The params carry its full merged snapshot.
+pub const RATE_LIMITS_UPDATED_NOTIFICATION: &str = "rateLimits.updated";
+
+/// Category of a subscription usage window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RateLimitWindowKind {
+    Session,
+    Weekly,
+    Other,
+}
+
+/// The provider's verdict for a window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RateLimitWindowStatus {
+    Allowed,
+    Warning,
+    Rejected,
+}
+
+/// One subscription usage window (`ProviderRateLimitWindow`).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRateLimitWindow {
+    /// Stable per provider, for example `five_hour`.
+    pub id: String,
+    pub kind: RateLimitWindowKind,
+    pub label: String,
+    /// Unix seconds.
+    pub resets_at: Option<i64>,
+    pub status: Option<RateLimitWindowStatus>,
+    /// Integer share used, 0–100.
+    pub used_percent: Option<u8>,
+    pub window_duration_mins: Option<u32>,
+}
+
+/// A provider's full subscription limit snapshot (`ProviderRateLimits`).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRateLimits {
+    /// Unix seconds of the latest change.
+    pub updated_at: i64,
+    pub windows: Vec<ProviderRateLimitWindow>,
+}
+
+/// Params of `rateLimits.updated`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimitsUpdatedParams {
+    pub rate_limits: ProviderRateLimits,
+}
+
+/// The `rateLimits.updated` notification envelope.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RateLimitsUpdatedNotification {
+    pub method: String,
+    pub params: RateLimitsUpdatedParams,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

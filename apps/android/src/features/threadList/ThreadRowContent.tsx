@@ -3,6 +3,7 @@ import { View } from "react-native";
 import { formatThreadTime } from "../../data/device-time";
 import { plainThreadPreview } from "../../data/thread-cache";
 import { colors, iconSize } from "../../theme";
+import { ProviderIcon } from "../../ui/ProviderIcon";
 import { RunningThreadTitle, ThreadTitle } from "../../ui/ThreadTitle";
 import { AppText as Text } from "../../ui/Typography";
 import { ServerIcon } from "../connections/ServerIcon";
@@ -42,14 +43,19 @@ export function ThreadRowContent({
           )}
           <View style={styles.threadMeta}>
             {typeof thread.agentBadge === "string" && (
-              <Text
+              <View
                 accessibilityLabel={`Agent ${thread.agentBadge}`}
-                numberOfLines={1}
+                accessible
                 style={styles.threadAgentBadge}
                 testID="thread-agent-badge"
               >
-                {thread.agentBadge}
-              </Text>
+                {typeof thread.agentProvider === "string" && (
+                  <ProviderIcon provider={thread.agentProvider} size={iconSize.indicator} />
+                )}
+                <Text numberOfLines={1} style={styles.threadAgentBadgeText}>
+                  {thread.agentBadge}
+                </Text>
+              </View>
             )}
             {thread.needsAttention === true ? (
               <View

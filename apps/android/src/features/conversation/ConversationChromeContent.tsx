@@ -102,6 +102,7 @@ export function createConversationChromeContent({
       onUnarchive={actionsInputs.onUnarchive}
       openThreadRename={threadRenameBinding.openThreadRename}
       pinned={pinned}
+      providerLimits={accountsInputs.providerLimits}
       readOnly={readOnly}
       remoteThread={readInputs.remoteThread}
       server={surfaceInputs.server}

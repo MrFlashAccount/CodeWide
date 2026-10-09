@@ -4,6 +4,7 @@ import { Pressable, Text } from "react-native";
 
 import type { AgentProvidersState } from "../src/data/agentProviders";
 import { parseAgentProvidersResult } from "../src/data/agentProviders";
+import { ProviderAccounts } from "../src/features/accounts/ProviderAccounts";
 import { UsageMenu } from "../src/features/accounts/UsageMenu";
 import { WorkspaceAccountUsageMenu } from "../src/features/accounts/WorkspaceAccountUsageMenu";
 import { AgentProviderStatusList } from "../src/features/connections/AgentProviderStatusList";
@@ -146,4 +147,85 @@ it("shows provider sign-in in the server detail, not as an account", () => {
   expect(view.getByText("Codex · connected")).toBeOnTheScreen();
   const old = render(<AgentProviderStatusList agentProviders={{ state$ }} connectionId="other" />);
   expect(old.queryByTestId("agent-provider-status")).toBeNull();
+});
+
+const claudeLimits = {
+  updatedAt: 1_800_000_000,
+  windows: [
+    { id: "five_hour", kind: "session", label: "Session", resetsAt: 1_800_010_000, status: "allowed", usedPercent: 25, windowDurationMins: 300 },
+    { id: "seven_day", kind: "weekly", label: "Weekly", resetsAt: 1_800_300_000, status: "allowed", usedPercent: 60, windowDurationMins: 10_080 },
+  ],
+};
+
+function providerState(claude: Record<string, unknown>) {
+  const value = parseAgentProvidersResult({
+    hostCapabilities: {},
+    providers: [
+      { auth: "unknown", capabilities: { "accounts.pool": true }, id: "codex", name: "Codex", planLabel: null, primary: true, status: "live" },
+      { auth: "authenticated", capabilities: { "accounts.pool": false }, id: "claude", name: "Claude", planLabel: "max", primary: false, status: "live", ...claude },
+    ],
+  });
+  if (value === null) throw new Error("fixture must parse");
+  return observable<Record<string, AgentProvidersState>>({ server: { status: "ready", value } });
+}
+
+it("lists the Claude sign-in as a read-only account with its limits", () => {
+  const state$ = providerState({ accountLabel: "dev@example.com", rateLimits: claudeLimits });
+  const view = render(<ProviderAccounts agentProviders={{ state$ }} connectionId="server" serverName="Studio" />);
+  expect(view.getByText("Claude")).toBeOnTheScreen();
+  expect(view.queryByText("Codex")).toBeNull();
+  expect(view.getByText("dev@example.com")).toBeOnTheScreen();
+  expect(view.getByText("Max · Signed in via Claude Code on Studio")).toBeOnTheScreen();
+  expect(view.getByLabelText("Weekly 40% left. Five-hour 75% left")).toBeOnTheScreen();
+  // No pool actions: no switching, login or removal.
+  expect(view.queryByLabelText(/Actions for/u)).toBeNull();
+  expect(view.queryByText(/Add .* account/u)).toBeNull();
+  fireEvent.press(view.getByTestId("provider-account-claude"));
+  expect(view.getByTestId("account-reset-window-remaining-five_hour")).toHaveTextContent("75% left");
+  expect(view.getByTestId("account-reset-window-remaining-seven_day")).toHaveTextContent("40% left");
+});
+
+it("tells how to sign in when Claude is signed out on the server", () => {
+  const state$ = providerState({ auth: "unauthenticated", planLabel: null, rateLimits: null });
+  const view = render(<ProviderAccounts agentProviders={{ state$ }} connectionId="server" serverName="Studio" />);
+  expect(view.getByText("Claude account")).toBeOnTheScreen();
+  expect(view.getByText("Not signed in — run `claude` on the server")).toBeOnTheScreen();
+  expect(view.queryByTestId("provider-limit-rings-claude")).toBeNull();
+});
+
+it("shows a Claude thread's subscription limits in its header usage menu", () => {
+  const known = render(
+    <WorkspaceAccountUsageMenu
+      database={null}
+      providerLimits={{ agentProviders: { state$: providerState({ rateLimits: claudeLimits }) }, connectionId: "server", provider: "claude" }}
+      currentUsage={null}
+      servers={[{ id: "server", name: "Server" }]}
+      // WHY: the menu reads only the agent descriptor; usage comes from `currentUsage`.
+      thread={claudeThread as never}
+    >
+      <Pressable accessibilityLabel="Menu">
+        <Text>Menu</Text>
+      </Pressable>
+    </WorkspaceAccountUsageMenu>,
+  );
+  const body = openMenuBody(known);
+  expect(body.getByText("Claude usage")).toBeOnTheScreen();
+  expect(body.getByTestId("account-reset-window-remaining-seven_day")).toHaveTextContent("40% left");
+  expect(body.queryByTestId("usage-accounts-section")).toBeNull();
+
+  const pending = render(
+    <WorkspaceAccountUsageMenu
+      database={null}
+      providerLimits={{ agentProviders: { state$: providerState({ rateLimits: null }) }, connectionId: "server", provider: "claude" }}
+      currentUsage={null}
+      servers={[{ id: "server", name: "Server" }]}
+      // WHY: the menu reads only the agent descriptor; usage comes from `currentUsage`.
+      thread={claudeThread as never}
+    >
+      <Pressable accessibilityLabel="Menu">
+        <Text>Menu</Text>
+      </Pressable>
+    </WorkspaceAccountUsageMenu>,
+  );
+  expect(openMenuBody(pending).getByText("Usage unknown")).toBeOnTheScreen();
 });

@@ -8,6 +8,9 @@
  * it does not understand becomes `{kind: "other"}`. Pure; no I/O.
  */
 
+import type { ProviderRateLimitWindow } from "../protocol.js";
+import { rateLimitEventWindow } from "./rateLimits.js";
+
 export type JsonRecord = Readonly<Record<string, unknown>>;
 
 export const isRecord = (value: unknown): value is JsonRecord =>
@@ -140,7 +143,12 @@ export type ClaudeFrame =
     }
   | { readonly kind: "compactBoundary"; readonly uuid: string | null }
   | { readonly count: number; readonly kind: "backgroundTasks" }
-  | { readonly kind: "rateLimit"; readonly status: string | null }
+  | {
+      readonly kind: "rateLimit";
+      readonly status: string | null;
+      /** The window the event reports; `null` when it names none. */
+      readonly window: ProviderRateLimitWindow | null;
+    }
   | { readonly kind: "other"; readonly type: string };
 
 function parseRequestFigures(value: unknown): RequestFigures | null {
@@ -403,7 +411,11 @@ function resultFrame(value: JsonRecord): ClaudeFrame {
 
 function rateLimitFrame(value: JsonRecord): ClaudeFrame {
   const info = value["rate_limit_info"];
-  return { kind: "rateLimit", status: isRecord(info) ? str(info["status"]) : null };
+  return {
+    kind: "rateLimit",
+    status: isRecord(info) ? str(info["status"]) : null,
+    window: rateLimitEventWindow(info),
+  };
 }
 
 const FRAMES: Readonly<Record<string, (value: JsonRecord) => ClaudeFrame>> = {

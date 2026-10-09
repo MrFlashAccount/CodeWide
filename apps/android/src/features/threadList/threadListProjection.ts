@@ -85,6 +85,7 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
           : null;
   return {
     agentBadge: threadAgentBadge(thread),
+    agentProvider: threadAgentBadgeProvider(thread),
     archived: thread.archived,
     id: thread.remoteThreadId,
     needsAttention: threadNeedsAttention(thread),
@@ -106,6 +107,12 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
 function threadAgentBadge(thread: StoredThreadSummary): string | null {
   const agent = thread.codewideAgent;
   return agent === null || agent === undefined || agent.primary ? null : agent.providerName;
+}
+
+/** The badged thread's provider id, for its mark; `null` exactly when there is no badge. */
+function threadAgentBadgeProvider(thread: StoredThreadSummary): string | null {
+  const agent = thread.codewideAgent;
+  return agent === null || agent === undefined || agent.primary ? null : agent.provider;
 }
 
 function threadNeedsAttention(thread: StoredThreadSummary): boolean {

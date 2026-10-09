@@ -10,11 +10,11 @@ use tokio::sync::{mpsc, watch};
 use super::{
     model::{
         AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ModelCatalog,
-        PermissionProfileCatalog, ProviderDescriptor, ProviderId, RequestRespondParams, RpcError,
-        SortDirection, ThreadCreateParams, ThreadListParams, ThreadListResult, ThreadOrigin,
-        ThreadReadResult, ThreadSettings, ThreadSortKey, ThreadStatus, ThreadTurnsParams,
-        ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, TurnInterruptParams,
-        TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+        PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
+        RequestRespondParams, RpcError, SortDirection, ThreadCreateParams, ThreadListParams,
+        ThreadListResult, ThreadOrigin, ThreadReadResult, ThreadSettings, ThreadSortKey,
+        ThreadStatus, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
+        TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
     },
     provider::{
         AgentProvider, ProviderAuth, ProviderError, ProviderEvent, ProviderFence, ProviderHealth,
@@ -32,6 +32,8 @@ pub(crate) struct FakeProvider {
     pub(crate) list_params: Mutex<Vec<ThreadListParams>>,
     status: watch::Sender<ProviderStatus>,
     health: watch::Sender<ProviderHealth>,
+    /// `Some` when the fake reports provider-level subscription limits.
+    rate_limits: Option<watch::Sender<Option<ProviderRateLimits>>>,
 }
 
 impl FakeProvider {
@@ -52,6 +54,20 @@ impl FakeProvider {
             list_params: Mutex::new(Vec::new()),
             status,
             health,
+            rate_limits: None,
+        }
+    }
+
+    /// Makes the fake report provider-level subscription limits (none yet).
+    pub(crate) fn reporting_rate_limits(mut self) -> Self {
+        self.rate_limits = Some(watch::Sender::new(None));
+        self
+    }
+
+    /// Publishes a limit snapshot; a fake that reports none ignores it.
+    pub(crate) fn set_rate_limits(&self, limits: ProviderRateLimits) {
+        if let Some(sender) = &self.rate_limits {
+            sender.send_replace(Some(limits));
         }
     }
 
@@ -145,6 +161,10 @@ impl AgentProvider for FakeProvider {
 
     fn subscribe_health(&self) -> Option<watch::Receiver<ProviderHealth>> {
         Some(self.health.subscribe())
+    }
+
+    fn subscribe_rate_limits(&self) -> Option<watch::Receiver<Option<ProviderRateLimits>>> {
+        self.rate_limits.as_ref().map(watch::Sender::subscribe)
     }
 
     fn take_events(&self) -> mpsc::Receiver<ProviderEvent> {

@@ -18,6 +18,8 @@ import type {
   InitializeResult,
   OperationName,
   ProviderAccount,
+  ProviderRateLimits,
+  RateLimitsUpdatedNotification,
   ToolCallParams,
   ToolCallResult,
   TurnId,
@@ -33,6 +35,7 @@ import {
   PROVIDER_ID,
   providerDescriptor,
 } from "../protocol.js";
+import type { RateLimitReporter } from "../account/rateLimitReporter.js";
 import type { ClaudeRuntime } from "../claude/port.js";
 import type { Logger } from "../log.js";
 import { isRecord } from "../mapping/frames.js";
@@ -185,6 +188,8 @@ export const TOOL_CALL_CANCELLED = "The tool call was cancelled.";
 
 export interface ServerDeps {
   readonly logger: Logger;
+  /** Owner of the subscription limits; the server reports its snapshot. */
+  readonly rateLimits: Pick<RateLimitReporter, "snapshot" | "usageRead">;
   readonly runtime: ClaudeRuntime;
   readonly service: ThreadService;
   readonly version: string;
@@ -279,6 +284,9 @@ export class RpcServer {
         if (probe.account !== null) {
           this.updateAccount(probe.account);
         }
+        if (probe.usage !== null) {
+          this.deps.rateLimits.usageRead(probe.usage);
+        }
       })
       .catch((error: unknown) => {
         this.deps.logger.log("warn", "claude runtime probe failed", {
@@ -345,6 +353,25 @@ export class RpcServer {
     for (const event of this.buffered.splice(0)) {
       this.send({ method: "event", params: event });
     }
+    const limits = this.deps.rateLimits.snapshot();
+    if (limits !== null) {
+      this.publishRateLimits(limits);
+    }
+  }
+
+  /**
+   * Sends the full limit snapshot (`rateLimits.updated`) once `initialized`;
+   * before that the latest snapshot is sent on `initialized`.
+   */
+  public publishRateLimits(rateLimits: ProviderRateLimits): void {
+    if (!this.initialized) {
+      return;
+    }
+    const notification: RateLimitsUpdatedNotification = {
+      method: "rateLimits.updated",
+      params: { rateLimits },
+    };
+    this.send(notification);
   }
 
   private async initialize(rawParams: unknown): Promise<Reply> {
@@ -387,7 +414,8 @@ export class RpcServer {
       this.initialized &&
       (previous === null ||
         previous.authenticated !== account.authenticated ||
-        previous.label !== account.label)
+        previous.label !== account.label ||
+        previous.accountLabel !== account.accountLabel)
     ) {
       const notification: AccountUpdatedNotification = {
         method: "account.updated",

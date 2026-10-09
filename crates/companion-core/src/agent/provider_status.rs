@@ -6,8 +6,14 @@
 //! plus the provider's own health), its sign-in state and its declared
 //! capabilities; disabled providers follow the enabled ones. The host-level
 //! capabilities say which connection-scoped features some enabled provider
-//! serves. Credentials never pass through here: the sign-in state is a flag
-//! and an opaque plan label reported by the provider.
+//! serves. Credentials never pass through here: the sign-in state is a flag,
+//! an opaque plan label and, when the provider reports it, the signed-in
+//! account label (email or organization) that the client shows like a pool
+//! account's email. A provider that reports provider-level subscription
+//! limits (Claude) also lists its latest `rateLimits` snapshot.
+//!
+//! `accountLabel` and `rateLimits` are omitted when not applicable, so a
+//! Codex-only read result keeps its earlier bytes.
 
 use std::sync::Arc;
 
@@ -16,6 +22,7 @@ use tokio::sync::{Notify, mpsc, watch};
 use tracing::warn;
 
 use super::{
+    model::ProviderRateLimits,
     provider::{AgentProvider, ProviderAuth, ProviderHealth, ProviderStatus},
     registry::{ProviderRegistry, disabled_provider_name},
 };
@@ -57,16 +64,17 @@ fn enabled_entry(registry: &ProviderRegistry, provider: &dyn AgentProvider) -> V
         (ProviderHealth::Available(_), ProviderStatus::Live) => "live",
         (ProviderHealth::Available(_), ProviderStatus::Reconnecting) => "reconnecting",
     };
-    let (auth, plan_label) = match health {
-        ProviderHealth::Available(ProviderAuth::Authenticated { plan_label }) => {
-            ("authenticated", plan_label)
-        }
-        ProviderHealth::Available(ProviderAuth::Unauthenticated) => ("unauthenticated", None),
+    let (auth, plan_label, account_label) = match health {
+        ProviderHealth::Available(ProviderAuth::Authenticated {
+            plan_label,
+            account_label,
+        }) => ("authenticated", plan_label, account_label),
+        ProviderHealth::Available(ProviderAuth::Unauthenticated) => ("unauthenticated", None, None),
         ProviderHealth::Available(ProviderAuth::Unknown) | ProviderHealth::Unavailable => {
-            ("unknown", None)
+            ("unknown", None, None)
         }
     };
-    json!({
+    let mut entry = json!({
         "id": descriptor.id.as_str(),
         "name": descriptor.display_name,
         "primary": registry.is_primary(&descriptor.id),
@@ -74,7 +82,20 @@ fn enabled_entry(registry: &ProviderRegistry, provider: &dyn AgentProvider) -> V
         "auth": auth,
         "planLabel": plan_label,
         "capabilities": provider.capabilities(),
-    })
+    });
+    if let Some(fields) = entry.as_object_mut() {
+        if let Some(account_label) = account_label {
+            fields.insert("accountLabel".into(), Value::String(account_label));
+        }
+        if let Some(rate_limits) = provider.subscribe_rate_limits() {
+            let latest = rate_limits.borrow().clone();
+            fields.insert(
+                "rateLimits".into(),
+                serde_json::to_value(latest).unwrap_or(Value::Null),
+            );
+        }
+    }
+    entry
 }
 
 /// A boolean capability is a host capability when an enabled provider
@@ -113,6 +134,9 @@ pub fn spawn_change_notifier(registry: Arc<ProviderRegistry>, sink: mpsc::Sender
             provider.subscribe_health(),
             changed.clone(),
         ));
+        if let Some(rate_limits) = provider.subscribe_rate_limits() {
+            tokio::spawn(watch_rate_limits(rate_limits, changed.clone()));
+        }
     }
     // Taken after subscribing, so every later change wakes the publisher.
     let last = snapshot(&registry);
@@ -135,6 +159,15 @@ async fn watch_provider(
             result = status.changed() => if result.is_err() { return },
             result = health.changed() => if result.is_err() { return },
         }
+        changed.notify_one();
+    }
+}
+
+async fn watch_rate_limits(
+    mut rate_limits: watch::Receiver<Option<ProviderRateLimits>>,
+    changed: Arc<Notify>,
+) {
+    while rate_limits.changed().await.is_ok() {
         changed.notify_one();
     }
 }
@@ -196,6 +229,7 @@ mod tests {
         let claude = claude();
         claude.set_health(ProviderHealth::Available(ProviderAuth::Authenticated {
             plan_label: Some("max".into()),
+            account_label: Some("user@example.com".into()),
         }));
         let registry = registry(
             vec![codex, claude.clone()],
@@ -243,6 +277,8 @@ mod tests {
                 ),
             ]
         );
+        assert_eq!(providers[1]["accountLabel"], "user@example.com");
+        assert!(providers[0].get("accountLabel").is_none());
         assert_eq!(providers[1]["capabilities"]["realtimeVoice"], false);
         assert_eq!(providers[2]["capabilities"], Value::Null);
         assert_eq!(snapshot["hostCapabilities"]["realtimeVoice"], true);
@@ -251,6 +287,83 @@ mod tests {
             snapshot["hostCapabilities"]
                 .get("turns.startWhileActive")
                 .is_none()
+        );
+        Ok(())
+    }
+
+    fn limits(used_percent: u8) -> ProviderRateLimits {
+        ProviderRateLimits {
+            updated_at: 1_760_000_000,
+            windows: vec![crate::agent::model::ProviderRateLimitWindow {
+                id: "five_hour".into(),
+                kind: crate::agent::model::RateLimitWindowKind::Session,
+                label: "Session".into(),
+                resets_at: Some(1_760_010_000),
+                status: Some(crate::agent::model::RateLimitWindowStatus::Allowed),
+                used_percent: Some(used_percent),
+                window_duration_mins: Some(300),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_codex_only_entry_keeps_its_fields() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = registry(vec![codex()], Vec::new())?;
+        let snapshot = snapshot(&registry);
+        let entry = snapshot["providers"][0]
+            .as_object()
+            .ok_or("entry must be an object")?;
+        let mut keys = entry.keys().map(String::as_str).collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "auth",
+                "capabilities",
+                "id",
+                "name",
+                "planLabel",
+                "primary",
+                "status"
+            ]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lists_provider_rate_limits_and_journals_their_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let claude = Arc::new(
+            FakeProvider::new("claude", agent_provider_claude::CAPABILITIES)
+                .reporting_rate_limits(),
+        );
+        let registry = registry(vec![codex(), claude.clone()], Vec::new())?;
+        let before = snapshot(&registry);
+        assert!(before["providers"][0].get("rateLimits").is_none());
+        assert_eq!(before["providers"][1]["rateLimits"], Value::Null);
+        assert!(before["providers"][1].get("rateLimits").is_some());
+
+        let (sink, mut journal) = mpsc::channel(8);
+        spawn_change_notifier(registry, sink);
+        claude.set_rate_limits(limits(42));
+        let event = tokio::time::timeout(Duration::from_secs(5), journal.recv())
+            .await?
+            .ok_or("journal closed")?;
+        assert_eq!(event["method"], CHANGED_METHOD);
+        assert_eq!(
+            event["params"]["providers"][1]["rateLimits"],
+            json!({
+                "updatedAt": 1_760_000_000,
+                "windows": [{
+                    "id": "five_hour",
+                    "kind": "session",
+                    "label": "Session",
+                    "resetsAt": 1_760_010_000,
+                    "status": "allowed",
+                    "usedPercent": 42,
+                    "windowDurationMins": 300,
+                }],
+            })
         );
         Ok(())
     }

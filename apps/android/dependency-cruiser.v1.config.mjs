@@ -33,6 +33,7 @@ const featurePublicModules = {
   ],
   accounts: [
     "AccountPoolFeature",
+    "ProviderAccounts",
     "WorkspaceAccountUsageMenu",
     "UsageMenu",
     "accountCapabilities",

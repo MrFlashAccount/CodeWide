@@ -41,6 +41,12 @@ export interface ProviderDescriptor {
 
 /** Signed-in state reported by the provider runtime. Never carries credentials. */
 export interface ProviderAccount {
+  /**
+   * The signed-in account as the user knows it (an email address, else an
+   * organization name); absent when the provider reports none. Shown to the
+   * user like a Codex pool account's email; never logged, never a credential.
+   */
+  readonly accountLabel?: string;
   readonly authenticated: boolean;
   /** Opaque display label such as a plan name; never an email or token. */
   readonly label: string | null;

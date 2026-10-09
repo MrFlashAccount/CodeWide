@@ -17,6 +17,8 @@ export type OrchestrationToolCall = {
   readonly failed: boolean;
   /** Short trailing label, such as the model. */
   readonly meta: string | null;
+  /** Provider id of the agent a spawn started, for its mark; `null` for other calls. */
+  readonly provider: string | null;
   readonly running: boolean;
   /** The child agent thread the row opens, when the call names one. */
   readonly targetThreadId: string | null;
@@ -117,6 +119,7 @@ function spawnCall(call: CallInput): OrchestrationToolCall {
     detail: clipped(call.error ?? text(call.args.prompt)),
     failed: call.error !== null,
     meta: text(call.result?.model ?? call.args.model),
+    provider: text(call.result?.provider ?? call.args.provider),
     running: call.running,
     targetThreadId: text(call.result?.agentThreadId),
     title: phaseTitle(call, {
@@ -147,6 +150,7 @@ function waitCall(call: CallInput, threadId: string | null): OrchestrationToolCa
     detail: clipped(call.error ?? text(call.result?.finalMessage)),
     failed: call.error !== null || status === "failed",
     meta: null,
+    provider: null,
     running: call.running,
     targetThreadId: threadId,
     title: phaseTitle(call, {
@@ -163,6 +167,7 @@ function messageCall(call: CallInput, threadId: string | null): OrchestrationToo
     detail: clipped(call.error ?? text(call.args.message)),
     failed: call.error !== null,
     meta: null,
+    provider: null,
     running: call.running,
     targetThreadId: threadId,
     title: phaseTitle(call, {
@@ -179,6 +184,7 @@ function cancelCall(call: CallInput, threadId: string | null): OrchestrationTool
     detail: clipped(call.error),
     failed: call.error !== null,
     meta: null,
+    provider: null,
     running: call.running,
     targetThreadId: threadId,
     title: phaseTitle(call, {
@@ -212,6 +218,7 @@ function listCall(call: CallInput): OrchestrationToolCall {
     detail: clipped(call.error ?? listSummary(agents)),
     failed: call.error !== null,
     meta: null,
+    provider: null,
     running: call.running,
     targetThreadId: null,
     title: phaseTitle(call, {

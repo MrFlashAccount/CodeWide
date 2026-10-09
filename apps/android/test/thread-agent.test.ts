@@ -250,13 +250,24 @@ describe("account limits in the conversation header", () => {
     accountRateLimitsDatabase: {} as never,
     onRefreshAccountRateLimits: vi.fn(async () => undefined),
   };
+  // WHY: the gate passes the provider list through untouched; its contents are irrelevant here.
+  const scope = { agentProviders: {} as never, connectionId: "server" };
 
   it("drops the account pool for a thread whose agent has no account rate limits", () => {
-    expect(threadAgentAccounts(claudeThread, accounts)).toEqual({
+    expect(threadAgentAccounts(claudeThread, accounts, null)).toEqual({
       accountRateLimitsDatabase: null,
       onRefreshAccountRateLimits: undefined,
+      providerLimits: null,
     });
     expect(accounts.onRefreshAccountRateLimits).not.toHaveBeenCalled();
+  });
+
+  it("reads such a thread's own provider limits from the server's provider list", () => {
+    expect(threadAgentAccounts(claudeThread, accounts, scope)).toEqual({
+      accountRateLimitsDatabase: null,
+      onRefreshAccountRateLimits: undefined,
+      providerLimits: { agentProviders: scope.agentProviders, connectionId: "server", provider: "claude" },
+    });
   });
 
   it("keeps it for a thread declaring accounts.rateLimits and for a legacy thread", () => {
@@ -268,7 +279,8 @@ describe("account limits in the conversation header", () => {
         providerName: "Codex",
       },
     };
-    expect(threadAgentAccounts(codexThread, accounts)).toBe(accounts);
-    expect(threadAgentAccounts(createV1TestThread("t", null, 1, []), accounts)).toBe(accounts);
+    const kept = { ...accounts, providerLimits: null };
+    expect(threadAgentAccounts(codexThread, accounts, scope)).toEqual(kept);
+    expect(threadAgentAccounts(createV1TestThread("t", null, 1, []), accounts, scope)).toEqual(kept);
   });
 });

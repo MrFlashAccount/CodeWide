@@ -100,6 +100,7 @@ import {
   type ThreadState,
   type TurnOutcomeRecord,
 } from "../state/threadState.js";
+import type { RateLimitSink } from "../account/rateLimitReporter.js";
 import { ClientToolCalls, type ClientToolCaller } from "./clientToolCalls.js";
 import { promptContent } from "./prompt.js";
 import { TurnBuilder } from "./turnBuilder.js";
@@ -139,6 +140,8 @@ export interface SessionDeps {
   readonly logger: Logger;
   readonly newUuid: () => string;
   readonly nowMs: () => number;
+  /** Receives the subscription limits sessions observe. */
+  readonly rateLimits: RateLimitSink;
   readonly runtime: ClaudeRuntime;
 }
 
@@ -757,9 +760,13 @@ export class ClaudeSession {
         return;
       case "rateLimit":
         this.log("info", "claude rate limit status", { status: frame.status });
+        if (frame.window !== null) {
+          this.deps.rateLimits.reported(frame.window);
+        }
         return;
       case "result":
         this.onResult(frame);
+        this.resultSeen();
         return;
       case "other":
         return;
@@ -771,6 +778,14 @@ export class ClaudeSession {
         return;
       default:
         unreachable(frame);
+    }
+  }
+
+  /** Lets the limit owner read usage through this live query when a read is due. */
+  private resultSeen(): void {
+    const query = this.query;
+    if (query !== null) {
+      this.deps.rateLimits.resultSeen(query.readUsage);
     }
   }
 

@@ -10,10 +10,11 @@ import { harness, scriptedRuntime } from "./support/scripted.js";
 
 function server() {
   const lines: unknown[] = [];
-  const { service } = harness();
+  const { service, rateLimits } = harness();
   const { runtime } = scriptedRuntime();
 
   const rpc = new RpcServer({
+    rateLimits,
     service,
     runtime,
     logger: createMemoryLogger(),
@@ -34,7 +35,7 @@ describe("rpc server", () => {
     vi.useFakeTimers();
     try {
       const lines: unknown[] = [];
-      const { service } = harness();
+      const { service, rateLimits } = harness();
       const { runtime } = scriptedRuntime();
       const accounts = [
         { authenticated: false, label: null },
@@ -43,13 +44,14 @@ describe("rpc server", () => {
       ];
       let probes = 0;
       const rpc = new RpcServer({
+        rateLimits,
         service,
         runtime: {
           ...runtime,
           probe: () => {
             const account = accounts[Math.min(probes, accounts.length - 1)] ?? null;
             probes += 1;
-            return Promise.resolve({ account, models: [] });
+            return Promise.resolve({ account, models: [], usage: null });
           },
         },
         logger: createMemoryLogger(),

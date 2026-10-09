@@ -14,6 +14,15 @@
         "method": "account.updated",
         "params": { "account": { "authenticated": true, "label": "max" } }
       }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "account.updated",
+        "params": {
+          "account": { "accountLabel": "user@example.com", "authenticated": true, "label": "pro" }
+        }
+      }
     }
   ]
 }

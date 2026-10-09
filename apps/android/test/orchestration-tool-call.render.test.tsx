@@ -41,6 +41,8 @@ it("renders a spawn call as a compact row that opens the child agent", () => {
   expect(screen.getByText("Spawned Codex agent “reviewer”")).toBeTruthy();
   expect(screen.getByText("Review the diff")).toBeTruthy();
   expect(screen.getByText("gpt-5.5")).toBeTruthy();
+  // The spawned agent's provider is marked with its brand icon.
+  expect(screen.getByTestId("provider-icon-codex", { includeHiddenElements: true })).toBeTruthy();
   fireEvent.press(screen.getByRole("button", { name: "Spawned Codex agent “reviewer”. Open agent" }));
   expect(open).toHaveBeenCalledWith(child);
 });
@@ -68,4 +70,5 @@ it("marks a failed call and shows its error", () => {
   );
   expect(screen.getByText("Could not wait for agent 0199a3c4")).toBeTruthy();
   expect(screen.getByText("agent not found")).toBeTruthy();
+  expect(screen.queryByTestId(/^provider-icon-/u, { includeHiddenElements: true })).toBeNull();
 });

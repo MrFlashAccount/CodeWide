@@ -253,9 +253,10 @@ describe("nativeSession.read", () => {
 describe("native session operations over JSON-RPC", () => {
   it("answer with v1 result shapes", async () => {
     const lines: unknown[] = [];
-    const { service } = harness({ store: store() });
+    const { service, rateLimits } = harness({ store: store() });
     const rpc = new RpcServer({
       logger: createMemoryLogger(),
+      rateLimits,
       runtime: scriptedRuntime().runtime,
       service,
       version: "0.1.0",

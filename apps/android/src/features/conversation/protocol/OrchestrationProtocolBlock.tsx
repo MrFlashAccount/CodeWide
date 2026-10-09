@@ -4,6 +4,7 @@ import { useContext, type ReactElement } from "react";
 import { Pressable, View } from "react-native";
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
 import { colors, controlHitSlop, iconSize } from "../../../theme";
+import { ProviderIcon } from "../../../ui/ProviderIcon";
 import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
 import { SubagentNavigationContext } from "../turns/turnContexts";
@@ -60,11 +61,7 @@ function OrchestrationHeader({
       onPress={open ?? undefined}
       style={({ pressed }) => [styles.header, pressed && styles.pressed]}
     >
-      <Ionicons
-        color={call.failed ? colors.red : colors.textMuted}
-        name={call.failed ? "alert-circle" : "people-outline"}
-        size={iconSize.inline}
-      />
+      <OrchestrationIcon call={call} />
       <OrchestrationTitle running={call.running} title={call.title} />
       <View style={styles.flex} />
       {call.meta !== null && (
@@ -76,6 +73,18 @@ function OrchestrationHeader({
         <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
       )}
     </Pressable>
+  );
+}
+
+/** The spawned agent's provider mark; otherwise the generic agents or failure glyph. */
+function OrchestrationIcon({ call }: { readonly call: OrchestrationToolCall }): ReactElement {
+  if (call.failed) {
+    return <Ionicons color={colors.red} name="alert-circle" size={iconSize.inline} />;
+  }
+  return call.provider === null ? (
+    <Ionicons color={colors.textMuted} name="people-outline" size={iconSize.inline} />
+  ) : (
+    <ProviderIcon provider={call.provider} size={iconSize.inline} />
   );
 }
 

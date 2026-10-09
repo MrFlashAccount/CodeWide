@@ -36,6 +36,20 @@ import { CLIENT_TOOL_SERVER } from "../mapping/clientTools.js";
 import { clientToolServer } from "./sdkClientTools.js";
 
 const PROBE_TIMEOUT_MS = 15_000;
+const USAGE_READ_TIMEOUT_MS = 5000;
+
+/**
+ * The SDK's usage read limited to plan rate limits. The SDK marks it
+ * experimental, so its answer is validated structurally by the mapper
+ * (`usageReadWindows`), and a `claude` that predates it rejects the call.
+ */
+async function readUsage(handle: Query): Promise<unknown> {
+  return withTimeout(
+    handle.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
+    USAGE_READ_TIMEOUT_MS,
+    "Claude usage read",
+  );
+}
 
 /** A push-based async input stream for one query. */
 class InputQueue implements AsyncIterable<SDKUserMessage> {
@@ -116,10 +130,14 @@ function toPermissionResult(
 }
 
 /** Rejects after `ms` unless `work` settles first. */
-async function withTimeout<Value>(work: Promise<Value>, ms: number): Promise<Value> {
+async function withTimeout<Value>(
+  work: Promise<Value>,
+  ms: number,
+  what = "Claude probe",
+): Promise<Value> {
   const abort = new AbortController();
   const timeout = delay(ms, null, { signal: abort.signal }).then(() => {
-    throw new Error("Claude probe timed out");
+    throw new Error(`${what} timed out`);
   });
   try {
     return await Promise.race([work, timeout]);
@@ -152,23 +170,44 @@ function mcpServersOption(
   return { mcpServers: { [CLIENT_TOOL_SERVER]: clientToolServer(clientTools) } };
 }
 
+type AccountField = (key: string) => string | null;
+
+/** Signed in when any login detail is present, or auth is external (3P providers). */
+function isAuthenticated(read: AccountField): boolean {
+  const provider = read("apiProvider");
+  return (
+    ["subscriptionType", "tokenSource", "apiKeySource", "email"].some(
+      (key) => read(key) !== null,
+    ) ||
+    (provider !== null && provider !== "firstParty")
+  );
+}
+
+/**
+ * The account label (email, else organization) exists only for an Anthropic
+ * login; tokens and key sources never leave here.
+ */
+function accountLabelOf(read: AccountField): string | null {
+  const provider = read("apiProvider");
+  return provider === null || provider === "firstParty"
+    ? (read("email") ?? read("organization"))
+    : null;
+}
+
 function accountOf(value: unknown): RuntimeAccount | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
-  const read = (key: string): string | null => {
+  const read: AccountField = (key) => {
     const field: unknown = Reflect.get(value, key);
     return typeof field === "string" && field.length > 0 ? field : null;
   };
-  const provider = read("apiProvider");
-  const authenticated =
-    read("subscriptionType") !== null ||
-    read("tokenSource") !== null ||
-    read("apiKeySource") !== null ||
-    read("email") !== null ||
-    (provider !== null && provider !== "firstParty");
-  // Only the plan type is surfaced; email and organization never leave here.
-  return { authenticated, label: read("subscriptionType") };
+  const accountLabel = accountLabelOf(read);
+  return {
+    ...(accountLabel === null ? {} : { accountLabel }),
+    authenticated: isAuthenticated(read),
+    label: read("subscriptionType"),
+  };
 }
 
 function rawModels(models: readonly unknown[]): readonly RawModel[] {
@@ -255,6 +294,7 @@ export function createSdkRuntime(claudeExecutable: string): ClaudeRuntime {
         offer: (prompt) => {
           input.push(toSdkMessage(prompt));
         },
+        readUsage: async () => readUsage(handle),
       };
     },
 
@@ -271,11 +311,17 @@ export function createSdkRuntime(claudeExecutable: string): ClaudeRuntime {
         prompt: input,
       });
       try {
+        // Best effort: a failed usage read leaves the limits unknown.
+        const usage = readUsage(handle).catch(() => null);
         const [initialization, models] = await withTimeout(
           Promise.all([handle.initializationResult(), handle.supportedModels()]),
           PROBE_TIMEOUT_MS,
         );
-        return { account: accountOf(initialization.account), models: rawModels(models) };
+        return {
+          account: accountOf(initialization.account),
+          models: rawModels(models),
+          usage: await usage,
+        };
       } finally {
         input.end();
         handle.close();

@@ -11,7 +11,14 @@
  *   every configured provider with its status, sign-in state and declared
  *   capabilities, plus the host-level capabilities of the server.
  *
- * Neither ever carries credentials, tokens, emails or organization names.
+ * - the neutral provider → companion notification `rateLimits.updated`, sent
+ *   by a provider that reports provider-level subscription limits (Claude)
+ *   whenever they change; the companion keeps the latest snapshot and lists it
+ *   on the provider's `companion/agentProviders/read` entry.
+ *
+ * None of them ever carries credentials or tokens. The only identifying value
+ * is the optional `accountLabel` (the signed-in email or organization), shown
+ * to the user like a Codex pool account's email and never logged.
  */
 
 import type { AdditiveBooleanCapability, BooleanCapability, CapabilitySet } from "./capabilities";
@@ -27,6 +34,54 @@ export interface AccountUpdatedParams {
 export interface AccountUpdatedNotification {
   readonly method: typeof ACCOUNT_UPDATED_NOTIFICATION;
   readonly params: AccountUpdatedParams;
+}
+
+/** Provider → companion notification: the provider's subscription limits changed. */
+export const RATE_LIMITS_UPDATED_NOTIFICATION = "rateLimits.updated" as const;
+
+/** Rolling window category: orders and labels the window. */
+export type RateLimitWindowKind = "other" | "session" | "weekly";
+
+/** Provider's verdict for a window; `warning` is allowed but close to the limit. */
+export type RateLimitWindowStatus = "allowed" | "rejected" | "warning";
+
+/** One subscription usage window of a provider. */
+export interface ProviderRateLimitWindow {
+  /**
+   * Stable per provider (Claude: `five_hour`, `seven_day`, `seven_day_opus`,
+   * `seven_day_sonnet`, `seven_day_overage_included`, `overage`), so a later
+   * update replaces the same window.
+   */
+  readonly id: string;
+  readonly kind: RateLimitWindowKind;
+  /** Provider display label, for example `Session` or `Weekly · Opus`. */
+  readonly label: string;
+  /** Reset time, Unix seconds; `null` when unknown. */
+  readonly resetsAt: number | null;
+  readonly status: RateLimitWindowStatus | null;
+  /** Share of the window used, integer 0–100; `null` when only a status is known. */
+  readonly usedPercent: number | null;
+  /** Window length in minutes; `null` when unknown. */
+  readonly windowDurationMins: number | null;
+}
+
+/**
+ * A provider's full subscription limit snapshot: every window it has reported,
+ * merged by `id`, ordered session, weekly, then the other ids sorted.
+ */
+export interface ProviderRateLimits {
+  /** Unix seconds of the latest change. */
+  readonly updatedAt: number;
+  readonly windows: readonly ProviderRateLimitWindow[];
+}
+
+export interface RateLimitsUpdatedParams {
+  readonly rateLimits: ProviderRateLimits;
+}
+
+export interface RateLimitsUpdatedNotification {
+  readonly method: typeof RATE_LIMITS_UPDATED_NOTIFICATION;
+  readonly params: RateLimitsUpdatedParams;
 }
 
 /** Client-wire read of the configured providers (answered in every mode). */
@@ -60,6 +115,11 @@ export type AgentProviderAuth = "authenticated" | "unauthenticated" | "unknown";
 
 /** One configured provider. Never a pool account. */
 export interface AgentProviderEntry {
+  /**
+   * The signed-in account (email, else organization) when the provider reports
+   * one; present only while `auth` is `authenticated`.
+   */
+  readonly accountLabel?: string;
   readonly auth: AgentProviderAuth;
   /** Declared capability set; `null` for a disabled provider. */
   readonly capabilities: CapabilitySet | null;
@@ -69,6 +129,12 @@ export interface AgentProviderEntry {
   /** Opaque plan label reported by the provider (for example `max`); `null` when unknown. */
   readonly planLabel: string | null;
   readonly primary: boolean;
+  /**
+   * Provider-level subscription limits. Present only for a provider that
+   * reports them (absent: it reports none, for example Codex, whose limits
+   * belong to its account pool); `null` until its first report.
+   */
+  readonly rateLimits?: ProviderRateLimits | null;
   readonly status: AgentProviderStatus;
 }
 

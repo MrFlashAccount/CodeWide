@@ -144,8 +144,9 @@ describe("SDK client tool server", () => {
 describe("tool.call over the stdio channel", () => {
   function rpcServer() {
     const lines: Record<string, unknown>[] = [];
-    const { service, queries } = harness();
+    const { service, queries, rateLimits } = harness();
     const rpc = new RpcServer({
+      rateLimits,
       service,
       runtime: scriptedRuntime().runtime,
       logger: createMemoryLogger(),

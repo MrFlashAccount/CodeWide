@@ -94,6 +94,11 @@ export interface ClaudeQuery {
   readonly next: () => Promise<IteratorResult<unknown, void>>;
   /** Queues one user message on the query's input stream. */
   readonly offer: (prompt: PromptOffer) => void;
+  /**
+   * The SDK's experimental usage read (plan rate limits) through this query;
+   * the raw answer, validated by `usageReadWindows`. Rejects when unsupported.
+   */
+  readonly readUsage: () => Promise<unknown>;
 }
 
 export interface RawModel {
@@ -103,20 +108,25 @@ export interface RawModel {
   readonly value: string;
 }
 
-/** Non-identifying account state derived from `initializationResult().account`. */
+/** Account state derived from `initializationResult().account`; never a credential. */
 export interface RuntimeAccount {
+  /** Signed-in email, else organization, of an Anthropic login; shown to the user, never logged. */
+  readonly accountLabel?: string;
   readonly authenticated: boolean;
+  /** Plan type such as `max`. */
   readonly label: string | null;
 }
 
 export interface ProbeResult {
   readonly account: RuntimeAccount | null;
   readonly models: readonly RawModel[];
+  /** Raw answer of the usage read, or `null` when it failed or is unsupported. */
+  readonly usage: unknown;
 }
 
 export interface ClaudeRuntime {
   readonly open: (options: QueryOpenOptions) => ClaudeQuery;
-  /** Starts a short-lived query without a prompt to read account and models; no model call. */
+  /** Starts a short-lived query without a prompt to read account, models and usage; no model call. */
   readonly probe: () => Promise<ProbeResult>;
 }
 

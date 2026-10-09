@@ -1,3 +1,4 @@
+import { agentProviders } from "../../data/workspace-runtime";
 import { ConversationComposition } from "./ConversationComposition";
 import { forkTargetChoices } from "../turnActions/forkTargets";
 import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
@@ -23,14 +24,20 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       : listedThread;
   return (
     <ConversationComposition
-      accounts={threadAgentAccounts(remoteThread, {
-        accountRateLimitsDatabase: props.runtime.accountRateLimits,
-        onRefreshAccountRateLimits:
-          props.activeConnectionId === ""
-            ? undefined
-            : async () =>
-                props.features.accounts.refreshAccountRateLimits(props.activeConnectionId, true),
-      })}
+      accounts={threadAgentAccounts(
+        remoteThread,
+        {
+          accountRateLimitsDatabase: props.runtime.accountRateLimits,
+          onRefreshAccountRateLimits:
+            props.activeConnectionId === ""
+              ? undefined
+              : async () =>
+                  props.features.accounts.refreshAccountRateLimits(props.activeConnectionId, true),
+        },
+        props.activeConnectionId === ""
+          ? null
+          : { agentProviders, connectionId: props.activeConnectionId },
+      )}
       actions={{
         archived: props.activeThread?.archived ?? false,
         forkTargets:

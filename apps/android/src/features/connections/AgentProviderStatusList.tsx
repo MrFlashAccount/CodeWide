@@ -5,6 +5,7 @@ import type { AgentProvidersResource } from "../../data/agentProvidersResource";
 import { colors, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowPosition } from "../../ui/AppListRow.types";
+import { ProviderIcon } from "../../ui/ProviderIcon";
 import { AppText as Text } from "../../ui/Typography";
 import { agentProviderStatusLines } from "./agentProviderPresentation";
 import { styles } from "./ConnectionRowEditor.styles";
@@ -28,11 +29,13 @@ export function AgentProviderStatusList({
       {lines.map((line, index) => (
         <AppListRow
           key={line.id}
-          leadingIcon={{
-            color: line.warning ? colors.warning : colors.textMuted,
-            name: line.warning ? "alert-circle-outline" : "sparkles-outline",
-            size: iconSize.action,
-          }}
+          leading={
+            <ProviderIcon
+              color={line.warning ? colors.warning : colors.textMuted}
+              provider={line.id}
+              size={iconSize.action}
+            />
+          }
           multiline
           position={listRowPosition(index, lines.length)}
           testID={`agent-provider-${line.id}`}

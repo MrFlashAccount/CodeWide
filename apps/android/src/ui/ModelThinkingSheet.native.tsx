@@ -23,6 +23,7 @@ import {
   STANDARD_SERVICE_TIER,
 } from "./modelServiceTier";
 import { modelEffortLabel } from "./modelEffortPresentation";
+import { ProviderIcon } from "./ProviderIcon";
 import { AppText as Text } from "./Typography";
 import type { ModelThinkingMenuProps, ModelSettingsChoice } from "./TurnControlMenus.types";
 
@@ -337,9 +338,7 @@ function ModelDisclosure({
       onPress={onPress}
       style={styles.modelButton}
     >
-      <Text numberOfLines={1} style={styles.rowText}>
-        {model?.label ?? "Choose model"}
-      </Text>
+      <ModelLabel label={model?.label ?? "Choose model"} provider={model?.provider ?? null} />
       <Ionicons
         color={colors.textMuted}
         name={expanded ? "chevron-up" : "chevron-down"}
@@ -400,9 +399,21 @@ function ModelRow({
       onPress={choose}
       style={styles.modelRow}
     >
-      <Text style={styles.rowText}>{candidate.label}</Text>
+      <ModelLabel label={candidate.label} provider={candidate.provider ?? null} />
       {selected && <Ionicons color={colors.text} name="checkmark" size={iconSize.inline} />}
     </Pressable>
+  );
+}
+
+/** A model's label, led by its provider's mark in a provider-aware catalog. */
+function ModelLabel({ label, provider }: { label: string; provider: string | null }): ReactNode {
+  return (
+    <View style={styles.modelLabel}>
+      {provider !== null && <ProviderIcon provider={provider} size={iconSize.inline} />}
+      <Text numberOfLines={1} style={styles.rowText}>
+        {label}
+      </Text>
+    </View>
   );
 }
 
@@ -549,6 +560,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xs,
     marginTop: spacing.xs,
+  },
+  modelLabel: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 1,
+    gap: spacing.xs,
   },
   modelList: {
     marginTop: spacing.xs,

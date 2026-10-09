@@ -7,6 +7,8 @@ type ModelControl = {
   efforts: string[];
   id: string;
   label: string;
+  /** Provider of a provider-aware catalog row (its mark); `null` or absent for a legacy catalog. */
+  provider?: string | null;
   serviceTiers?: readonly { description: string; id: string; name: string }[];
   supportsPersonality: boolean;
 };

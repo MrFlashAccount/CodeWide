@@ -22,11 +22,11 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::model::{
     AgentEvent, AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ClientToolSpec,
-    ModelCatalog, PermissionProfileCatalog, ProviderDescriptor, ProviderId, RequestRespondParams,
-    RpcError, ThreadCreateParams, ThreadListParams, ThreadListResult, ThreadReadResult,
-    ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, ToolCallParams,
-    ToolCallResult, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
-    TurnSteerResult,
+    ModelCatalog, PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
+    RequestRespondParams, RpcError, ThreadCreateParams, ThreadListParams, ThreadListResult,
+    ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
+    ToolCallParams, ToolCallResult, TurnInterruptParams, TurnStartParams, TurnStartResult,
+    TurnSteerParams, TurnSteerResult,
 };
 
 pub use native_storage::{
@@ -47,16 +47,19 @@ pub enum ProviderStatus {
     Live,
 }
 
-/// Sign-in state reported by a provider runtime. Never carries credentials,
-/// tokens, emails or organization names.
+/// Sign-in state reported by a provider runtime. Never carries credentials or
+/// tokens; the account label (email or organization) is shown to the user and
+/// never logged.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderAuth {
     /// The provider does not report sign-in state, or has not reported it yet.
     Unknown,
     Unauthenticated,
-    /// Signed in; `plan_label` is an opaque plan name such as `max`.
+    /// Signed in; `plan_label` is an opaque plan name such as `max`,
+    /// `account_label` the signed-in email or organization when reported.
     Authenticated {
         plan_label: Option<String>,
+        account_label: Option<String>,
     },
 }
 
@@ -197,6 +200,13 @@ pub trait AgentProvider: Send + Sync {
 
     /// Changes of [`Self::health`]; `None` when it never changes.
     fn subscribe_health(&self) -> Option<watch::Receiver<ProviderHealth>> {
+        None
+    }
+
+    /// Provider-level subscription limits. `None` when the provider reports
+    /// none (Codex: its limits belong to its account pool); otherwise the
+    /// latest snapshot, `None` inside until the first report.
+    fn subscribe_rate_limits(&self) -> Option<watch::Receiver<Option<ProviderRateLimits>>> {
         None
     }
 

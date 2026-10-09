@@ -49,6 +49,9 @@ fn round_trip_message(responds_to: Option<&str>, message: &Value) -> Result<Valu
         }
         Some("initialized") => Ok(message.clone()),
         Some(ACCOUNT_UPDATED_NOTIFICATION) => round_trip::<AccountUpdatedNotification>(message),
+        Some(RATE_LIMITS_UPDATED_NOTIFICATION) => {
+            round_trip::<RateLimitsUpdatedNotification>(message)
+        }
         Some(_) => round_trip::<RequestEnvelope>(message),
         None if message.get("error").is_some() => {
             let error = round_trip::<RpcError>(&message["error"])?;

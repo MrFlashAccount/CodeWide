@@ -1,8 +1,13 @@
 import type { TurnControlsValue } from "../data/turn-controls-types";
 import { listRowPosition } from "./AppListRow.types";
+import { iconSize } from "../theme";
 import { ControlOption } from "./ControlOption";
+import { ProviderIcon } from "./ProviderIcon";
 
-/** Shared model rows for list-based model selection surfaces. */
+/**
+ * Shared model rows for list-based model selection surfaces. Rows of a
+ * provider-aware catalog carry their provider's mark; a legacy catalog has none.
+ */
 export function ModelPickerOptions({
   models,
   onSelect,
@@ -17,6 +22,11 @@ export function ModelPickerOptions({
       {models.map((candidate, index) => (
         <ControlOption
           key={candidate.id}
+          leading={
+            candidate.provider === null ? undefined : (
+              <ProviderIcon provider={candidate.provider} size={iconSize.action} />
+            )
+          }
           onPress={() => {
             onSelect(candidate);
           }}

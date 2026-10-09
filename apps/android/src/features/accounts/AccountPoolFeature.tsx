@@ -5,16 +5,20 @@ import { AccountLoginSheet } from "./AccountLoginSheet";
 import { AccountProfileRow } from "./AccountProfileRow";
 /** V1 AccountPoolFeature owner, extracted without changing interaction or resource lifetime. */
 import { Ionicons } from "@expo/vector-icons";
+import { useSelector } from "@legendapp/state/react";
 import { useState } from "react";
+import { accountPoolOwner } from "../../data/agentProviders";
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
+import { ProviderIcon } from "../../ui/ProviderIcon";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AccountPoolFeature.styles";
 
 export function AccountPoolEditor({
   accountPool,
+  agentProviders,
   connectionId,
   onActivate,
   onCancelLogin,
@@ -26,6 +30,7 @@ export function AccountPoolEditor({
 }: AccountPoolProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const owner = useSelector(() => accountPoolOwner(agentProviders?.state$[connectionId]?.get()));
   const profiles = accountPool?.profiles ?? [];
   const profileIds = profiles
     .map((profile) => profile.id)
@@ -67,8 +72,9 @@ export function AccountPoolEditor({
     <>
       <View style={styles.accountPoolEditor}>
         <View style={styles.accountPoolHeader}>
+          {owner !== null && <ProviderIcon provider={owner.id} size={iconSize.inline} />}
           <View style={styles.flex}>
-            <Text style={styles.fieldLabel}>Codex accounts</Text>
+            <Text style={styles.fieldLabel}>{`${owner?.name ?? "Codex"} accounts`}</Text>
             <Text style={styles.menuActionSubtitle}>
               Manual selection · automatic fallback on limit
             </Text>

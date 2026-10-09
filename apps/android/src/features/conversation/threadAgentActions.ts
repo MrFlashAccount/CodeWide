@@ -3,7 +3,10 @@ import {
   threadAgentSupports,
   whenThreadAgentSupports as gate,
 } from "../../data/threadAgent";
-import type { ConversationAccountCapabilities } from "../accounts/conversationAccountCapabilities";
+import type {
+  ConversationAccountCapabilities,
+  ProviderLimitsScope,
+} from "../accounts/conversationAccountCapabilities";
 import { threadOffersFork } from "../turnActions/forkTargets";
 import type { createConversationScopeBindings } from "./conversationScopeBindings";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
@@ -61,13 +64,30 @@ export function threadAgentActions(
 /**
  * Account rate limits belong to the provider that declares `accounts.rateLimits`.
  * A thread of another provider keeps its context usage but gets no account rows
- * and never reads the account pool. A legacy thread keeps both.
+ * and never reads the account pool; its usage menu shows its own provider's
+ * subscription limits from the server's provider list instead (`scope`). A
+ * legacy thread keeps the account pool.
  */
 export function threadAgentAccounts(
   thread: unknown,
-  accounts: ConversationAccountCapabilities,
+  accounts: Omit<ConversationAccountCapabilities, "providerLimits">,
+  scope: ProviderLimitsScope | null,
 ): ConversationAccountCapabilities {
-  return threadAgentSupports(readThreadAgent(thread), "accounts.rateLimits")
-    ? accounts
-    : { accountRateLimitsDatabase: null, onRefreshAccountRateLimits: undefined };
+  const agent = readThreadAgent(thread);
+  if (threadAgentSupports(agent, "accounts.rateLimits")) {
+    return {
+      accountRateLimitsDatabase: accounts.accountRateLimitsDatabase,
+      onRefreshAccountRateLimits: accounts.onRefreshAccountRateLimits,
+      providerLimits: null,
+    };
+  }
+  const provider = agent?.provider ?? null;
+  return {
+    accountRateLimitsDatabase: null,
+    onRefreshAccountRateLimits: undefined,
+    providerLimits:
+      scope === null || provider === null
+        ? null
+        : { agentProviders: scope.agentProviders, connectionId: scope.connectionId, provider },
+  };
 }

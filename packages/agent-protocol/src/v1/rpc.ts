@@ -19,7 +19,7 @@ import type {
   ProviderRequestParams,
   ProviderRequestResult,
 } from "./operations";
-import type { AccountUpdatedNotification } from "./providers";
+import type { AccountUpdatedNotification, RateLimitsUpdatedNotification } from "./providers";
 
 export type RpcId = string | number;
 
@@ -77,7 +77,8 @@ export type ProtocolMessage =
   | ProviderRequestResponse
   | EventNotification
   | InitializedNotification
-  | AccountUpdatedNotification;
+  | AccountUpdatedNotification
+  | RateLimitsUpdatedNotification;
 
 const INVALID_REQUEST = -32_600;
 const METHOD_NOT_FOUND = -32_601;

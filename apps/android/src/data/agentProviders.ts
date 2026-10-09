@@ -6,8 +6,9 @@
  * its status, sign-in state and declared capabilities, plus the server's
  * host-level capabilities (`AgentProvidersReadResult` in
  * `packages/agent-protocol`). A provider is never a pool account, and the
- * Companion never sends credentials here: sign-in is a state plus an opaque
- * plan label.
+ * Companion never sends credentials here: sign-in is a state, an opaque plan
+ * label and the signed-in account label. A provider that reports subscription
+ * limits without an account pool (Claude) carries them as `rateLimits`.
  *
  * An older Companion does not know the method; the client then has no provider
  * list (`unsupported`) and renders exactly as before.
@@ -24,12 +25,46 @@ export type AgentProviderRuntimeStatus = "disabled" | "live" | "reconnecting" | 
 /** `unknown`: the provider does not report sign-in state, or has not yet. */
 type AgentProviderAuth = "authenticated" | "unauthenticated" | "unknown";
 
+/** One rolling usage window a provider reports for its signed-in subscription. */
+export type ProviderLimitWindow = {
+  /** Stable per provider, e.g. `five_hour` or `seven_day`; windows merge by it. */
+  readonly id: string;
+  readonly kind: "other" | "session" | "weekly";
+  /** Provider display label such as `Weekly · Opus`. */
+  readonly label: string;
+  /** Unix seconds; `null` when the provider did not say. */
+  readonly resetsAt: number | null;
+  readonly status: "allowed" | "rejected" | "warning" | null;
+  /** Share used, 0–100; `null` when only a status is known. */
+  readonly usedPercent: number | null;
+  readonly windowDurationMins: number | null;
+};
+
+/**
+ * Provider-level subscription limits (not an account pool):
+ * - `notReported` — the provider does not report them (the entry has no `rateLimits`);
+ * - `pending` — it reports them but has not yet (`rateLimits: null`), shown as unknown;
+ * - `known` — the latest full snapshot.
+ */
+export type ProviderLimits =
+  | { readonly kind: "notReported" }
+  | { readonly kind: "pending" }
+  | {
+      readonly kind: "known";
+      /** Unix seconds of the provider's latest report. */
+      readonly updatedAt: number;
+      readonly windows: readonly ProviderLimitWindow[];
+    };
+
 /** One configured provider of a server. */
 export type AgentProviderStatusEntry = {
+  /** Signed-in account (email or organization) when the provider reports one; `null` otherwise. */
+  readonly accountLabel: string | null;
   readonly auth: AgentProviderAuth;
   /** Supported capability names; `null` for a disabled provider. */
   readonly capabilities: readonly string[] | null;
   readonly id: AgentProviderId;
+  readonly limits: ProviderLimits;
   readonly name: string;
   /** Opaque plan label such as `max`; `null` when unknown or signed out. */
   readonly planLabel: string | null;
@@ -62,6 +97,13 @@ const MAX_NAME_CHARACTERS = 64;
 const MAX_PLAN_LABEL_CHARACTERS = 64;
 const MAX_CAPABILITIES = 256;
 const MAX_CAPABILITY_CHARACTERS = 128;
+const MAX_ACCOUNT_LABEL_CHARACTERS = 254;
+const MAX_LIMIT_WINDOWS = 16;
+const MAX_WINDOW_ID_CHARACTERS = 64;
+const MAX_WINDOW_LABEL_CHARACTERS = 64;
+const PERCENT_MAX = 100;
+const NOT_REPORTED: ProviderLimits = { kind: "notReported" };
+const PENDING: ProviderLimits = { kind: "pending" };
 
 /** Validates one read result or change notification payload; `null` for any other shape. */
 export function parseAgentProvidersResult(value: unknown): AgentProvidersSnapshot | null {
@@ -106,13 +148,19 @@ export function agentProvidersValue(state: AgentProvidersState): AgentProvidersS
  * single-provider or older server keeps its plain "Accounts" wording.
  */
 export function accountPoolOwnerName(state: AgentProvidersState | undefined): string | null {
+  return accountPoolOwner(state)?.name ?? null;
+}
+
+/** The provider owning the account pool, under the same multi-provider rule as its name. */
+export function accountPoolOwner(
+  state: AgentProvidersState | undefined,
+): AgentProviderStatusEntry | null {
   const value = state === undefined ? null : agentProvidersValue(state);
   if (value === null || value.providers.length < MULTI_PROVIDER_COUNT) {
     return null;
   }
   return (
-    value.providers.find((entry) => entry.capabilities?.includes("accounts.pool") === true)?.name ??
-    null
+    value.providers.find((entry) => entry.capabilities?.includes("accounts.pool") === true) ?? null
   );
 }
 
@@ -124,9 +172,11 @@ function parseEntry(value: unknown): AgentProviderStatusEntry | null {
     return null;
   }
   return {
+    accountLabel: boundedText(row.accountLabel, MAX_ACCOUNT_LABEL_CHARACTERS),
     auth: state.auth,
     capabilities: state.capabilities,
     id,
+    limits: entryLimits(row),
     name: boundedText(row.name, MAX_NAME_CHARACTERS) ?? id,
     planLabel: boundedText(row.planLabel, MAX_PLAN_LABEL_CHARACTERS),
     primary: state.primary,
@@ -154,6 +204,88 @@ function entryState(
 /** `null` for a disabled provider, `undefined` for an invalid shape. */
 function entryCapabilities(value: unknown): readonly string[] | null | undefined {
   return value === null ? null : (supportedNames(value) ?? undefined);
+}
+
+/** Absent `rateLimits`: the provider does not report provider-level limits. */
+function entryLimits(row: Record<string, unknown>): ProviderLimits {
+  return Object.hasOwn(row, "rateLimits") ? parseLimits(row.rateLimits) : NOT_REPORTED;
+}
+
+/**
+ * A provider that reports limits but sends an unusable snapshot reads as
+ * pending (unknown) rather than dropping the whole provider list; invalid
+ * windows are skipped.
+ */
+function parseLimits(value: unknown): ProviderLimits {
+  const record = unknownRecord(value);
+  const rows = record === null ? null : boundedWindowRows(record.windows);
+  const updatedAt: unknown = record?.updatedAt;
+  if (rows === null || !isPositiveInteger(updatedAt)) {
+    return PENDING;
+  }
+  const windows: ProviderLimitWindow[] = [];
+  for (const row of rows) {
+    const window = parseLimitWindow(row);
+    if (window !== null) {
+      windows.push(window);
+    }
+  }
+  return { kind: "known", updatedAt, windows };
+}
+
+function boundedWindowRows(value: unknown): readonly unknown[] | null {
+  return Array.isArray(value) && value.length <= MAX_LIMIT_WINDOWS ? value : null;
+}
+
+function parseLimitWindow(value: unknown): ProviderLimitWindow | null {
+  const row = unknownRecord(value);
+  const identity = row === null ? null : limitWindowIdentity(row);
+  if (row === null || identity === null) {
+    return null;
+  }
+  return {
+    id: identity.id,
+    kind: identity.kind,
+    label: identity.label,
+    resetsAt: positiveIntegerOrNull(row.resetsAt),
+    status: identity.status,
+    usedPercent: isPercent(row.usedPercent) ? row.usedPercent : null,
+    windowDurationMins: positiveIntegerOrNull(row.windowDurationMins),
+  };
+}
+
+/** The closed-vocabulary and naming fields of one window; `null` when any is invalid. */
+function limitWindowIdentity(
+  row: Record<string, unknown>,
+): Pick<ProviderLimitWindow, "id" | "kind" | "label" | "status"> | null {
+  const id = boundedText(row.id, MAX_WINDOW_ID_CHARACTERS);
+  const label = boundedText(row.label, MAX_WINDOW_LABEL_CHARACTERS);
+  const { kind, status } = row;
+  if (id === null || label === null || !isWindowKind(kind) || !isWindowStatus(status)) {
+    return null;
+  }
+  return { id, kind, label, status };
+}
+
+function positiveIntegerOrNull(value: unknown): number | null {
+  return isPositiveInteger(value) ? value : null;
+}
+
+function isWindowKind(value: unknown): value is ProviderLimitWindow["kind"] {
+  return value === "session" || value === "weekly" || value === "other";
+}
+
+function isWindowStatus(value: unknown): value is ProviderLimitWindow["status"] {
+  return value === null || value === "allowed" || value === "warning" || value === "rejected";
+}
+
+/** Unix seconds and window lengths are positive integers. */
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isPercent(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= PERCENT_MAX;
 }
 
 function isRuntimeStatus(value: unknown): value is AgentProviderRuntimeStatus {

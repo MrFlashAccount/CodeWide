@@ -14,6 +14,7 @@ import { useAppDialog } from "../../ui/AppDialog";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
 import { AccountPoolEditor } from "../accounts/AccountPoolFeature";
+import { ProviderAccounts } from "../accounts/ProviderAccounts";
 import { AgentProviderStatusList } from "./AgentProviderStatusList";
 import { connectionDiagnosticReport } from "./connectionDiagnosticReport";
 import { ServerIcon } from "./ServerIcon";
@@ -218,6 +219,7 @@ export function ConnectionRowEditor({
             onRemoveAccountProfile !== undefined && (
               <AccountPoolEditor
                 accountPool={accountPool}
+                {...(agentProviders === undefined ? {} : { agentProviders })}
                 connectionId={connection.id}
                 onActivate={onActivateAccountProfile}
                 onCancelLogin={onCancelAccountLogin}
@@ -228,6 +230,13 @@ export function ConnectionRowEditor({
                 onUpdate={onUpdateAccountProfile}
               />
             )}
+          {agentProviders !== undefined && (
+            <ProviderAccounts
+              agentProviders={agentProviders}
+              connectionId={connection.id}
+              serverName={connection.displayName}
+            />
+          )}
         </View>
       )}
     </View>

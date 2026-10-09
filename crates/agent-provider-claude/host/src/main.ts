@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { parseConfig } from "./config.js";
 import { createLogger } from "./log.js";
+import { RateLimitReporter } from "./account/rateLimitReporter.js";
 import { createSdkRuntime } from "./claude/sdkRuntime.js";
 import { createSdkSessionStore } from "./claude/sdkSessionStore.js";
 import { ThreadStateStore } from "./state/stateStore.js";
@@ -46,6 +47,13 @@ if (parsed.status === "error") {
   const runtime = createSdkRuntime(config.claudeExecutable);
   const sessionStore = createSdkSessionStore();
   const holder: { server: RpcServer | null } = { server: null };
+  const rateLimits = new RateLimitReporter({
+    logger,
+    nowMs,
+    publish: (limits) => {
+      holder.server?.publishRateLimits(limits);
+    },
+  });
   const service = new ThreadService({
     backgroundDeferMaxMs: BACKGROUND_DEFER_MAX_MINUTES * MS_PER_MINUTE,
     callClientTool: async (params, signal) => {
@@ -64,12 +72,14 @@ if (parsed.status === "error") {
     logger,
     newUuid: () => randomUUID(),
     nowMs,
+    rateLimits,
     runtime,
     sessionStore,
     stateStore: new ThreadStateStore(config.stateDirectory),
   });
   const server = new RpcServer({
     logger,
+    rateLimits,
     runtime,
     service,
     version: HOST_VERSION,

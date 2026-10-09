@@ -31,12 +31,17 @@ export const styles = StyleSheet.create({
     overflow: "hidden",
   },
   threadAgentBadge: {
+    alignItems: "center",
     borderColor: colors.border,
     borderRadius: radii.compact,
     borderWidth: StyleSheet.hairlineWidth,
-    color: colors.textMuted,
+    flexDirection: "row",
     flexShrink: 0,
+    gap: spacing.xxs,
     paddingHorizontal: spacing.xxs,
+  },
+  threadAgentBadgeText: {
+    color: colors.textMuted,
     ...typeScale.caption,
   },
   threadAttentionIcon: {

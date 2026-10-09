@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   AgentEvent,
+  ProviderRateLimits,
   ToolCallParams,
   ToolCallResult,
   TurnId,
@@ -20,6 +21,7 @@ import type {
   PromptOffer,
   QueryOpenOptions,
 } from "../../src/claude/port.js";
+import { RateLimitReporter } from "../../src/account/rateLimitReporter.js";
 import { createMemoryLogger } from "../../src/log.js";
 import { ThreadStateStore } from "../../src/state/stateStore.js";
 import { ThreadService, type OperationResult } from "../../src/threads/service.js";
@@ -35,6 +37,9 @@ export interface ScriptedQuery {
   readonly push: (frame: unknown) => void;
   readonly end: () => void;
   readonly fail: (error: Error) => void;
+  /** Answer of the next usage reads; a read rejects while it is `null`. */
+  usage: unknown;
+  usageReads: number;
 }
 
 export function scriptedRuntime(store: MemorySessionStore = new MemorySessionStore()): {
@@ -43,7 +48,8 @@ export function scriptedRuntime(store: MemorySessionStore = new MemorySessionSto
 } {
   const queries: ScriptedQuery[] = [];
   const runtime: ClaudeRuntime = {
-    probe: () => Promise.resolve({ account: { authenticated: true, label: "max" }, models: [] }),
+    probe: () =>
+      Promise.resolve({ account: { authenticated: true, label: "max" }, models: [], usage: null }),
     open(options): ClaudeQuery {
       const buffered: IteratorResult<unknown, void>[] = [];
       let failure: Error | null = null;
@@ -63,6 +69,8 @@ export function scriptedRuntime(store: MemorySessionStore = new MemorySessionSto
         offers: [],
         interrupts: 0,
         closed: false,
+        usage: null,
+        usageReads: 0,
         push: (frame) => {
           store.persistFrame(location, frame);
           deliver({ done: false, value: frame });
@@ -97,6 +105,12 @@ export function scriptedRuntime(store: MemorySessionStore = new MemorySessionSto
             waiter = { resolve, reject };
           });
         },
+        readUsage: () => {
+          scripted.usageReads += 1;
+          return scripted.usage === null
+            ? Promise.reject(new Error("usage read unsupported"))
+            : Promise.resolve(scripted.usage);
+        },
       };
     },
   };
@@ -119,6 +133,9 @@ export interface Harness {
   readonly logs: readonly string[];
   readonly stateDirectory: string;
   readonly clock: { now: number };
+  readonly rateLimits: RateLimitReporter;
+  /** Every snapshot the reporter published. */
+  readonly publishedLimits: ProviderRateLimits[];
 }
 
 export function harness(
@@ -138,6 +155,12 @@ export function harness(
     options.stateDirectory ?? mkdtempSync(join(tmpdir(), "claude-agent-host-unit-"));
   const nowMs = (): number => clock.now;
   const toolCalls: RecordedToolCall[] = [];
+  const publishedLimits: ProviderRateLimits[] = [];
+  const rateLimits = new RateLimitReporter({
+    logger,
+    nowMs,
+    publish: (limits) => publishedLimits.push(limits),
+  });
   const service = new ThreadService({
     callClientTool: (params, signal) =>
       new Promise((resolve) => {
@@ -155,6 +178,7 @@ export function harness(
     emit: (event) => events.push(event),
     nowMs,
     newUuid: counterUuids(),
+    rateLimits,
     interruptTimeoutMs: options.interruptTimeoutMs ?? 50,
     idleReleaseMs: options.idleReleaseMs ?? 30 * 60 * 1000,
     backgroundDeferMaxMs: 4 * 60 * 60 * 1000,
@@ -168,6 +192,8 @@ export function harness(
     logs: logger.lines,
     stateDirectory,
     clock,
+    rateLimits,
+    publishedLimits,
   };
 }
 

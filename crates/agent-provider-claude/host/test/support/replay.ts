@@ -23,6 +23,7 @@ import type {
   PromptOffer,
   QueryOpenOptions,
 } from "../../src/claude/port.js";
+import { RateLimitReporter } from "../../src/account/rateLimitReporter.js";
 import { createMemoryLogger } from "../../src/log.js";
 import { ThreadStateStore } from "../../src/state/stateStore.js";
 import { ThreadService } from "../../src/threads/service.js";
@@ -175,7 +176,7 @@ export async function replayTranscript(entries: readonly TranscriptEntry[]): Pro
   let gate: Signal | null = null;
 
   const runtime: ClaudeRuntime = {
-    probe: () => Promise.resolve({ account: null, models: [] }),
+    probe: () => Promise.resolve({ account: null, models: [], usage: null }),
     open(options: QueryOpenOptions): ClaudeQuery {
       opens.push(options);
       const location = { cwd: options.cwd, sessionId: options.identity.sessionId };
@@ -189,6 +190,7 @@ export async function replayTranscript(entries: readonly TranscriptEntry[]): Pro
         close: () => {
           closed = true;
         },
+        readUsage: () => Promise.reject(new Error("replays record no usage reads")),
         next: async () => {
           for (;;) {
             if (closed) return { done: true, value: undefined };
@@ -241,6 +243,13 @@ export async function replayTranscript(entries: readonly TranscriptEntry[]): Pro
   };
 
   const nowMs = steppingClock();
+  // Recorded rate_limit_event frames carry a status only; nothing is published.
+  // Its own fixed clock keeps the stepping clock (and the goldens) unchanged.
+  const rateLimits = new RateLimitReporter({
+    logger,
+    nowMs: () => 0,
+    publish: () => undefined,
+  });
   const service = new ThreadService({
     // Recorded fixtures carry no client tools.
     callClientTool: () => Promise.reject(new Error("replays declare no client tools")),
@@ -274,6 +283,7 @@ export async function replayTranscript(entries: readonly TranscriptEntry[]): Pro
       }
     },
     nowMs,
+    rateLimits,
     newUuid: counterUuids(),
     interruptTimeoutMs: 200,
     idleReleaseMs: 60 * 60 * 1000,
