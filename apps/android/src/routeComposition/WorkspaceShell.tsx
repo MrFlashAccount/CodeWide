@@ -119,6 +119,7 @@ function V1WorkspaceDestinationStack({
       <Stack.Screen name="browser/[sessionId]" options={v1BrowserScreenOptions} />
       <Stack.Screen name="drawing/[sessionId]" options={v1FullscreenScreenOptions} />
       <Stack.Screen name="projects/add/[connectionId]" options={v1SheetScreenOptions} />
+      <Stack.Screen name="projects/add/index" options={v1SheetScreenOptions} />
       <Stack.Screen name="projects/index" options={v1SheetScreenOptions} />
       <Stack.Screen name="search" options={v1SheetScreenOptions} />
       <Stack.Screen name="settings/index" options={v1SheetScreenOptions} />
