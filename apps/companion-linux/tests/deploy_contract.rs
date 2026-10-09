@@ -89,7 +89,7 @@ fn default_distribution_installs_and_registers_git_plugin() {
 fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
     assert!(COMPANION_UNIT.contains("current/bin/codewide-companion serve"));
     assert!(INSTALL_SCRIPT.contains("generations/$artifact_digest"));
-    assert!(INSTALL_SCRIPT.contains("mv -f \"$install_root/.current-new\""));
+    assert!(INSTALL_SCRIPT.contains("mv -fT \"$install_root/.current-new\""));
     assert!(!INSTALL_SCRIPT.contains("$install_root/codewide-companion\""));
     assert!(UPDATE_UNIT.contains("bootstrap/codewide-companion-update-guardian"));
     assert!(!UPDATE_UNIT.contains("current/"));
@@ -132,4 +132,22 @@ fn one_shot_release_validates_builds_installs_verifies_and_rolls_back() {
     assert!(RELEASE_SCRIPT.contains("./apps/companion-linux/deploy/install.sh"));
     assert!(RELEASE_SCRIPT.contains("./apps/companion-linux/deploy/verify.sh"));
     assert!(RELEASE_SCRIPT.contains("restoring the previous installation"));
+}
+
+#[test]
+fn installer_replaces_the_current_symlink_instead_of_moving_into_it() {
+    // `current` is a symlink to a generation directory. Without `-T`, GNU mv
+    // moves the new link *into* the old generation and the switch is lost.
+    for line in INSTALL_SCRIPT
+        .lines()
+        .filter(|line| line.contains("mv ") && line.contains("\"$install_root/current\""))
+    {
+        assert!(
+            line.contains("mv -fT"),
+            "current switch must use mv -T: {line}"
+        );
+    }
+    assert!(
+        INSTALL_SCRIPT.contains("mv -fT \"$install_root/.current-new\" \"$install_root/current\"")
+    );
 }
