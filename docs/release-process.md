@@ -76,7 +76,7 @@ product versions `0.5.0`. Subsequent releases reuse unchanged products.
 
 Each product workflow runs in validation mode and uploads its artifact to the
 parent run. The final job checks the available files, source checksums, and
-signed appcast URL, then generates a manifest, `SHA256SUMS`, and Markdown
+signed appcast URL, then generates a signed host-update manifest, `SHA256SUMS`, and Markdown
 release notes from commit subjects between the common base and the release
 commit. It uploads the complete set into a **draft** GitHub Release, downloads
 it again to compare every byte, and only then publishes the dated release.
@@ -92,6 +92,34 @@ A failed build, missing file, or failed upload leaves no public release. A
 failed upload may leave a draft, which the same commit can safely retry.
 `dry_run` stops after assembling the validated package and attaches it as a
 workflow artifact. OTA remains a separate manual channel.
+
+The signed `release-manifest.json` uses a dedicated P-256 key from the
+`HOST_UPDATE_P256_PRIVATE_KEY` release-environment secret. The release job
+proves it matches `HOST_UPDATE_P256_PUBLIC_KEY_SPKI`; platform guardians pin
+that public SPKI and verify the ES256 signature before considering any
+target. The signed payload has a monotonic semantic-version sequence,
+issue/expiry timestamps, and exact Linux/macOS build, source revision, artifact
+digest, bootstrap/journal requirement, state epoch, and rollback source digest.
+The immediately preceding signed manifest is verified with the same key before
+its target digests are admitted into `rollbackCompatibleFrom`.
+
+The Linux baseline bundle and macOS application embed only the matching public
+SPKI and `HOST_UPDATE_SIGNING_KEY_ID`. Manual baseline installation persists
+that immutable trust outside replaceable Companion generations. The private
+signing key is available only to release-manifest assembly and is never exposed
+to either platform artifact build.
+
+The Linux bundle also carries its release version, the exact full source
+revision, and the same 12-character build id used by the signed release target.
+The standalone installer accepts that provenance only after verifying the
+archive checksum, requires the build id to match the source-revision prefix,
+and writes those exact values into immutable generation metadata.
+
+The first signed manifest is deliberately a manual baseline: it has no signed
+predecessor digest, so no installed version can remotely apply it. Install that
+release through the existing one-shot/manual paths. Remote apply remains
+disabled until the Linux and macOS guardians independently satisfy the recovery
+gates in [Companion remote update](companion-remote-update.md).
 
 GitHub Release publication is the atomic boundary. Homebrew tap updates run
 after publication in one commit for Linux CodeWide, Relay, and macOS; a tap
@@ -242,6 +270,13 @@ Required GitHub `release` environment secrets:
 
 - `SPARKLE_ED25519_PUBLIC_KEY`
 - `SPARKLE_ED25519_PRIVATE_KEY`
+- `HOST_UPDATE_P256_PRIVATE_KEY` (PKCS#8 PEM; shared release-set manifest signer)
+- `HOST_UPDATE_P256_PUBLIC_KEY_SPKI` (base64 DER SPKI; pinned by both guardians)
+
+The optional release-environment variable `HOST_UPDATE_SIGNING_KEY_ID` defaults
+to `host-update-v1`. Key rotation changes the variable and both key secrets;
+the first release under the new id intentionally ignores the old-key manifest
+and becomes another manual baseline.
 
 There is no Developer ID or notarization step. Sparkle authenticates update
 artifacts, while macOS may still warn on the first launch of an ad-hoc-signed

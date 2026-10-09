@@ -11,6 +11,10 @@ use companion_core::runtime_host::{
 };
 use companion_core::{
     host_identity::HostDisplayName,
+    host_update::{
+        HOST_UPDATE_BOOTSTRAP_VERSION, HOST_UPDATE_JOURNAL_VERSION, HostPlatform, ReleaseAdmission,
+        SignedReleaseDescriptor, admit_signed_release, verify_signed_release_descriptor,
+    },
     managed_runtime::{
         AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
         relay_connection_label,
@@ -21,6 +25,7 @@ use companion_core::{
 };
 
 mod codex_installation;
+mod macos_host_update;
 
 pub use codex_installation::FfiCodexInstallation;
 use codex_installation::{inspect_codex_installation, start_codex_app_server};
@@ -90,6 +95,133 @@ pub struct FfiDeviceStatus {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct FfiHostUpdateTarget {
+    pub platform: String,
+    pub version: String,
+    pub build: String,
+    pub source_revision: String,
+    pub artifact_url: String,
+    pub sha256: String,
+    pub bootstrap_version: u16,
+    pub journal_version: u16,
+    pub state_epoch: u32,
+    pub rollback_compatible_from: Vec<String>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct FfiVerifiedHostUpdateRelease {
+    pub sequence: u64,
+    pub expires_at: u64,
+    pub targets: Vec<FfiHostUpdateTarget>,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct FfiAdmittedHostUpdate {
+    pub sequence: u64,
+    pub expires_at: u64,
+    pub target_fingerprint: String,
+    pub target: FfiHostUpdateTarget,
+}
+
+/// Verifies a signed stable descriptor for baseline receipt establishment.
+/// This does not admit an update; callers must independently prove the
+/// installed bundle is byte-identical to the verified current release image.
+///
+/// # Errors
+///
+/// Returns an error when the envelope, signature, trust key, channel, or
+/// freshness contract is invalid.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
+pub fn verify_host_update_release(
+    envelope_json: String,
+    public_key_spki: String,
+    now_unix_seconds: u64,
+    trusted_key_id: String,
+) -> Result<FfiVerifiedHostUpdateRelease, CompanionFfiError> {
+    let envelope: SignedReleaseDescriptor =
+        serde_json::from_str(&envelope_json).map_err(CompanionFfiError::runtime)?;
+    let descriptor = verify_signed_release_descriptor(
+        &envelope,
+        &public_key_spki,
+        now_unix_seconds,
+        &trusted_key_id,
+    )
+    .map_err(CompanionFfiError::runtime)?;
+    Ok(FfiVerifiedHostUpdateRelease {
+        sequence: descriptor.sequence,
+        expires_at: descriptor.expires_at,
+        targets: descriptor
+            .targets
+            .into_iter()
+            .map(ffi_host_update_target)
+            .collect(),
+    })
+}
+
+/// Applies the complete shared admission policy to one macOS target.
+///
+/// # Errors
+///
+/// Returns an error when signature verification or any target, predecessor,
+/// sequence, compatibility, or state-epoch admission rule fails.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+pub fn admit_macos_host_update_release(
+    envelope_json: String,
+    public_key_spki: String,
+    now_unix_seconds: u64,
+    trusted_key_id: String,
+    current_version: String,
+    current_digest: String,
+    highest_sequence: u64,
+    state_epoch: u32,
+) -> Result<FfiAdmittedHostUpdate, CompanionFfiError> {
+    let envelope: SignedReleaseDescriptor =
+        serde_json::from_str(&envelope_json).map_err(CompanionFfiError::runtime)?;
+    let admission = ReleaseAdmission {
+        trusted_key_id: &trusted_key_id,
+        platform: HostPlatform::MacosUniversal,
+        current_version: &current_version,
+        current_digest: &current_digest,
+        highest_sequence,
+        state_epoch,
+        bootstrap_version: HOST_UPDATE_BOOTSTRAP_VERSION,
+        journal_version: HOST_UPDATE_JOURNAL_VERSION,
+    };
+    let (descriptor, target, target_fingerprint) =
+        admit_signed_release(&envelope, &public_key_spki, now_unix_seconds, &admission)
+            .map_err(CompanionFfiError::runtime)?;
+    Ok(FfiAdmittedHostUpdate {
+        sequence: descriptor.sequence,
+        expires_at: descriptor.expires_at,
+        target_fingerprint,
+        target: ffi_host_update_target(target),
+    })
+}
+
+fn ffi_host_update_target(
+    target: companion_core::host_update::ReleaseTargetV1,
+) -> FfiHostUpdateTarget {
+    FfiHostUpdateTarget {
+        platform: match target.platform {
+            HostPlatform::LinuxX86_64 => "linux-x86-64",
+            HostPlatform::MacosUniversal => "macos-universal",
+        }
+        .to_owned(),
+        version: target.version,
+        build: target.build,
+        source_revision: target.source_revision,
+        artifact_url: target.artifact_url,
+        sha256: target.sha256,
+        bootstrap_version: target.bootstrap_version,
+        journal_version: target.journal_version,
+        state_epoch: target.state_epoch,
+        rollback_compatible_from: target.rollback_compatible_from,
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct FfiPairing {
     pub link: String,
     pub expires_at_unix_ms: u64,
@@ -152,13 +284,20 @@ impl CoreHost {
             .map_err(CompanionFfiError::runtime)?;
         let host_display_name =
             HostDisplayName::new(computer_name).map_err(CompanionFfiError::runtime)?;
+        let updater_root = Path::new(&state_directory)
+            .parent()
+            .ok_or_else(|| CompanionFfiError::runtime("Companion state directory has no parent"))?
+            .join("Updater");
         let config = ManagedRuntimeConfig::desktop(
             state_directory.into(),
             codex_home.clone(),
             host_display_name,
         )
         .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly)
-        .with_listen_address(listen_address.parse().map_err(CompanionFfiError::runtime)?);
+        .with_listen_address(listen_address.parse().map_err(CompanionFfiError::runtime)?)
+        .with_host_update_guardian(macos_host_update::MacOsHostUpdateGuardian::shared(
+            updater_root,
+        ));
         let companion = executor
             .block_on(ManagedRuntime::start(config))
             .map_err(CompanionFfiError::runtime)?;

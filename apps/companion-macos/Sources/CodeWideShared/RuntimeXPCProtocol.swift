@@ -10,6 +10,12 @@ import Foundation
         withReply reply: @escaping @Sendable (RuntimeHealthPayload?, NSError?) -> Void
     )
 
+    /// Stops the runtime for a guardian-owned transaction without creating a
+    /// second pending/last-update authority in RuntimeHost state.
+    func stopForGuardianUpdate(
+        withReply reply: @escaping @Sendable (Bool, NSError?) -> Void
+    )
+
     func appServer(
         withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
     )

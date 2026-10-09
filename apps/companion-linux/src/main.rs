@@ -1238,12 +1238,11 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     if let Some(account_pool) = &account_pool {
         sync = sync.with_account_pool(account_pool);
     }
-    let identity = CompanionIdentity::load_or_create(
-        &options
-            .identity_dir
-            .clone()
-            .unwrap_or_else(|| state_directory.join("identity")),
-    )?;
+    let identity_directory = options
+        .identity_dir
+        .clone()
+        .unwrap_or_else(|| state_directory.join("identity"));
+    let identity = CompanionIdentity::load_or_create(&identity_directory)?;
     // Retain the historical filename: V1 uploads already persist ownership here.
     let workspace_upload_staging = WorkspaceUploadStore::open(
         state_directory.join("sync-v2-workspace-uploads.redb"),
@@ -1270,6 +1269,15 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let mut excluded_ports = HashSet::from([options.listen.port()]);
     excluded_ports.insert(bootstrap_tls_target.port());
     excluded_ports.insert(inner_tls_target.port());
+    let update_guardian = Arc::new(
+        codewide_companion::host_update::LinuxHostUpdateGuardian::new_with_runtime(
+            codewide_companion::host_update::LinuxHostUpdateGuardian::default_root(),
+            codewide_companion::host_update::LinuxHostUpdateGuardian::default_state_root(),
+            identity.public().tls_pin_sha256.clone(),
+            identity_directory.join("identity.json"),
+            relay.clone(),
+        ),
+    );
     let services = server::CompanionServices {
         build_shelf: configured_build_shelf()?,
         files: Some(files),
@@ -1299,7 +1307,13 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         &identity,
         registry.trusted_client_spki(),
     )?;
-    let routers = server::split_routers_with_registry_and_services(store, registry, sync, services);
+    let routers = server::split_routers_with_registry_services_and_host_update(
+        store,
+        registry,
+        sync,
+        services,
+        Some(update_guardian),
+    );
     let control = local_control::bind(&options.control_endpoint).await?;
     info!(
         public = %options.listen,

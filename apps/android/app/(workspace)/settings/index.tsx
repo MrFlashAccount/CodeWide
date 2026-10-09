@@ -7,6 +7,7 @@ import {
   workspaceRuntime,
 } from "../../../src/data/workspace-runtime";
 import { SubscribedConnectionSettings } from "../../../src/features/settings/SettingsFeature";
+import { useHostUpdateProjection } from "../../../src/features/connections/useHostUpdateProjection";
 import { workspaceFeatures as features } from "../../../src/features/workspace/createWorkspaceFeatures";
 import { useWorkspaceRouteResources } from "../../../src/services/workspace/workspaceRouteResources";
 
@@ -27,15 +28,22 @@ export default function V1SettingsRoute(): React.JSX.Element {
   const visible = useIsFocused();
   const params = useLocalSearchParams<{ request?: string; section?: string }>();
   const resources = useWorkspaceRouteResources();
+  const hostUpdates = useHostUpdateProjection(
+    resources.list.settingsConnections,
+    features.connections.hostUpdates,
+  );
   return (
     <SubscribedConnectionSettings
       accountRateLimitsDatabase={resources.runtime.accountRateLimits}
       connections={resources.list.settingsConnections}
       entryPage={params.section === "voice-assistant" ? "voiceAssistant" : "overview"}
       {...(params.request === undefined ? {} : { entryRequest: params.request })}
+      hostUpdates={hostUpdates}
       onAddServer={() => {
         router.push("/settings/servers/new");
       }}
+      onApplyHostUpdate={features.connections.hostUpdates.apply}
+      onCheckHostUpdate={features.connections.hostUpdates.check}
       onClose={() => {
         recoverUnavailableRoute(router, "/");
       }}

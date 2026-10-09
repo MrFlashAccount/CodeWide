@@ -5,7 +5,8 @@ printf '%s\n' 'This complete Companion release may take 3-10 minutes. AI agents:
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 INSTALL_ROOT="$HOME/.local/lib/codewide"
-PLUGIN_ROOT="$INSTALL_ROOT/plugins"
+CURRENT_LINK="$INSTALL_ROOT/current"
+BOOTSTRAP_ROOT="$INSTALL_ROOT/bootstrap"
 UNIT_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 TMP_ROOT=${TMPDIR:-/tmp}
 BACKUP_DIR=
@@ -46,6 +47,28 @@ restore_target() {
   fi
 }
 
+backup_current_link() {
+  if [ -L "$CURRENT_LINK" ]; then
+    readlink "$CURRENT_LINK" >"$BACKUP_DIR/current.link"
+  elif [ -e "$CURRENT_LINK" ]; then
+    printf '%s\n' "Refusing non-symlink Companion current path: $CURRENT_LINK" >&2
+    return 1
+  else
+    : >"$BACKUP_DIR/current.missing"
+  fi
+}
+
+restore_current_link() {
+  temporary="$INSTALL_ROOT/.current-release-restore"
+  rm -f -- "$temporary"
+  if [ -f "$BACKUP_DIR/current.link" ]; then
+    ln -s "$(cat "$BACKUP_DIR/current.link")" "$temporary"
+    mv -f -- "$temporary" "$CURRENT_LINK"
+  elif [ -f "$BACKUP_DIR/current.missing" ]; then
+    rm -f -- "$CURRENT_LINK"
+  fi
+}
+
 cleanup_backup() {
   [ -n "$BACKUP_DIR" ] || return 0
   case "$BACKUP_DIR" in
@@ -81,8 +104,10 @@ run_quiet() {
 validate_release_payload() {
   test -x target/release/codewide-companion
   test -x target/release/codewide-vcs-git
+  test -x target/release/codewide-companion-update-guardian
   test -x apps/companion-linux/deploy/memory-watch.sh
   test -r apps/companion-linux/deploy/codewide-companion.service
+  test -r apps/companion-linux/deploy/codewide-companion-update.service
   test -r apps/companion-linux/deploy/codewide-companion-memory-watch.service
   test -r apps/companion-linux/deploy/codewide-companion-memory-watch.timer
 }
@@ -93,12 +118,13 @@ finish_release() {
   if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_STARTED" -eq 1 ]; then
     printf '%s\n' 'Companion release failed after installation started; restoring the previous installation.' >&2
     systemctl --user stop codewide-companion.service 2>/dev/null || true
-    restore_target companion "$INSTALL_ROOT/codewide-companion" 0755
-    restore_target vcs-git "$PLUGIN_ROOT/codewide-vcs-git" 0755
-    restore_target memory-watch "$INSTALL_ROOT/codewide-companion-memory-watch" 0755
+    restore_target update-guardian "$BOOTSTRAP_ROOT/codewide-companion-update-guardian" 0755
+    restore_target update-config "$BOOTSTRAP_ROOT/config.json" 0600
     restore_target unit "$UNIT_ROOT/codewide-companion.service" 0644
+    restore_target update-unit "$UNIT_ROOT/codewide-companion-update.service" 0644
     restore_target memory-watch-unit "$UNIT_ROOT/codewide-companion-memory-watch.service" 0644
     restore_target memory-watch-timer "$UNIT_ROOT/codewide-companion-memory-watch.timer" 0644
+    restore_current_link
     systemctl --user daemon-reload
     if [ "$SERVICE_WAS_ACTIVE" -eq 1 ]; then
       systemctl --user restart codewide-companion.service || true
@@ -134,6 +160,7 @@ run_quiet 'building optimized binaries' ./scripts/build-companion.sh --quiet
 run_quiet 'validating release payload' validate_release_payload
 
 SOURCE_REVISION=$(git rev-parse HEAD)
+COMPANION_BUILD=$(printf '%.12s' "$SOURCE_REVISION")
 SOURCE_DIRTY=false
 if [ -n "$(git status --porcelain)" ]; then
   SOURCE_DIRTY=true
@@ -141,7 +168,9 @@ fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   BINARY_SHA256=$(sha256sum target/release/codewide-companion | cut -d ' ' -f 1)
-  printf '%s\n' "{\"release\":\"companion\",\"status\":\"validated\",\"dryRun\":true,\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\"}"
+  GUARDIAN_SHA256=$(sha256sum target/release/codewide-companion-update-guardian | cut -d ' ' -f 1)
+  UPDATE_UNIT_SHA256=$(sha256sum apps/companion-linux/deploy/codewide-companion-update.service | cut -d ' ' -f 1)
+  printf '%s\n' "{\"release\":\"companion\",\"status\":\"validated\",\"dryRun\":true,\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\",\"guardianSha256\":\"$GUARDIAN_SHA256\",\"updateUnitSha256\":\"$UPDATE_UNIT_SHA256\"}"
   exit 0
 fi
 
@@ -149,20 +178,26 @@ BACKUP_DIR=$(mktemp -d "$TMP_ROOT/codewide-companion-release.XXXXXX")
 if systemctl --user is-active --quiet codewide-companion.service; then
   SERVICE_WAS_ACTIVE=1
 fi
-backup_target "$INSTALL_ROOT/codewide-companion" companion
-backup_target "$PLUGIN_ROOT/codewide-vcs-git" vcs-git
-backup_target "$INSTALL_ROOT/codewide-companion-memory-watch" memory-watch
+backup_current_link
+backup_target "$BOOTSTRAP_ROOT/codewide-companion-update-guardian" update-guardian
+backup_target "$BOOTSTRAP_ROOT/config.json" update-config
 backup_target "$UNIT_ROOT/codewide-companion.service" unit
+backup_target "$UNIT_ROOT/codewide-companion-update.service" update-unit
 backup_target "$UNIT_ROOT/codewide-companion-memory-watch.service" memory-watch-unit
 backup_target "$UNIT_ROOT/codewide-companion-memory-watch.timer" memory-watch-timer
 
 DEPLOYMENT_STARTED=1
-run_quiet 'installing companion' ./apps/companion-linux/deploy/install.sh
+run_quiet 'installing companion' env \
+  CODEWIDE_COMPANION_BUILD="$COMPANION_BUILD" \
+  CODEWIDE_COMPANION_SOURCE_REVISION="$SOURCE_REVISION" \
+  ./apps/companion-linux/deploy/install.sh
 run_quiet 'verifying installation' ./apps/companion-linux/deploy/verify.sh
 DEPLOYMENT_STARTED=0
 
-BINARY_SHA256=$(sha256sum "$INSTALL_ROOT/codewide-companion" | cut -d ' ' -f 1)
+BINARY_SHA256=$(sha256sum "$CURRENT_LINK/bin/codewide-companion" | cut -d ' ' -f 1)
+GUARDIAN_SHA256=$(sha256sum "$BOOTSTRAP_ROOT/codewide-companion-update-guardian" | cut -d ' ' -f 1)
+UPDATE_UNIT_SHA256=$(sha256sum "$UNIT_ROOT/codewide-companion-update.service" | cut -d ' ' -f 1)
 MAIN_PID=$(systemctl --user show codewide-companion.service -p MainPID --value)
 RESTARTS=$(systemctl --user show codewide-companion.service -p NRestarts --value)
 
-printf '%s\n' "{\"release\":\"companion\",\"status\":\"published\",\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\",\"mainPid\":$MAIN_PID,\"restartCount\":$RESTARTS}"
+printf '%s\n' "{\"release\":\"companion\",\"status\":\"published\",\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\",\"guardianSha256\":\"$GUARDIAN_SHA256\",\"updateUnitSha256\":\"$UPDATE_UNIT_SHA256\",\"mainPid\":$MAIN_PID,\"restartCount\":$RESTARTS}"

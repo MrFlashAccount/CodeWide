@@ -21,6 +21,9 @@ it("renders the same server icon in settings and thread-list projections", () =>
   const sections = connectionSettingsSections({
     accountRateLimits: [],
     connections: [connection],
+    hostUpdates: {},
+    onApplyHostUpdate: jest.fn(async () => undefined),
+    onCheckHostUpdate: jest.fn(async () => undefined),
     onDelete: jest.fn(async () => undefined),
     onReconnect: jest.fn(async () => undefined),
     onToggle: jest.fn(async () => undefined),

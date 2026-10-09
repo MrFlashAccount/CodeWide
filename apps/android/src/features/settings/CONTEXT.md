@@ -16,6 +16,8 @@ Personal voice enrollment is an explicit six-second microphone action. The switc
 
 `SettingsSheet` retains its selected-server navigation, back behavior, refreshed content and overview fallback when a selected server disappears. Servers are the only headed overview section. Security, Voice Assistant and Advanced form one list; Security opens a dedicated page whose current control is Biometric Lock. Closing/reopening and adding a server preserve the existing callback order. `SettingsVersion` preserves clipboard and version presentation. No settings action disposes or reconstructs the application runtime.
 
+Each server page renders the Connections-owned Companion update projection. Settings owns neither HTTP/session access nor update operation state: it shows the current and available versions, platform, capability and durable terminal result, confirms the temporary disconnect plus automatic rollback, then emits the exact displayed target fingerprint. Pending activation preserves and shimmers the current version text; a disconnect does not remove the server or clear the operation.
+
 Allowed imports are connection public capabilities and existing shared data/UI/boot authorities. Private cross-feature imports, V2 runtime/storage, lower-to-feature edges and full RemoteWorkspace contracts are forbidden. The experiment and diagnostics modules stay at their current paths until their approved units migrate.
 
 Verification: `settings-sheet.native.test.tsx`, `v1-voice-settings.render.test.tsx`, `user-preferences.test.ts`, `global-supervisor-thread-profile.test.ts`, `global-supervisor-runtime.test.ts`, `app-lock.test.ts`, `v1-settings-feature-contract.test.ts`, native configuration checks, and `pnpm validate:android:v1`.

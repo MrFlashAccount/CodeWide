@@ -20,6 +20,7 @@ pub mod history;
 mod history_questions;
 pub mod history_service;
 pub mod host_identity;
+pub mod host_update;
 pub mod identity;
 pub mod image_previews;
 pub mod managed_runtime;

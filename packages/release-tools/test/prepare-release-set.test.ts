@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,60 +9,83 @@ import { describe, expect, it } from "vitest";
 import { prepareReleaseSet } from "../../../scripts/prepare-release-set";
 import { readReleaseProducts } from "../../../scripts/release-product-contract";
 
-const version = "0.4.1";
-const artifactFiles = [
-  [`codewide-relay-${version}-linux-x86_64`, "codewide-relay-x86_64-unknown-linux-musl"],
-  [
-    `codewide-companion-${version}-linux-x86_64`,
-    `codewide-companion-${version}-x86_64-unknown-linux-musl.tar.gz`,
-  ],
-  [`CodeWide-${version}`, `CodeWide-${version}.dmg`],
-  [`CodeWide-${version}`, "appcast.xml"],
-  [`CodeWide-Android-${version}`, "app-release.apk"],
-] as const;
+const releaseKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+const signing = {
+  privateKeyPem: releaseKey.privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+  publicKeySpki: releaseKey.publicKey.export({ format: "der", type: "spki" }).toString("base64"),
+  keyId: "test-release-v1",
+  nowMs: 1_800_000_000_000,
+} as const;
 
-function fixture(root: string): {
-  readonly planPath: string;
-  readonly artifacts: string;
-  readonly output: string;
-} {
+const version = "0.4.1";
+function artifactFiles(releaseVersion: string) {
+  return [
+    [`codewide-relay-${releaseVersion}-linux-x86_64`, "codewide-relay-x86_64-unknown-linux-musl"],
+    [
+      `codewide-companion-${releaseVersion}-linux-x86_64`,
+      `codewide-companion-${releaseVersion}-x86_64-unknown-linux-musl.tar.gz`,
+    ],
+    [`CodeWide-${releaseVersion}`, `CodeWide-${releaseVersion}.dmg`],
+    [`CodeWide-${releaseVersion}`, "appcast.xml"],
+    [`CodeWide-Android-${releaseVersion}`, "app-release.apk"],
+  ] as const;
+}
+
+function fixture(
+  root: string,
+  releaseVersion = version,
+  linuxSourceRevision?: string,
+): { readonly planPath: string; readonly artifacts: string; readonly output: string } {
+  mkdirSync(root, { recursive: true });
   const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const base = execFileSync("git", ["rev-parse", "HEAD~1"], { encoding: "utf8" }).trim();
   const planPath = join(root, "plan.json");
   const artifacts = join(root, "artifacts");
   const output = join(root, "output");
-  writeFileSync(
-    planPath,
-    JSON.stringify({
-      base,
+  const previousVersion = releaseVersion === version ? "0.4.0" : version;
+  writeFileSync(planPath, JSON.stringify({
+    base,
+    sourceRevision,
+    version: releaseVersion,
+    previousVersion,
+    tag: `v${releaseVersion}`,
+    affected: ["android-apk"],
+    targets: ["relay", "companion-linux", "macos", "android-apk"].map((id) => ({
+      id,
+      version: releaseVersion,
+      previousVersion,
       sourceRevision,
-      version,
-      tag: `v${version}`,
-      affected: ["android-apk"],
-      targets: ["relay", "companion-linux", "macos", "android-apk"].map((id) => ({
-        id,
-        version,
-        sourceRevision,
-        sourceTag: `v${version}`,
-        delivery: "build",
-      })),
-    }),
-  );
-  for (const [artifact, name] of artifactFiles) {
+      sourceTag: `v${releaseVersion}`,
+      delivery: "build",
+    })),
+  }));
+  for (const [artifact, name] of artifactFiles(releaseVersion)) {
     const directory = join(artifacts, artifact);
     mkdirSync(directory, { recursive: true });
     const path = join(directory, name);
-    const content =
-      name === "appcast.xml"
-        ? `<enclosure url="https://github.com/MrFlashAccount/CodeWide/releases/download/v${version}/CodeWide-${version}.dmg" sparkle:edSignature="signature"/>`
+    if (name.endsWith(".tar.gz")) {
+      const bundleName = "codewide-companion-x86_64-unknown-linux-musl";
+      const bundleRoot = join(root, "linux-bundle", bundleName);
+      mkdirSync(join(bundleRoot, "bootstrap"), { recursive: true });
+      const revision = linuxSourceRevision ?? sourceRevision;
+      writeFileSync(
+        join(bundleRoot, "bootstrap", "generation.json"),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          version: releaseVersion,
+          build: revision.slice(0, 12),
+          sourceRevision: revision,
+        })}\n`,
+      );
+      execFileSync("tar", ["-czf", path, "-C", join(root, "linux-bundle"), bundleName]);
+    } else {
+      const content = name === "appcast.xml"
+        ? `<enclosure url="https://github.com/MrFlashAccount/CodeWide/releases/download/v${releaseVersion}/CodeWide-${releaseVersion}.dmg" sparkle:edSignature="signature"/>`
         : `validated ${name}`;
-    writeFileSync(path, content);
-    if (
-      name === "app-release.apk" ||
-      name.endsWith("-unknown-linux-musl") ||
-      name.endsWith(".tar.gz")
-    ) {
-      const digest = createHash("sha256").update(content).digest("hex");
+      writeFileSync(path, content);
+    }
+    if (name === "app-release.apk" || name.endsWith("-unknown-linux-musl") || name.endsWith(".tar.gz")) {
+      const digest = createHash("sha256").update(readFileSync(path)).digest("hex");
       writeFileSync(`${path}.sha256`, `${digest}  ${name}\n`);
     }
   }
@@ -74,7 +97,7 @@ describe("atomic release package", () => {
     const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
     try {
       const paths = fixture(root);
-      prepareReleaseSet(paths.planPath, paths.artifacts, paths.output);
+      prepareReleaseSet(paths.planPath, paths.artifacts, paths.output, signing);
       const assets = join(paths.output, "assets");
       const sums = readFileSync(join(assets, "SHA256SUMS"), "utf8");
       expect(sums).toContain(`CodeWide-${version}-400001.apk`);
@@ -88,9 +111,32 @@ describe("atomic release package", () => {
         const digest = createHash("sha256").update(payload).digest("hex");
         expect(readFileSync(join(assets, `${name}.sha256`), "utf8")).toBe(`${digest}  ${name}\n`);
       }
-      const manifest = readFileSync(join(assets, "release-manifest.json"), "utf8");
-      expect(manifest).toContain('"sourceRevision"');
-      expect(manifest).toContain('"sha256"');
+      const manifest = JSON.parse(readFileSync(join(assets, "release-manifest.json"), "utf8")) as {
+        readonly payload: string;
+        readonly signature: string;
+      };
+      const payload = Buffer.from(manifest.payload, "base64url");
+      expect(
+        verify(
+          "sha256",
+          payload,
+          createPublicKey(releaseKey.privateKey),
+          Buffer.from(manifest.signature, "base64"),
+        ),
+      ).toBe(true);
+      const descriptor = JSON.parse(payload.toString("utf8")) as {
+        readonly sequence: number;
+        readonly targets: readonly {
+          readonly sourceRevision: string;
+          readonly sha256: string;
+          readonly rollbackCompatibleFrom: readonly string[];
+        }[];
+      };
+      expect(descriptor.sequence).toBe(4_000_001);
+      expect(descriptor.targets).toHaveLength(2);
+      expect(descriptor.targets.every(({ sourceRevision }) => sourceRevision.length === 40)).toBe(true);
+      expect(descriptor.targets.every(({ sha256 }) => sha256.length === 64)).toBe(true);
+      expect(descriptor.targets.every(({ rollbackCompatibleFrom }) => rollbackCompatibleFrom.length === 0)).toBe(true);
       const notes = readFileSync(join(paths.output, "release-notes.md"), "utf8");
       expect(notes).toContain("## Changes");
       expect(notes).toContain("## Downloads");
@@ -107,9 +153,9 @@ describe("atomic release package", () => {
         join(paths.artifacts, `CodeWide-Android-${version}`, "app-release.apk"),
         "altered APK",
       );
-      expect(() => prepareReleaseSet(paths.planPath, paths.artifacts, paths.output)).toThrow(
-        "Invalid source checksum",
-      );
+      expect(() =>
+        prepareReleaseSet(paths.planPath, paths.artifacts, paths.output, signing),
+      ).toThrow("Invalid source checksum");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -119,7 +165,7 @@ describe("atomic release package", () => {
     const root = mkdtempSync(join(tmpdir(), "codewide-reused-release-"));
     try {
       const paths = fixture(root);
-      prepareReleaseSet(paths.planPath, paths.artifacts, paths.output);
+      prepareReleaseSet(paths.planPath, paths.artifacts, paths.output, signing);
       const inventory = readReleaseProducts(
         JSON.parse(readFileSync(join(paths.output, "assets", "release-manifest.json"), "utf8")),
       );
@@ -140,13 +186,18 @@ describe("atomic release package", () => {
           base: sourceRevision,
           sourceRevision,
           version: "0.5.0",
+          previousVersion: version,
           tag: "release-2026-09-30.1",
           affected: [],
-          targets: inventory.map((product) => ({ ...product, delivery: "reuse" })),
+          targets: inventory.map((product) => ({
+            ...product,
+            previousVersion: product.version,
+            delivery: "reuse",
+          })),
         }),
       );
       const nextOutput = join(root, "next-output");
-      prepareReleaseSet(nextPlan, nextArtifacts, nextOutput);
+      prepareReleaseSet(nextPlan, nextArtifacts, nextOutput, signing);
       const products = readReleaseProducts(
         JSON.parse(readFileSync(join(nextOutput, "assets", "release-manifest.json"), "utf8")),
       );
@@ -164,13 +215,18 @@ describe("atomic release package", () => {
           base: sourceRevision,
           sourceRevision,
           version: "0.5.0",
+          previousVersion: version,
           tag: "release-2026-10-01.1",
           affected: [],
-          targets: products.map((product) => ({ ...product, delivery: "reuse" })),
+          targets: products.map((product) => ({
+            ...product,
+            previousVersion: product.version,
+            delivery: "reuse",
+          })),
         }),
       );
       const thirdOutput = join(root, "third-output");
-      prepareReleaseSet(nextPlan, nextArtifacts, thirdOutput);
+      prepareReleaseSet(nextPlan, nextArtifacts, thirdOutput, signing);
       expect(
         readReleaseProducts(
           JSON.parse(readFileSync(join(thirdOutput, "assets", "release-manifest.json"), "utf8")),
@@ -178,7 +234,7 @@ describe("atomic release package", () => {
       ).toEqual(inventory);
 
       writeFileSync(join(reused, `CodeWide-${version}.dmg`), "tampered original");
-      expect(() => prepareReleaseSet(nextPlan, nextArtifacts, nextOutput)).toThrow(
+      expect(() => prepareReleaseSet(nextPlan, nextArtifacts, nextOutput, signing)).toThrow(
         "Reused asset checksum mismatch",
       );
     } finally {
@@ -190,7 +246,7 @@ describe("atomic release package", () => {
     const root = mkdtempSync(join(tmpdir(), "codewide-mixed-release-"));
     try {
       const paths = fixture(root);
-      prepareReleaseSet(paths.planPath, paths.artifacts, paths.output);
+      prepareReleaseSet(paths.planPath, paths.artifacts, paths.output, signing);
       const inventory = readReleaseProducts(
         JSON.parse(readFileSync(join(paths.output, "assets", "release-manifest.json"), "utf8")),
       );
@@ -218,6 +274,7 @@ describe("atomic release package", () => {
           base: sourceRevision,
           sourceRevision,
           version: nextVersion,
+          previousVersion: version,
           tag,
           affected: ["android-apk"],
           targets: inventory.map((product) =>
@@ -226,15 +283,16 @@ describe("atomic release package", () => {
                   id: product.id,
                   delivery: "build",
                   version: nextVersion,
+                  previousVersion: product.version,
                   sourceRevision,
                   sourceTag: tag,
                 }
-              : { ...product, delivery: "reuse" },
+              : { ...product, previousVersion: product.version, delivery: "reuse" },
           ),
         }),
       );
       const nextOutput = join(root, "next");
-      prepareReleaseSet(paths.planPath, paths.artifacts, nextOutput);
+      prepareReleaseSet(paths.planPath, paths.artifacts, nextOutput, signing);
       const products = readReleaseProducts(
         JSON.parse(readFileSync(join(nextOutput, "assets", "release-manifest.json"), "utf8")),
       );
@@ -254,6 +312,18 @@ describe("atomic release package", () => {
     }
   });
 
+  it("rejects Linux generation provenance that disagrees with the signed release plan", () => {
+    const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
+    try {
+      const paths = fixture(root, version, "b".repeat(40));
+      expect(() => prepareReleaseSet(paths.planPath, paths.artifacts, paths.output, signing)).toThrow(
+        "Linux Companion bundle provenance does not match the release plan",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a macOS feed that points outside the combined release", () => {
     const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
     try {
@@ -262,9 +332,84 @@ describe("atomic release package", () => {
         join(paths.artifacts, `CodeWide-${version}`, "appcast.xml"),
         '<enclosure url="https://github.com/MrFlashAccount/CodeWide/releases/download/v0.4.0/CodeWide-0.4.0.dmg" sparkle:edSignature="signature"/>',
       );
-      expect(() => prepareReleaseSet(paths.planPath, paths.artifacts, paths.output)).toThrow(
-        "appcast does not point",
-      );
+      expect(() =>
+        prepareReleaseSet(paths.planPath, paths.artifacts, paths.output, signing),
+      ).toThrow("appcast does not point");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("certifies only digests from the verified immediate predecessor", () => {
+    const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
+    try {
+      const baseline = fixture(join(root, "baseline"));
+      prepareReleaseSet(baseline.planPath, baseline.artifacts, baseline.output, signing);
+      const previousManifestPath = join(baseline.output, "assets", "release-manifest.json");
+      const next = fixture(join(root, "next"), "0.4.2");
+      prepareReleaseSet(next.planPath, next.artifacts, next.output, {
+        ...signing,
+        previousManifestPath,
+      });
+      const previousEnvelope = JSON.parse(readFileSync(previousManifestPath, "utf8")) as {
+        readonly payload: string;
+      };
+      const previousDescriptor = JSON.parse(
+        Buffer.from(previousEnvelope.payload, "base64url").toString("utf8"),
+      ) as {
+        readonly targets: readonly { readonly platform: string; readonly sha256: string }[];
+      };
+      const nextEnvelope = JSON.parse(
+        readFileSync(join(next.output, "assets", "release-manifest.json"), "utf8"),
+      ) as { readonly payload: string };
+      const nextDescriptor = JSON.parse(
+        Buffer.from(nextEnvelope.payload, "base64url").toString("utf8"),
+      ) as {
+        readonly targets: readonly {
+          readonly platform: string;
+          readonly rollbackCompatibleFrom: readonly string[];
+        }[];
+      };
+      for (const target of nextDescriptor.targets) {
+        const previous = previousDescriptor.targets.find(({ platform }) => platform === target.platform);
+        expect(target.rollbackCompatibleFrom).toEqual([previous?.sha256]);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a tampered predecessor instead of certifying rollback", () => {
+    const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
+    try {
+      const baseline = fixture(join(root, "baseline"));
+      prepareReleaseSet(baseline.planPath, baseline.artifacts, baseline.output, signing);
+      const previousManifestPath = join(baseline.output, "assets", "release-manifest.json");
+      const envelope = JSON.parse(readFileSync(previousManifestPath, "utf8")) as { payload: string };
+      envelope.payload = `${envelope.payload.startsWith("A") ? "B" : "A"}${envelope.payload.slice(1)}`;
+      writeFileSync(previousManifestPath, JSON.stringify(envelope));
+      const next = fixture(join(root, "next"), "0.4.2");
+      expect(() =>
+        prepareReleaseSet(next.planPath, next.artifacts, next.output, {
+          ...signing,
+          previousManifestPath,
+        }),
+      ).toThrow("Previous release manifest signature is invalid");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a signing key that does not match the pinned public key", () => {
+    const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
+    try {
+      const paths = fixture(root);
+      expect(() =>
+        prepareReleaseSet(paths.planPath, paths.artifacts, paths.output, {
+          ...signing,
+          publicKeySpki: Buffer.from("wrong key").toString("base64"),
+        }),
+      ).toThrow("does not match the pinned public SPKI");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

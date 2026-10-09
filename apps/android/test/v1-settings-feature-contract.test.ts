@@ -24,7 +24,12 @@ describe("M1 feature integration contracts", () => {
     expect(source).not.toContain('testID="ui-generation-setting"');
     expect(source).not.toContain("UiGenerationControl");
     expect(source).not.toContain('title="Interface"');
-    expect(source).toContain('title="Biometric Lock"');
+    const security = readFileSync(
+      new URL("../src/features/settings/SecuritySettings.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("<SecuritySettings />");
+    expect(security).toContain('title="Biometric Lock"');
     expect(source).not.toContain("ComposerEditorTrialEntry");
     expect(source).not.toContain("ConversationLayoutFeatureFlag");
     expect(source).toContain('<SettingsSection title="Experiments">');

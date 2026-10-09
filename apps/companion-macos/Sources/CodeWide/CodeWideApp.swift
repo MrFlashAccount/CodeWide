@@ -1,5 +1,7 @@
 import AppKit
+import CodeWideShared
 import Combine
+import OSLog
 import SwiftUI
 
 @main
@@ -8,6 +10,11 @@ final class CodeWideApp: NSObject, NSApplicationDelegate {
     private var menuBar: CompanionMenuBarController?
     private var keepAwake: KeepAwakeController?
     private var launchAtLogin: LaunchAtLoginController?
+    private var remoteUpdates: RemoteUpdateCoordinator?
+    private let logger = Logger(
+        subsystem: RuntimeConstants.appBundleIdentifier,
+        category: "Application"
+    )
 
     static func main() {
         let application = NSApplication.shared
@@ -19,6 +26,11 @@ final class CodeWideApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installApplicationMenu()
+        do {
+            try GuardianBootstrapInstaller().installIfNeeded()
+        } catch {
+            logger.error("Update guardian bootstrap failed: \(error.localizedDescription, privacy: .private)")
+        }
         let runtime = RuntimeConnection()
         let updates = UpdateController(runtime: runtime)
         let dialogs = CompanionDialogController(runtime: runtime)
@@ -26,6 +38,8 @@ final class CodeWideApp: NSObject, NSApplicationDelegate {
         let launchAtLogin = LaunchAtLoginController()
         self.keepAwake = keepAwake
         self.launchAtLogin = launchAtLogin
+        let remoteUpdates = RemoteUpdateCoordinator(runtime: runtime)
+        self.remoteUpdates = remoteUpdates
         let onboarding = OnboardingWindowController(runtime: runtime, showRelaySetup: {
             dialogs.showRelaySetup()
         })
@@ -34,6 +48,7 @@ final class CodeWideApp: NSObject, NSApplicationDelegate {
                                              keepAwake: keepAwake,
                                              launchAtLogin: launchAtLogin)
         runtime.start()
+        remoteUpdates.start()
         onboarding.showIfNeeded()
     }
 

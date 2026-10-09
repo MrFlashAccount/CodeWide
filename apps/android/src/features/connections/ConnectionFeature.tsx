@@ -9,6 +9,8 @@ import {
   connectionStateLabel,
 } from "./connectionPresentation";
 import { ConnectionRowEditor } from "./ConnectionRowEditor";
+import { HostUpdateSettings } from "./HostUpdateSettings";
+import type { HostUpdateView } from "./hostUpdateSettingsContract";
 import { ServerIcon } from "./ServerIcon";
 
 import type { ConnectionSettingsProps } from "./connectionSettingsContract";
@@ -17,8 +19,11 @@ import type { ConnectionSettingsProps } from "./connectionSettingsContract";
 export function connectionSettingsSections({
   accountRateLimits,
   connections,
+  hostUpdates,
   onActivateAccountProfile,
+  onApplyHostUpdate,
   onCancelAccountLogin,
+  onCheckHostUpdate,
   onConsumeAccountResetCredit,
   onDelete,
   onReconnect,
@@ -29,48 +34,77 @@ export function connectionSettingsSections({
   onUpdate,
   onUpdateAccountProfile,
 }: ConnectionSettingsProps) {
-  return connections.map((connection) => ({
-    content: (
-      <ConnectionRowEditor
-        accountPool={
-          accountRateLimits.find((row) => row.connectionId === connection.id)?.accountPool ?? null
-        }
-        connection={connection}
-        onDelete={onDelete}
-        onReconnect={onReconnect}
-        onToggle={onToggle}
-        onUpdate={onUpdate}
-        {...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool })}
-        {...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin })}
-        {...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin })}
-        {...(onConsumeAccountResetCredit === undefined ? {} : { onConsumeAccountResetCredit })}
-        {...(onActivateAccountProfile === undefined ? {} : { onActivateAccountProfile })}
-        {...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile })}
-        {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}
-      />
-    ),
-    description: connectionStateLabel(connection.state, connection.enabled, connection.health),
-    id: connection.id,
-    leading: <ServerIcon color={colors.text} iconId={connection.iconId} metric="title" />,
-    statusIcon:
-      connection.enabled && connectionActivity(connection.state, connection.health) !== null ? (
-        <ConnectionActivityIndicator
-          size={iconSize.indicator}
-          status={connection.state}
-          {...(connection.health === undefined ? {} : { health: connection.health })}
-        />
-      ) : (
-        <View
-          style={[
-            styles.connectionStateDot,
-            {
-              backgroundColor: connection.enabled
-                ? connectionStateColor(connection.state, connection.health)
-                : colors.textDim,
-            },
-          ]}
-        />
+  return connections.map((connection) => {
+    const hostUpdate = hostUpdates[connection.id];
+    return {
+      content: (
+        <>
+          <ConnectionRowEditor
+            accountPool={
+              accountRateLimits.find((row) => row.connectionId === connection.id)?.accountPool ??
+              null
+            }
+            connection={connection}
+            onDelete={onDelete}
+            onReconnect={onReconnect}
+            onToggle={onToggle}
+            onUpdate={onUpdate}
+            {...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool })}
+            {...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin })}
+            {...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin })}
+            {...(onConsumeAccountResetCredit === undefined ? {} : { onConsumeAccountResetCredit })}
+            {...(onActivateAccountProfile === undefined ? {} : { onActivateAccountProfile })}
+            {...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile })}
+            {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}
+          />
+          {hostUpdate !== undefined && (
+            <HostUpdateSettings
+              connectionId={connection.id}
+              connectionName={connection.displayName}
+              onApply={onApplyHostUpdate}
+              onCheck={onCheckHostUpdate}
+              update={hostUpdate}
+            />
+          )}
+        </>
       ),
-    title: connection.displayName,
-  }));
+      description: connectionDescription(
+        connectionStateLabel(connection.state, connection.enabled, connection.health),
+        hostUpdate,
+      ),
+      id: connection.id,
+      leading: <ServerIcon color={colors.text} iconId={connection.iconId} metric="title" />,
+      statusIcon:
+        connection.enabled && connectionActivity(connection.state, connection.health) !== null ? (
+          <ConnectionActivityIndicator
+            size={iconSize.indicator}
+            status={connection.state}
+            {...(connection.health === undefined ? {} : { health: connection.health })}
+          />
+        ) : (
+          <View
+            style={[
+              styles.connectionStateDot,
+              {
+                backgroundColor: connection.enabled
+                  ? connectionStateColor(connection.state, connection.health)
+                  : colors.textDim,
+              },
+            ]}
+          />
+        ),
+      title: connection.displayName,
+    };
+  });
+}
+
+function connectionDescription(state: string, update: HostUpdateView | undefined): string {
+  if (update === undefined || update.currentVersion === null) {
+    return state;
+  }
+  const available =
+    update.latestVersion !== null && update.latestVersion !== update.currentVersion
+      ? ` · Update ${update.latestVersion}`
+      : "";
+  return `${state} · Companion ${update.currentVersion}${available}`;
 }

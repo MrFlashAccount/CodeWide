@@ -4,3 +4,6 @@
 //! imports it in-process; this crate does not introduce an IPC boundary.
 
 pub use companion_core::*;
+
+/// Linux-only adapter for the durable, out-of-process host-update guardian.
+pub mod host_update;

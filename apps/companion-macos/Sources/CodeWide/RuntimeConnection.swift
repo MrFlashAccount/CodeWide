@@ -138,6 +138,23 @@ final class RuntimeConnection: ObservableObject {
         }
     }
 
+    func stopForGuardianUpdate() async throws {
+        preparingUpdate = true
+        stateRevision += 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        do {
+            guard try await requestStopForGuardianUpdate() else {
+                throw RuntimeConnectionError.updateCheckpointRejected
+            }
+            disconnect()
+        } catch {
+            preparingUpdate = false
+            start()
+            throw error
+        }
+    }
+
     private func checkpointForUpdate(targetVersion: String) async throws {
         let payload = try await requestPrepareForUpdate(targetVersion: targetVersion)
         guard payload.updateStatus == "prepared", validatesRuntime(payload) else {
@@ -418,6 +435,22 @@ final class RuntimeConnection: ObservableObject {
             }
             proxy.prepareForUpdate(targetVersion: targetVersion) { payload, error in
                 gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestStopForGuardianUpdate() async throws -> Bool {
+        try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.stopForGuardianUpdate { stopped, error in
+                if let error {
+                    gate.resume(with: .failure(error))
+                } else {
+                    gate.resume(with: .success(stopped))
+                }
             }
         }
     }

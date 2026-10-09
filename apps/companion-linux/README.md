@@ -60,6 +60,19 @@ The same release asset feeds the `codewide-companion` formula in
 activation and rollback; the Homebrew formula uses `brew services` and prints
 the required one-time state and Git-provider initialization commands.
 
+Managed installations use immutable directories under
+`~/.local/lib/codewide/generations/`. The stable systemd unit executes only
+`current/bin/codewide-companion`; activation replaces the relative `current`
+symlink on the same filesystem. A distinct guardian executable lives under
+`bootstrap/`, outside every generation. Its journal lives independently under
+`~/.local/state/codewide/host-update`. The guardian owns that journal,
+downloads only the target authenticated by the signed release descriptor,
+waits for exact health and the initiating device's reconnect, and switches back
+to the certified previous generation on any failure. It never restores or
+rewrites Companion's authoritative state. Existing flat installations report
+`manual_bootstrap_required` until the standalone installer establishes this
+layout and its pinned trust configuration.
+
 ## Validation and release
 
 ```sh

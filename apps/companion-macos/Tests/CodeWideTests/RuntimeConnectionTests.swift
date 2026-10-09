@@ -337,6 +337,16 @@ struct RuntimeConnectionTests {
         #expect(service.managementRequests == 0)
     }
 
+    @Test func guardianStopDoesNotCreateALegacyUpdateCheckpoint() async throws {
+        let service = TestRuntimeService()
+        let runtime = makeRuntime(service: service)
+
+        try await runtime.stopForGuardianUpdate()
+
+        #expect(service.guardianStopRequests == 1)
+        #expect(service.legacyUpdateCheckpointRequests == 0)
+    }
+
     @Test func oldSnapshotCannotUndoRelayDisableOrDeviceRevocation() async throws {
         let service = TestRuntimeService()
         let runtime = makeRuntime(service: service)
@@ -398,6 +408,8 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     var pendingEnrollmentStart: (@Sendable (RelayEnrollmentPayload?, NSError?) -> Void)?
     var enrollmentAddress: String?
     var cancelledEnrollments: [String] = []
+    var guardianStopRequests = 0
+    var legacyUpdateCheckpointRequests = 0
 
     static var healthy: RuntimeHealthPayload {
         RuntimeHealthPayload(
@@ -464,6 +476,7 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     }
 
     func prepareForUpdate(targetVersion: String, withReply reply: @escaping @Sendable (RuntimeHealthPayload?, NSError?) -> Void) {
+        legacyUpdateCheckpointRequests += 1
         reply(RuntimeHealthPayload(
             phase: "preparingUpdate", degradedReason: nil,
             appVersion: "1.0.0", hostVersion: "1.0.0", coreVersion: "1.0.0",
@@ -472,6 +485,13 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
             updateFromVersion: "1.0.0", updateTargetVersion: targetVersion, updateFailureReason: nil,
             hostExecutablePath: "/test/CodeWide.app/Contents/MacOS/CodeWideRuntime"
         ), nil)
+    }
+
+    func stopForGuardianUpdate(
+        withReply reply: @escaping @Sendable (Bool, NSError?) -> Void
+    ) {
+        guardianStopRequests += 1
+        reply(true, nil)
     }
 
     func pairRelay(address: String, invitationJSON: String, withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void) {

@@ -17,7 +17,7 @@ const nativeAuthentication = readFileSync(
   "utf8",
 );
 const settings = readFileSync(
-  new URL("../src/features/settings/SettingsFeature.tsx", import.meta.url),
+  new URL("../src/features/settings/SecuritySettings.tsx", import.meta.url),
   "utf8",
 );
 

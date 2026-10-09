@@ -5,13 +5,13 @@ import type { ConnectionProfileDatabase } from "../../data/connection-profile-da
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { ServerIconId } from "../../data/serverIcons";
 import type { ConnectionStateModel } from "../../data/connection-state-model";
+import type { createWorkspaceSession, WorkspaceSyncSession } from "../../data/workspace-session";
 import {
   validateConnectionInput,
   validateConnectionRuntimeUpdate,
   type ConnectionInput,
   type ConnectionUpdateInput,
 } from "../../data/connection-validation";
-import type { WorkspaceSyncSession } from "../../data/workspace-session";
 import {
   claimNativePairing,
   deleteNativeConnection,
@@ -23,6 +23,7 @@ import {
   wakeNativeConnection,
 } from "../../native/native-transport";
 
+import { createConnectionHostUpdateResource } from "./hostUpdateWorkspaceBinding";
 import type { ConnectionsWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts connections intents using retained lower authorities. */
 export function createConnectionsWorkspaceAdapter({
@@ -37,6 +38,7 @@ export function createConnectionsWorkspaceAdapter({
   getSession,
   invalidateCatalog,
   invalidateDeletedConnectionBindings,
+  scopedHttpAuthorization,
 }: {
   closeCatalogWindows: (connectionId: string) => void;
   currentConnections: () => StoredConnection[];
@@ -49,7 +51,12 @@ export function createConnectionsWorkspaceAdapter({
   getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
   invalidateCatalog: (connectionId: string) => void;
   invalidateDeletedConnectionBindings: () => Promise<void>;
+  scopedHttpAuthorization: ReturnType<typeof createWorkspaceSession>["scopedHttpAuthorization"];
 }): ConnectionsWorkspaceCapabilities {
+  const hostUpdates = createConnectionHostUpdateResource({
+    currentConnections,
+    scopedHttpAuthorization,
+  });
   const refreshConnectionProfiles = async (): Promise<StoredConnection[]> =>
     requireConnectionProfileDatabase(getProfiles()).hydrate();
   const addConnection = async (input: ConnectionInput) => {
@@ -128,6 +135,7 @@ export function createConnectionsWorkspaceAdapter({
     await invalidateDeletedConnectionBindings();
     await refreshConnectionProfiles();
     getConnectionState()?.remove(connectionId);
+    hostUpdates.forget(connectionId);
   };
 
   const setConnectionEnabled = async (connectionId: string, enabled: boolean) => {
@@ -199,6 +207,7 @@ export function createConnectionsWorkspaceAdapter({
   return {
     addConnection,
     deleteConnection,
+    hostUpdates,
     moveConnection,
     reconnectConnection,
     setConnectionEnabled,

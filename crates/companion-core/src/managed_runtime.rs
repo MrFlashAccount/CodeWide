@@ -21,6 +21,7 @@ use crate::{
     files::FileService,
     history_service::HistoryService,
     host_identity::HostDisplayName,
+    host_update::SharedHostUpdateGuardian,
     identity::{CompanionIdentity, TransportIdentity},
     image_previews::ImagePreviewService,
     media::MediaProxyService,
@@ -52,6 +53,7 @@ pub struct ManagedRuntimeConfig {
     pub secret_storage_policy: SecretStoragePolicy,
     pub host_display_name: HostDisplayName,
     pub listen_address: SocketAddr,
+    pub host_update_guardian: Option<SharedHostUpdateGuardian>,
 }
 
 impl ManagedRuntimeConfig {
@@ -69,6 +71,7 @@ impl ManagedRuntimeConfig {
             secret_storage_policy: SecretStoragePolicy::PlatformPreferred,
             host_display_name,
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
+            host_update_guardian: None,
         }
     }
 
@@ -81,6 +84,13 @@ impl ManagedRuntimeConfig {
     #[must_use]
     pub fn with_listen_address(mut self, address: SocketAddr) -> Self {
         self.listen_address = address;
+        self
+    }
+
+    /// Installs the platform-owned host replacement boundary for private V1 routes.
+    #[must_use]
+    pub fn with_host_update_guardian(mut self, guardian: SharedHostUpdateGuardian) -> Self {
+        self.host_update_guardian = Some(guardian);
         self
     }
 }
@@ -283,11 +293,12 @@ impl ManagedRuntime {
         };
         let bootstrap_tls = bootstrap_config(&identity)?;
         let inner_tls = device_bound_config(&identity, registry.trusted_client_spki())?;
-        let routers = server::split_routers_with_registry_and_services(
+        let routers = server::split_routers_with_registry_services_and_host_update(
             store,
             registry.clone(),
             sync,
             services,
+            config.host_update_guardian,
         );
         let bootstrap_handle = axum_server::Handle::new();
         let inner_handle = axum_server::Handle::new();

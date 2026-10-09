@@ -49,6 +49,15 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         }
     }
 
+    func stopForGuardianUpdate(
+        withReply reply: @escaping @Sendable (Bool, NSError?) -> Void
+    ) {
+        reply(true, nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            exit(EXIT_SUCCESS)
+        }
+    }
+
     func appServer(
         withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
     ) {

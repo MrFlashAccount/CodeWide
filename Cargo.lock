@@ -735,6 +735,7 @@ dependencies = [
  "codewide-relay",
  "companion-core",
  "flate2",
+ "fs2",
  "futures-util",
  "hex",
  "http",
@@ -898,8 +899,12 @@ dependencies = [
 name = "companion-swift-ffi"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "companion-core",
+ "rand 0.9.5",
  "semver",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",

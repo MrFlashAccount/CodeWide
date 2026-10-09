@@ -1,0 +1,27 @@
+[Unit]
+Description=CodeWide Companion update guardian
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+Environment=HOME=%h
+ExecStart=%h/.local/lib/codewide/bootstrap/codewide-companion-update-guardian --install-root %h/.local/lib/codewide --state-root %h/.local/state/codewide/host-update
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=15min
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=%h/.local/lib/codewide %h/.local/state/codewide/host-update
+ReadOnlyPaths=%h/.local/lib/codewide/bootstrap %h/.config/systemd/user
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

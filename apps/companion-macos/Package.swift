@@ -19,6 +19,7 @@ let package = Package(
     products: [
         .executable(name: "CodeWide", targets: ["CodeWide"]),
         .executable(name: "CodeWideRuntime", targets: ["CodeWideRuntime"]),
+        .executable(name: "CodeWideUpdateGuardian", targets: ["CodeWideUpdateGuardian"]),
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
@@ -52,10 +53,20 @@ let package = Package(
             dependencies: ["CodeWideShared", "CompanionSwiftFFI"],
             path: "Sources/CodeWideRuntime"
         ),
+        .executableTarget(
+            name: "CodeWideUpdateGuardian",
+            dependencies: ["CodeWideShared", "CompanionSwiftFFI"],
+            path: "Sources/CodeWideUpdateGuardian"
+        ),
         .testTarget(
             name: "CodeWideTests",
             dependencies: ["CodeWide", "CodeWideRuntime", "CodeWideShared", "CompanionSwiftFFI"],
             path: "Tests/CodeWideTests"
+        ),
+        .testTarget(
+            name: "CodeWideUpdateGuardianTests",
+            dependencies: ["CodeWideUpdateGuardian", "CodeWideShared"],
+            path: "Tests/CodeWideUpdateGuardianTests"
         ),
         .testTarget(
             name: "CodeWideSharedTests",
