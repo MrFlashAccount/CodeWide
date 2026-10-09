@@ -80,6 +80,8 @@ struct FakeNeutral {
     threads: Mutex<Vec<AgentThread>>,
     turn_starts: Mutex<VecDeque<TurnStartResult>>,
     started: Mutex<Vec<TurnStartParams>>,
+    /// Every `thread.update` change, serialized.
+    updates: Mutex<Vec<Value>>,
     active: Mutex<bool>,
     responses: Mutex<Vec<RequestRespondParams>>,
     events: Mutex<Option<mpsc::Receiver<ProviderEvent>>>,
@@ -190,6 +192,7 @@ impl FakeNeutral {
                 threads: Mutex::new(Vec::new()),
                 turn_starts: Mutex::new(VecDeque::new()),
                 started: Mutex::new(Vec::new()),
+                updates: Mutex::new(Vec::new()),
                 active: Mutex::new(false),
                 responses: Mutex::new(Vec::new()),
                 events: Mutex::new(Some(receiver)),
@@ -421,9 +424,13 @@ impl AgentProvider for FakeNeutral {
 
     async fn thread_update(
         &self,
-        _: ThreadUpdateParams,
+        params: ThreadUpdateParams,
     ) -> Result<ThreadUpdateResult, ProviderError> {
         self.record("thread.update");
+        self.updates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(serde_json::to_value(&params.change).unwrap_or(Value::Null));
         Ok(ThreadUpdateResult { thread: None })
     }
 
@@ -764,6 +771,50 @@ async fn thread_start_binds_the_requested_provider_and_turns_bypass_the_primary(
             .any(|method| method.starts_with("turn/") || method == "thread/read"),
         "{primary_methods:?}"
     );
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
+async fn turn_start_overrides_become_thread_settings_before_the_turn() -> TestResult {
+    // A new chat sends its effort and access choice only with its first
+    // `turn/start`; a neutral provider must receive them as thread settings.
+    let mut harness = Harness::start(default_answer, |_| Vec::new()).await?;
+    let thread_id = harness.new_fake_thread().await?;
+    harness
+        .rpc(
+            "put",
+            "companion/queue/put",
+            json!({"command": {
+                "commandId": "message-settings",
+                "remoteThreadId": thread_id,
+                "method": "turn/start",
+                "presentation": "delivery",
+                "params": {
+                    "threadId": thread_id,
+                    "clientUserMessageId": "message-settings",
+                    "input": [{"type": "text", "text": "hello", "text_elements": []}],
+                    "model": "fake-model",
+                    "effort": "max",
+                    "permissions": ":full-access"
+                }
+            }}),
+        )
+        .await?;
+    wait_for_state(&harness.store, "message-settings", OutboxState::Delivered).await?;
+    let calls = harness.fake.calls();
+    let update = calls.iter().position(|call| call == "thread.update");
+    let start = calls.iter().position(|call| call == "turn.start");
+    assert!(
+        matches!((update, start), (Some(update), Some(start)) if update < start),
+        "{calls:?}"
+    );
+    let updates = harness.fake.updates.lock().map_err(|_| "lock")?.clone();
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0]["type"], "settings");
+    assert_eq!(updates[0]["model"], "fake-model");
+    assert_eq!(updates[0]["effort"], "max");
+    assert_eq!(updates[0]["permissionProfile"], ":full-access");
     harness.stop();
     Ok(())
 }
@@ -1222,7 +1273,7 @@ async fn model_list_merges_catalogs_with_one_default() -> TestResult {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["codewideAgentProvider"], "codex");
     assert_eq!(rows[1]["codewideAgentProvider"], FAKE);
-    assert_eq!(rows[1]["displayName"], "Fake · Default (recommended)");
+    assert_eq!(rows[1]["displayName"], "Default (recommended)");
     assert_eq!(
         rows.iter().filter(|row| row["isDefault"] == true).count(),
         1
@@ -1492,7 +1543,7 @@ async fn real_sidecar_serves_threads_catalogs_and_degradation_without_a_turn() -
     assert!(claude_rows.iter().all(|row| {
         row["displayName"]
             .as_str()
-            .is_some_and(|name| name.starts_with("Claude · "))
+            .is_some_and(|name| !name.is_empty())
     }));
     let model = claude_rows[0]["model"].clone();
     let started = harness

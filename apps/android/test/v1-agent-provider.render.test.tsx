@@ -52,7 +52,11 @@ it("shows the provider badge only on rows that carry one", () => {
   const badged = render(
     <ThreadRowContent selected={false} server={undefined} thread={{ ...thread, agentBadge: "Claude", agentProvider: "claude" }} />,
   );
-  expect(badged.getByTestId("thread-agent-badge")).toHaveTextContent("Claude");
+  const badge = badged.getByTestId("thread-agent-badge");
+  // Icon only: the provider name is the accessibility label, never visible text.
+  expect(badge).toHaveAccessibleName("Agent Claude");
+  expect(badge).not.toHaveTextContent("Claude");
+  expect(badged.queryByText("Claude")).toBeNull();
   expect(badged.getByTestId("provider-icon-claude", { includeHiddenElements: true })).toBeTruthy();
   const plain = render(<ThreadRowContent selected={false} server={undefined} thread={thread} />);
   expect(plain.queryByTestId("thread-agent-badge")).toBeNull();

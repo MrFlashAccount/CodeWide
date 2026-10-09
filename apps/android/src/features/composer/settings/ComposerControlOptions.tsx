@@ -2,6 +2,7 @@
 import { listRowPosition } from "../../../ui/AppListRow.types";
 import { AppSheetScrollView } from "../../../ui/AppSheet";
 import { ControlOption } from "../../../ui/ControlOption";
+import { modelEffortLabel } from "../../../ui/modelEffortPresentation";
 import { ModelPickerOptions } from "../../../ui/ModelPickerOptions";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "../ComposerMenu.styles";
@@ -62,7 +63,7 @@ export function ComposerControlOptions({
                   }}
                   position={listRowPosition(index, reasoningEfforts.length)}
                   selected={effort === selectedEffort}
-                  title={effort}
+                  title={modelEffortLabel(effort)}
                 />
               ))}
             </>

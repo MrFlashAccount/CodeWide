@@ -82,12 +82,12 @@ it("optimistically shimmers the selected model without changing its text geometr
     selectedServiceTier: undefined,
   };
   const view = render(<ComposerControlChips {...props} />);
-  expect(view.getByTestId("composer-model-label")).toHaveTextContent("sol · medium");
+  expect(view.getByTestId("composer-model-label")).toHaveTextContent("sol · Medium");
 
   fireEvent.press(view.getByLabelText("Choose Astra"));
   expect(onApplySettings).toHaveBeenCalledTimes(1);
-  expect(view.getByTestId("composer-model-label")).toHaveTextContent("astra · high");
-  expect(view.getByTestId("composer-model-label")).toHaveProp("accessibilityLabel", "astra · high");
+  expect(view.getByTestId("composer-model-label")).toHaveTextContent("astra · High");
+  expect(view.getByTestId("composer-model-label")).toHaveProp("accessibilityLabel", "astra · High");
   expect(view.getByTestId("composer-model-label")).not.toHaveTextContent("Updating…");
 
   seedThreadExecutionSettings(thread, {
@@ -97,7 +97,7 @@ it("optimistically shimmers the selected model without changing its text geometr
     serviceTier: null,
   });
   view.rerender(<ComposerControlChips {...props} />);
-  expect(view.getByTestId("composer-model-label")).toHaveTextContent("astra · high");
+  expect(view.getByTestId("composer-model-label")).toHaveTextContent("astra · High");
   expect(view.getByTestId("composer-model-label")).not.toHaveProp("accessibilityLabel");
 
   seedThreadExecutionSettings(thread, {
@@ -107,7 +107,7 @@ it("optimistically shimmers the selected model without changing its text geometr
     serviceTier: null,
   });
   view.rerender(<ComposerControlChips {...props} />);
-  expect(view.getByTestId("composer-model-label")).toHaveTextContent("sol · medium");
+  expect(view.getByTestId("composer-model-label")).toHaveTextContent("sol · Medium");
 });
 
 it("stops the local pending shimmer when App Server confirms Fast as priority", () => {
@@ -140,7 +140,7 @@ it("stops the local pending shimmer when App Server confirms Fast as priority", 
   const view = render(<ComposerControlChips {...props} />);
 
   fireEvent.press(view.getByLabelText("Enable Fast"));
-  expect(view.getByTestId("composer-model-label")).toHaveProp("accessibilityLabel", "sol · medium");
+  expect(view.getByTestId("composer-model-label")).toHaveProp("accessibilityLabel", "sol · Medium");
 
   seedThreadExecutionSettings(thread, {
     effort: "medium",

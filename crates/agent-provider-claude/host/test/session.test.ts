@@ -242,6 +242,78 @@ describe("settings", () => {
     expect(events.length).toBe(before);
   });
 
+  const bash = (toolUseId: string) => ({
+    toolName: "Bash",
+    input: { command: "make" },
+    toolUseId,
+    decisionReason: null,
+    signal: new AbortController().signal,
+  });
+  const profileChange = (permissionProfile: string) =>
+    ({
+      type: "settings",
+      model: null,
+      effort: null,
+      permissionProfile,
+      serviceTier: null,
+    }) as const;
+  const lastSettings = (events: readonly AgentEvent[]) => {
+    const last = events.filter((event) => event.type === "thread.updated").at(-1);
+    return last?.type === "thread.updated" ? last.thread.settings : null;
+  };
+
+  it("applies full access to the running turn: no more approval requests", async () => {
+    const { service, queries, events } = harness();
+    createThread(service);
+    startedTurn(await service.startTurn(THREAD, prompt("build")));
+    queries[0]?.push(frames.init);
+    await settle();
+    expect((await service.update(THREAD, profileChange(":full-access"))).status).toBe("ok");
+    // Reported at once, not at the turn boundary.
+    expect(lastSettings(events)).toMatchObject({ permissionProfile: ":full-access" });
+    expect(queries[0]?.closed).toBe(false);
+    // A query opened without `allowDangerouslySkipPermissions` cannot enter bypass mode;
+    // the host allows instead.
+    expect(queries[0]?.modes).toEqual([]);
+    const decision = await queries[0]?.options.canUseTool(bash("toolu_full"));
+    expect(decision).toMatchObject({ behavior: "allow" });
+    expect(events.some((event) => event.type === "request.opened")).toBe(false);
+  });
+
+  it("tightens a full-access session live", async () => {
+    const { service, queries, events } = harness();
+    createThread(service, THREAD, ":full-access");
+    startedTurn(await service.startTurn(THREAD, prompt("build")));
+    expect(queries[0]?.options.profile.permissionMode).toBe("bypassPermissions");
+    expect((await service.update(THREAD, profileChange(":workspace"))).status).toBe("ok");
+    expect(queries[0]?.modes).toEqual(["acceptEdits"]);
+    void queries[0]?.options.canUseTool(bash("toolu_ws"));
+    await settle();
+    expect(events.some((event) => event.type === "request.opened")).toBe(true);
+    // Back to full access: this query may re-enter bypass mode.
+    expect((await service.update(THREAD, profileChange(":full-access"))).status).toBe("ok");
+    expect(queries[0]?.modes).toEqual(["acceptEdits", "bypassPermissions"]);
+  });
+
+  it("keeps :read-only changes for the next turn boundary", async () => {
+    const { service, queries, events } = harness();
+    createThread(service);
+    startedTurn(await service.startTurn(THREAD, prompt("build")));
+    queries[0]?.push(frames.init);
+    await settle();
+    expect((await service.update(THREAD, profileChange(":read-only"))).status).toBe("ok");
+    expect(lastSettings(events)).toMatchObject({ permissionProfile: ":read-only" });
+    expect(queries[0]?.modes).toEqual([]);
+    void queries[0]?.options.canUseTool(bash("toolu_ro"));
+    await settle();
+    expect(events.some((event) => event.type === "request.opened")).toBe(true);
+    queries[0]?.push(frames.result());
+    await settle();
+    expect(queries[0]?.closed).toBe(true);
+    startedTurn(await service.startTurn(THREAD, prompt("next")));
+    expect(queries[1]?.options.profile.profile).toBe(":read-only");
+  });
+
   it("rejects an unknown permission profile", async () => {
     const { service } = harness();
     createThread(service);

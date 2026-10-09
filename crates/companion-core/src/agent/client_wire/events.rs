@@ -298,28 +298,33 @@ impl EventProjector {
             }
             payloads.push(json!({"method": "thread/name/updated", "params": params}));
         }
-        if let Some(previous) = &previous {
-            if previous.archived != next.archived {
-                let method = if next.archived {
-                    "thread/archived"
-                } else {
-                    "thread/unarchived"
-                };
-                payloads.push(json!({"method": method, "params": {"threadId": id}}));
-            }
-            if previous.settings != next.settings {
-                payloads.push(json!({
-                    "method": "thread/settings/updated",
-                    "params": {
-                        "threadId": id,
-                        "threadSettings": settings::thread_settings(
-                            &next.settings,
-                            &thread.cwd,
-                            &self.provider.descriptor.model_provider,
-                        ),
-                    }
-                }));
-            }
+        if let Some(previous) = &previous
+            && previous.archived != next.archived
+        {
+            let method = if next.archived {
+                "thread/archived"
+            } else {
+                "thread/unarchived"
+            };
+            payloads.push(json!({"method": method, "params": {"threadId": id}}));
+        }
+        // Without a snapshot (the first update of a thread since this
+        // companion started) the client's settings may be anything: send them.
+        if previous
+            .as_ref()
+            .is_none_or(|previous| previous.settings != next.settings)
+        {
+            payloads.push(json!({
+                "method": "thread/settings/updated",
+                "params": {
+                    "threadId": id,
+                    "threadSettings": settings::thread_settings(
+                        &next.settings,
+                        &thread.cwd,
+                        &self.provider.descriptor.model_provider,
+                    ),
+                }
+            }));
         }
         self.observe_thread(thread);
         payloads
@@ -510,7 +515,13 @@ mod tests {
         let first = projector.project(AgentEvent::ThreadUpdated {
             thread: thread(ThreadStatus::Idle, None, false, "m"),
         });
-        assert_eq!(methods(&first), ["thread/status/changed"]);
+        // The first snapshot since startup carries the settings: a settings
+        // change is often the first update a thread gets after a restart.
+        assert_eq!(
+            methods(&first),
+            ["thread/status/changed", "thread/settings/updated"]
+        );
+        assert_eq!(first[1]["params"]["threadSettings"]["model"], "m");
         let unchanged = projector.project(AgentEvent::ThreadUpdated {
             thread: thread(ThreadStatus::Idle, None, false, "m"),
         });

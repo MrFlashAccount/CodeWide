@@ -36,7 +36,10 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
         "reasoningEffort": thread.settings.effort,
         "createdAt": thread.created_at,
         "updatedAt": thread.updated_at,
-        "recencyAt": thread.recency_at,
+        // The neutral order key: a thread without its own recency (a session
+        // started outside CodeWide) orders by its update time. Clients that
+        // persist the key as a column must not see `null` and sort it last.
+        "recencyAt": thread.recency_at.unwrap_or(thread.updated_at),
         "status": thread_status(thread.status),
         "path": null,
         "cwd": thread.cwd,

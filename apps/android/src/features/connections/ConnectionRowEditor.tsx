@@ -15,7 +15,7 @@ import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
 import { AccountPoolEditor } from "../accounts/AccountPoolFeature";
 import { ProviderAccounts } from "../accounts/ProviderAccounts";
-import { AgentProviderStatusList } from "./AgentProviderStatusList";
+import { AgentProviderMarks } from "./AgentProviderMarks";
 import { connectionDiagnosticReport } from "./connectionDiagnosticReport";
 import { ServerIcon } from "./ServerIcon";
 import { styles } from "./ConnectionRowEditor.styles";
@@ -175,6 +175,12 @@ export function ConnectionRowEditor({
             title="Connection"
             trailing={
               <>
+                {agentProviders !== undefined && (
+                  <AgentProviderMarks
+                    agentProviders={agentProviders}
+                    connectionId={connection.id}
+                  />
+                )}
                 <Switch
                   accessibilityLabel={`Enable ${connection.displayName}`}
                   onValueChange={(enabled) => void onToggle(connection.id, enabled)}
@@ -207,9 +213,6 @@ export function ConnectionRowEditor({
             secureLive={secureLive}
             setDiagnosticExpanded={setDiagnosticExpanded}
           />
-          {agentProviders !== undefined && (
-            <AgentProviderStatusList agentProviders={agentProviders} connectionId={connection.id} />
-          )}
           {onRefreshAccountPool !== undefined &&
             onStartAccountLogin !== undefined &&
             onCancelAccountLogin !== undefined &&

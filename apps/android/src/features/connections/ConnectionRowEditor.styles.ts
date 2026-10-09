@@ -12,13 +12,10 @@ import {
 
 export const styles = StyleSheet.create({
   agentProviders: {
-    gap: spacing.xxs,
-    minWidth: 0,
-  },
-  agentProvidersTitle: {
-    color: colors.textMuted,
-    ...typeScale.label,
-    marginTop: spacing.xxs,
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: spacing.xs,
   },
   connectionActionMenuAnchor: {
     flexShrink: 0,

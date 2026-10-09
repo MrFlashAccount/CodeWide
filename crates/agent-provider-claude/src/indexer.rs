@@ -15,7 +15,7 @@ use agent_core::{
 };
 use async_trait::async_trait;
 use tokio::sync::{mpsc, watch};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     search::ClaudeSearch,
@@ -123,13 +123,19 @@ impl ClaudeIndexer {
     }
 
     /// Indexes every listed session that changed and drops indexed sessions
-    /// the store no longer lists.
+    /// the store no longer lists. A session whose read fails while the host
+    /// is live is logged with its id and skipped, so one unreadable session
+    /// cannot keep every other session out of the index; the skipped ids are
+    /// returned for a retry.
     ///
     /// # Errors
-    /// Returns the first host, index or search failure.
-    pub async fn backfill(&self) -> Result<(), IndexError> {
+    /// Returns a listing failure, an unavailable host, or an index or search
+    /// failure.
+    pub async fn backfill(&self) -> Result<BTreeSet<String>, IndexError> {
         let mut cursor = None;
         let mut listed = BTreeSet::new();
+        let mut failed = BTreeSet::new();
+        let mut read = 0_usize;
         loop {
             let page = self
                 .sessions
@@ -157,7 +163,8 @@ impl ClaudeIndexer {
                     }
                     continue;
                 }
-                self.index_session(&session.session_id).await?;
+                read += 1;
+                self.index_or_skip(&session.session_id, &mut failed).await?;
             }
             cursor = page.next_cursor;
             if cursor.is_none() {
@@ -166,10 +173,34 @@ impl ClaudeIndexer {
         }
         for session_id in self.store.session_ids()? {
             if !listed.contains(&session_id) {
-                self.index_session(&session_id).await?;
+                self.index_or_skip(&session_id, &mut failed).await?;
             }
         }
-        Ok(())
+        info!(
+            listed = listed.len(),
+            read,
+            failed = failed.len(),
+            "Claude session index pass finished"
+        );
+        Ok(failed)
+    }
+
+    /// Indexes one session during a pass; a failure other than an
+    /// unavailable host is logged and recorded instead of ending the pass.
+    async fn index_or_skip(
+        &self,
+        session_id: &str,
+        failed: &mut BTreeSet<String>,
+    ) -> Result<(), IndexError> {
+        match self.index_session(session_id).await {
+            Ok(_thread) => Ok(()),
+            Err(err) if err.host_unavailable() => Err(err),
+            Err(err) => {
+                report(&err, Some(session_id), "Claude session indexing failed");
+                failed.insert(session_id.to_owned());
+                Ok(())
+            }
+        }
     }
 
     /// Re-reads a thread's sessions after its live turn finished. A thread
@@ -241,28 +272,38 @@ impl ClaudeIndexer {
                 if !backfilled {
                     self.search.set_indexing(true);
                     match self.backfill().await {
-                        Ok(()) => {
+                        Ok(failed) => {
                             backfilled = true;
                             self.search.set_indexing(false);
-                            // A listing requested during the pass runs again.
-                            if relist.try_recv().is_err() {
-                                self.freshness.set_catalog_current(true);
-                            } else {
+                            // A listing requested during the pass runs again;
+                            // a skipped session keeps the host answering the
+                            // list until its retry succeeds.
+                            if relist.try_recv().is_ok() {
                                 backfilled = false;
+                            } else if failed.is_empty() {
+                                self.freshness.set_catalog_current(true);
                             }
+                            pending_sessions.extend(failed);
                         }
-                        Err(err) => report(&err, "Claude session backfill failed"),
+                        Err(err) => report(&err, None, "Claude session backfill failed"),
                     }
                 }
+                let had_pending = !pending_sessions.is_empty();
                 for session_id in std::mem::take(&mut pending_sessions) {
                     if let Err(err) = self.index_session(&session_id).await {
-                        report(&err, "Claude session indexing failed");
+                        report(&err, Some(&session_id), "Claude session indexing failed");
                         pending_sessions.insert(session_id);
                     }
                 }
+                if had_pending && pending_sessions.is_empty() {
+                    // Every skipped session is indexed: one more pass marks
+                    // the catalog current.
+                    backfilled = false;
+                    continue;
+                }
                 for thread in std::mem::take(&mut pending_threads) {
                     if let Err(err) = self.refresh_thread(&thread).await {
-                        report(&err, "Claude thread re-indexing failed");
+                        report_thread(&err, &thread, "Claude thread re-indexing failed");
                         pending_threads.insert(thread);
                     }
                 }
@@ -275,7 +316,7 @@ impl ClaudeIndexer {
                 change = changes.recv(), if changes_open => match change {
                     Some(change) => {
                         if let Err(err) = self.apply(&change).await {
-                            report(&err, "Claude session indexing failed");
+                            report(&err, Some(&change.session_id), "Claude session indexing failed");
                             pending_sessions.insert(change.session_id);
                         }
                     }
@@ -284,7 +325,7 @@ impl ClaudeIndexer {
                 thread = finished.recv(), if finished_open => match thread {
                     Some(thread) => {
                         if let Err(err) = self.refresh_thread(&thread).await {
-                            report(&err, "Claude thread re-indexing failed");
+                            report_thread(&err, &thread, "Claude thread re-indexing failed");
                             pending_threads.insert(thread);
                         }
                     }
@@ -305,14 +346,27 @@ impl ClaudeIndexer {
     }
 }
 
-/// Logs a failed index step: an unavailable host is expected and retried.
-fn report(err: &IndexError, message: &'static str) {
+/// Logs a failed index step with the session it concerns (an opaque id,
+/// never content): an unavailable host is expected and retried.
+fn report(err: &IndexError, session_id: Option<&str>, message: &'static str) {
+    let session_id = session_id.unwrap_or("");
     if err.host_unavailable() {
-        debug!(err = %err, "{message}; retrying when the Claude host is live");
+        debug!(err = %err, session_id, "{message}; retrying when the Claude host is live");
     } else if matches!(err, IndexError::Host(_)) {
-        warn!(err = %err, "{message}");
+        warn!(err = %err, session_id, "{message}");
     } else {
-        error!(err = %err, "{message}");
+        error!(err = %err, session_id, "{message}");
+    }
+}
+
+/// Logs a failed thread re-read with its thread id.
+fn report_thread(err: &IndexError, thread: &AppThreadId, message: &'static str) {
+    if err.host_unavailable() {
+        debug!(err = %err, thread_id = %thread, "{message}; retrying when the Claude host is live");
+    } else if matches!(err, IndexError::Host(_)) {
+        warn!(err = %err, thread_id = %thread, "{message}");
+    } else {
+        error!(err = %err, thread_id = %thread, "{message}");
     }
 }
 
@@ -330,6 +384,8 @@ mod tests {
     pub(crate) struct FakeHost {
         pub(crate) sessions: Mutex<HashMap<String, NativeSessionReadResult>>,
         pub(crate) reads: Mutex<Vec<String>>,
+        /// Sessions whose read fails although the host is live.
+        pub(crate) unreadable: Mutex<Vec<String>>,
     }
 
     impl FakeHost {
@@ -380,6 +436,19 @@ mod tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(session_id.to_owned());
+            if self
+                .unreadable
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .any(|unreadable| unreadable == session_id)
+            {
+                return Err(ProviderError::Rejected(RpcError {
+                    code: -32_603,
+                    message: "session record cannot be parsed".into(),
+                    data: None,
+                }));
+            }
             self.sessions
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -471,6 +540,29 @@ mod tests {
             })
             .await?;
         assert!(store.session_ids()?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_session_is_skipped_and_reported_without_blocking_the_rest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let host = Arc::new(FakeHost::default());
+        host.put(session_read("broken", "broken", 30, &["big"]));
+        host.put(session_read("terminal", "terminal", 10, &["hello"]));
+        host.unreadable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push("broken".into());
+        let (indexer, store) = indexer(directory.path(), host)?;
+        let failed = indexer.backfill().await?;
+        assert_eq!(failed.into_iter().collect::<Vec<_>>(), ["broken"]);
+        assert!(
+            store
+                .thread_turns(&AppThreadId::from_static("terminal"))?
+                .is_some(),
+            "a later session is indexed despite the failed one"
+        );
         Ok(())
     }
 

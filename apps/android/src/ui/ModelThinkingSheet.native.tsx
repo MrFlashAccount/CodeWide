@@ -22,6 +22,8 @@ import {
   retainedServiceTier,
   STANDARD_SERVICE_TIER,
 } from "./modelServiceTier";
+import { ModelAgentNote, ModelProviderHeader } from "./ModelAgentScope";
+import { groupsModelsByProvider, modelSections } from "./modelSections";
 import { modelEffortLabel } from "./modelEffortPresentation";
 import { ProviderIcon } from "./ProviderIcon";
 import { AppText as Text } from "./Typography";
@@ -227,6 +229,7 @@ function ModelMenuContent({
   return (
     <View style={styles.content}>
       <Text style={styles.title}>Model & Thinking</Text>
+      <ModelAgentNote scope={props.agentScope} />
       <MenuNotices error={props.error} loading={props.loading && props.models.length === 0} />
       <ModelControls
         model={model}
@@ -238,6 +241,7 @@ function ModelMenuContent({
       />
       {modelsExpanded && (
         <ModelChoices
+          grouped={groupsModelsByProvider(props.agentScope)}
           models={props.models}
           onChoose={onSelectModel}
           selectedEffort={draft.effort}
@@ -349,27 +353,38 @@ function ModelDisclosure({
 }
 
 function ModelChoices({
+  grouped,
   models,
   onChoose,
   selectedEffort,
   selectedModel,
 }: {
+  /** Groups the rows under provider headers (a new chat on a multi-provider server). */
+  grouped: boolean;
   models: readonly ModelControl[];
   onChoose: (model: string, effort: string) => void;
   selectedEffort: string | null;
   selectedModel: string | null;
 }): ReactNode {
+  const row = (candidate: ModelControl) => (
+    <ModelRow
+      candidate={candidate}
+      key={candidate.id}
+      onChoose={onChoose}
+      selected={candidate.id === selectedModel}
+      selectedEffort={selectedEffort}
+    />
+  );
   return (
     <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={styles.modelList}>
-      {models.map((candidate) => (
-        <ModelRow
-          candidate={candidate}
-          key={candidate.id}
-          onChoose={onChoose}
-          selected={candidate.id === selectedModel}
-          selectedEffort={selectedEffort}
-        />
-      ))}
+      {grouped
+        ? modelSections(models).map((section) => (
+            <View key={section.provider ?? "unannotated"}>
+              {section.provider !== null && <ModelProviderHeader provider={section.provider} />}
+              {section.models.map(row)}
+            </View>
+          ))
+        : models.map(row)}
     </ScrollView>
   );
 }

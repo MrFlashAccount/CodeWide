@@ -163,3 +163,35 @@ async fn model_provider_filter_selects_the_non_lead_provider_by_name() {
     assert_eq!(page["data"][1]["modelProvider"], "claude-models");
     assert_eq!(page["data"][1]["codewideAgent"]["provider"], "claude");
 }
+
+#[tokio::test]
+async fn a_terminal_session_without_recency_is_merged_with_its_update_time_as_order_key() {
+    // A Claude session started in a terminal has no `CodeWide` recency; it
+    // must be ordered by its update time on the wire too, or a client that
+    // persists `recencyAt` sorts it after every other thread.
+    let (fake, wire) = {
+        let mut fake = FakeProvider::new("claude", CapabilitySet::none(StartWhileActiveMode::Busy));
+        let mut terminal = thread("claude", "terminal", 95);
+        terminal.recency_at = None;
+        terminal.origin = crate::agent::model::ThreadOrigin::External;
+        fake.threads = vec![terminal];
+        let fake = fake.into_arc();
+        let wire = WireProvider {
+            descriptor: fake.descriptor(),
+            capabilities: fake.capabilities(),
+            primary_id: ProviderId::from_static("codex"),
+            multi_provider: true,
+        };
+        (fake, wire)
+    };
+    let plan = prepare(
+        &json!({"limit": 2, "sortKey": "recency_at", "sortDirection": "desc", "archived": false,
+            "modelProviders": [], "sourceKinds": ["cli", "vscode"], "useStateDbOnly": true}),
+        true,
+    );
+    let lead = lead_page(&[("x1", 100), ("x2", 90)], Some("L1"));
+    let page = finish(&plan, Some(&lead), lead.clone(), &providers(&fake, &wire)).await;
+    assert_eq!(ids(&page), ["x1", "terminal", "x2"]);
+    assert_eq!(page["data"][1]["recencyAt"], 95);
+    assert_eq!(page["data"][1]["updatedAt"], 95);
+}

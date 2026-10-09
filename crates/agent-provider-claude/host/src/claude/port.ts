@@ -12,7 +12,7 @@
 import type { ClientToolSpec, ToolCallResult } from "../protocol.js";
 import type { JsonRecord } from "../mapping/frames.js";
 import type { PermissionDecision } from "../permissions/approvals.js";
-import type { ProfileOptions } from "../permissions/profiles.js";
+import type { PermissionMode, ProfileOptions } from "../permissions/profiles.js";
 
 /** Content blocks of a prompt offer (Anthropic Messages API user content). */
 export type PromptContent =
@@ -99,6 +99,12 @@ export interface ClaudeQuery {
    * the raw answer, validated by `usageReadWindows`. Rejects when unsupported.
    */
   readonly readUsage: () => Promise<unknown>;
+  /**
+   * `query.setPermissionMode()`: changes the live session's permission mode
+   * from the next tool call on. `bypassPermissions` needs a query opened with
+   * `allowDangerouslySkipPermissions`.
+   */
+  readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
 }
 
 export interface RawModel {

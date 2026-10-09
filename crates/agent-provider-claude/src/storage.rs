@@ -462,4 +462,88 @@ mod tests {
         assert!(storage.list(&params, &provider).is_none());
         Ok(())
     }
+
+    /// The Claude host's listing of this machine's store: every session,
+    /// interactive or not, as `nativeSession.list` returns it.
+    struct ListedSessions(Vec<agent_core::model::NativeSessionReadResult>);
+
+    #[async_trait::async_trait]
+    impl NativeSessions for ListedSessions {
+        async fn list(
+            &self,
+            _params: agent_core::model::NativeSessionListParams,
+        ) -> Result<agent_core::model::NativeSessionListResult, agent_core::provider::ProviderError>
+        {
+            Ok(agent_core::model::NativeSessionListResult {
+                next_cursor: None,
+                sessions: self.0.iter().map(|read| read.session.clone()).collect(),
+            })
+        }
+
+        async fn read(
+            &self,
+            session_id: &str,
+        ) -> Result<agent_core::model::NativeSessionReadResult, agent_core::provider::ProviderError>
+        {
+            self.0
+                .iter()
+                .find(|read| read.session.session_id == session_id)
+                .cloned()
+                .ok_or_else(|| {
+                    agent_core::provider::ProviderError::Rejected(RpcError {
+                        code: agent_core::model::ERROR_INVALID_REQUEST,
+                        message: format!("native session not found: {session_id}"),
+                        data: None,
+                    })
+                })
+        }
+    }
+
+    #[tokio::test]
+    async fn started_storage_lists_a_terminal_session_from_the_host_listing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use agent_core::model::{SortDirection, ThreadOrigin, ThreadSortKey};
+        let directory = tempfile::tempdir()?;
+        let storage = storage(directory.path())?;
+        let terminal = session_read("terminal", "terminal", 20, &["hello"]);
+        let mut programmatic = session_read("sdk", "sdk", 30, &["probe"]);
+        programmatic.session.interactive = false;
+        let (_status, status) = watch::channel(ProviderStatus::Live);
+        storage.start(
+            Arc::new(ListedSessions(vec![terminal, programmatic])),
+            status,
+        );
+        let params = ThreadListParams {
+            archived: false,
+            cwd: None,
+            search_term: None,
+            sort_key: ThreadSortKey::RecencyAt,
+            sort_direction: SortDirection::Desc,
+            window: None,
+            cursor: None,
+            limit: 10,
+        };
+        let provider = ProviderId::from_static("claude");
+        let page = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(page) = storage.list(&params, &provider) {
+                    return page;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?
+        .map_err(|error| error.message)?;
+        let listed = page
+            .threads
+            .iter()
+            .map(|thread| thread.app_thread_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(listed, ["terminal"], "programmatic sessions stay hidden");
+        let thread = &page.threads[0];
+        assert_eq!(thread.origin, ThreadOrigin::External);
+        assert_eq!((thread.recency_at, thread.updated_at), (None, 20));
+        assert!(storage.owns(&AppThreadId::from_static("terminal")));
+        Ok(())
+    }
 }

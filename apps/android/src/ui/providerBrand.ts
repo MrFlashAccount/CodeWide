@@ -20,6 +20,8 @@ type ProviderMark =
 
 type ProviderBrand = {
   readonly mark: ProviderMark;
+  /** The agent's display name; `null` for an unknown provider. */
+  readonly name: string | null;
   /** The CLI product that holds the provider's sign-in on the server, when it has one. */
   readonly productName: string | null;
 };
@@ -40,15 +42,22 @@ const OPENAI_MARK: ProviderMark = {
   viewBox: "100 100 411 411",
 };
 
-const GENERIC_BRAND: ProviderBrand = { mark: { kind: "generic" }, productName: null };
+const GENERIC_BRAND: ProviderBrand = { mark: { kind: "generic" }, name: null, productName: null };
 
 /** Known provider ids as the Companion reports them (`ProviderDescriptor.id`). */
 const BRANDS: Readonly<Record<string, ProviderBrand>> = {
-  claude: { mark: CLAUDE_MARK, productName: "Claude Code" },
-  codex: { mark: OPENAI_MARK, productName: "Codex" },
+  claude: { mark: CLAUDE_MARK, name: "Claude", productName: "Claude Code" },
+  codex: { mark: OPENAI_MARK, name: "Codex", productName: "Codex" },
 };
 
 /** Presentation of one provider id; unknown ids get the generic mark and no product name. */
 export function providerBrand(provider: string): ProviderBrand {
   return Object.hasOwn(BRANDS, provider) ? (BRANDS[provider] ?? GENERIC_BRAND) : GENERIC_BRAND;
+}
+
+/** Display name of a provider id: its brand name, else the id with a capital first letter. */
+export function providerDisplayName(provider: string): string {
+  return (
+    providerBrand(provider).name ?? `${provider.slice(0, 1).toUpperCase()}${provider.slice(1)}`
+  );
 }

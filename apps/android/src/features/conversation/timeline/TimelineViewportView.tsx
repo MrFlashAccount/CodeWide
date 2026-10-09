@@ -255,7 +255,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         contentInsetAdjustmentBehavior="never"
         data={timelineRows}
         diagnostics={diagnostics}
-        extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}:${String(rowPremeasurementEnabled)}`}
+        extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}:${String(rowPremeasurementEnabled)}:${props.renderTimelineItemRevision}`}
         initialScrollAtEnd={initialScrollAtEnd}
         initialScrollIndex={
           props.timelinePositioned

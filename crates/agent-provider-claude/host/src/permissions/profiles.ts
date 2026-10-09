@@ -99,6 +99,16 @@ export function profileOptions(profile: ProfileId): ProfileOptions {
   }
 }
 
+/**
+ * Whether a live query can move from one profile to the other with
+ * `setPermissionMode` alone. Both must load the same settings, MCP servers
+ * and tools, so `:read-only` (its own tool set, no settings, no MCP) changes
+ * only when the query reopens at a turn boundary.
+ */
+export function switchesLive(from: ProfileOptions, to: ProfileOptions): boolean {
+  return from.profile !== ":read-only" && to.profile !== ":read-only";
+}
+
 /** Whether `canUseTool` may ask the user about this tool under the profile. */
 export function profileAllowsTool(options: ProfileOptions, toolName: string): boolean {
   return options.profile !== ":read-only" || READ_ONLY_TOOLS.includes(toolName);

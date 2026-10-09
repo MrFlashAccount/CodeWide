@@ -18,6 +18,8 @@ import {
   isFastServiceTier,
   serviceTiersMatch,
 } from "../../../ui/modelServiceTier";
+import { modelEffortLabel } from "../../../ui/modelEffortPresentation";
+import { ProviderIcon } from "../../../ui/ProviderIcon";
 import { ComposerContextLabel } from "../../../ui/ResourceContextChip";
 import { ModelThinkingMenu, PermissionsMenu } from "../../../ui/TurnControlMenus";
 import type { ModelSettingsChoice } from "../../../ui/TurnControlMenus.types";
@@ -30,6 +32,7 @@ import {
   permissionProfileLabel,
 } from "../settings";
 import { styles } from "./ComposerControlChips.styles";
+import { modelAgentScope } from "./modelAgentScope";
 import { providerScopedControls } from "./providerScopedControls";
 
 const MODEL_CONFIRMATION_TIMEOUT_MS = 15_000;
@@ -164,7 +167,14 @@ export function ComposerControlChips({
   const modelPending = initialLoading;
   const permissionsPending = initialLoading;
   const modelNameAndEffort =
-    displayedEffort === null ? modelLabel : `${modelLabel} · ${displayedEffort}`;
+    displayedEffort === null ? modelLabel : `${modelLabel} · ${modelEffortLabel(displayedEffort)}`;
+  const modelProvider = selectedControlModel?.provider ?? null;
+  const modelIcon =
+    modelProvider === null ? (
+      <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
+    ) : (
+      <ProviderIcon provider={modelProvider} />
+    );
   const modelTextPending = modelPending || pendingChoice !== null;
   const effectiveServiceTier = newChat
     ? selectedServiceTier === undefined
@@ -184,7 +194,7 @@ export function ComposerControlChips({
     <>
       {readOnly ? (
         <View style={styles.composerContextChip} testID="readonly-model-chip">
-          <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
+          {modelIcon}
           <ComposerContextLabel
             loading={modelTextPending}
             testID="composer-model-label"
@@ -201,6 +211,11 @@ export function ComposerControlChips({
               ? "Loading model"
               : `Model and thinking: ${modelLabel}, ${effectiveEffort ?? "not specified"}`
           }
+          agentScope={modelAgentScope(
+            resource?.value ?? EMPTY_TURN_CONTROLS,
+            newChat,
+            remoteThread,
+          )}
           error={effectiveError}
           loading={initialLoading}
           models={controls.models}
@@ -220,7 +235,7 @@ export function ComposerControlChips({
           selectedServiceTier={effectiveServiceTier}
           triggerChildren={
             <>
-              <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
+              {modelIcon}
               <ComposerContextLabel
                 loading={modelTextPending}
                 testID="composer-model-label"

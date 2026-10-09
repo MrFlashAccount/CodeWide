@@ -26,7 +26,7 @@ use crate::{
         },
         model::{
             ClientMessageId, ERROR_INVALID_REQUEST, ERROR_PROVIDER_DISABLED, ItemsView,
-            SortDirection, ThreadTurnsParams, TurnStartParams, TurnStartResult,
+            SortDirection, ThreadTurnsParams, ThreadUpdateParams, TurnStartParams, TurnStartResult,
         },
         provider::{AdmissionError, DispatchError, ProviderError, ProviderStatus},
     },
@@ -591,6 +591,29 @@ async fn neutral_resolution(
     };
     let client_message_id =
         decode::client_message_id(params).or_else(|| ClientMessageId::parse(&claimed.command_id));
+    // The composer's model, effort and access choices travel with the turn
+    // (a new chat sends them only here). A neutral provider has no per-turn
+    // overrides, so they become the thread's settings first; repeating the
+    // update on a redelivery is a no-op.
+    if let Some(change) = decode::turn_settings_overrides(params) {
+        let updated = target
+            .provider
+            .thread_update(ThreadUpdateParams {
+                app_thread_id: target.thread_id.clone(),
+                change,
+            })
+            .await;
+        match updated {
+            Ok(_) => {}
+            Err(ProviderError::Rejected(error)) => {
+                return OwnedClaimResolution::Rejected(error.message);
+            }
+            Err(error) => {
+                warn!(command_id = %claimed.command_id, err = %error, "turn settings update failed; the turn waits");
+                return OwnedClaimResolution::NotSent(retry_delay_ms(claimed.attempts));
+            }
+        }
+    }
     let started = target
         .provider
         .turn_start(TurnStartParams {

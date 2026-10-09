@@ -191,6 +191,7 @@ export async function replayTranscript(entries: readonly TranscriptEntry[]): Pro
           closed = true;
         },
         readUsage: () => Promise.reject(new Error("replays record no usage reads")),
+        setPermissionMode: () => Promise.resolve(),
         next: async () => {
           for (;;) {
             if (closed) return { done: true, value: undefined };

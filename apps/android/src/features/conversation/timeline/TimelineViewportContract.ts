@@ -54,6 +54,8 @@ export type TimelineViewportProps = {
   persistTimelineAtEnd: () => void;
   persistTimelineOffset: (offset: number) => void;
   renderTimelineItem: ({ item }: LegendListRenderItemProps<TimelineRow>) => ReactElement;
+  /** Changes whenever `renderTimelineItem` would render a row differently for the same row data. */
+  renderTimelineItemRevision: string;
   reportHistoryViewport: () => void;
   schedulePaginationWindowTrim: () => void;
   scheduleUnreadAgentVisibilityCheck: () => void;

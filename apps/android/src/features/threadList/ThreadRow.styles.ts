@@ -32,17 +32,10 @@ export const styles = StyleSheet.create({
   },
   threadAgentBadge: {
     alignItems: "center",
-    borderColor: colors.border,
-    borderRadius: radii.compact,
-    borderWidth: StyleSheet.hairlineWidth,
-    flexDirection: "row",
     flexShrink: 0,
-    gap: spacing.xxs,
-    paddingHorizontal: spacing.xxs,
-  },
-  threadAgentBadgeText: {
-    color: colors.textMuted,
-    ...typeScale.caption,
+    height: iconSize.indicator,
+    justifyContent: "center",
+    width: iconSize.indicator,
   },
   threadAttentionIcon: {
     alignItems: "center",

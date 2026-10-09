@@ -7,7 +7,7 @@ import { parseAgentProvidersResult } from "../src/data/agentProviders";
 import { ProviderAccounts } from "../src/features/accounts/ProviderAccounts";
 import { UsageMenu } from "../src/features/accounts/UsageMenu";
 import { WorkspaceAccountUsageMenu } from "../src/features/accounts/WorkspaceAccountUsageMenu";
-import { AgentProviderStatusList } from "../src/features/connections/AgentProviderStatusList";
+import { AgentProviderMarks } from "../src/features/connections/AgentProviderMarks";
 import { ConversationHeader } from "../src/features/conversation/header/ConversationHeader";
 import { ContentMenu } from "../src/ui/ContentMenu";
 
@@ -64,6 +64,8 @@ it("keeps the context ring of a Claude thread without Codex account rows", () =>
     />,
   );
   expect(view.getByLabelText("Context usage")).toBeOnTheScreen();
+  // The provider is shown on the model chip, not in the title.
+  expect(view.queryByTestId("provider-icon-claude", { includeHiddenElements: true })).toBeNull();
   const body = openMenuBody(view);
   expect(body.getByTestId("usage-context-section")).toBeOnTheScreen();
   expect(body.queryByTestId("usage-accounts-section")).toBeNull();
@@ -130,7 +132,7 @@ it("titles the account rows with the pool owner's provider", () => {
   expect(openMenuBody(view).getByText("Codex accounts")).toBeOnTheScreen();
 });
 
-it("shows provider sign-in in the server detail, not as an account", () => {
+it("marks the server's agents with their sign-in status, not as accounts", () => {
   const value = parseAgentProvidersResult({
     hostCapabilities: {},
     providers: [
@@ -142,10 +144,12 @@ it("shows provider sign-in in the server detail, not as an account", () => {
   const state$ = observable<Record<string, AgentProvidersState>>({
     server: { status: "ready", value },
   });
-  const view = render(<AgentProviderStatusList agentProviders={{ state$ }} connectionId="server" />);
-  expect(view.getByText("Claude · not signed in — run `claude` on the server to sign in")).toBeOnTheScreen();
-  expect(view.getByText("Codex · connected")).toBeOnTheScreen();
-  const old = render(<AgentProviderStatusList agentProviders={{ state$ }} connectionId="other" />);
+  const view = render(<AgentProviderMarks agentProviders={{ state$ }} connectionId="server" />);
+  expect(view.getByLabelText("Claude · not signed in — run `claude` on the server to sign in")).toBeOnTheScreen();
+  expect(view.getByLabelText("Codex · connected")).toBeOnTheScreen();
+  expect(view.getByTestId("agent-provider-claude")).toBeOnTheScreen();
+  expect(view.getByTestId("agent-provider-codex")).toBeOnTheScreen();
+  const old = render(<AgentProviderMarks agentProviders={{ state$ }} connectionId="other" />);
   expect(old.queryByTestId("agent-provider-status")).toBeNull();
 });
 

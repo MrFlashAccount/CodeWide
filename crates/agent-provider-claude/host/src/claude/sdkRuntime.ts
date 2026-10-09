@@ -295,6 +295,9 @@ export function createSdkRuntime(claudeExecutable: string): ClaudeRuntime {
           input.push(toSdkMessage(prompt));
         },
         readUsage: async () => readUsage(handle),
+        setPermissionMode: async (mode) => {
+          await handle.setPermissionMode(mode);
+        },
       };
     },
 

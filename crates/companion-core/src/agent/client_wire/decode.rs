@@ -227,6 +227,16 @@ pub fn settings_change(params: &Value) -> ThreadChange {
     }
 }
 
+/// Execution overrides of a `turn/start` (the same fields as
+/// `thread/settings/update`); `None` when the request carries none.
+#[must_use]
+pub fn turn_settings_overrides(params: &Value) -> Option<ThreadChange> {
+    ["model", "effort", "permissions", "serviceTier"]
+        .iter()
+        .any(|name| params.get(*name).and_then(Value::as_str).is_some())
+        .then(|| settings_change(params))
+}
+
 /// Decodes a client answer to a runtime request into the neutral response.
 /// Anything that is not a recognizable answer becomes `error`, which every
 /// provider treats as a decline (never an allow).

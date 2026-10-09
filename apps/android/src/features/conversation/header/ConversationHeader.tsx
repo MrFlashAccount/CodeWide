@@ -4,7 +4,6 @@ import { contextUsageFromProjection } from "../../../data/account-rate-limits";
 import { readThreadAgent } from "../../../data/threadAgent";
 import { colors, iconSize } from "../../../theme";
 import { InlineEmoji } from "../../../ui/InlineIcon";
-import { ProviderIcon } from "../../../ui/ProviderIcon";
 import { leadingEmoji } from "../../../ui/ThreadTitle";
 import { AppText as Text } from "../../../ui/Typography";
 import { ContextRing } from "../../accounts/UsageMenu";
@@ -54,8 +53,6 @@ export function ConversationHeader({
   const agent = readThreadAgent(remoteThread);
   // In multi-provider mode a thread with account limits shows its own provider's pool.
   const accountsOwnerName = agent?.providerName ?? null;
-  // Like the thread-list badge, only a thread of a non-primary provider is marked.
-  const agentMark = agent === null || agent.primary ? null : agent.provider;
   return (
     <View style={styles.conversationHeader} testID="conversation-header">
       {compact && (
@@ -65,11 +62,6 @@ export function ConversationHeader({
       )}
       <View style={[styles.conversationIdentity, !compact && styles.conversationIdentityRaised]}>
         <View style={styles.conversationTitleRow}>
-          {agentMark !== null && agent !== null && (
-            <View accessibilityLabel={`Agent ${agent.providerName}`} accessible>
-              <ProviderIcon provider={agentMark} size={iconSize.inline} />
-            </View>
-          )}
           {leadingEmoji(thread.title) !== null && (
             <InlineEmoji role="title" value={leadingEmoji(thread.title) ?? ""} />
           )}

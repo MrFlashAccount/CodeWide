@@ -232,6 +232,39 @@ describe("persisted project catalog", () => {
     await reader.close();
   });
 
+  it("orders a thread without its own recency by its update time, as the list comparator does", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    for (let i = 0; i < 10; i++)
+      writer.write({ type: "insert", value: summary(`codex-${i}`, { recencyAt: 100 + i, updatedAt: 100 + i }) });
+    // A Claude session started in a terminal: the companion lists it with
+    // `recencyAt: null` and orders it by `updatedAt`.
+    writer.write({ type: "insert", value: summary("terminal", { recencyAt: null, updatedAt: 500 }) });
+    await writer.commit({ durable: true });
+    const page = await writer.loadView({ ...request, recentLimit: 3 });
+    expect(page.recent.map((row) => row.name)).toEqual(["terminal", "codex-9", "codex-8"]);
+    await writer.close();
+  });
+
+  it("repairs an order key a previous version stored as NULL", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    writer.write({ type: "insert", value: summary("codex", { recencyAt: 100, updatedAt: 100 }) });
+    writer.write({ type: "insert", value: summary("terminal", { recencyAt: null, updatedAt: 500 }) });
+    await writer.commit({ durable: true });
+    await writer.close();
+    sqlite.native.exec(
+      "UPDATE codewide_thread_summaries SET recency_at = NULL WHERE thread_id = 'terminal'",
+    );
+    const reader = createThreadSummarySqlite();
+    await reader.prepare();
+    const page = await reader.loadView({ ...request, recentLimit: 1 });
+    expect(page.recent.map((row) => row.name)).toEqual(["terminal"]);
+    await reader.close();
+  });
+
   it("project refresh cannot evict another project's rows or discard unread state", async () => {
     const writer = createThreadSummarySqlite();
     await writer.prepare();

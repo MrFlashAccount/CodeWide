@@ -25,6 +25,11 @@
  *   background tasks defer it up to a bound.
  * - The turn index entry is written when a turn starts, on a steer and when
  *   it ends; the in-flight snapshot whenever an item starts or completes.
+ * - A permission profile change between profiles that load the same
+ *   settings, MCP servers and tools applies to the live query at once
+ *   (`setPermissionMode`), even during a turn; `:read-only` and model or
+ *   effort changes wait for the next turn boundary. Under a full-access
+ *   profile `canUseTool` allows every tool without a request.
  * - Client tools are allowed without a prompt under every profile (the
  *   companion enforces their limits); a changed tool set applies when the
  *   query (re)opens, so an idle query without background tasks is closed;
@@ -90,6 +95,7 @@ import {
   isProfileId,
   profileAllowsTool,
   profileOptions,
+  switchesLive,
   type ProfileOptions,
 } from "../permissions/profiles.js";
 import { historyPrefix } from "../history/prefix.js";
@@ -234,6 +240,12 @@ function isTopLevelContent(frame: ContentFrame): boolean {
 
 type ResultFrame = Extract<ClaudeFrame, { readonly kind: "result" }>;
 
+const sameSettings = (left: ThreadSettings, right: ThreadSettings): boolean =>
+  left.effort === right.effort &&
+  left.model === right.model &&
+  left.permissionProfile === right.permissionProfile &&
+  left.serviceTier === right.serviceTier;
+
 const profileOf = (settings: ThreadSettings): ProfileOptions =>
   profileOptions(
     isProfileId(settings.permissionProfile) ? settings.permissionProfile : ":read-only",
@@ -256,6 +268,10 @@ export class ClaudeSession {
   private readonly clientTools: ClientToolCalls;
   /** The client tool set the open query was opened with. */
   private queryClientTools: readonly ClientToolSpec[] = [];
+  /** Whether the open query was opened with `allowDangerouslySkipPermissions`. */
+  private queryAllowsBypass = false;
+  /** A live permission mode change failed: the open query is closed at the next boundary. */
+  private queryModeOutdated = false;
 
   public constructor(thread: ThreadPort, deps: SessionDeps) {
     this.thread = thread;
@@ -629,7 +645,8 @@ export class ClaudeSession {
     request: PermissionRequest,
   ): Promise<PermissionDecision> {
     const state = this.thread.state();
-    if (!profileAllowsTool(profileOf(state.settings), request.toolName)) {
+    const profile = profileOf(state.settings);
+    if (!profileAllowsTool(profile, request.toolName)) {
       active.builder.markDeclined(request.toolUseId);
       return {
         behavior: "deny",
@@ -639,6 +656,15 @@ export class ClaudeSession {
       };
     }
     this.emitAll(active.builder.startTool(request.toolUseId, request.toolName, request.input));
+    if (profile.permissionMode === "bypassPermissions") {
+      // Full access chosen while the query still runs in an asking mode.
+      return {
+        behavior: "allow",
+        scope: "once",
+        toolUseID: request.toolUseId,
+        updatedInput: request.input,
+      };
+    }
     const response = await this.openRequest(
       `perm-${request.toolUseId}`,
       approvalRequest({
@@ -680,6 +706,8 @@ export class ClaudeSession {
     });
     this.query = query;
     this.queryClientTools = this.clientTools.current;
+    this.queryAllowsBypass = profileOf(state.settings).allowDangerouslySkipPermissions;
+    this.queryModeOutdated = false;
     this.deps.liveSessions.count += 1;
     this.log("info", "claude session opened", {
       liveSessions: this.deps.liveSessions.count,
@@ -1001,27 +1029,102 @@ export class ClaudeSession {
 
   // ------------------------------------------------------------- settings
 
-  /** Stores new settings; they take effect at the next turn boundary. Returns whether anything changed. */
+  /**
+   * Stores new settings. A permission profile change that can switch live
+   * takes effect at once; the rest takes effect at the next turn boundary.
+   * Returns whether anything changed.
+   */
   public updateSettings(next: ThreadSettings): boolean {
     const state = this.thread.state();
     const effective = state.pendingSettings ?? state.settings;
-    if (JSON.stringify(effective) === JSON.stringify(next)) {
+    if (sameSettings(effective, next)) {
       return false;
     }
     this.thread.update((current) => ({ ...current, pendingSettings: next }));
-    this.applyPendingSettingsIfPossible();
+    this.switchPermissionsLive();
+    if (!this.applyPendingSettingsIfPossible()) {
+      // The client shows the chosen settings (`pendingSettings ?? settings`) at once.
+      this.thread.emitThreadUpdated();
+    }
     return true;
   }
 
-  private applyPendingSettingsIfPossible(): void {
-    const pending = this.thread.state().pendingSettings;
-    if (pending === null || this.active !== null || this.backgroundTasks > 0) {
+  /**
+   * Makes a pending permission profile effective now when the live query can
+   * switch to it (or no query is open): the next tool call already runs under
+   * it, also inside the active turn. Other pending fields stay pending.
+   */
+  private switchPermissionsLive(): void {
+    const state = this.thread.state();
+    const pending = state.pendingSettings;
+    if (pending === null || pending.permissionProfile === state.settings.permissionProfile) {
       return;
+    }
+    const from = profileOf(state.settings);
+    const to = profileOf(pending);
+    if (this.query !== null && !switchesLive(from, to)) {
+      return;
+    }
+    const settings: ThreadSettings = {
+      ...state.settings,
+      permissionProfile: pending.permissionProfile,
+    };
+    this.thread.update((current) => ({
+      ...current,
+      pendingSettings: sameSettings(settings, pending) ? null : pending,
+      settings,
+    }));
+    this.setQueryPermissionMode(to);
+  }
+
+  /**
+   * Moves the open query to the profile's mode. A query opened without
+   * `allowDangerouslySkipPermissions` cannot enter `bypassPermissions`; it keeps
+   * its mode and `canUseTool` allows every tool under the full-access profile.
+   */
+  private setQueryPermissionMode(profile: ProfileOptions): void {
+    const query = this.query;
+    if (query === null) {
+      return;
+    }
+    if (profile.permissionMode === "bypassPermissions" && !this.queryAllowsBypass) {
+      return;
+    }
+    const generation = this.generation;
+    query.setPermissionMode(profile.permissionMode).catch((error: unknown) => {
+      if (generation !== this.generation) {
+        return;
+      }
+      this.queryModeOutdated = true;
+      this.log(
+        "error",
+        "claude permission mode change failed; the session reopens at the next turn",
+        {
+          err: toError(error),
+        },
+      );
+      this.applyPendingSettingsIfPossible();
+    });
+  }
+
+  /** Applies pending settings when no turn or background task runs; returns whether it emitted `thread.updated`. */
+  private applyPendingSettingsIfPossible(): boolean {
+    const pending = this.thread.state().pendingSettings;
+    if (
+      (pending === null && !this.queryModeOutdated) ||
+      this.active !== null ||
+      this.backgroundTasks > 0
+    ) {
+      return false;
     }
     // The idle query keeps the old options; close it so the next turn reopens with `resume`.
     this.closeQuery();
+    if (pending === null) {
+      return false;
+    }
     this.thread.update((current) => ({ ...current, pendingSettings: null, settings: pending }));
     this.thread.emitThreadUpdated();
+    return true;
   }
 
   /** Replaces the thread's client tools; they apply when a turn next opens or reopens the query. */

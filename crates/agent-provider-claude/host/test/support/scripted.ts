@@ -37,6 +37,8 @@ export interface ScriptedQuery {
   readonly push: (frame: unknown) => void;
   readonly end: () => void;
   readonly fail: (error: Error) => void;
+  /** Every live permission mode change, in order. */
+  readonly modes: string[];
   /** Answer of the next usage reads; a read rejects while it is `null`. */
   usage: unknown;
   usageReads: number;
@@ -67,6 +69,7 @@ export function scriptedRuntime(store: MemorySessionStore = new MemorySessionSto
       const scripted: ScriptedQuery = {
         options,
         offers: [],
+        modes: [],
         interrupts: 0,
         closed: false,
         usage: null,
@@ -110,6 +113,10 @@ export function scriptedRuntime(store: MemorySessionStore = new MemorySessionSto
           return scripted.usage === null
             ? Promise.reject(new Error("usage read unsupported"))
             : Promise.resolve(scripted.usage);
+        },
+        setPermissionMode: (mode) => {
+          scripted.modes.push(mode);
+          return Promise.resolve();
         },
       };
     },

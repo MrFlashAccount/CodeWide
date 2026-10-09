@@ -25,6 +25,7 @@ import type { UseThreadTimelineProps } from "./ThreadTimeline.types";
 import { timelineRowItem, type TimelineRow } from "./timelineRows";
 
 export function useThreadTimeline(props: UseThreadTimelineProps) {
+  const requestPrompt = props.requestPrompt?.node ?? null;
   const renderTimelineItem = ({ item: timelineRow }: LegendListRenderItemProps<TimelineRow>) => {
     const item = timelineRowItem(timelineRow);
     const boundaryKey =
@@ -107,7 +108,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                       animateLiveUpdates={props.animateLiveUpdates}
                       compact={props.timelineCompact}
                       forceExpanded={props.threadSearchActive}
-                      requestPrompt={item.turn.status === "inProgress" ? props.requestPrompt : null}
+                      requestPrompt={item.turn.status === "inProgress" ? requestPrompt : null}
                       turn={item}
                       usage={usage}
                       {...(props.getTransferAccess === undefined
@@ -153,7 +154,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                       placement={timelineRow.placement}
                       presentation={virtualizedPresentation}
                       requestPrompt={
-                        timelineRow.item.turn.status === "inProgress" ? props.requestPrompt : null
+                        timelineRow.item.turn.status === "inProgress" ? requestPrompt : null
                       }
                       turn={timelineRow.item}
                       usage={usage}
@@ -239,7 +240,9 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
       row
     );
   };
-  return { renderTimelineItem };
+  // Inputs of `renderTimelineItem` that no row object carries; the list re-renders rows when it changes.
+  const renderTimelineItemRevision = props.requestPrompt?.revision ?? "";
+  return { renderTimelineItem, renderTimelineItemRevision };
 }
 
 const styles = StyleSheet.create({

@@ -3,9 +3,10 @@
 //! The first page lists the primary provider's rows, then every other
 //! provider's rows, each annotated with `codewideAgentProvider`. Exactly one
 //! row is the default (the primary's), at most 100 rows are returned, and a
-//! duplicate model id keeps the earlier provider's row. Non-primary model
-//! names are labelled `"<Provider> · <displayName>"`. A single-provider host
-//! keeps the lead response unchanged.
+//! duplicate model id keeps the earlier provider's row. Model names keep the
+//! provider's own `displayName`; clients identify the provider by the
+//! `codewideAgentProvider` annotation. A single-provider host keeps the lead
+//! response unchanged.
 
 use std::collections::HashSet;
 
@@ -23,7 +24,7 @@ fn model_row(entry: &ModelEntry, provider: &WireProvider) -> Value {
         "upgrade": null,
         "upgradeInfo": null,
         "availabilityNux": null,
-        "displayName": format!("{} · {}", provider.descriptor.display_name, entry.display_name),
+        "displayName": entry.display_name,
         "description": entry.description,
         "modelSpecialty": null,
         "hidden": entry.hidden,
@@ -222,7 +223,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0][PROVIDER_FIELD], "codex");
         assert_eq!(rows[1][PROVIDER_FIELD], "claude");
-        assert_eq!(rows[1]["displayName"], "Claude · Default (recommended)");
+        assert_eq!(rows[1]["displayName"], "Default (recommended)");
         assert_eq!(
             rows.iter().filter(|row| row["isDefault"] == true).count(),
             1

@@ -49,12 +49,7 @@ export function ThreadRowContent({
                 style={styles.threadAgentBadge}
                 testID="thread-agent-badge"
               >
-                {typeof thread.agentProvider === "string" && (
-                  <ProviderIcon provider={thread.agentProvider} size={iconSize.indicator} />
-                )}
-                <Text numberOfLines={1} style={styles.threadAgentBadgeText}>
-                  {thread.agentBadge}
-                </Text>
+                <ProviderIcon provider={thread.agentProvider ?? ""} size={iconSize.indicator} />
               </View>
             )}
             {thread.needsAttention === true ? (

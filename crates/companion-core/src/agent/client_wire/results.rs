@@ -201,6 +201,11 @@ pub async fn execute(target: &Target, method: &str, params: &Value) -> Result<Va
         "turn/start" => {
             let input = decode::user_contents(params.get("input").unwrap_or(&Value::Null))
                 .map_err(|message| RpcFailure::new(ERROR_INVALID_PARAMS, message))?;
+            // A client sends its composer choices with the turn (a new chat
+            // sends them only here); they become the thread's settings first.
+            if let Some(change) = decode::turn_settings_overrides(params) {
+                update(target, change).await?;
+            }
             let started = provider
                 .turn_start(TurnStartParams {
                     app_thread_id: thread_id,

@@ -3,15 +3,16 @@ import { View } from "react-native";
 
 import type { AgentProvidersResource } from "../../data/agentProvidersResource";
 import { colors, iconSize } from "../../theme";
-import { AppListRow } from "../../ui/AppListRow";
-import { listRowPosition } from "../../ui/AppListRow.types";
 import { ProviderIcon } from "../../ui/ProviderIcon";
-import { AppText as Text } from "../../ui/Typography";
 import { agentProviderStatusLines } from "./agentProviderPresentation";
 import { styles } from "./ConnectionRowEditor.styles";
 
-/** Agent provider status of one server, read from the model-owned provider list. */
-export function AgentProviderStatusList({
+/**
+ * Agents available on one server, as a compact row of provider marks beside the
+ * connection switch. A mark needing attention is tinted; its status and sign-in
+ * text stay available to assistive technology.
+ */
+export function AgentProviderMarks({
   agentProviders,
   connectionId,
 }: {
@@ -25,22 +26,19 @@ export function AgentProviderStatusList({
   }
   return (
     <View style={styles.agentProviders} testID="agent-provider-status">
-      <Text style={styles.agentProvidersTitle}>Agents</Text>
-      {lines.map((line, index) => (
-        <AppListRow
+      {lines.map((line) => (
+        <View
+          accessibilityLabel={line.label}
+          accessible
           key={line.id}
-          leading={
-            <ProviderIcon
-              color={line.warning ? colors.warning : colors.textMuted}
-              provider={line.id}
-              size={iconSize.action}
-            />
-          }
-          multiline
-          position={listRowPosition(index, lines.length)}
           testID={`agent-provider-${line.id}`}
-          title={line.label}
-        />
+        >
+          <ProviderIcon
+            color={line.warning ? colors.warning : colors.textMuted}
+            provider={line.id}
+            size={iconSize.inline}
+          />
+        </View>
       ))}
     </View>
   );
