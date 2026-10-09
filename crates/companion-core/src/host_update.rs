@@ -27,6 +27,7 @@ pub const HOST_UPDATE_RELEASE_MAX_LIFETIME_SECONDS: u64 = 180 * 24 * 60 * 60;
 pub enum HostPlatform {
     LinuxX86_64,
     MacosUniversal,
+    RelayLinuxX86_64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

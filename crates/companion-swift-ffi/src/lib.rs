@@ -207,6 +207,7 @@ fn ffi_host_update_target(
         platform: match target.platform {
             HostPlatform::LinuxX86_64 => "linux-x86-64",
             HostPlatform::MacosUniversal => "macos-universal",
+            HostPlatform::RelayLinuxX86_64 => "relay-linux-x86-64",
         }
         .to_owned(),
         version: target.version,
@@ -441,6 +442,46 @@ impl CoreHost {
             .relay_status()
             .map(Into::into)
             .map_err(CompanionFfiError::runtime)
+    }
+
+    /// Returns Relay-owned self-update state as the shared camel-case JSON contract.
+    /// # Errors
+    /// Returns an adapter error when Relay is absent or unreachable.
+    pub fn relay_update_status_json(&self) -> Result<String, CompanionFfiError> {
+        let status = self
+            .executor
+            .block_on(self.companion.relay_update_status())
+            .map_err(CompanionFfiError::runtime)?;
+        serde_json::to_string(&status).map_err(CompanionFfiError::runtime)
+    }
+
+    /// Refreshes signed Relay release information and returns the shared JSON contract.
+    /// # Errors
+    /// Returns an adapter error when Relay is absent, unreachable, or rejects the release.
+    pub fn check_relay_update_json(&self) -> Result<String, CompanionFfiError> {
+        let status = self
+            .executor
+            .block_on(self.companion.check_relay_update())
+            .map_err(CompanionFfiError::runtime)?;
+        serde_json::to_string(&status).map_err(CompanionFfiError::runtime)
+    }
+
+    /// Submits update intent; the Relay and its updater own execution and rollback.
+    /// # Errors
+    /// Returns an adapter error when Relay rejects or cannot persist the operation.
+    pub fn apply_relay_update_json(
+        &self,
+        target_fingerprint: String,
+        idempotency_key: String,
+    ) -> Result<String, CompanionFfiError> {
+        let accepted = self
+            .executor
+            .block_on(
+                self.companion
+                    .apply_relay_update(target_fingerprint, idempotency_key),
+            )
+            .map_err(CompanionFfiError::runtime)?;
+        serde_json::to_string(&accepted).map_err(CompanionFfiError::runtime)
     }
 
     /// Consumes a Relay invitation and starts its outbound adapter.

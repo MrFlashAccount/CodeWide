@@ -505,6 +505,41 @@ impl ManagedRuntime {
     pub fn relay_status(&self) -> RuntimeResult<RelayStatus> {
         Ok(self.relay.status()?)
     }
+
+    /// Reads Relay-owned self-update state through the pinned management route.
+    /// # Errors
+    /// Rejects missing Relay configuration or a failed authenticated request.
+    pub async fn relay_update_status(
+        &self,
+    ) -> RuntimeResult<codewide_relay::update::RelayUpdateStatus> {
+        Ok(self.relay.update_status().await?)
+    }
+
+    /// Refreshes signed Relay release information on the Relay host.
+    /// # Errors
+    /// Rejects missing Relay configuration or a failed authenticated request.
+    pub async fn check_relay_update(
+        &self,
+    ) -> RuntimeResult<codewide_relay::update::RelayUpdateStatus> {
+        Ok(self.relay.check_update().await?)
+    }
+
+    /// Requests a durable Relay-owned self-update operation.
+    /// # Errors
+    /// Rejects invalid intent or a failed authenticated request.
+    pub async fn apply_relay_update(
+        &self,
+        target_fingerprint: String,
+        idempotency_key: String,
+    ) -> RuntimeResult<codewide_relay::update::ApplyRelayUpdateAccepted> {
+        Ok(self
+            .relay
+            .apply_update(&codewide_relay::update::ApplyRelayUpdateRequest {
+                target_fingerprint,
+                idempotency_key,
+            })
+            .await?)
+    }
 }
 
 impl Drop for ManagedRuntime {

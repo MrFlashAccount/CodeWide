@@ -588,6 +588,13 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
     func appServerConnection()  -> FfiAppServerConnection
 
     /**
+     * Submits update intent; the Relay and its updater own execution and rollback.
+     * # Errors
+     * Returns an adapter error when Relay rejects or cannot persist the operation.
+     */
+    func applyRelayUpdateJson(targetFingerprint: String, idempotencyKey: String) throws  -> String
+
+    /**
      * Starts address-only pairing and returns its local presentation handle.
      * # Errors
      * Rejects invalid input or a concurrent operation.
@@ -600,6 +607,13 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      * Propagates unavailable runtime state.
      */
     func cancelRelayEnrollment(id: String) throws
+
+    /**
+     * Refreshes signed Relay release information and returns the shared JSON contract.
+     * # Errors
+     * Returns an adapter error when Relay is absent, unreachable, or rejects the release.
+     */
+    func checkRelayUpdateJson() throws  -> String
 
     /**
      * Describes whether a compatible installed Codex can start the selected App Server.
@@ -672,6 +686,13 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      * Returns an adapter error when Relay state is invalid or unsafe.
      */
     func relayStatus() throws  -> FfiRelayStatus
+
+    /**
+     * Returns Relay-owned self-update state as the shared camel-case JSON contract.
+     * # Errors
+     * Returns an adapter error when Relay is absent or unreachable.
+     */
+    func relayUpdateStatusJson() throws  -> String
 
     /**
      * Revokes one paired device.
@@ -782,6 +803,22 @@ open func appServerConnection() -> FfiAppServerConnection  {
 }
 
     /**
+     * Submits update intent; the Relay and its updater own execution and rollback.
+     * # Errors
+     * Returns an adapter error when Relay rejects or cannot persist the operation.
+     */
+open func applyRelayUpdateJson(targetFingerprint: String, idempotencyKey: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_apply_relay_update_json(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(targetFingerprint),
+        FfiConverterString.lower(idempotencyKey),uniffiCallStatus
+    )
+})
+}
+
+    /**
      * Starts address-only pairing and returns its local presentation handle.
      * # Errors
      * Rejects invalid input or a concurrent operation.
@@ -808,6 +845,20 @@ open func cancelRelayEnrollment(id: String)throws   {try rustCallWithError(FfiCo
         FfiConverterString.lower(id),uniffiCallStatus
     )
 }
+}
+
+    /**
+     * Refreshes signed Relay release information and returns the shared JSON contract.
+     * # Errors
+     * Returns an adapter error when Relay is absent, unreachable, or rejects the release.
+     */
+open func checkRelayUpdateJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_check_relay_update_json(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
 
     /**
@@ -954,6 +1005,20 @@ open func relayStatus()throws  -> FfiRelayStatus  {
     return try  FfiConverterTypeFfiRelayStatus_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
     uniffi_companion_swift_ffi_fn_method_corehost_relay_status(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Returns Relay-owned self-update state as the shared camel-case JSON contract.
+     * # Errors
+     * Returns an adapter error when Relay is absent or unreachable.
+     */
+open func relayUpdateStatusJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_relay_update_status_json(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -2233,10 +2298,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_apply_relay_update_json() != 35855) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_begin_relay_enrollment() != 61786) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_cancel_relay_enrollment() != 38570) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_check_relay_update_json() != 18642) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_codex_installation() != 62835) {
@@ -2267,6 +2338,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_relay_status() != 54663) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_relay_update_status_json() != 22208) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_revoke_device() != 29457) {

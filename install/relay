@@ -18,6 +18,10 @@ unit_created=0
 activation_started=0
 deployment_started=0
 linger_changed=0
+update_service=
+update_path=
+update_units_written=0
+update_path_was_enabled=0
 
 usage() {
   printf '%s\n' 'Usage: install-relay [--version VERSION] [--install-dir DIRECTORY] [--download-base-url URL] [--no-start]'
@@ -177,8 +181,16 @@ if [ "$(uname -m)" != x86_64 ]; then
   exit 2
 fi
 inspect_service
+runtime_binary="$INSTALL_DIR/codewide-relay"
+updater_install_path="$INSTALL_DIR/codewide-relay-updater"
+update_root="$state_root/update"
+if [ "$activate" = 1 ] && [ "$service_scope" = user ]; then
+  runtime_binary="$update_root/runtime/codewide-relay"
+  updater_install_path="$update_root/bootstrap/codewide-relay-updater"
+fi
 target=x86_64-unknown-linux-musl
 asset="codewide-relay-$target"
+updater_asset="codewide-relay-updater-$target"
 if [ -z "$DOWNLOAD_BASE_URL" ]; then
   # Versions through 0.4.0 used product tags; 0.4.1 starts the combined release.
   case "$VERSION" in
@@ -253,10 +265,24 @@ cleanup() {
 }
 
 replace_binary() {
-  staged=$(install_command mktemp "$INSTALL_DIR/.codewide-relay.install.XXXXXX") || return 1
-  install_command cp "$1" "$staged" || return 1
-  install_command chmod 0755 "$staged" || return 1
-  install_command mv -f -- "$staged" "$INSTALL_DIR/codewide-relay" || return 1
+  target_path=$1
+  source_path=$2
+  target_dir=$(dirname -- "$target_path")
+  direct_install=0
+  if [ "$activate" = 1 ] && [ "$service_scope" = user ]; then
+    case "$target_path" in "$update_root"/*) direct_install=1 ;; esac
+  fi
+  if [ "$direct_install" = 1 ]; then
+    staged=$(mktemp "$target_dir/.codewide-relay.install.XXXXXX") || return 1
+    cp "$source_path" "$staged" || return 1
+    chmod 0755 "$staged" || return 1
+    mv -f -- "$staged" "$target_path" || return 1
+  else
+    staged=$(install_command mktemp "$target_dir/.codewide-relay.install.XXXXXX") || return 1
+    install_command cp "$source_path" "$staged" || return 1
+    install_command chmod 0755 "$staged" || return 1
+    install_command mv -f -- "$staged" "$target_path" || return 1
+  fi
   staged=
 }
 
@@ -267,9 +293,31 @@ finish() {
     printf '%s\n' 'Relay installation failed; restoring the previous deployment without changing its state.' >&2
     if [ "$activation_started" = 1 ]; then service_command stop || :; fi
     if [ -f "$temporary_root/previous-binary" ]; then
-      replace_binary "$temporary_root/previous-binary" || printf '%s\n' 'Failed to restore the previous Relay executable.' >&2
+      replace_binary "$runtime_binary" "$temporary_root/previous-binary" || printf '%s\n' 'Failed to restore the previous Relay executable.' >&2
     else
-      install_command rm -f -- "$INSTALL_DIR/codewide-relay" || :
+      if [ "$activate" = 1 ] && [ "$service_scope" = user ]; then rm -f -- "$runtime_binary" || :;
+      else install_command rm -f -- "$runtime_binary" || :; fi
+      if [ "$runtime_binary" != "$INSTALL_DIR/codewide-relay" ]; then install_command rm -f -- "$INSTALL_DIR/codewide-relay" || :; fi
+    fi
+    if [ -f "$temporary_root/previous-updater" ]; then
+      replace_binary "$updater_install_path" "$temporary_root/previous-updater" || printf '%s\n' 'Failed to restore the previous Relay Updater executable.' >&2
+    else
+      install_command rm -f -- "$updater_install_path" || :
+    fi
+    if [ "$update_units_written" = 1 ]; then
+      if [ "$service_scope" = system ]; then
+        privileged systemctl disable --now codewide-relay-update.path || :
+        if [ -f "$temporary_root/previous-update.service" ]; then privileged install -m 0644 "$temporary_root/previous-update.service" "$update_service"; else privileged rm -f -- "$update_service"; fi
+        if [ -f "$temporary_root/previous-update.path" ]; then privileged install -m 0644 "$temporary_root/previous-update.path" "$update_path"; else privileged rm -f -- "$update_path"; fi
+        privileged systemctl daemon-reload || :
+        if [ "$update_path_was_enabled" = 1 ]; then privileged systemctl enable --now codewide-relay-update.path || :; fi
+      else
+        user_systemctl disable --now codewide-relay-update.path || :
+        if [ -f "$temporary_root/previous-update.service" ]; then mv -f -- "$temporary_root/previous-update.service" "$update_service"; else rm -f -- "$update_service"; fi
+        if [ -f "$temporary_root/previous-update.path" ]; then mv -f -- "$temporary_root/previous-update.path" "$update_path"; else rm -f -- "$update_path"; fi
+        user_systemctl daemon-reload || :
+        if [ "$update_path_was_enabled" = 1 ]; then user_systemctl enable --now codewide-relay-update.path || :; fi
+      fi
     fi
     if [ "$activation_started" = 1 ] && [ "$service_was_enabled" = 0 ]; then
       service_command disable || :
@@ -316,6 +364,58 @@ write_unit() {
   unit_staged=
 }
 
+write_update_units() {
+  if [ "$service_scope" = system ]; then
+    update_unit_root=${CODEWIDE_RELAY_SYSTEMD_UNIT_DIR:-/etc/systemd/system}
+    case "$update_unit_root" in
+      /*) ;;
+      *) printf '%s\n' 'The systemd unit directory must be absolute.' >&2; return 1 ;;
+    esac
+    update_scope=system
+  else
+    update_unit_root=$unit_root
+    update_scope=user
+  fi
+  if [ "$service_scope" = system ]; then privileged mkdir -p -- "$update_unit_root";
+  else mkdir -p -- "$update_unit_root"; fi
+  update_service="$update_unit_root/codewide-relay-update.service"
+  update_path="$update_unit_root/codewide-relay-update.path"
+  if [ "$service_scope" = system ]; then
+    if privileged systemctl is-enabled codewide-relay-update.path >/dev/null 2>&1; then update_path_was_enabled=1; fi
+  elif user_systemctl is-enabled codewide-relay-update.path >/dev/null 2>&1; then
+    update_path_was_enabled=1
+  fi
+  if [ -f "$update_service" ]; then
+    if [ "$service_scope" = system ]; then privileged cp -p "$update_service" "$temporary_root/previous-update.service";
+    else cp -p "$update_service" "$temporary_root/previous-update.service"; fi
+  fi
+  if [ -f "$update_path" ]; then
+    if [ "$service_scope" = system ]; then privileged cp -p "$update_path" "$temporary_root/previous-update.path";
+    else cp -p "$update_path" "$temporary_root/previous-update.path"; fi
+  fi
+  service_staged=$(mktemp "$temporary_root/codewide-relay-update.service.XXXXXX")
+  path_staged=$(mktemp "$temporary_root/codewide-relay-update.path.XXXXXX")
+  printf '%s\n' '[Unit]' 'Description=CodeWide Relay Updater' 'After=network-online.target' 'Wants=network-online.target' '' '[Service]' 'Type=oneshot' 'UMask=0077' \
+    "ExecStart=\"$(unit_argument "$updater_install_path")\" --state \"$(unit_argument "$state_root")\" --install-path \"$(unit_argument "$runtime_binary")\" --scope $update_scope --service codewide-relay.service" \
+    'Restart=on-failure' 'RestartSec=2s' 'TimeoutStartSec=10min' 'NoNewPrivileges=true' 'PrivateTmp=false' \
+    "ReadWritePaths=\"$(unit_argument "$update_root")\" \"$(unit_argument "$(dirname -- "$runtime_binary")")\"" \
+    'ProtectSystem=full' 'ProtectHome=read-only' '' >"$service_staged"
+  if [ "$service_scope" = user ]; then
+    printf '%s\n' 'CapabilityBoundingSet=' 'AmbientCapabilities=' >>"$service_staged"
+  fi
+  printf '%s\n' '[Unit]' 'Description=Start CodeWide Relay Updater for a durable pending operation' '' '[Path]' \
+    "PathExists=$(unit_argument "$update_root/pending")" 'Unit=codewide-relay-update.service' '' '[Install]' 'WantedBy=default.target' >"$path_staged"
+  chmod 0644 "$service_staged" "$path_staged"
+  if [ "$service_scope" = system ]; then
+    privileged install -m 0644 "$service_staged" "$update_service"
+    privileged install -m 0644 "$path_staged" "$update_path"
+  else
+    mv -f -- "$service_staged" "$update_service"
+    mv -f -- "$path_staged" "$update_path"
+  fi
+  update_units_written=1
+}
+
 start_service() {
   if [ "$service_scope" = user ]; then
     if [ "$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null || :)" != yes ]; then
@@ -346,8 +446,13 @@ start_service() {
   else
     privileged systemctl daemon-reload
   fi
+  write_update_units
+  if [ "$service_scope" = system ]; then privileged systemctl daemon-reload;
+  else user_systemctl daemon-reload; fi
   activation_started=1
   service_command enable
+  if [ "$service_scope" = system ]; then privileged systemctl enable --now codewide-relay-update.path;
+  else user_systemctl enable --now codewide-relay-update.path; fi
   service_command restart
   wait_service_ready
 }
@@ -381,8 +486,12 @@ download() {
 
 payload="$temporary_root/$asset"
 checksum="$temporary_root/$asset.sha256"
+updater_payload="$temporary_root/$updater_asset"
+updater_checksum="$temporary_root/$updater_asset.sha256"
 download "$DOWNLOAD_BASE_URL/$asset" "$payload"
 download "$DOWNLOAD_BASE_URL/$asset.sha256" "$checksum"
+download "$DOWNLOAD_BASE_URL/$updater_asset" "$updater_payload"
+download "$DOWNLOAD_BASE_URL/$updater_asset.sha256" "$updater_checksum"
 
 line_count=$(wc -l <"$checksum" | tr -d ' ')
 expected=$(awk 'NR == 1 { print $1 }' "$checksum")
@@ -413,11 +522,62 @@ if [ "$actual" != "$expected" ]; then
   exit 1
 fi
 
+updater_line_count=$(wc -l <"$updater_checksum" | tr -d ' ')
+updater_expected=$(awk 'NR == 1 { print $1 }' "$updater_checksum")
+updater_recorded_name=$(awk 'NR == 1 { print $2 }' "$updater_checksum")
+updater_recorded_name=${updater_recorded_name#\*}
+case "$updater_expected" in
+  ????????????????????????????????????????????????????????????????) ;;
+  *) printf '%s\n' 'Relay Updater checksum has an invalid length.' >&2; exit 1 ;;
+esac
+case "$updater_expected" in
+  *[!0-9a-f]*) printf '%s\n' 'Relay Updater checksum is malformed.' >&2; exit 1 ;;
+esac
+if [ "$updater_line_count" != 1 ] || [ "$updater_recorded_name" != "$updater_asset" ]; then
+  printf '%s\n' 'Relay Updater checksum manifest is malformed.' >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  updater_actual=$(sha256sum "$updater_payload" | awk '{ print $1 }')
+else
+  updater_actual=$(shasum -a 256 "$updater_payload" | awk '{ print $1 }')
+fi
+if [ "$updater_actual" != "$updater_expected" ]; then
+  printf '%s\n' 'CodeWide Relay Updater checksum verification failed.' >&2
+  exit 1
+fi
+
 chmod 0755 "$payload"
+chmod 0755 "$updater_payload"
 reported_version=$("$payload" --version)
 if [ "$reported_version" != "codewide-relay $VERSION" ]; then
   printf 'Downloaded Relay version mismatch: %s\n' "$reported_version" >&2
   exit 1
+fi
+if [ "$activate" = 1 ] && [ "$service_existed" = 1 ]; then
+  if [ "$service_was_active" != 1 ]; then
+    printf '%s\n' 'The existing Relay service must be running so its state directory can be verified safely.' >&2
+    exit 1
+  fi
+  if [ "$service_scope" = system ]; then state_root=$(privileged "$payload" bootstrap-info);
+  else state_root=$("$payload" bootstrap-info); fi
+  case "$state_root" in
+    /*) ;;
+    *) printf '%s\n' 'The active Relay reported an invalid state directory.' >&2; exit 1 ;;
+  esac
+  if printf '%s' "$state_root" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+    printf '%s\n' 'The active Relay reported an unsafe state directory.' >&2
+    exit 1
+  fi
+  [ -d "$state_root" ] || {
+    printf '%s\n' 'The active Relay state directory does not exist.' >&2
+    exit 1
+  }
+  update_root="$state_root/update"
+  if [ "$service_scope" = user ]; then
+    runtime_binary="$update_root/runtime/codewide-relay"
+    updater_install_path="$update_root/bootstrap/codewide-relay-updater"
+  fi
 fi
 if [ "$activate" = 1 ] && [ "$service_existed" = 0 ] && \
   [ -S "$state_root/control.sock" ] && \
@@ -436,8 +596,61 @@ fi
 if [ -f "$INSTALL_DIR/codewide-relay" ]; then
   install_command cp -p "$INSTALL_DIR/codewide-relay" "$temporary_root/previous-binary"
 fi
+if [ -f "$updater_install_path" ]; then
+  install_command cp -p "$updater_install_path" "$temporary_root/previous-updater"
+fi
 deployment_started=1
-replace_binary "$payload"
+if [ "$activate" = 1 ]; then
+  if [ "$service_scope" = user ]; then
+    mkdir -p -- "$(dirname -- "$runtime_binary")" "$(dirname -- "$updater_install_path")" "$update_root/operations" "$update_root/receipts"
+    chmod 0700 "$update_root" "$(dirname -- "$runtime_binary")" "$(dirname -- "$updater_install_path")" "$update_root/operations" "$update_root/receipts"
+  else
+    state_owner=$(privileged stat -c '%u:%g' "$state_root")
+    privileged mkdir -p -- "$update_root/operations" "$update_root/receipts"
+    privileged chmod 0700 "$update_root" "$update_root/operations" "$update_root/receipts"
+    privileged chown -R "$state_owner" "$update_root"
+    install_command mkdir -p -m 0755 "$(dirname -- "$updater_install_path")"
+  fi
+else
+  install_command mkdir -p -m 0755 "$(dirname -- "$updater_install_path")"
+fi
+replace_binary "$runtime_binary" "$payload"
+replace_binary "$updater_install_path" "$updater_payload"
+if [ "$activate" = 1 ] && [ "$service_scope" = user ]; then
+  link_staged="$INSTALL_DIR/.codewide-relay.link.$$"
+  install_command ln -s "$runtime_binary" "$link_staged"
+  install_command mv -f -- "$link_staged" "$INSTALL_DIR/codewide-relay"
+fi
+if [ "$activate" = 1 ]; then
+  trust=$("$updater_install_path" --print-trust)
+  key_id=$(printf '%s\n' "$trust" | awk -F '\t' '{print $1}')
+  public_key=$(printf '%s\n' "$trust" | awk -F '\t' '{print $2}')
+  updater_version=$(printf '%s\n' "$trust" | awk -F '\t' '{print $3}')
+  source_revision=$(printf '%s\n' "$trust" | awk -F '\t' '{print $4}')
+  if [ "$updater_version" != "$VERSION" ]; then
+    printf '%s\n' 'Relay and Relay Updater versions do not match.' >&2
+    exit 1
+  fi
+  build=$(printf '%.12s' "$source_revision")
+  json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+  config_tmp="$temporary_root/config.json"
+  printf '{"schemaVersion":1,"keyId":"%s","publicKeySpki":"%s","manifestUrl":"%s","installPath":"%s","updaterPath":"%s","serviceScope":"%s","serviceName":"codewide-relay.service"}\n' \
+    "$(json_escape "$key_id")" "$(json_escape "$public_key")" \
+    'https://github.com/MrFlashAccount/CodeWide/releases/latest/download/release-manifest.json' \
+    "$(json_escape "$runtime_binary")" "$(json_escape "$updater_install_path")" "$service_scope" >"$config_tmp"
+  chmod 0600 "$config_tmp"
+  installed_tmp="$temporary_root/installed.json"
+  printf '{"schemaVersion":1,"version":"%s","build":"%s","sourceRevision":"%s","artifactDigest":"%s","highestSequence":0}\n' \
+    "$VERSION" "$build" "$source_revision" "$expected" >"$installed_tmp"
+  chmod 0600 "$installed_tmp"
+  if [ "$service_scope" = system ]; then
+    privileged install -m 0600 -o "${state_owner%:*}" -g "${state_owner#*:}" "$config_tmp" "$update_root/config.json"
+    privileged install -m 0600 -o "${state_owner%:*}" -g "${state_owner#*:}" "$installed_tmp" "$update_root/installed.json"
+  else
+    mv -f -- "$config_tmp" "$update_root/config.json"
+    mv -f -- "$installed_tmp" "$update_root/installed.json"
+  fi
+fi
 
 hash -r 2>/dev/null || :
 resolved=$(command -v codewide-relay || :)

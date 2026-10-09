@@ -68,7 +68,7 @@ pub fn reply(reply: Reply, json: bool) -> Result<()> {
         return Ok(());
     }
     match reply {
-        Reply::Status { port, routes } => {
+        Reply::Status { port, routes, .. } => {
             println!(
                 "{}  {}",
                 style("CodeWide Relay").bold(),

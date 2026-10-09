@@ -5,9 +5,13 @@ use codewide_relay::{
     pairing::{INVITATION_VERSION, InvitationBundle, PairRequest, PairResponse},
     registry::validate_route_id,
     transport_tls::pinned_client_config,
+    update::{
+        ApplyRelayUpdateAccepted, ApplyRelayUpdateRequest, RelayUpdateOperation, RelayUpdateStatus,
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     io::Write,
     net::SocketAddr,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
@@ -33,7 +37,7 @@ pub use enrollment::RelayEnrollmentStatus;
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
 pub struct RelayError {
-    message: &'static str,
+    message: Cow<'static, str>,
     #[source]
     source: codewide_relay::Error,
 }
@@ -49,9 +53,12 @@ impl RelayError {
 
 // Keep credentials and request URLs out of user-facing errors. The original
 // typed source remains available to diagnostics and error-chain inspection.
-fn relay_error_message(source: &(dyn std::error::Error + 'static)) -> &'static str {
+fn relay_error_message(source: &(dyn std::error::Error + 'static)) -> Cow<'static, str> {
     if let Some(config) = source.downcast_ref::<RelayConfigError>() {
-        return config.0;
+        return config.0.into();
+    }
+    if let Some(update) = source.downcast_ref::<codewide_relay::adapter::UpdateRequestError>() {
+        return update.message.clone().into();
     }
     let mut cause = Some(source);
     while let Some(error) = cause {
@@ -65,7 +72,8 @@ fn relay_error_message(source: &(dyn std::error::Error + 'static)) -> &'static s
                 "The Relay certificate does not match this invitation. Create an invitation using the running Relay service's user and --state directory."
             } else {
                 "Could not establish a secure connection to the Relay. Check its address, port and TLS configuration."
-            };
+            }
+            .into();
         }
         // reqwest/hyper can wrap the TLS failure in multiple io::Errors.
         // io::Error::source skips the contained error's own concrete type.
@@ -76,7 +84,8 @@ fn relay_error_message(source: &(dyn std::error::Error + 'static)) -> &'static s
     }
     if let Some(request) = source.downcast_ref::<reqwest::Error>() {
         if request.is_timeout() {
-            return "The Relay did not respond in time. Check its address, port and network access.";
+            return "The Relay did not respond in time. Check its address, port and network access."
+                .into();
         }
         if let Some(status) = request.status() {
             return match status {
@@ -89,23 +98,24 @@ fn relay_error_message(source: &(dyn std::error::Error + 'static)) -> &'static s
                 _ => {
                     "The Relay rejected the pairing request. Check the Relay service and create a new invitation."
                 }
-            };
+            }
+            .into();
         }
         if request.is_connect() {
-            return "Could not connect to the Relay. Use a reachable DNS name or IP address with its port; SSH aliases are not expanded.";
+            return "Could not connect to the Relay. Use a reachable DNS name or IP address with its port; SSH aliases are not expanded.".into();
         }
-        return "The connection to the Relay failed. Check the network and try again.";
+        return "The connection to the Relay failed. Check the network and try again.".into();
     }
     if source.is::<serde_json::Error>() {
-        return "Invalid Relay invitation or response. Use a new invitation from a compatible Relay version.";
+        return "Invalid Relay invitation or response. Use a new invitation from a compatible Relay version.".into();
     }
     if let Some(error) = source.downcast_ref::<std::io::Error>()
         && error.kind() == std::io::ErrorKind::PermissionDenied
         && error.to_string() == "relay request rejected"
     {
-        return "Invalid Relay invitation or saved credentials. Create a new invitation from the running Relay service.";
+        return "Invalid Relay invitation or saved credentials. Create a new invitation from the running Relay service.".into();
     }
-    "Could not read or save Relay settings. Check access to the Companion's data directory."
+    "Could not read or save Relay settings. Check access to the Companion's data directory.".into()
 }
 
 #[derive(Clone)]
@@ -181,6 +191,81 @@ impl Drop for RunningAdapter {
 }
 
 impl RelayRuntime {
+    fn management_adapter(&self) -> Result<Adapter, RelayError> {
+        RelayConfig::load(&self.0.config_path)?
+            .map(|config| config.adapter(self.0.device_target, self.0.pairing_target))
+            .ok_or_else(|| RelayError::new(invalid_config("Relay pairing is not configured")))
+    }
+
+    /// Reads the remote Relay Updater state through this Companion's pinned route.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Relay pairing or the pinned request is unavailable.
+    pub async fn update_status(&self) -> Result<RelayUpdateStatus, RelayError> {
+        self.management_adapter()?
+            .update_status()
+            .await
+            .map_err(RelayError::new)
+    }
+
+    /// Refreshes signed Relay update information on the Relay host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Relay rejects or cannot retrieve the release.
+    pub async fn check_update(&self) -> Result<RelayUpdateStatus, RelayError> {
+        self.management_adapter()?
+            .check_update()
+            .await
+            .map_err(RelayError::new)
+    }
+
+    /// Requests a durable, Relay-owned update operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Relay rejects or cannot persist the operation.
+    pub async fn apply_update(
+        &self,
+        request: &ApplyRelayUpdateRequest,
+    ) -> Result<ApplyRelayUpdateAccepted, RelayError> {
+        self.management_adapter()?
+            .apply_update(request)
+            .await
+            .map_err(RelayError::new)
+    }
+
+    /// Reads one Relay-owned update operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the operation cannot be read from the Relay.
+    pub async fn update_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<RelayUpdateOperation, RelayError> {
+        self.management_adapter()?
+            .update_operation(operation_id)
+            .await
+            .map_err(RelayError::new)
+    }
+
+    /// Submits the paired-route reconnect proof to the Relay Updater.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the authenticated proof cannot be recorded.
+    pub async fn reconnect_update(
+        &self,
+        operation_id: &str,
+    ) -> Result<RelayUpdateOperation, RelayError> {
+        self.management_adapter()?
+            .reconnect_update(operation_id)
+            .await
+            .map_err(RelayError::new)
+    }
+
     /// Returns the route and pinned Relay identity for a new phone pairing link.
     /// # Errors
     /// Rejects invalid or unreadable durable Relay configuration.

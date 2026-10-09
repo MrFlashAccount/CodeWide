@@ -5,7 +5,7 @@ const OPAQUE_ID_MAX_LENGTH = 128;
 const MAX_ERROR_MESSAGE_LENGTH = 320;
 
 /** Supported host identifiers from the private Companion host-update V1 contract. */
-export type HostUpdatePlatform = "linux-x86-64" | "macos-universal";
+export type HostUpdatePlatform = "linux-x86-64" | "macos-universal" | "relay-linux-x86-64";
 
 /** Durable update phases reported by the platform guardian. */
 export type HostUpdatePhase =
@@ -238,6 +238,7 @@ function platform(value: unknown): HostUpdatePlatform {
   switch (value) {
     case "linux-x86-64":
     case "macos-universal":
+    case "relay-linux-x86-64":
       return value;
     default:
       throw new Error("Host update platform is invalid");

@@ -11,5 +11,8 @@ export type ConnectionSettingsProps = Omit<ConnectionEditorProps, "connection" |
   connections: StoredConnection[];
   hostUpdates: Readonly<Record<string, HostUpdateView>>;
   onApplyHostUpdate: (connectionId: string, targetFingerprint: string) => Promise<void>;
+  onApplyRelayUpdate: (connectionId: string, targetFingerprint: string) => Promise<void>;
   onCheckHostUpdate: (connectionId: string) => Promise<void>;
+  onCheckRelayUpdate: (connectionId: string) => Promise<void>;
+  relayUpdates: Readonly<Record<string, HostUpdateView>>;
 };

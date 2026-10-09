@@ -50,8 +50,10 @@ export function ConnectionSettings({
   onActivateAccountProfile,
   onAddServer,
   onApplyHostUpdate,
+  onApplyRelayUpdate,
   onCancelAccountLogin,
   onCheckHostUpdate,
+  onCheckRelayUpdate,
   onClose,
   onConsumeAccountResetCredit,
   onDelete,
@@ -63,6 +65,7 @@ export function ConnectionSettings({
   onToggle,
   onUpdate,
   onUpdateAccountProfile,
+  relayUpdates,
   visible,
   voiceAssistantModelCatalog,
 }: {
@@ -77,8 +80,10 @@ export function ConnectionSettings({
   ) => Promise<AccountPoolSnapshot>;
   onAddServer: () => void;
   onApplyHostUpdate: (connectionId: string, targetFingerprint: string) => Promise<void>;
+  onApplyRelayUpdate: (connectionId: string, targetFingerprint: string) => Promise<void>;
   onCancelAccountLogin?: (connectionId: string, loginId: string) => Promise<void>;
   onCheckHostUpdate: (connectionId: string) => Promise<void>;
+  onCheckRelayUpdate: (connectionId: string) => Promise<void>;
   onClose: () => void;
   onConsumeAccountResetCredit?: (
     connectionId: string,
@@ -103,6 +108,7 @@ export function ConnectionSettings({
     profileId: string,
     update: { enabled?: boolean; priority?: number },
   ) => Promise<AccountPoolSnapshot>;
+  relayUpdates: Readonly<Record<string, HostUpdateView>>;
   visible: boolean;
   voiceAssistantModelCatalog: VoiceAssistantModelCatalog;
 }) {
@@ -137,11 +143,14 @@ export function ConnectionSettings({
         connections,
         hostUpdates,
         onApplyHostUpdate,
+        onApplyRelayUpdate,
         onCheckHostUpdate,
+        onCheckRelayUpdate,
         onDelete,
         onReconnect,
         onToggle,
         onUpdate,
+        relayUpdates,
         ...(onRefreshAccountPool === undefined ? {} : { onRefreshAccountPool }),
         ...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin }),
         ...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin }),

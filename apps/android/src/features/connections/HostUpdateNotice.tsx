@@ -4,14 +4,18 @@ import { styles } from "./HostUpdateSettings.styles";
 
 /** Announces durable update progress and recovery without replacing version text. */
 export function HostUpdateNotice({
+  subject = "Companion",
   update,
 }: {
+  readonly subject?: "Companion" | "Relay";
   readonly update: HostUpdateView;
 }): React.JSX.Element {
   if (update.disconnected && update.phase !== null) {
     return (
       <Text accessibilityLiveRegion="polite" style={styles.status}>
-        Companion is restarting. Waiting to verify the update; this device remains paired.
+        {subject === "Relay"
+          ? "Relay is restarting. Waiting to verify the update; paired devices remain connected safely."
+          : "Companion is restarting. Waiting to verify the update; the device remains paired."}
       </Text>
     );
   }
@@ -23,7 +27,7 @@ export function HostUpdateNotice({
       </Text>
     );
   }
-  const operation = operationNotice(update.phase);
+  const operation = operationNotice(update.phase, subject);
   if (operation !== null) {
     return (
       <Text accessibilityLiveRegion={operation.liveRegion} style={operation.style}>
@@ -31,10 +35,13 @@ export function HostUpdateNotice({
       </Text>
     );
   }
-  return <Text style={styles.detail}>{availabilityNotice(update)}</Text>;
+  return <Text style={styles.detail}>{availabilityNotice(update, subject)}</Text>;
 }
 
-function operationNotice(phase: HostUpdateView["phase"]): {
+function operationNotice(
+  phase: HostUpdateView["phase"],
+  subject: "Companion" | "Relay",
+): {
   readonly liveRegion: "assertive" | "polite";
   readonly style: typeof styles.error | typeof styles.status | typeof styles.success;
   readonly text: string;
@@ -43,24 +50,24 @@ function operationNotice(phase: HostUpdateView["phase"]): {
     case "accepted":
       return notice("Update accepted and protected by automatic rollback.");
     case "installing":
-      return notice("Installing the signed Companion update.");
+      return notice(`Installing the signed ${subject} update.`);
     case "targetReady":
-      return notice("The new Companion version is ready to restart.");
+      return notice(`The new ${subject} version is ready to restart.`);
     case "awaitingReconnect":
-      return notice("Waiting for the updated Companion to reconnect.");
+      return notice(`Waiting for the updated ${subject} to reconnect.`);
     case "rollingBack":
-      return notice("Verification failed. Restoring the previous Companion version.");
+      return notice(`Verification failed. Restoring the previous ${subject} version.`);
     case "committed":
       return {
         liveRegion: "polite",
         style: styles.success,
-        text: "Companion updated and reconnected successfully.",
+        text: `${subject} updated and reconnected successfully.`,
       };
     case "rolledBack":
       return {
         liveRegion: "assertive",
         style: styles.error,
-        text: "The update was rolled back safely. The previous Companion version is running.",
+        text: `The update was rolled back safely. The previous ${subject} version is running.`,
       };
     case "failed":
     case null:
@@ -73,22 +80,24 @@ function notice(text: string) {
   return { liveRegion: "polite" as const, style: styles.status, text };
 }
 
-function availabilityNotice(update: HostUpdateView): string {
+function availabilityNotice(update: HostUpdateView, subject: "Companion" | "Relay"): string {
   switch (update.availability) {
     case "unsupported":
-      return "This Companion version cannot update remotely. Update it manually once to enable this control.";
+      return `This ${subject} version cannot update remotely. Update it manually once to enable this control.`;
     case "manualBootstrap":
-      return "The update guardian must be installed manually before safe remote updates are available.";
+      return subject === "Relay"
+        ? "Relay Updater must be installed manually once before safe remote updates are available."
+        : "The update guardian must be installed manually before safe remote updates are available.";
     case "manualUpdate":
-      return "This Companion requires a manual update.";
+      return `This ${subject} requires a manual update.`;
     case "ready":
       return update.currentVersion !== null && update.latestVersion === null
-        ? "Companion is up to date."
-        : "Signed Companion update information is available.";
+        ? `${subject} is up to date.`
+        : `Signed ${subject} update information is available.`;
     case "error":
       return "Check for updates again to continue.";
     case "loading":
     default:
-      return "Checking signed Companion releases.";
+      return `Checking signed ${subject} releases.`;
   }
 }

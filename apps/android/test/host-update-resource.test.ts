@@ -9,6 +9,7 @@ import type {
 import { parseHostUpdateOperation } from "../src/features/connections/hostUpdateContract";
 import { createHostUpdateResource } from "../src/features/connections/hostUpdateResource";
 import { HostUpdateHttpError } from "../src/features/connections/hostUpdateTransport";
+import { parseRelayUpdateStatus } from "../src/features/connections/relayUpdateContract";
 
 const CURRENT_DIGEST = "a".repeat(64);
 const TARGET_FINGERPRINT = "b".repeat(64);
@@ -16,6 +17,35 @@ const SOURCE_REVISION = "c".repeat(40);
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+it("maps the Relay Updater contract into the shared update resource", () => {
+  const parsed = parseRelayUpdateStatus({
+    activeOperation: null,
+    availableTarget: {
+      build: "2",
+      expiresAt: 4_000_000_000,
+      releaseSequence: 2,
+      sourceRevision: SOURCE_REVISION,
+      targetFingerprint: TARGET_FINGERPRINT,
+      version: "1.1.0",
+    },
+    capability: {
+      apiVersion: 1,
+      applySupported: true,
+      bootstrapVersion: 1,
+      journalVersion: 1,
+      unavailableReason: null,
+      updaterContractVersion: 1,
+    },
+    currentBuild: "1",
+    currentDigest: CURRENT_DIGEST,
+    currentSourceRevision: SOURCE_REVISION,
+    currentVersion: "1.0.0",
+  });
+  expect(parsed.platform).toBe("relay-linux-x86-64");
+  expect(parsed.capability.guardianContractVersion).toBe(1);
+  expect(parsed.availableTarget?.target.version).toBe("1.1.0");
 });
 
 describe("Companion host update resource", () => {

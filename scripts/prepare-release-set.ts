@@ -204,11 +204,14 @@ function signedHostUpdateManifest(
   }
   const linux = requiredProduct(products, "companion-linux");
   const macos = requiredProduct(products, "macos");
+  const relay = requiredProduct(products, "relay");
   const linuxAsset = requiredProductAsset(linux, (name) => name.endsWith(".tar.gz"));
   const macosAsset = requiredProductAsset(macos, (name) => name.endsWith(".dmg"));
+  const relayAsset = requiredProductAsset(relay, (name) => name === "codewide-relay-x86_64-unknown-linux-musl");
   const expectedPreviousVersions = new Map<string, string>([
     ["linux-x86-64", requiredPlanTarget(plan, "companion-linux").previousVersion],
     ["macos-universal", requiredPlanTarget(plan, "macos").previousVersion],
+    ["relay-linux-x86-64", requiredPlanTarget(plan, "relay").previousVersion],
   ]);
   const sequence = releaseSequence(plan.version);
   const rollback = previousTargetDigests(
@@ -256,6 +259,18 @@ function signedHostUpdateManifest(
         journalVersion: 1,
         stateEpoch: 1,
         rollbackCompatibleFrom: rollbackDigest(rollback, "macos-universal"),
+      },
+      {
+        platform: "relay-linux-x86-64",
+        version: relay.version,
+        build: relay.sourceRevision.slice(0, 12),
+        sourceRevision: relay.sourceRevision,
+        artifactUrl: `${artifactPrefix}${relayAsset.name}`,
+        sha256: relayAsset.sha256,
+        bootstrapVersion: 1,
+        journalVersion: 1,
+        stateEpoch: 1,
+        rollbackCompatibleFrom: rollbackDigest(rollback, "relay-linux-x86-64"),
       },
     ],
   };
@@ -423,6 +438,11 @@ function productFiles(
           name: "codewide-relay-x86_64-unknown-linux-musl",
           artifact: `codewide-relay-${version}-linux-x86_64`,
           filename: "codewide-relay-x86_64-unknown-linux-musl",
+        },
+        {
+          name: "codewide-relay-updater-x86_64-unknown-linux-musl",
+          artifact: `codewide-relay-${version}-linux-x86_64`,
+          filename: "codewide-relay-updater-x86_64-unknown-linux-musl",
         },
       ];
     case "companion-linux": {

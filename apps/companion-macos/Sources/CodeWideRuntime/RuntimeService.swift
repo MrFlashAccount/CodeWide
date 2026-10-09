@@ -138,6 +138,44 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         }
     }
 
+    func relayUpdateStatus(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(try core.relayUpdateStatusJson(), nil)
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
+    func checkRelayUpdate(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(try core.checkRelayUpdateJson(), nil)
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
+    func applyRelayUpdate(
+        targetFingerprint: String,
+        idempotencyKey: String,
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(
+                try core.applyRelayUpdateJson(
+                    targetFingerprint: targetFingerprint,
+                    idempotencyKey: idempotencyKey
+                ),
+                nil
+            )
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
     func pairRelay(
         address: String,
         invitationJSON: String,

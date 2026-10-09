@@ -8,7 +8,7 @@ use codewide_relay::{
     transport_tls::{RelayTlsIdentity, pinned_client_config},
 };
 use futures_util::{SinkExt, StreamExt, future::join_all};
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -33,12 +33,21 @@ struct Fixture {
     relay_tls_pin_sha256: String,
     route_id: String,
     registry: Registry,
-    _state: tempfile::TempDir,
+    state: tempfile::TempDir,
+    with_updater: bool,
     adapter: Adapter,
 }
 
 impl Fixture {
     async fn start() -> Result<Self> {
+        Self::start_configured(false).await
+    }
+
+    async fn start_with_updater() -> Result<Self> {
+        Self::start_configured(true).await
+    }
+
+    async fn start_configured(with_updater: bool) -> Result<Self> {
         let relay_listener = TcpListener::bind("127.0.0.1:0").await?;
         let relay = relay_listener.local_addr()?;
         let target = TcpListener::bind("127.0.0.1:0").await?;
@@ -57,6 +66,8 @@ impl Fixture {
                 registry.clone(),
                 relay_tls.clone(),
                 relay_stop.clone(),
+                state.path(),
+                with_updater,
             )),
             relay_stop,
             adapter_stops: Vec::new(),
@@ -65,7 +76,8 @@ impl Fixture {
             relay_tls_pin_sha256: relay_tls_pin_sha256.clone(),
             route_id: paired.route_id.clone(),
             registry,
-            _state: state,
+            state,
+            with_updater,
             adapter: Adapter {
                 companion_url: Arc::from(format!("wss://{relay}")),
                 relay_tls_pin_sha256: Arc::from(relay_tls_pin_sha256),
@@ -123,6 +135,8 @@ impl Fixture {
             self.registry.clone(),
             self.relay_tls.clone(),
             self.relay_stop.clone(),
+            self.state.path(),
+            self.with_updater,
         ));
         Ok(())
     }
@@ -189,8 +203,15 @@ fn spawn_relay(
     registry: Registry,
     tls: Arc<rustls::ServerConfig>,
     stop: CancellationToken,
+    state_root: &Path,
+    with_updater: bool,
 ) -> JoinHandle<()> {
     let relay = Relay::new(registry);
+    let relay = if with_updater {
+        relay.with_updater(codewide_relay::update::RelayUpdater::new(state_root))
+    } else {
+        relay
+    };
     tokio::spawn(async move {
         let _ = codewide_relay::server::serve(relay, relay_listener, tls, stop).await;
     })
@@ -374,6 +395,43 @@ async fn health_pair_and_control_are_absent_from_the_plain_carrier() -> Result<(
             .await?
             .status(),
         reqwest::StatusCode::NO_CONTENT
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn relay_update_status_requires_route_credentials_and_reports_bootstrap_state() -> Result<()>
+{
+    let fixture = Fixture::start_with_updater().await?;
+    let endpoint = format!(
+        "https://{}/relay/update/{}",
+        fixture.relay, fixture.route_id
+    );
+    let client = pinned_http_client(&fixture.relay_tls_pin_sha256)?;
+
+    assert_eq!(
+        client
+            .get(&endpoint)
+            .bearer_auth("wrong-token-that-is-long-enough-000000")
+            .send()
+            .await?
+            .status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+
+    let status = client
+        .get(endpoint)
+        .bearer_auth(fixture.adapter.access_token.as_ref())
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<codewide_relay::update::RelayUpdateStatus>()
+        .await?;
+    assert_eq!(status.current_version, env!("CARGO_PKG_VERSION"));
+    assert!(!status.capability.apply_supported);
+    assert_eq!(
+        status.capability.unavailable_reason.as_deref(),
+        Some("manual_bootstrap_required")
     );
     Ok(())
 }

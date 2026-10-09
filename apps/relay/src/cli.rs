@@ -74,6 +74,9 @@ enum Command {
         #[arg(long)]
         route: String,
     },
+    /// Print the state directory selected from the active service for the installer.
+    #[command(hide = true)]
+    BootstrapInfo,
 }
 
 pub async fn run() -> ExitCode {
@@ -101,6 +104,17 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
         return Err("pair needs an interactive terminal to confirm the matching symbols. For scripts or older clients, use invite.".into());
     }
     let target = discovery::target(cli.state.as_deref())?;
+    if matches!(cli.command, Some(Command::BootstrapInfo)) {
+        let state = target
+            .state
+            .to_str()
+            .ok_or("The Relay state path is not valid UTF-8")?;
+        if state.chars().any(char::is_control) || !target.state.is_absolute() {
+            return Err("The Relay state path is unsafe".into());
+        }
+        println!("{state}");
+        return Ok(ExitCode::SUCCESS);
+    }
     let mut socket = match UnixStream::connect(target.state.join(SOCKET)).await {
         Ok(socket) => socket,
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -131,7 +145,7 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
         Some(Command::Revoke { route }) => Request::Revoke {
             route: route.clone(),
         },
-        Some(Command::Serve) => return Ok(ExitCode::SUCCESS),
+        Some(Command::BootstrapInfo | Command::Serve) => return Ok(ExitCode::SUCCESS),
     };
     write_frame(&mut socket, &request).await?;
     let reply = tokio::time::timeout(Duration::from_secs(5), read_frame(&mut socket)).await??;
@@ -153,7 +167,8 @@ async fn run_server(cli: &Cli) -> Result<()> {
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o710))?;
     }
     let identity = RelayTlsIdentity::load_or_create(&root)?;
-    let relay = Relay::new(registry.clone());
+    let relay =
+        Relay::new(registry.clone()).with_updater(codewide_relay::update::RelayUpdater::new(&root));
     let port = cli.port.unwrap_or(8780);
     let listener = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
     let control = ControlServer::bind(

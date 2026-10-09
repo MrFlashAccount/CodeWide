@@ -22,8 +22,10 @@ export function connectionSettingsSections({
   hostUpdates,
   onActivateAccountProfile,
   onApplyHostUpdate,
+  onApplyRelayUpdate,
   onCancelAccountLogin,
   onCheckHostUpdate,
+  onCheckRelayUpdate,
   onConsumeAccountResetCredit,
   onDelete,
   onReconnect,
@@ -33,9 +35,11 @@ export function connectionSettingsSections({
   onToggle,
   onUpdate,
   onUpdateAccountProfile,
+  relayUpdates,
 }: ConnectionSettingsProps) {
   return connections.map((connection) => {
     const hostUpdate = hostUpdates[connection.id];
+    const relayUpdate = relayUpdates[connection.id];
     return {
       content: (
         <>
@@ -66,11 +70,22 @@ export function connectionSettingsSections({
               update={hostUpdate}
             />
           )}
+          {relayUpdate !== undefined && relayUpdate.currentVersion !== null && (
+            <HostUpdateSettings
+              connectionId={connection.id}
+              connectionName={connection.displayName}
+              onApply={onApplyRelayUpdate}
+              onCheck={onCheckRelayUpdate}
+              subject="Relay"
+              update={relayUpdate}
+            />
+          )}
         </>
       ),
       description: connectionDescription(
         connectionStateLabel(connection.state, connection.enabled, connection.health),
         hostUpdate,
+        relayUpdate,
       ),
       id: connection.id,
       leading: <ServerIcon color={colors.text} iconId={connection.iconId} metric="title" />,
@@ -98,13 +113,24 @@ export function connectionSettingsSections({
   });
 }
 
-function connectionDescription(state: string, update: HostUpdateView | undefined): string {
+function connectionDescription(
+  state: string,
+  host: HostUpdateView | undefined,
+  relay: HostUpdateView | undefined,
+): string {
+  const versions = [updateDescription("Companion", host), updateDescription("Relay", relay)].filter(
+    (value): value is string => value !== null,
+  );
+  return versions.length === 0 ? state : `${state} · ${versions.join(" · ")}`;
+}
+
+function updateDescription(label: string, update: HostUpdateView | undefined): string | null {
   if (update === undefined || update.currentVersion === null) {
-    return state;
+    return null;
   }
   const available =
     update.latestVersion !== null && update.latestVersion !== update.currentVersion
-      ? ` · Update ${update.latestVersion}`
+      ? ` → ${update.latestVersion}`
       : "";
-  return `${state} · Companion ${update.currentVersion}${available}`;
+  return `${label} ${update.currentVersion}${available}`;
 }

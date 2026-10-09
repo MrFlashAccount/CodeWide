@@ -402,6 +402,9 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     var holdDevices = false
     var pendingDevices: (@Sendable (DeviceListPayload?, NSError?) -> Void)?
     var relayEnabled = true
+    var relayUpdateJSON = """
+    {"currentVersion":"0.4.1","capability":{"applySupported":true,"unavailableReason":null},"availableTarget":null,"activeOperation":null}
+    """
     var directEndpoints = ["wss://192.0.2.1:8766/v1/sync"]
     var lastPairingEndpoint: String?
     var holdEnrollmentStart = false
@@ -466,6 +469,26 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     func relayStatus(withReply reply: @escaping @Sendable (RelayStatusPayload?, NSError?) -> Void) {
         if let relayFailure { reply(nil, relayFailure); return }
         reply(RelayStatusPayload(configured: true, enabled: relayEnabled, connection: relayEnabled ? "online" : "disabled", publicEndpoint: "wss://test.invalid"), nil)
+    }
+
+    func relayUpdateStatus(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        reply(relayUpdateJSON, nil)
+    }
+
+    func checkRelayUpdate(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        reply(relayUpdateJSON, nil)
+    }
+
+    func applyRelayUpdate(
+        targetFingerprint: String,
+        idempotencyKey: String,
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        reply("{\"operationId\":\"test-operation\",\"phase\":\"accepted\"}", nil)
     }
 
     func devices(withReply reply: @escaping @Sendable (DeviceListPayload?, NSError?) -> Void) {

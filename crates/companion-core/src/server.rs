@@ -372,6 +372,17 @@ fn build_secure_router(state: AppState) -> Router {
         .route("/v1/host-update", get(host_update_status))
         .route("/v1/host-update/check", post(host_update_check))
         .route("/v1/host-update/apply", post(host_update_apply))
+        .route("/v1/relay-update", get(relay_update_status))
+        .route("/v1/relay-update/check", post(relay_update_check))
+        .route("/v1/relay-update/apply", post(relay_update_apply))
+        .route(
+            "/v1/relay-update/operations/{operation_id}",
+            get(relay_update_operation),
+        )
+        .route(
+            "/v1/relay-update/operations/{operation_id}/reconnect",
+            post(relay_update_reconnect),
+        )
         .route(
             "/v1/host-update/operations/{operation_id}",
             get(host_update_operation),

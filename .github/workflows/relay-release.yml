@@ -48,6 +48,8 @@ on:
     secrets:
       HOMEBREW_TAP_DEPLOY_KEY:
         required: true
+      HOST_UPDATE_P256_PUBLIC_KEY_SPKI:
+        required: true
 
 permissions:
   contents: write
@@ -115,9 +117,13 @@ jobs:
           echo "CODEWIDE_RELAY_VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=relay-v$version" >> "$GITHUB_ENV"
           echo "ASSET=dist/relay/codewide-relay-x86_64-unknown-linux-musl" >> "$GITHUB_ENV"
+          echo "UPDATER_ASSET=dist/relay/codewide-relay-updater-x86_64-unknown-linux-musl" >> "$GITHUB_ENV"
 
       - name: Build portable binary
         id: build
+        env:
+          CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI: ${{ secrets.HOST_UPDATE_P256_PUBLIC_KEY_SPKI }}
+          CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID: ${{ vars.HOST_UPDATE_SIGNING_KEY_ID || 'host-update-v1' }}
         run: ./scripts/build-relay-linux
 
       - name: Save completed Linux build before installer validation
@@ -139,6 +145,8 @@ jobs:
           path: |
             ${{ env.ASSET }}
             ${{ env.ASSET }}.sha256
+            ${{ env.UPDATER_ASSET }}
+            ${{ env.UPDATER_ASSET }}.sha256
           if-no-files-found: error
 
       - name: Validate Homebrew tap generation
@@ -162,11 +170,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="CodeWide Relay $CODEWIDE_RELAY_VERSION. Portable static x86_64 binary with a checksummed standalone installer."
+          notes="CodeWide Relay $CODEWIDE_RELAY_VERSION. Portable static x86_64 Relay and short-lived Relay Updater with checksummed standalone installation."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" --clobber
+            gh release upload "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" "$UPDATER_ASSET" "$UPDATER_ASSET.sha256" --clobber
           else
-            gh release create "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" \
+            gh release create "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" "$UPDATER_ASSET" "$UPDATER_ASSET.sha256" \
               --title "CodeWide Relay $CODEWIDE_RELAY_VERSION" \
               --notes "$notes" \
               --latest=false

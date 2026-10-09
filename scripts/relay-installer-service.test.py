@@ -22,6 +22,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET = "codewide-relay-x86_64-unknown-linux-musl"
+UPDATER_ASSET = "codewide-relay-updater-x86_64-unknown-linux-musl"
 
 
 def alive(pid):
@@ -60,7 +61,12 @@ def manager_tool(tool, args):
     args = [arg for arg in args if arg != "--user"]
     unit = root / ("config/systemd/user/codewide-relay.service" if scope == "user" else "system.service")
     pid_path = root / f"{scope}.pid"
-    enabled = root / f"{scope}.enabled"
+    unit_name = args[-1] if len(args) > 1 else ""
+    enabled = root / (
+        f"{scope}.update.enabled"
+        if unit_name == "codewide-relay-update.path"
+        else f"{scope}.enabled"
+    )
     pid = int(pid_path.read_text()) if pid_path.exists() else 0
     running = bool(pid and alive(pid))
     command = args[0]
@@ -130,6 +136,9 @@ class InstallerServiceTests(unittest.TestCase):
         self.payload = self.release / ASSET
         shutil.copyfile(DIST / ASSET, self.payload)
         self.payload.chmod(0o755)
+        self.updater_payload = self.release / UPDATER_ASSET
+        shutil.copyfile(DIST / UPDATER_ASSET, self.updater_payload)
+        self.updater_payload.chmod(0o755)
         self.version = subprocess.check_output([str(self.payload), "--version"], text=True).split()[1]
         self.checksum()
         self.env = {
@@ -143,6 +152,7 @@ class InstallerServiceTests(unittest.TestCase):
             "CODEWIDE_RELAY_VERSION": self.version,
             "CODEWIDE_RELAY_DOWNLOAD_BASE_URL": self.release.as_uri(),
             "CODEWIDE_RELAY_ALLOW_INSECURE_DOWNLOAD": "1",
+            "CODEWIDE_RELAY_SYSTEMD_UNIT_DIR": str(self.root / "systemd/system"),
         }
         self.unit = self.root / "config/systemd/user/codewide-relay.service"
         self.state = Path(self.env["XDG_STATE_HOME"]) / "codewide/relay"
@@ -159,6 +169,10 @@ class InstallerServiceTests(unittest.TestCase):
     def checksum(self):
         digest = hashlib.sha256(self.payload.read_bytes()).hexdigest()
         (self.release / f"{ASSET}.sha256").write_text(f"{digest}  {ASSET}\n")
+        updater_digest = hashlib.sha256(self.updater_payload.read_bytes()).hexdigest()
+        (self.release / f"{UPDATER_ASSET}.sha256").write_text(
+            f"{updater_digest}  {UPDATER_ASSET}\n"
+        )
 
     def install(self, *args):
         # Match curl | sh: the installer and its child commands receive a pipe.
@@ -219,7 +233,14 @@ class InstallerServiceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertIn(b"Ready: codewide-relay pair", result.stdout)
         self.assertTrue((self.root / "user.enabled").exists())
+        self.assertTrue((self.root / "user.update.enabled").exists())
         self.assertTrue((self.root / "linger").exists())
+        self.assertTrue((self.state / "update/bootstrap/codewide-relay-updater").is_file())
+        self.assertTrue((self.root / "config/systemd/user/codewide-relay-update.path").is_file())
+        self.assertEqual(
+            json.loads((self.state / "update/config.json").read_text())["serviceScope"],
+            "user",
+        )
         self.assert_ready()
         computer = self.paired_computer()
         pending = self.cli("invite")
@@ -244,9 +265,22 @@ class InstallerServiceTests(unittest.TestCase):
         executable = str(self.bin / "codewide-relay").replace("%", "%%").replace("$", "$$").replace('"', '\\"')
         path.write_text(f'[Service]\nExecStart=/usr/bin/env -- "{executable}" serve --state "{self.state}" --port {self.port}\nRestart=on-failure\nUMask=0077\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=default.target\n')
 
+    def start_existing_service(self, scope):
+        installed = self.bin / "codewide-relay"
+        shutil.copyfile(self.payload, installed)
+        installed.chmod(0o755)
+        command = ["systemctl"]
+        if scope == "user":
+            command.append("--user")
+        command += ["restart", "codewide-relay.service"]
+        result = subprocess.run(command, env=self.env, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assert_ready()
+
     def test_upgrade_preserves_custom_unit_port_and_identity(self):
         self.state = self.root / "custom-state"
         self.custom_unit(self.unit)
+        self.start_existing_service("user")
         unit = self.unit.read_bytes()
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr.decode())
@@ -290,12 +324,14 @@ class InstallerServiceTests(unittest.TestCase):
         self.assertFalse(self.unit.exists())
         self.assertFalse((self.bin / "codewide-relay").exists())
         self.assertFalse((self.root / "user.enabled").exists())
+        self.assertFalse((self.root / "user.update.enabled").exists())
         self.assertFalse((self.root / "linger").exists())
 
     def test_existing_system_service_is_updated_without_a_second_identity(self):
         self.state = self.root / "system-state"
         system_unit = self.root / "system.service"
         self.custom_unit(system_unit)
+        self.start_existing_service("system")
         unit = system_unit.read_bytes()
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr.decode())
@@ -307,6 +343,12 @@ class InstallerServiceTests(unittest.TestCase):
         self.assert_authorized(computer)
         self.assertFalse(self.unit.exists())
         self.assertFalse(Path(self.env["XDG_STATE_HOME"]).exists())
+        self.assertTrue((self.root / "systemd/system/codewide-relay-update.path").is_file())
+        self.assertTrue((self.root / "system.update.enabled").exists())
+        self.assertEqual(
+            json.loads((self.state / "update/config.json").read_text())["serviceScope"],
+            "system",
+        )
         self.assert_ready()
 
     def test_non_systemd_requires_explicit_binary_only_install(self):

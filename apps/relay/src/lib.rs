@@ -8,6 +8,7 @@ pub mod pairing;
 pub mod registry;
 pub mod server;
 pub mod transport_tls;
+pub mod update;
 mod wire;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;

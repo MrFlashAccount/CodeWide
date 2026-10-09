@@ -21,6 +21,7 @@ const version = "0.4.1";
 function artifactFiles(releaseVersion: string) {
   return [
     [`codewide-relay-${releaseVersion}-linux-x86_64`, "codewide-relay-x86_64-unknown-linux-musl"],
+    [`codewide-relay-${releaseVersion}-linux-x86_64`, "codewide-relay-updater-x86_64-unknown-linux-musl"],
     [
       `codewide-companion-${releaseVersion}-linux-x86_64`,
       `codewide-companion-${releaseVersion}-x86_64-unknown-linux-musl.tar.gz`,
@@ -105,6 +106,7 @@ describe("atomic release package", () => {
       expect(sums).toContain("appcast.xml");
       for (const name of [
         "codewide-relay-x86_64-unknown-linux-musl",
+        "codewide-relay-updater-x86_64-unknown-linux-musl",
         `codewide-companion-${version}-x86_64-unknown-linux-musl.tar.gz`,
       ]) {
         const payload = readFileSync(join(assets, name));
@@ -133,7 +135,7 @@ describe("atomic release package", () => {
         }[];
       };
       expect(descriptor.sequence).toBe(4_000_001);
-      expect(descriptor.targets).toHaveLength(2);
+      expect(descriptor.targets).toHaveLength(3);
       expect(descriptor.targets.every(({ sourceRevision }) => sourceRevision.length === 40)).toBe(true);
       expect(descriptor.targets.every(({ sha256 }) => sha256.length === 64)).toBe(true);
       expect(descriptor.targets.every(({ rollbackCompatibleFrom }) => rollbackCompatibleFrom.length === 0)).toBe(true);

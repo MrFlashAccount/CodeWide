@@ -32,6 +32,10 @@ export default function V1SettingsRoute(): React.JSX.Element {
     resources.list.settingsConnections,
     features.connections.hostUpdates,
   );
+  const relayUpdates = useHostUpdateProjection(
+    resources.list.settingsConnections,
+    features.connections.relayUpdates,
+  );
   return (
     <SubscribedConnectionSettings
       accountRateLimitsDatabase={resources.runtime.accountRateLimits}
@@ -43,7 +47,9 @@ export default function V1SettingsRoute(): React.JSX.Element {
         router.push("/settings/servers/new");
       }}
       onApplyHostUpdate={features.connections.hostUpdates.apply}
+      onApplyRelayUpdate={features.connections.relayUpdates.apply}
       onCheckHostUpdate={features.connections.hostUpdates.check}
+      onCheckRelayUpdate={features.connections.relayUpdates.check}
       onClose={() => {
         recoverUnavailableRoute(router, "/");
       }}
@@ -53,6 +59,7 @@ export default function V1SettingsRoute(): React.JSX.Element {
       onToggle={resources.connectionActions.toggleConnection}
       onUpdate={resources.connectionActions.updateSavedConnection}
       {...(workspaceRuntime.native ? ACCOUNT_ACTIONS : NO_ACCOUNT_ACTIONS)}
+      relayUpdates={relayUpdates}
       visible={visible}
       voiceAssistantModelCatalog={globalVoiceModelCatalog}
     />

@@ -53,6 +53,15 @@ type HostUpdateTransportAuthority = {
 /** Uses the existing pinned native HTTP origin and refreshable device session. */
 export function createHostUpdateTransport(
   authority: HostUpdateTransportAuthority,
+  {
+    basePath = "/v1/host-update",
+    parseStatus = parseHostUpdateStatus,
+    subject = "Companion",
+  }: {
+    readonly basePath?: string;
+    readonly parseStatus?: (value: unknown) => HostUpdateStatus;
+    readonly subject?: string;
+  } = {},
 ): HostUpdateTransport {
   const request = async (connectionId: string, path: string, init?: RequestInit) => {
     const connection = authority
@@ -78,7 +87,7 @@ export function createHostUpdateTransport(
       response = await send(true);
     }
     if (!response.ok) {
-      throw await responseError(response);
+      throw await responseError(response, subject);
     }
     return response;
   };
@@ -95,7 +104,7 @@ export function createHostUpdateTransport(
   return {
     async apply(connectionId, targetFingerprint, idempotencyKey) {
       return parseApplyHostUpdateAccepted(
-        await jsonRequest(connectionId, "/v1/host-update/apply", {
+        await jsonRequest(connectionId, `${basePath}/apply`, {
           body: JSON.stringify({ idempotencyKey, targetFingerprint }),
           headers: { "content-type": "application/json" },
           method: "POST",
@@ -103,26 +112,24 @@ export function createHostUpdateTransport(
       );
     },
     async check(connectionId) {
-      return parseHostUpdateStatus(
-        await jsonRequest(connectionId, "/v1/host-update/check", { method: "POST" }),
-      );
+      return parseStatus(await jsonRequest(connectionId, `${basePath}/check`, { method: "POST" }));
     },
     async readOperation(connectionId, operationId) {
       return parseHostUpdateOperation(
         await jsonRequest(
           connectionId,
-          `/v1/host-update/operations/${encodeURIComponent(operationId)}`,
+          `${basePath}/operations/${encodeURIComponent(operationId)}`,
         ),
       );
     },
     async readStatus(connectionId) {
-      return parseHostUpdateStatus(await jsonRequest(connectionId, "/v1/host-update"));
+      return parseStatus(await jsonRequest(connectionId, basePath));
     },
     async reconnect(connectionId, operationId) {
       return parseHostUpdateOperation(
         await jsonRequest(
           connectionId,
-          `/v1/host-update/operations/${encodeURIComponent(operationId)}/reconnect`,
+          `${basePath}/operations/${encodeURIComponent(operationId)}/reconnect`,
           { method: "POST" },
         ),
       );
@@ -130,14 +137,18 @@ export function createHostUpdateTransport(
   };
 }
 
-async function responseError(response: Response): Promise<HostUpdateHttpError> {
-  const fallback = `Companion update request failed (${String(response.status)})`;
+async function responseError(response: Response, subject: string): Promise<HostUpdateHttpError> {
+  const fallback = `${subject} update request failed (${String(response.status)})`;
   try {
     const body: unknown = await response.json();
     if (isRecord(body)) {
       const row = body;
       if (typeof row.error === "string" && typeof row.message === "string") {
-        return new HostUpdateHttpError(response.status, row.error, sanitizeMessage(row.message));
+        return new HostUpdateHttpError(
+          response.status,
+          row.error,
+          sanitizeMessage(row.message, subject),
+        );
       }
     }
   } catch {
@@ -146,9 +157,9 @@ async function responseError(response: Response): Promise<HostUpdateHttpError> {
   return new HostUpdateHttpError(response.status, "http_error", fallback);
 }
 
-function sanitizeMessage(message: string): string {
+function sanitizeMessage(message: string, subject: string): string {
   const compact = message.replaceAll(/\s+/gu, " ").trim().slice(0, MAX_ERROR_MESSAGE_LENGTH);
-  return compact.length === 0 ? "Companion rejected the update request" : compact;
+  return compact.length === 0 ? `${subject} rejected the update request` : compact;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

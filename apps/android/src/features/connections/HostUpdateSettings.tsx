@@ -15,6 +15,7 @@ type HostUpdateSettingsProps = {
   readonly connectionName: string;
   readonly onApply: (connectionId: string, targetFingerprint: string) => Promise<void>;
   readonly onCheck: (connectionId: string) => Promise<void>;
+  readonly subject?: "Companion" | "Relay";
   readonly update: HostUpdateView;
 };
 
@@ -24,6 +25,7 @@ export function HostUpdateSettings({
   connectionName,
   onApply,
   onCheck,
+  subject = "Companion",
   update,
 }: HostUpdateSettingsProps): React.JSX.Element {
   const dialog = useAppDialog();
@@ -34,17 +36,23 @@ export function HostUpdateSettings({
     dialog,
     onApply,
     onCheck,
+    subject,
     update,
   });
 
   return (
-    <View accessibilityLabel="Companion update" style={styles.body} testID="host-update-settings">
-      <HostUpdateMetadata pending={pending} update={update} />
-      <HostUpdateNotice update={update} />
+    <View
+      accessibilityLabel={`${subject} update`}
+      style={styles.body}
+      testID={subject === "Companion" ? "host-update-settings" : "relay-update-settings"}
+    >
+      <HostUpdateMetadata pending={pending} subject={subject} update={update} />
+      <HostUpdateNotice subject={subject} update={update} />
       <HostUpdateActions
         onApply={handlers.apply}
         onCheck={handlers.check}
         pending={pending}
+        subject={subject}
         update={update}
       />
     </View>
@@ -57,6 +65,7 @@ function useHostUpdateHandlers({
   dialog,
   onApply,
   onCheck,
+  subject = "Companion",
   update,
 }: HostUpdateSettingsProps & { readonly dialog: ReturnType<typeof useAppDialog> }): {
   readonly apply: () => void;
@@ -77,11 +86,11 @@ function useHostUpdateHandlers({
       return;
     }
     dialog.alert(
-      "Update Companion?",
-      `${connectionName} will temporarily disconnect while Companion restarts. If the new version cannot start and reconnect safely, the device will automatically roll back to the current version.`,
+      `Update ${subject}?`,
+      `${connectionName}'s ${subject} connection will temporarily disconnect while ${subject} restarts. If the new version cannot start and reconnect safely, it will automatically roll back to the current version.`,
       [
         { style: "cancel", text: "Cancel" },
-        { onPress: confirmApply, text: "Update Companion" },
+        { onPress: confirmApply, text: `Update ${subject}` },
       ],
     );
   });
@@ -90,16 +99,18 @@ function useHostUpdateHandlers({
 
 function HostUpdateMetadata({
   pending,
+  subject,
   update,
 }: {
   readonly pending: boolean;
+  readonly subject: "Companion" | "Relay";
   readonly update: HostUpdateView;
 }): React.JSX.Element {
   const currentVersion = update.currentVersion ?? "Unavailable";
   return (
     <>
       <View style={styles.row}>
-        <Text style={styles.label}>Companion version</Text>
+        <Text style={styles.label}>{subject} version</Text>
         {pending ? (
           <WaveText
             containerStyle={styles.versionShimmer}
@@ -131,11 +142,13 @@ function HostUpdateActions({
   onApply,
   onCheck,
   pending,
+  subject,
   update,
 }: {
   readonly onApply: () => void;
   readonly onCheck: () => void;
   readonly pending: boolean;
+  readonly subject: "Companion" | "Relay";
   readonly update: HostUpdateView;
 }): React.JSX.Element {
   const retry = update.canRetry;
@@ -145,18 +158,18 @@ function HostUpdateActions({
     <View style={styles.actions}>
       {showApply && (
         <AppButton
-          accessibilityLabel={retry ? "Retry Companion update" : "Update Companion"}
+          accessibilityLabel={retry ? `Retry ${subject} update` : `Update ${subject}`}
           accessibilityState={{ busy: pending }}
           isDisabled={pending}
           onPress={onApply}
           variant="primary"
         >
-          {retry ? "Retry update" : "Update Companion"}
+          {retry ? "Retry update" : `Update ${subject}`}
         </AppButton>
       )}
       {showCheck && (
         <AppButton
-          accessibilityLabel="Check for Companion updates"
+          accessibilityLabel={`Check for ${subject} updates`}
           onPress={onCheck}
           variant="secondary"
         >
@@ -167,6 +180,11 @@ function HostUpdateActions({
   );
 }
 
-function platformLabel(platform: "linux-x86-64" | "macos-universal"): string {
-  return platform === "macos-universal" ? "macOS" : "Linux";
+function platformLabel(
+  platform: "linux-x86-64" | "macos-universal" | "relay-linux-x86-64",
+): string {
+  if (platform === "macos-universal") {
+    return "macOS";
+  }
+  return platform === "relay-linux-x86-64" ? "Relay · Linux" : "Linux";
 }

@@ -23,7 +23,10 @@ import {
   wakeNativeConnection,
 } from "../../native/native-transport";
 
-import { createConnectionHostUpdateResource } from "./hostUpdateWorkspaceBinding";
+import {
+  createConnectionHostUpdateResource,
+  createConnectionRelayUpdateResource,
+} from "./hostUpdateWorkspaceBinding";
 import type { ConnectionsWorkspaceCapabilities } from "./workspaceCapabilities";
 /** Converts connections intents using retained lower authorities. */
 export function createConnectionsWorkspaceAdapter({
@@ -54,6 +57,10 @@ export function createConnectionsWorkspaceAdapter({
   scopedHttpAuthorization: ReturnType<typeof createWorkspaceSession>["scopedHttpAuthorization"];
 }): ConnectionsWorkspaceCapabilities {
   const hostUpdates = createConnectionHostUpdateResource({
+    currentConnections,
+    scopedHttpAuthorization,
+  });
+  const relayUpdates = createConnectionRelayUpdateResource({
     currentConnections,
     scopedHttpAuthorization,
   });
@@ -136,6 +143,7 @@ export function createConnectionsWorkspaceAdapter({
     await refreshConnectionProfiles();
     getConnectionState()?.remove(connectionId);
     hostUpdates.forget(connectionId);
+    relayUpdates.forget(connectionId);
   };
 
   const setConnectionEnabled = async (connectionId: string, enabled: boolean) => {
@@ -210,6 +218,7 @@ export function createConnectionsWorkspaceAdapter({
     hostUpdates,
     moveConnection,
     reconnectConnection,
+    relayUpdates,
     setConnectionEnabled,
     updateConnection,
     updateConnectionProfile,

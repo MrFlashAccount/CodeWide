@@ -9,6 +9,7 @@ export type ConnectionsWorkspaceCapabilities = {
   hostUpdates: HostUpdateResource;
   moveConnection: (connectionId: string, direction: -1 | 1) => Promise<void>;
   reconnectConnection: (connectionId: string) => Promise<void>;
+  relayUpdates: HostUpdateResource;
   setConnectionEnabled: (connectionId: string, enabled: boolean) => Promise<void>;
   updateConnection: (connectionId: string, input: ConnectionUpdateInput) => Promise<void>;
   updateConnectionProfile: (

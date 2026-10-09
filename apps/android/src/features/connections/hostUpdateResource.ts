@@ -22,7 +22,9 @@ import { HostUpdateHttpError, type HostUpdateTransport } from "./hostUpdateTrans
 
 type HostUpdateResourceOptions = {
   readonly createIdempotencyKey: () => string;
+  readonly idempotencyPrefix?: string;
   readonly retryBaseMilliseconds?: number;
+  readonly subject?: string;
   readonly transport: HostUpdateTransport;
 };
 
@@ -53,7 +55,9 @@ function cancelTimer(record: HostUpdateResourceRecord): void {
  */
 export function createHostUpdateResource({
   createIdempotencyKey,
+  idempotencyPrefix = "host-update",
   retryBaseMilliseconds = DEFAULT_RETRY_MILLISECONDS,
+  subject = "Companion",
   transport,
 }: HostUpdateResourceOptions): HostUpdateResource {
   const snapshot$ = observable<HostUpdateSnapshot>({ byConnection: {} });
@@ -317,13 +321,13 @@ export function createHostUpdateResource({
             canApply: false,
             canCheck: true,
             errorCode: "stale_target",
-            errorMessage: "The available Companion release changed. Check again before updating.",
+            errorMessage: `The available ${subject} release changed. Check again before updating.`,
           });
         }
         return;
       }
       record.intent = {
-        idempotencyKey: `host-update-${createIdempotencyKey()}`,
+        idempotencyKey: `${idempotencyPrefix}-${createIdempotencyKey()}`,
         operationId: null,
         targetFingerprint,
       };

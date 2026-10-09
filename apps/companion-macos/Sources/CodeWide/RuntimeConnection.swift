@@ -12,6 +12,9 @@ final class RuntimeConnection: ObservableObject {
     @Published private(set) var isDiscoveringAppServers = false
     @Published private(set) var hasDiscoveredAppServers = false
     @Published private(set) var relay: RelayStatusPayload?
+    @Published private(set) var relayUpdate: RelayUpdateView?
+    @Published private(set) var relayUpdateError: String?
+    @Published private(set) var isRelayUpdateWorking = false
     @Published private(set) var directAccess: DirectAccessPayload?
     @Published var pairingEndpoint: String?
     @Published private(set) var devices: [DeviceStatusPayload] = []
@@ -89,6 +92,7 @@ final class RuntimeConnection: ObservableObject {
             self.directAccess = nil
             self.appServer = nil
             self.relay = nil
+            self.relayUpdate = nil
             self.devices = []
             status = "Unavailable"
             lastError = error.localizedDescription
@@ -107,6 +111,12 @@ final class RuntimeConnection: ObservableObject {
                 pairingEndpoint = direct.endpoints.first
             }
             relay = relayStatus
+            if relayStatus.configured {
+                await refreshRelayUpdateSilently()
+            } else {
+                relayUpdate = nil
+                relayUpdateError = nil
+            }
             devices = deviceList.devices
             if appServers.isEmpty {
                 await discoverAppServers()
@@ -118,6 +128,7 @@ final class RuntimeConnection: ObservableObject {
             directAccess = nil
             appServer = nil
             relay = nil
+            relayUpdate = nil
             devices = []
             status = "Unavailable"
             lastError = error.localizedDescription
@@ -263,6 +274,7 @@ final class RuntimeConnection: ObservableObject {
         status = "Switching App Server"
         health = nil
         relay = nil
+        relayUpdate = nil
         directAccess = nil
         pairingEndpoint = nil
         devices = []
@@ -286,6 +298,51 @@ final class RuntimeConnection: ObservableObject {
         stateRevision += 1
         relay = updated
         await refresh()
+    }
+
+    func checkRelayUpdate() async throws {
+        guard !isRelayUpdateWorking else { return }
+        isRelayUpdateWorking = true
+        relayUpdateError = nil
+        defer { isRelayUpdateWorking = false }
+        do {
+            relayUpdate = try RelayUpdateCodec.status(try await requestCheckRelayUpdate())
+        } catch {
+            relayUpdateError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func applyRelayUpdate() async throws {
+        guard !isRelayUpdateWorking,
+              let target = relayUpdate?.availableTarget
+        else { return }
+        isRelayUpdateWorking = true
+        relayUpdateError = nil
+        defer { isRelayUpdateWorking = false }
+        do {
+            _ = try RelayUpdateCodec.accepted(
+                try await requestApplyRelayUpdate(
+                    targetFingerprint: target.targetFingerprint,
+                    idempotencyKey: "macos-\(UUID().uuidString.lowercased())"
+                )
+            )
+            await refreshRelayUpdateSilently()
+        } catch {
+            relayUpdateError = error.localizedDescription
+            throw error
+        }
+    }
+
+    private func refreshRelayUpdateSilently() async {
+        do {
+            let update = try RelayUpdateCodec.status(try await requestRelayUpdateStatus())
+            relayUpdate = update
+            relayUpdateError = update.failureMessage
+        } catch {
+            // An old Relay and the short restart window do not make the local
+            // Companion unavailable. Explicit actions still surface failures.
+        }
     }
 
     var preferredPairingRoute: PairingRoute {
@@ -359,6 +416,7 @@ final class RuntimeConnection: ObservableObject {
                 directAccess = nil
                 appServer = nil
                 relay = nil
+                relayUpdate = nil
                 devices = []
                 status = requiresApproval ? "Approval required" : "Unavailable"
                 lastError = requiresApproval
@@ -373,6 +431,7 @@ final class RuntimeConnection: ObservableObject {
             directAccess = nil
             appServer = nil
             relay = nil
+            relayUpdate = nil
             devices = []
             status = "Registration failed"
             lastError = error.localizedDescription
@@ -462,6 +521,48 @@ final class RuntimeConnection: ObservableObject {
                 return
             }
             proxy.relayStatus { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestRelayUpdateStatus() async throws -> String {
+        try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.relayUpdateStatus { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestCheckRelayUpdate() async throws -> String {
+        try await XPCReplyGate.perform(timeout: .seconds(30)) { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.checkRelayUpdate { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestApplyRelayUpdate(
+        targetFingerprint: String,
+        idempotencyKey: String
+    ) async throws -> String {
+        try await XPCReplyGate.perform(timeout: .seconds(30)) { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.applyRelayUpdate(
+                targetFingerprint: targetFingerprint,
+                idempotencyKey: idempotencyKey
+            ) { payload, error in
                 gate.resume(with: Self.result(payload: payload, error: error))
             }
         }
