@@ -29,6 +29,9 @@ const THREAD_USAGE: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_
 const THREAD_METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_metadata");
 const THREAD_PINS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_pins");
 const THREADS_BY_PARENT: TableDefinition<&[u8], u8> = TableDefinition::new("threads_by_parent");
+
+mod agent_tables;
+pub use agent_tables::BindingWrite;
 const SCHEMA_VERSION: u32 = 7;
 const ROLLOUT_LOGIC_VERSION: u64 = 4;
 const FILE_STATE_VERSION: u8 = 2;
@@ -140,9 +143,19 @@ pub enum OutboxClaimOutcome {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutboxClaimResolution<'a> {
     Delivered,
-    NotSent { retry_after_ms: u64 },
-    Rejected { error: &'a str },
-    Indeterminate { error: &'a str, retry_after_ms: u64 },
+    NotSent {
+        retry_after_ms: u64,
+    },
+    /// The provider refused a start because the thread has an active turn:
+    /// keep the command queued as "deliver after idle" without an attempt.
+    Busy,
+    Rejected {
+        error: &'a str,
+    },
+    Indeterminate {
+        error: &'a str,
+        retry_after_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -488,6 +501,7 @@ impl IndexStore {
             write.open_table(THREAD_METADATA)?;
             write.open_table(THREAD_PINS)?;
             write.open_table(THREADS_BY_PARENT)?;
+            agent_tables::create(&write)?;
         }
         write.commit()?;
         Ok(Self {
@@ -1568,6 +1582,12 @@ impl IndexStore {
                     command.state = OutboxState::Queued;
                     command.last_error = None;
                     command.next_attempt_at = now.saturating_add(retry_after_ms);
+                }
+                OutboxClaimResolution::Busy => {
+                    command.state = OutboxState::Queued;
+                    command.presentation = OutboxPresentation::Queue;
+                    command.last_error = None;
+                    command.next_attempt_at = now;
                 }
                 OutboxClaimResolution::Rejected { error } => {
                     command.state = OutboxState::Failed;

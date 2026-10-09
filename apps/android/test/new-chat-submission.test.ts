@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { parseAgentProviderId } from "../src/data/threadAgent";
 import { createNewChatSubmission } from "../src/features/projects/newChatSubmission";
 import type { NewThreadDraft } from "../src/services/threads/newThreadService";
 import { parseThreadSelectionKey } from "../src/services/threads/threadRouteParams";
@@ -21,17 +22,17 @@ describe("new-chat admission binding", () => {
     const select = vi.fn();
     const closeDraft = vi.fn();
     const submit = createNewChatSubmission({
+      catalogModels: () => [],
       closeDraft,
       commands,
       draftChat: draft,
       setActiveThreadId: select,
     });
     const sent = submit("message", { type: "start" }, {});
-    expect(commands.startThreadInWorkspace).toHaveBeenCalledWith(
-      "server",
-      "/project",
-      "activation",
-    );
+    expect(commands.startThreadInWorkspace).toHaveBeenCalledWith("server", "/project", {
+      agent: null,
+      requestId: "activation",
+    });
     expect(select).not.toHaveBeenCalled();
     created.resolve("thread");
     await vi.waitFor(() =>
@@ -63,6 +64,7 @@ describe("new-chat admission binding", () => {
     const closeDraft = vi.fn();
     await expect(
       createNewChatSubmission({
+        catalogModels: () => [],
         closeDraft,
         commands,
         draftChat: draft,
@@ -80,6 +82,7 @@ describe("new-chat admission binding", () => {
     };
     const options = { model: "selected" };
     await createNewChatSubmission({
+      catalogModels: () => [],
       closeDraft: vi.fn(),
       commands,
       draftChat: { ...draft, workspaceMode: "current" },
@@ -88,4 +91,40 @@ describe("new-chat admission binding", () => {
     expect(commands.sendText.mock.calls[0]?.[4]).toBe(options);
     expect(commands.startThreadInWorkspace).not.toHaveBeenCalled();
   });
+  it("binds a new chat to the provider of the catalog row that offered the chosen model", async () => {
+    const commands = {
+      startThread: vi.fn().mockResolvedValue("thread"),
+      startThreadInWorkspace: vi.fn(),
+      sendText: vi.fn().mockResolvedValue("command"),
+    };
+    const models = [
+      catalogModel("gpt-default", "codex", true),
+      catalogModel("claude-sonnet", "claude", false),
+    ];
+    const submit = createNewChatSubmission({
+      catalogModels: () => models,
+      closeDraft: vi.fn(),
+      commands,
+      draftChat: { ...draft, workspaceMode: "current" },
+      setActiveThreadId: vi.fn(),
+    });
+    await submit("message", { type: "start" }, { model: "claude-sonnet" });
+    await submit("message", { type: "start" }, {});
+    expect(commands.startThread.mock.calls).toEqual([
+      ["server", "/project", { model: "claude-sonnet", provider: "claude" }],
+      ["server", "/project", undefined],
+    ]);
+  });
 });
+
+function catalogModel(id: string, provider: string, isDefault: boolean) {
+  return {
+    defaultEffort: "high",
+    efforts: ["high"],
+    id,
+    isDefault,
+    label: id,
+    provider: parseAgentProviderId(provider),
+    supportsPersonality: false,
+  };
+}

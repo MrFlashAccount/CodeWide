@@ -41,6 +41,16 @@ export function ThreadRowContent({
             </View>
           )}
           <View style={styles.threadMeta}>
+            {typeof thread.agentBadge === "string" && (
+              <Text
+                accessibilityLabel={`Agent ${thread.agentBadge}`}
+                numberOfLines={1}
+                style={styles.threadAgentBadge}
+                testID="thread-agent-badge"
+              >
+                {thread.agentBadge}
+              </Text>
+            )}
             {thread.needsAttention === true ? (
               <View
                 accessibilityLabel="Требуется твоё внимание"

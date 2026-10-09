@@ -104,19 +104,24 @@ export function selectTurnRenderWindow(
   // message. Keep that pre-turn activity in the response bubble. A context
   // compaction is presented outside only when it belongs to that pre-turn
   // lifecycle; a compaction after the user boundary belongs inside the turn.
+  // Agent text is the response itself, never pre-turn activity: a
+  // provider-initiated turn has no user message at all, and its answer must
+  // stream and complete as the response rather than as a lifecycle row.
   const firstUserIndex = userItemIndexes[0] ?? Number.POSITIVE_INFINITY;
-  const compactionIndexes = materializedIndexes.filter((index) => {
+  const preTurnIndexes = materializedIndexes.filter((index) => {
     const item = turn.items[index];
     return (
-      item?.type === "contextCompaction" && (index < firstUserIndex || isProjectedPreTurn(item))
+      item !== undefined &&
+      item.type !== "agentMessage" &&
+      (index < firstUserIndex || isProjectedPreTurn(item))
     );
   });
-  const preTurnActivityIndexes = materializedIndexes.filter((index) => {
-    const item = turn.items[index];
-    return (
-      item?.type !== "contextCompaction" && (index < firstUserIndex || isProjectedPreTurn(item))
-    );
-  });
+  const compactionIndexes = preTurnIndexes.filter(
+    (index) => turn.items[index]?.type === "contextCompaction",
+  );
+  const preTurnActivityIndexes = preTurnIndexes.filter(
+    (index) => turn.items[index]?.type !== "contextCompaction",
+  );
   const separatedIndexSet = new Set([...preTurnActivityIndexes, ...compactionIndexes]);
 
   if (turn.status !== "inProgress") {

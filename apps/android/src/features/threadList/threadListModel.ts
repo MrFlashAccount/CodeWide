@@ -123,6 +123,7 @@ export function threadListRowsEqual(previous: ThreadListRow, next: ThreadListRow
       left.archived === right.archived &&
       left.unread === right.unread &&
       left.needsAttention === right.needsAttention &&
+      (left.agentBadge ?? null) === (right.agentBadge ?? null) &&
       left.state === right.state)
   );
 }

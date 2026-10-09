@@ -90,7 +90,7 @@ function ApprovalForm({
       <View style={styles.approvalTitleRow}>
         <Ionicons color={colors.amber} name="shield-checkmark-outline" size={iconSize.action} />
         <Text ellipsizeMode="tail" numberOfLines={1} style={styles.approvalTitle}>
-          {approvalTitle(method)}
+          {approvalTitle(method, params)}
         </Text>
         {requestCount > 1 && <Text style={styles.approvalQueueCount}>1/{requestCount}</Text>}
         {waiting && <Text style={styles.approvalPending}>RESOLVING…</Text>}
@@ -145,7 +145,16 @@ function ApprovalForm({
   );
 }
 
-function approvalTitle(method: string): string {
+/**
+ * The Companion may name a tool approval that is not a shell command (for example
+ * an MCP call or a web fetch) through `codewideApprovalTitle`; otherwise the
+ * method decides the title.
+ */
+function approvalTitle(method: string, params: PendingServerRequest["params"]): string {
+  const serverTitle = params.codewideApprovalTitle;
+  if (typeof serverTitle === "string" && serverTitle.trim() !== "") {
+    return serverTitle.trim();
+  }
   if (method === "item/commandExecution/requestApproval") {
     return "Command approval";
   }
@@ -153,7 +162,7 @@ function approvalTitle(method: string): string {
     return "File change approval";
   }
   if (method === "item/tool/requestUserInput") {
-    return "Codex needs input";
+    return "The agent needs input";
   }
   if (method === "item/permissions/requestApproval") {
     return "Additional permissions";

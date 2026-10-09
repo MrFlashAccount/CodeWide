@@ -1,6 +1,7 @@
 import { observable, type Observable } from "@legendapp/state";
 
 import type { TurnControlsValue } from "./turn-controls-types";
+import { primaryProviderModels } from "./turnControlsAgentProviders";
 
 /** Published state for the Voice Assistant view of the shared model catalog. */
 export type VoiceAssistantModelCatalogSnapshot =
@@ -19,7 +20,10 @@ export type VoiceAssistantModelCatalog = {
   readonly snapshot$: Observable<{ value: VoiceAssistantModelCatalogSnapshot }>;
 };
 
-/** Model-owned resource for the Voice Assistant picker; RPC data never lives in component state. */
+/**
+ * Model-owned resource for the Voice Assistant picker; RPC data never lives in component state.
+ * The hidden supervisor thread runs on the host's primary provider, so only its models are offered.
+ */
 export function createVoiceAssistantModelCatalog(
   load: () => Promise<readonly TurnControlsValue["models"][number][]>,
 ): VoiceAssistantModelCatalog {
@@ -37,7 +41,7 @@ export function createVoiceAssistantModelCatalog(
       snapshot$.value.set({ models: current.models, status: "loading" });
       pending = load()
         .then((models) => {
-          snapshot$.value.set({ models, status: "ready" });
+          snapshot$.value.set({ models: primaryProviderModels(models), status: "ready" });
         })
         .catch((error: unknown) => {
           snapshot$.value.set({

@@ -11,6 +11,7 @@ use base64::{Engine as _, engine::general_purpose};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use codewide_companion::{
     account_pool::AccountPoolService,
+    agent::providers::codex::{CodexProvider, storage::CodexStorage},
     auth::DeviceRegistry,
     build_shelf::BuildShelfProxy,
     catalog::SessionCatalog,
@@ -1151,11 +1152,6 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             history
         }
     };
-    let sync = if options.enable_mutations {
-        SyncHub::with_mutations(upstream.clone(), store.clone(), history.clone())
-    } else {
-        SyncHub::new(upstream, store.clone(), history.clone())
-    };
     let legacy_attachment_root = state_directory.join("attachments");
     let attachment_root = codex_home.join("attachments/codewide");
     tokio::fs::create_dir_all(&attachment_root).await?;
@@ -1228,11 +1224,15 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let projects =
         codewide_companion::projects::ProjectService::open(state_directory.join("projects.json"))
             .await?;
-    let mut sync = sync
+    // The Codex storage modules are reached only through the Codex adapter.
+    let codex = CodexProvider::new(upstream.clone())
+        .with_storage(CodexStorage::new(history).with_resources(resources.clone()));
+    let registry =
+        codewide_companion::agent::providers::load_registry(&state_directory, Arc::new(codex));
+    let mut sync = SyncHub::with_registry(registry, store.clone(), options.enable_mutations)
         .with_content_projector(projector)
         .with_dictation(dictation)
         .with_files(files.clone())
-        .with_resources(resources.clone())
         .with_projects(projects.clone())
         .with_workspaces(workspaces.clone());
     if let Some(account_pool) = &account_pool {

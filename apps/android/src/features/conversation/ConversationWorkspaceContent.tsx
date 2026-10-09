@@ -1,9 +1,19 @@
 import { ConversationComposition } from "./ConversationComposition";
+import { threadAgentActions } from "./threadAgentActions";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
-/** Joins one resolved detail snapshot with the independently scoped feature surfaces. */
+/**
+ * Joins one resolved detail snapshot with the independently scoped feature surfaces.
+ * Thread actions the bound agent does not declare are passed as `undefined`, which
+ * every feature already renders as a hidden or disabled control.
+ */
 export function renderConversationWorkspaceContent(props: RenderConversationWorkspaceContentProps) {
   const listedThread = props.visibleConversationThread;
   const remoteThread = props.snapshot.remoteThread;
+  const gated = threadAgentActions(
+    remoteThread,
+    props.conversationActions,
+    props.forkCurrentThread,
+  );
   // Directly opened chats can be excluded from the catalog. Their detail snapshot
   // supplies the title without inserting a synthetic row into the ordinary list.
   const visibleThread =
@@ -23,9 +33,9 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       actions={{
         archived: props.activeThread?.archived ?? false,
         onArchive: props.threadMutationActions.onArchive,
-        onCompact: props.conversationActions.onCompact,
+        onCompact: gated.onCompact,
         onDelete: props.threadMutationActions.onDelete,
-        onFork: props.forkCurrentThread,
+        onFork: gated.onFork,
         onRename: props.threadMutationActions.onRename,
         onTogglePin: props.threadMutationActions.onTogglePin,
         onUnarchive: props.threadMutationActions.onUnarchive,
@@ -44,8 +54,8 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         getTransferAccess: props.conversationActions.getTransferAccess,
       }}
       changes={{
-        onLoadThreadChangeDiff: props.conversationActions.onLoadThreadChangeDiff,
-        onLoadThreadResources: props.conversationActions.onLoadThreadResources,
+        onLoadThreadChangeDiff: gated.onLoadThreadChangeDiff,
+        onLoadThreadResources: gated.onLoadThreadResources,
         onLoadTurnChanges: props.loadTurnChanges,
         threadResourceId: props.activeThreadResourceId,
         threadResourceRevision: props.activeConnectionState,
@@ -71,12 +81,12 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       }}
       diagnostics={{ onFixUnsupportedBlock: props.onFixUnsupportedBlock }}
       goal={{
-        captureGoalLifecycle: props.conversationActions.captureGoalLifecycle,
+        captureGoalLifecycle: gated.captureGoalLifecycle,
         goalResourceId: props.activeThreadResourceId,
-        onClearGoal: props.conversationActions.onClearGoal,
-        onGetGoal: props.conversationActions.onGetGoal,
-        onSetGoal: props.conversationActions.onSetGoal,
-        onSetGoalStatus: props.conversationActions.onSetGoalStatus,
+        onClearGoal: gated.onClearGoal,
+        onGetGoal: gated.onGetGoal,
+        onSetGoal: gated.onSetGoal,
+        onSetGoalStatus: gated.onSetGoalStatus,
       }}
       ports={{
         onCreateTunnel: props.conversationActions.onCreateTunnel,
@@ -142,7 +152,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         questionSummaries: props.features.requests.getQuestionSummaries(),
         sendQuestionAnswer: props.features.requests.sendQuestionAnswer,
       }}
-      review={{ onStartReview: props.conversationActions.onStartReview }}
+      review={{ onStartReview: gated.onStartReview }}
       surface={{
         compact: !props.desktop,
         cwd: props.snapshot.cwd ?? "/workspace",
@@ -157,8 +167,8 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       }}
       terminal={{
         backgroundTerminalsResourceId: props.activeThreadResourceId,
-        onListTerminals: props.conversationActions.onListTerminals,
-        onTerminateTerminal: props.conversationActions.onTerminateTerminal,
+        onListTerminals: gated.onListTerminals,
+        onTerminateTerminal: gated.onTerminateTerminal,
       }}
     />
   );

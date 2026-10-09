@@ -22,11 +22,13 @@ export function ComposerAccessoryTray({
   fileEnabled,
   goalEnabled,
   onSelect,
+  skillsEnabled,
   terminalEnabled,
 }: {
   fileEnabled: boolean;
   goalEnabled: boolean;
   onSelect: (action: ComposerAccessoryAction) => void;
+  skillsEnabled: boolean;
   terminalEnabled: boolean;
 }) {
   const enabled = (action: ComposerAccessoryAction) =>
@@ -34,7 +36,9 @@ export function ComposerAccessoryTray({
       ? fileEnabled
       : action === "terminal"
         ? terminalEnabled
-        : action !== "goal" || goalEnabled;
+        : action === "skills"
+          ? skillsEnabled
+          : goalEnabled;
   return (
     <View
       accessibilityLabel="Composer actions"
@@ -79,6 +83,8 @@ type ComposerAccessoryCapabilities = {
   goalEnabled: boolean;
   openComposerFeature: (action: ComposerAccessoryAction) => void;
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
+  /** False when the thread's agent does not accept skill input. */
+  skillsEnabled: boolean;
   terminalEnabled: boolean;
 };
 export function useComposerAccessoryActions({
@@ -86,6 +92,7 @@ export function useComposerAccessoryActions({
   goalEnabled,
   openComposerFeature,
   setComposerTrayVisible,
+  skillsEnabled,
   terminalEnabled,
 }: ComposerAccessoryCapabilities) {
   const openAccessoryAction = useEvent((action: ComposerAccessoryAction) => {
@@ -104,7 +111,7 @@ export function useComposerAccessoryActions({
       id: "terminal",
       label: "Terminal",
     },
-    { icon: "sparkles-outline", id: "skills", label: "Skills" },
+    { disabled: !skillsEnabled, icon: "sparkles-outline", id: "skills", label: "Skills" },
     { disabled: !goalEnabled, icon: "flag-outline", id: "goal", label: "Goal" },
   ];
 
@@ -123,6 +130,7 @@ export function useComposerAccessoryActions({
     anchoredComposerActions,
     handleAnchoredComposerAction,
     openAccessoryAction,
+    skillsEnabled,
     terminalEnabled: terminalEnabled && Platform.OS === "android",
     useAnchoredComposerMenu,
   };

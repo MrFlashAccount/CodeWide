@@ -56,6 +56,13 @@
 - Run `pnpm validate:android:v1` for Android changes and `pnpm --filter @codewide/android compile:android` when validating the application bundle. Run `pnpm test:companion`, Cargo Clippy, and Cargo format checks for backend changes.
 - The retirement scope and UI reuse audit are recorded in [docs/android-v2-retirement.md](docs/android-v2-retirement.md). Earlier V2 client architecture and parity documents are historical.
 
+## Agent provider layer
+
+- The provider layer contract is in [docs/agent-providers.md](docs/agent-providers.md). Read the nearest `CONTEXT.md` before changing `crates/companion-core/src/agent/**`, `packages/agent-protocol/**` or `apps/claude-sidecar/**`; their `must_not_import` rules are checked in review.
+- Run `pnpm --filter @codewide/agent-protocol test` and `pnpm test:companion` for changes under `packages/agent-protocol/**`; protocol fixtures must round-trip in both TypeScript and Rust.
+- Run `pnpm --filter @codewide/claude-sidecar test` and `pnpm typecheck` for changes under `apps/claude-sidecar/**`.
+- Run `pnpm test:companion`, Cargo Clippy and Cargo format checks for changes under `crates/companion-core/src/agent/**`.
+
 ## Releases
 
 Use only the repository-owned one-shot release commands:

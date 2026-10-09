@@ -17,6 +17,7 @@ import { styles } from "./ComposerMenu.styles";
 import type { ComposerMenuPage } from "./composerTypes";
 import { composerModelSettings } from "./modelSettings";
 import { EMPTY_TURN_CONTROLS } from "./settings";
+import { providerScopedControls } from "./settings/providerScopedControls";
 import { SkillsPicker } from "./skills/SkillsPicker";
 
 export function ResourceComposerMenu({
@@ -32,7 +33,11 @@ export function ResourceComposerMenu({
   resources: WorkspaceResourceDatabase | null;
 }): ReactNode {
   const controlsResource = useTurnControlsRow(resources, controlsResourceId);
-  const controls = controlsResource?.value ?? EMPTY_TURN_CONTROLS;
+  const controls = providerScopedControls(
+    controlsResource?.value ?? EMPTY_TURN_CONTROLS,
+    newChat,
+    props.thread,
+  );
   const loading =
     props.initialPage === "skills"
       ? controls.skills.length === 0 &&

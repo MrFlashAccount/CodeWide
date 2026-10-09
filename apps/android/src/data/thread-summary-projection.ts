@@ -5,6 +5,7 @@ import {
   currentAsyncQuestions,
   hasAsyncQuestions,
 } from "./questionLifecycle";
+import { readThreadAgent } from "./threadAgent";
 import { unknownRecord } from "./unknownRecord";
 import { isThread } from "./thread-cursor-sync";
 import { threadSummaryDescendants } from "./thread-summary-descendants";
@@ -93,6 +94,8 @@ export function projectThreadSummarySnapshot(
     closedQuestionTurnId: questionTurnClosed(thread.turns.at(-1))
       ? (thread.turns.at(-1)?.id ?? previous?.closedQuestionTurnId ?? null)
       : (previous?.closedQuestionTurnId ?? null),
+    // The provider is fixed per thread; a snapshot without the descriptor keeps the last one.
+    codewideAgent: readThreadAgent(thread) ?? previous?.codewideAgent ?? null,
     cwd: thread.cwd,
     firstUnreadAgentTurnId: previous?.firstUnreadAgentTurnId ?? null,
     gitOriginUrl: thread.gitInfo?.originUrl ?? previous?.gitOriginUrl ?? null,

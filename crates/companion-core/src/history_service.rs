@@ -219,10 +219,16 @@ impl HistoryService {
     }
 
     /// Captures membership independently of recent catalog pagination.
-    pub(crate) fn thread_pin_snapshot(&self) -> Result<Value, HistoryServiceError> {
+    /// The pin snapshot, reading rollout archive state only for threads
+    /// `has_rollout` admits. Other threads are reported unarchived here; the
+    /// caller owns their archive state.
+    pub(crate) fn thread_pin_snapshot_for(
+        &self,
+        has_rollout: &dyn Fn(&str) -> bool,
+    ) -> Result<Value, HistoryServiceError> {
         let snapshot = self.store.thread_pin_snapshot()?;
         let mut archived_thread_ids = Vec::new();
-        for id in &snapshot.thread_ids {
+        for id in snapshot.thread_ids.iter().filter(|id| has_rollout(id)) {
             match self.catalog.thread_archived(id) {
                 Ok(true) => archived_thread_ids.push(id),
                 Ok(false) | Err(CatalogError::NotFound(_)) => {}
@@ -232,31 +238,6 @@ impl HistoryService {
         Ok(
             json!({"cursor": snapshot.cursor, "threadIds": snapshot.thread_ids, "archivedThreadIds": archived_thread_ids}),
         )
-    }
-
-    /// Attaches durable Companion pin metadata to thread shells and catalog pages.
-    pub(crate) fn annotate_thread_pins(
-        &self,
-        method: &str,
-        result: &mut Value,
-    ) -> Result<(), crate::store::StoreError> {
-        if let Some(thread) = result.get_mut("thread")
-            && let Some(id) = thread.get("id").and_then(Value::as_str)
-        {
-            let pin = self.store.thread_pin(id)?;
-            crate::thread_pins::annotate(thread, pin);
-        }
-        if matches!(method, "thread/list" | "companion/supervisor/threadList")
-            && let Some(threads) = result.get_mut("data").and_then(Value::as_array_mut)
-        {
-            for thread in threads {
-                if let Some(id) = thread.get("id").and_then(Value::as_str) {
-                    let pin = self.store.thread_pin(id)?;
-                    crate::thread_pins::annotate(thread, pin);
-                }
-            }
-        }
-        Ok(())
     }
 
     pub(crate) async fn filter_catalog_page(

@@ -37,6 +37,7 @@ import { ThreadCatalogReads } from "./thread-catalog-read";
 import { THREAD_CATALOG_PAGE_SIZE } from "./thread-catalog-loader";
 import { ProjectUnreadModel } from "./project-unread-model";
 import { isCatalogExcluded } from "./threadCatalogMembership";
+import { sameThreadAgent } from "./threadAgent";
 
 export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   const catalogReads = new ThreadCatalogReads();
@@ -874,6 +875,7 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
     left.preview === right.preview &&
     left.cwd === right.cwd &&
     (left.gitOriginUrl ?? null) === (right.gitOriginUrl ?? null) &&
+    sameThreadAgent(left.codewideAgent ?? null, right.codewideAgent ?? null) &&
     left.updatedAt === right.updatedAt &&
     left.recencyAt === right.recencyAt &&
     left.status.type === right.status.type &&

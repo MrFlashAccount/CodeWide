@@ -13,6 +13,7 @@ use url::Url;
 
 use crate::{
     account_pool::AccountPoolService,
+    agent::providers::codex::storage::CodexStorage,
     auth::{DeviceRegistry, DeviceStatus},
     catalog::SessionCatalog,
     content::{ContentProjector, PrivateContentService},
@@ -164,11 +165,6 @@ impl ManagedRuntime {
                 history
             }
         };
-        let sync = if config.enable_mutations {
-            SyncHub::with_mutations(upstream.clone(), store.clone(), history.clone())
-        } else {
-            SyncHub::new(upstream.clone(), store.clone(), history.clone())
-        };
 
         let attachment_root = config.codex_home.join("attachments/codewide");
         tokio::fs::create_dir_all(&attachment_root).await?;
@@ -221,11 +217,15 @@ impl ManagedRuntime {
             config.codex_home.join("worktrees"),
         ));
         let projects = ProjectService::open(config.state_directory.join("projects.json")).await?;
-        let mut sync = sync
+        // The Codex storage modules are reached only through the Codex adapter.
+        let codex = crate::agent::providers::codex::CodexProvider::new(upstream.clone())
+            .with_storage(CodexStorage::new(history).with_resources(resources.clone()));
+        let registry =
+            crate::agent::providers::load_registry(&config.state_directory, Arc::new(codex));
+        let mut sync = SyncHub::with_registry(registry, store.clone(), config.enable_mutations)
             .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
             .with_dictation(dictation)
             .with_files(files.clone())
-            .with_resources(resources.clone())
             .with_projects(projects.clone())
             .with_workspaces(workspaces.clone());
         if let Some(account_pool) = &account_pool {

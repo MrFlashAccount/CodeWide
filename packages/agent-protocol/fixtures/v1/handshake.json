@@ -1,0 +1,76 @@
+{
+  "description": "initialize negotiation, the initialized notification and a structured error",
+  "messages": [
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-companion-initialize",
+        "method": "initialize",
+        "params": {
+          "protocol": "codewide-agent",
+          "protocolVersion": 1,
+          "client": { "name": "codewide_companion", "version": "0.1.0" }
+        }
+      }
+    },
+    {
+      "respondsTo": "initialize",
+      "message": {
+        "id": "codewide-companion-initialize",
+        "result": {
+          "protocolVersion": 1,
+          "provider": { "id": "claude", "displayName": "Claude", "modelProvider": "anthropic", "version": "0.1.0" },
+          "capabilities": {
+            "turns.steer": true,
+            "turns.providerInitiated": true,
+            "threads.hostMintedIds": true,
+            "threads.externalDiscovery": false,
+            "threads.compact": true,
+            "threads.fork": false,
+            "requests.userInput": true,
+            "requests.mcpElicitation": false,
+            "requests.dynamicToolCall": false,
+            "settings.serviceTier": false,
+            "settings.personality": false,
+            "input.skillsAndMentions": false,
+            "catalog.skillsPlugins": false,
+            "review": false,
+            "goals": false,
+            "backgroundTerminals": false,
+            "realtimeVoice": false,
+            "globalSupervisor": false,
+            "subagentThreads": false,
+            "accounts.pool": false,
+            "accounts.rateLimits": false,
+            "history.threadResources": false,
+            "history.messageSearch": false,
+            "host.fs": false,
+            "host.config": false,
+            "codex.native": false,
+            "turns.startWhileActive": "busy"
+          },
+          "account": { "authenticated": true, "label": null }
+        }
+      }
+    },
+    { "respondsTo": null, "message": { "method": "initialized" } },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 7,
+        "error": {
+          "code": -32072,
+          "message": "review is not supported by this thread's agent",
+          "data": { "capability": "review", "provider": "claude" }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 8,
+        "error": { "code": -32600, "message": "thread not found: 0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e", "data": null }
+      }
+    }
+  ]
+}

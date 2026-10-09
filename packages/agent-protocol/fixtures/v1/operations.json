@@ -1,0 +1,598 @@
+{
+  "description": "every operation request and its result shape",
+  "messages": [
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 1,
+        "method": "catalog.models",
+        "params": {}
+      }
+    },
+    {
+      "respondsTo": "catalog.models",
+      "message": {
+        "id": 1,
+        "result": {
+          "models": [
+            {
+              "id": "claude-sonnet-4-5",
+              "model": "claude-sonnet-4-5",
+              "displayName": "Sonnet 4.5",
+              "description": "Balanced",
+              "isDefault": true,
+              "hidden": false,
+              "efforts": [
+                {
+                  "effort": "low",
+                  "description": "Faster"
+                },
+                {
+                  "effort": "high",
+                  "description": "Deeper"
+                }
+              ],
+              "defaultEffort": "high",
+              "inputModalities": [
+                "text",
+                "image"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 2,
+        "method": "catalog.permissionProfiles",
+        "params": {}
+      }
+    },
+    {
+      "respondsTo": "catalog.permissionProfiles",
+      "message": {
+        "id": 2,
+        "result": {
+          "profiles": [
+            {
+              "id": ":read-only",
+              "displayName": "Read only",
+              "description": "Reads files only"
+            },
+            {
+              "id": ":workspace",
+              "displayName": "Workspace",
+              "description": "Edits files in the workspace"
+            },
+            {
+              "id": ":full-access",
+              "displayName": "Full access",
+              "description": "No approvals"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 3,
+        "method": "thread.create",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "cwd": "/home/dev/project",
+          "settings": {
+            "model": "claude-sonnet-4-5",
+            "effort": null,
+            "permissionProfile": ":read-only",
+            "serviceTier": null
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.create",
+      "message": {
+        "id": 3,
+        "result": {
+          "thread": {
+            "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+            "provider": "claude",
+            "cwd": "/home/dev/project",
+            "name": "Tests",
+            "preview": "Fix the failing test",
+            "createdAt": 1760000000,
+            "updatedAt": 1760000100,
+            "recencyAt": null,
+            "archived": false,
+            "origin": "interactive",
+            "status": "idle",
+            "settings": {
+              "model": "claude-sonnet-4-5",
+              "effort": null,
+              "permissionProfile": ":read-only",
+              "serviceTier": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 4,
+        "method": "thread.create",
+        "params": {
+          "appThreadId": null,
+          "cwd": "/home/dev/project",
+          "settings": {
+            "model": "gpt-5.5",
+            "effort": "medium",
+            "permissionProfile": ":workspace",
+            "serviceTier": "priority"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 5,
+        "method": "thread.read",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.read",
+      "message": {
+        "id": 5,
+        "result": {
+          "thread": {
+            "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+            "provider": "claude",
+            "cwd": "/home/dev/project",
+            "name": "Tests",
+            "preview": "Fix the failing test",
+            "createdAt": 1760000000,
+            "updatedAt": 1760000100,
+            "recencyAt": null,
+            "archived": false,
+            "origin": "interactive",
+            "status": "idle",
+            "settings": {
+              "model": "claude-sonnet-4-5",
+              "effort": null,
+              "permissionProfile": ":read-only",
+              "serviceTier": null
+            }
+          },
+          "activeTurnId": null
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 6,
+        "method": "thread.list",
+        "params": {
+          "archived": false,
+          "cwd": null,
+          "searchTerm": "test",
+          "sortKey": "recencyAt",
+          "sortDirection": "desc",
+          "window": {
+            "lower": 1760000000,
+            "lowerInclusive": true,
+            "upper": 1760009999,
+            "upperInclusive": false
+          },
+          "cursor": "v1:recencyAt:desc:1760000100:0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "limit": 100
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.list",
+      "message": {
+        "id": 6,
+        "result": {
+          "threads": [
+            {
+              "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+              "provider": "claude",
+              "cwd": "/home/dev/project",
+              "name": "Tests",
+              "preview": "Fix the failing test",
+              "createdAt": 1760000000,
+              "updatedAt": 1760000100,
+              "recencyAt": null,
+              "archived": false,
+              "origin": "interactive",
+              "status": "idle",
+              "settings": {
+                "model": "claude-sonnet-4-5",
+                "effort": null,
+                "permissionProfile": ":read-only",
+                "serviceTier": null
+              }
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 7,
+        "method": "thread.turns",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "cursor": null,
+          "limit": 20,
+          "sortDirection": "desc",
+          "itemsView": "full"
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.turns",
+      "message": {
+        "id": 7,
+        "result": {
+          "turns": [
+            {
+              "turnId": "0199a3c4-8000-7000-8000-000000000001",
+              "status": "interrupted",
+              "origin": "user",
+              "startedAt": 1760000100,
+              "completedAt": 1760000101,
+              "error": null,
+              "items": [
+                {
+                  "type": "userMessage",
+                  "itemId": "0199a3c4-8000-7000-8000-000000000001:user:0",
+                  "clientMessageId": null,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hi"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "nextCursor": "0199a3c4-8000-7000-8000-000000000001"
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 10,
+        "method": "thread.update",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "change": {
+            "type": "name",
+            "name": "Renamed"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 11,
+        "method": "thread.update",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "change": {
+            "type": "archived",
+            "archived": true
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 12,
+        "method": "thread.update",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "change": {
+            "type": "deleted"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 13,
+        "method": "thread.update",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "change": {
+            "type": "settings",
+            "model": "claude-opus-4-1",
+            "effort": null,
+            "permissionProfile": null,
+            "serviceTier": null
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.update",
+      "message": {
+        "id": 12,
+        "result": {
+          "thread": null
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.update",
+      "message": {
+        "id": 13,
+        "result": {
+          "thread": {
+            "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+            "provider": "claude",
+            "cwd": "/home/dev/project",
+            "name": "Tests",
+            "preview": "Fix the failing test",
+            "createdAt": 1760000000,
+            "updatedAt": 1760000100,
+            "recencyAt": null,
+            "archived": false,
+            "origin": "interactive",
+            "status": "idle",
+            "settings": {
+              "model": "claude-sonnet-4-5",
+              "effort": null,
+              "permissionProfile": ":read-only",
+              "serviceTier": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 20,
+        "method": "thread.owns",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.owns",
+      "message": {
+        "id": 20,
+        "result": {
+          "owned": false
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 21,
+        "method": "thread.compact",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.compact",
+      "message": {
+        "id": 21,
+        "result": {}
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 22,
+        "method": "turn.start",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "clientMessageId": "android-2b1c",
+          "input": [
+            {
+              "type": "text",
+              "text": "hi"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": "turn.start",
+      "message": {
+        "id": 22,
+        "result": {
+          "type": "started",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001"
+        }
+      }
+    },
+    {
+      "respondsTo": "turn.start",
+      "message": {
+        "id": 22,
+        "result": {
+          "type": "busy",
+          "activeTurnId": "0199a3c4-8000-7000-8000-000000000001"
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 23,
+        "method": "turn.steer",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "expectedTurnId": "0199a3c4-8000-7000-8000-000000000001",
+          "clientMessageId": "remote-1x",
+          "input": [
+            {
+              "type": "text",
+              "text": "also"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": "turn.steer",
+      "message": {
+        "id": 23,
+        "result": {
+          "turnId": "0199a3c4-8000-7000-8000-000000000001"
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 24,
+        "method": "turn.interrupt",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001"
+        }
+      }
+    },
+    {
+      "respondsTo": "turn.interrupt",
+      "message": {
+        "id": 24,
+        "result": {}
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 25,
+        "method": "turn.interrupt",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": null
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 30,
+        "method": "request.respond",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "requestId": "perm-0",
+          "response": {
+            "type": "approval",
+            "decision": "acceptForSession"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 31,
+        "method": "request.respond",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "requestId": 1,
+          "response": {
+            "type": "userInput",
+            "answers": {
+              "q0": {
+                "answers": [
+                  "vitest",
+                  "playwright"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 32,
+        "method": "request.respond",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "requestId": "perm-2",
+          "response": {
+            "type": "capability",
+            "payload": {
+              "action": "accept"
+            }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 33,
+        "method": "request.respond",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "requestId": 3,
+          "response": {
+            "type": "error",
+            "message": "client failed"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": "request.respond",
+      "message": {
+        "id": 30,
+        "result": {}
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": 40,
+        "method": "capability.invoke",
+        "params": {
+          "capability": "accounts.pool",
+          "method": "companion/accountPool/list",
+          "params": {}
+        }
+      }
+    },
+    {
+      "respondsTo": "capability.invoke",
+      "message": {
+        "id": 40,
+        "result": {
+          "result": {
+            "data": []
+          }
+        }
+      }
+    }
+  ]
+}

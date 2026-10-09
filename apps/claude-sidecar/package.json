@@ -1,0 +1,25 @@
+{
+  "name": "@codewide/claude-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "codewide-agent v1 provider over the Claude Agent SDK, launched by the CodeWide companion",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node scripts/check-host-lock.mjs && vitest run --root ../.. apps/claude-sidecar"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.295",
+    "@anthropic-ai/sdk": "0.127.0",
+    "@modelcontextprotocol/sdk": "1.30.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@codewide/agent-protocol": "workspace:*"
+  }
+}

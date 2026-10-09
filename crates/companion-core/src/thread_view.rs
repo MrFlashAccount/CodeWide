@@ -1,9 +1,15 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{
-    history_service::{HistoryService, HistoryServiceError},
-    upstream::{UpstreamError, UpstreamFence, UpstreamHandle},
+use crate::agent::{
+    client_wire::{
+        gateway::{ClientWireGateway, Target},
+        history as provider_history, items,
+    },
+    model::{ItemsView, SortDirection, ThreadSettings, ThreadStatus, ThreadTurnsParams},
+    provider::{HistorySyncRequest, NativeSurface, ProviderError, ProviderFence},
 };
 
 pub const READ_MODEL_VERSION: u64 = 4;
@@ -37,16 +43,18 @@ struct ThreadExecutionSettingsSnapshot {
 
 #[derive(Clone)]
 pub struct ThreadViewService {
-    upstream: UpstreamHandle,
-    history: HistoryService,
+    gateway: Arc<ClientWireGateway>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadViewError {
     #[error(transparent)]
-    Upstream(#[from] UpstreamError),
-    #[error(transparent)]
-    History(#[from] HistoryServiceError),
+    Upstream(#[from] ProviderError),
+    #[error("{0}")]
+    Route(String),
+    /// The native provider's stored history could not be read.
+    #[error("{0}")]
+    History(String),
     #[error("App Server request failed: {0}")]
     Rpc(String),
     #[error("thread sync request is invalid")]
@@ -61,18 +69,36 @@ pub enum ThreadViewError {
 
 impl ThreadViewService {
     #[must_use]
-    pub fn new(upstream: UpstreamHandle, history: HistoryService) -> Self {
-        Self { upstream, history }
+    pub fn new(gateway: Arc<ClientWireGateway>) -> Self {
+        Self { gateway }
     }
 
-    /// Reads the App Server-owned lifecycle used to admit a queued turn.
+    async fn target(&self, thread_id: &str) -> Result<Target, ThreadViewError> {
+        self.gateway
+            .resolve_thread(thread_id, None)
+            .await
+            .map_err(|failure| ThreadViewError::Route(failure.message))
+    }
+
+    /// Reads the provider-owned lifecycle used to admit a queued turn.
     ///
     /// # Errors
     ///
-    /// Returns an error when App Server cannot provide a valid thread status.
+    /// Returns an error when the provider cannot provide a valid thread status.
     pub async fn activity(&self, thread_id: &str) -> Result<ThreadActivity, ThreadViewError> {
-        let response = self
-            .upstream
+        let target = self.target(thread_id).await?;
+        let Some(native) = target.native() else {
+            let read = target.provider.thread_read(&target.thread_id).await?;
+            return Ok(match read.thread.status {
+                ThreadStatus::Active => ThreadActivity::Active,
+                // A failed turn is not a permanent lock for neutral providers:
+                // they accept the next turn.
+                ThreadStatus::Idle | ThreadStatus::NotLoaded | ThreadStatus::Failed => {
+                    ThreadActivity::Idle
+                }
+            });
+        };
+        let response = native
             .request(json!({
                 "id": "thread-view-activity",
                 "method": "thread/read",
@@ -112,7 +138,15 @@ impl ThreadViewService {
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(36);
 
-        let (result, execution_settings, shell_fence) = self.read_thread_shell(thread_id).await?;
+        let target = self.target(thread_id).await?;
+        let Some(native) = target.native() else {
+            return self.sync_neutral(&target, after_turn_id, limit).await;
+        };
+        let thread_store = native.thread_store().ok_or_else(|| {
+            ThreadViewError::History("Thread history storage is unavailable".into())
+        })?;
+        let (result, execution_settings, shell_fence) =
+            Self::read_thread_shell(native, thread_id).await?;
         let mut thread = result
             .get("thread")
             .cloned()
@@ -127,7 +161,7 @@ impl ThreadViewService {
             .ok_or(ThreadViewError::InvalidStatus)?
             .insert("turns".into(), Value::Array(Vec::new()));
         let (mut active_turn, fence) = if active {
-            let (active_turn, active_fence) = self.read_active_turn(thread_id).await?;
+            let (active_turn, active_fence) = Self::read_active_turn(native, thread_id).await?;
             (active_turn, active_fence)
         } else {
             (Value::Null, shell_fence)
@@ -142,37 +176,20 @@ impl ThreadViewService {
         } else {
             None
         };
-        let history = match self
-            .history
-            .sync_thread_history_with_source(
+        let history = thread_store
+            .sync_history(HistorySyncRequest {
                 thread_id,
                 after_turn_id,
                 limit,
                 active_turn_id,
                 source_witness,
-            )
+            })
             .await
-        {
-            Ok(history) => history,
-            Err(HistoryServiceError::Catalog(crate::catalog::CatalogError::NotFound(_)))
-                if after_turn_id.is_none() =>
-            {
-                json!({
-                    "kind": "reset",
-                    "headTurnId": Value::Null,
-                    "turns": [],
-                    "hasMore": false,
-                    "olderCursor": Value::Null,
-                })
-            }
-            Err(error) => return Err(error.into()),
-        };
-        self.history
-            .enrich_active_questions(thread_id, &mut active_turn)
-            .await?;
-        self.history
-            .enrich_active_realtime_transcripts(thread_id, &mut active_turn)
-            .await?;
+            .map_err(ThreadViewError::History)?;
+        thread_store
+            .enrich_active_turn(thread_id, &mut active_turn)
+            .await
+            .map_err(ThreadViewError::History)?;
         let through_cursor = fence.wait().await?;
         Ok(json!({
             "readModelVersion": READ_MODEL_VERSION,
@@ -185,18 +202,17 @@ impl ThreadViewService {
     }
 
     async fn read_thread_shell(
-        &self,
+        native: &dyn NativeSurface,
         thread_id: &str,
     ) -> Result<
         (
             Value,
             Option<ThreadExecutionSettingsSnapshot>,
-            UpstreamFence,
+            ProviderFence,
         ),
         ThreadViewError,
     > {
-        let (response, fence) = self
-            .upstream
+        let (response, fence) = native
             .request_fenced(json!({
                 "id": "thread-view-observe",
                 "method": "thread/resume",
@@ -209,9 +225,8 @@ impl ThreadViewService {
         match rpc_result(&response) {
             Err(ThreadViewError::Rpc(message)) if message == UNLOADED_SUBAGENT_RESUME => {
                 // Inspection must not restart the parent execution tree. Keep history
-                // bounded through HistoryService, rather than includeTurns=true.
-                let (stored, stored_fence) = self
-                    .upstream
+                // bounded through the stored history, rather than includeTurns=true.
+                let (stored, stored_fence) = native
                     .request_fenced(json!({
                         "id": "thread-view-inspect",
                         "method": "thread/read",
@@ -232,11 +247,10 @@ impl ThreadViewService {
     /// by the downstream projector; item shells must remain present so the
     /// client can apply only the durable event tail after this snapshot.
     async fn read_active_turn(
-        &self,
+        native: &dyn NativeSurface,
         thread_id: &str,
-    ) -> Result<(Value, UpstreamFence), ThreadViewError> {
-        let (response, fence) = self
-            .upstream
+    ) -> Result<(Value, ProviderFence), ThreadViewError> {
+        let (response, fence) = native
             .request_fenced(json!({
                 "id": "thread-view-sync-active",
                 "method": "thread/turns/list",
@@ -257,6 +271,89 @@ impl ThreadViewService {
             .cloned()
             .ok_or(ThreadViewError::InvalidActiveTurn)?;
         Ok((turn, fence))
+    }
+}
+
+impl ThreadViewService {
+    /// The same snapshot for a provider without the native surface: thread
+    /// shell and active turn from neutral reads (fenced on the provider's
+    /// event stream), history from its finished turns.
+    async fn sync_neutral(
+        &self,
+        target: &Target,
+        after_turn_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Value, ThreadViewError> {
+        let (read, shell_fence) = target
+            .provider
+            .thread_read_fenced(&target.thread_id)
+            .await?;
+        let (active_turn, fence) = if read.active_turn_id.is_some() {
+            let (page, fence) = target
+                .provider
+                .thread_turns_fenced(ThreadTurnsParams {
+                    app_thread_id: target.thread_id.clone(),
+                    cursor: None,
+                    limit: 1,
+                    sort_direction: SortDirection::Desc,
+                    items_view: ItemsView::Full,
+                })
+                .await?;
+            let active = page
+                .turns
+                .first()
+                .map_or(Value::Null, |turn| items::turn(turn, ItemsView::Full));
+            (active, fence)
+        } else {
+            (Value::Null, shell_fence)
+        };
+        let (turns, head_turn_id, older_cursor) =
+            provider_history::latest(target, limit.clamp(1, 100))
+                .await
+                .map_err(|failure| ThreadViewError::Route(failure.message))?;
+        let current = head_turn_id.is_some() && after_turn_id == head_turn_id.as_deref();
+        let history = if current {
+            json!({
+                "kind": "current",
+                "headTurnId": head_turn_id,
+                "turns": [],
+                "hasMore": false,
+                "olderCursor": Value::Null,
+                "sourceWitness": provider_history::SOURCE_WITNESS,
+            })
+        } else {
+            json!({
+                "kind": "reset",
+                "headTurnId": head_turn_id,
+                "turns": turns.iter().map(|turn| items::turn(turn, ItemsView::Full)).collect::<Vec<_>>(),
+                "hasMore": false,
+                "olderCursor": older_cursor,
+                "sourceWitness": provider_history::SOURCE_WITNESS,
+            })
+        };
+        let thread = items::thread(&read.thread, &target.wire, &[]);
+        let through_cursor = fence.wait().await?;
+        Ok(json!({
+            "readModelVersion": READ_MODEL_VERSION,
+            "throughCursor": through_cursor,
+            "thread": thread,
+            "executionSettings": neutral_execution_settings(&read.thread.settings),
+            "history": history,
+            "activeTurn": active_turn,
+        }))
+    }
+}
+
+fn neutral_execution_settings(settings: &ThreadSettings) -> ThreadExecutionSettingsSnapshot {
+    let (approval_policy, sandbox_policy) =
+        crate::agent::client_wire::settings::legacy_policy_names(&settings.permission_profile);
+    ThreadExecutionSettingsSnapshot {
+        model: settings.model.clone(),
+        effort: settings.effort.clone(),
+        service_tier: settings.service_tier.clone(),
+        permissions: Some(settings.permission_profile.clone()),
+        approval_policy: approval_policy.to_owned(),
+        sandbox_policy: sandbox_policy.to_owned(),
     }
 }
 

@@ -96,6 +96,7 @@ export type ComposerFeatureProps = {
   sendDisabled: boolean;
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
   setSelectedPersonality: (value: Personality | null) => void;
+  skillsEnabled: boolean;
   steerComposer: () => void;
   stopAction: "goalAndResponse" | "response" | null;
   terminalEnabled: boolean;

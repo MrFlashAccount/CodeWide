@@ -5,6 +5,11 @@ import type {
 } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import { loadSkillCatalog } from "./load-skill-catalog";
+import {
+  catalogHasProviderFields,
+  modelRowAgentProvider,
+  permissionRowWithProviders,
+} from "./turnControlsAgentProviders";
 import type {
   TurnControlsLoadOptions,
   TurnControlsRow,
@@ -34,6 +39,7 @@ export function turnControlsCacheNeedsRepair(
     cached.error !== null ||
     cached.value === null ||
     !persistedDefaultsPresent(cached.value) ||
+    !catalogHasProviderFields(cached.value) ||
     !cached.value.models.every(
       (model) =>
         typeof model.isDefault === "boolean" &&
@@ -234,6 +240,7 @@ export function createTurnControlsLoader({
                 id: model.model,
                 isDefault: model.isDefault,
                 label: model.displayName,
+                provider: modelRowAgentProvider(model),
                 serviceTiers: parseModelServiceTiers(model.serviceTiers),
                 supportsPersonality: model.supportsPersonality,
               }));
@@ -244,7 +251,7 @@ export function createTurnControlsLoader({
                 "permissionProfile/list",
                 { cursor: null, cwd, limit: 100 },
               );
-              return response.data;
+              return response.data.map(permissionRowWithProviders);
             },
             skills: async () =>
               loadSkillCatalog({

@@ -30,6 +30,7 @@ import {
   permissionProfileLabel,
 } from "../settings";
 import { styles } from "./ComposerControlChips.styles";
+import { providerScopedControls } from "./providerScopedControls";
 
 const MODEL_CONFIRMATION_TIMEOUT_MS = 15_000;
 
@@ -107,7 +108,11 @@ export function ComposerControlChips({
     resourceId ?? "inactive",
     async () => (load === undefined ? EMPTY_TURN_CONTROLS : load(cwd)),
   );
-  const controls = resource?.value ?? EMPTY_TURN_CONTROLS;
+  const controls = providerScopedControls(
+    resource?.value ?? EMPTY_TURN_CONTROLS,
+    newChat,
+    remoteThread,
+  );
   const initialLoading =
     load !== undefined &&
     (resource === null || (resource.status === "loading" && resource.value === null));

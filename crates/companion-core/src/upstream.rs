@@ -11,9 +11,8 @@ use std::{
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
-    process::{Child, ChildStdin, ChildStdout},
+    process::Child,
     sync::{broadcast, mpsc, oneshot, watch},
     time::sleep,
 };
@@ -33,6 +32,8 @@ const APP_SERVER_MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 const LARGE_APP_SERVER_FRAME_BYTES: usize = 1024 * 1024;
 const LARGE_STRING_FIELD_BYTES: usize = 256 * 1024;
 type AppServerSocket = tokio_tungstenite::WebSocketStream<UnixStream>;
+
+pub mod stdio;
 
 pub type RawAppServerSocket = tokio_tungstenite::WebSocketStream<UnixStream>;
 
@@ -243,6 +244,34 @@ impl UpstreamHandle {
             .stdout
             .take()
             .ok_or_else(|| UpstreamError::Protocol("App Server stdout is not piped".into()))?;
+        let (handle, parts) = Self::unconnected();
+        tokio::spawn(stdio::run_stdio(
+            stdin,
+            stdout,
+            parts,
+            stdio::StdioProfile::app_server_enrollment(),
+        ));
+        Ok(handle)
+    }
+
+    /// Launches and supervises a JSONL stdio child that speaks this
+    /// transport's request/response/notification framing with `profile`'s
+    /// initialize handshake. The child is restarted with exponential backoff
+    /// whenever it exits; requests fail with `Reconnecting` until the next
+    /// handshake completes. Every initialize response (result or error) is
+    /// published on the returned watch.
+    #[must_use]
+    pub fn spawn_supervised_stdio(
+        command: stdio::SupervisedCommand,
+        profile: stdio::StdioProfile,
+    ) -> (Self, watch::Receiver<Option<Value>>) {
+        let (handle, parts) = Self::unconnected();
+        let (initialized_tx, initialized) = watch::channel(None);
+        tokio::spawn(stdio::supervise(command, profile, parts, initialized_tx));
+        (handle, initialized)
+    }
+
+    fn unconnected() -> (Self, stdio::TransportParts) {
         let (commands, command_rx) = mpsc::channel(REQUEST_QUEUE_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let ordered_events = Arc::new(std::sync::Mutex::new(None));
@@ -257,20 +286,17 @@ impl UpstreamHandle {
             version,
             generation: generation.clone(),
         };
-        let connection_state = ConnectionStateWriter {
-            status: status_tx,
-            version: version_tx,
-            generation,
-        };
-        tokio::spawn(run_stdio(
-            stdin,
-            stdout,
-            command_rx,
+        let parts = stdio::TransportParts {
+            commands: command_rx,
             events,
             ordered_events,
-            connection_state,
-        ));
-        Ok(handle)
+            connection_state: ConnectionStateWriter {
+                status: status_tx,
+                version: version_tx,
+                generation,
+            },
+        };
+        (handle, parts)
     }
 
     #[must_use]
@@ -424,159 +450,6 @@ async fn run(
         let delay = Duration::from_millis((250_u64 * 2_u64.pow(exponent)).min(30_000));
         sleep(delay).await;
     }
-}
-
-async fn run_stdio(
-    mut stdin: ChildStdin,
-    stdout: ChildStdout,
-    mut commands: mpsc::Receiver<UpstreamCommand>,
-    events: broadcast::Sender<Value>,
-    ordered_events: Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
-    connection_state: ConnectionStateWriter,
-) {
-    let mut lines = BufReader::new(stdout).lines();
-    let result = run_stdio_connection(
-        &mut stdin,
-        &mut lines,
-        &mut commands,
-        &events,
-        &ordered_events,
-        &connection_state,
-    )
-    .await;
-    let _ = connection_state.status.send(ConnectionStatus::Reconnecting);
-    if let Err(error) = result {
-        warn!(%error, "private App Server stdio connection failed");
-    }
-    while let Ok(command) = commands.try_recv() {
-        reject_command(command, UpstreamError::Disconnected);
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-async fn run_stdio_connection(
-    stdin: &mut ChildStdin,
-    lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
-    commands: &mut mpsc::Receiver<UpstreamCommand>,
-    events: &broadcast::Sender<Value>,
-    ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
-    connection_state: &ConnectionStateWriter,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    write_json_line(
-        stdin,
-        &json!({
-            "id": INITIALIZE_ID,
-            "method": "initialize",
-            "params": {
-                "clientInfo": {
-                    "name": "codewide_account_enrollment",
-                    "title": "CodeWide Account Enrollment",
-                    "version": env!("CARGO_PKG_VERSION")
-                },
-                "capabilities": { "experimentalApi": true }
-            }
-        }),
-    )
-    .await?;
-    let initialized = loop {
-        let Some(line) = lines.next_line().await? else {
-            return Err(UpstreamError::Disconnected.into());
-        };
-        let value: Value = serde_json::from_str(&line)?;
-        if value.get("id").and_then(Value::as_str) == Some(INITIALIZE_ID) {
-            break value;
-        }
-        if value.get("method").and_then(Value::as_str).is_some() {
-            publish_notification(events, ordered_events, value).await;
-        }
-    };
-    if initialized.get("error").is_some() {
-        return Err(UpstreamError::Protocol(initialized.to_string()).into());
-    }
-    write_json_line(stdin, &json!({"method": "initialized"})).await?;
-    let _ = connection_state
-        .version
-        .send(app_server_version(&initialized));
-    connection_state.generation.fetch_add(1, Ordering::AcqRel);
-    let _ = connection_state.status.send(ConnectionStatus::Live);
-    info!("Connected to private Codex App Server over stdio");
-
-    let mut counter = 0_u64;
-    let mut pending: HashMap<String, PendingUpstreamRequest> = HashMap::new();
-    let mut pending_cleanup = tokio::time::interval(Duration::from_secs(1));
-    loop {
-        tokio::select! {
-            _ = pending_cleanup.tick() => {
-                pending.retain(|_, request| !request.response.is_closed());
-            }
-            outbound = commands.recv() => {
-                let Some(outbound) = outbound else { break; };
-                match outbound {
-                    UpstreamCommand::Request(mut outbound) => {
-                        if outbound.response.is_closed() {
-                            continue;
-                        }
-                        counter = counter.wrapping_add(1);
-                        let upstream_id = format!("codewide-stdio:{counter}");
-                        let Some(object) = outbound.request.as_object_mut() else {
-                            let _ = outbound.response.send(Err(UpstreamError::Protocol("request is not an object".into())));
-                            continue;
-                        };
-                        object.insert("id".into(), Value::String(upstream_id.clone()));
-                        if write_json_line(stdin, &outbound.request).await.is_err() {
-                            let _ = outbound.response.send(Err(UpstreamError::Disconnected));
-                            break;
-                        }
-                        pending.insert(upstream_id, PendingUpstreamRequest {
-                            response: outbound.response,
-                            fence: outbound.fence,
-                        });
-                    }
-                    UpstreamCommand::ServerResponse(outbound) => {
-                        let valid = outbound.response.get("id").is_some()
-                            && (outbound.response.get("result").is_some() || outbound.response.get("error").is_some())
-                            && outbound.response.get("method").is_none();
-                        if !valid {
-                            let _ = outbound.delivered.send(Err(UpstreamError::Protocol("invalid server response".into())));
-                            continue;
-                        }
-                        if write_json_line(stdin, &outbound.response).await.is_ok() {
-                            let _ = outbound.delivered.send(Ok(()));
-                        } else {
-                            let _ = outbound.delivered.send(Err(UpstreamError::Disconnected));
-                            break;
-                        }
-                    }
-                }
-            }
-            line = lines.next_line() => {
-                let Some(line) = line? else { break; };
-                let value: Value = serde_json::from_str(&line)?;
-                if value.get("method").and_then(Value::as_str).is_some() {
-                    publish_notification(events, ordered_events, value).await;
-                    continue;
-                }
-                let id = match value.get("id") {
-                    Some(Value::String(id)) => id.clone(),
-                    Some(id) => id.to_string(),
-                    None => continue,
-                };
-                if let Some(request) = pending.remove(&id) {
-                    complete_pending_request(request, value, ordered_events).await;
-                }
-            }
-        }
-    }
-    for (_, request) in pending {
-        let _ = request.response.send(Err(UpstreamError::Disconnected));
-    }
-    Ok(())
-}
-
-async fn write_json_line(stdin: &mut ChildStdin, value: &Value) -> std::io::Result<()> {
-    stdin.write_all(value.to_string().as_bytes()).await?;
-    stdin.write_all(b"\n").await?;
-    stdin.flush().await
 }
 
 async fn run_connection(
@@ -911,6 +784,7 @@ fn parse_text_frame(
 mod tests {
     use super::*;
     use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
     use tokio::net::UnixListener;
     use tokio::process::Command;
     use tokio_tungstenite::accept_async;

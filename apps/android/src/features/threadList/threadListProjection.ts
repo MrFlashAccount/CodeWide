@@ -84,6 +84,7 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
           ? "failed"
           : null;
   return {
+    agentBadge: threadAgentBadge(thread),
     archived: thread.archived,
     id: thread.remoteThreadId,
     needsAttention: threadNeedsAttention(thread),
@@ -95,6 +96,16 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
     unread: thread.unread,
     ...(state === null ? {} : { state }),
   };
+}
+
+/**
+ * A thread bound to a provider other than its host's primary one is labelled with
+ * the provider's display name, because the provider decides which features the
+ * thread has. The name is display text only; nothing branches on it.
+ */
+function threadAgentBadge(thread: StoredThreadSummary): string | null {
+  const agent = thread.codewideAgent;
+  return agent === null || agent === undefined || agent.primary ? null : agent.providerName;
 }
 
 function threadNeedsAttention(thread: StoredThreadSummary): boolean {

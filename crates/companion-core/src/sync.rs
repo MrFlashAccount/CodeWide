@@ -9,24 +9,35 @@ use futures_util::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
 };
-use rand::Rng;
 use serde_json::{Map, Value, json};
 use tracing::{debug, info, warn};
 
 use crate::{
-    account_pool::{AccountPoolError, AccountPoolService},
+    agent::{
+        bindings::BindingStore,
+        client_wire::{
+            decode::{self, MergedMethod, MethodRoute},
+            events::EventProjector,
+            gateway::{ClientWireGateway, RpcFailure},
+            history::{self as provider_history, Anchor},
+        },
+        model::{Capability, ProviderId},
+        provider::{
+            HistoryPageError, NativeThreadResources, NativeThreadStore, ProviderError,
+            ProviderEvent, ProviderStatus,
+        },
+        registry::ProviderRegistry,
+    },
     auth::{AuthorizationChange, AuthorizationContext},
     content::{ContentProjector, MAX_INLINE_TEXT_BYTES},
     dictation::DictationService,
     files::FileService,
     global_supervisor_limits::GLOBAL_SUPERVISOR_LIMITS_V1,
-    history_service::HistoryService,
     projects::ProjectService,
-    remote_inputs::{RemoteInputError, prepare_remote_file_inputs},
-    resources::ResourceService,
+    remote_inputs::prepare_remote_file_inputs,
     store::{
-        IndexStore, IndexedThreadMetadata, OutboxClaimOutcome, OutboxClaimResolution,
-        OutboxClaimResolutionOutcome, OutboxCommand, OutboxPresentation, OutboxState, ReplayPage,
+        IndexStore, IndexedThreadMetadata, OutboxClaimOutcome, OutboxCommand, OutboxState,
+        ReplayPage,
     },
     sync_live::{
         LiveChannelRegistry, LiveControlResult, classify_pending_request_method,
@@ -38,10 +49,24 @@ use crate::{
         reject_oversized_dynamic_tool_requests, remove_server_request,
         retry_oversized_dynamic_tool_rejections, rpc_id_key,
     },
-    thread_view::{ThreadActivity, ThreadViewService},
-    upstream::{ConnectionStatus, OrderedUpstreamEvent, UpstreamError, UpstreamHandle},
-    workspaces::{WorkspacePhase, WorkspaceService},
+    thread_view::ThreadViewService,
+    workspaces::WorkspaceService,
 };
+
+mod outbox;
+mod outbox_state;
+mod provider_rpc;
+mod queue;
+
+use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
+#[cfg(test)]
+use outbox_state::turn_with_client_message;
+use outbox_state::{
+    OwnedClaimResolution, emit_queue_changed, resolve_outbox_claim, retry_delay_ms,
+    rpc_error_message,
+};
+use provider_rpc::{RpcResultObservers, forward_rpc_response};
+use queue::{queue_changed_thread_id, queue_command, queue_rpc};
 
 const MAX_REPLAY_ENTRIES: usize = 2_048;
 const MAX_REPLAY_BYTES: u64 = 4 * 1024 * 1024;
@@ -51,24 +76,18 @@ const REPLAY_BATCH_DELAY: Duration = Duration::from_millis(16);
 const MAX_COALESCED_TEXT_DELTA_BYTES: usize = MAX_INLINE_TEXT_BYTES;
 const MAX_STREAM_DIAGNOSTIC_TURNS: usize = 4_096;
 const MAX_RECENT_TURN_STARTS: usize = 4_096;
-const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const OUTBOX_RETRY_BASE_MS: u64 = 1_000;
-const OUTBOX_RETRY_MAX_MS: u64 = 30_000;
-const OUTBOX_ACCOUNT_SWITCH_WAIT_MS: u64 = 1_000;
-const OUTBOX_RECONCILE_PAGE_SIZE: u64 = 100;
-const ROLLOUT_RECONCILIATION_POLL: Duration = Duration::from_millis(50);
-const ROLLOUT_RECONCILIATION_RETRY: Duration = Duration::from_secs(1);
 const MAX_CONCURRENT_SESSION_RPCS: usize = 32;
 const SESSION_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
-const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE: i64 = -32_061;
-const GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_MESSAGE: &str =
-    "Global supervisor thread is unavailable";
+/// Delay before the one-time binding backfill starts, so it never competes
+/// with clients reconnecting right after a companion restart.
+const BINDING_BACKFILL_DELAY: Duration = Duration::from_secs(30);
+/// Answer of a storage-backed method when no provider exposes the storage.
+const STORAGE_UNAVAILABLE: &str = "Thread history storage is unavailable";
 #[derive(Clone)]
 pub struct SyncHub {
     port_inventory: Option<crate::port_inventory::PortInventory>,
-    upstream: UpstreamHandle,
+    gateway: Arc<ClientWireGateway>,
     store: Arc<IndexStore>,
-    history: HistoryService,
     thread_view: ThreadViewService,
     events: tokio::sync::broadcast::Sender<DurableSignal>,
     local_events: tokio::sync::mpsc::Sender<Value>,
@@ -81,8 +100,6 @@ pub struct SyncHub {
     content_projector: Arc<std::sync::RwLock<Option<Arc<ContentProjector>>>>,
     dictation: Arc<std::sync::RwLock<Option<Arc<DictationService>>>>,
     files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
-    resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
-    account_pool: Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
     projects: Arc<std::sync::RwLock<Option<Arc<ProjectService>>>>,
     workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
 }
@@ -101,7 +118,14 @@ enum DurableSignal {
 
 enum IngestInput {
     Payload(Value),
-    Fence(tokio::sync::oneshot::Sender<Result<u64, UpstreamError>>),
+    /// A provider payload; `observe_resources` is false for providers
+    /// without `history.threadResources`, whose threads have no stored
+    /// history the resource owner could ever read or evict.
+    ProviderPayload {
+        payload: Value,
+        observe_resources: bool,
+    },
+    Fence(tokio::sync::oneshot::Sender<Result<u64, ProviderError>>),
     ThreadPinImport(
         crate::thread_pins::ThreadPinImportRequest,
         tokio::sync::oneshot::Sender<Result<u64, String>>,
@@ -117,7 +141,8 @@ struct IngestContext {
     events: tokio::sync::broadcast::Sender<DurableSignal>,
     server_requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
     content_projector: Arc<std::sync::RwLock<Option<Arc<ContentProjector>>>>,
-    resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
+    /// Owner of `history.threadResources`, resolved once at build.
+    resources: Option<Arc<dyn NativeThreadResources>>,
     usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
 }
 
@@ -133,38 +158,6 @@ enum AuthorizationChangeOutcome {
     Continue,
     Disable,
     Close,
-}
-
-enum OutboxDeliveryError {
-    Deferred(String),
-    Uncertain(String),
-}
-
-enum ThreadMutationDispatchError {
-    AccountPool(AccountPoolError),
-    Upstream(UpstreamError),
-}
-
-impl ThreadMutationDispatchError {
-    fn message(&self) -> String {
-        match self {
-            Self::AccountPool(error) => error.to_string(),
-            Self::Upstream(error) => error.to_string(),
-        }
-    }
-
-    fn into_outbox(self) -> OutboxDeliveryError {
-        match self {
-            Self::AccountPool(AccountPoolError::Deferred(reason)) => {
-                OutboxDeliveryError::Deferred(reason)
-            }
-            Self::AccountPool(error) => OutboxDeliveryError::Uncertain(error.to_string()),
-            Self::Upstream(error @ (UpstreamError::Reconnecting | UpstreamError::Backpressure)) => {
-                OutboxDeliveryError::Deferred(error.to_string())
-            }
-            Self::Upstream(error) => OutboxDeliveryError::Uncertain(error.to_string()),
-        }
-    }
 }
 
 enum LiveReplayError {
@@ -350,7 +343,7 @@ impl RecentTurnStarts {
 }
 
 fn spawn_live_replay_task(
-    history: HistoryService,
+    thread_store: Option<Arc<dyn NativeThreadStore>>,
     socket: SessionSocket,
     store: Arc<IndexStore>,
     mut events: tokio::sync::broadcast::Receiver<DurableSignal>,
@@ -364,9 +357,13 @@ fn spawn_live_replay_task(
                     if head <= delivered_cursor {
                         continue;
                     }
-                    let result =
-                        send_live_replay_after(&socket, store.clone(), delivered_cursor, &history)
-                            .await;
+                    let result = send_live_replay_after(
+                        &socket,
+                        store.clone(),
+                        delivered_cursor,
+                        thread_store.as_deref(),
+                    )
+                    .await;
                     if matches!(result, Err(LiveReplayError::SnapshotRequired)) {
                         warn!(
                             delivered_cursor,
@@ -378,7 +375,13 @@ fn spawn_live_replay_task(
                 Ok(DurableSignal::Failed) => Err(LiveReplayError::Journal),
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     debug!(skipped, "sync client coalesced live wake-up signals");
-                    send_live_replay_after(&socket, store.clone(), delivered_cursor, &history).await
+                    send_live_replay_after(
+                        &socket,
+                        store.clone(),
+                        delivered_cursor,
+                        thread_store.as_deref(),
+                    )
+                    .await
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
@@ -405,30 +408,33 @@ impl SyncHub {
         self.port_inventory = Some(inventory);
         self
     }
-    /// Creates a passive event/replay companion that does not execute client RPC.
+    /// Creates a companion over a provider registry. `mutations` enables
+    /// authenticated RPC execution and durable command delivery; without it
+    /// the hub is a passive event/replay shadow that never executes RPC.
     #[must_use]
-    pub fn new(upstream: UpstreamHandle, store: Arc<IndexStore>, history: HistoryService) -> Self {
-        Self::build(upstream, store, history, MutationMode::ReadOnlyShadow)
-    }
-
-    /// Creates an active companion with unrestricted authenticated RPC forwarding
-    /// and durable command delivery.
-    #[must_use]
-    pub fn with_mutations(
-        upstream: UpstreamHandle,
+    pub fn with_registry(
+        registry: Arc<ProviderRegistry>,
         store: Arc<IndexStore>,
-        history: HistoryService,
+        mutations: bool,
     ) -> Self {
-        Self::build(upstream, store, history, MutationMode::Active)
+        let mode = if mutations {
+            MutationMode::Active
+        } else {
+            MutationMode::ReadOnlyShadow
+        };
+        Self::build(registry, store, mode)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn build(
-        upstream: UpstreamHandle,
+        registry: Arc<ProviderRegistry>,
         store: Arc<IndexStore>,
-        history: HistoryService,
         mutation_mode: MutationMode,
     ) -> Self {
-        let thread_view = ThreadViewService::new(upstream.clone(), history.clone());
+        let bindings = Arc::new(BindingStore::new(store.clone()));
+        let gateway = Arc::new(ClientWireGateway::new(registry, bindings.clone()));
+        let registry = gateway.registry().clone();
+        let thread_view = ThreadViewService::new(gateway.clone());
         // The durable replay journal owns payload bytes. The live channel is
         // only a wake-up edge; tokio broadcast retains its full ring even
         // after every receiver has consumed an entry, so putting JSON Values
@@ -443,67 +449,84 @@ impl SyncHub {
         let content_projector = Arc::new(std::sync::RwLock::new(None));
         let dictation = Arc::new(std::sync::RwLock::new(None));
         let files = Arc::new(std::sync::RwLock::new(None));
-        let resources = Arc::new(std::sync::RwLock::new(None));
-        let account_pool = Arc::new(std::sync::RwLock::new(None));
         let projects = Arc::new(std::sync::RwLock::new(None));
         let workspaces = Arc::new(std::sync::RwLock::new(None));
         let usage_projector = Arc::new(std::sync::Mutex::new(
             crate::usage::LiveUsageProjector::new(store.clone()),
         ));
-        tokio::spawn(forward_upstream_events(
-            upstream.take_ordered_events(),
-            ordered_ingest.clone(),
-            outbox_wakeup.clone(),
-            live_channels.clone(),
-        ));
+        // One ordered forwarder per provider; each keeps its own fence order.
+        for provider in registry.enabled() {
+            tokio::spawn(forward_provider_events(
+                provider.take_events(),
+                EventProjector::new(gateway.wire(provider)),
+                gateway.clone(),
+                ordered_ingest.clone(),
+                outbox_wakeup.clone(),
+                live_channels.clone(),
+            ));
+            let owner = provider.descriptor().id;
+            let request_gateway = gateway.clone();
+            tokio::spawn(clear_user_requests_on_disconnect(
+                provider.subscribe_status(),
+                server_requests.clone(),
+                local_events.clone(),
+                Arc::new(move |id: &Value| {
+                    request_gateway
+                        .decode_request_id(id)
+                        .is_some_and(|decoded| decoded.provider == owner)
+                }),
+            ));
+        }
         tokio::spawn(forward_local_events(ingest_rx, ordered_ingest.clone()));
-        match history.spawn_rollout_monitor() {
-            Ok(changes) => {
-                tokio::spawn(forward_rollout_changes(
-                    changes,
-                    history.clone(),
-                    local_events.clone(),
-                    resources.clone(),
-                ));
-            }
-            Err(error) => warn!(%error, "canonical rollout monitor is unavailable"),
+        // Changes written outside the companion (other App Server processes)
+        // become semantic invalidations through the provider's own storage.
+        for store in registry
+            .enabled()
+            .filter_map(|provider| provider.native_surface()?.thread_store())
+        {
+            store.spawn_change_monitor(local_events.clone());
         }
         let ingest_context = IngestContext {
             store: store.clone(),
             events: events.clone(),
             server_requests: server_requests.clone(),
             content_projector: content_projector.clone(),
-            resources: resources.clone(),
+            resources: registry
+                .owner(Capability::HistoryThreadResources)
+                .and_then(|provider| provider.native_surface()?.thread_resources()),
             usage_projector: usage_projector.clone(),
         };
         tokio::spawn(ingest_events(ordered_ingest_rx, ingest_context));
-        tokio::spawn(clear_user_requests_on_disconnect(
-            upstream.subscribe_status(),
-            server_requests.clone(),
-            local_events.clone(),
-        ));
-        tokio::spawn(retry_oversized_dynamic_tool_rejections(
-            upstream.clone(),
-            server_requests.clone(),
-        ));
+        if let Some(owner) = registry.owner(Capability::RequestsDynamicToolCall) {
+            tokio::spawn(retry_oversized_dynamic_tool_rejections(
+                owner.clone(),
+                server_requests.clone(),
+            ));
+        }
         if mutation_mode == MutationMode::Active {
+            for provider in registry.discovery_providers() {
+                tokio::spawn(crate::agent::bindings::run_backfill(
+                    bindings.clone(),
+                    provider.clone(),
+                    BINDING_BACKFILL_DELAY,
+                ));
+            }
             tokio::spawn(run_outbox_pump(
-                upstream.clone(),
-                store.clone(),
-                history.clone(),
-                thread_view.clone(),
+                PumpContext {
+                    gateway: gateway.clone(),
+                    store: store.clone(),
+                    thread_view: thread_view.clone(),
+                    local_events: local_events.clone(),
+                    files: files.clone(),
+                    workspaces: workspaces.clone(),
+                },
                 outbox_wakeup.clone(),
-                local_events.clone(),
-                files.clone(),
-                account_pool.clone(),
-                workspaces.clone(),
             ));
         }
         Self {
             port_inventory: None,
-            upstream,
+            gateway,
             store,
-            history,
             thread_view,
             events,
             local_events,
@@ -516,16 +539,33 @@ impl SyncHub {
             content_projector,
             dictation,
             files,
-            resources,
-            account_pool,
             projects,
             workspaces,
         }
     }
 
+    /// The provider registry this hub routes through.
     #[must_use]
-    pub fn upstream_status(&self) -> ConnectionStatus {
-        self.upstream.status()
+    pub fn registry(&self) -> &Arc<ProviderRegistry> {
+        self.gateway.registry()
+    }
+
+    /// Transport state of the primary provider, which the client sees as
+    /// the companion status.
+    #[must_use]
+    pub fn upstream_status(&self) -> ProviderStatus {
+        self.gateway.registry().primary().status()
+    }
+
+    /// Journals a provider-owned local event stream (for example account-pool
+    /// changes) through the durable client channel; each event also wakes the
+    /// outbox, which may be waiting for admission.
+    pub fn forward_provider_local_events(&self, events: tokio::sync::broadcast::Receiver<Value>) {
+        tokio::spawn(forward_provider_local_events(
+            events,
+            self.local_events.clone(),
+            self.outbox_wakeup.clone(),
+        ));
     }
 
     /// Installs the private-content projector used by both live notifications
@@ -559,34 +599,6 @@ impl SyncHub {
             Ok(mut slot) => *slot = Some(files),
             Err(poisoned) => *poisoned.into_inner() = Some(files),
         }
-        self
-    }
-
-    /// Installs the canonical rollout resource projector and its active-turn
-    /// in-memory overlay.
-    #[must_use]
-    pub fn with_resources(self, resources: Arc<ResourceService>) -> Self {
-        match self.resources.write() {
-            Ok(mut slot) => *slot = Some(resources),
-            Err(poisoned) => *poisoned.into_inner() = Some(resources),
-        }
-        self
-    }
-
-    /// Installs the companion-owned multi-account scheduler. Its event stream
-    /// is projected through the same durable client channel as other local
-    /// companion services.
-    #[must_use]
-    pub fn with_account_pool(self, account_pool: &Arc<AccountPoolService>) -> Self {
-        match self.account_pool.write() {
-            Ok(mut slot) => *slot = Some(account_pool.clone()),
-            Err(poisoned) => *poisoned.into_inner() = Some(account_pool.clone()),
-        }
-        tokio::spawn(forward_account_pool_events(
-            account_pool.subscribe_events(),
-            self.local_events.clone(),
-            self.outbox_wakeup.clone(),
-        ));
         self
     }
 
@@ -632,17 +644,31 @@ impl SyncHub {
         }
     }
 
-    fn resources(&self) -> Option<Arc<ResourceService>> {
-        match self.resources.read() {
-            Ok(slot) => slot.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
+    /// Stored thread resources of the `history.threadResources` owner.
+    fn thread_resources(&self) -> Option<Arc<dyn NativeThreadResources>> {
+        self.registry()
+            .owner(Capability::HistoryThreadResources)?
+            .native_surface()?
+            .thread_resources()
     }
 
-    fn account_pool(&self) -> Option<Arc<AccountPoolService>> {
-        match self.account_pool.read() {
-            Ok(slot) => slot.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
+    /// Stored threads of the `capability` owner.
+    fn thread_store(&self, capability: Capability) -> Option<Arc<dyn NativeThreadStore>> {
+        self.registry()
+            .owner(capability)?
+            .native_surface()?
+            .thread_store()
+    }
+
+    /// Prepares one journaled event for replay through the thread store of the
+    /// `codex.native` owner; without one the event is replayed unchanged.
+    fn replay_event(
+        thread_store: Option<&dyn NativeThreadStore>,
+        payload: Value,
+    ) -> Result<Value, String> {
+        match thread_store {
+            Some(thread_store) => thread_store.replay_event(payload),
+            None => Ok(payload),
         }
     }
 
@@ -738,7 +764,7 @@ impl SyncHub {
         {
             return None;
         }
-        let status = if self.upstream.status() == ConnectionStatus::Live {
+        let status = if self.upstream_status() == ProviderStatus::Live {
             "live"
         } else {
             "reconnecting"
@@ -752,13 +778,12 @@ impl SyncHub {
 
         let mut ready = false;
         if !snapshot_required {
+            let thread_store = self.thread_store(Capability::CodexNative);
             for (cursor, payload) in replay.entries {
                 let Ok(payload) = serde_json::from_slice::<Value>(&payload)
                     .map_err(|_| ())
                     .and_then(|payload| {
-                        self.history
-                            .catalog_event(crate::usage::price_replay_payload(payload))
-                            .map_err(|_| ())
+                        Self::replay_event(thread_store.as_deref(), payload).map_err(|_| ())
                     })
                 else {
                     close_with(socket, 1011, "replay_journal_failed").await;
@@ -812,7 +837,7 @@ impl SyncHub {
             None
         };
         let mut snapshot_started_at = session.snapshot_started_at;
-        let mut upstream_status = self.upstream.subscribe_status();
+        let mut upstream_status = self.gateway.registry().primary().subscribe_status();
         let rpc_permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SESSION_RPCS));
         let thread_mutation_lanes = ThreadMutationLanes::default();
         let (task_failed_tx, mut task_failed_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -834,7 +859,7 @@ impl SyncHub {
                 return;
             };
             replay_task = Some(spawn_live_replay_task(
-                self.history.clone(),
+                self.thread_store(Capability::CodexNative),
                 socket.clone(),
                 self.store.clone(),
                 events,
@@ -918,10 +943,11 @@ impl SyncHub {
                                         snapshot_started_at = Some(Instant::now());
                                         continue;
                                     }
+                                    let thread_store = self.thread_store(Capability::CodexNative);
                                     for (cursor, payload) in replay.entries {
                                         let Ok(payload) = serde_json::from_slice::<Value>(&payload)
                     .map_err(|_| ())
-                    .and_then(|payload| self.history.catalog_event(crate::usage::price_replay_payload(payload)).map_err(|_| ())) else {
+                    .and_then(|payload| Self::replay_event(thread_store.as_deref(), payload).map_err(|_| ())) else {
                                             close_with(&socket, 1011, "replay_journal_failed").await;
                                             break 'session;
                                         };
@@ -943,7 +969,7 @@ impl SyncHub {
                                         && let Some(events) = replay_events.take()
                                     {
                                         replay_task = Some(spawn_live_replay_task(
-                            self.history.clone(),
+                            self.thread_store(Capability::CodexNative),
                                             socket.clone(),
                                             self.store.clone(),
                                             events,
@@ -1038,7 +1064,7 @@ impl SyncHub {
                 }
                 changed = upstream_status.changed() => {
                     if changed.is_err() { break; }
-                    let status = if *upstream_status.borrow() == ConnectionStatus::Live { "live" } else { "reconnecting" };
+                    let status = if *upstream_status.borrow() == ProviderStatus::Live { "live" } else { "reconnecting" };
                     if send_json(&socket, &json!({ "type": "status", "status": status })).await.is_err() { break; }
                 }
                 change = receive_authorization_change(&mut authorization_changes), if authorization_changes.is_some() => {
@@ -1117,7 +1143,7 @@ impl SyncHub {
             return Err(());
         }
         let key = rpc_id_key(&id);
-        let request_class = {
+        let (request_class, request_method, request_thread_id) = {
             let mut pending = self.server_requests.lock().await;
             let Some(request) = pending.requests.get(&key) else {
                 return send_json(
@@ -1127,10 +1153,16 @@ impl SyncHub {
                 .await
                 .map_err(|_| ());
             };
-            let request_class = request
+            let request_method = request
                 .get("method")
                 .and_then(Value::as_str)
-                .and_then(classify_pending_request_method);
+                .unwrap_or("")
+                .to_owned();
+            let request_thread_id = request
+                .pointer("/params/threadId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let request_class = classify_pending_request_method(&request_method);
             if !pending.resolving.insert(key.clone()) {
                 return send_json(
                     socket,
@@ -1139,10 +1171,17 @@ impl SyncHub {
                 .await
                 .map_err(|_| ());
             }
-            request_class
+            (request_class, request_method, request_thread_id)
         };
         response = enforce_dynamic_tool_output_limit(response, request_class);
-        match self.upstream.respond(response).await {
+        let delivered = provider_rpc::deliver_server_response(
+            &self.gateway,
+            &request_method,
+            request_thread_id.as_deref(),
+            response,
+        )
+        .await;
+        match delivered {
             Ok(()) => {
                 remove_server_request(&self.server_requests, &key).await;
                 if self
@@ -1163,11 +1202,13 @@ impl SyncHub {
             Err(error) => {
                 self.server_requests.lock().await.resolving.remove(&key);
                 let reason = match error {
-                    UpstreamError::Backpressure => "upstream_backpressure",
-                    UpstreamError::Reconnecting | UpstreamError::Disconnected => {
+                    ProviderError::Backpressure(_) => "upstream_backpressure",
+                    ProviderError::Reconnecting(_) | ProviderError::Disconnected(_) => {
                         "app_server_reconnecting"
                     }
-                    UpstreamError::Protocol(_) => "upstream_delivery_failed",
+                    ProviderError::Protocol(_) | ProviderError::Rejected(_) => {
+                        "upstream_delivery_failed"
+                    }
                 };
                 send_json(
                     socket,
@@ -1213,9 +1254,16 @@ impl SyncHub {
             method.as_str(),
             "thread/read" | "thread/turns/list" | "thread/items/list"
         ) && let Some(thread_id) = params.get("threadId").and_then(Value::as_str)
-            && let Some(resources) = self.resources()
+            && let Some(resources) = self.thread_resources()
+            && self
+                .gateway
+                .resolve_thread(thread_id, Some(Capability::HistoryThreadResources))
+                .await
+                .is_ok()
         {
-            resources.schedule_prewarm(thread_id);
+            // Only threads whose provider declares `history.threadResources`
+            // reach the resource owner's storage.
+            resources.prewarm(thread_id);
         }
         if self
             .try_handle_local_service_rpc(socket, &id, &method, &params, authorization)
@@ -1241,8 +1289,35 @@ impl SyncHub {
         {
             return Ok(());
         }
+        let target = match decode::route(&method, &params) {
+            MethodRoute::ThreadStart => {
+                return provider_rpc::handle_thread_start(self, socket, request.take(), id).await;
+            }
+            MethodRoute::Merged(merged) => {
+                return provider_rpc::handle_merged(
+                    self,
+                    socket,
+                    request.take(),
+                    id,
+                    &method,
+                    merged,
+                )
+                .await;
+            }
+            MethodRoute::Host { owner } => {
+                return provider_rpc::handle_host(self, socket, request.take(), id, &method, owner)
+                    .await;
+            }
+            MethodRoute::Thread {
+                thread_id,
+                requires,
+            } => match self.gateway.resolve_thread(&thread_id, requires).await {
+                Ok(target) => target,
+                Err(failure) => return send_rpc_failure(socket, id, &failure).await,
+            },
+        };
         if method == "turn/start" && self.recent_turn_starts.lock().await.seen_or_insert(&params) {
-            match reconcile_direct_turn_start(&self.upstream, &params).await {
+            match reconcile_direct_turn_start(&target, &params).await {
                 Ok(Some(turn)) => {
                     return forward_rpc_response(
                         socket,
@@ -1250,11 +1325,7 @@ impl SyncHub {
                         id,
                         &method,
                         self.projector(),
-                        &self.history,
-                        RpcResultObservers {
-                            resources: self.resources(),
-                            projects: self.projects(),
-                        },
+                        self.observers(&target.wire),
                     )
                     .await;
                 }
@@ -1275,118 +1346,29 @@ impl SyncHub {
                 object.insert("params".into(), prepared);
             }
         }
-        if matches!(method.as_str(), "turn/start" | "thread/settings/update") {
-            let account_pool = self.account_pool();
-            let response = if method == "turn/start" {
-                dispatch_turn_start_with_resume(
-                    &self.upstream,
-                    account_pool.as_ref(),
-                    request.take(),
-                )
-                .await
-            } else {
-                dispatch_thread_settings_update_with_resume(
-                    &self.upstream,
-                    account_pool.as_ref(),
-                    request.take(),
-                )
-                .await
-            };
-            return match response {
-                Ok(response) => {
-                    forward_rpc_response(
-                        socket,
-                        response,
-                        id,
-                        &method,
-                        self.projector(),
-                        &self.history,
-                        RpcResultObservers {
-                            resources: self.resources(),
-                            projects: self.projects(),
-                        },
-                    )
-                    .await
-                }
-                Err(error) => {
-                    let code = match (&error, method.as_str()) {
-                        (_, "turn/start") | (ThreadMutationDispatchError::AccountPool(_), _) => {
-                            -32040
-                        }
-                        (ThreadMutationDispatchError::Upstream(UpstreamError::Backpressure), _) => {
-                            -32004
-                        }
-                        (
-                            ThreadMutationDispatchError::Upstream(
-                                UpstreamError::Reconnecting | UpstreamError::Disconnected,
-                            ),
-                            _,
-                        ) => -32003,
-                        (ThreadMutationDispatchError::Upstream(UpstreamError::Protocol(_)), _) => {
-                            -32020
-                        }
-                    };
-                    send_rpc_error(socket, id, code, &error.message()).await
-                }
-            };
-        }
-        if method == "thread/realtime/start" {
-            let account_pool = self.account_pool();
-            let thread_id = request
-                .pointer("/params/threadId")
-                .and_then(Value::as_str)
-                .map_or_else(|| "unknown".to_owned(), ToOwned::to_owned);
-            let started_at = Instant::now();
-            return match dispatch_realtime_start_with_resume(
-                &self.upstream,
-                account_pool.as_ref(),
+        if target.native().is_none() {
+            return provider_rpc::handle_neutral_thread_rpc(
+                self,
+                socket,
+                &target,
                 request.take(),
+                id,
+                &method,
             )
-            .await
-            {
-                Ok(response) => {
-                    info!(
-                        thread_id = %thread_id,
-                        upstream_response_ms = u64::try_from(started_at.elapsed().as_millis())
-                            .unwrap_or(u64::MAX),
-                        outcome = if response.get("error").is_some() {
-                            "rejected"
-                        } else {
-                            "accepted"
-                        },
-                        "global voice realtime start response received from app server"
-                    );
-                    forward_rpc_response(
-                        socket,
-                        response,
-                        id,
-                        &method,
-                        self.projector(),
-                        &self.history,
-                        RpcResultObservers {
-                            resources: self.resources(),
-                            projects: self.projects(),
-                        },
-                    )
-                    .await
-                }
-                Err(error) => send_rpc_error(socket, id, -32020, &error.message()).await,
-            };
+            .await;
         }
-        forward_rpc(
-            &self.upstream,
-            socket,
-            request.take(),
-            id,
-            &method,
-            self.projector(),
-            &self.history,
-            RpcResultObservers {
-                resources: self.resources(),
-                projects: self.projects(),
-            },
-        )
-        .await
+        provider_rpc::handle_native_thread_rpc(self, socket, &target, request.take(), id, &method)
+            .await
+    }
+
+    fn observers(&self, wire: &crate::agent::client_wire::WireProvider) -> RpcResultObservers {
+        RpcResultObservers {
+            thread_store: self.thread_store(Capability::CodexNative),
+            pins: self.store.clone(),
+            resources: self.thread_resources(),
+            projects: self.projects(),
+            wire: wire.clone(),
+        }
     }
 
     async fn handle_thread_pin_import_rpc(
@@ -1466,9 +1448,8 @@ impl SyncHub {
             return Ok(true);
         }
         if method == "companion/thread/pins/list" {
-            let history = self.history.clone();
-            match tokio::task::spawn_blocking(move || history.thread_pin_snapshot()).await {
-                Ok(Ok(snapshot)) => send_local_rpc_result(socket, id, json!(snapshot)).await?,
+            match provider_rpc::thread_pin_snapshot(self).await {
+                Ok(snapshot) => send_local_rpc_result(socket, id, snapshot).await?,
                 _ => {
                     send_rpc_error(
                         socket,
@@ -1482,6 +1463,13 @@ impl SyncHub {
             return Ok(true);
         }
         if method == "companion/threadSubagents/read" {
+            if let Err(failure) = self
+                .gate_thread_capability(params, Capability::SubagentThreads)
+                .await
+            {
+                send_rpc_failure(socket, id.clone(), &failure).await?;
+                return Ok(true);
+            }
             self.handle_thread_subagents_rpc(socket, id, params).await?;
             return Ok(true);
         }
@@ -1505,8 +1493,22 @@ impl SyncHub {
             }
             return Ok(true);
         }
-        if ResourceService::handles(method) {
-            return self.handle_resource_rpc(socket, id, method, params).await;
+        if let Some(resources) = self
+            .thread_resources()
+            .filter(|resources| resources.handles(method))
+        {
+            if let Err(failure) = self
+                .gate_thread_capability(params, Capability::HistoryThreadResources)
+                .await
+            {
+                send_rpc_failure(socket, id.clone(), &failure).await?;
+                return Ok(true);
+            }
+            match resources.read(method, params).await {
+                Ok(result) => send_local_rpc_result(socket, id, result).await?,
+                Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await?,
+            }
+            return Ok(true);
         }
         if ProjectService::handles(method) {
             let Some(projects) = self.projects() else {
@@ -1530,46 +1532,55 @@ impl SyncHub {
         if WorkspaceService::handles(method) {
             return self.handle_workspace_rpc(socket, id, method, params).await;
         }
-        if !AccountPoolService::handles(method) {
-            return Ok(false);
-        }
-        let Some(account_pool) = self.account_pool() else {
-            send_rpc_error(socket, id.clone(), -32040, "Account pool is unavailable").await?;
-            return Ok(true);
-        };
-        match account_pool.handle(method, params).await {
-            Ok(result) => send_local_rpc_result(socket, id, result).await?,
-            Err(error) => {
-                send_rpc_error(socket, id.clone(), -32040, &error.to_string()).await?;
-            }
-        }
-        Ok(true)
+        self.try_handle_accounts_rpc(socket, id, method, params)
+            .await
     }
 
-    async fn handle_resource_rpc(
+    /// Account methods go to the provider owning `accounts.pool`.
+    async fn try_handle_accounts_rpc(
         &self,
         socket: &SessionSocket,
         id: &Value,
         method: &str,
         params: &Value,
     ) -> Result<bool, ()> {
-        let Some(resources) = self.resources() else {
-            send_rpc_error(
-                socket,
-                id.clone(),
-                -32020,
-                "Resource service is unavailable",
-            )
-            .await?;
-            return Ok(true);
+        let Some((owner, _)) = self.gateway.owner(Capability::AccountsPool) else {
+            return Ok(false);
         };
-        match resources.handle(method, params).await {
+        let Some(native) = owner.native_surface() else {
+            return Ok(false);
+        };
+        let Some(result) = native.handle_host_rpc(method, params).await else {
+            return Ok(false);
+        };
+        match result {
             Ok(result) => send_local_rpc_result(socket, id, result).await?,
-            Err(error) => {
-                send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
-            }
+            Err(error) => send_rpc_error(socket, id.clone(), -32040, &error).await?,
         }
         Ok(true)
+    }
+
+    /// Thread-scoped companion services read the capability owner's stored
+    /// history; a thread whose provider lacks the capability gets `-32072`
+    /// without touching it.
+    async fn gate_thread_capability(
+        &self,
+        params: &Value,
+        capability: Capability,
+    ) -> Result<(), RpcFailure> {
+        let Some(thread_id) = params.get("threadId").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        match self
+            .gateway
+            .resolve_thread(thread_id, Some(capability))
+            .await
+        {
+            Ok(_) => Ok(()),
+            // Unknown threads keep the service's own not-found behavior.
+            Err(failure) if failure.code == -32_600 => Ok(()),
+            Err(failure) => Err(failure),
+        }
     }
 
     async fn handle_thread_subagents_rpc(
@@ -1578,9 +1589,12 @@ impl SyncHub {
         id: &Value,
         params: &Value,
     ) -> Result<(), ()> {
-        match self.history.subagent_descendants(params) {
+        let Some(store) = self.thread_store(Capability::SubagentThreads) else {
+            return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE).await;
+        };
+        match store.subagent_descendants(params) {
             Ok(result) => send_local_rpc_result(socket, id, result).await,
-            Err(error) => send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await,
+            Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await,
         }
     }
 
@@ -1618,35 +1632,21 @@ impl SyncHub {
         method: &str,
         params: &Value,
     ) -> Result<bool, ()> {
-        if matches!(
-            method,
-            "companion/search/context" | "companion/search/window"
-        ) {
-            let result = if method == "companion/search/window" {
-                self.history.search_window(params).await
-            } else {
-                self.history.search_context(params).await
-            };
-            match result {
-                Ok(result) => {
-                    self.send_projected_rpc_result(socket, id, method, result)
-                        .await?;
-                }
-                Err(error) => {
-                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
-                }
-            }
+        if method.starts_with("companion/search")
+            && let Err(failure) = self
+                .gate_thread_capability(params, Capability::HistoryMessageSearch)
+                .await
+        {
+            send_rpc_failure(socket, id.clone(), &failure).await?;
             return Ok(true);
         }
-        if method == "companion/search" {
-            match self.history.search_messages(params).await {
+        if let Some(searched) = self.search(method, params).await {
+            match searched {
                 Ok(result) => {
                     self.send_projected_rpc_result(socket, id, method, result)
                         .await?;
                 }
-                Err(error) => {
-                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
-                }
+                Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await?,
             }
             return Ok(true);
         }
@@ -1662,36 +1662,44 @@ impl SyncHub {
             }
             return Ok(true);
         }
+        if let Some(handled) = self
+            .try_handle_provider_history_rpc(socket, id, method, params)
+            .await?
+        {
+            return Ok(handled);
+        }
+        // Native threads (and unknown ids) read the stored history of the
+        // `codex.native` owner, as the pass-through wire always did.
+        let store = self.thread_store(Capability::CodexNative);
         if matches!(
             method,
             "companion/thread/history/after" | "companion/thread/history/before"
         ) {
-            let page = if method == "companion/thread/history/after" {
-                self.history.turns_after(params).await
-            } else {
-                self.history.turns_before(params).await
+            let page = match &store {
+                Some(store) => store.history_page(method, params).await,
+                None => None,
             };
             match page {
-                Ok(result) => {
+                Some(Ok(result)) => {
                     self.send_projected_rpc_result(socket, id, method, result)
                         .await?;
                 }
-                Err(error) => {
-                    let code = if matches!(
-                        error,
-                        crate::history_service::HistoryServiceError::HistorySourceChanged
-                            | crate::history_service::HistoryServiceError::InvalidCursor
-                    ) {
-                        -32021
-                    } else {
-                        -32020
-                    };
-                    send_rpc_error(socket, id.clone(), code, &error.to_string()).await?;
+                Some(Err(HistoryPageError::Stale(message))) => {
+                    send_rpc_error(socket, id.clone(), -32021, &message).await?;
+                }
+                Some(Err(HistoryPageError::Failed(message))) => {
+                    send_rpc_error(socket, id.clone(), -32020, &message).await?;
+                }
+                None => {
+                    send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE).await?;
                 }
             }
             return Ok(true);
         }
-        let Some(result) = self.history.try_turns_page(method, params).await else {
+        let Some(store) = store else {
+            return Ok(false);
+        };
+        let Some(result) = store.turns_page(method, params).await else {
             return Ok(false);
         };
         match result {
@@ -1699,9 +1707,80 @@ impl SyncHub {
                 self.send_projected_rpc_result(socket, id, method, result)
                     .await?;
             }
-            Err(error) => send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?,
+            Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await?,
         }
         Ok(true)
+    }
+
+    /// `companion/search*` through the `history.messageSearch` owner; `None`
+    /// for methods it does not answer.
+    async fn search(&self, method: &str, params: &Value) -> Option<Result<Value, String>> {
+        let search = self
+            .registry()
+            .owner(Capability::HistoryMessageSearch)
+            .and_then(|owner| owner.native_surface()?.message_search());
+        match search {
+            Some(search) => search.search(method, params).await,
+            None if matches!(
+                method,
+                "companion/search" | "companion/search/context" | "companion/search/window"
+            ) =>
+            {
+                Some(Err(STORAGE_UNAVAILABLE.to_owned()))
+            }
+            None => None,
+        }
+    }
+
+    /// History reads of threads whose provider has no native stored history.
+    /// `Some(handled)` decides the request; `None` continues locally.
+    async fn try_handle_provider_history_rpc(
+        &self,
+        socket: &SessionSocket,
+        id: &Value,
+        method: &str,
+        params: &Value,
+    ) -> Result<Option<bool>, ()> {
+        let routed = match params.get("threadId").and_then(Value::as_str) {
+            Some(thread_id)
+                if matches!(
+                    method,
+                    "companion/thread/history/after"
+                        | "companion/thread/history/before"
+                        | "thread/turns/list"
+                ) =>
+            {
+                match self.gateway.resolve_thread(thread_id, None).await {
+                    Ok(target) => Some(target),
+                    Err(failure) if failure.code == -32_600 => None,
+                    Err(failure) => {
+                        send_rpc_failure(socket, id.clone(), &failure).await?;
+                        return Ok(Some(true));
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Some(target) = routed.as_ref().filter(|target| target.native().is_none()) {
+            if method == "thread/turns/list" {
+                // Served by the provider through the routed RPC path.
+                return Ok(Some(false));
+            }
+            let anchor = if method == "companion/thread/history/after" {
+                Anchor::After
+            } else {
+                Anchor::Before
+            };
+            match provider_history::page(target, params, anchor).await {
+                Ok(result) => {
+                    self.send_projected_rpc_result(socket, id, method, result)
+                        .await?;
+                }
+                Err(failure) => send_rpc_failure(socket, id.clone(), &failure).await?,
+            }
+            return Ok(Some(true));
+        }
+        Ok(None)
     }
 
     async fn send_projected_rpc_result(
@@ -1711,12 +1790,14 @@ impl SyncHub {
         method: &str,
         mut result: Value,
     ) -> Result<(), ()> {
-        if let Some(thread) = result.get_mut("thread") {
-            // Catalog exclusion controls discovery only. A direct thread route
+        if let Some(thread) = result.get_mut("thread")
+            && let Some(thread_store) = self.thread_store(Capability::CodexNative)
+        {
+            // List exclusion controls discovery only. A direct thread route
             // reads the same bounded history as any other thread.
-            crate::catalog_visibility::annotate_thread(thread);
+            thread_store.annotate_thread(thread);
         }
-        if let Err(error) = self.history.annotate_thread_pins(method, &mut result) {
+        if let Err(error) = crate::thread_pins::annotate_result(&self.store, method, &mut result) {
             warn!(err = ?error, "thread pin projection failed");
             return send_rpc_error(
                 socket,
@@ -1726,7 +1807,7 @@ impl SyncHub {
             )
             .await;
         }
-        if let Some(resources) = self.resources() {
+        if let Some(resources) = self.thread_resources() {
             resources.observe_rpc_result(method, &result).await;
         }
         let result = match self.projector() {
@@ -1904,8 +1985,8 @@ impl SyncHub {
         claimed: &OutboxCommand,
         claim_token: u64,
         request: Value,
-    ) -> Result<Value, UpstreamError> {
-        let response = match self.upstream.request(request).await {
+    ) -> Result<Value, ProviderError> {
+        let response = match provider_rpc::send_steer(&self.gateway, request).await {
             Ok(response) => response,
             Err(error) => {
                 resolve_outbox_claim(
@@ -1968,7 +2049,7 @@ async fn send_live_replay_after(
     socket: &SessionSocket,
     store: Arc<IndexStore>,
     cursor: u64,
-    history: &HistoryService,
+    thread_store: Option<&dyn NativeThreadStore>,
 ) -> Result<u64, LiveReplayError> {
     let replay = tokio::task::spawn_blocking(move || store.replay_after(Some(cursor)))
         .await
@@ -1980,9 +2061,8 @@ async fn send_live_replay_after(
     for (event_cursor, payload) in replay.entries {
         let payload =
             serde_json::from_slice::<Value>(&payload).map_err(|_| LiveReplayError::Journal)?;
-        let payload = history
-            .catalog_event(crate::usage::price_replay_payload(payload))
-            .map_err(|_| LiveReplayError::Journal)?;
+        let payload =
+            SyncHub::replay_event(thread_store, payload).map_err(|_| LiveReplayError::Journal)?;
         send_json(
             socket,
             &json!({ "type": "event", "cursor": event_cursor, "payload": payload }),
@@ -1993,33 +2073,66 @@ async fn send_live_replay_after(
     Ok(replay.head_cursor)
 }
 
-async fn forward_upstream_events(
-    mut upstream: tokio::sync::mpsc::Receiver<OrderedUpstreamEvent>,
+/// One provider's ordered forwarder: observes thread bindings, projects
+/// neutral events onto the client wire, routes realtime traffic to live
+/// channels, wakes the outbox on `turn/completed`, and keeps fences in order.
+async fn forward_provider_events(
+    mut provider_events: tokio::sync::mpsc::Receiver<ProviderEvent>,
+    mut projector: EventProjector,
+    gateway: Arc<ClientWireGateway>,
     ingest: tokio::sync::mpsc::Sender<IngestInput>,
     outbox_wakeup: Arc<tokio::sync::Notify>,
     live_channels: Arc<LiveChannelRegistry>,
 ) {
-    while let Some(event) = upstream.recv().await {
+    let provider_id: ProviderId = projector.provider_id().clone();
+    let observe_resources = gateway
+        .registry()
+        .get(&provider_id)
+        .is_some_and(|provider| {
+            provider
+                .capabilities()
+                .supports(Capability::HistoryThreadResources)
+        });
+    while let Some(event) = provider_events.recv().await {
         match event {
-            OrderedUpstreamEvent::Notification(payload) => {
-                if is_realtime_notification(&payload) {
-                    live_channels.route(payload).await;
-                    continue;
+            ProviderEvent::Event(event) => {
+                if let Some(thread_id) = event.app_thread_id() {
+                    let known = gateway
+                        .bindings()
+                        .provider_of(thread_id)
+                        .await
+                        .is_ok_and(|bound| bound.is_some());
+                    if !known {
+                        gateway
+                            .observe_threads(&provider_id, &[thread_id.to_string()])
+                            .await;
+                    }
                 }
-                if payload.get("method").and_then(Value::as_str) == Some("turn/completed") {
-                    outbox_wakeup.notify_one();
-                }
-                if ingest.send(IngestInput::Payload(payload)).await.is_err() {
-                    break;
+                for payload in projector.project(*event) {
+                    if is_realtime_notification(&payload) {
+                        live_channels.route(payload).await;
+                        continue;
+                    }
+                    if payload.get("method").and_then(Value::as_str) == Some("turn/completed") {
+                        outbox_wakeup.notify_one();
+                    }
+                    let input = IngestInput::ProviderPayload {
+                        payload,
+                        observe_resources,
+                    };
+                    if ingest.send(input).await.is_err() {
+                        return;
+                    }
                 }
             }
-            OrderedUpstreamEvent::Fence(fence) => {
+            ProviderEvent::Fence(fence) => {
                 if let Err(error) = ingest.send(IngestInput::Fence(fence)).await {
-                    let IngestInput::Fence(fence) = error.0 else {
-                        unreachable!("only a fence is sent from this branch");
-                    };
-                    let _ = fence.send(Err(UpstreamError::Disconnected));
-                    break;
+                    if let IngestInput::Fence(fence) = error.0 {
+                        let _ = fence.send(Err(ProviderError::Disconnected(
+                            "replay ingest stopped".into(),
+                        )));
+                    }
+                    return;
                 }
             }
         }
@@ -2037,72 +2150,6 @@ async fn forward_local_events(
     }
 }
 
-async fn forward_rollout_changes(
-    mut changes: tokio::sync::mpsc::Receiver<crate::rollout_monitor::RolloutChange>,
-    history: HistoryService,
-    ingest: tokio::sync::mpsc::Sender<Value>,
-    resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
-) {
-    let mut pending = HashMap::<String, crate::rollout_monitor::RolloutChange>::new();
-    let mut retry_after = HashMap::<String, Instant>::new();
-    let mut changes_open = true;
-    let mut poll = tokio::time::interval(ROLLOUT_RECONCILIATION_POLL);
-    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        tokio::select! {
-            change = changes.recv(), if changes_open => {
-                match change {
-                    Some(change) => {
-                        history.observe_rollout_change(&change);
-                        let resource_service = match resources.read() {
-                            Ok(slot) => slot.clone(),
-                            Err(poisoned) => poisoned.into_inner().clone(),
-                        };
-                        if let Some(resource_service) = resource_service {
-                            resource_service.schedule_prewarm(&change.thread_id);
-                        }
-                        // Coalesce every filesystem echo for one thread, but
-                        // never discard the trailing write. That final write is
-                        // the canonical repair boundary for a live projection.
-                        let thread_id = change.thread_id.clone();
-                        pending.insert(thread_id.clone(), change);
-                        retry_after.remove(&thread_id);
-                    }
-                    None => changes_open = false,
-                }
-            }
-            _ = poll.tick(), if !pending.is_empty() => {
-                let now = Instant::now();
-                let due = pending.keys().filter(|thread_id| {
-                    retry_after.get(*thread_id).is_none_or(|retry_at| *retry_at <= now)
-                }).cloned().collect::<Vec<_>>();
-                for thread_id in due {
-                    let Some(change) = pending.get(&thread_id).cloned() else {
-                        continue;
-                    };
-                    match history.rollout_invalidation_event(change).await {
-                        Ok(payload) => {
-                            pending.remove(&thread_id);
-                            retry_after.remove(&thread_id);
-                            if let Some(payload) = payload
-                                && ingest.send(payload).await.is_err() {
-                                    return;
-                                }
-                        }
-                        Err(error) => {
-                            tracing::warn!(thread_id, %error, "canonical rollout reconciliation failed");
-                            retry_after.insert(thread_id, Instant::now() + ROLLOUT_RECONCILIATION_RETRY);
-                        }
-                    }
-                }
-            }
-        }
-        if !changes_open && pending.is_empty() {
-            return;
-        }
-    }
-}
-
 async fn send_local_rpc_result(
     socket: &SessionSocket,
     id: &Value,
@@ -2116,7 +2163,7 @@ async fn send_local_rpc_result(
     .map_err(|_| ())
 }
 
-async fn forward_account_pool_events(
+async fn forward_provider_local_events(
     mut account_events: tokio::sync::broadcast::Receiver<Value>,
     ingest: tokio::sync::mpsc::Sender<Value>,
     outbox_wakeup: Arc<tokio::sync::Notify>,
@@ -2130,7 +2177,7 @@ async fn forward_account_pool_events(
                 }
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                warn!(skipped, "account pool event forwarder lagged");
+                warn!(skipped, "provider local event forwarder lagged");
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
         }
@@ -2179,7 +2226,7 @@ async fn process_ingest_control(context: &IngestContext, control: IngestInput) -
             .await;
             complete_pin_commit(context, completion, result)
         }
-        IngestInput::Payload(_) => Err(()),
+        IngestInput::Payload(_) | IngestInput::ProviderPayload { .. } => Err(()),
     }
 }
 
@@ -2190,7 +2237,11 @@ async fn ingest_events(
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     while let Some(first) = ingest.recv().await {
         let first = match first {
-            IngestInput::Payload(payload) => payload,
+            IngestInput::Payload(payload) => (payload, true),
+            IngestInput::ProviderPayload {
+                payload,
+                observe_resources,
+            } => (payload, observe_resources),
             control => {
                 if process_ingest_control(&context, control).await.is_err() {
                     break;
@@ -2207,7 +2258,11 @@ async fn ingest_events(
                 break;
             }
             match tokio::time::timeout(remaining, ingest.recv()).await {
-                Ok(Some(IngestInput::Payload(payload))) => payloads.push(payload),
+                Ok(Some(IngestInput::Payload(payload))) => payloads.push((payload, true)),
+                Ok(Some(IngestInput::ProviderPayload {
+                    payload,
+                    observe_resources,
+                })) => payloads.push((payload, observe_resources)),
                 Ok(Some(command)) => {
                     control = Some(command);
                     break;
@@ -2232,8 +2287,16 @@ async fn ingest_events(
 async fn ingest_payload_batch(
     context: &IngestContext,
     stream_diagnostics: &mut AgentStreamDiagnostics,
-    mut payloads: Vec<Value>,
+    batch: Vec<(Value, bool)>,
 ) -> Result<(), ()> {
+    let mut without_resources = HashSet::new();
+    let mut payloads = Vec::with_capacity(batch.len());
+    for (payload, observe_resources) in batch {
+        if !observe_resources && let Some(thread_id) = payload_thread_id(&payload) {
+            without_resources.insert(thread_id.to_owned());
+        }
+        payloads.push(payload);
+    }
     payloads = reject_oversized_dynamic_tool_requests(&context.server_requests, payloads)
         .await
         .map_err(|()| {
@@ -2251,20 +2314,7 @@ async fn ingest_payload_batch(
         let _ = context.events.send(DurableSignal::Failed);
         return Err(());
     }
-    for payload in &payloads {
-        if let Err(error) = observe_subagent_metadata(&context.store, payload) {
-            warn!(%error, "live subagent metadata index update failed");
-        }
-    }
-    let resource_service = match context.resources.read() {
-        Ok(slot) => slot.clone(),
-        Err(poisoned) => poisoned.into_inner().clone(),
-    };
-    if let Some(resource_service) = resource_service {
-        for payload in &payloads {
-            resource_service.observe(payload).await;
-        }
-    }
+    observe_batch(context, &payloads, &without_resources).await;
     let projector = match context.content_projector.read() {
         Ok(slot) => slot.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
@@ -2335,16 +2385,47 @@ async fn ingest_payload_batch(
     Ok(())
 }
 
+/// Index observers that run before projection: live subagent metadata and
+/// the stored resource overlay (skipped for threads whose provider lacks
+/// `history.threadResources`).
+async fn observe_batch(
+    context: &IngestContext,
+    payloads: &[Value],
+    without_resources: &HashSet<String>,
+) {
+    for payload in payloads {
+        if let Err(error) = observe_subagent_metadata(&context.store, payload) {
+            warn!(%error, "live subagent metadata index update failed");
+        }
+    }
+    if let Some(resources) = &context.resources {
+        for payload in payloads {
+            if payload_thread_id(payload).is_some_and(|id| without_resources.contains(id)) {
+                continue;
+            }
+            resources.observe_event(payload).await;
+        }
+    }
+}
+
+fn payload_thread_id(payload: &Value) -> Option<&str> {
+    let params = payload.get("params")?;
+    params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .or_else(|| params.pointer("/thread/id").and_then(Value::as_str))
+}
+
 async fn resolve_replay_fence(
     store: &Arc<IndexStore>,
-    fence: tokio::sync::oneshot::Sender<Result<u64, UpstreamError>>,
+    fence: tokio::sync::oneshot::Sender<Result<u64, ProviderError>>,
 ) {
     let durable_store = store.clone();
     let cursor = tokio::task::spawn_blocking(move || durable_store.replay_head()).await;
     let result = match cursor {
         Ok(Ok(cursor)) => Ok(cursor),
-        Ok(Err(error)) => Err(UpstreamError::Protocol(error.to_string())),
-        Err(error) => Err(UpstreamError::Protocol(error.to_string())),
+        Ok(Err(error)) => Err(ProviderError::Protocol(error.to_string())),
+        Err(error) => Err(ProviderError::Protocol(error.to_string())),
     };
     let _ = fence.send(result);
 }
@@ -2590,1317 +2671,6 @@ fn agent_stream_key(payload: &Value) -> Option<AgentStreamKey> {
     })
 }
 
-struct RpcResultObservers {
-    resources: Option<Arc<ResourceService>>,
-    projects: Option<Arc<ProjectService>>,
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn forward_rpc(
-    upstream: &UpstreamHandle,
-    socket: &SessionSocket,
-    mut request: Value,
-    id: Value,
-    method: &str,
-    projector: Option<Arc<ContentProjector>>,
-    history: &HistoryService,
-    observers: RpcResultObservers,
-) -> Result<(), ()> {
-    let supervisor_source = if method == "companion/supervisor/threadList" {
-        let Some(source) = request
-            .pointer("/params/threadSource")
-            .and_then(Value::as_str)
-            .filter(|source| crate::catalog_visibility::is_supervisor_owned_source(source))
-            .map(ToOwned::to_owned)
-        else {
-            return send_rpc_error(
-                socket,
-                id,
-                -32602,
-                "A supervisor-owned creation source is required",
-            )
-            .await;
-        };
-        request["method"] = json!("thread/list");
-        if let Some(params) = request.get_mut("params").and_then(Value::as_object_mut) {
-            params.remove("threadSource");
-        }
-        Some(source)
-    } else {
-        None
-    };
-    let activity_read = activity_read_scope(method, &request);
-    let result = upstream.request(request).await;
-    match result {
-        Ok(mut response) => {
-            enrich_activity_response(history, activity_read, &mut response).await;
-            if matches!(method, "thread/list" | "companion/supervisor/threadList")
-                && let Some(result) = response.get_mut("result")
-            {
-                match history
-                    .filter_catalog_page(result.take(), supervisor_source)
-                    .await
-                {
-                    Ok(filtered) => *result = filtered,
-                    Err(error) => {
-                        warn!(err = ?error, "catalog visibility resolution failed");
-                        return send_rpc_error(
-                            socket,
-                            id,
-                            -32020,
-                            "Catalog visibility unavailable",
-                        )
-                        .await;
-                    }
-                }
-            }
-            forward_rpc_response(socket, response, id, method, projector, history, observers).await
-        }
-        Err(error) => {
-            let code = match error {
-                UpstreamError::Backpressure => -32004,
-                UpstreamError::Reconnecting | UpstreamError::Disconnected => -32003,
-                UpstreamError::Protocol(_) => -32020,
-            };
-            send_rpc_error(socket, id, code, &error.to_string()).await
-        }
-    }
-}
-
-struct ActivityReadScope {
-    thread_id: String,
-    turn_id: Option<String>,
-}
-
-fn activity_read_scope(method: &str, request: &Value) -> Option<ActivityReadScope> {
-    if method != "thread/items/list"
-        && !(method == "thread/turns/list"
-            && request.pointer("/params/itemsView").and_then(Value::as_str) == Some("full"))
-    {
-        return None;
-    }
-    Some(ActivityReadScope {
-        thread_id: request.pointer("/params/threadId")?.as_str()?.to_owned(),
-        turn_id: request
-            .pointer("/params/turnId")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    })
-}
-
-async fn enrich_activity_response(
-    history: &HistoryService,
-    scope: Option<ActivityReadScope>,
-    response: &mut Value,
-) {
-    let Some(scope) = scope else {
-        return;
-    };
-    let Some(entries) = response
-        .pointer_mut("/result/data")
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-    let ids = match &scope.turn_id {
-        Some(id) => vec![id.clone()],
-        None => entries
-            .iter()
-            .filter_map(|t| t.get("id").and_then(Value::as_str).map(str::to_owned))
-            .collect(),
-    };
-    let Ok(metadata) = history.activity_metadata(scope.thread_id, ids).await else {
-        warn!("Canonical activity pricing unavailable");
-        return;
-    };
-    if let Some(id) = scope.turn_id {
-        if let Some(metrics) = metadata.get(&id).and_then(|m| m.get("activityMetrics")) {
-            for entry in entries {
-                if let Some(item) = entry.get_mut("item") {
-                    crate::activity_metrics::attach_item_metrics(item, metrics);
-                }
-            }
-        }
-    } else {
-        for turn in entries {
-            let usage = turn
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|id| metadata.get(id))
-                .and_then(|m| m.get("usage"));
-            if let Some(usage) = usage.cloned()
-                && let Some(object) = turn.as_object_mut()
-                && let Some(metadata) = object
-                    .entry("codewide")
-                    .or_insert_with(|| json!({}))
-                    .as_object_mut()
-            {
-                metadata.insert("usage".into(), usage);
-            }
-        }
-    }
-}
-
-async fn forward_rpc_response(
-    socket: &SessionSocket,
-    mut response: Value,
-    id: Value,
-    method: &str,
-    projector: Option<Arc<ContentProjector>>,
-    history: &HistoryService,
-    observers: RpcResultObservers,
-) -> Result<(), ()> {
-    if !rpc_is_known_read(method)
-        && let Some(error) = response.get("error")
-    {
-        let code = error.get("code").and_then(Value::as_i64);
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("upstream rejected the mutation");
-        warn!(
-            rpc_method = method,
-            rpc_code = code,
-            rpc_error = message,
-            "App Server mutation rejected"
-        );
-    }
-    if let Some(thread) = response.pointer_mut("/result/thread") {
-        crate::catalog_visibility::annotate_thread(thread);
-    }
-    if method == "thread/list"
-        && let Some(result) = response.get_mut("result")
-    {
-        *result = history.enrich_thread_list(result.take()).await;
-    }
-    if let Some(result) = response.get_mut("result")
-        && let Err(error) = history.annotate_thread_pins(method, result)
-    {
-        warn!(err = ?error, "thread pin projection failed");
-        return send_rpc_error(socket, id, -32020, "Thread pin projection unavailable").await;
-    }
-    if let (Some(projects), Some(result)) = (observers.projects, response.get("result")) {
-        projects.observe_rpc_result(method, result).await;
-    }
-    if let (Some(resources), Some(result)) = (observers.resources, response.get("result")) {
-        resources.observe_rpc_result(method, result).await;
-    }
-    if let (Some(projector), Some(result)) = (projector, response.get_mut("result")) {
-        *result = projector.project_rpc_result(method, result.take());
-    }
-    if let Some(object) = response.as_object_mut() {
-        object.insert("id".into(), id);
-    }
-    send_json(socket, &json!({ "type": "rpc", "response": response }))
-        .await
-        .map_err(|_| ())
-}
-
-fn queue_rpc(
-    store: &IndexStore,
-    method: &str,
-    params: &Value,
-) -> Result<Value, crate::store::StoreError> {
-    let object = params.as_object().ok_or_else(|| {
-        crate::store::StoreError::CorruptedIndex("queue params must be an object".into())
-    })?;
-    match method {
-        "companion/queue/put" => queue_put(store, object),
-        "companion/queue/list" => {
-            let thread_id = object.get("threadId").and_then(Value::as_str);
-            // Delivered queue rows are durable handoff receipts. The client
-            // projects them as accepted chat deliveries (not queued prompts)
-            // until the canonical user item with the same command id arrives.
-            Ok(json!({"data": store.outbox_list(thread_id)? }))
-        }
-        "companion/queue/edit" => {
-            let command_id = required_string(object.get("commandId"), "commandId")?;
-            let input = object.get("input").cloned().ok_or_else(|| {
-                crate::store::StoreError::CorruptedIndex("queue input is required".into())
-            })?;
-            serde_json::to_value(store.outbox_edit_prompt(command_id, &input)?).map_err(Into::into)
-        }
-        "companion/queue/cancel" => {
-            let command_id = required_string(object.get("commandId"), "commandId")?;
-            Ok(json!({"cancelled": store.outbox_cancel(command_id)?}))
-        }
-        "companion/queue/retry" => {
-            let command_id = required_string(object.get("commandId"), "commandId")?;
-            serde_json::to_value(store.outbox_retry_failed(command_id)?).map_err(Into::into)
-        }
-        "companion/queue/move" => queue_move(store, object),
-        _ => Err(crate::store::StoreError::CorruptedIndex(
-            "unknown companion queue method".into(),
-        )),
-    }
-}
-
-fn queue_command(params: &Value) -> Option<&Map<String, Value>> {
-    let object = params.as_object()?;
-    object
-        .get("command")
-        .and_then(Value::as_object)
-        .or(Some(object))
-}
-
-fn queue_changed_thread_id(store: &IndexStore, method: &str, params: &Value) -> Option<String> {
-    if method == "companion/queue/list" {
-        return None;
-    }
-    if method == "companion/queue/put" {
-        return queue_command(params)?
-            .get("remoteThreadId")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-    }
-    let command_id = params.get("commandId").and_then(Value::as_str)?;
-    store
-        .outbox_list(None)
-        .ok()?
-        .into_iter()
-        .find(|command| command.command_id == command_id)
-        .map(|command| command.remote_thread_id)
-}
-
-fn queue_put(
-    store: &IndexStore,
-    object: &Map<String, Value>,
-) -> Result<Value, crate::store::StoreError> {
-    let command = object
-        .get("command")
-        .and_then(Value::as_object)
-        .unwrap_or(object);
-    let command_id = required_string(command.get("commandId"), "commandId")?;
-    let thread_id = required_string(command.get("remoteThreadId"), "remoteThreadId")?;
-    if required_string(command.get("method"), "method")? != "turn/start" {
-        return Err(crate::store::StoreError::CorruptedIndex(
-            "only turn/start can be queued".into(),
-        ));
-    }
-    let rpc_params = command.get("params").cloned().unwrap_or_else(|| json!({}));
-    let created_at = command.get("createdAt").and_then(Value::as_u64);
-    let workspace_request_id = command.get("workspaceRequestId").and_then(Value::as_str);
-    let presentation = match command.get("presentation").and_then(Value::as_str) {
-        None | Some("queue") => OutboxPresentation::Queue,
-        Some("delivery") => OutboxPresentation::Delivery,
-        Some(_) => {
-            return Err(crate::store::StoreError::CorruptedIndex(
-                "queue presentation must be queue or delivery".into(),
-            ));
-        }
-    };
-    serde_json::to_value(store.outbox_put_turn_start_with_workspace(
-        command_id,
-        thread_id,
-        rpc_params,
-        created_at,
-        presentation,
-        workspace_request_id,
-    )?)
-    .map_err(Into::into)
-}
-
-fn queue_move(
-    store: &IndexStore,
-    object: &Map<String, Value>,
-) -> Result<Value, crate::store::StoreError> {
-    let command_id = required_string(object.get("commandId"), "commandId")?;
-    let moved = if let Some(before) = object.get("beforeCommandId") {
-        let before = match before {
-            Value::Null => None,
-            value => Some(required_string(Some(value), "beforeCommandId")?),
-        };
-        store.outbox_place(command_id, before)?
-    } else {
-        queue_move_relative(store, command_id, object)?
-    };
-    Ok(json!({"moved": moved}))
-}
-
-fn queue_move_relative(
-    store: &IndexStore,
-    command_id: &str,
-    object: &Map<String, Value>,
-) -> Result<bool, crate::store::StoreError> {
-    let commands = store.outbox_list(None)?;
-    let selected = commands
-        .iter()
-        .find(|command| command.command_id == command_id)
-        .ok_or_else(|| {
-            crate::store::StoreError::CorruptedIndex("outbox command not found".into())
-        })?;
-    let same_thread = commands
-        .iter()
-        .filter(|command| {
-            command.remote_thread_id == selected.remote_thread_id
-                && command.state == OutboxState::Queued
-        })
-        .collect::<Vec<_>>();
-    let index = same_thread
-        .iter()
-        .position(|command| command.command_id == command_id)
-        .ok_or_else(|| {
-            crate::store::StoreError::CorruptedIndex("outbox command is not queued".into())
-        })?;
-    let direction = object
-        .get("direction")
-        .and_then(Value::as_i64)
-        .filter(|direction| matches!(direction, -1 | 1))
-        .ok_or_else(|| {
-            crate::store::StoreError::CorruptedIndex("queue direction must be -1 or 1".into())
-        })?;
-    let target = i64::try_from(index)
-        .unwrap_or(i64::MAX)
-        .saturating_add(direction);
-    let Ok(target) = usize::try_from(target) else {
-        return Ok(false);
-    };
-    if target >= same_thread.len() {
-        return Ok(false);
-    }
-    let before = if direction < 0 {
-        Some(same_thread[target].command_id.as_str())
-    } else {
-        same_thread
-            .get(target.saturating_add(1))
-            .map(|command| command.command_id.as_str())
-    };
-    store.outbox_place(command_id, before)
-}
-
-fn required_string<'a>(
-    value: Option<&'a Value>,
-    label: &str,
-) -> Result<&'a str, crate::store::StoreError> {
-    value.and_then(Value::as_str).ok_or_else(|| {
-        crate::store::StoreError::CorruptedIndex(format!("{label} must be a string"))
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn run_outbox_pump(
-    upstream: UpstreamHandle,
-    store: Arc<IndexStore>,
-    history: HistoryService,
-    thread_view: ThreadViewService,
-    wakeup: Arc<tokio::sync::Notify>,
-    local_events: tokio::sync::mpsc::Sender<Value>,
-    files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
-    account_pool: Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
-    workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
-) {
-    let mut status = upstream.subscribe_status();
-    let prune_store = store.clone();
-    match tokio::task::spawn_blocking(move || prune_store.outbox_prune_delivered_receipts()).await {
-        Ok(Ok(removed)) if removed > 0 => {
-            info!(removed, "pruned delivered outbox receipts");
-        }
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => warn!(%error, "delivered outbox receipt pruning failed"),
-        Err(error) => warn!(%error, "delivered outbox receipt pruning worker failed"),
-    }
-    let recovery_store = store.clone();
-    match tokio::task::spawn_blocking(move || {
-        recovery_store.outbox_recover_legacy_account_pool_failures()
-    })
-    .await
-    {
-        Ok(Ok(thread_ids)) => {
-            if !thread_ids.is_empty() {
-                info!(
-                    recovered_threads = thread_ids.len(),
-                    "requeued commands failed by legacy account switching"
-                );
-            }
-            for thread_id in thread_ids {
-                emit_queue_changed(&store, &local_events, &thread_id).await;
-            }
-        }
-        Ok(Err(error)) => warn!(%error, "legacy account-pool queue recovery failed"),
-        Err(error) => warn!(%error, "legacy account-pool recovery worker failed"),
-    }
-    loop {
-        if *status.borrow() == ConnectionStatus::Live {
-            let store_for_read = store.clone();
-            let heads =
-                tokio::task::spawn_blocking(move || store_for_read.outbox_ready_heads()).await;
-            match heads {
-                Ok(Ok(heads)) => {
-                    for command in heads {
-                        reconcile_outbox_command(
-                            &upstream,
-                            &store,
-                            &history,
-                            &thread_view,
-                            &local_events,
-                            &files,
-                            &account_pool,
-                            &workspaces,
-                            command,
-                        )
-                        .await;
-                    }
-                }
-                Ok(Err(error)) => warn!(%error, "durable outbox read failed"),
-                Err(error) => warn!(%error, "durable outbox worker failed"),
-            }
-        }
-        tokio::select! {
-            () = wakeup.notified() => {}
-            changed = status.changed() => {
-                if changed.is_err() {
-                    break;
-                }
-            }
-            () = tokio::time::sleep(OUTBOX_POLL_INTERVAL), if *status.borrow() == ConnectionStatus::Live => {}
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-async fn reconcile_outbox_command(
-    upstream: &UpstreamHandle,
-    store: &Arc<IndexStore>,
-    history: &HistoryService,
-    thread_view: &ThreadViewService,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    files: &Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
-    account_pool: &Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
-    workspaces: &Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
-    command: OutboxCommand,
-) {
-    if let Some(request_id) = command.workspace_request_id.as_deref() {
-        let workspace_service = match workspaces.read() {
-            Ok(slot) => slot.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        };
-        let Some(workspace_service) = workspace_service else {
-            wait_outbox(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Queued,
-                None,
-                u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
-            )
-            .await;
-            return;
-        };
-        match workspace_service.operation_status(request_id).await {
-            Ok(Some(operation)) if operation.phase == WorkspacePhase::Ready => {}
-            Ok(Some(operation)) if operation.phase == WorkspacePhase::Failed => {
-                set_outbox_state(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Failed,
-                    operation
-                        .error
-                        .as_deref()
-                        .or(Some("workspace preparation failed")),
-                )
-                .await;
-                return;
-            }
-            Ok(Some(_)) => {
-                wait_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Queued,
-                    None,
-                    u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
-                )
-                .await;
-                return;
-            }
-            Ok(None) => {
-                set_outbox_state(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Failed,
-                    Some("workspace operation was not found"),
-                )
-                .await;
-                return;
-            }
-            Err(error) => {
-                defer_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Queued,
-                    &error.to_string(),
-                    retry_delay_ms(command.attempts),
-                )
-                .await;
-                return;
-            }
-        }
-    }
-    let account_pool_service = match account_pool.read() {
-        Ok(slot) => slot.clone(),
-        Err(poisoned) => poisoned.into_inner().clone(),
-    };
-    if let Some(account_pool) = &account_pool_service {
-        match account_pool.prepare_for_turn().await {
-            Ok(()) => {}
-            Err(AccountPoolError::Deferred(reason)) => {
-                wait_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Queued,
-                    None,
-                    OUTBOX_ACCOUNT_SWITCH_WAIT_MS,
-                )
-                .await;
-                debug!(command_id = %command.command_id, %reason, "outbox is waiting to switch Codex accounts");
-                return;
-            }
-            Err(error) if error.is_retryable() => {
-                warn!(command_id = %command.command_id, %error, "outbox account preparation will retry");
-                defer_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Queued,
-                    &error.to_string(),
-                    retry_delay_ms(command.attempts),
-                )
-                .await;
-                return;
-            }
-            Err(error) => {
-                set_outbox_state(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Failed,
-                    Some(&error.to_string()),
-                )
-                .await;
-                return;
-            }
-        }
-    }
-    if command.state == OutboxState::Uncertain {
-        match history_contains_client_message(upstream, history, &command).await {
-            Ok(true) => {
-                set_outbox_state(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Delivered,
-                    None,
-                )
-                .await;
-            }
-            Ok(false) | Err(_) => {
-                // A lost App Server response is genuinely ambiguous because
-                // clientUserMessageId is projection metadata, not an
-                // idempotency key. Never resend blindly. Ordinary starts use
-                // the canonical local summary; steers use full App Server
-                // history because intermediate user messages are absent from
-                // the summary projection.
-                wait_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Uncertain,
-                    command.last_error.as_deref(),
-                    u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
-                )
-                .await;
-            }
-        }
-        return;
-    }
-    if command.presentation == OutboxPresentation::Queue {
-        match thread_view.activity(&command.remote_thread_id).await {
-            Ok(ThreadActivity::Active | ThreadActivity::Unavailable) => {
-                // Explicit queue means "the next turn", never an implicit
-                // steer into the current one. App Server accepts turn/start
-                // while another client owns the active turn. A system-error
-                // lifecycle without explicit direct-input authority must also
-                // wait; ThreadViewService admits recoverable failures only
-                // when App Server explicitly permits input.
-                wait_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Queued,
-                    None,
-                    u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
-                )
-                .await;
-                return;
-            }
-            Ok(ThreadActivity::Idle) => {}
-            Err(error) => {
-                debug!(command_id = %command.command_id, %error, "queued turn is waiting for authoritative lifecycle");
-                wait_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Queued,
-                    None,
-                    u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
-                )
-                .await;
-                return;
-            }
-        }
-    }
-    deliver_outbox_start(
-        upstream,
-        store,
-        local_events,
-        files,
-        account_pool_service,
-        command,
-    )
-    .await;
-}
-
-async fn history_contains_client_message(
-    upstream: &UpstreamHandle,
-    history: &HistoryService,
-    command: &OutboxCommand,
-) -> Result<bool, String> {
-    if command.has_resolved_steer_claim() {
-        return upstream_full_history_contains_client_message(upstream, command).await;
-    }
-    let params = json!({
-        "threadId": command.remote_thread_id,
-        "cursor": null,
-        "limit": OUTBOX_RECONCILE_PAGE_SIZE,
-        "sortDirection": "desc",
-        "itemsView": "summary"
-    });
-    let page = history
-        .try_turns_page("thread/turns/list", &params)
-        .await
-        .ok_or_else(|| "local summary history is unavailable".to_string())?
-        .map_err(|error| error.to_string())?;
-    let turns = page
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "local summary history returned no turns page".to_string())?;
-    Ok(turns_contain_client_message(turns, &command.command_id))
-}
-
-async fn upstream_full_history_contains_client_message(
-    upstream: &UpstreamHandle,
-    command: &OutboxCommand,
-) -> Result<bool, String> {
-    let response = upstream
-        .request(json!({
-            "id": "outbox-steer-reconcile",
-            "method": "thread/turns/list",
-            "params": {
-                "threadId": command.remote_thread_id,
-                "cursor": null,
-                "limit": OUTBOX_RECONCILE_PAGE_SIZE,
-                "sortDirection": "desc",
-                "itemsView": "full"
-            }
-        }))
-        .await
-        .map_err(|error| error.to_string())?;
-    if response.get("error").is_some() {
-        return Err(rpc_error_message(&response));
-    }
-    let turns = response
-        .get("result")
-        .and_then(|result| result.get("data"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| "upstream full history returned no turns page".to_string())?;
-    Ok(turns_contain_client_message(turns, &command.command_id))
-}
-
-#[allow(clippy::too_many_lines)]
-async fn deliver_outbox_start(
-    upstream: &UpstreamHandle,
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    files: &Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
-    account_pool: Option<Arc<AccountPoolService>>,
-    command: OutboxCommand,
-) {
-    let file_service = match files.read() {
-        Ok(slot) => slot.clone(),
-        Err(poisoned) => poisoned.into_inner().clone(),
-    };
-    let mut prepared_params =
-        match prepare_remote_file_inputs(&command.method, command.params.clone(), file_service)
-            .await
-        {
-            Ok(params) => params,
-            Err(RemoteInputError::FileServiceUnavailable) => {
-                // The active pump is spawned before main installs optional
-                // services. Keep a restored command queued across that startup
-                // window instead of turning a valid attachment into a failure.
-                return;
-            }
-            Err(error) => {
-                fail_queued_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    &error.to_string(),
-                )
-                .await;
-                return;
-            }
-        };
-    let Some((claimed, claim_token)) =
-        claim_outbox_dispatch(store, local_events, &command.command_id).await
-    else {
-        return;
-    };
-    if claimed.params != command.params {
-        let refreshed_file_service = match files.read() {
-            Ok(slot) => slot.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        };
-        prepared_params = match prepare_remote_file_inputs(
-            &claimed.method,
-            claimed.params.clone(),
-            refreshed_file_service,
-        )
-        .await
-        {
-            Ok(params) => params,
-            Err(error) => {
-                resolve_outbox_claim(
-                    store,
-                    local_events,
-                    &claimed.remote_thread_id,
-                    &claimed.command_id,
-                    claim_token,
-                    OwnedClaimResolution::Rejected(error.to_string()),
-                )
-                .await;
-                return;
-            }
-        };
-    }
-    let start = json!({
-        "id": "outbox-start",
-        "method": claimed.method.as_str(),
-        "params": prepared_params
-    });
-    let delivered = dispatch_turn_start_with_resume(upstream, account_pool.as_ref(), start)
-        .await
-        .map_err(ThreadMutationDispatchError::into_outbox);
-    match delivered {
-        Ok(response) if response.get("error").is_some() => {
-            resolve_outbox_claim(
-                store,
-                local_events,
-                &claimed.remote_thread_id,
-                &claimed.command_id,
-                claim_token,
-                OwnedClaimResolution::Rejected(rpc_error_message(&response)),
-            )
-            .await;
-        }
-        Ok(_) => {
-            resolve_outbox_claim(
-                store,
-                local_events,
-                &claimed.remote_thread_id,
-                &claimed.command_id,
-                claim_token,
-                OwnedClaimResolution::Delivered,
-            )
-            .await;
-        }
-        Err(OutboxDeliveryError::Deferred(reason)) => {
-            resolve_outbox_claim(
-                store,
-                local_events,
-                &claimed.remote_thread_id,
-                &claimed.command_id,
-                claim_token,
-                OwnedClaimResolution::NotSent(OUTBOX_ACCOUNT_SWITCH_WAIT_MS),
-            )
-            .await;
-            debug!(command_id = %claimed.command_id, %reason, "turn/start waited for upstream delivery");
-        }
-        Err(OutboxDeliveryError::Uncertain(error)) => {
-            warn!(command_id = %claimed.command_id, %error, "turn/start delivery is uncertain");
-            resolve_outbox_claim(
-                store,
-                local_events,
-                &claimed.remote_thread_id,
-                &claimed.command_id,
-                claim_token,
-                OwnedClaimResolution::Indeterminate {
-                    error,
-                    retry_after_ms: retry_delay_ms(claimed.attempts),
-                },
-            )
-            .await;
-        }
-    }
-}
-
-async fn dispatch_turn_start_with_resume(
-    upstream: &UpstreamHandle,
-    account_pool: Option<&Arc<AccountPoolService>>,
-    request: Value,
-) -> Result<Value, ThreadMutationDispatchError> {
-    let response = dispatch_turn_start_once(upstream, account_pool, request.clone()).await?;
-    let Some(thread_id) = request.pointer("/params/threadId").and_then(Value::as_str) else {
-        return Ok(response);
-    };
-    if !is_thread_not_found_response(&response, thread_id) {
-        return Ok(response);
-    }
-
-    // `thread not found` is a conclusive pre-acceptance rejection. A Companion
-    // reconnect can replace the App Server runtime while indexed history keeps
-    // the chat readable, so mutation ownership must rehydrate that runtime
-    // before the one safe retry. No turn history is returned to the phone.
-    let resumed = resume_thread_runtime(upstream, account_pool, thread_id).await?;
-    if resumed.get("error").is_some() {
-        return Ok(resumed);
-    }
-    dispatch_turn_start_once(upstream, account_pool, request).await
-}
-
-async fn dispatch_thread_settings_update_with_resume(
-    upstream: &UpstreamHandle,
-    account_pool: Option<&Arc<AccountPoolService>>,
-    request: Value,
-) -> Result<Value, ThreadMutationDispatchError> {
-    let response = upstream
-        .request(request.clone())
-        .await
-        .map_err(ThreadMutationDispatchError::Upstream)?;
-    let Some(thread_id) = request.pointer("/params/threadId").and_then(Value::as_str) else {
-        return Ok(response);
-    };
-    if !is_thread_not_found_response(&response, thread_id) {
-        return Ok(response);
-    }
-
-    // Settings require a loaded runtime even when indexed history is readable.
-    // The exact thread-not-found rejection proves no settings were applied, so
-    // resume without history and retry once, before Global Voice starts audio.
-    let resumed = resume_thread_runtime(upstream, account_pool, thread_id).await?;
-    if resumed.get("error").is_some() {
-        return Ok(resumed);
-    }
-    upstream
-        .request(request)
-        .await
-        .map_err(ThreadMutationDispatchError::Upstream)
-}
-
-async fn dispatch_realtime_start_with_resume(
-    upstream: &UpstreamHandle,
-    account_pool: Option<&Arc<AccountPoolService>>,
-    request: Value,
-) -> Result<Value, ThreadMutationDispatchError> {
-    let response = upstream
-        .request(request.clone())
-        .await
-        .map_err(ThreadMutationDispatchError::Upstream)?;
-    let Some(thread_id) = request
-        .pointer("/params/threadId")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-    else {
-        return Ok(response);
-    };
-    if !is_thread_not_found_response(&response, &thread_id) {
-        return Ok(response);
-    }
-
-    // `thread/realtime/start` is rejected before a live session exists, so
-    // rehydrating the indexed thread and retrying once cannot duplicate audio.
-    let resumed = resume_thread_runtime(upstream, account_pool, &thread_id).await?;
-    if resumed.get("error").is_some() {
-        return Ok(if is_rollout_not_found_response(&resumed, &thread_id) {
-            global_supervisor_thread_unavailable_response(&request)
-        } else {
-            resumed
-        });
-    }
-    let retried = upstream
-        .request(request)
-        .await
-        .map_err(ThreadMutationDispatchError::Upstream)?;
-    Ok(if is_thread_not_found_response(&retried, &thread_id) {
-        global_supervisor_thread_unavailable_response(&retried)
-    } else {
-        retried
-    })
-}
-
-async fn resume_thread_runtime(
-    upstream: &UpstreamHandle,
-    account_pool: Option<&Arc<AccountPoolService>>,
-    thread_id: &str,
-) -> Result<Value, ThreadMutationDispatchError> {
-    match account_pool {
-        Some(account_pool) => account_pool
-            .resume_thread_runtime(thread_id)
-            .await
-            .map_err(ThreadMutationDispatchError::AccountPool),
-        None => upstream
-            .request(json!({
-                "id": "thread-mutation-resume",
-                "method": "thread/resume",
-                "params": {
-                    "threadId": thread_id,
-                    "excludeTurns": true
-                }
-            }))
-            .await
-            .map_err(ThreadMutationDispatchError::Upstream),
-    }
-}
-
-async fn dispatch_turn_start_once(
-    upstream: &UpstreamHandle,
-    account_pool: Option<&Arc<AccountPoolService>>,
-    request: Value,
-) -> Result<Value, ThreadMutationDispatchError> {
-    match account_pool {
-        Some(account_pool) => account_pool
-            .send_turn_start(request)
-            .await
-            .map_err(ThreadMutationDispatchError::AccountPool),
-        None => upstream
-            .request(request)
-            .await
-            .map_err(ThreadMutationDispatchError::Upstream),
-    }
-}
-
-fn is_thread_not_found_response(response: &Value, thread_id: &str) -> bool {
-    response
-        .pointer("/error/message")
-        .and_then(Value::as_str)
-        .and_then(|message| message.strip_prefix("thread not found: "))
-        == Some(thread_id)
-}
-
-fn is_rollout_not_found_response(response: &Value, thread_id: &str) -> bool {
-    response
-        .pointer("/error/message")
-        .and_then(Value::as_str)
-        .and_then(|message| message.strip_prefix("no rollout found for thread id "))
-        == Some(thread_id)
-}
-
-fn global_supervisor_thread_unavailable_response(request: &Value) -> Value {
-    json!({
-        "id": request.get("id").cloned().unwrap_or(Value::Null),
-        "error": {
-            "code": GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_RPC_CODE,
-            "message": GLOBAL_SUPERVISOR_THREAD_UNAVAILABLE_MESSAGE
-        }
-    })
-}
-
-fn retry_delay_ms(attempts: u32) -> u64 {
-    let exponent = attempts.min(6);
-    let cap = OUTBOX_RETRY_BASE_MS
-        .saturating_mul(1_u64 << exponent)
-        .min(OUTBOX_RETRY_MAX_MS);
-    let floor = (cap / 2).max(1);
-    rand::rng().random_range(floor..=cap)
-}
-
-enum OwnedClaimResolution {
-    Delivered,
-    NotSent(u64),
-    Rejected(String),
-    Indeterminate { error: String, retry_after_ms: u64 },
-}
-
-async fn claim_outbox_dispatch(
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    command_id: &str,
-) -> Option<(OutboxCommand, u64)> {
-    let claim_store = Arc::clone(store);
-    let command_id = command_id.to_owned();
-    let result =
-        tokio::task::spawn_blocking(move || claim_store.outbox_claim_dispatch(&command_id)).await;
-    match result {
-        Ok(Ok(OutboxClaimOutcome::Acquired { command, token })) => {
-            emit_queue_changed(store, local_events, &command.remote_thread_id).await;
-            Some((command, token))
-        }
-        Ok(Ok(OutboxClaimOutcome::Duplicate(_) | OutboxClaimOutcome::Unavailable(_))) => None,
-        Ok(Err(error)) => {
-            warn!(%error, "durable outbox dispatch claim failed");
-            None
-        }
-        Err(error) => {
-            warn!(%error, "durable outbox dispatch claim worker failed");
-            None
-        }
-    }
-}
-
-async fn resolve_outbox_claim(
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    thread_id: &str,
-    command_id: &str,
-    token: u64,
-    resolution: OwnedClaimResolution,
-) {
-    let resolution_store = Arc::clone(store);
-    let command_id = command_id.to_owned();
-    let result = tokio::task::spawn_blocking(move || match resolution {
-        OwnedClaimResolution::Delivered => resolution_store.outbox_resolve_claim(
-            &command_id,
-            token,
-            OutboxClaimResolution::Delivered,
-        ),
-        OwnedClaimResolution::NotSent(retry_after_ms) => resolution_store.outbox_resolve_claim(
-            &command_id,
-            token,
-            OutboxClaimResolution::NotSent { retry_after_ms },
-        ),
-        OwnedClaimResolution::Rejected(error) => resolution_store.outbox_resolve_claim(
-            &command_id,
-            token,
-            OutboxClaimResolution::Rejected { error: &error },
-        ),
-        OwnedClaimResolution::Indeterminate {
-            error,
-            retry_after_ms,
-        } => resolution_store.outbox_resolve_claim(
-            &command_id,
-            token,
-            OutboxClaimResolution::Indeterminate {
-                error: &error,
-                retry_after_ms,
-            },
-        ),
-    })
-    .await;
-    match result {
-        Ok(Ok(OutboxClaimResolutionOutcome::Applied(_))) => {
-            emit_queue_changed(store, local_events, thread_id).await;
-        }
-        Ok(Ok(
-            OutboxClaimResolutionOutcome::AlreadyResolved(_)
-            | OutboxClaimResolutionOutcome::Stale(_),
-        )) => {}
-        Ok(Err(error)) => warn!(%error, "durable outbox claim resolution failed"),
-        Err(error) => warn!(%error, "durable outbox claim resolution worker failed"),
-    }
-}
-
-async fn fail_queued_outbox(
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    thread_id: &str,
-    command_id: &str,
-    error: &str,
-) {
-    let fail_store = Arc::clone(store);
-    let command_id = command_id.to_owned();
-    let error = error.to_owned();
-    let result =
-        tokio::task::spawn_blocking(move || fail_store.outbox_fail_queued(&command_id, &error))
-            .await;
-    match result {
-        Ok(Ok(Some(_))) => emit_queue_changed(store, local_events, thread_id).await,
-        Ok(Ok(None)) => {}
-        Ok(Err(error)) => warn!(%error, "durable queued outbox failure update failed"),
-        Err(error) => warn!(%error, "durable queued outbox failure worker failed"),
-    }
-}
-
-async fn set_outbox_state(
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    thread_id: &str,
-    command_id: &str,
-    state: OutboxState,
-    error: Option<&str>,
-) {
-    let store = store.clone();
-    let command_id = command_id.to_owned();
-    let error = error.map(str::to_owned);
-    let update_store = store.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        update_store.outbox_set_state(&command_id, state, error.as_deref())
-    })
-    .await;
-    match result {
-        Ok(Ok(_)) => emit_queue_changed(&store, local_events, thread_id).await,
-        Ok(Err(error)) => warn!(%error, "durable outbox update failed"),
-        Err(error) => warn!(%error, "durable outbox update worker failed"),
-    }
-}
-
-async fn defer_outbox(
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    thread_id: &str,
-    command_id: &str,
-    state: OutboxState,
-    error: &str,
-    delay_ms: u64,
-) {
-    let store = store.clone();
-    let command_id = command_id.to_owned();
-    let error = error.to_owned();
-    let update_store = store.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        update_store.outbox_defer(&command_id, state, &error, delay_ms)
-    })
-    .await;
-    match result {
-        Ok(Ok(_)) => emit_queue_changed(&store, local_events, thread_id).await,
-        Ok(Err(error)) => warn!(%error, "durable outbox retry scheduling failed"),
-        Err(error) => warn!(%error, "durable outbox retry worker failed"),
-    }
-}
-
-async fn wait_outbox(
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    thread_id: &str,
-    command_id: &str,
-    state: OutboxState,
-    error: Option<&str>,
-    delay_ms: u64,
-) {
-    let store = store.clone();
-    let command_id = command_id.to_owned();
-    let error = error.map(str::to_owned);
-    let update_store = store.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        update_store.outbox_wait(&command_id, state, error.as_deref(), delay_ms)
-    })
-    .await;
-    match result {
-        Ok(Ok((_, true))) => emit_queue_changed(&store, local_events, thread_id).await,
-        Ok(Ok((_, false))) => {}
-        Ok(Err(error)) => warn!(%error, "durable outbox wait scheduling failed"),
-        Err(error) => warn!(%error, "durable outbox wait worker failed"),
-    }
-}
-
-async fn emit_queue_changed(
-    store: &Arc<IndexStore>,
-    local_events: &tokio::sync::mpsc::Sender<Value>,
-    thread_id: &str,
-) {
-    let store = store.clone();
-    let thread_id = thread_id.to_owned();
-    let listed = tokio::task::spawn_blocking({
-        let thread_id = thread_id.clone();
-        move || store.outbox_list(Some(&thread_id))
-    })
-    .await;
-    let Ok(Ok(data)) = listed else {
-        warn!(thread_id, "durable outbox notification read failed");
-        return;
-    };
-    let _ = local_events
-        .send(json!({
-            "method": "companion/queue/changed",
-            "params": {"threadId": thread_id, "data": data}
-        }))
-        .await;
-}
-
-/// `clientUserMessageId` is projection metadata in App Server, not an
-/// idempotency key: repeating `turn/start` would append the same prompt again.
-/// Reconcile before every direct start so a retry after a lost RPC response is
-/// acknowledged with the already-created turn instead of being forwarded.
-async fn reconcile_direct_turn_start(
-    upstream: &UpstreamHandle,
-    params: &Value,
-) -> Result<Option<Value>, String> {
-    let Some(thread_id) = params.get("threadId").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    let Some(client_id) = params.get("clientUserMessageId").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    let response = upstream
-        .request(json!({
-            "id": "turn-start-reconcile",
-            "method": "thread/turns/list",
-            "params": {
-                "threadId": thread_id,
-                "cursor": null,
-                "limit": 16,
-                "sortDirection": "desc",
-                "itemsView": "summary"
-            }
-        }))
-        .await
-        .map_err(|error| format!("Could not verify prior message delivery: {error}"))?;
-    if response.get("error").is_some() {
-        return Err(format!(
-            "Could not verify prior message delivery: {}",
-            rpc_error_message(&response)
-        ));
-    }
-    let turns = response
-        .get("result")
-        .and_then(|result| result.get("data"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| "Could not verify prior message delivery: invalid turns page".to_string())?;
-    Ok(turn_with_client_message(turns, client_id).cloned())
-}
-
-fn turns_contain_client_message(turns: &[Value], client_id: &str) -> bool {
-    turn_with_client_message(turns, client_id).is_some()
-}
-
-fn turn_with_client_message<'a>(turns: &'a [Value], client_id: &str) -> Option<&'a Value> {
-    turns.iter().find(|turn| {
-        turn.get("items")
-            .and_then(Value::as_array)
-            .is_some_and(|items| {
-                items.iter().any(|item| {
-                    item.get("type").and_then(Value::as_str) == Some("userMessage")
-                        && item.get("clientId").and_then(Value::as_str) == Some(client_id)
-                })
-            })
-    })
-}
-
-fn rpc_error_message(response: &Value) -> String {
-    let error = response.get("error").unwrap_or(response);
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .map_or_else(|| error.to_string(), str::to_owned);
-    message.chars().take(500).collect()
-}
-
 // Scheduling and diagnostic hints only: unknown methods are forwarded too,
 // but conservatively share the ordered lane when they target a thread.
 fn rpc_is_known_read(method: &str) -> bool {
@@ -4002,6 +2772,19 @@ async fn send_rpc_error(
     .map_err(|_| ())
 }
 
+async fn send_rpc_failure(
+    socket: &SessionSocket,
+    id: Value,
+    failure: &RpcFailure,
+) -> Result<(), ()> {
+    send_json(
+        socket,
+        &json!({ "type": "rpc", "response": { "id": id, "error": failure.to_json() } }),
+    )
+    .await
+    .map_err(|_| ())
+}
+
 async fn send_json(socket: &SessionSocket, value: &Value) -> Result<(), axum::Error> {
     socket.send(Message::Text(value.to_string().into())).await
 }
@@ -4047,9 +2830,9 @@ async fn close_with(socket: &SessionSocket, code: u16, reason: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
 
     use super::*;
+    use crate::store::OutboxPresentation;
 
     #[tokio::test]
     async fn durable_fence_resolves_after_every_preceding_payload_is_committed()
@@ -4064,7 +2847,7 @@ mod tests {
             events: signals,
             server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
             content_projector: Arc::new(std::sync::RwLock::new(None)),
-            resources: Arc::new(std::sync::RwLock::new(None)),
+            resources: None,
             usage_projector: Arc::new(std::sync::Mutex::new(
                 crate::usage::LiveUsageProjector::new(store.clone()),
             )),
@@ -4391,61 +3174,5 @@ mod tests {
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0]["futureField"], 1);
         assert_eq!(payloads[1]["futureField"], 2);
-    }
-
-    #[tokio::test]
-    async fn rollout_echoes_publish_one_semantic_reconciliation_without_a_silence_window()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let directory = tempfile::tempdir()?;
-        let thread_id = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
-        let sessions = directory.path().join("sessions/2026/08/18");
-        std::fs::create_dir_all(&sessions)?;
-        let path = sessions.join(format!("rollout-2026-08-18T12-00-00-{thread_id}.jsonl"));
-        let mut rollout = std::fs::File::create(&path)?;
-        for line in [
-            json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}),
-            json!({"type":"event_msg","payload":{"type":"user_message","message":"Question"}}),
-            json!({"type":"event_msg","payload":{"type":"agent_message","message":"Complete answer"}}),
-            json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","last_agent_message":"Complete answer"}}),
-        ] {
-            writeln!(rollout, "{line}")?;
-        }
-        rollout.sync_all()?;
-
-        let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-        let history = HistoryService::new(
-            Arc::new(crate::catalog::SessionCatalog::scan(directory.path())),
-            store,
-        );
-        let (change_tx, change_rx) = tokio::sync::mpsc::channel(4);
-        let (ingest_tx, mut ingest_rx) = tokio::sync::mpsc::channel(4);
-        for _ in 0..2 {
-            change_tx
-                .send(crate::rollout_monitor::RolloutChange {
-                    thread_id: thread_id.to_owned(),
-                    path: path.clone(),
-                    archived: false,
-                })
-                .await?;
-        }
-        drop(change_tx);
-        let forwarder = tokio::spawn(forward_rollout_changes(
-            change_rx,
-            history,
-            ingest_tx,
-            Arc::new(std::sync::RwLock::new(None)),
-        ));
-
-        let repaired = tokio::time::timeout(Duration::from_millis(300), ingest_rx.recv())
-            .await?
-            .ok_or("semantic reconciliation was not emitted")?;
-        assert_eq!(repaired["method"], "companion/thread/invalidated");
-        assert_eq!(repaired["params"]["threadId"], thread_id);
-        forwarder.await?;
-        assert!(
-            ingest_rx.recv().await.is_none(),
-            "coalesced rollout writes must not emit duplicate reconciliation events"
-        );
-        Ok(())
     }
 }

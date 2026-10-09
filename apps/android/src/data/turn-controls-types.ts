@@ -1,4 +1,5 @@
 import type { CatalogSkill } from "./skill-catalog-types";
+import type { AgentProviderId } from "./threadAgent";
 
 export type TurnControlsValue = {
   defaults: {
@@ -14,10 +15,18 @@ export type TurnControlsValue = {
     id: string;
     isDefault: boolean;
     label: string;
+    /** `model/list` `codewideAgentProvider`; `null` from a legacy single-provider Companion. */
+    provider: AgentProviderId | null;
     serviceTiers?: Array<{ description: string; id: string; name: string }>;
     supportsPersonality: boolean;
   }>;
-  permissions: Array<{ allowed: boolean; description: string | null; id: string }>;
+  permissions: Array<{
+    allowed: boolean;
+    description: string | null;
+    id: string;
+    /** `permissionProfile/list` `codewideAgentProviders`; `null` when not annotated. */
+    providers: readonly AgentProviderId[] | null;
+  }>;
   skills: CatalogSkill[];
 };
 

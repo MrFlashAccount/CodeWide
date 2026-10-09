@@ -135,3 +135,31 @@ Ownership documentation:
 - `apps/android/src/features/threadList/CONTEXT.md`
 - `docs/android-v1-feature-architecture.md`
 - This report.
+
+## Multi-provider pages
+
+Status: approved contract for the agent provider layer ([`docs/agent-providers.md`](agent-providers.md)); implementation in progress. The server-owned membership and opaque-cursor rules above stay unchanged for the primary (lead) provider.
+
+When more than one provider is enabled, Companion merges `thread/list` from the lead (primary) provider and the other providers in `crates/companion-core/src/agent/client_wire/`. The callers' exact params are the contract: `apps/android/src/data/thread-catalog-loader.ts` and `packages/sync-client/src/session.ts`.
+
+Non-lead rows:
+
+- carry `modelProvider` set to the provider's name (`"anthropic"` for Claude), `source: "appServer"`, `threadSource: null`, no parent, not ephemeral, no section and no project;
+- are included when `modelProviders` is empty/omitted or names that provider, and when `sourceKinds` is empty/omitted or contains `cli`, `vscode` or `appServer`;
+- honor `sortKey` `created_at`, `updated_at`, `recency_at`; `section_position` yields no non-lead rows; `sortDirection` `asc`/`desc`; `archived` and `cwd` exactly; `searchTerm` as a substring of the name, else of the first user message;
+- are excluded by `originators`, a concrete `sectionId` or `projectId`, `parentThreadId` and `ancestorThreadId`; `useStateDbOnly` is ignored; an unknown param name yields no non-lead rows plus one `warn` log;
+- skip resource enrichment (capability `history.threadResources`).
+
+Pipeline order: raw lead page → window bound from the raw page → `filter_catalog_page` on lead rows only → merge non-lead rows → enrichment, pins, projects observer, projector.
+
+Window rule: page k covers `[b_k, b_(k-1))` by sort value in seconds (`desc`; `asc` mirrored). `b_k` is the smallest key on the raw lead page, or `-∞` when the lead is exhausted; a null `recencyAt` uses `updatedAt`. The bound is clamped, `b_k = min(b_k, b_(k-1))`, so windows never overlap. Each live non-lead provider is read for at most 10 pages of 100 rows per window; when that limit truncates a window, the next window starts at the last emitted key and the excess moves to the next page.
+
+Cursor:
+
+- Only one provider enabled → the lead request, result and cursor pass through byte-for-byte (today's behavior), and no `codewideAgent` field is attached.
+- Several providers, but the params admit no non-lead row → the lead cursor passes through unchanged.
+- Otherwise the cursor is `"cwl1." + base64url(JSON {lead, leadDone, bound})`, where `bound` is the previous page's window edge; it stays opaque to the client and a raw lead cursor is accepted. Only a null cursor means exhaustion.
+- In multi-provider mode every row, lead and non-lead, carries `codewideAgent` (see [capabilities](agent-providers.md#capabilities)).
+- A non-lead provider that is not live contributes no rows to that response.
+
+`companion/supervisor/threadList` returns rows only from providers declaring `globalSupervisor`. The internal project discovery call stays on the `host.fs` owner.

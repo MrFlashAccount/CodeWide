@@ -151,6 +151,9 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
           draft: scope.newChatDraft,
           kind: "draft",
           onSend: createNewChatSubmission({
+            catalogModels: () =>
+              props.runtime.resources?.turnControls.get(activeControlsResourceId ?? "")?.value
+                ?.models ?? [],
             closeDraft: props.onDraftAdmitted,
             commands: {
               sendText: props.features.composer.sendText,

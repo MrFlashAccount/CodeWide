@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ThreadStartResponse } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
+import { parseAgentProviderId } from "../src/data/threadAgent";
 import { createProjectsWorkspaceAdapter } from "../src/features/projects/workspaceAdapter";
 import type { TurnControlsValue } from "../src/data/turn-controls-types";
 import { createV1TestThread } from "./fixtures/v1Thread";
@@ -68,16 +69,27 @@ describe("projects workspace command adapter", () => {
     test.rpcAfterAttach.mockResolvedValueOnce({
       workspace: { capability: "workspace.create@1", provider: "git", repositoryRoot: "/project", cwd: "/isolated", created: true },
     }).mockResolvedValueOnce(started("/isolated"));
-    expect(await test.adapter.startThreadInWorkspace("server", "/project", "activation")).toBe("created");
+    expect(await test.adapter.startThreadInWorkspace("server", "/project", { agent: null, requestId: "activation" })).toBe("created");
     expect(test.rpcAfterAttach.mock.calls.map(call => [call[1], call[2]])).toEqual([
       ["companion/workspace/create", { workspace: "/project", requestId: "activation" }],
       ["thread/start", { cwd: "/isolated" }],
     ]);
   });
+  it("names the chosen model and its provider in thread/start", async () => {
+    const test = binding();
+    test.rpcAfterAttach.mockResolvedValue(started("/project"));
+    const provider = parseAgentProviderId("claude");
+    await test.adapter.startThread("server", "/project", { model: "claude-sonnet", provider });
+    await test.adapter.startThread("server", "/project", { model: "legacy-model", provider: null });
+    expect(test.rpcAfterAttach.mock.calls.map(call => call[2])).toEqual([
+      { cwd: "/project", model: "claude-sonnet", codewideAgentProvider: "claude" },
+      { cwd: "/project", model: "legacy-model" },
+    ]);
+  });
   it("stops before thread creation when the provider's workspace result is invalid", async () => {
     const test = binding();
     test.rpcAfterAttach.mockResolvedValue({ workspace: { cwd: "" } });
-    await expect(test.adapter.startThreadInWorkspace("server", "/project", "activation")).rejects.toThrow("invalid created workspace");
+    await expect(test.adapter.startThreadInWorkspace("server", "/project", { agent: null, requestId: "activation" })).rejects.toThrow("invalid created workspace");
     expect(test.rpcAfterAttach).toHaveBeenCalledOnce();
     expect(test.imported).not.toHaveBeenCalled();
     expect(test.summarized).not.toHaveBeenCalled();

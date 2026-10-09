@@ -138,7 +138,7 @@ export const renderRegistry = {
   dynamicToolCall: ((_item, payload) => {
     const status = text(payload.status);
     return {
-      title: text(payload.tool) ?? "Dynamic tool",
+      title: dynamicToolTitle(payload),
       body: compactJson(payload.contentItems ?? payload.arguments ?? null),
       status,
       durationMs: number(payload.durationMs),
@@ -312,4 +312,26 @@ function boundedJson(value: unknown, maxChars: number): string {
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+/** Argument names that identify what a read-style tool looked at, in priority order. */
+const DYNAMIC_TOOL_PRIMARY_ARGUMENTS = ["file_path", "pattern", "path"] as const;
+
+/**
+ * Names a dynamic tool call by its tool and primary argument, e.g. "Read src/a.ts",
+ * so read-style calls show what they read instead of only the tool name.
+ */
+function dynamicToolTitle(payload: Payload): string {
+  const tool = text(payload.tool) ?? "Dynamic tool";
+  const args = objectValue(payload.arguments);
+  if (args === null) {
+    return tool;
+  }
+  for (const name of DYNAMIC_TOOL_PRIMARY_ARGUMENTS) {
+    const value = args[name];
+    if (typeof value === "string" && value.trim() !== "") {
+      return `${tool} ${value.trim()}`;
+    }
+  }
+  return tool;
 }

@@ -101,10 +101,10 @@ const reviewSuggestion = {
 function mountEditor() {
   return render(
     <ComposerMarkdownInput
-      accessibilityLabel="Message Codex"
+      accessibilityLabel="Message the agent"
       mentionIndicators={["/", "@"]}
       onChangeValue={jest.fn()}
-      placeholder="Message Codex…"
+      placeholder="Message the agent…"
       search={async (query) =>
         query.text === "" || reviewSuggestion.label.toLowerCase().includes(query.text.toLowerCase())
           ? [reviewSuggestion]
@@ -141,7 +141,7 @@ it("fills the composer shell, grows intrinsically and keeps the empty-state plac
     <ComposerMarkdownInput
       accessibilityLabel="Main composer"
       value=""
-      placeholder="Message Codex…"
+      placeholder="Message the agent…"
       mentionIndicators={["/"]}
       search={async () => []}
       onChangeValue={jest.fn()}
@@ -159,7 +159,7 @@ it("fills the composer shell, grows intrinsically and keeps the empty-state plac
     width: "100%",
     maxHeight: 132,
   });
-  expect(editor.props.placeholder).toBe("Message Codex…");
+  expect(editor.props.placeholder).toBe("Message the agent…");
   expect(editor.props.placeholderTextColor).toBe(colors.textDim);
   expect(editor.props.scrollEnabled).toBe(true);
 });

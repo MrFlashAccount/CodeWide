@@ -1502,6 +1502,7 @@ it("replaces /new after successful first admission and retires only the captured
 
   await act(async () => {
     await createNewChatSubmission({
+      catalogModels: () => [],
       closeDraft: (draftId) => {
         drafts.close(draftId);
       },
@@ -1537,6 +1538,7 @@ it("retains the exact draft and /new destination when first admission fails", as
 
   await expect(
     createNewChatSubmission({
+      catalogModels: () => [],
       closeDraft: (draftId) => {
         drafts.close(draftId);
       },

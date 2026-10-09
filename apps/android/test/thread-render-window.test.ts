@@ -284,3 +284,35 @@ it("keeps async question messages out of final-response selection and streaming 
   expect(isAgentMessageStillStreaming(rawTurn, question.id)).toBe(false);
   expect(selectTurnRenderWindow({ ...rawTurn, status: "completed" }).latestAgentIndex).toBe(1);
 });
+
+describe("provider-initiated (wake) turn without a user message", () => {
+  // A Claude background task can start a turn by itself. Its items arrive with
+  // the projected pre-turn flag because no user boundary ever materializes.
+  const wakeItems: FakeItem[] = [
+    { type: "commandExecution", id: "tool", codewidePreTurn: true },
+    { type: "agentMessage", id: "commentary", phase: "commentary", codewidePreTurn: true },
+    { type: "commandExecution", id: "tool-2", codewidePreTurn: true },
+    { type: "agentMessage", id: "answer", phase: "final_answer", codewidePreTurn: true },
+  ];
+
+  it("streams agent text as the response while the wake turn is active", () => {
+    const active = selectTurnRenderWindow(turn(wakeItems));
+    expect(active.userItemIndexes).toEqual([]);
+    expect(active.liveActivityIndexes).toEqual([1, 3]);
+    expect(active.preTurnActivityIndexes).toEqual([0, 2]);
+    expect(active.latestAgentIndex).toBe(3);
+  });
+
+  it("renders the final answer exactly once after the wake turn completes", () => {
+    const completed = selectTurnRenderWindow(turn(wakeItems, "completed"));
+    const rendered = [
+      ...completed.preTurnActivityIndexes,
+      ...completed.collapsedActivityIndexes,
+      ...completed.compactionIndexes,
+      completed.latestAgentIndex,
+    ];
+    expect(completed.latestAgentIndex).toBe(3);
+    expect(rendered.toSorted((left, right) => left - right)).toEqual([0, 1, 2, 3]);
+    expect(new Set(rendered).size).toBe(rendered.length);
+  });
+});

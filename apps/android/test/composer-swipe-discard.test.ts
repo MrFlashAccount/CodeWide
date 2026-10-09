@@ -55,7 +55,7 @@ describe("composer swipe discard", () => {
     expect(input).toBeGreaterThan(menu);
     expect(voice).toBeGreaterThan(input);
     expect(send).toBeGreaterThan(voice);
-    expect(editor).toContain('accessibilityLabel="Message Codex"');
+    expect(editor).toContain('accessibilityLabel="Message the agent"');
     expect(microphone).toContain("ref={microphoneButtonRef}");
     expect(submitAction).toContain("<ComposerDeliveryMenu");
     const menuStyle = sourceObjectDeclaration(composerStyles, "composerMenu").replace(/\s+/gu, " ");

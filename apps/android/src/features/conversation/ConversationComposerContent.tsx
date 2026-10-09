@@ -133,6 +133,7 @@ export function createConversationComposerContent({
           composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
         }
         setSelectedPersonality={composerStateBinding.composerEditingBinding.setSelectedPersonality}
+        skillsEnabled={composerDelivery.composerAccessoryActionsBinding.skillsEnabled}
         steerComposer={composerDelivery.composerDeliveryBinding.steerComposer}
         stopAction={composerDelivery.composerDeliveryBinding.stopAction}
         terminalEnabled={composerDelivery.composerAccessoryActionsBinding.terminalEnabled}

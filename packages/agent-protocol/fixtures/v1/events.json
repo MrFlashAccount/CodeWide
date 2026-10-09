@@ -1,0 +1,503 @@
+{
+  "description": "one Claude turn with every item kind, deltas, an approval, a question, usage, plan, diff and a wake turn",
+  "messages": [
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "thread.updated",
+          "thread": {
+            "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+            "provider": "claude",
+            "cwd": "/home/dev/project",
+            "name": null,
+            "preview": "Fix the failing test",
+            "createdAt": 1760000000,
+            "updatedAt": 1760000100,
+            "recencyAt": 1760000100,
+            "archived": false,
+            "origin": "interactive",
+            "status": "active",
+            "settings": { "model": "claude-sonnet-4-5", "effort": "high", "permissionProfile": ":workspace", "serviceTier": null }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "turn.started",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turn": {
+            "turnId": "0199a3c4-8000-7000-8000-000000000001",
+            "status": "inProgress",
+            "origin": "user",
+            "startedAt": 1760000100,
+            "completedAt": null,
+            "error": null,
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.started",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": {
+            "type": "userMessage",
+            "itemId": "0199a3c4-8000-7000-8000-000000000001:user:0",
+            "clientMessageId": "android-2b1c",
+            "content": [
+              { "type": "text", "text": "Fix the failing test" },
+              { "type": "localImage", "path": "/tmp/screenshot.png" },
+              { "type": "image", "url": "data:image/png;base64,AAAA" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.delta",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "itemId": "msg_01:0",
+          "delta": { "kind": "reasoning", "text": "Looking at the test", "summaryIndex": 0 }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.delta",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "itemId": "msg_01:1",
+          "delta": { "kind": "text", "text": "I will run" }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.delta",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "itemId": "toolu_bash",
+          "delta": { "kind": "output", "text": "1 failed\n" }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.delta",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "itemId": "toolu_edit",
+          "delta": {
+            "kind": "fileChanges",
+            "changes": [{ "path": "/home/dev/project/a.ts", "kind": "update", "movePath": null, "diff": "-a\n+b\n" }]
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": { "type": "reasoning", "itemId": "msg_01:0", "summary": ["Looking at the test"], "content": [] }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": {
+            "type": "command",
+            "itemId": "toolu_bash",
+            "command": "pnpm test",
+            "cwd": "/home/dev/project",
+            "status": "failed",
+            "output": "1 failed\n",
+            "exitCode": null,
+            "durationMs": 1250
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "request.opened",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "requestId": "perm-1",
+          "request": {
+            "type": "approval",
+            "kind": "fileChange",
+            "itemId": "toolu_edit",
+            "title": "Edit a.ts",
+            "detail": null,
+            "command": null,
+            "cwd": "/home/dev/project",
+            "decisions": ["accept", "acceptForSession", "decline", "cancel"]
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "request.opened",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "requestId": 42,
+          "request": {
+            "type": "approval",
+            "kind": "tool",
+            "itemId": "toolu_fetch",
+            "title": "Fetch https://example.com",
+            "detail": "WebFetch",
+            "command": "WebFetch https://example.com",
+            "cwd": null,
+            "decisions": ["accept", "decline", "cancel"]
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "request.opened",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "requestId": "perm-2",
+          "request": {
+            "type": "userInput",
+            "itemId": "toolu_ask",
+            "questions": [
+              {
+                "id": "q0",
+                "header": "Runner",
+                "question": "Which runner?",
+                "options": [
+                  { "label": "vitest", "description": "Unit tests" },
+                  { "label": "playwright", "description": "End-to-end" }
+                ],
+                "multiSelect": true,
+                "secret": false,
+                "allowOther": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "request.opened",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "requestId": "perm-3",
+          "request": { "type": "capabilityRequest", "capability": "requests.mcpElicitation", "payload": { "schema": {} } }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "request.resolved",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "requestId": "perm-1",
+          "reason": "responded"
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": {
+            "type": "fileChange",
+            "itemId": "toolu_edit",
+            "changes": [
+              { "path": "/home/dev/project/a.ts", "kind": "update", "movePath": null, "diff": "@@ -1 +1 @@\n-a\n+b\n" },
+              { "path": "/home/dev/project/new.ts", "kind": "add", "movePath": null, "diff": "export {};\n" }
+            ],
+            "status": "completed"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": {
+            "type": "mcpToolCall",
+            "itemId": "toolu_mcp",
+            "server": "notes",
+            "tool": "write_note",
+            "arguments": { "text": "hello" },
+            "status": "completed",
+            "result": { "content": [{ "type": "text", "text": "saved" }], "structuredContent": null },
+            "error": null,
+            "durationMs": 30
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": {
+            "type": "toolCall",
+            "itemId": "toolu_read",
+            "namespace": "claude",
+            "tool": "Read",
+            "arguments": { "file_path": "/home/dev/project/a.ts" },
+            "output": "a",
+            "status": "completed",
+            "durationMs": null
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": {
+            "type": "webSearch",
+            "itemId": "toolu_search",
+            "query": "vitest fake timers",
+            "action": { "type": "search", "query": "vitest fake timers" }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": { "type": "webSearch", "itemId": "toolu_page", "query": "", "action": { "type": "openPage", "url": "https://example.com" } }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": { "type": "imageView", "itemId": "toolu_img:image", "path": "/home/dev/project/logo.png" }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": { "type": "plan", "itemId": "toolu_plan", "text": "1. Fix\n2. Test" }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": { "type": "compaction", "itemId": "compact-1" }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": { "type": "capabilityItem", "itemId": "cap-1", "capability": "review", "kind": "enteredReviewMode", "payload": { "review": "x" } }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "item": { "type": "agentMessage", "itemId": "msg_02:0", "text": "Fixed.", "phase": "final" }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "usage.updated",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "last": { "inputTokens": 1200, "cachedInputTokens": 1000, "outputTokens": 80, "reasoningOutputTokens": 0, "totalTokens": 1280 },
+          "total": { "inputTokens": 5400, "cachedInputTokens": 4000, "outputTokens": 300, "reasoningOutputTokens": 0, "totalTokens": 5700 },
+          "contextWindow": 200000
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "plan.updated",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "explanation": null,
+          "plan": [
+            { "step": "Reproduce", "status": "completed" },
+            { "step": "Fix", "status": "inProgress" },
+            { "step": "Verify", "status": "pending" }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "diff.updated",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-8000-7000-8000-000000000001",
+          "diff": "diff --git a/a.ts b/a.ts\n"
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": { "type": "capability.event", "appThreadId": null, "capability": "codex.native", "payload": { "method": "account/updated", "params": {} } }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "turn.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turn": {
+            "turnId": "0199a3c4-8000-7000-8000-000000000001",
+            "status": "completed",
+            "origin": "user",
+            "startedAt": 1760000100,
+            "completedAt": 1760000160,
+            "error": null,
+            "items": [
+              {
+                "type": "userMessage",
+                "itemId": "0199a3c4-8000-7000-8000-000000000001:user:0",
+                "clientMessageId": "android-2b1c",
+                "content": [{ "type": "text", "text": "Fix the failing test" }]
+              },
+              { "type": "agentMessage", "itemId": "msg_02:0", "text": "Fixed.", "phase": "final" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "turn.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turn": {
+            "turnId": "0199a3c4-8000-7000-8000-000000000002",
+            "status": "failed",
+            "origin": "provider",
+            "startedAt": 1760000200,
+            "completedAt": 1760000201,
+            "error": { "kind": "processExited", "message": "Claude process exited unexpectedly" },
+            "items": []
+          }
+        }
+      }
+    }
+  ]
+}

@@ -87,6 +87,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
               fileEnabled={props.fileAttachmentEnabled}
               goalEnabled={props.onSetGoal !== undefined}
               onSelect={props.openAccessoryAction}
+              skillsEnabled={props.skillsEnabled}
               terminalEnabled={props.terminalEnabled}
             />
           )}

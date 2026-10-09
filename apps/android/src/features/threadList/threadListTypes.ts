@@ -1,4 +1,6 @@
 export type ThreadListItem = {
+  /** Provider label for a thread not bound to its host's primary provider. */
+  agentBadge?: string | null;
   archived?: boolean;
   id: string;
   needsAttention?: boolean;

@@ -30,6 +30,15 @@ export const styles = StyleSheet.create({
     minWidth: 0,
     overflow: "hidden",
   },
+  threadAgentBadge: {
+    borderColor: colors.border,
+    borderRadius: radii.compact,
+    borderWidth: StyleSheet.hairlineWidth,
+    color: colors.textMuted,
+    flexShrink: 0,
+    paddingHorizontal: spacing.xxs,
+    ...typeScale.caption,
+  },
   threadAttentionIcon: {
     alignItems: "center",
     flexShrink: 0,

@@ -41,13 +41,22 @@ describe("turn controls loader", () => {
   it("refreshes a model catalog cached before service tier support", () => {
     const oldCatalog: TurnControlsValue = {
       ...empty,
-      models: [{ id: "sol", label: "Sol", defaultEffort: "high", efforts: ["high"], supportsPersonality: false, isDefault: true }],
+      models: [{ id: "sol", label: "Sol", defaultEffort: "high", efforts: ["high"], supportsPersonality: false, isDefault: true, provider: null }],
     };
     expect(turnControlsCacheNeedsRepair({ status: "ready", error: null, value: oldCatalog })).toBe(true);
     const cachedModel = oldCatalog.models[0];
     if (cachedModel === undefined) { throw new Error("Model fixture is absent"); }
     cachedModel.serviceTiers = [{ id: "priority", name: "Fast", description: "" }];
     expect(turnControlsCacheNeedsRepair({ status: "ready", error: null, value: oldCatalog })).toBe(false);
+  });
+
+  it("refreshes a catalog cached before provider annotations", () => {
+    const model = { id: "sol", label: "Sol", defaultEffort: "high", efforts: ["high"], supportsPersonality: false, isDefault: true, serviceTiers: [] };
+    const annotated: TurnControlsValue = { ...empty, models: [{ ...model, provider: null }] };
+    expect(turnControlsCacheNeedsRepair({ status: "ready", error: null, value: annotated })).toBe(false);
+    // WHY: simulates a catalog persisted by an earlier client version, which lacks the provider field.
+    const persisted = { ...empty, models: [model] } as unknown as TurnControlsValue;
+    expect(turnControlsCacheNeedsRepair({ status: "ready", error: null, value: persisted })).toBe(true);
   });
 
   it("refreshes cached defaults that predate service tier settings", () => {
