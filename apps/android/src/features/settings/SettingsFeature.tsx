@@ -8,6 +8,8 @@ import { Platform } from "react-native";
 import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
 import type { AccountRateLimitsRow } from "../../data/account-rate-limits";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
+import { androidReleaseAvailability } from "../../data/androidReleaseAvailability";
+import { availableAndroidRelease } from "../../data/androidReleaseContract";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { ConnectionUpdateInput } from "../../data/connection-validation";
 import type { HostUpdateView } from "../connections/connectionSettingsContract";
@@ -116,6 +118,8 @@ export function ConnectionSettings({
   const voiceOrbStyle = useGlobalVoiceOrbStyle();
   const voiceAssistantPersonality = useVoiceAssistantPersonality();
   const voiceAssistantModels = useSelector(() => voiceAssistantModelCatalog.snapshot$.value.get());
+  const androidRelease = useSelector(() => androidReleaseAvailability.snapshot$.value.get());
+  const applicationVersion = Constants.expoConfig?.version ?? "unknown";
   const voiceAssistantBackgroundModel = useVoiceAssistantBackgroundModel(voiceAssistantModels);
   const personalVoiceFilter = usePersonalVoiceFilter();
   const openVoiceAssistantSettings = useEvent(() => {
@@ -159,7 +163,12 @@ export function ConnectionSettings({
         ...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile }),
         ...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile }),
       })}
-      version={<SettingsVersion version={Constants.expoConfig?.version ?? "unknown"} />}
+      version={
+        <SettingsVersion
+          update={availableAndroidRelease(applicationVersion, androidRelease)}
+          version={applicationVersion}
+        />
+      }
       visible={visible}
       voiceAssistant={{
         content: (
