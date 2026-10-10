@@ -12,6 +12,7 @@ export function AccountLoginSheet({
   copyAccountCode,
   loginActionBusy,
   openAccountSignIn,
+  providerName,
   userCode,
 }: {
   closeAccountLogin: () => void;
@@ -19,12 +20,15 @@ export function AccountLoginSheet({
   copyAccountCode: () => Promise<void>;
   loginActionBusy: boolean;
   openAccountSignIn: () => Promise<void>;
+  /** The pool owner's name; `null` for an older Companion that does not name it. */
+  providerName: string | null;
   userCode: string;
 }) {
+  const account = providerName === null ? "account" : `${providerName} account`;
   return (
     <AppSheet
       contentProps={{
-        dismissLabel: "Close Codex account sign-in",
+        dismissLabel: `Close ${account} sign-in`,
         enableDynamicSizing: true,
         enableOverDrag: false,
         index: 0,
@@ -42,7 +46,7 @@ export function AccountLoginSheet({
             <Ionicons color={colors.primary} name="people-outline" size={iconSize.action} />
           </View>
           <View style={styles.flex}>
-            <Text style={styles.accountLoginTitle}>Connect Codex account</Text>
+            <Text style={styles.accountLoginTitle}>Connect {account}</Text>
             <Text style={styles.accountLoginSubtitle}>
               Sign in to add this account as an automatic fallback.
             </Text>
@@ -56,7 +60,7 @@ export function AccountLoginSheet({
             </Text>
           </View>
           <Pressable
-            accessibilityLabel="Copy one-time Codex sign-in code"
+            accessibilityLabel="Copy one-time sign-in code"
             accessibilityRole="button"
             onPress={() => void copyAccountCode()}
             style={[styles.accountLoginCopyButton, codeCopied && styles.accountLoginCopyButtonDone]}

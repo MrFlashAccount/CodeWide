@@ -13,13 +13,18 @@ import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
+import { SettingsGroupHeader } from "../../ui/SettingsGroupHeader";
 import { AccountPoolEditor } from "../accounts/AccountPoolFeature";
+import { ProviderAccounts } from "../accounts/ProviderAccounts";
+import { AgentProviderMarks } from "./AgentProviderMarks";
 import { connectionDiagnosticReport } from "./connectionDiagnosticReport";
+import { connectionStateLabel } from "./connectionPresentation";
 import { ServerIcon } from "./ServerIcon";
 import { styles } from "./ConnectionRowEditor.styles";
 
 export function ConnectionRowEditor({
   accountPool,
+  agentProviders,
   connection,
   onActivateAccountProfile,
   onCancelAccountLogin,
@@ -155,6 +160,7 @@ export function ConnectionRowEditor({
         />
       ) : (
         <View style={styles.connectionRow}>
+          <SettingsGroupHeader title="Connection" />
           <AppListRow
             description={connection.endpoint}
             descriptionLeading={
@@ -168,10 +174,20 @@ export function ConnectionRowEditor({
               ) : undefined
             }
             fixedHeight={listRowHeight.double}
-            leading={createElement(ServerIcon, { iconId: connection.iconId, metric: "body" })}
-            title="Connection"
+            leading={
+              <View style={styles.leadingSlot}>
+                {createElement(ServerIcon, { iconId: connection.iconId, metric: "body" })}
+              </View>
+            }
+            title={connectionStateLabel(connection.state, connection.enabled, connection.health)}
             trailing={
               <>
+                {agentProviders !== undefined && (
+                  <AgentProviderMarks
+                    agentProviders={agentProviders}
+                    connectionId={connection.id}
+                  />
+                )}
                 <Switch
                   accessibilityLabel={`Enable ${connection.displayName}`}
                   onValueChange={(enabled) => void onToggle(connection.id, enabled)}
@@ -213,6 +229,7 @@ export function ConnectionRowEditor({
             onRemoveAccountProfile !== undefined && (
               <AccountPoolEditor
                 accountPool={accountPool}
+                {...(agentProviders === undefined ? {} : { agentProviders })}
                 connectionId={connection.id}
                 onActivate={onActivateAccountProfile}
                 onCancelLogin={onCancelAccountLogin}
@@ -223,6 +240,13 @@ export function ConnectionRowEditor({
                 onUpdate={onUpdateAccountProfile}
               />
             )}
+          {agentProviders !== undefined && (
+            <ProviderAccounts
+              agentProviders={agentProviders}
+              connectionId={connection.id}
+              serverName={connection.displayName}
+            />
+          )}
         </View>
       )}
     </View>

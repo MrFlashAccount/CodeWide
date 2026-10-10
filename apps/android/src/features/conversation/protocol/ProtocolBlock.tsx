@@ -15,6 +15,8 @@ import { CommandExecutionProtocolBlock } from "./CommandOutput";
 import { FileChangeProtocolBlock } from "./FileChangeProtocolBlock";
 import { ImageProtocolBlock } from "./ImageProtocolBlock";
 import { MemoryCitationList } from "./MemoryCitationList";
+import { orchestrationToolCall } from "./orchestrationToolCall";
+import { OrchestrationProtocolBlock } from "./OrchestrationProtocolBlock";
 import { styles } from "./ProtocolBlock.styles";
 import { ThinkingStatus } from "./ThinkingStatus";
 import { TokenUsageProtocolBlock } from "./TokenUsageProtocolBlock";
@@ -92,6 +94,11 @@ export function ProtocolBlock({
         />
       </>
     );
+  }
+  const orchestration =
+    block.kind === "dynamicToolCall" ? orchestrationToolCall(block.raw, block.status) : null;
+  if (orchestration !== null) {
+    return <OrchestrationProtocolBlock call={orchestration} />;
   }
   if (block.kind === "mcpToolCall" || block.kind === "dynamicToolCall") {
     return (

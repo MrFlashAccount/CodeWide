@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { parseAgentProviderId } from "../src/data/threadAgent";
 import {
+  createTurnControlsLoader,
   loadTurnControlsIncrementally,
   turnControlsCacheNeedsRepair,
 } from "../src/data/turn-controls-loader";
+import { turnControlsResourceKey } from "../src/data/workspace-resource-keys";
 import type { TurnControlsValue } from "../src/data/turn-controls-types";
 
 const empty: TurnControlsValue = {
@@ -41,13 +44,22 @@ describe("turn controls loader", () => {
   it("refreshes a model catalog cached before service tier support", () => {
     const oldCatalog: TurnControlsValue = {
       ...empty,
-      models: [{ id: "sol", label: "Sol", defaultEffort: "high", efforts: ["high"], supportsPersonality: false, isDefault: true }],
+      models: [{ id: "sol", label: "Sol", defaultEffort: "high", efforts: ["high"], supportsPersonality: false, isDefault: true, provider: null }],
     };
     expect(turnControlsCacheNeedsRepair({ status: "ready", error: null, value: oldCatalog })).toBe(true);
     const cachedModel = oldCatalog.models[0];
     if (cachedModel === undefined) { throw new Error("Model fixture is absent"); }
     cachedModel.serviceTiers = [{ id: "priority", name: "Fast", description: "" }];
     expect(turnControlsCacheNeedsRepair({ status: "ready", error: null, value: oldCatalog })).toBe(false);
+  });
+
+  it("refreshes a catalog cached before provider annotations", () => {
+    const model = { id: "sol", label: "Sol", defaultEffort: "high", efforts: ["high"], supportsPersonality: false, isDefault: true, serviceTiers: [] };
+    const annotated: TurnControlsValue = { ...empty, models: [{ ...model, provider: null }] };
+    expect(turnControlsCacheNeedsRepair({ status: "ready", error: null, value: annotated })).toBe(false);
+    // WHY: simulates a catalog persisted by an earlier client version, which lacks the provider field.
+    const persisted = { ...empty, models: [model] } as unknown as TurnControlsValue;
+    expect(turnControlsCacheNeedsRepair({ status: "ready", error: null, value: persisted })).toBe(true);
   });
 
   it("refreshes cached defaults that predate service tier settings", () => {
@@ -152,5 +164,100 @@ describe("turn controls loader", () => {
     );
 
     expect(calls).toEqual(["models", "defaults"]);
+  });
+});
+
+describe("merged catalog with an unavailable provider", () => {
+  type Row = Omit<import("../src/data/turn-controls-types").TurnControlsRow, "updatedAt">;
+  function modelRow(id: string, provider: string, isDefault = false) {
+    return {
+      id,
+      model: id,
+      displayName: id,
+      isDefault,
+      defaultReasoningEffort: "high",
+      supportedReasoningEfforts: [{ reasoningEffort: "high" }],
+      serviceTiers: [],
+      supportsPersonality: false,
+      codewideAgentProvider: provider,
+    };
+  }
+
+  it("keeps the provider's cached rows and refreshes again until it answers", async () => {
+    const rows = new Map<string, Row>();
+    const cachedModel = (id: string, provider: string, isDefault: boolean) => ({
+      defaultEffort: "high",
+      defaultServiceTier: null,
+      efforts: ["high"],
+      id,
+      isDefault,
+      label: id,
+      provider: parseAgentProviderId(provider),
+      serviceTiers: [],
+      supportsPersonality: false,
+    });
+    rows.set(turnControlsResourceKey("server", "/w"), {
+      connectionId: "server",
+      cwd: "/w",
+      error: null,
+      id: turnControlsResourceKey("server", "/w"),
+      status: "ready",
+      value: {
+        ...empty,
+        defaults: { ...empty.defaults, serviceTier: null },
+        models: [cachedModel("gpt", "codex", true), cachedModel("sonnet", "claude", false)],
+      },
+    });
+    let claudeLive = false;
+    const methods: string[] = [];
+    const rpcAfterAttach = vi.fn(async (_session: unknown, method: string): Promise<unknown> => {
+      methods.push(method);
+      switch (method) {
+        case "model/list":
+          return claudeLive
+            ? { data: [modelRow("gpt", "codex", true), modelRow("sonnet", "claude")] }
+            : {
+                data: [modelRow("gpt", "codex", true)],
+                codewideAgentProvidersUnavailable: ["claude"],
+              };
+        case "permissionProfile/list":
+          return { data: [] };
+        case "config/read":
+          return { config: { model: null, model_reasoning_effort: null, sandbox_mode: null } };
+        default:
+          return { data: [] };
+      }
+    });
+    const load = createTurnControlsLoader({
+      getResources: () => ({
+        putTurnControls: (row: Row) => {
+          rows.set(row.id, row);
+        },
+        // WHY: the loader reads only `get` from the live collection.
+        turnControls: { get: (key: string) => rows.get(key) } as never,
+      }),
+      // WHY: the session is passed through to the mocked RPC only.
+      getSession: () => ({}) as never,
+      // WHY: the mock answers the few catalog methods this test exercises.
+      rpcAfterAttach: rpcAfterAttach as never,
+    });
+    const settle = async () => {
+      await load("server", "/w");
+      // The cached value is answered at once; the second call joins the background refresh.
+      await load("server", "/w");
+    };
+    await settle();
+    const kept = rows.get(turnControlsResourceKey("server", "/w"))?.value?.models ?? [];
+    expect(kept.map((model) => [model.id, model.isDefault])).toEqual([
+      ["gpt", true],
+      ["sonnet", false],
+    ]);
+    const before = methods.filter((method) => method === "model/list").length;
+    claudeLive = true;
+    await settle();
+    const afterRetry = methods.filter((method) => method === "model/list").length;
+    expect(afterRetry).toBeGreaterThan(before);
+    await load("server", "/w");
+    expect(methods.filter((method) => method === "model/list").length).toBe(afterRetry);
   });
 });

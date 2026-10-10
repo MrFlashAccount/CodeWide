@@ -6,12 +6,14 @@ import type {
 import { threadIdFromEvent, threadProjectionPatchFromEvent } from "@codewide/sync-client";
 import { appLogger } from "../observability/logger";
 import type { AccountPoolSnapshot } from "./account-pool";
+import { AGENT_PROVIDERS_CHANGED_METHOD } from "./agentProviders";
+import type { AgentProvidersResource } from "./agentProvidersResource";
 import type { AccountRateLimitsDatabase } from "./account-rate-limits-database";
 import type { createCatalogRuntime } from "./catalog-runtime";
 import { reconcileDeliveredCommandReceipts } from "./command-delivery";
 import { operationConfirmsDeliveredCommand } from "./command-receipt-evidence";
 import { hasAppServerAcceptedPendingDelivery, parseHostQueueSnapshot } from "./queue-event";
-import { subagentActivityRootThreadId } from "./subagent-loader";
+import { subagentActivity } from "./subagent-loader";
 import type { ThreadDetailDatabase } from "./thread-detail-database";
 import { threadPatchRequiresAuthoritativeRefresh } from "./thread-detail-refresh-policy";
 import type { ThreadProjectionStore } from "./thread-projection-store";
@@ -26,6 +28,7 @@ import { threadResourceKey } from "./workspace-resource-keys";
 /** Applies native projection effects without awaiting fallback network repair in the ordered lane. */
 export function createThreadSyncProjection({
   accountRateLimits,
+  agentProviders,
   catalog,
   details,
   resources,
@@ -33,6 +36,7 @@ export function createThreadSyncProjection({
   sync,
 }: {
   accountRateLimits: AccountRateLimitsDatabase;
+  agentProviders: Pick<AgentProvidersResource, "applyChanged">;
   catalog: ReturnType<typeof createCatalogRuntime>;
   details: ThreadDetailDatabase;
   resources: WorkspaceResourceDatabase;
@@ -56,7 +60,7 @@ export function createThreadSyncProjection({
       const projectedThreads = projected.threads;
       const receiptThreadIds = new Set<string>();
       const deliveredReceiptThreads = new Set<string>();
-      const subagentRoots = new Set<string>();
+      const subagentRoots = new Map<string, boolean>();
       for (const event of events) {
         const params = asRecord(event.payload.params);
         const patch = threadProjectionPatchFromEvent(event.payload);
@@ -75,6 +79,12 @@ export function createThreadSyncProjection({
           // oxlint-disable-next-line typescript/no-unsafe-type-assertion
           const accountPool = params as AccountPoolSnapshot;
           accountRateLimits.putAccountPool(connectionId, accountPool);
+        }
+        if (
+          event.payload.method === AGENT_PROVIDERS_CHANGED_METHOD &&
+          !agentProviders.applyChanged(connectionId, event.payload.params)
+        ) {
+          appLogger.warn({ event: "agent_providers.changed.invalid" });
         }
         if (
           event.payload.method === "companion/queue/changed" &&
@@ -110,9 +120,12 @@ export function createThreadSyncProjection({
             patch.operation.archived === true,
           );
         }
-        const subagentRoot = subagentActivityRootThreadId(event.payload);
-        if (subagentRoot !== null) {
-          subagentRoots.add(subagentRoot);
+        const activity = subagentActivity(event.payload);
+        if (activity !== null) {
+          subagentRoots.set(
+            activity.rootThreadId,
+            (subagentRoots.get(activity.rootThreadId) ?? false) || activity.spawning,
+          );
         }
         const threadId = threadIdFromEvent(event.payload);
         if (threadId === null) {
@@ -178,7 +191,11 @@ export function createThreadSyncProjection({
             });
           });
       }
-      for (const rootThreadId of subagentRoots) {
+      for (const [rootThreadId, spawning] of subagentRoots) {
+        if (spawning) {
+          catalog.refreshSpawnedSubagents(connectionId, rootThreadId);
+          continue;
+        }
         void catalog.refreshSubagents(connectionId, rootThreadId, true).catch(() => {
           appLogger.warn({
             event: "subagent.event_refresh.failed",

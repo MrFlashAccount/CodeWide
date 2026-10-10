@@ -30,7 +30,7 @@ test.describe("adaptive CodeWide workspace", () => {
     await expect(page.getByRole("button", { name: /Rich renderer benchmark/ }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /Release v1\.4/ })).toHaveCount(0);
 
-    const composer = page.getByLabel("Message Codex");
+    const composer = page.getByLabel("Message the agent");
     await expect(composer).toBeVisible();
     const composerBox = await composer.boundingBox();
     const menuBox = await page.getByLabel("Composer menu").boundingBox();
@@ -281,7 +281,7 @@ test.describe("adaptive CodeWide workspace", () => {
     await page.getByLabel("Save annotation").click();
     await page.getByLabel("Add image annotations to message").click();
     await expect(page.getByLabel("Attached image 1 full screen")).toHaveCount(0);
-    await expect(page.getByPlaceholder("Message Codex…")).toHaveValue(/Image annotations[\s\S]*50\.0%, 50\.0%[\s\S]*Tighten this spacing/);
+    await expect(page.getByPlaceholder("Message the agent…")).toHaveValue(/Image annotations[\s\S]*50\.0%, 50\.0%[\s\S]*Tighten this spacing/);
   });
 
 
@@ -349,7 +349,7 @@ test.describe("adaptive CodeWide workspace", () => {
     const composer = await page.getByTestId("composer-row").boundingBox();
     const menu = await page.getByLabel("Composer menu").boundingBox();
     const inputShell = await page.getByTestId("composer-input-shell").boundingBox();
-    const input = await page.getByLabel("Message Codex").boundingBox();
+    const input = await page.getByLabel("Message the agent").boundingBox();
     const voice = await page.getByLabel("Voice input").boundingBox();
     const send = await page.getByLabel("Send message").boundingBox();
     for (const target of [menu, voice, send]) {
@@ -363,16 +363,16 @@ test.describe("adaptive CodeWide workspace", () => {
     expect(voice?.x ?? 0).toBeGreaterThan((input?.x ?? 0) + (input?.width ?? 0) - 100);
     expect(send?.x ?? 0).toBeGreaterThan(voice?.x ?? 0);
 
-    await page.getByLabel("Message Codex").focus();
+    await page.getByLabel("Message the agent").focus();
     const focusedComposer = await page.getByTestId("composer-row").boundingBox();
     const focusedInputShell = await page.getByTestId("composer-input-shell").boundingBox();
     expect((focusedComposer?.x ?? 0) + (focusedComposer?.width ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
     expect((focusedInputShell?.x ?? 0) + (focusedInputShell?.width ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
 
-    await page.getByLabel("Message Codex").fill("A multiline composer should grow with its content and stay compact until the text actually needs more room. ".repeat(12));
+    await page.getByLabel("Message the agent").fill("A multiline composer should grow with its content and stay compact until the text actually needs more room. ".repeat(12));
     await expect.poll(async () => (await page.getByTestId("composer-input-shell").boundingBox())?.height ?? 0).toBeGreaterThan(inputShell?.height ?? 48);
     expect((await page.getByTestId("composer-input-shell").boundingBox())?.height ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(132);
-    await page.getByLabel("Message Codex").fill("");
+    await page.getByLabel("Message the agent").fill("");
     await expect.poll(async () => (await page.getByTestId("composer-input-shell").boundingBox())?.height ?? 0).toBeCloseTo(menu?.height ?? 48, 0);
   });
 
@@ -454,7 +454,7 @@ test.describe("adaptive CodeWide workspace", () => {
     await expect(page.getByTestId("composer-input-shell")).toHaveCSS("background-color", "rgb(32, 32, 32)");
     await expect(page.getByTestId("composer-input-shell")).toHaveCSS("border-radius", "28px");
     await expect(page.getByLabel("Send message")).toHaveCSS("background-color", "rgb(230, 230, 230)");
-    expect(await page.getByLabel("Message Codex").evaluate((element) => getComputedStyle(element).fontFamily)).toContain("RobotoFlex-Regular");
+    expect(await page.getByLabel("Message the agent").evaluate((element) => getComputedStyle(element).fontFamily)).toContain("RobotoFlex-Regular");
     await expect(page.getByTestId("conversation-title")).toContainText("Release v1.4");
     expect(await page.getByTestId("conversation-title").evaluate((element) => getComputedStyle(element).fontFamily)).toContain("RobotoFlex-Medium");
     await expect(page.getByTestId("conversation-header")).toHaveCSS("border-bottom-width", "0px");
@@ -565,7 +565,7 @@ test.describe("adaptive CodeWide workspace", () => {
 
     await expect(page.getByTestId("server-rail")).toHaveCount(0);
     await expect(page.getByLabel("Back to threads")).toBeVisible();
-    await expect(page.getByLabel("Message Codex")).toBeVisible();
+    await expect(page.getByLabel("Message the agent")).toBeVisible();
   });
 
   test("windowed desktop keeps the narrow conversation pane inside its bounds", async ({ page }, testInfo) => {
@@ -599,7 +599,7 @@ test.describe("adaptive CodeWide workspace", () => {
     await expect(page.getByRole("button", { name: /Rich renderer benchmark/ })).toBeVisible();
     await page.getByRole("button", { name: /Release v1\.4/ }).click();
 
-    const composer = page.getByLabel("Message Codex");
+    const composer = page.getByLabel("Message the agent");
     const composerBox = await composer.boundingBox();
     const menuBox = await page.getByLabel("Composer menu").boundingBox();
     expect(composerBox?.width ?? 0).toBeGreaterThan(180);
@@ -666,23 +666,23 @@ test.describe("adaptive CodeWide workspace", () => {
     await page.goto("/");
     if (testInfo.project.name === "phone") {
       await page.getByRole("button", { name: /Release v1\.4/ }).click();
-      await page.getByLabel("Message Codex").fill("private per-thread draft");
+      await page.getByLabel("Message the agent").fill("private per-thread draft");
       await page.getByLabel("Back to threads").click();
       await page.getByRole("button", { name: /Release v1\.4/ }).click();
     } else {
       await page.getByLabel("Lab, live").click();
-      await page.getByLabel("Message Codex").fill("private per-thread draft");
+      await page.getByLabel("Message the agent").fill("private per-thread draft");
       await page.getByText("Sleep/wake recovery", { exact: true }).click();
       await page.getByText("Rich renderer benchmark", { exact: true }).first().click();
     }
-    await expect(page.getByLabel("Message Codex")).toHaveValue("private per-thread draft");
+    await expect(page.getByLabel("Message the agent")).toHaveValue("private per-thread draft");
   });
 
   test("wide warm navigation isolates optimistic messages by server and thread", async ({ page }, testInfo) => {
     test.fixme(true, "Known optimistic-overlay isolation bug; keep the contract explicit until the sync layer owns it.");
     test.skip(testInfo.project.name === "phone");
     await page.goto("/");
-    await page.getByLabel("Message Codex").fill("orbit-only optimistic message");
+    await page.getByLabel("Message the agent").fill("orbit-only optimistic message");
     await page.getByLabel("Send message").click();
     await expect(page.getByText("orbit-only optimistic message", { exact: true })).toBeVisible();
 
@@ -820,7 +820,7 @@ test.describe("adaptive CodeWide workspace", () => {
       await page.getByRole("button", { name: /Orbit/ }).last().click();
     }
     await expect(page.getByTestId("conversation-title")).toHaveText("New Chat");
-    const composer = page.getByLabel("Message Codex");
+    const composer = page.getByLabel("Message the agent");
     await expect(composer).toBeVisible();
     await composer.fill("Draft survives project changes");
     await page.getByLabel(/Change project, currently/).click();

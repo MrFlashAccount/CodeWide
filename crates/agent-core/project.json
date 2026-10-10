@@ -1,0 +1,36 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "agent-core",
+  "projectType": "library",
+  "sourceRoot": "crates/agent-core/src",
+  "tags": ["language:rust", "type:library"],
+  "metadata": {
+    "description": "Provider-neutral agent model, provider contract and capabilities"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p agent-core --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p agent-core --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p agent-core --release",
+        "cwd": "."
+      }
+    }
+  }
+}

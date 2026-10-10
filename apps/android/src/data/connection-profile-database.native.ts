@@ -190,7 +190,7 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
           missing.map((config) => {
             const hostname = new URL(config.endpoint).hostname;
             return {
-              displayName: hostname === "" ? "Remote Codex" : hostname,
+              displayName: hostname === "" ? "Remote Companion" : hostname,
               enabled: config.enabled,
               endpoint: config.endpoint,
               iconId: "desktop",

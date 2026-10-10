@@ -4,6 +4,7 @@ import type { MainThreadReadCapabilities } from "./mainThreadReadCapabilities";
 import type { ConversationSurfaceCapabilities } from "./conversationSurfaceCapabilities";
 import type { ConversationAccountCapabilities } from "../accounts/conversationAccountCapabilities";
 import type { useTerminalDeletion } from "../terminal/terminalActions";
+import type { ForkTargetPicker } from "../turnActions/forkTargetPicker";
 import type { useThreadRename } from "../turnActions/threadRename";
 import { ConversationBottomChrome } from "./ConversationBottomChrome";
 import type { createConversationComposerContent } from "./ConversationComposerContent";
@@ -27,6 +28,7 @@ export function createConversationChromeContent({
   deleteThread,
   draftConnectionId,
   draftThreadId,
+  forkPicker,
   historyActivityModel,
   historyActivityResourceId,
   newChat,
@@ -57,6 +59,7 @@ export function createConversationChromeContent({
   deleteThread: ReturnType<typeof useTerminalDeletion>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  forkPicker: ForkTargetPicker;
   historyActivityModel: Exclude<MainThreadReadCapabilities["historyActivityModel"], undefined>;
   historyActivityResourceId: Exclude<
     MainThreadReadCapabilities["historyActivityResourceId"],
@@ -89,6 +92,8 @@ export function createConversationChromeContent({
       }
       draftConnectionId={draftConnectionId}
       draftThreadId={draftThreadId}
+      forkPicker={forkPicker}
+      forkTargets={actionsInputs.forkTargets}
       historyActivityModel={historyActivityModel}
       historyActivityResourceId={historyActivityResourceId}
       newChat={newChat}
@@ -101,6 +106,7 @@ export function createConversationChromeContent({
       onUnarchive={actionsInputs.onUnarchive}
       openThreadRename={threadRenameBinding.openThreadRename}
       pinned={pinned}
+      providerLimits={accountsInputs.providerLimits}
       readOnly={readOnly}
       remoteThread={readInputs.remoteThread}
       server={surfaceInputs.server}

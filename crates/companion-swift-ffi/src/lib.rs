@@ -24,7 +24,20 @@ use companion_core::{
     upstream::probe_app_server_version,
 };
 
+/// The Claude agent host inside the application bundle:
+/// `Contents/Resources/claude-agent-host`, next to the runtime's
+/// `Contents/MacOS` executable. `None` outside a bundle.
+fn bundled_claude_host() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let host = executable
+        .parent()?
+        .parent()?
+        .join("Resources/claude-agent-host");
+    host.is_file().then_some(host)
+}
+
 mod codex_installation;
+mod logging;
 mod macos_host_update;
 
 pub use codex_installation::FfiCodexInstallation;
@@ -276,6 +289,7 @@ impl CoreHost {
         computer_name: String,
         listen_address: String,
     ) -> Result<Arc<Self>, CompanionFfiError> {
+        logging::install(Path::new(&state_directory));
         let lifecycle = RuntimeHost::open(&state_directory, app_version, host_version)?;
         let codex_home = PathBuf::from(codex_home);
         let executor = tokio::runtime::Builder::new_multi_thread()
@@ -298,7 +312,8 @@ impl CoreHost {
         .with_listen_address(listen_address.parse().map_err(CompanionFfiError::runtime)?)
         .with_host_update_guardian(macos_host_update::MacOsHostUpdateGuardian::shared(
             updater_root,
-        ));
+        ))
+        .with_claude_host(bundled_claude_host());
         let companion = executor
             .block_on(ManagedRuntime::start(config))
             .map_err(CompanionFfiError::runtime)?;

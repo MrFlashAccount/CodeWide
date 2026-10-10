@@ -36,14 +36,18 @@ describe("composer attachment preview", () => {
     expect(screen.match(/<ComposerAttachmentTray/g)).toHaveLength(1);
     expect(tray).toContain('testID="composer-attachment-strip"');
     expect(ownerComposerFeature).toContain("scope={props.composerUploadScope}");
-    expect(ownerDraft).toContain(
-      "const attachments = queuedComposerEdit?.initialAttachments ?? storedAttachments",
+    // Queue edits own their attachments first; goal edits (added later) start
+    // without the resident message attachments.
+    expect(ownerDraft).toMatch(
+      /const attachments =\s+queuedComposerEdit\?\.initialAttachments \?\?\s+\(editingGoal === null \? storedAttachments : EMPTY_COMPOSER_ATTACHMENTS\)/u,
     );
     expect(ownerDraft).toContain('`${composerScope}\\u0000queue-edit:${queuedComposerEdit.commandId}`');
     expect(ownerQueueEdit).toContain(
       "await onEditQueued(edit.commandId, text, editedAttachments)",
     );
-    expect(ownerDraft).toContain("const draft = queuedComposerEdit?.initialText ?? storedDraft");
+    expect(ownerDraft).toContain(
+      "const draft = queuedComposerEdit?.initialText ?? editingGoal?.objective ?? storedDraft",
+    );
     expect(ownerComposerFeature).toContain('testID="queued-composer-edit-bar"');
     expect(screen).not.toContain('testID="queue-attachment-strip"');
     expect(tray).toContain("composerAttachmentSource(attachment)");

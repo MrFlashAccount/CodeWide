@@ -7,7 +7,7 @@ import { formatEstimatedTurnCost } from "../../turn-cost";
 import { AnimatedNumber, compactNumberFormat, usdNumberFormat } from "../../ui/AnimatedNumber";
 import { AppText as Text } from "../../ui/Typography";
 import { TOKEN_SYMBOL } from "../../ui/token-display";
-import { SessionUsageDetails } from "./SessionUsageDetails";
+import { SessionUsageDetails, type SessionCostDetails } from "./SessionUsageDetails";
 
 import { styles } from "./UsageMenu.styles";
 
@@ -89,19 +89,7 @@ export function SessionUsageSummary({
       {sessionExpanded && (
         <SessionUsageDetails
           compactionCount={compactionCount ?? null}
-          cost={
-            sessionCost === null
-              ? null
-              : {
-                  cached: sessionCost.cachedInputCostUsd,
-                  input:
-                    sessionCost.uncachedInputCostUsd +
-                    sessionCost.cachedInputCostUsd +
-                    sessionCost.cacheWriteInputCostUsd,
-                  output: sessionCost.outputCostUsd,
-                  total: sessionCost.totalCostUsd,
-                }
-          }
+          cost={sessionCostDetails(sessionCost)}
           tokens={
             sessionUsage === null
               ? null
@@ -116,4 +104,22 @@ export function SessionUsageSummary({
       )}
     </View>
   );
+}
+
+function sessionCostDetails(
+  cost: TurnUsageProjection["thread"]["cost"] | null,
+): SessionCostDetails | null {
+  if (cost === null) {
+    return null;
+  }
+  if (cost.basis === "providerReported") {
+    return { basis: "providerReported", prices: cost.pricingVersion, total: cost.totalCostUsd };
+  }
+  return {
+    basis: "apiEquivalent",
+    cached: cost.cachedInputCostUsd,
+    input: cost.uncachedInputCostUsd + cost.cachedInputCostUsd + cost.cacheWriteInputCostUsd,
+    output: cost.outputCostUsd,
+    total: cost.totalCostUsd,
+  };
 }

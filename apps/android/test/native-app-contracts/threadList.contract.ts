@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { sourceHasJsxElement, sourceObjectDeclaration } from "../source-contract";
 import {
@@ -17,6 +18,11 @@ import {
   migratedThreadListModel,
 } from "./threadList-sources";
 
+const sharedRowActionTrigger = readFileSync(
+  new URL("../../src/ui/RowActionTrigger.native.tsx", import.meta.url),
+  "utf8",
+);
+
 it("preserves threadList integration contracts", () => {
   for (const header of [threadSidebarHeader, mobileThreadsHeader])
     expect(header.match(/<ThreadFilterMenu/gu)).toHaveLength(1);
@@ -25,8 +31,11 @@ it("preserves threadList integration contracts", () => {
   expect(threadFilterMenu).not.toContain("<AppSheet");
   expect(threadFilterMenu).not.toContain("<AppPopover");
   expect(threadRow).not.toContain("Pressable");
-  expect(threadRowNativeTrigger).toContain("Gesture.Race(longPress, tap)");
-  expect(threadRowNativeTrigger).toContain(".maxDistance(THREAD_ROW_TAP_MAX_DISTANCE)");
+  // Thread and sidebar project rows share one scroll-safe activation owner.
+  expect(threadRowNativeTrigger).toContain('import { RowActionTrigger } from "../../ui/RowActionTrigger"');
+  expect(threadRowNativeTrigger).toContain('gestureTestId="thread-row"');
+  expect(sharedRowActionTrigger).toContain("Gesture.Race(longPress, tap)");
+  expect(sharedRowActionTrigger.match(/\.maxDistance\(ROW_ACTION_TAP_MAX_DISTANCE\)/gu)).toHaveLength(2);
   expect(listMenus).toContain("function ThreadFilterMenu(");
   expect(listMenus).toContain('? "Thread filters, no filters selected"');
   expect(migratedThreadListWorkspace).toContain(

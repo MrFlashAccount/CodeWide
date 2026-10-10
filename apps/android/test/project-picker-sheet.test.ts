@@ -16,10 +16,11 @@ describe("project picker", () => {
   it("pins discovered projects without selecting them", () => {
     const pinProject = session.slice(session.indexOf("const pinProject ="));
 
-    expect(pinProject).toContain("await onAddProject(project.path)");
+    // Pinning is scoped to the choice's server since multi-server project picking.
+    expect(pinProject).toContain("await onAddProject(choice.server.id, choice.project.path)");
     expect(pinProject).not.toContain("onSelect(");
     expect(content).toContain("const canPin = !item.pinned && onAddProject !== undefined && onManageProjects === undefined");
-    expect(content).toContain("onPin={canPin ? () => void pinProject(item.project) : undefined}");
+    expect(content).toContain("onPin={canPin ? () => void pinProject(item.choice) : undefined}");
     expect(row).toContain('label: "Pin"');
   });
 });

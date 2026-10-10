@@ -9,15 +9,16 @@ import {
   connectionStateLabel,
 } from "./connectionPresentation";
 import { ConnectionRowEditor } from "./ConnectionRowEditor";
-import { HostUpdateSettings } from "./HostUpdateSettings";
 import type { HostUpdateView } from "./hostUpdateSettingsContract";
 import { ServerIcon } from "./ServerIcon";
+import { ServerSoftwareSection } from "./ServerSoftwareSection";
 
 import type { ConnectionSettingsProps } from "./connectionSettingsContract";
 
 /** Presents qualified server status and editors through the public settings capability. */
 export function connectionSettingsSections({
   accountRateLimits,
+  agentProviders,
   connections,
   hostUpdates,
   onActivateAccountProfile,
@@ -42,13 +43,15 @@ export function connectionSettingsSections({
     const relayUpdate = relayUpdates[connection.id];
     return {
       content: (
-        <>
+        // One column, so the page gap does not stack on top of the section spacing.
+        <View>
           <ConnectionRowEditor
             accountPool={
               accountRateLimits.find((row) => row.connectionId === connection.id)?.accountPool ??
               null
             }
             connection={connection}
+            {...(agentProviders === undefined ? {} : { agentProviders })}
             onDelete={onDelete}
             onReconnect={onReconnect}
             onToggle={onToggle}
@@ -61,26 +64,16 @@ export function connectionSettingsSections({
             {...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile })}
             {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}
           />
-          {hostUpdate !== undefined && (
-            <HostUpdateSettings
-              connectionId={connection.id}
-              connectionName={connection.displayName}
-              onApply={onApplyHostUpdate}
-              onCheck={onCheckHostUpdate}
-              update={hostUpdate}
-            />
-          )}
-          {relayUpdate !== undefined && relayUpdate.currentVersion !== null && (
-            <HostUpdateSettings
-              connectionId={connection.id}
-              connectionName={connection.displayName}
-              onApply={onApplyRelayUpdate}
-              onCheck={onCheckRelayUpdate}
-              subject="Relay"
-              update={relayUpdate}
-            />
-          )}
-        </>
+          <ServerSoftwareSection
+            connection={connection}
+            hostUpdate={hostUpdate}
+            onApplyHostUpdate={onApplyHostUpdate}
+            onApplyRelayUpdate={onApplyRelayUpdate}
+            onCheckHostUpdate={onCheckHostUpdate}
+            onCheckRelayUpdate={onCheckRelayUpdate}
+            relayUpdate={relayUpdate}
+          />
+        </View>
       ),
       description: connectionDescription(
         connectionStateLabel(connection.state, connection.enabled, connection.health),
@@ -88,6 +81,14 @@ export function connectionSettingsSections({
         relayUpdate,
       ),
       id: connection.id,
+      ...(agentProviders === undefined
+        ? {}
+        : {
+            onOpen: () => {
+              // Detail-page intent; a failure keeps the last snapshot and its error in the resource.
+              agentProviders.refresh(connection.id).catch(() => undefined);
+            },
+          }),
       leading: <ServerIcon color={colors.text} iconId={connection.iconId} metric="title" />,
       statusIcon:
         connection.enabled && connectionActivity(connection.state, connection.health) !== null ? (

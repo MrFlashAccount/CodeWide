@@ -230,7 +230,11 @@ jobs:
         env:
           CODEWIDE_CORE_VERSION: ${{ env.CODEWIDE_VERSION }}
           MACOSX_DEPLOYMENT_TARGET: "26.0"
+          # The Rust core embeds the release signing key; without it the app is an unofficial build.
+          CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI: ${{ secrets.HOST_UPDATE_P256_PUBLIC_KEY_SPKI }}
+          CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID: ${{ inputs.host_update_key_id || vars.HOST_UPDATE_SIGNING_KEY_ID || 'host-update-v1' }}
         run: |
+          test -n "$CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI"
           output="apps/companion-macos/.build/rust/$CODEWIDE_VERSION"
           pnpm nx run companion-swift-ffi:build-macos-arm64 --outputPath="$output"
           test -s "$output/libcompanion_swift_ffi.a"

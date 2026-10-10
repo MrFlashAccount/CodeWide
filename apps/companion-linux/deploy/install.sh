@@ -87,7 +87,7 @@ previous_link=
 if [ -L "$install_root/current" ]; then previous_link=$(readlink "$install_root/current"); fi
 rm -f "$install_root/.current-new"
 ln -s "generations/$artifact_digest" "$install_root/.current-new"
-mv -f "$install_root/.current-new" "$install_root/current"
+mv -fT "$install_root/.current-new" "$install_root/current"
 
 previous_unit=
 if [ "$activate" -eq 1 ]; then
@@ -102,7 +102,7 @@ restore_previous() {
   if [ -n "$previous_link" ]; then
     rm -f "$install_root/.current-restore"
     ln -s "$previous_link" "$install_root/.current-restore"
-    mv -f "$install_root/.current-restore" "$install_root/current"
+    mv -fT "$install_root/.current-restore" "$install_root/current"
     systemctl --user start codewide-companion.service 2>/dev/null || true
   elif [ -n "$previous_unit" ]; then
     systemctl --user start "$previous_unit" 2>/dev/null || true

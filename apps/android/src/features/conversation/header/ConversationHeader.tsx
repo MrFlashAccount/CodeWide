@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View } from "react-native";
 import { contextUsageFromProjection } from "../../../data/account-rate-limits";
+import { DEFAULT_SERVER_ICON_ID } from "../../../data/serverIcons";
 import { colors, iconSize } from "../../../theme";
 import { InlineEmoji } from "../../../ui/InlineIcon";
 import { leadingEmoji } from "../../../ui/ThreadTitle";
@@ -26,6 +27,8 @@ export function ConversationHeader({
   dismissComposerKeyboardForOverlay,
   draftConnectionId,
   draftThreadId,
+  forkPicker,
+  forkTargets,
   historyActivityModel,
   historyActivityResourceId,
   newChat,
@@ -38,6 +41,7 @@ export function ConversationHeader({
   onUnarchive,
   openThreadRename,
   pinned,
+  providerLimits = null,
   readOnly,
   remoteThread,
   server,
@@ -102,8 +106,10 @@ export function ConversationHeader({
           currentUsage={currentUsage}
           database={accountRateLimitsDatabase}
           placement="bottom"
+          providerLimits={providerLimits}
           servers={[
             {
+              iconId: server?.iconId ?? DEFAULT_SERVER_ICON_ID,
               id: server?.id ?? "active-server",
               name: server?.name ?? "Server",
             },
@@ -114,7 +120,11 @@ export function ConversationHeader({
             : { onRefresh: onRefreshAccountRateLimits })}
         >
           <Pressable
-            accessibilityLabel="Context usage and account limits"
+            accessibilityLabel={
+              accountRateLimitsDatabase === null
+                ? "Context usage"
+                : "Context usage and account limits"
+            }
             style={styles.headerIcon}
           >
             <ContextRing
@@ -142,6 +152,8 @@ export function ConversationHeader({
               : { onArchive })}
           {...(onCompact === undefined ? {} : { onCompact })}
           {...(onFork === undefined ? {} : { onFork })}
+          {...(forkTargets === undefined ? {} : { forkTargets })}
+          {...(forkPicker === undefined ? {} : { forkPicker })}
           {...(deleteThread === undefined ? {} : { onDelete: deleteThread })}
         />
       )}

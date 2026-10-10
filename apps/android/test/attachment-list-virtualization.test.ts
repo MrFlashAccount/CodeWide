@@ -14,8 +14,9 @@ it("gives the attachment sheet fixed cells instead of eagerly mounting every res
   expect(sheet).not.toContain("attachments.map(");
   expect(sheet).not.toContain("estimatedItemSize");
   expect(styles).toContain("threadAttachmentCell: { height: listRowHeight.double }");
-  const settings = readFileSync(new URL("../src/features/settings/SettingsFeature.tsx", import.meta.url), "utf8");
-  expect(settings).toContain("fixedHeight={listRowHeight.double}");
+  // The biometric lock row moved from SettingsFeature into its own security owner.
+  const security = readFileSync(new URL("../src/features/settings/SecuritySettings.tsx", import.meta.url), "utf8");
+  expect(security).toContain("fixedHeight={listRowHeight.double}");
 });
 
 it("keeps the attachment row on the synchronous icon implementation", () => {

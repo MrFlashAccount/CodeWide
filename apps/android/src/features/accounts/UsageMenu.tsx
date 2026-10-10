@@ -14,6 +14,8 @@ import { renderContextRingView } from "./ContextRingView";
 import { SessionUsageSummary } from "./SessionUsageSummary";
 import { styles } from "./UsageMenu.styles";
 import { AccountUsageSection } from "./accountUsage";
+import type { UsageAccountRow } from "./usageAccounts";
+import { ProviderUsageSection } from "./ProviderUsageSection";
 
 import { appLogger } from "../../observability/logger";
 import {
@@ -21,6 +23,7 @@ import {
   currentThreadUsageProjection,
 } from "../../data/account-rate-limits";
 import type { AccountUsageSource } from "../../data/account-usage-presentation";
+import type { AgentProviderStatusEntry } from "../../data/agentProviders";
 import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
 import { AnimatedNumber, compactNumberFormat } from "../../ui/AnimatedNumber";
@@ -62,6 +65,7 @@ type UsageMenuView = {
 };
 
 export function UsageMenu({
+  accountRows,
   accountSources,
   actions = EMPTY_USAGE_ACTIONS,
   align = "start",
@@ -70,8 +74,11 @@ export function UsageMenu({
   currentUsage,
   onRefresh,
   placement = "top",
+  providerLimits = null,
   thread,
 }: {
+  /** The accounts shown, one row per account across the listed servers. */
+  accountRows?: readonly UsageAccountRow[];
   accountSources?: readonly AccountUsageSource[];
   actions?: UsageMenuAction[];
   align?: "start" | "center" | "end";
@@ -80,6 +87,8 @@ export function UsageMenu({
   currentUsage?: TurnUsageProjection | null;
   onRefresh?: () => Promise<unknown>;
   placement?: "top" | "bottom" | "left" | "right";
+  /** The thread's own provider subscription limits (no account pool); `null` when not shown. */
+  providerLimits?: AgentProviderStatusEntry | null;
   thread?: Thread | null;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
@@ -90,7 +99,8 @@ export function UsageMenu({
     MENU_MIN_WIDTH,
     Math.min(MENU_MAX_WIDTH, width - MENU_WINDOW_GUTTER),
   );
-  const hasLeadingSection = thread !== undefined || accountSources !== undefined;
+  const hasLeadingSection =
+    thread !== undefined || accountSources !== undefined || providerLimits !== null;
   const openChanged = useEvent((open: boolean) => {
     setOpen(open);
     if (!open) {
@@ -124,11 +134,13 @@ export function UsageMenu({
       width={contentWidth}
     >
       <UsageMenuContent
+        accountRows={accountRows}
         accountSources={accountSources}
         actions={actions}
         compactionCount={compactionCount}
         hasLeadingSection={hasLeadingSection}
         onDismiss={close}
+        providerLimits={providerLimits}
         sessionExpanded={sessionExpanded}
         setSessionExpanded={setSessionExpanded}
         showThreadUsage={thread !== undefined}
@@ -152,21 +164,25 @@ function projectUsageMenu(
 }
 
 function UsageMenuContent({
+  accountRows,
   accountSources,
   actions,
   compactionCount,
   hasLeadingSection,
   onDismiss,
+  providerLimits,
   sessionExpanded,
   setSessionExpanded,
   showThreadUsage,
   view,
 }: {
+  readonly accountRows: readonly UsageAccountRow[] | undefined;
   readonly accountSources: readonly AccountUsageSource[] | undefined;
   readonly actions: readonly UsageMenuAction[];
   readonly compactionCount: number | null | undefined;
   readonly hasLeadingSection: boolean;
   readonly onDismiss: () => void;
+  readonly providerLimits: AgentProviderStatusEntry | null;
   readonly sessionExpanded: boolean;
   readonly setSessionExpanded: Dispatch<SetStateAction<boolean>>;
   readonly showThreadUsage: boolean;
@@ -175,7 +191,14 @@ function UsageMenuContent({
   return (
     <View style={styles.content} testID="usage-menu">
       {showThreadUsage ? <UsageContextSection context={view.context} /> : null}
-      <AccountUsageSection accountSources={accountSources} hasContext={showThreadUsage} />
+      {providerLimits === null ? null : (
+        <ProviderUsageSection entry={providerLimits} hasContext={showThreadUsage} />
+      )}
+      <AccountUsageSection
+        accountRows={accountRows}
+        accountSources={accountSources}
+        hasContext={showThreadUsage}
+      />
       {showThreadUsage ? (
         <SessionUsageSummary
           compactionCount={compactionCount}

@@ -1,0 +1,17 @@
+[package]
+name = "agent-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Provider-neutral CodeWide agent model, provider contract and capabilities"
+
+[dependencies]
+async-trait = "0.1.89"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["sync"] }
+
+[lints]
+workspace = true

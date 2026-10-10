@@ -1,9 +1,55 @@
 /** V1 RequestFeature owner, extracted without changing interaction or resource lifetime. */
 import { Pressable, View } from "react-native";
 import type { PendingServerRequest } from "../../data/pending-request-types";
+import { useEvent } from "../../react/useEvent";
+import { controlHitSlop } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import type { mcpElicitationFields } from "./elicitationForm";
 import { styles } from "./RequestFeature.styles";
+
+type ApprovalActionVariant = "primary" | "quiet" | "secondary";
+
+type ApprovalActionButtonProps = {
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly onPress: () => void;
+  readonly variant: ApprovalActionVariant;
+};
+
+function ApprovalActionButton({
+  disabled,
+  label,
+  onPress,
+  variant,
+}: ApprovalActionButtonProps): React.JSX.Element {
+  const activate = useEvent(onPress);
+  const variantStyle =
+    variant === "primary"
+      ? styles.approvalActionPrimary
+      : variant === "secondary"
+        ? styles.approvalActionSecondary
+        : styles.approvalActionQuiet;
+  const textStyle =
+    variant === "primary"
+      ? styles.approvalActionPrimaryText
+      : variant === "secondary"
+        ? styles.approvalActionSecondaryText
+        : styles.approvalActionQuietText;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      hitSlop={controlHitSlop.regular}
+      onPress={activate}
+      style={[styles.approvalAction, variantStyle]}
+    >
+      <Text numberOfLines={1} style={[styles.approvalActionText, textStyle]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
 
 type RequestResponseActionsProps = {
   answers: Record<string, string>;
@@ -29,14 +75,13 @@ export function RequestResponseActions({
   respond,
   submitElicitation,
   waiting,
-}: RequestResponseActionsProps) {
+}: RequestResponseActionsProps): React.JSX.Element {
   return (
     <View style={styles.approvalActions}>
       {method === "item/tool/requestUserInput" ? (
-        <Pressable
-          accessibilityRole="button"
+        <ApprovalActionButton
           disabled={waiting}
-          hitSlop={4}
+          label="Submit"
           onPress={() =>
             void respond({
               answers: Object.fromEntries(
@@ -47,100 +92,72 @@ export function RequestResponseActions({
               ),
             })
           }
-          style={[styles.primaryButton, styles.approvalButton]}
-        >
-          <Text style={styles.primaryButtonText}>Submit</Text>
-        </Pressable>
+          variant="primary"
+        />
       ) : method === "item/permissions/requestApproval" ? (
         <>
-          <Pressable
-            accessibilityRole="button"
+          <ApprovalActionButton
             disabled={waiting}
-            hitSlop={4}
+            label="Decline"
             onPress={() => void respond({ permissions: {}, scope: "turn" })}
-            style={[styles.approvalDeclineButton, styles.approvalButton]}
-          >
-            <Text style={styles.approvalDeclineText}>Decline</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
+            variant="quiet"
+          />
+          <ApprovalActionButton
             disabled={waiting}
-            hitSlop={4}
+            label="Allow turn"
             onPress={() => void respond({ permissions: params.permissions ?? {}, scope: "turn" })}
-            style={[styles.primaryButton, styles.approvalButton]}
-          >
-            <Text style={styles.primaryButtonText}>Allow turn</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
+            variant="primary"
+          />
+          <ApprovalActionButton
             disabled={waiting}
-            hitSlop={4}
+            label="For session"
             onPress={() =>
               void respond({ permissions: params.permissions ?? {}, scope: "session" })
             }
-            style={[styles.secondaryButton, styles.approvalButton]}
-          >
-            <Text style={styles.secondaryButtonText}>For session</Text>
-          </Pressable>
+            variant="secondary"
+          />
         </>
       ) : method === "mcpServer/elicitation/request" ? (
         <>
-          <Pressable
-            accessibilityRole="button"
+          <ApprovalActionButton
             disabled={waiting}
-            hitSlop={4}
+            label="Decline"
             onPress={() => void respond({ _meta: null, action: "decline", content: null })}
-            style={[styles.approvalDeclineButton, styles.approvalButton]}
-          >
-            <Text style={styles.approvalDeclineText}>Decline</Text>
-          </Pressable>
+            variant="quiet"
+          />
           {(elicitationFields.length > 0 || elicitationUrl !== null) && (
-            <Pressable
-              accessibilityRole="button"
+            <ApprovalActionButton
               disabled={waiting}
-              hitSlop={4}
+              label={elicitationMode === "url" ? "Done" : "Submit"}
               onPress={
                 elicitationMode === "url"
                   ? () => void respond({ _meta: null, action: "accept", content: null })
                   : submitElicitation
               }
-              style={[styles.primaryButton, styles.approvalButton]}
-            >
-              <Text style={styles.primaryButtonText}>
-                {elicitationMode === "url" ? "Done" : "Submit"}
-              </Text>
-            </Pressable>
+              variant="primary"
+            />
           )}
         </>
       ) : (
         <>
-          <Pressable
-            accessibilityRole="button"
+          <ApprovalActionButton
             disabled={waiting}
-            hitSlop={4}
+            label="Decline"
             onPress={() => void respond({ decision: "decline" })}
-            style={[styles.approvalDeclineButton, styles.approvalButton]}
-          >
-            <Text style={styles.approvalDeclineText}>Decline</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
+            variant="quiet"
+          />
+          <ApprovalActionButton
             disabled={waiting}
-            hitSlop={4}
+            label="Accept once"
             onPress={() => void respond({ decision: "accept" })}
-            style={[styles.primaryButton, styles.approvalButton]}
-          >
-            <Text style={styles.primaryButtonText}>Accept once</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
+            variant="primary"
+          />
+          <ApprovalActionButton
             disabled={waiting}
-            hitSlop={4}
+            label="For session"
             onPress={() => void respond({ decision: "acceptForSession" })}
-            style={[styles.secondaryButton, styles.approvalButton]}
-          >
-            <Text style={styles.secondaryButtonText}>For session</Text>
-          </Pressable>
+            variant="secondary"
+          />
         </>
       )}
     </View>

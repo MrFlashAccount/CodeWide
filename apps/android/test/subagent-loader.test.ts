@@ -1,7 +1,7 @@
 import type { RpcClient } from "@codewide/sync-client";
 import { describe, expect, it, vi } from "vitest";
 
-import { loadSubagentDescendants, subagentActivityRootThreadId } from "../src/data/subagent-loader";
+import { loadSubagentDescendants, subagentActivity } from "../src/data/subagent-loader";
 
 function indexedThread(id: string, parentThreadId: string, archived = false) {
   return {
@@ -27,17 +27,34 @@ function indexedThread(id: string, parentThreadId: string, archived = false) {
 
 describe("subagent descendant loading", () => {
   it("requests an authoritative descendant refresh for live subagent activity", () => {
-    expect(subagentActivityRootThreadId({
+    expect(subagentActivity({
       method: "item/completed",
       params: {
         threadId: "root",
         item: { type: "subAgentActivity", kind: "started", agentThreadId: "child" },
       },
-    })).toBe("root");
-    expect(subagentActivityRootThreadId({
+    })).toEqual({ rootThreadId: "root", spawning: false });
+    expect(subagentActivity({
+      method: "item/started",
+      params: { threadId: "root", item: { type: "subAgentActivity", kind: "started" } },
+    })).toBeNull();
+    expect(subagentActivity({
       method: "item/completed",
       params: { threadId: "root", item: { type: "agentMessage" } },
     })).toBeNull();
+  });
+
+  it("treats a Claude spawning call as subagent activity from its start", () => {
+    const spawn = (method: string, tool = "spawnAgent") => ({
+      method,
+      params: {
+        threadId: "root",
+        item: { type: "collabAgentToolCall", tool, receiverThreadIds: [], status: "inProgress" },
+      },
+    });
+    expect(subagentActivity(spawn("item/started"))).toEqual({ rootThreadId: "root", spawning: true });
+    expect(subagentActivity(spawn("item/completed"))).toEqual({ rootThreadId: "root", spawning: false });
+    expect(subagentActivity(spawn("item/started", "sendInput"))).toBeNull();
   });
 
   it("loads the descendant tree from one local parent-index RPC", async () => {

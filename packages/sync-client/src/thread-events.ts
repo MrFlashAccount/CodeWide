@@ -35,23 +35,39 @@ export type UsageTokenCounts = {
   reasoningOutputTokens: number;
 };
 
-export type UsageCostProjection = {
+type UsageCostTokens = {
   model: string;
-  pricingVersion: string;
   currency: "USD";
-  basis: "apiEquivalent";
-  price: { input: number; cachedInput: number; output: number };
   uncachedInputTokens: number;
   cachedInputTokens: number;
   cacheWriteInputTokens: number;
   outputTokens: number;
   cacheHitPercent: number;
+  totalCostUsd: number;
+};
+
+/** An API-equivalent estimate the companion computed from a price table, per component. */
+export type ApiEquivalentCostProjection = UsageCostTokens & {
+  basis: "apiEquivalent";
+  pricingVersion: string;
+  price: { input: number; cachedInput: number; output: number };
   uncachedInputCostUsd: number;
   cachedInputCostUsd: number;
   cacheWriteInputCostUsd: number;
   outputCostUsd: number;
-  totalCostUsd: number;
 };
+
+/**
+ * A cost the agent provider estimated itself (for example, the Claude Agent
+ * SDK). Only the total is known; `pricingVersion` names the provider's price
+ * table: its list prices or rates managed by the user's organization.
+ */
+export type ProviderReportedCostProjection = UsageCostTokens & {
+  basis: "providerReported";
+  pricingVersion: "list" | "managed";
+};
+
+export type UsageCostProjection = ApiEquivalentCostProjection | ProviderReportedCostProjection;
 
 export type UsageScopeProjection = {
   tokens: UsageTokenCounts;
@@ -212,7 +228,12 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
   if (patch.threadId !== thread.id) return false;
   const params = patch.operation;
   let changed = true;
-  if (params.kind === "threadStatus" && params.status !== undefined) thread.status = params.status as Thread["status"];
+  if (params.kind === "threadStatus" && params.status !== undefined) {
+    thread.status = params.status as Thread["status"];
+    // The companion carries the lock of a thread open in another process here;
+    // App Server status changes omit it and keep the snapshot's value.
+    if (typeof params.canAcceptDirectInput === "boolean") thread.canAcceptDirectInput = params.canAcceptDirectInput;
+  }
   else if (params.kind === "threadName") thread.name = typeof params.threadName === "string" ? params.threadName : null;
   else if (params.kind === "threadSettings") updateThreadSettings(thread, params.threadSettings);
   else if (params.kind === "turnStarted") {

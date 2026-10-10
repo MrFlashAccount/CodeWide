@@ -102,7 +102,7 @@ export function ProjectPickerContent({
                     }}
                     selected={false}
                     serverIconId={item.iconId}
-                    subtitle={`${item.serverName}${item.available ? "" : " · Offline"} · Let Codex choose the working directory`}
+                    subtitle={`${item.serverName}${item.available ? "" : " · Offline"} · Let the agent choose the working directory`}
                     title={
                       state.serverFilter === null && props.servers.length > 1
                         ? `${item.serverName} defaults`

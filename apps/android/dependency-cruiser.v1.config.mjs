@@ -33,6 +33,7 @@ const featurePublicModules = {
   ],
   accounts: [
     "AccountPoolFeature",
+    "ProviderAccounts",
     "WorkspaceAccountUsageMenu",
     "UsageMenu",
     "accountCapabilities",
@@ -170,6 +171,8 @@ const featurePublicModules = {
     "turnActions",
     "turnActionCapabilities",
     "threadConversationCapabilities",
+    "forkTargets",
+    "forkTargetPicker",
   ],
   search: [
     "GlobalSearchScreen",

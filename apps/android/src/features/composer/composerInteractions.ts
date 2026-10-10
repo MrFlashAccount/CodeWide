@@ -1,4 +1,5 @@
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.155.1/v2";
+import { readThreadAgent, threadAgentSupports } from "../../data/threadAgent";
 import type { useConversationOwner } from "../../ui/use-conversation-owner";
 import type { ConversationGoalCapabilities } from "../goal/conversationGoalCapabilities";
 import type { ThreadCurrentOutcome } from "../../data/thread-current-outcome";
@@ -73,6 +74,7 @@ export function useComposerInteractions({
     goalEnabled: onSetGoal !== undefined,
     openComposerFeature: composerFeatureActionsBinding.openComposerFeature,
     setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
+    skillsEnabled: threadAgentSupports(readThreadAgent(remoteThread), "input.skillsAndMentions"),
     terminalEnabled,
   });
   const goalSubmission = createComposerGoalSubmission(

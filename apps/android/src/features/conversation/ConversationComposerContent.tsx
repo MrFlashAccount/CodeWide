@@ -25,6 +25,7 @@ export function createConversationComposerContent({
   getStableTransferAccess,
   goalContent,
   goalInputs,
+  onForkIntoAgent,
   overlayScrollOwnershipBinding,
   readInputs,
   surfaceInputs,
@@ -40,6 +41,8 @@ export function createConversationComposerContent({
   getStableTransferAccess: ReturnType<typeof useDocumentTransferAccess>;
   goalContent: ReactNode;
   goalInputs: ConversationCompositionCapabilities["goal"];
+  /** Opens the thread's "Fork into" picker; absent when the thread cannot fork. */
+  onForkIntoAgent: (() => void) | undefined;
   overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
   readInputs: MainThreadReadCapabilities;
   surfaceInputs: ConversationSurfaceCapabilities;
@@ -64,6 +67,7 @@ export function createConversationComposerContent({
         composerTrayVisible={composerStateBinding.composerMenuStateBinding.composerTrayVisible}
         composerUploadScope={composerStateBinding.composerEditingBinding.composerUploadScope}
         controlError={composerStateBinding.composerEditingBinding.controlError}
+        controls$={composerStateBinding.composerEditingBinding.controls$}
         controlsResourceId={composerInputs.controlsResourceId}
         currentTurnId={timelineRead.conversationPresentationBinding.currentTurnId}
         cwd={surfaceInputs.cwd}
@@ -98,6 +102,7 @@ export function createConversationComposerContent({
         newChat={surfaceInputs.newChat}
         onLoadControls={composerInputs.onLoadControls}
         onSetGoal={goalInputs.onSetGoal}
+        {...(onForkIntoAgent === undefined ? {} : { onForkIntoAgent })}
         openAccessoryAction={composerDelivery.composerAccessoryActionsBinding.openAccessoryAction}
         openControls={composerCommands.composerControlActionsBinding.openControls}
         openQuickControlMenu={composerCommands.composerControlActionsBinding.openQuickControlMenu}
@@ -133,6 +138,7 @@ export function createConversationComposerContent({
           composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
         }
         setSelectedPersonality={composerStateBinding.composerEditingBinding.setSelectedPersonality}
+        skillsEnabled={composerDelivery.composerAccessoryActionsBinding.skillsEnabled}
         steerComposer={composerDelivery.composerDeliveryBinding.steerComposer}
         stopAction={composerDelivery.composerDeliveryBinding.stopAction}
         terminalEnabled={composerDelivery.composerAccessoryActionsBinding.terminalEnabled}

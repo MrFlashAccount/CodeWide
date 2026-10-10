@@ -2,7 +2,9 @@ import { afterEach, expect, it, jest } from "@jest/globals";
 import { fireEvent, render } from "@testing-library/react-native";
 import { StyleSheet } from "react-native";
 
+import { observable } from "@legendapp/state";
 import type { AccountPoolProfile } from "../src/data/account-pool";
+import { parseAgentProvidersResult, type AgentProvidersState } from "../src/data/agentProviders";
 import { AccountPoolEditor } from "../src/features/accounts/AccountPoolFeature";
 import { AccountProfileRow } from "../src/features/accounts/AccountProfileRow";
 import { accountLimitProgressColor } from "../src/features/accounts/accountResetPresentation";
@@ -235,7 +237,7 @@ it("prefers the exact metered Pro tier over the coarse account summary", () => {
   expect(view.queryByText(/Pro · Primary/u)).toBeNull();
 });
 
-it("renders Add Codex account as the final compact list row", () => {
+it("renders Add account as the final compact list row", () => {
   jest.useFakeTimers().setSystemTime(NOW);
   const account = profile(Math.floor(NOW / 1_000) + 7 * 24 * 60 * 60);
   const accountPool = snapshot(account);
@@ -262,9 +264,50 @@ it("renders Add Codex account as the final compact list row", () => {
   );
 
   const buttons = view.getAllByRole("button");
-  expect(buttons.at(-1)?.props.testID).toBe("add-codex-account");
-  expect(view.getByTestId("add-codex-account")).toHaveStyle({ height: 56 });
+  expect(buttons.at(-1)?.props.testID).toBe("add-pool-account");
+  expect(view.getByTestId("add-pool-account")).toHaveStyle({ height: 56 });
+  // An older Companion does not name the pool's provider.
+  expect(view.getByText("Add account")).toBeTruthy();
+});
+
+function poolEditor(capabilities: readonly string[]) {
+  const accountPool = snapshot(profile(Math.floor(NOW / 1_000) + 7 * 24 * 60 * 60));
+  const value = parseAgentProvidersResult({
+    hostCapabilities: {},
+    providers: [
+      { auth: "unknown", capabilities: Object.fromEntries(capabilities.map((name) => [name, true])), id: "codex", name: "Codex", planLabel: null, primary: true, status: "live" },
+      { auth: "authenticated", capabilities: {}, id: "claude", name: "Claude", planLabel: null, primary: false, status: "live" },
+    ],
+  });
+  if (value === null) throw new Error("fixture must parse");
+  const state$ = observable<Record<string, AgentProvidersState>>({ server: { status: "ready", value } });
+  return render(
+    <AccountPoolEditor
+      accountPool={accountPool}
+      agentProviders={{ state$ }}
+      connectionId="server"
+      onActivate={jest.fn(() => Promise.resolve(accountPool))}
+      onCancelLogin={jest.fn(() => Promise.resolve())}
+      onConsumeResetCredit={jest.fn(() => Promise.resolve({ accountPool, outcome: "reset" as const }))}
+      onRefresh={jest.fn(() => Promise.resolve(accountPool))}
+      onRemove={jest.fn(() => Promise.resolve(accountPool))}
+      onStartLogin={jest.fn(() => Promise.resolve({ loginId: "login", userCode: "CODE", verificationUrl: "https://example.com" }))}
+      onUpdate={jest.fn(() => Promise.resolve(accountPool))}
+    />,
+  );
+}
+
+it("names the pool after the provider that declares it", () => {
+  jest.useFakeTimers().setSystemTime(NOW);
+  const view = poolEditor(["accounts.pool"]);
+  expect(view.getByText("Codex accounts")).toBeTruthy();
   expect(view.getByText("Add Codex account")).toBeTruthy();
+});
+
+it("shows no pool when no provider declares one", () => {
+  jest.useFakeTimers().setSystemTime(NOW);
+  const view = poolEditor([]);
+  expect(view.queryByTestId("add-pool-account")).toBeNull();
 });
 
 it("omits the inner ring and five-hour detail when that limit is unavailable", () => {

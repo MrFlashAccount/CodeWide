@@ -11,6 +11,7 @@ use std::{
 use codewide_companion::{
     catalog::SessionCatalog,
     history_service::HistoryService,
+    rollout_store::RolloutStore,
     server,
     store::IndexStore,
     sync::SyncHub,
@@ -68,7 +69,7 @@ async fn authoritative_refresh_recovers_without_cross_disconnect_replay() -> Tes
     // bounded read APIs when the temporary rollout index has no coverage.
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(temporary.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(companion_upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;

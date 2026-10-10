@@ -101,8 +101,7 @@ fn wrap_text_with_mentioned_files(input: &mut Vec<Value>, files: &[(String, Stri
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    let prefix =
-        format!("# Files mentioned by the user:\n\n{file_list}\n\n## My request for Codex:\n\n");
+    let prefix = format!("# Files mentioned by the user:\n\n{file_list}\n\n## My request:\n\n");
     if let Some(text) = input.iter_mut().find(|part| {
         part.get("type").and_then(Value::as_str) == Some("text")
             && part.get("text").and_then(Value::as_str).is_some()
@@ -207,7 +206,7 @@ mod tests {
         .await?;
 
         let prefix = format!(
-            "# Files mentioned by the user:\n\n## notes: {}\n\n## My request for Codex:\n\n",
+            "# Files mentioned by the user:\n\n## notes: {}\n\n## My request:\n\n",
             canonical_root.join("notes.txt").display()
         );
         assert_eq!(
@@ -264,7 +263,7 @@ mod tests {
             json!([{
                 "type": "text",
                 "text": format!(
-                    "# Files mentioned by the user:\n\n## notes.md: {}\n\n## My request for Codex:\n\n",
+                    "# Files mentioned by the user:\n\n## notes.md: {}\n\n## My request:\n\n",
                     canonical_file.display()
                 ),
                 "text_elements": []

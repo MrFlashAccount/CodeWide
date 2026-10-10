@@ -20,22 +20,41 @@ type IndexedSubagentResponse = {
   threads: IndexedSubagent[];
 };
 
-export function subagentActivityRootThreadId(payload: Record<string, unknown>): string | null {
-  // Wait for completion: item/started can race the new rollout header. The
-  // Companion watcher advances the local metadata index independently of the
-  // UI invalidation suppression window.
-  if (payload.method !== "item/completed") {
-    return null;
-  }
+/** A live event after which the Companion's descendant index may list a new or changed subagent. */
+export type SubagentActivity = {
+  readonly rootThreadId: string;
+  /**
+   * The spawn has only begun: the agent's transcript reaches the index a moment later, so one
+   * read can still miss it.
+   */
+  readonly spawning: boolean;
+};
+
+export function subagentActivity(payload: Record<string, unknown>): SubagentActivity | null {
   const params = record(payload.params);
   const item = record(params?.item);
-  if (params === null || item?.type !== "subAgentActivity") {
+  if (params === null || item === null || typeof params.threadId !== "string") {
     return null;
   }
-  if (item.kind !== "started" && item.kind !== "interacted") {
-    return null;
+  const rootThreadId = params.threadId;
+  // Codex: wait for completion, because item/started can race the new rollout header. The
+  // Companion watcher advances the local metadata index independently of the UI invalidation
+  // suppression window.
+  if (item.type === "subAgentActivity") {
+    return payload.method === "item/completed" &&
+      (item.kind === "started" || item.kind === "interacted")
+      ? { rootThreadId, spawning: false }
+      : null;
   }
-  return typeof params.threadId === "string" ? params.threadId : null;
+  // Claude: its agents are never announced as threads. The spawning call is the only live
+  // signal, and a foreground call completes only when its agent has finished.
+  if (item.type === "collabAgentToolCall" && item.tool === "spawnAgent") {
+    if (payload.method === "item/started") {
+      return { rootThreadId, spawning: true };
+    }
+    return payload.method === "item/completed" ? { rootThreadId, spawning: false } : null;
+  }
+  return null;
 }
 
 /** Load one descendant tree from the Companion's canonical parent index. */

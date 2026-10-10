@@ -1,0 +1,540 @@
+{
+ "description": "A Bash call blocked by a hook, a background sleep with a Monitor, a prompt typed while the turn ran, an interrupt marker, a follow-up prompt and a task-notification wake.",
+ "source": "Agent SDK 0.3.295 getSessionMessages(includeSystemMessages: true) on a local probe session; paths, signatures and usage removed.",
+ "messages": [
+  {
+   "type": "user",
+   "uuid": "a8eb9e50-1317-4b65-83dd-a12826f54ac3",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": "Run the shell command `sleep 25` using the Bash tool, then reply DONE."
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:31.873Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "a9434eeb-fea6-477f-beed-0f9c57d1f7aa",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXCTS63L5MfjAEYnAwY",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:33.439Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "8a88c5a4-9dbd-4b8d-9ddd-909754ee28ec",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXCTS63L5MfjAEYnAwY",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_01BrGSFdDTTxvDfU51LNFuMZ",
+      "name": "Bash",
+      "input": {
+       "command": "sleep 25",
+       "description": "Sleep for 25 seconds"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:33.713Z"
+  },
+  {
+   "type": "user",
+   "uuid": "c28160b5-4761-4b39-9f53-86ffa6c32d69",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "type": "tool_result",
+      "content": "<tool_use_error>Blocked: standalone sleep 25. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_use_error>",
+      "is_error": true,
+      "tool_use_id": "toolu_01BrGSFdDTTxvDfU51LNFuMZ"
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:33.721Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "1e730236-e430-4b9a-8f4d-35a7144a7cb0",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXCacCTSPq12MkJTPVJ",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:36.003Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "cffec853-01d0-41d7-b7ee-715157a18bfa",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXCacCTSPq12MkJTPVJ",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_01HMVZZbtyPGwmTEab1FmDXU",
+      "name": "Bash",
+      "input": {
+       "command": "sleep 25",
+       "description": "Sleep for 25 seconds",
+       "run_in_background": true
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:36.348Z"
+  },
+  {
+   "type": "user",
+   "uuid": "bb6c0f45-9230-4149-8353-ebd0d93065da",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_01HMVZZbtyPGwmTEab1FmDXU",
+      "type": "tool_result",
+      "content": "Command running in background with ID: bf30j14g3. Output is being written to: /tmp/claude-tasks/ed607e83-c55b-44f3-a3b7-f7164d6eadf9/tasks/bf30j14g3.output. You will be notified when it completes. To check interim output, use Read on that file path.",
+      "is_error": false
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:36.416Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "0391af84-f0d2-4898-b711-e7cc0fa7e163",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXCnAUE68uxd1ziZFXN",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:39.652Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "b332913c-c7d3-4ef1-bec7-2bef208442dc",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXCnAUE68uxd1ziZFXN",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_01G3ZaEcFpvZcpTKJbWcNizd",
+      "name": "Monitor",
+      "input": {
+       "command": "until [ -f /tmp/claude-tasks/ed607e83-c55b-44f3-a3b7-f7164d6eadf9/tasks/bf30j14g3.output ] && grep -q \"completed\" /tmp/claude-tasks/ed607e83-c55b-44f3-a3b7-f7164d6eadf9/tasks/bf30j14g3.output 2>/dev/null; do sleep 1; done",
+       "description": "Wait for sleep command to complete"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:40.651Z"
+  },
+  {
+   "type": "user",
+   "uuid": "84595aa9-b8d4-4428-85ea-b020650b6714",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_01G3ZaEcFpvZcpTKJbWcNizd",
+      "type": "tool_result",
+      "content": "Monitor started (task b4p16kmnj, expires in 5m unless the source ends first; you get one notice at expiry — re-arm if you still need the watch). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply."
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:40.677Z"
+  },
+  {
+   "type": "user",
+   "uuid": "cbe87e67-1cee-4222-8988-d9e53a271947",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": "Write the numbers from 1 to 300, one per line, no other text."
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:40.796Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "27416d2c-26d5-4aa7-8587-d2fed852cc48",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXD6nQ4LNkHTLtUKTcf",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:44.648Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "4df0af32-7116-485d-b96c-eb6ca7f9ed96",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXD6nQ4LNkHTLtUKTcf",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_01PNMeNfVpGdqUKqbJLTjbDR",
+      "name": "Bash",
+      "input": {
+       "command": "seq 1 300",
+       "description": "Generate numbers 1 to 300"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:44.925Z"
+  },
+  {
+   "type": "user",
+   "uuid": "ca50fab4-c10d-45a3-9443-985067b89f61",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_01PNMeNfVpGdqUKqbJLTjbDR",
+      "type": "tool_result",
+      "content": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63\n64\n65\n66\n67\n68\n69\n70\n71\n72\n73\n74\n75\n76\n77\n78\n79\n80\n81\n82\n83\n84\n85\n86\n87\n88\n89\n90\n91\n92\n93\n94\n95\n96\n97\n98\n99\n100\n101\n102\n103\n104\n105\n106\n107\n108\n109\n110\n111\n112\n113\n114\n115\n116\n117\n118\n119\n120\n121\n122\n123\n124\n125\n126\n127\n128\n129\n130\n131\n132\n133\n134\n135\n136\n137\n138\n139\n140\n141\n142\n143\n144\n145\n146\n147\n148\n149\n150\n151\n152\n153\n154\n155\n156\n157\n158\n159\n160\n161\n162\n163\n164\n165\n166\n167\n168\n169\n170\n171\n172\n173\n174\n175\n176\n177\n178\n179\n180\n181\n182\n183\n184\n185\n186\n187\n188\n189\n190\n191\n192\n193\n194\n195\n196\n197\n198\n199\n200\n201\n202\n203\n204\n205\n206\n207\n208\n209\n210\n211\n212\n213\n214\n215\n216\n217\n218\n219\n220\n221\n222\n223\n224\n225\n226\n227\n228\n229\n230\n231\n232\n233\n234\n235\n236\n237\n238\n239\n240\n241\n242\n243\n244\n245\n246\n247\n248\n249\n250\n251\n252\n253\n254\n255\n256\n257\n258\n259\n260\n261\n262\n263\n264\n265\n266\n267\n268\n269\n270\n271\n272\n273\n274\n275\n276\n277\n278\n279\n280\n281\n282\n283\n284\n285\n286\n287\n288\n289\n290\n291\n292\n293\n294\n295\n296\n297\n298\n299\n300",
+      "is_error": false
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:44.952Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "843fa1ad-c7e4-4cfa-a63d-58d112bc409d",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXDQaiTzurUkwJCSfAc",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:46.317Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "42c65092-dec3-4bb4-a0e3-e8f6c0f1706c",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXDWXQ9GABc4t1L1Vm4",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": null,
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:49.006Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "3710bcc3-a67d-49ad-a1c9-ecf5b6bed46a",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXDWXQ9GABc4t1L1Vm4",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "1"
+     }
+    ],
+    "stop_reason": null,
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:49.010Z"
+  },
+  {
+   "type": "user",
+   "uuid": "2f9917ce-1ecc-40d1-a018-ee7efca51f1c",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "[Request interrupted by user]"
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:49.012Z"
+  },
+  {
+   "type": "user",
+   "uuid": "fc14b3d3-8607-4c00-812c-a65c268fba1e",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": "Reply with just OK."
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:49.023Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "80491340-644d-4c96-a522-fe5521954246",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXDi4vpBvvJ99PWV9cF",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:50.807Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "aef6b134-24b5-40d7-93b9-0e15d1a33c07",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXDi4vpBvvJ99PWV9cF",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "OK"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:40:50.809Z"
+  },
+  {
+   "type": "user",
+   "uuid": "e44dd6c6-9fa8-4f89-b72c-d0260f384d44",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "role": "user",
+    "content": "<task-notification>\n<task-id>bf30j14g3</task-id>\n<tool-use-id>toolu_01HMVZZbtyPGwmTEab1FmDXU</tool-use-id>\n<output-file>/tmp/claude-tasks/ed607e83-c55b-44f3-a3b7-f7164d6eadf9/tasks/bf30j14g3.output</output-file>\n<status>completed</status>\n<summary>Background command \"Sleep for 25 seconds\" completed (exit code 0)</summary>\n</task-notification>"
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:41:01.487Z",
+   "origin": {
+    "kind": "task-notification",
+    "producer": "session-task",
+    "runId": "0mv0u3z22-3d64f08a"
+   }
+  },
+  {
+   "type": "assistant",
+   "uuid": "f7a9e842-f97c-4ca2-be68-545f682c92c3",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXEdEFwoN2U4Br6BnAC",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:41:03.680Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "04b76496-4558-4b25-baf4-65a502d3b36f",
+   "session_id": "ed607e83-c55b-44f3-a3b7-f7164d6eadf9",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrXEdEFwoN2U4Br6BnAC",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "DONE"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:41:03.694Z"
+  }
+ ]
+}

@@ -22,7 +22,11 @@ import {
   retainedServiceTier,
   STANDARD_SERVICE_TIER,
 } from "./modelServiceTier";
+import { ModelAgentNote, ModelProviderHeader } from "./ModelAgentScope";
+import { groupsModelsByProvider, modelSections } from "./modelSections";
+import { clampModelEffort, modelEffortLevels } from "./modelEffort";
 import { modelEffortLabel } from "./modelEffortPresentation";
+import { ProviderIcon } from "./ProviderIcon";
 import { AppText as Text } from "./Typography";
 import type { ModelThinkingMenuProps, ModelSettingsChoice } from "./TurnControlMenus.types";
 
@@ -71,10 +75,7 @@ function modelDraftChoice(
   models: readonly ModelControl[],
 ): ModelSettingsChoice | null {
   const model = models.find((candidate) => candidate.id === draft.model);
-  if (model === undefined || draft.effort === null) {
-    return null;
-  }
-  if (!model.efforts.includes(draft.effort) && draft.effort !== model.defaultEffort) {
+  if (model === undefined || clampModelEffort(model, draft.effort) !== draft.effort) {
     return null;
   }
   return {
@@ -109,7 +110,7 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
       current.status === "open" ? { ...current, modelsExpanded: !current.modelsExpanded } : current,
     );
   });
-  const selectModel = useEvent((model: string, effort: string) => {
+  const selectModel = useEvent((model: string, effort: string | null) => {
     setState((current) => {
       if (current.status !== "open") {
         return current;
@@ -162,6 +163,10 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
     setState({ status: "closed" });
     props.onClose();
   });
+  const close = useEvent(() => {
+    setState({ status: "closed" });
+    props.onClose();
+  });
   const trigger = createElement(
     Pressable,
     {
@@ -182,6 +187,7 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
       {state.status === "open" && (
         <ModelMenuContent
           apply={apply}
+          close={close}
           draft={state.draft}
           initial={state.initial}
           modelsExpanded={state.modelsExpanded}
@@ -199,6 +205,7 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
 
 function ModelMenuContent({
   apply,
+  close,
   draft,
   initial,
   modelsExpanded,
@@ -210,11 +217,12 @@ function ModelMenuContent({
   props,
 }: {
   apply: () => void;
+  close: () => void;
   draft: ModelDraft;
   initial: ModelDraft;
   modelsExpanded: boolean;
   onSelectEffort: (effort: string) => void;
-  onSelectModel: (model: string, effort: string) => void;
+  onSelectModel: (model: string, effort: string | null) => void;
   onSelectPersonality: (personality: ModelDraft["personality"]) => void;
   onSelectServiceTier: (serviceTier: string) => void;
   onToggleModels: () => void;
@@ -226,6 +234,7 @@ function ModelMenuContent({
   return (
     <View style={styles.content}>
       <Text style={styles.title}>Model & Thinking</Text>
+      <ModelAgentNote onFork={close} scope={props.agentScope} />
       <MenuNotices error={props.error} loading={props.loading && props.models.length === 0} />
       <ModelControls
         model={model}
@@ -237,6 +246,7 @@ function ModelMenuContent({
       />
       {modelsExpanded && (
         <ModelChoices
+          grouped={groupsModelsByProvider(props.agentScope)}
           models={props.models}
           onChoose={onSelectModel}
           selectedEffort={draft.effort}
@@ -249,7 +259,7 @@ function ModelMenuContent({
         selected={draft.personality}
         visible={props.showPersonalityControls !== false}
       />
-      {model !== undefined && (
+      {model !== undefined && model.defaultEffort !== null && (
         <CodeWideSlider
           accessibilityLabel="Thinking level"
           formatValue={modelEffortLabel}
@@ -257,7 +267,7 @@ function ModelMenuContent({
           onSelect={onSelectEffort}
           selected={draft.effort}
           testID="thinking-level"
-          values={model.efforts.length > 0 ? model.efforts : [model.defaultEffort]}
+          values={modelEffortLevels(model)}
         />
       )}
       <ApplyButton disabled={!canApply} onPress={apply} />
@@ -337,9 +347,7 @@ function ModelDisclosure({
       onPress={onPress}
       style={styles.modelButton}
     >
-      <Text numberOfLines={1} style={styles.rowText}>
-        {model?.label ?? "Choose model"}
-      </Text>
+      <ModelLabel label={model?.label ?? "Choose model"} provider={model?.provider ?? null} />
       <Ionicons
         color={colors.textMuted}
         name={expanded ? "chevron-up" : "chevron-down"}
@@ -350,27 +358,38 @@ function ModelDisclosure({
 }
 
 function ModelChoices({
+  grouped,
   models,
   onChoose,
   selectedEffort,
   selectedModel,
 }: {
+  /** Groups the rows under provider headers (a new chat on a multi-provider server). */
+  grouped: boolean;
   models: readonly ModelControl[];
-  onChoose: (model: string, effort: string) => void;
+  onChoose: (model: string, effort: string | null) => void;
   selectedEffort: string | null;
   selectedModel: string | null;
 }): ReactNode {
+  const row = (candidate: ModelControl) => (
+    <ModelRow
+      candidate={candidate}
+      key={candidate.id}
+      onChoose={onChoose}
+      selected={candidate.id === selectedModel}
+      selectedEffort={selectedEffort}
+    />
+  );
   return (
     <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={styles.modelList}>
-      {models.map((candidate) => (
-        <ModelRow
-          candidate={candidate}
-          key={candidate.id}
-          onChoose={onChoose}
-          selected={candidate.id === selectedModel}
-          selectedEffort={selectedEffort}
-        />
-      ))}
+      {grouped
+        ? modelSections(models).map((section) => (
+            <View key={section.provider ?? "unannotated"}>
+              {section.provider !== null && <ModelProviderHeader provider={section.provider} />}
+              {section.models.map(row)}
+            </View>
+          ))
+        : models.map(row)}
     </ScrollView>
   );
 }
@@ -382,15 +401,12 @@ function ModelRow({
   selectedEffort,
 }: {
   candidate: ModelControl;
-  onChoose: (model: string, effort: string) => void;
+  onChoose: (model: string, effort: string | null) => void;
   selected: boolean;
   selectedEffort: string | null;
 }): ReactNode {
   const choose = useEvent(() => {
-    const effort = candidate.efforts.includes(selectedEffort ?? "")
-      ? (selectedEffort ?? candidate.defaultEffort)
-      : candidate.defaultEffort;
-    onChoose(candidate.id, effort);
+    onChoose(candidate.id, clampModelEffort(candidate, selectedEffort));
   });
   return (
     <Pressable
@@ -400,9 +416,21 @@ function ModelRow({
       onPress={choose}
       style={styles.modelRow}
     >
-      <Text style={styles.rowText}>{candidate.label}</Text>
+      <ModelLabel label={candidate.label} provider={candidate.provider ?? null} />
       {selected && <Ionicons color={colors.text} name="checkmark" size={iconSize.inline} />}
     </Pressable>
+  );
+}
+
+/** A model's label, led by its provider's mark in a provider-aware catalog. */
+function ModelLabel({ label, provider }: { label: string; provider: string | null }): ReactNode {
+  return (
+    <View style={styles.modelLabel}>
+      {provider !== null && <ProviderIcon provider={provider} size={iconSize.inline} />}
+      <Text numberOfLines={1} style={styles.rowText}>
+        {label}
+      </Text>
+    </View>
   );
 }
 
@@ -549,6 +577,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xs,
     marginTop: spacing.xs,
+  },
+  modelLabel: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 1,
+    gap: spacing.xs,
   },
   modelList: {
     marginTop: spacing.xs,

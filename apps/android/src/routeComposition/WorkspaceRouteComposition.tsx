@@ -9,7 +9,11 @@ import {
   focusInteractiveTerminalSession,
 } from "../data/interactive-terminal-store";
 import { refreshNativeTerminalInventory } from "../data/nativeTerminalInventory";
-import { workspaceRuntime, type WorkspaceRuntimeSnapshot } from "../data/workspace-runtime";
+import {
+  agentProviders,
+  workspaceRuntime,
+  type WorkspaceRuntimeSnapshot,
+} from "../data/workspace-runtime";
 import { useThreadListAccountRefresh } from "../features/accounts/threadListAccountRefresh";
 import { useConnectionActions } from "../features/connections/connectionActions";
 import { useConnectionProjection } from "../features/connections/connectionProjection";
@@ -214,6 +218,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
   const pendingRequests = usePendingRequests(runtime.pendingRequests);
   const threadListSources: ThreadListSources = {
     accountRateLimitsDatabase: runtime.accountRateLimits,
+    agentProviders,
     pendingRequests,
     threadSummaryDatabase: runtime.threadSummaries,
   };

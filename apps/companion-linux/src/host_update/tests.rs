@@ -61,20 +61,81 @@ fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> Oper
 fn flat_mutable_install_requires_manual_bootstrap() {
     let directory = tempfile::tempdir().expect("temporary directory");
     fs::write(directory.path().join("codewide-companion"), b"legacy").expect("legacy binary");
-    let guardian = LinuxHostUpdateGuardian::new(
+    let guardian = LinuxHostUpdateGuardian::with_trust(
         directory.path().to_path_buf(),
         directory.path().join("host-update-state"),
-        "pin".to_owned(),
-        HostUpdateRelayState {
-            configured: false,
-            enabled: false,
-            upstream_live: false,
-        },
+        Some(test_trust()),
     );
     assert_eq!(
         guardian.capability().unavailable_reason.as_deref(),
         Some("manual_bootstrap_required")
     );
+}
+
+#[test]
+fn build_without_embedded_trust_is_not_remotely_updatable() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    install_generation(directory.path());
+    let guardian = LinuxHostUpdateGuardian::with_trust(
+        directory.path().to_path_buf(),
+        directory.path().join("host-update-state"),
+        None,
+    );
+    let capability = guardian.capability();
+    assert!(!capability.apply_supported);
+    assert_eq!(
+        capability.unavailable_reason.as_deref(),
+        Some("unofficial_build")
+    );
+}
+
+#[test]
+fn embedded_trust_needs_only_the_installed_guardian_not_an_installer_config() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    install_generation(directory.path());
+    assert!(!directory.path().join("bootstrap/config.json").exists());
+    let guardian = LinuxHostUpdateGuardian::with_trust(
+        directory.path().to_path_buf(),
+        directory.path().join("host-update-state"),
+        Some(test_trust()),
+    );
+    let capability = guardian.capability();
+    assert!(capability.apply_supported);
+    assert_eq!(capability.unavailable_reason, None);
+}
+
+fn test_trust() -> ReleaseTrust {
+    ReleaseTrust {
+        key_id: "test-key".to_owned(),
+        public_key_spki: "dGVzdA==".to_owned(),
+    }
+}
+
+/// Lays out the guardian and one immutable generation exactly as the installer does.
+fn install_generation(root: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let digest = "c".repeat(64);
+    let bootstrap = root.join("bootstrap");
+    fs::create_dir_all(&bootstrap).expect("bootstrap directory");
+    fs::set_permissions(&bootstrap, fs::Permissions::from_mode(0o700)).expect("bootstrap mode");
+    let guardian = bootstrap.join("codewide-companion-update-guardian");
+    fs::write(&guardian, b"guardian").expect("guardian binary");
+    fs::set_permissions(&guardian, fs::Permissions::from_mode(0o755)).expect("guardian mode");
+    let generation = root.join("generations").join(&digest);
+    fs::create_dir_all(&generation).expect("generation directory");
+    store::write_json(
+        &generation.join("metadata.json"),
+        &GenerationMetadataV1 {
+            schema_version: 1,
+            version: "1.0.0".to_owned(),
+            build: "build".to_owned(),
+            source_revision: "d".repeat(40),
+            artifact_digest: digest.clone(),
+        },
+    )
+    .expect("generation metadata");
+    std::os::unix::fs::symlink(format!("generations/{digest}"), root.join("current"))
+        .expect("current generation");
 }
 
 #[test]

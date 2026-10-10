@@ -63,7 +63,8 @@ export type HostUpdateStatus = {
   readonly availableTarget: AvailableHostUpdate | null;
   readonly capability: HostUpdateCapability;
   readonly currentBuild: string;
-  readonly currentDigest: string;
+  /** `null` when the host runs a build that was never installed from a signed release. */
+  readonly currentDigest: string | null;
   readonly currentSourceRevision: string;
   readonly currentVersion: string;
   readonly platform: HostUpdatePlatform;
@@ -85,7 +86,10 @@ export function parseHostUpdateStatus(value: unknown): HostUpdateStatus {
       row.availableTarget === null ? null : parseAvailableHostUpdate(row.availableTarget),
     capability: parseCapability(row.capability),
     currentBuild: text(row.currentBuild, "currentBuild"),
-    currentDigest: hex(row.currentDigest, SHA256_HEX_LENGTH, "currentDigest"),
+    currentDigest:
+      row.currentDigest === null
+        ? null
+        : hex(row.currentDigest, SHA256_HEX_LENGTH, "currentDigest"),
     currentSourceRevision: hex(row.currentSourceRevision, SHA1_HEX_LENGTH, "currentSourceRevision"),
     currentVersion: text(row.currentVersion, "currentVersion"),
     platform: platform(row.platform),

@@ -11,7 +11,8 @@ import { PrivateAssetRecoveryProvider } from "../../../rendering/use-private-ima
 import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary";
 import { MessageActionRail } from "./MessageActionRail";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
-import type { projectTurnPresentation } from "./turnProjection";
+import { groupFooterFacts, groupTailTurn, type TurnBubbleGroup } from "./turnBubbleGroup";
+import { projectTurnPresentation } from "./turnProjection";
 import { TurnMetricsProvider } from "./TurnMetricsProvider";
 import { TurnFooter } from "./TurnFooter";
 import { styles } from "./TurnTimelineItem.styles";
@@ -32,16 +33,21 @@ type VirtualizedTurnLeadItemProps = Pick<
 type VirtualizedTurnTimelineItemProps = {
   agentDateLabel?: string | null;
   animateLiveUpdates: boolean;
+  /** The slice's place in its response bubble (corners, footer, actions, date). */
+  bubble: VirtualizedTurnPlacement;
   compact: boolean;
   followsLead: boolean;
   forceExpanded: boolean;
   getTransferAccess?: TurnTimelineItemProps["getTransferAccess"];
+  /** The turns sharing this bubble, or `null` for a turn drawn alone. */
+  group: TurnBubbleGroup | null;
   latestAgentRef?: TurnTimelineItemProps["latestAgentRef"];
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   onForkThroughTurn?: (turnId: string) => Promise<void>;
   onLatestAgentLayout?: TurnTimelineItemProps["onLatestAgentLayout"];
   onLoadItems?: (turnId: string) => Promise<void>;
   parts: readonly VirtualizedTurnPart[];
+  /** The slice's place within its own turn (history, artifacts, response gaps). */
   placement: VirtualizedTurnPlacement;
   presentation: TurnPresentation;
   requestPrompt: ReactNode;
@@ -113,16 +119,14 @@ function VirtualizedTurnSlice({
   return (
     <View
       style={[
-        isLeadingSlice(props.placement) && !props.followsLead
+        isLeadingSlice(props.bubble) && !props.followsLead
           ? styles.turnGroup
           : styles.virtualizedTurnSegment,
-        isLeadingSlice(props.placement) && props.followsLead
-          ? styles.virtualizedTurnAfterLead
-          : null,
+        isLeadingSlice(props.bubble) && props.followsLead ? styles.virtualizedTurnAfterLead : null,
       ]}
       testID="turn-group"
     >
-      {isLeadingSlice(props.placement) && agentDateLabel !== null ? (
+      {isLeadingSlice(props.bubble) && agentDateLabel !== null ? (
         <TimelineDateSeparator label={agentDateLabel} />
       ) : null}
       <VirtualizedAgentMessage {...props} presentation={presentation} usage={usage} />
@@ -143,6 +147,7 @@ function VirtualizedAgentMessage({
       compact={props.compact}
       forceExpanded={props.forceExpanded}
       getTransferAccess={props.getTransferAccess}
+      group={props.group}
       onFixUnsupportedBlock={props.onFixUnsupportedBlock}
       onLoadItems={props.onLoadItems}
       parts={props.parts}
@@ -168,12 +173,13 @@ function VirtualizedAgentMessage({
         errorResetKey={`${props.turn.key}:agent`}
         fill={presentation.agentBubbleFill}
         footer={renderFooterForPlacement({
-          placement: props.placement,
+          group: props.group,
+          placement: props.bubble,
           presentation,
           turn: props.turn,
           usage,
         })}
-        segment={props.placement}
+        segment={props.bubble}
         testID="codex-bubble"
         variant="agent"
       >
@@ -181,9 +187,13 @@ function VirtualizedAgentMessage({
       </Bubble>
       <VirtualizedMessageActions
         onForkThroughTurn={props.onForkThroughTurn}
-        placement={props.placement}
-        presentation={presentation}
-        turn={props.turn}
+        placement={props.bubble}
+        {...groupActionTarget({
+          canFork: props.onForkThroughTurn !== undefined,
+          group: props.group,
+          presentation,
+          turn: props.turn,
+        })}
       />
     </View>
   );
@@ -274,11 +284,41 @@ function VirtualizedMessageActions({
   return <MessageActionRail request={request} />;
 }
 
-function renderVirtualizedTurnFooter(
-  presentation: TurnPresentation,
-  turn: TurnTimelineItemProps["turn"],
-  usage: TurnUsageProjection | null,
-): ReactElement {
+/**
+ * The turn a bubble's actions act on: the latest turn of a group, so copying
+ * or forking a continued response includes the continuation.
+ */
+function groupActionTarget({
+  canFork,
+  group,
+  presentation,
+  turn,
+}: {
+  readonly canFork: boolean;
+  readonly group: TurnBubbleGroup | null;
+  readonly presentation: TurnPresentation;
+  readonly turn: TurnTimelineItemProps["turn"];
+}): { readonly presentation: TurnPresentation; readonly turn: TurnTimelineItemProps["turn"] } {
+  const tail = group === null ? undefined : groupTailTurn(group);
+  if (tail === undefined || tail === turn) {
+    return { presentation, turn };
+  }
+  return { presentation: projectTurnPresentation(tail, null, canFork, false), turn: tail };
+}
+
+function renderVirtualizedTurnFooter({
+  group,
+  presentation,
+  turn,
+  usage,
+}: {
+  group: TurnBubbleGroup | null;
+  presentation: TurnPresentation;
+  turn: TurnTimelineItemProps["turn"];
+  usage: TurnUsageProjection | null;
+}): ReactElement {
+  const facts = footerFacts(presentation, usage, group);
+  const metadata = projectedTurnMetadata(presentation.rawTurn);
   return (
     <TurnFooter
       changesTarget={{
@@ -286,27 +326,51 @@ function renderVirtualizedTurnFooter(
         threadId: turn.threadId,
         turnId: turn.id,
       }}
-      completedAt={presentation.rawTurn.completedAt}
-      diff={projectedTurnMetadata(presentation.rawTurn)?.diff ?? ""}
-      durationMs={presentation.rawTurn.durationMs}
+      completedAt={facts.completedAt}
+      diff={metadata?.diff ?? ""}
+      durationMs={facts.durationMs}
+      model={metadata?.execution?.model ?? null}
       status={presentation.rawTurn.status}
-      usage={usage}
+      usage={facts.usage}
     />
   );
 }
 
+/**
+ * A group's footer is drawn on its latest turn's last slice: that turn's
+ * status and time, with the duration and usage of the whole bubble.
+ */
+function footerFacts(
+  presentation: TurnPresentation,
+  usage: TurnUsageProjection | null,
+  group: TurnBubbleGroup | null,
+): NonNullable<ReturnType<typeof groupFooterFacts>> {
+  const facts = group === null ? null : groupFooterFacts(group);
+  return (
+    facts ?? {
+      completedAt: presentation.rawTurn.completedAt,
+      durationMs: presentation.rawTurn.durationMs,
+      usage,
+    }
+  );
+}
+
 function renderFooterForPlacement({
+  group,
   placement,
   presentation,
   turn,
   usage,
 }: {
+  group: TurnBubbleGroup | null;
   placement: VirtualizedTurnPlacement;
   presentation: TurnPresentation;
   turn: TurnTimelineItemProps["turn"];
   usage: TurnUsageProjection | null;
 }): ReactElement | null {
-  return isTrailingSlice(placement) ? renderVirtualizedTurnFooter(presentation, turn, usage) : null;
+  return isTrailingSlice(placement)
+    ? renderVirtualizedTurnFooter({ group, presentation, turn, usage })
+    : null;
 }
 
 function isLeadingSlice(placement: VirtualizedTurnPlacement): boolean {

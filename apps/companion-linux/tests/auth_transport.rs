@@ -15,6 +15,7 @@ use codewide_companion::{
     device_tls,
     history_service::HistoryService,
     identity::CompanionIdentity,
+    rollout_store::RolloutStore,
     server,
     store::IndexStore,
     sync::SyncHub,
@@ -59,7 +60,7 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let registry = Arc::new(

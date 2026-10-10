@@ -1,4 +1,5 @@
 import type { CatalogSkill } from "./skill-catalog-types";
+import type { AgentProviderId } from "./threadAgent";
 
 export type TurnControlsValue = {
   defaults: {
@@ -7,18 +8,37 @@ export type TurnControlsValue = {
     permissions: string | null;
     serviceTier?: string | null;
   };
-  models: Array<{
-    defaultEffort: string;
-    defaultServiceTier?: string | null;
-    efforts: string[];
+  models: TurnControlsModel[];
+  permissions: Array<{
+    allowed: boolean;
+    description: string | null;
     id: string;
-    isDefault: boolean;
-    label: string;
-    serviceTiers?: Array<{ description: string; id: string; name: string }>;
-    supportsPersonality: boolean;
+    /** `permissionProfile/list` `codewideAgentProviders`; `null` when not annotated. */
+    providers: readonly AgentProviderId[] | null;
   }>;
-  permissions: Array<{ allowed: boolean; description: string | null; id: string }>;
   skills: CatalogSkill[];
+};
+
+/**
+ * Reasoning levels of one catalog model. A model either offers thinking levels
+ * with a default (`efforts` may be empty when the catalog lists only the
+ * default) or offers none: `defaultEffort: null` and no levels, as a Claude
+ * model without effort support reports `defaultReasoningEffort: null`.
+ */
+export type TurnControlsModelReasoning =
+  | { defaultEffort: string; efforts: string[] }
+  | { defaultEffort: null; efforts: readonly [] };
+
+/** One `model/list` row as the composer offers it. */
+export type TurnControlsModel = TurnControlsModelReasoning & {
+  defaultServiceTier?: string | null;
+  id: string;
+  isDefault: boolean;
+  label: string;
+  /** `model/list` `codewideAgentProvider`; `null` from a legacy single-provider Companion. */
+  provider: AgentProviderId | null;
+  serviceTiers?: Array<{ description: string; id: string; name: string }>;
+  supportsPersonality: boolean;
 };
 
 export type TurnControlsSection = keyof TurnControlsValue;

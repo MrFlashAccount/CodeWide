@@ -54,7 +54,7 @@ it("preserves thread runtime integration contracts", () => {
     "const loadView = async (request: ThreadSummaryViewRequest)",
   );
   expect(threadSummarySqlite).toContain("async loadView(request)");
-  expect(threadSummaryDatabase).toContain("async applySnapshot(connectionId, snapshots)");
+  expect(threadSummaryDatabase).toContain("async applySnapshot(connectionId, snapshots, cursor)");
   expect(threadSummaryDatabase).toContain("async applyEvents(connectionId, events)");
   expect(threadSummaryDatabase).toContain("async updateArchived(connectionId, threadId, archived)");
   expect(threadSummaryDatabase).not.toContain("SqliteRemoteStore");

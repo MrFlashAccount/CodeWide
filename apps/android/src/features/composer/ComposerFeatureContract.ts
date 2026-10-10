@@ -1,5 +1,6 @@
 import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
+import type { Observable } from "@legendapp/state";
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import type { View } from "react-native";
 import type { GetTransferAccess } from "../../data/private-transfer";
@@ -24,6 +25,7 @@ import type { ComposerSendPreference } from "./deliveryMode";
 import type { ComposerMarkdownInputHandle } from "./input/ComposerMarkdownInput.types";
 import type { ComposerMention } from "./input/composer-mentions";
 import type { ComposerTextSnapshot } from "./composerSession";
+import type { ComposerControlsState } from "./settings/controlsOverlay";
 
 /** Capabilities and state required by the complete V1 composer surface. */
 export type ComposerFeatureProps = {
@@ -40,6 +42,8 @@ export type ComposerFeatureProps = {
   composerTrayVisible: boolean;
   composerUploadScope: string;
   controlError: string | null;
+  /** The settings owner's state; `null` on a read-only surface. */
+  controls$: Observable<ComposerControlsState> | null;
   controlsResourceId: string | null;
   currentTurnId: string | null;
   cwd: string;
@@ -64,6 +68,8 @@ export type ComposerFeatureProps = {
   microphoneAccess: { allowCapture: () => boolean; granted: boolean };
   microphoneButtonRef: RefObject<View | null>;
   newChat: boolean;
+  /** Opens the thread's "Fork into" picker; absent when the thread cannot fork into another agent. */
+  onForkIntoAgent?: () => void;
   onLoadControls: LoadTurnControls | undefined;
   onSetGoal: GoalDialogProps["onSet"] | undefined;
   openAccessoryAction: (action: ComposerAccessoryAction) => void;
@@ -90,12 +96,13 @@ export type ComposerFeatureProps = {
   selectedPersonality: Personality | null;
   selectedServiceTier: string | null | undefined;
   selectEffort: (effort: string) => void;
-  selectModel: (model: string, effort: string) => void;
+  selectModel: (model: string, effort: string | null) => void;
   selectPermissions: (permissions: string | null) => void;
   selectServiceTier: (serviceTier: string) => void;
   sendDisabled: boolean;
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
   setSelectedPersonality: (value: Personality | null) => void;
+  skillsEnabled: boolean;
   steerComposer: () => void;
   stopAction: "goalAndResponse" | "response" | null;
   terminalEnabled: boolean;

@@ -9,6 +9,7 @@ const action = jest.fn();
 it("shimmers model and access labels until their controls resource is available", () => {
   const view = render(
     <ComposerControlChips
+      controls$={null}
       cwd="/workspace"
       error={null}
       load={() => new Promise<TurnControlsValue>(() => undefined)}

@@ -1,3 +1,4 @@
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { StoredComposerPreferences } from "../../data/thread-ui-state-types";
 import type { LoadTurnControls, ThreadSettings } from "../../data/turn-controls-types";
 import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
@@ -16,7 +17,13 @@ export type ComposerSettingsCapabilities = {
   draftThreadId: string | null;
   newChat: boolean;
   onLoadControls: LoadTurnControls | undefined;
+  /**
+   * Resolves when the server accepts the change and rejects when it refuses
+   * it; stays pending while the durable command waits for a connection.
+   */
   onUpdateSettings: ((settings: ThreadSettings) => Promise<void>) | undefined;
+  /** The conversation's thread with its server settings; absent in a new chat. */
+  remoteThread: Thread | null | undefined;
   saveComposerPreferences:
     | ((
         connectionId: string,

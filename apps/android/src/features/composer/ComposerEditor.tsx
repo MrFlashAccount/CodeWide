@@ -55,7 +55,7 @@ export function ComposerEditor({
       {...(getTransferAccess === undefined ? {} : { getAccess: getStableTransferAccess })}
     >
       <ComposerMarkdownInput
-        accessibilityLabel="Message Codex"
+        accessibilityLabel="Message the agent"
         ref={composerInputRef}
         {...(fileAttachmentEnabled &&
         !pastedAttachmentPending &&
@@ -82,7 +82,7 @@ export function ComposerEditor({
         search={searchComposerSuggestions}
         {...(getTransferAccess === undefined ? {} : { getTransferAccess: getStableTransferAccess })}
         onSelectMention={selectComposerMention}
-        placeholder={editingQueuedMessage ? "Edit queued message…" : "Message Codex…"}
+        placeholder={editingQueuedMessage ? "Edit queued message…" : "Message the agent…"}
         style={styles.composerInput}
       />
     </PrivateImageAccessProvider>

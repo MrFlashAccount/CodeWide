@@ -223,6 +223,11 @@ function AgentModelSetting({
   });
   const close = useEvent(() => undefined);
   const select = useEvent((choice: ModelSettingsChoice) => {
+    if (choice.effort === null) {
+      // The background agent runs with an explicit thinking level.
+      setError("The selected Voice Assistant model is unavailable");
+      return;
+    }
     setError(null);
     onSelect({ effort: choice.effort, model: choice.model }).catch((selectionError: unknown) => {
       setError(

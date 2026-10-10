@@ -8,6 +8,7 @@ import { Platform } from "react-native";
 import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
 import type { AccountRateLimitsRow } from "../../data/account-rate-limits";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
+import type { AgentProvidersResource } from "../../data/agentProvidersResource";
 import { androidReleaseAvailability } from "../../data/androidReleaseAvailability";
 import { availableAndroidRelease } from "../../data/androidReleaseContract";
 import type { StoredConnection } from "../../data/connection-profile-types";
@@ -45,6 +46,7 @@ export function SubscribedConnectionSettings({
 
 export function ConnectionSettings({
   accountRateLimits,
+  agentProviders,
   connections,
   entryPage = "overview",
   entryRequest,
@@ -72,6 +74,7 @@ export function ConnectionSettings({
   voiceAssistantModelCatalog,
 }: {
   accountRateLimits: AccountRateLimitsRow[];
+  agentProviders?: Pick<AgentProvidersResource, "refresh" | "state$">;
   connections: StoredConnection[];
   entryPage?: "overview" | "voiceAssistant";
   entryRequest?: string;
@@ -144,6 +147,7 @@ export function ConnectionSettings({
       security={Platform.OS === "web" ? null : <SecuritySettings />}
       servers={connectionSettingsSections({
         accountRateLimits,
+        ...(agentProviders === undefined ? {} : { agentProviders }),
         connections,
         hostUpdates,
         onApplyHostUpdate,

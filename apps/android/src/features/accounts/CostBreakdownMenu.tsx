@@ -46,7 +46,7 @@ export function CostBreakdownMenu({
   return (
     <Pressable
       accessibilityHint="Shows the token cost breakdown"
-      accessibilityLabel={`Estimated API-equivalent cost ${formatEstimatedTurnCost(estimate.totalCostUsd)}`}
+      accessibilityLabel={`${estimate.basis === "apiEquivalent" ? "Estimated API-equivalent cost" : "Cost estimated by the agent"} ${formatEstimatedTurnCost(estimate.totalCostUsd)}`}
       accessibilityRole="button"
       collapsable={false}
       hitSlop={5}

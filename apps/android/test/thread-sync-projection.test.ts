@@ -31,8 +31,10 @@ function harness(initial = summary("worker", { status: { type: "active", activeF
   };
   // WHY: The test exercises the real ordered projection through its catalog-facing
   // ports; unrelated command, account and snapshot operations are not invoked.
+  const applyChanged = vi.fn(() => true);
   const ports = {
     accountRateLimits: {},
+    agentProviders: { applyChanged },
     catalog: { readThreadSummary, refreshConnectionWindows, refreshInvalidatedThread: vi.fn() },
     details: { applyEvents: async () => ({ checkpoint: Promise.resolve(), threads: new Map() }) },
     resources: { threadResources: new Map() },
@@ -52,6 +54,7 @@ function harness(initial = summary("worker", { status: { type: "active", activeF
   } as unknown as Ports;
   return {
     store: createThreadSyncProjection(ports),
+    applyChanged,
     refreshConnectionWindows,
     readThreadSummary,
     get,
@@ -135,4 +138,14 @@ it("does not turn server-excluded supervisor progress into catalog repair work",
   }
   expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
   expect(test.get).not.toHaveBeenCalled();
+});
+
+it("publishes a durable provider status change to the provider list owner", async () => {
+  const test = harness();
+  const params = { hostCapabilities: {}, providers: [] };
+  await test.store.applyEvents("server", [
+    { cursor: 1, payload: { method: "companion/agentProviders/changed", params } },
+  ]);
+  expect(test.applyChanged).toHaveBeenCalledExactlyOnceWith("server", params);
+  expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
 });

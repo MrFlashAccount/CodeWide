@@ -1,10 +1,13 @@
 use std::{fs, io::Write};
 
+use std::{path::Path, sync::Arc};
+
 use codewide_companion::{
     rollout::{
         backfill_rollout_prefix, index_rollout, index_rollout_fully, rollout_file_id,
         scan_tail_turns,
     },
+    rollout_store::{ROLLOUT_INDEX_SCHEMA, RolloutStore},
     store::IndexStore,
 };
 use redb::{Database, ReadableDatabase, ReadableTableMetadata, TableDefinition};
@@ -20,7 +23,7 @@ fn indexes_only_complete_jsonl_records() -> Result<(), Box<dyn std::error::Error
     write!(rollout, r#"{{"type":"response_item","payload":{{}}}}"#)?;
     rollout.sync_all()?;
 
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     let report = index_rollout(&store, &rollout_path)?;
 
     assert_eq!(report.indexed_records, 2);
@@ -57,7 +60,7 @@ fn indexes_turn_boundaries_and_supports_descending_pages() -> Result<(), Box<dyn
     write_turn(&mut rollout, "turn-3", false)?;
     rollout.sync_all()?;
 
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     let report = index_rollout(&store, &rollout_path)?;
     let file_id = rollout_file_id(&rollout_path);
     assert_eq!(report.total_turns, 3);
@@ -104,7 +107,7 @@ fn materializes_and_incrementally_advances_the_active_turn_summary()
     )?;
     rollout.sync_all()?;
 
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     index_rollout(&store, &rollout_path)?;
     let file_id = rollout_file_id(&rollout_path);
     let turn = store.turn_by_id(&file_id, "turn")?.ok_or("turn missing")?;
@@ -191,7 +194,7 @@ fn large_cold_index_serves_the_tail_then_backfills_the_prefix()
     rollout.sync_all()?;
 
     let store_path = directory.path().join("index.redb");
-    let store = IndexStore::open(&store_path)?;
+    let store = open_rollout_store(&store_path)?;
     let hot = index_rollout(&store, &rollout_path)?;
     let file_id = rollout_file_id(&rollout_path);
     let state = store.file_state(&file_id)?.ok_or("file state missing")?;
@@ -205,7 +208,7 @@ fn large_cold_index_serves_the_tail_then_backfills_the_prefix()
     assert!(store.record_count()? < 70 * 4);
 
     drop(store);
-    let reopened = IndexStore::open(&store_path)?;
+    let reopened = open_rollout_store(&store_path)?;
     let warm = index_rollout(&reopened, &rollout_path)?;
     assert_eq!(warm.indexed_records, 0);
     assert!(!warm.complete);
@@ -238,7 +241,7 @@ fn large_cold_index_serves_the_tail_then_backfills_the_prefix()
 fn rebuilds_derived_index_after_rollout_replacement() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let rollout_path = directory.path().join("rollout.jsonl");
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     {
         let mut rollout = fs::File::create(&rollout_path)?;
         write_turn(&mut rollout, "old-1", true)?;
@@ -265,7 +268,7 @@ fn rebuilds_derived_index_after_rollout_replacement() -> Result<(), Box<dyn std:
 fn replaces_a_partial_tail_index_after_truncation() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let rollout_path = directory.path().join("rollout.jsonl");
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     {
         let mut rollout = fs::File::create(&rollout_path)?;
         writeln!(
@@ -312,7 +315,7 @@ fn aborted_turn_is_closed_at_its_terminal_record() -> Result<(), Box<dyn std::er
     )?;
     rollout.sync_all()?;
 
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     index_rollout(&store, &rollout_path)?;
     let file_id = rollout_file_id(&rollout_path);
     let turn = store
@@ -360,7 +363,7 @@ fn logic_upgrade_does_not_materialize_row_deletion_copies() -> Result<(), Box<dy
     }
     let before = fs::metadata(&path)?.len();
     {
-        let migrated = IndexStore::open(&path)?;
+        let migrated = IndexStore::open_with(&path, &[&ROLLOUT_INDEX_SCHEMA])?;
         assert_eq!(migrated.replay_after(Some(0))?.entries.len(), 1);
         assert_eq!(migrated.outbox_get("command-1")?, Some(queued_command));
     }
@@ -385,9 +388,9 @@ fn schema_upgrade_rebuilds_only_derived_rollout_tables() -> Result<(), Box<dyn s
     write_turn(&mut rollout, "turn-1", true)?;
     rollout.sync_all()?;
     {
-        let store = IndexStore::open(&state_path)?;
+        let (host, store) = open_index(&state_path)?;
         index_rollout(&store, &rollout_path)?;
-        store.append_replay_batch(&[br#"{"method":"kept"}"#.to_vec()], 8, 1024)?;
+        host.append_replay_batch(&[br#"{"method":"kept"}"#.to_vec()], 8, 1024)?;
         assert_eq!(store.turn_count()?, 1);
     }
     {
@@ -397,9 +400,9 @@ fn schema_upgrade_rebuilds_only_derived_rollout_tables() -> Result<(), Box<dyn s
         write.commit()?;
     }
 
-    let migrated = IndexStore::open(&state_path)?;
+    let (migrated, rollout_index) = open_index(&state_path)?;
     assert_eq!(migrated.schema_version(), 7);
-    assert_eq!(migrated.turn_count()?, 0);
+    assert_eq!(rollout_index.turn_count()?, 0);
     assert_eq!(migrated.replay_after(Some(0))?.entries.len(), 1);
     Ok(())
 }
@@ -422,7 +425,7 @@ fn cold_and_warm_history_exclude_rolled_back_turns_after_reopen_and_backfill()
     writer.sync_all()?;
     let file_id = rollout_file_id(&path);
     {
-        let store = IndexStore::open(&state_path)?;
+        let store = open_rollout_store(&state_path)?;
         assert!(!index_rollout(&store, &path)?.complete);
         writeln!(
             writer,
@@ -450,7 +453,7 @@ fn cold_and_warm_history_exclude_rolled_back_turns_after_reopen_and_backfill()
             .collect::<Vec<_>>(),
         ["survivor"]
     );
-    let store = IndexStore::open(&state_path)?;
+    let store = open_rollout_store(&state_path)?;
     index_rollout_fully(&store, &path)?;
     assert_eq!(
         store
@@ -481,7 +484,7 @@ fn cold_and_indexed_turn_lifecycles_agree() -> Result<(), Box<dyn std::error::Er
     let aborted_end = writer.metadata()?.len();
     write_turn(&mut writer, "open", false)?;
     writer.sync_all()?;
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     index_rollout(&store, &path)?;
     let warm = store.turns_desc(&rollout_file_id(&path), None, 10)?;
     let cold = scan_tail_turns(&path, None, 10)?;
@@ -526,7 +529,7 @@ fn nested_rollbacks_count_only_surviving_turns() -> Result<(), Box<dyn std::erro
             .collect::<Vec<_>>(),
         ["new", "keep"]
     );
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     index_rollout_fully(&store, &path)?;
     assert_eq!(
         store
@@ -555,7 +558,7 @@ fn equal_length_rewrite_outside_checkpoint_tail_rebuilds_the_index()
     write_turn(&mut writer, "tail", true)?;
     writer.sync_all()?;
     let previous_time = writer.metadata()?.modified()?;
-    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    let store = open_rollout_store(directory.path().join("index.redb"))?;
     index_rollout(&store, &path)?;
     let length = writer.metadata()?.len();
     writer.seek(SeekFrom::Start(0))?;
@@ -597,4 +600,15 @@ fn write_turn(
         )?;
     }
     Ok(())
+}
+
+/// Opens the host index with the rollout schema, as the companion does.
+fn open_index(path: &Path) -> Result<(Arc<IndexStore>, RolloutStore), Box<dyn std::error::Error>> {
+    let host = Arc::new(IndexStore::open_with(path, &[&ROLLOUT_INDEX_SCHEMA])?);
+    let rollout = RolloutStore::attach(host.database(), host.clone())?;
+    Ok((host, rollout))
+}
+
+fn open_rollout_store(path: impl AsRef<Path>) -> Result<RolloutStore, Box<dyn std::error::Error>> {
+    Ok(open_index(path.as_ref())?.1)
 }

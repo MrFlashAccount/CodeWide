@@ -20,6 +20,120 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "agent-provider-claude"
+version = "0.1.0"
+dependencies = [
+ "agent-core",
+ "agent-resources",
+ "agent-search",
+ "agent-transport",
+ "async-trait",
+ "base64 0.22.1",
+ "companion-host",
+ "flate2",
+ "notify",
+ "redb",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "agent-provider-codex"
+version = "0.1.0"
+dependencies = [
+ "agent-core",
+ "agent-resources",
+ "agent-search",
+ "agent-transport",
+ "async-trait",
+ "base64 0.22.1",
+ "blake3",
+ "companion-host",
+ "futures-util",
+ "hex",
+ "memchr",
+ "notify",
+ "percent-encoding",
+ "rand 0.9.5",
+ "redb",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "agent-resources"
+version = "0.1.0"
+dependencies = [
+ "agent-core",
+ "async-trait",
+ "companion-host",
+ "futures-util",
+ "hex",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "agent-search"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "thiserror 2.0.20",
+ "time",
+]
+
+[[package]]
+name = "agent-transport"
+version = "0.1.0"
+dependencies = [
+ "agent-core",
+ "axum",
+ "futures-util",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -725,6 +839,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 name = "codewide-companion"
 version = "0.1.0"
 dependencies = [
+ "agent-provider-codex",
  "async-trait",
  "axum",
  "axum-server",
@@ -842,6 +957,10 @@ dependencies = [
 name = "companion-core"
 version = "0.1.0"
 dependencies = [
+ "agent-core",
+ "agent-provider-claude",
+ "agent-provider-codex",
+ "agent-transport",
  "async-trait",
  "axum",
  "axum-server",
@@ -850,6 +969,7 @@ dependencies = [
  "bytes",
  "clap",
  "codewide-relay",
+ "companion-host",
  "flate2",
  "fs2",
  "futures-util",
@@ -898,6 +1018,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "companion-host"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "redb",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "companion-swift-ffi"
 version = "0.1.0"
 dependencies = [
@@ -910,6 +1044,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uniffi",
 ]
 
@@ -1411,6 +1547,16 @@ dependencies = [
  "libc",
  "thiserror 1.0.69",
  "winapi",
+]
+
+[[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -4000,6 +4146,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5078,6 +5235,16 @@ dependencies = [
  "rusticata-macros",
  "thiserror 2.0.20",
  "time",
+]
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
 ]
 
 [[package]]

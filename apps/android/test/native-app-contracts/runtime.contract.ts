@@ -80,11 +80,17 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain("mirrorQueuedCommands");
   expect(voiceWorkspace).not.toContain("sameConnections(");
   expect(ownerWorkspaceRuntime).toContain("supervisor.replaceConnections(initialProfiles)");
-  const browserWorkspaceStyles = readFileSync(
-    new URL("../../src/features/browser/BrowserWorkspace.styles.ts", import.meta.url),
+  // Browser CONTEXT: network and HTTP error content stays inside the WebView;
+  // the app overlays only local action notices (unsupported links, popups).
+  const internalBrowser = readFileSync(
+    new URL("../../src/features/browser/InternalBrowser.native.tsx", import.meta.url),
     "utf8",
   );
-  expect(browserWorkspaceStyles).toContain("backgroundColor: colors.errorContainer");
+  expect(internalBrowser).toMatch(
+    /\{pageSession\.status\.kind === "notice" && \(\s*<BrowserPageFeedback/u,
+  );
+  expect(internalBrowser).toContain("onError={pageSession.pageFailed}");
+  expect(internalBrowser).toContain("onHttpError={pageSession.httpFailed}");
   const composerDeliveryMenu = readFileSync(
     new URL("../../src/features/composer/ComposerDeliveryMenu.native.tsx", import.meta.url),
     "utf8",

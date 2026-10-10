@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "agent-resources",
+  "projectType": "library",
+  "sourceRoot": "crates/agent-resources/src",
+  "tags": ["language:rust", "type:library"],
+  "implicitDependencies": ["agent-core", "companion-host"],
+  "metadata": {
+    "description": "Thread resource projection and reads shared by provider adapters"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p agent-resources --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p agent-resources --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p agent-resources --release",
+        "cwd": "."
+      }
+    }
+  }
+}

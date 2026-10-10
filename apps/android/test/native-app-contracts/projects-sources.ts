@@ -8,10 +8,6 @@ export const newChat = readFileSync(
   new URL("../../src/routeComposition/WorkspaceRouteComposition.tsx", import.meta.url),
   "utf8",
 );
-export const newThreadServerSheet = readFileSync(
-  new URL("../../src/features/projects/NewThreadServerSheet.tsx", import.meta.url),
-  "utf8",
-);
 export const projectPickerContent = readFileSync(
   new URL("../../src/features/projects/ProjectPickerContent.tsx", import.meta.url),
   "utf8",

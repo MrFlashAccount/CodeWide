@@ -193,6 +193,66 @@ const enabled = {
   threadSearchActive: false,
 };
 
+/** A turn with no user message: a background task woke the agent. */
+function providerTurnRow(id: string, source: string, status: "completed" | "inProgress"): TurnRow {
+  const row = status === "completed" ? turnRow(id, source) : streamingTurnRow(id, [
+    { id: `${id}-agent`, phase: "final_answer", text: source, type: "agentMessage" },
+  ]);
+  return row;
+}
+
+describe("continued responses", () => {
+  it("draws everything from one user message to the next as one bubble", () => {
+    const head = completedConversationTurnRow("head", "First answer");
+    const wake = providerTurnRow("wake", "Background task finished", "completed");
+    const next = completedConversationTurnRow("next", "Another answer");
+    const rows = projectTimelineRows([head, wake, next], enabled);
+    const slices = rows.filter((row) => row.kind === "turnSlice");
+
+    expect(slices.map((row) => [row.item.id, row.placement, row.bubble])).toEqual([
+      ["head", "single", "start"],
+      ["wake", "single", "end"],
+      ["next", "single", "single"],
+    ]);
+    // The head's answer folds into the bubble's history; only the latest answer stays outside.
+    expect(slices[0]).toMatchObject({
+      group: { memberIndex: 0, members: [head, wake] },
+      parts: [{ kind: "empty" }],
+    });
+    expect(slices[1]?.parts).toEqual([expect.objectContaining({ kind: "markdownBlock" })]);
+    expect(slices[1]).toMatchObject({ group: { memberIndex: 1, members: [head, wake] } });
+    expect(slices[2]).toMatchObject({ group: null });
+    // The continuation still answers for its own turn.
+    expect(timelineResponseStartRow(rows, "wake")?.key).toBe(timelineRowKey(slices[1]!));
+  });
+
+  it("streams a live continuation into the existing bubble without changing row keys", () => {
+    const head = completedConversationTurnRow("head", "First answer");
+    const alone = projectTimelineRows([head], enabled);
+    const live = projectTimelineRows(
+      [head, providerTurnRow("wake", "Working", "inProgress")],
+      enabled,
+    );
+
+    expect(live[0]?.key).toBe(alone[0]?.key);
+    expect(live.map((row) => (row.kind === "turnSlice" ? row.bubble : row.kind))).toEqual([
+      "turnLead",
+      "start",
+      "end",
+    ]);
+    // While the continuation runs, the head's answer is still the latest one shown.
+    expect(live[1]).toMatchObject({ parts: [expect.objectContaining({ kind: "markdownBlock" })] });
+  });
+
+  it("keeps a turn without a user message alone when nothing precedes it", () => {
+    const rows = projectTimelineRows(
+      [providerTurnRow("wake", "Background task finished", "completed")],
+      enabled,
+    );
+    expect(rows).toMatchObject([{ bubble: "single", group: null, kind: "turnSlice" }]);
+  });
+});
+
 describe("feature-flagged conversation rows", () => {
   it("uses the measured cold-row mean as the dynamic fallback", () => {
     expect(timelineRowSizeEstimate()).toBe(115);
@@ -270,13 +330,18 @@ describe("feature-flagged conversation rows", () => {
   });
 
   it("preserves unchanged row identity across outer timeline snapshots", () => {
-    const stable = turnRow("stable", "Stable response");
-    const changing = turnRow("changing", "First response");
+    const stable = completedConversationTurnRow("stable", "Stable response");
+    const changing = completedConversationTurnRow("changing", "First response");
     const first = projectTimelineRows([stable, changing], enabled);
-    const second = projectTimelineRows([stable, turnRow("changing", "Updated response")], enabled);
+    const second = projectTimelineRows(
+      [stable, completedConversationTurnRow("changing", "Updated response")],
+      enabled,
+    );
 
+    // Lead and response rows of the unchanged turn keep their identity.
     expect(second[0]).toBe(first[0]);
-    expect(second[1]).not.toBe(first[1]);
+    expect(second[1]).toBe(first[1]);
+    expect(second[3]).not.toBe(first[3]);
   });
 
   it("keeps the physical row key stable when a streaming message gains a tool call", () => {

@@ -1,7 +1,9 @@
+import type { ServerIconId } from "./serverIcons";
 import type { AccountRateLimitsRow } from "./account-rate-limits";
 import type { AccountUsageSource } from "./account-usage-presentation";
 
 export interface AccountUsageServer {
+  readonly iconId: ServerIconId;
   readonly id: string;
   readonly name: string;
 }

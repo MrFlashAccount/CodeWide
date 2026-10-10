@@ -84,6 +84,8 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
           ? "failed"
           : null;
   return {
+    agentBadge: threadAgentBadge(thread),
+    agentProvider: threadAgentBadgeProvider(thread),
     archived: thread.archived,
     id: thread.remoteThreadId,
     needsAttention: threadNeedsAttention(thread),
@@ -95,6 +97,18 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
     unread: thread.unread,
     ...(state === null ? {} : { state }),
   };
+}
+
+/** The thread's declared provider name, used only to label its provider mark. */
+function threadAgentBadge(thread: StoredThreadSummary): string | null {
+  const agent = thread.codewideAgent;
+  return agent === null || agent === undefined ? null : agent.providerName;
+}
+
+/** The thread's declared provider id, for its mark; `null` for legacy or malformed data. */
+function threadAgentBadgeProvider(thread: StoredThreadSummary): string | null {
+  const agent = thread.codewideAgent;
+  return agent === null || agent === undefined ? null : agent.provider;
 }
 
 function threadNeedsAttention(thread: StoredThreadSummary): boolean {

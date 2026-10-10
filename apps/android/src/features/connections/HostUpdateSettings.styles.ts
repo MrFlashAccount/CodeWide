@@ -1,52 +1,96 @@
 import { StyleSheet } from "react-native";
 
-import { colors, radii, spacing, typeScale, typeWeight } from "../../theme";
+import { SETTINGS_ROW_LEADING_SIZE } from "../../ui/settingsRowLayout";
+
+import { colors, radii, spacing, typeScale } from "../../theme";
+import { listRowHeight } from "../../ui/AppListRow.types";
 
 export const styles = StyleSheet.create({
-  actions: {
+  callout: {
+    // Setup and progress are not warnings: a raised neutral surface keeps the
+    // tone calm, and only a real failure switches to the error container.
+    backgroundColor: colors.surfaceContainerHighest,
+    borderRadius: radii.medium,
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+    // The callout text starts in the row's text column.
+    marginLeft: spacing.md + SETTINGS_ROW_LEADING_SIZE + spacing.md - spacing.sm,
+    marginRight: spacing.md,
+    padding: spacing.sm,
+  },
+  calloutActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.xs,
   },
-  body: {
-    backgroundColor: colors.surfaceContainerLow,
+  calloutError: {
+    backgroundColor: colors.errorContainer,
     borderRadius: radii.medium,
-    gap: spacing.sm,
-    padding: spacing.md,
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+    // The callout text starts in the row's text column.
+    marginLeft: spacing.md + SETTINGS_ROW_LEADING_SIZE + spacing.md - spacing.sm,
+    marginRight: spacing.md,
+    padding: spacing.sm,
   },
-  detail: {
-    color: colors.textMuted,
-    ...typeScale.body,
+  calloutText: {
+    color: colors.text,
+    ...typeScale.label,
   },
-  error: {
-    color: colors.red,
-    ...typeScale.body,
+  calloutTextError: {
+    color: colors.onErrorContainer,
+    ...typeScale.label,
   },
-  label: {
+  card: {
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radii.medium,
+    overflow: "hidden",
+  },
+  command: {
+    alignItems: "center",
+    backgroundColor: colors.code,
+    borderRadius: radii.compact,
+    flexDirection: "row",
+    paddingLeft: spacing.xs,
+  },
+  commandText: {
+    color: colors.text,
+    flex: 1,
+    minWidth: 0,
+    ...typeScale.code,
+  },
+  description: {
     color: colors.textMuted,
     ...typeScale.label,
+  },
+  descriptionError: {
+    color: colors.red,
+  },
+  descriptionSuccess: {
+    color: colors.green,
+  },
+  leadingSlot: {
+    alignItems: "center",
+    width: SETTINGS_ROW_LEADING_SIZE,
   },
   row: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.sm,
-    justifyContent: "space-between",
+    gap: spacing.md,
+    minHeight: listRowHeight.double,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  text: {
+    flex: 1,
+    gap: spacing.xxs,
     minWidth: 0,
   },
-  status: {
-    color: colors.textMuted,
-    ...typeScale.body,
-  },
-  success: {
-    color: colors.green,
-    ...typeScale.body,
-  },
-  value: {
+  title: {
     color: colors.text,
-    flexShrink: 1,
     ...typeScale.body,
-    fontWeight: typeWeight.semibold,
   },
-  versionShimmer: {
-    alignItems: "flex-end",
-    flex: 1,
+  titleShimmer: {
+    alignSelf: "flex-start",
   },
 });

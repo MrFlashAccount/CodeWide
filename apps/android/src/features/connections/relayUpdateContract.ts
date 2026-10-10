@@ -26,6 +26,8 @@ export function parseRelayUpdateStatus(value: unknown): HostUpdateStatus {
       ...capability,
       guardianContractVersion: capability.updaterContractVersion,
     },
+    // Relay reports an empty digest until Relay Updater installs a signed release.
+    currentDigest: row.currentDigest === "" ? null : row.currentDigest,
     platform: "relay-linux-x86-64",
   });
 }

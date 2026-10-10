@@ -1,0 +1,45 @@
+#!/bin/sh
+# Builds the Claude agent host as one self-contained executable with Bun
+# (`bun build --compile`). The Claude Agent SDK is left out: the companion
+# downloads the pinned package from npm on the user's machine and passes it
+# to the host with --agent-sdk. Usage:
+#
+#   build-claude-agent-host <bun-target> <output-file>
+#
+# <bun-target> is a Bun compile target such as bun-linux-x64 or
+# bun-darwin-arm64. The host's dependencies must be installed (pnpm install).
+set -eu
+
+[ "$#" -eq 2 ] || {
+  printf 'Usage: %s <bun-target> <output-file>\n' "$0" >&2
+  exit 2
+}
+target=$1
+output=$2
+case "$target" in
+  bun-linux-x64|bun-linux-arm64|bun-darwin-x64|bun-darwin-arm64) ;;
+  *) printf 'Unsupported Bun target: %s\n' "$target" >&2; exit 2 ;;
+esac
+case "$output" in
+  /*) ;;
+  *) printf '%s\n' 'output file must be absolute' >&2; exit 2 ;;
+esac
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+host="$repo_root/crates/agent-provider-claude/host"
+bun=${CODEWIDE_BUN:-bun}
+command -v "$bun" >/dev/null 2>&1 || {
+  printf '%s\n' 'Bun is required to build the Claude agent host (set CODEWIDE_BUN or put bun on PATH).' >&2
+  exit 2
+}
+test -d "$host/node_modules" || {
+  printf '%s\n' 'The Claude agent host has no node_modules; run pnpm install first.' >&2
+  exit 2
+}
+mkdir -p "$(dirname -- "$output")"
+cd "$host"
+"$bun" build --compile --minify \
+  --external @anthropic-ai/claude-agent-sdk \
+  --target "$target" \
+  src/main.ts --outfile "$output" >/dev/null
+test -x "$output"

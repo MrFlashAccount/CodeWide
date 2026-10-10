@@ -1,0 +1,22 @@
+[package]
+name = "companion-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Host infrastructure contracts shared by CodeWide Companion core and provider adapters"
+
+[dependencies]
+async-trait = "0.1.89"
+redb = { version = "4.1.0", features = ["cache_metrics"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "time"] }
+tracing = "0.1.41"
+
+[dev-dependencies]
+tempfile = "3.21.0"
+
+[lints]
+workspace = true

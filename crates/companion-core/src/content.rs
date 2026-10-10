@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use crate::{rollout_content, store::IndexStore};
+use companion_host::content::CanonicalContentSource;
 
 pub const MAX_INLINE_TEXT_BYTES: usize = 16 * 1024;
 pub const MAX_PROJECTED_ITEM_BYTES: usize = 32 * 1024;
@@ -53,7 +53,7 @@ pub struct PrivateContentService {
     directory: PathBuf,
     replay_directory: PathBuf,
     fallback_directories: Arc<[PathBuf]>,
-    rollout_store: Option<Arc<IndexStore>>,
+    canonical: Option<Arc<dyn CanonicalContentSource>>,
     memory: Arc<Mutex<MemoryCache>>,
     writes: tokio::sync::mpsc::Sender<PersistRequest>,
 }
@@ -162,21 +162,21 @@ impl PrivateContentService {
         Self::open_inner(directory, fallback_directories, None)
     }
 
-    /// Opens a source-aware store that resolves proven canonical rollout
-    /// locators before falling back to companion-owned bytes.
+    /// Opens a source-aware store that resolves content a provider proves
+    /// from its canonical sources before falling back to companion-owned bytes.
     #[must_use]
     pub fn open_indexed(
         directory: PathBuf,
         fallback_directories: Vec<PathBuf>,
-        rollout_store: Arc<IndexStore>,
+        canonical: Arc<dyn CanonicalContentSource>,
     ) -> Arc<Self> {
-        Self::open_inner(directory, fallback_directories, Some(rollout_store))
+        Self::open_inner(directory, fallback_directories, Some(canonical))
     }
 
     fn open_inner(
         directory: PathBuf,
         fallback_directories: Vec<PathBuf>,
-        rollout_store: Option<Arc<IndexStore>>,
+        canonical: Option<Arc<dyn CanonicalContentSource>>,
     ) -> Arc<Self> {
         let (writes, receiver) = tokio::sync::mpsc::channel(MAX_PENDING_WRITES);
         let memory = Arc::new(Mutex::new(MemoryCache::default()));
@@ -184,7 +184,7 @@ impl PrivateContentService {
         tokio::spawn(persist_worker(
             directory.clone(),
             replay_directory.clone(),
-            rollout_store.clone(),
+            canonical.clone(),
             receiver,
             memory.clone(),
         ));
@@ -192,7 +192,7 @@ impl PrivateContentService {
             directory,
             replay_directory,
             fallback_directories: fallback_directories.into(),
-            rollout_store,
+            canonical,
             memory,
             writes,
         })
@@ -426,8 +426,8 @@ impl PrivateContentService {
         if let Some(value) = cached(&self.memory, id) {
             return Ok(Some(value));
         }
-        if let Some(store) = self.rollout_store.as_deref() {
-            match rollout_content::load(store, id).await {
+        if let Some(canonical) = self.canonical.as_deref() {
+            match canonical.load(id).await {
                 Ok(Some(content)) => {
                     return Ok(Some(CachedContent {
                         bytes: content.bytes,
@@ -438,7 +438,7 @@ impl PrivateContentService {
                     }));
                 }
                 Ok(None) => {}
-                Err(error) => tracing::warn!(%error, "rollout content lookup failed"),
+                Err(error) => tracing::warn!(%error, "canonical content lookup failed"),
             }
         }
         let mut directories = Vec::with_capacity(2 + self.fallback_directories.len());
@@ -644,7 +644,7 @@ impl ContentProjector {
             metadata.insert("artifacts".into(), Value::Array(artifacts));
         }
         if let Some(metrics) = metadata.get_mut("activityMetrics") {
-            crate::activity_metrics::compact_summary(metrics);
+            companion_host::activity_metrics::compact_summary(metrics);
         }
         if !metadata.is_empty() {
             summary.insert("codewide".into(), Value::Object(metadata));
@@ -653,13 +653,13 @@ impl ContentProjector {
     }
 
     fn project_turn_items(&self, turn: Value) -> Value {
-        let mut turn = crate::activity_metrics::attach_to_turn(turn);
+        let mut turn = companion_host::activity_metrics::attach_to_turn(turn);
         let metrics = turn.pointer("/codewide/activityMetrics").cloned();
         if let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) {
             for item in items {
                 *item = self.project_item(item.take());
                 if let Some(metrics) = &metrics {
-                    crate::activity_metrics::attach_item_metrics(item, metrics);
+                    companion_host::activity_metrics::attach_item_metrics(item, metrics);
                 }
             }
         }
@@ -846,9 +846,6 @@ impl ContentProjector {
         }
         if object.get("type").and_then(Value::as_str) == Some("userMessage") {
             compact_user_images(object, &self.content);
-            if let Some(parts) = object.get_mut("content").and_then(Value::as_array_mut) {
-                crate::user_message_projection::project_desktop_content(parts);
-            }
             attach_user_message_attachments(object);
         }
         if object.get("type").and_then(Value::as_str) == Some("imageGeneration")
@@ -1508,7 +1505,7 @@ fn cached(cache: &Mutex<MemoryCache>, id: &str) -> Option<CachedContent> {
 async fn persist_worker(
     directory: PathBuf,
     replay_directory: PathBuf,
-    rollout_store: Option<Arc<IndexStore>>,
+    canonical: Option<Arc<dyn CanonicalContentSource>>,
     mut receiver: tokio::sync::mpsc::Receiver<PersistRequest>,
     memory: Arc<Mutex<MemoryCache>>,
 ) {
@@ -1518,11 +1515,11 @@ async fn persist_worker(
     let mut prefer_pending = false;
     while let Some(current) = request {
         let retention = pending_retention(&memory, &current.id).unwrap_or(current.retention);
-        let canonical = if let Some(store) = rollout_store.as_deref() {
-            match rollout_content::load(store, &current.id).await {
+        let proven = if let Some(source) = canonical.as_deref() {
+            match source.load(&current.id).await {
                 Ok(content) => content.is_some(),
                 Err(error) => {
-                    tracing::warn!(%error, "rollout content persistence lookup failed");
+                    tracing::warn!(%error, "canonical content persistence lookup failed");
                     false
                 }
             }
@@ -1533,7 +1530,7 @@ async fn persist_worker(
             ContentRetention::Fallback => &directory,
             ContentRetention::Replay => &replay_directory,
         };
-        let persisted = if canonical {
+        let persisted = if proven {
             Ok(PersistOutcome {
                 created: false,
                 bytes: 0,
@@ -1855,8 +1852,26 @@ fn unix_time_ms() -> u64 {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
+    use companion_host::{content::CanonicalContent, index::StoreError};
+
     use super::*;
-    use crate::rollout::index_rollout_fully;
+
+    /// Proves exactly one text from a provider's canonical source.
+    struct OneCanonicalText(&'static str);
+
+    #[async_trait::async_trait]
+    impl CanonicalContentSource for OneCanonicalText {
+        async fn load(&self, digest: &str) -> Result<Option<CanonicalContent>, StoreError> {
+            Ok(
+                (hex::encode(Sha256::digest(self.0.as_bytes())) == digest).then(|| {
+                    CanonicalContent {
+                        bytes: Arc::from(self.0.as_bytes()),
+                        content_type: "text/plain; charset=utf-8".into(),
+                    }
+                }),
+            )
+        }
+    }
 
     #[test]
     fn repeated_content_queues_one_persistence_write() {
@@ -1866,7 +1881,7 @@ mod tests {
             directory: directory.path().to_path_buf(),
             replay_directory: directory.path().join("replay"),
             fallback_directories: Vec::new().into(),
-            rollout_store: None,
+            canonical: None,
             memory: Arc::new(Mutex::new(MemoryCache::default())),
             writes,
         };
@@ -1893,7 +1908,7 @@ mod tests {
             directory: directory.path().to_path_buf(),
             replay_directory: directory.path().join("replay"),
             fallback_directories: Vec::new().into(),
-            rollout_store: None,
+            canonical: None,
             memory: Arc::new(Mutex::new(MemoryCache::default())),
             writes,
         };
@@ -1924,7 +1939,7 @@ mod tests {
             directory: fallback.clone(),
             replay_directory: replay.clone(),
             fallback_directories: Vec::new().into(),
-            rollout_store: None,
+            canonical: None,
             memory: memory.clone(),
             writes,
         };
@@ -1954,21 +1969,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proven_rollout_content_is_not_duplicated_in_the_fallback_store()
+    async fn proven_canonical_content_is_not_duplicated_in_the_fallback_store()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
-        let rollout = directory.path().join("rollout.jsonl");
-        std::fs::write(
-            &rollout,
-            concat!(
-                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread\",\"cwd\":\"/tmp\",\"timestamp\":\"2026-01-01T00:00:00Z\"}}\n",
-                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"thread_id\":\"thread\",\"turn_id\":\"turn\",\"item\":{\"type\":\"CommandExecution\",\"id\":\"command\",\"aggregated_output\":\"canonical output\"}}}\n",
-            ),
-        )?;
-        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
-        index_rollout_fully(&store, &rollout)?;
         let fallback = directory.path().join("fallback");
-        let content = PrivateContentService::open_indexed(fallback.clone(), Vec::new(), store);
+        let content = PrivateContentService::open_indexed(
+            fallback.clone(),
+            Vec::new(),
+            Arc::new(OneCanonicalText("canonical output")),
+        );
 
         let reference = content.put_text("canonical output", "text/plain; charset=utf-8");
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -2332,6 +2341,25 @@ mod tests {
         );
     }
 
+    /// The companion's composition: user text first, then content.
+    fn user_text_item(raw: Value) -> Value {
+        let mut notification = json!({"method":"item/completed", "params":{}});
+        notification["params"]["item"] = raw;
+        crate::user_message_projection::project_notification(
+            notification,
+            &agent_core::user_text::NoUserTextFormats,
+        )
+        .map_or(Value::Null, |mut payload| payload["params"]["item"].take())
+    }
+
+    fn user_text_result(method: &str, value: Value) -> Value {
+        crate::user_message_projection::project_rpc_result(
+            method,
+            value,
+            &agent_core::user_text::NoUserTextFormats,
+        )
+    }
+
     #[tokio::test]
     async fn desktop_file_envelope_projects_as_media_and_authored_text_on_every_read_lane() {
         let directory = tempfile::tempdir().expect("content directory");
@@ -2361,7 +2389,7 @@ mod tests {
                 ]
                 .join(newline);
                 let raw = json!({"id":"user", "type":"userMessage", "content":[{"type":"text", "text":text, "text_elements":[]}]});
-                let expected = projector.project_item(raw.clone());
+                let expected = projector.project_item(user_text_item(raw.clone()));
                 assert_eq!(
                     expected["content"],
                     json!([
@@ -2378,18 +2406,24 @@ mod tests {
                     ])
                 );
                 assert_eq!(projector.project_item(expected.clone()), expected);
-                let event = projector.project_notification(
-                    json!({"method":"item/completed", "params":{"item":raw}}),
-                );
+                let event = projector.project_notification(json!({
+                    "method":"item/completed", "params":{"item":user_text_item(raw.clone())}
+                }));
                 assert_eq!(event["params"]["item"], expected);
                 let page = projector.project_rpc_result(
                     "thread/turns/list",
-                    json!({"data":[{"id":"turn", "items":[raw]}]}),
+                    user_text_result(
+                        "thread/turns/list",
+                        json!({"data":[{"id":"turn", "items":[raw.clone()]}]}),
+                    ),
                 );
                 assert_eq!(page["data"][0]["items"][0], expected);
                 let sync = projector.project_rpc_result(
                     "companion/thread/sync",
-                    json!({"history":{"turns":[{"id":"turn", "items":[raw]}]}}),
+                    user_text_result(
+                        "companion/thread/sync",
+                        json!({"history":{"turns":[{"id":"turn", "items":[raw]}]}}),
+                    ),
                 );
                 assert_eq!(sync["history"]["turns"][0]["items"][0], expected);
             }
@@ -2404,14 +2438,14 @@ mod tests {
                 .path()
                 .join("cas"),
         ));
-        let projected = projector.project_item(json!({
+        let projected = projector.project_item(user_text_item(json!({
             "id": "user-message",
             "type": "userMessage",
             "content": [{
                 "type": "text",
                 "text": "# Files mentioned by the user:\n\n## plan.md: /srv/codex/plan.md\n\n## page.html: `/srv/codex/page.html`\n\n## My request for Codex:\n\nReview both."
             }]
-        }));
+        })));
 
         assert_eq!(projected["codewideAttachments"]["version"], 1);
         assert_eq!(

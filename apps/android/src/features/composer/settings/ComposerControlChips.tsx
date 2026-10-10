@@ -1,63 +1,48 @@
 /** V1 ComposerControlChips owner, extracted without changing interaction or resource lifetime. */
 import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
-import { projectedThreadExecutionSettings } from "@codewide/sync-client";
-import { observable } from "@legendapp/state";
+import {
+  projectedThreadExecutionSettings,
+  type ProjectedThreadExecutionSettings,
+} from "@codewide/sync-client";
+import type { Observable } from "@legendapp/state";
 import { useSelector } from "@legendapp/state/react";
-import { useEffect } from "react";
 import { View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { activeTurnId } from "../../../data/thread-lifecycle";
+import { readThreadAgent } from "../../../data/threadAgent";
 import type { LoadTurnControls, TurnControlsValue } from "../../../data/turn-controls-types";
 import { useTurnControlsRow } from "../../../data/use-workspace-resource-row";
 import type { WorkspaceResourceDatabase } from "../../../data/workspace-resource-database";
 import { useAsyncResource } from "../../../rendering/async-resource-store";
 import { colors, iconSize } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
-import {
-  fastServiceTier,
-  isFastServiceTier,
-  serviceTiersMatch,
-} from "../../../ui/modelServiceTier";
+import { fastServiceTier, isFastServiceTier } from "../../../ui/modelServiceTier";
+import { modelEffortLabel } from "../../../ui/modelEffortPresentation";
+import { ProviderIcon } from "../../../ui/ProviderIcon";
 import { ComposerContextLabel } from "../../../ui/ResourceContextChip";
 import { ModelThinkingMenu, PermissionsMenu } from "../../../ui/TurnControlMenus";
 import type { ModelSettingsChoice } from "../../../ui/TurnControlMenus.types";
-import { composerModelSettings } from "../modelSettings";
-import { useConstant } from "../../../react/useConstant";
-import { useEvent } from "../../../react/useEvent";
 import {
   EMPTY_TURN_CONTROLS,
   executionPermissionsLabel,
   permissionProfileLabel,
 } from "../settings";
 import { styles } from "./ComposerControlChips.styles";
+import {
+  existingThreadControlsView,
+  newChatControlsView,
+  selectedPermissionProfile,
+  type ComposerPermissionsDisplay,
+} from "./composerControlsView";
+import { EMPTY_CONTROLS_OVERLAY, type ComposerControlsState } from "./controlsOverlay";
+import { modelAgentScope } from "./modelAgentScope";
+import { providerScopedControls } from "./providerScopedControls";
 
-const MODEL_CONFIRMATION_TIMEOUT_MS = 15_000;
-
-type PendingModelChoice = {
-  readonly choice: ModelSettingsChoice;
-  readonly threadId: string;
-};
-
-export function ComposerControlChips({
-  cwd,
-  error,
-  load,
-  newChat,
-  onApplySettings,
-  onClose,
-  onFallback,
-  onQuickOpen,
-  onSelectPermissions,
-  readOnly,
-  remoteThread,
-  resourceId,
-  resources,
-  selectedEffort,
-  selectedModel,
-  selectedPermissions,
-  selectedPersonality,
-  selectedServiceTier,
-}: {
+/** Props of the composer's model and access chips. */
+export type ComposerControlChipsProps = {
+  /** The settings owner's state; `null` on a read-only surface without settings commands. */
+  controls$: Observable<ComposerControlsState> | null;
   cwd: string;
   error: string | null;
   load?: LoadTurnControls;
@@ -65,6 +50,8 @@ export function ComposerControlChips({
   onApplySettings: (choice: ModelSettingsChoice) => void;
   onClose: (scope: "model-menu" | "permissions-menu") => void;
   onFallback: (page: "model" | "permissions") => void;
+  /** Opens the thread's "Fork into" picker; absent when the thread cannot fork. */
+  onForkIntoAgent?: () => void;
   onQuickOpen: (scope: "model-menu" | "permissions-menu") => void;
   onSelectPermissions: (permissions: string | null) => void;
   readOnly: boolean;
@@ -76,38 +63,36 @@ export function ComposerControlChips({
   selectedPermissions: string | null;
   selectedPersonality: Personality | null;
   selectedServiceTier: string | null | undefined;
-}) {
-  const pendingModel$ = useConstant(() => observable<PendingModelChoice | null>(null));
-  const pendingModel = useSelector(() => pendingModel$.get());
-  useEffect(() => {
-    if (pendingModel === null) {
-      return undefined;
-    }
-    const timeout = setTimeout(() => {
-      pendingModel$.set(null);
-    }, MODEL_CONFIRMATION_TIMEOUT_MS);
-    return () => {
-      clearTimeout(timeout);
-    };
-  }, [pendingModel, pendingModel$]);
-  const applyModelSettings = useEvent((choice: ModelSettingsChoice) => {
-    if (
-      !newChat &&
-      remoteThread !== null &&
-      remoteThread !== undefined &&
-      choice.executionChanged
-    ) {
-      pendingModel$.set({ choice, threadId: remoteThread.id });
-    }
-    onApplySettings(choice);
-  });
+};
+
+/**
+ * The model/thinking and access chips. An existing thread shows its server
+ * settings with the settings owner's pending local choices over them; a new
+ * chat shows its local choices over the catalog defaults.
+ */
+export function ComposerControlChips(props: ComposerControlChipsProps) {
+  const {
+    cwd,
+    error,
+    load,
+    newChat,
+    onClose,
+    onFallback,
+    onQuickOpen,
+    readOnly,
+    remoteThread,
+    resourceId,
+    resources,
+  } = props;
   const resource = useTurnControlsRow(resources, resourceId);
   useAsyncResource<TurnControlsValue>(
     load === undefined || resourceId === null ? null : "conversation-turn-controls",
     resourceId ?? "inactive",
     async () => (load === undefined ? EMPTY_TURN_CONTROLS : load(cwd)),
   );
-  const controls = resource?.value ?? EMPTY_TURN_CONTROLS;
+  const overlay = useSelector(() => props.controls$?.overlay.get() ?? EMPTY_CONTROLS_OVERLAY);
+  const catalog = resource?.value ?? EMPTY_TURN_CONTROLS;
+  const controls = providerScopedControls(catalog, newChat, remoteThread);
   const initialLoading =
     load !== undefined &&
     (resource === null || (resource.status === "loading" && resource.value === null));
@@ -118,88 +103,89 @@ export function ComposerControlChips({
     remoteThread === null || remoteThread === undefined
       ? null
       : projectedThreadExecutionSettings(remoteThread);
-  const pendingConfirmed =
-    pendingModel !== null &&
-    remoteThread?.id === pendingModel.threadId &&
-    serverExecution?.model === pendingModel.choice.model &&
-    serverExecution.effort === pendingModel.choice.effort &&
-    serviceTiersMatch(pendingModel.choice.serviceTier, serverExecution.serviceTier);
-  useEffect(() => {
-    if (pendingConfirmed) {
-      pendingModel$.set(null);
-    }
-  }, [pendingConfirmed, pendingModel$]);
-  const pendingChoice =
-    !newChat &&
-    error === null &&
-    remoteThread !== null &&
-    remoteThread !== undefined &&
-    pendingModel?.threadId === remoteThread.id &&
-    !pendingConfirmed
-      ? pendingModel.choice
-      : null;
-  const { effort: effectiveEffort, model: effectiveModel } = composerModelSettings(
-    newChat,
-    serverExecution,
-    {
-      effort: pendingChoice?.effort ?? selectedEffort,
-      model: pendingChoice?.model ?? selectedModel,
-    },
-    controls,
-  );
-  const displayedEffort = pendingChoice?.effort ?? effectiveEffort;
-  const displayedModel = pendingChoice?.model ?? effectiveModel;
-  const effectivePermissions =
-    selectedPermissions ?? serverExecution?.permissions ?? controls.defaults.permissions;
-  const selectedControlModel = controls.models.find((candidate) => candidate.id === displayedModel);
+  const view = newChat
+    ? newChatControlsView(controls, {
+        effort: props.selectedEffort,
+        model: props.selectedModel,
+        permissions: props.selectedPermissions,
+        serviceTier: props.selectedServiceTier,
+      })
+    : existingThreadControlsView({
+        activeTurnId: activeTurnId(remoteThread),
+        agent: readThreadAgent(remoteThread),
+        controls,
+        overlay,
+        server: serverExecution,
+      });
   const modelLabel =
-    selectedControlModel?.label ??
-    displayedModel ??
+    view.modelEntry?.label ??
+    view.model.value ??
     (pending ? "Loading model…" : "Model not confirmed");
-  const modelPending = initialLoading;
-  const permissionsPending = initialLoading;
   const modelNameAndEffort =
-    displayedEffort === null ? modelLabel : `${modelLabel} · ${displayedEffort}`;
-  const modelTextPending = modelPending || pendingChoice !== null;
-  const effectiveServiceTier = newChat
-    ? selectedServiceTier === undefined
-      ? (controls.defaults.serviceTier ?? selectedControlModel?.defaultServiceTier ?? null)
-      : selectedServiceTier
-    : pendingChoice !== null
-      ? (pendingChoice.serviceTier ?? null)
-      : serverExecution?.serviceTier === undefined
-        ? (controls.defaults.serviceTier ?? selectedControlModel?.defaultServiceTier ?? null)
-        : serverExecution.serviceTier;
-  const fastTier = fastServiceTier(selectedControlModel?.serviceTiers);
-  const permissionLabel =
-    effectivePermissions === null
-      ? executionPermissionsLabel(serverExecution, pending)
-      : permissionProfileLabel(effectivePermissions);
+    view.effort.value === null
+      ? modelLabel
+      : `${modelLabel} · ${modelEffortLabel(view.effort.value)}`;
+  const modelProvider = view.modelEntry?.provider ?? null;
+  const modelIcon =
+    modelProvider === null ? (
+      <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
+    ) : (
+      <ProviderIcon provider={modelProvider} />
+    );
+  const modelTextPending =
+    initialLoading || view.model.pending || view.effort.pending || view.serviceTier.pending;
+  const modelNextTurn = view.model.nextTurn || view.effort.nextTurn || view.serviceTier.nextTurn;
+  const fastTier = fastServiceTier(view.modelEntry?.serviceTiers);
+  const fast = fastTier !== undefined && isFastServiceTier(view.serviceTier.value, fastTier);
+  const permissionLabel = permissionsDisplayLabel(view.permissions.value, serverExecution, pending);
+  const modelText = initialLoading ? "Loading model…" : modelNameAndEffort;
+  const modelTrigger = (
+    <>
+      {modelIcon}
+      <ComposerContextLabel
+        loading={modelTextPending}
+        testID="composer-model-label"
+        text={modelText}
+      />
+      {fast && <Ionicons color={colors.text} name="flash" size={iconSize.inline} />}
+      {modelNextTurn && <NextTurnMarker testID="composer-model-next-turn" />}
+    </>
+  );
+  const permissionsText = initialLoading ? "Loading access…" : permissionLabel;
+  const permissionsTrigger = (
+    <>
+      <InlineIcon color={colors.textMuted} name="shield-checkmark-outline" role="label" />
+      <ComposerContextLabel
+        loading={initialLoading || view.permissions.pending}
+        testID="composer-permissions-label"
+        text={permissionsText}
+      />
+      {view.permissions.nextTurn && <NextTurnMarker testID="composer-permissions-next-turn" />}
+    </>
+  );
   return (
     <>
       {readOnly ? (
         <View style={styles.composerContextChip} testID="readonly-model-chip">
-          <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
-          <ComposerContextLabel
-            loading={modelTextPending}
-            testID="composer-model-label"
-            text={modelPending ? "Loading model…" : modelNameAndEffort}
-          />
-          {fastTier !== undefined && isFastServiceTier(effectiveServiceTier, fastTier) && (
-            <Ionicons color={colors.text} name="flash" size={iconSize.inline} />
-          )}
+          {modelTrigger}
         </View>
       ) : (
         <ModelThinkingMenu
           accessibilityLabel={
-            modelPending
+            initialLoading
               ? "Loading model"
-              : `Model and thinking: ${modelLabel}, ${effectiveEffort ?? "not specified"}`
+              : `Model and thinking: ${modelLabel}, ${view.effort.value ?? "not specified"}${nextTurnSuffix(modelNextTurn)}`
           }
+          agentScope={modelAgentScope({
+            catalog,
+            forkIntoAgent: props.onForkIntoAgent,
+            newChat,
+            thread: remoteThread,
+          })}
           error={effectiveError}
           loading={initialLoading}
           models={controls.models}
-          onApplySettings={applyModelSettings}
+          onApplySettings={props.onApplySettings}
           onClose={() => {
             onClose("model-menu");
           }}
@@ -209,39 +195,24 @@ export function ComposerControlChips({
           onOpen={() => {
             onQuickOpen("model-menu");
           }}
-          selectedEffort={displayedEffort}
-          selectedModel={displayedModel}
-          selectedPersonality={selectedPersonality}
-          selectedServiceTier={effectiveServiceTier}
-          triggerChildren={
-            <>
-              <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
-              <ComposerContextLabel
-                loading={modelTextPending}
-                testID="composer-model-label"
-                text={modelPending ? "Loading model…" : modelNameAndEffort}
-              />
-              {fastTier !== undefined && isFastServiceTier(effectiveServiceTier, fastTier) && (
-                <Ionicons color={colors.text} name="flash" size={iconSize.inline} />
-              )}
-            </>
-          }
+          selectedEffort={view.effort.value}
+          selectedModel={view.model.value}
+          selectedPersonality={props.selectedPersonality}
+          selectedServiceTier={view.serviceTier.value}
+          triggerChildren={modelTrigger}
           triggerStyle={styles.composerContextChip}
         />
       )}
       {readOnly ? (
         <View style={styles.composerContextChip} testID="readonly-permissions-chip">
-          <InlineIcon color={colors.textMuted} name="shield-checkmark-outline" role="label" />
-          <ComposerContextLabel
-            loading={permissionsPending}
-            testID="composer-permissions-label"
-            text={permissionsPending ? "Loading access…" : permissionLabel}
-          />
+          {permissionsTrigger}
         </View>
       ) : (
         <PermissionsMenu
           accessibilityLabel={
-            permissionsPending ? "Loading access" : `Permissions: ${permissionLabel}`
+            initialLoading
+              ? "Loading access"
+              : `Permissions: ${permissionLabel}${nextTurnSuffix(view.permissions.nextTurn)}`
           }
           error={effectiveError}
           loading={initialLoading}
@@ -254,22 +225,46 @@ export function ComposerControlChips({
           onOpen={() => {
             onQuickOpen("permissions-menu");
           }}
-          onSelectPermissions={onSelectPermissions}
+          onSelectPermissions={props.onSelectPermissions}
           permissions={controls.permissions}
-          selectedPermissions={effectivePermissions}
-          triggerChildren={
-            <>
-              <InlineIcon color={colors.textMuted} name="shield-checkmark-outline" role="label" />
-              <ComposerContextLabel
-                loading={permissionsPending}
-                testID="composer-permissions-label"
-                text={permissionsPending ? "Loading access…" : permissionLabel}
-              />
-            </>
-          }
+          selectedPermissions={selectedPermissionProfile(view.permissions.value)}
+          serverDefault={view.permissionDefault}
+          triggerChildren={permissionsTrigger}
           triggerStyle={styles.composerContextChip}
         />
       )}
     </>
   );
+}
+
+/** A subtle mark on a chip whose value takes effect when the next turn starts. */
+function NextTurnMarker({ testID }: { readonly testID: string }) {
+  return (
+    <View accessibilityLabel="Applies from the next turn" accessible testID={testID}>
+      <InlineIcon color={colors.textMuted} name="time-outline" role="label" />
+    </View>
+  );
+}
+
+function nextTurnSuffix(nextTurn: boolean): string {
+  return nextTurn ? ", applies from the next turn" : "";
+}
+
+/** The access chip's text. */
+function permissionsDisplayLabel(
+  display: ComposerPermissionsDisplay,
+  serverExecution: ProjectedThreadExecutionSettings | null,
+  pending: boolean,
+): string {
+  if (display.kind === "profile") {
+    return permissionProfileLabel(display.id);
+  }
+  if (display.kind === "default") {
+    return display.resolved === null
+      ? pending
+        ? "Loading access…"
+        : "Server default"
+      : permissionProfileLabel(display.resolved);
+  }
+  return executionPermissionsLabel(serverExecution, pending);
 }

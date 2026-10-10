@@ -1,0 +1,25 @@
+{
+  "name": "@codewide/agent-protocol",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./v1": "./src/v1/index.ts",
+    "./fixtures/v1/*": "./fixtures/v1/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+    "test": "vitest run --root ../.. packages/agent-protocol",
+    "lint": "oxlint --config oxlint.config.mjs --tsconfig tsconfig.json --type-aware --type-check --deny-warnings --report-unused-disable-directives src",
+    "format": "oxfmt --config oxfmt.json --write .",
+    "format:check": "oxfmt --config oxfmt.json --check ."
+  },
+  "devDependencies": {
+    "@sergeigarin/hygene": "github:MrFlashAccount/hygiene#828e4a23b913b010ac314964b32aa903870fa621",
+    "@types/node": "^24.0.0",
+    "oxfmt": "0.64.0",
+    "oxlint": "1.79.0",
+    "oxlint-tsgolint": "7.0.2001"
+  }
+}

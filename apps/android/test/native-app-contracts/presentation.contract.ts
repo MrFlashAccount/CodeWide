@@ -71,7 +71,8 @@ it("preserves presentation integration contracts", () => {
   expect(messageActionMenu).not.toContain("heroui-native/menu");
   expect(messageActionMenu).toContain("hostRef.current?.open(request, event)");
   expect(turnControlMenus).toContain("id: SERVER_DEFAULT_PERMISSIONS");
-  expect(turnControlMenus).toContain('description: "Use the server\'s configured access level"');
+  expect(turnControlMenus).toContain("description: serverDefaultDescription(option)");
+  expect(turnControlMenus).toContain('"Use the server\'s configured access level"');
   expect(appDialog).toContain("{state.isOpen && (");
   expect(
     sourceHasJsxElement(appDialog, "AppDialogSurface", ["isOpen", "request={state.request}"]),

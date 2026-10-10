@@ -70,6 +70,8 @@ function turnView(turn: TurnItem, virtualized: boolean) {
         followsLead={row.followsLead}
         forceExpanded={false}
         parts={row.parts}
+        bubble={row.bubble}
+        group={row.group}
         placement={row.placement}
         presentation={projectTurnPresentation(turn, null, false, false)}
       />
@@ -117,6 +119,11 @@ describe.each([false, true])("thinking handoff (virtualized: %s)", (virtualized)
       });
       expect(label.props.allowFontScaling).toBe(true);
       expect(label.props.numberOfLines).toBe(1);
+      expect(bubble).toHaveStyle({
+        paddingBottom: spacing.sm,
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.sm,
+      });
       expect(view.getByTestId("agent-bubble-frame")).not.toHaveStyle({ flexGrow: 1 });
 
       view.rerender(turnView(withReasoning(pending, []), virtualized));

@@ -1,0 +1,28 @@
+{
+  "description": "account.updated: the provider reports a signed-in state change after initialize; the label is an opaque plan name, never an email or token",
+  "messages": [
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "account.updated",
+        "params": { "account": { "authenticated": false, "label": null } }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "account.updated",
+        "params": { "account": { "authenticated": true, "label": "max" } }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "account.updated",
+        "params": {
+          "account": { "accountLabel": "user@example.com", "authenticated": true, "label": "pro" }
+        }
+      }
+    }
+  ]
+}
