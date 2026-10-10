@@ -110,6 +110,8 @@ export interface ClaudeQuery {
 export interface RawModel {
   readonly description: string;
   readonly displayName: string;
+  /** The canonical API model id an alias row resolves to, when the SDK reports it. */
+  readonly resolvedModel?: string;
   readonly supportedEffortLevels: readonly string[];
   readonly value: string;
 }

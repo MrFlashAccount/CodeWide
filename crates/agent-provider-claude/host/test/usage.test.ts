@@ -59,11 +59,13 @@ const assistant = (
     readonly output: number;
   },
   parentToolUseId: string | null = null,
+  model = "claude-sonnet-4-6",
 ) => ({
   type: "assistant",
   message: {
     content: [{ text: `reply ${messageId}`, type: "text" }],
     id: messageId,
+    model,
     usage: {
       cache_creation_input_tokens: usage.cacheCreation,
       cache_read_input_tokens: usage.cacheRead,
@@ -76,6 +78,22 @@ const assistant = (
 
 const usageEvents = (events: readonly AgentEvent[]) =>
   events.flatMap((event) => (event.type === "usage.updated" ? [event] : []));
+
+/** The usage each finished turn reported with its completion; live updates come before it. */
+const turnEndUsage = (events: readonly AgentEvent[]) =>
+  events.flatMap((event, index) =>
+    event.type === "usage.updated" && events[index + 1]?.type === "turn.completed" ? [event] : [],
+  );
+
+/** A tool result that ends the previous request. */
+const toolResult = (toolUseId: string) => ({
+  type: "user",
+  message: {
+    content: [{ content: "ok", tool_use_id: toolUseId, type: "tool_result" }],
+    role: "user",
+  },
+  parent_tool_use_id: null,
+});
 
 const tokens = (
   input: number,
@@ -137,7 +155,7 @@ describe("turn usage", () => {
         }),
       );
     });
-    const [usage] = usageEvents(events);
+    const [usage] = turnEndUsage(events);
     expect(usage).toMatchObject({
       contextWindow: 200_000,
       cost: { basis: "managed", model: "mixed", threadUsd: 0.012, turnUsd: 0.012 },
@@ -404,5 +422,76 @@ describe("meterResult", () => {
     expect(delta?.cost).toEqual({ type: "unpriced" });
     const next = measure(baseline, [model("sonnet", { costUSD: 9.5, inputTokens: 50_100 })]);
     expect(next.delta?.usage.inputTokens).toBe(100);
+  });
+});
+
+describe("live usage", () => {
+  it("reports each complete top-level request once, with its model, before the result", async () => {
+    const { service, queries, events } = harness();
+    createThread(service);
+    await runTurn(service, () => {
+      const query = queries[0];
+      query?.push(frames.init);
+      // One request delivered as two messages with the same id: the later counts.
+      query?.push(assistant("m1", { cacheCreation: 0, cacheRead: 0, input: 100, output: 5 }));
+      query?.push(assistant("m1", { cacheCreation: 0, cacheRead: 0, input: 100, output: 20 }));
+      query?.push(toolResult("toolu_1"));
+      // A subagent request is part of the turn totals only once the result measures it.
+      query?.push(
+        assistant("s1", { cacheCreation: 0, cacheRead: 0, input: 9_000, output: 50 }, "toolu_1"),
+      );
+      query?.push(
+        assistant(
+          "m2",
+          { cacheCreation: 10, cacheRead: 100, input: 30, output: 40 },
+          null,
+          "claude-opus-5-5",
+        ),
+      );
+      query?.push(toolResult("toolu_2"));
+      query?.push(
+        resultWith({
+          "claude-sonnet-4-6": { costUSD: 0.02, inputTokens: 9_250, outputTokens: 110 },
+        }),
+      );
+    });
+    const reported = usageEvents(events);
+    const live = reported.filter((event) => !turnEndUsage(events).includes(event));
+    expect(live).toEqual([
+      expect.objectContaining({
+        contextWindow: 1_000_000,
+        last: tokens(100, 0, 0, 20),
+        model: "claude-sonnet-4-6",
+        total: tokens(100, 0, 0, 20),
+      }),
+      expect.objectContaining({
+        last: tokens(30, 100, 10, 40),
+        model: "claude-opus-5-5",
+        total: tokens(130, 100, 10, 60),
+      }),
+    ]);
+    expect(live.every((event) => !("cost" in event))).toBe(true);
+    // The result reports the measured totals and the SDK's cost.
+    expect(turnEndUsage(events)).toEqual([
+      expect.objectContaining({ cost: expect.objectContaining({ turnUsd: 0.02 }) }),
+    ]);
+  });
+
+  it("uses the window the SDK reported once a result named it", async () => {
+    const { service, queries, events } = harness();
+    createThread(service);
+    await runTurn(service, () => {
+      queries[0]?.push(frames.init);
+      queries[0]?.push(resultWith({ "claude-sonnet-4-6": { inputTokens: 10, outputTokens: 1 } }));
+    });
+    await runTurn(service, () => {
+      queries[0]?.push(assistant("m3", { cacheCreation: 0, cacheRead: 0, input: 50, output: 5 }));
+      queries[0]?.push(toolResult("toolu_3"));
+      queries[0]?.push(resultWith({ "claude-sonnet-4-6": { inputTokens: 70, outputTokens: 9 } }));
+    });
+    const live = usageEvents(events).filter((event) => !turnEndUsage(events).includes(event));
+    expect(live).toEqual([
+      expect.objectContaining({ contextWindow: 200_000, total: tokens(60, 0, 0, 6) }),
+    ]);
   });
 });

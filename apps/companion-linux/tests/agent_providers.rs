@@ -334,6 +334,7 @@ impl AgentProvider for FakeNeutral {
                 default_effort: None,
                 input_modalities: Vec::new(),
             }],
+            prices: std::collections::BTreeMap::new(),
         })
     }
 

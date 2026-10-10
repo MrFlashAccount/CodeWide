@@ -147,6 +147,17 @@ impl ProviderFence {
     }
 }
 
+/// A thread whose stored history changed outside every live turn of this
+/// companion, for example a session a person drives in a terminal. The
+/// companion turns it into a thread invalidation so an open conversation
+/// re-reads its history at once instead of on the next open.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryChange {
+    pub app_thread_id: AppThreadId,
+    /// The thread's archive state, carried to the thread list.
+    pub archived: bool,
+}
+
 /// One entry of a provider's ordered event stream.
 pub enum ProviderEvent {
     Event(Box<AgentEvent>),
@@ -307,6 +318,14 @@ pub trait AgentProvider: Send + Sync {
     /// `codex.native` surface. Requests and observed events are client-wire
     /// JSON, as for the native surface.
     fn thread_resources(&self) -> Option<Arc<dyn NativeThreadResources>> {
+        None
+    }
+
+    /// Changes of the provider's own stored history written outside its live
+    /// turns ([`HistoryChange`]), for a provider without the `codex.native`
+    /// surface. Taken once by the companion; `None` when the provider has no
+    /// such source.
+    fn take_history_changes(&self) -> Option<mpsc::Receiver<HistoryChange>> {
         None
     }
 }

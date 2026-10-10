@@ -6,12 +6,15 @@
 //! that no table prices stays unpriced. Persisted usage and the replay journal
 //! never contain a calculated price; prices are derived on delivery.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::model::{ProviderCost, ProviderCostBasis, ProviderId, TokenUsage, TurnUsageRecord};
+use crate::model::{
+    ModelPriceEntry, ProviderCost, ProviderCostBasis, ProviderId, TokenUsage, TurnUsageRecord,
+};
 
 /// `CostProjection::basis` of a cost the provider computed itself (for
 /// example, the Claude Agent SDK). It carries only a total: the price and
@@ -23,6 +26,12 @@ pub const PROVIDER_REPORTED_BASIS: &str = "providerReported";
 /// provider-reported cost ([`ProviderCost`]). Present only when the provider
 /// reported one, so a Codex stream never carries it.
 pub const PROVIDER_COST_FIELD: &str = "codewideProviderCost";
+
+/// Client-wire field of `thread/tokenUsage/updated` params that names the
+/// model of the `last` request, when the provider reported it. It prices the
+/// request instead of the thread's selected model (an alias, or another model
+/// the provider routed the request to).
+pub const REQUEST_MODEL_FIELD: &str = "codewideRequestModel";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -267,6 +276,131 @@ pub trait ModelPricing: Send + Sync {
 
     /// The uncached input price in USD per million tokens.
     fn input_price(&self, model: &str) -> Option<f64>;
+}
+
+/// `CostProjection::basis` of a cost the companion computed from a model's
+/// API list rates.
+pub const API_EQUIVALENT_BASIS: &str = "apiEquivalent";
+
+/// A price table of model ids → API list rates, shared by every provider: a
+/// provider publishes its rates with its model catalog (or declares them
+/// statically), and costs are computed here from the rates alone.
+#[derive(Default)]
+pub struct CatalogPricing {
+    prices: RwLock<HashMap<String, ModelPriceEntry>>,
+}
+
+impl CatalogPricing {
+    /// A table of `prices`; model ids are normalized ([`normalize_model`]).
+    #[must_use]
+    pub fn new(prices: impl IntoIterator<Item = (String, ModelPriceEntry)>) -> Self {
+        let table = Self::default();
+        table.replace(prices);
+        table
+    }
+
+    /// Replaces the whole table, as the provider's latest catalog states it.
+    pub fn replace(&self, prices: impl IntoIterator<Item = (String, ModelPriceEntry)>) {
+        let prices = prices
+            .into_iter()
+            .map(|(model, price)| (normalize_model(&model), price))
+            .collect();
+        // A poisoned lock still holds the previous complete table.
+        match self.prices.write() {
+            Ok(mut current) => *current = prices,
+            Err(poisoned) => *poisoned.into_inner() = prices,
+        }
+    }
+
+    /// Whether no model is priced yet.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        match self.prices.read() {
+            Ok(prices) => prices.is_empty(),
+            Err(poisoned) => poisoned.into_inner().is_empty(),
+        }
+    }
+
+    fn price(&self, model: &str) -> Option<ModelPriceEntry> {
+        let prices = match self.prices.read() {
+            Ok(prices) => prices,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        prices.get(&normalize_model(model)).cloned()
+    }
+}
+
+impl ModelPricing for CatalogPricing {
+    fn request_cost(&self, model: &str, usage: TokenCounts) -> Option<CostProjection> {
+        let price = self.price(model)?;
+        Some(rates_cost(model, &price, usage, true))
+    }
+
+    fn session_cost(&self, model: &str, usage: TokenCounts) -> Option<CostProjection> {
+        // Cumulative counters do not preserve the request boundaries needed to
+        // apply long-context rates, so the aggregate is priced at base rates.
+        let price = self.price(model)?;
+        Some(rates_cost(model, &price, usage, false))
+    }
+
+    fn input_price(&self, model: &str) -> Option<f64> {
+        self.price(model).map(|price| price.rates.input)
+    }
+}
+
+/// The cost of `usage` at `price`. A single request whose input exceeds the
+/// long-context threshold is priced at the long-context rates when
+/// `request_boundaries` is true.
+#[must_use]
+pub fn rates_cost(
+    model: &str,
+    price: &ModelPriceEntry,
+    usage: TokenCounts,
+    request_boundaries: bool,
+) -> CostProjection {
+    let rates = price
+        .long_context
+        .filter(|long| request_boundaries && usage.input_tokens > long.above_input_tokens)
+        .map_or(price.rates, |long| long.rates);
+    let cached = usage.cached_input_tokens.min(usage.input_tokens);
+    let cache_write = usage
+        .cache_write_input_tokens
+        .min(usage.input_tokens.saturating_sub(cached));
+    let uncached = usage
+        .input_tokens
+        .saturating_sub(cached)
+        .saturating_sub(cache_write);
+    let uncached_cost = usd(uncached, rates.input);
+    let cached_cost = usd(cached, rates.cached_input);
+    let cache_write_cost = usd(cache_write, rates.cache_write_input);
+    let output_cost = usd(usage.output_tokens, rates.output);
+    CostProjection {
+        model: normalize_model(model),
+        pricing_version: price.pricing_version.clone(),
+        currency: "USD".into(),
+        basis: API_EQUIVALENT_BASIS.into(),
+        price: ModelPrice {
+            input: price.rates.input,
+            cached_input: price.rates.cached_input,
+            output: price.rates.output,
+        },
+        uncached_input_tokens: uncached,
+        cached_input_tokens: cached,
+        cache_write_input_tokens: cache_write,
+        output_tokens: usage.output_tokens,
+        cache_hit_percent: cache_hit_percent(cached, usage.input_tokens),
+        uncached_input_cost_usd: uncached_cost,
+        cached_input_cost_usd: cached_cost,
+        cache_write_input_cost_usd: cache_write_cost,
+        output_cost_usd: output_cost,
+        total_cost_usd: uncached_cost + cached_cost + cache_write_cost + output_cost,
+    }
+}
+
+// WHY: a display estimate; token counts far below 2^52 convert exactly.
+#[allow(clippy::cast_precision_loss)]
+fn usd(tokens: u64, dollars_per_million: f64) -> f64 {
+    tokens as f64 * dollars_per_million / 1_000_000.0
 }
 
 /// One price table and the provider that owns it (`None` for a table of no
@@ -619,6 +753,70 @@ mod tests {
         let sum = add_cost(pricing.request_cost("priced", tokens), Some(other)).ok_or("sum")?;
         assert_eq!(sum.model, "mixed");
         assert!((sum.price.input).abs() < f64::EPSILON);
+        Ok(())
+    }
+
+    fn catalog() -> CatalogPricing {
+        let rates = |input: f64| crate::model::ModelRates {
+            input,
+            cached_input: input / 10.0,
+            cache_write_input: input * 1.25,
+            output: input * 5.0,
+        };
+        CatalogPricing::new([(
+            " Claude-Haiku ".to_owned(),
+            ModelPriceEntry {
+                pricing_version: "test-api".into(),
+                rates: rates(1.0),
+                long_context: Some(crate::model::LongContextRates {
+                    above_input_tokens: 1_000,
+                    rates: rates(5.0),
+                }),
+            },
+        )])
+    }
+
+    #[test]
+    fn catalog_prices_each_token_kind_at_its_rate() -> Result<(), &'static str> {
+        let usage = TokenCounts {
+            total_tokens: 1_000_000,
+            input_tokens: 800_000,
+            cached_input_tokens: 400_000,
+            cache_write_input_tokens: 200_000,
+            output_tokens: 200_000,
+            ..TokenCounts::default()
+        };
+        // Below the long-context threshold only when priced as an aggregate.
+        let cost = catalog()
+            .session_cost("claude-haiku", usage)
+            .ok_or("model unpriced")?;
+        assert_eq!(cost.basis, API_EQUIVALENT_BASIS);
+        assert_eq!(cost.pricing_version, "test-api");
+        assert_eq!(cost.uncached_input_tokens, 200_000);
+        // 0.2M × $1 + 0.4M × $0.1 + 0.2M × $1.25 + 0.2M × $5.
+        assert!((cost.total_cost_usd - 1.49).abs() < 1e-9);
+        Ok(())
+    }
+
+    #[test]
+    fn a_long_request_uses_the_long_context_rates() -> Result<(), &'static str> {
+        let request = |input_tokens| TokenCounts {
+            total_tokens: input_tokens,
+            input_tokens,
+            ..TokenCounts::default()
+        };
+        let table = catalog();
+        let short = table
+            .request_cost("CLAUDE-HAIKU", request(1_000))
+            .ok_or("unpriced")?;
+        let long = table
+            .request_cost("claude-haiku", request(1_001))
+            .ok_or("unpriced")?;
+        assert!((short.total_cost_usd - 0.001).abs() < 1e-12);
+        assert!((long.total_cost_usd - 0.005_005).abs() < 1e-12);
+        assert!(table.request_cost("claude-opus", request(10)).is_none());
+        table.replace(std::iter::empty());
+        assert!(table.is_empty());
         Ok(())
     }
 }

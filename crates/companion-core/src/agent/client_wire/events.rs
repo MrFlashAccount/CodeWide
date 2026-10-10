@@ -188,6 +188,7 @@ impl EventProjector {
                 total,
                 context_window,
                 cost,
+                model,
             } => {
                 let mut notification = json!({
                     "method": "thread/tokenUsage/updated",
@@ -206,6 +207,11 @@ impl EventProjector {
                     && let Some(params) = notification["params"].as_object_mut()
                 {
                     params.insert(agent_core::usage::PROVIDER_COST_FIELD.into(), cost);
+                }
+                if let Some(model) = model
+                    && let Some(params) = notification["params"].as_object_mut()
+                {
+                    params.insert(agent_core::usage::REQUEST_MODEL_FIELD.into(), json!(model));
                 }
                 vec![notification]
             }
@@ -620,25 +626,35 @@ mod tests {
             reasoning_output_tokens: 5,
             total_tokens: 1_370,
         };
-        let event = |cost| AgentEvent::UsageUpdated {
+        let event = |cost, model: Option<&str>| AgentEvent::UsageUpdated {
             app_thread_id: AppThreadId::from_static("t"),
             turn_id: TurnId::from_static("u"),
             last: usage,
             total: usage,
             context_window: Some(200_000),
             cost,
+            model: model.map(str::to_owned),
         };
         let mut projector = projector();
-        let unpriced = projector.project(event(None));
+        let unpriced = projector.project(event(None, None));
         let params = &unpriced[0]["params"];
         assert_eq!(params["tokenUsage"]["last"]["cacheWriteInputTokens"], 300);
         assert!(params.get(agent_core::usage::PROVIDER_COST_FIELD).is_none());
-        let priced = projector.project(event(Some(crate::agent::model::ProviderCost {
-            basis: crate::agent::model::ProviderCostBasis::Managed,
-            model: "claude-sonnet-4-6".into(),
-            turn_usd: 0.25,
-            thread_usd: None,
-        })));
+        assert!(params.get(agent_core::usage::REQUEST_MODEL_FIELD).is_none());
+        let live = projector.project(event(None, Some("claude-opus-5-5")));
+        assert_eq!(
+            live[0]["params"][agent_core::usage::REQUEST_MODEL_FIELD],
+            "claude-opus-5-5"
+        );
+        let priced = projector.project(event(
+            Some(crate::agent::model::ProviderCost {
+                basis: crate::agent::model::ProviderCostBasis::Managed,
+                model: "claude-sonnet-4-6".into(),
+                turn_usd: 0.25,
+                thread_usd: None,
+            }),
+            None,
+        ));
         assert_eq!(
             priced[0]["params"][agent_core::usage::PROVIDER_COST_FIELD],
             json!({"basis": "managed", "model": "claude-sonnet-4-6", "turnUsd": 0.25, "threadUsd": null})

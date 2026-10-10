@@ -23,6 +23,7 @@ import {
 import { createAccountRateLimitsLoader } from "./account-rate-limits-loader";
 import { createCatalogRuntime } from "./catalog-runtime";
 import { createCommandDelivery, createCommandDeliveryProjection } from "./command-delivery";
+import { nativeCommandSettlements } from "./nativeCommandSettlement";
 import {
   createConnectionProfileDatabase,
   type ConnectionProfileDatabase,
@@ -280,6 +281,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       sendSystemText: async (request) => commandDelivery.sendSystemTextWithCommandId(request),
       targetPolicy: globalSupervisor.targetPolicy,
     });
+    const projectCommandDelivery = createCommandDeliveryProjection(details, summaries);
     const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
         setConnectionPath: connectionState.setPath,
@@ -293,7 +295,10 @@ async function startWorkspaceRuntime(): Promise<void> {
       onLiveRealtime: (connectionId, event) => {
         globalSupervisorIngress.publishLive(connectionId, event);
       },
-      onOutboxChange: createCommandDeliveryProjection(details, summaries),
+      onOutboxChange: (delivery) => {
+        projectCommandDelivery(delivery);
+        nativeCommandSettlements.observe(delivery);
+      },
       onPendingRequests: (connectionId, requests) => {
         pendingRequests.replace(connectionId, requests);
         void globalSupervisorAttention

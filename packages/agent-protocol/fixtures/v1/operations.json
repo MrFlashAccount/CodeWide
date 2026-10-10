@@ -38,7 +38,21 @@
                 "image"
               ]
             }
-          ]
+          ],
+          "prices": {
+            "claude-sonnet-4-5": {
+              "pricingVersion": "anthropic-api-2026-10-06",
+              "rates": { "input": 3.0, "cachedInput": 0.3, "cacheWriteInput": 3.75, "output": 15.0 }
+            },
+            "claude-haiku-5-5": {
+              "pricingVersion": "anthropic-api-2026-10-06",
+              "rates": { "input": 0.1, "cachedInput": 0.01, "cacheWriteInput": 0.125, "output": 0.5 },
+              "longContext": {
+                "aboveInputTokens": 100000,
+                "rates": { "input": 0.5, "cachedInput": 0.05, "cacheWriteInput": 0.625, "output": 2.5 }
+              }
+            }
+          }
         }
       }
     },

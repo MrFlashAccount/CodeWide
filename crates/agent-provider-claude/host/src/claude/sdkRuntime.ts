@@ -226,6 +226,7 @@ function rawModels(models: readonly unknown[]): readonly RawModel[] {
       {
         description: typeof description === "string" ? description : "",
         displayName,
+        ...resolvedModelOf(Reflect.get(model, "resolvedModel")),
         supportedEffortLevels: Array.isArray(efforts)
           ? efforts.filter((effort): effort is string => typeof effort === "string")
           : [],
@@ -233,6 +234,11 @@ function rawModels(models: readonly unknown[]): readonly RawModel[] {
       },
     ];
   });
+}
+
+/** The canonical id an SDK alias row resolves to, when it reports one. */
+function resolvedModelOf(resolvedModel: unknown): { readonly resolvedModel?: string } {
+  return typeof resolvedModel === "string" && resolvedModel.length > 0 ? { resolvedModel } : {};
 }
 
 const EFFORTS: ReadonlySet<unknown> = new Set<EffortLevel>([

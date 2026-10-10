@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 
 use super::WireProvider;
 use crate::agent::model::{
-    AgentItem, AgentThread, AgentTurn, CallStatus, ClientMessageId, ExecutionStatus, FileChange,
-    FileChangeKind, ItemsView, MessagePhase, ThreadStatus, TurnStatus, UserContent,
-    WebSearchAction,
+    AgentItem, AgentThread, AgentTurn, AppThreadId, CallStatus, ClientMessageId, ExecutionStatus,
+    FileChange, FileChangeKind, ItemsView, MessagePhase, SubagentStatus, ThreadStatus, TurnStatus,
+    UserContent, WebSearchAction,
 };
 
 /// Marker namespace of a capability item projected as a generic tool call.
@@ -164,6 +164,28 @@ const fn call_status(status: CallStatus) -> &'static str {
         CallStatus::InProgress => "inProgress",
         CallStatus::Completed => "completed",
         CallStatus::Failed => "failed",
+    }
+}
+
+/// `collabAgentToolCall.status`: the item stays `inProgress` while its
+/// sub-agent works, also after a background launch returned, so the client
+/// shows it as running.
+const fn subagent_call_status(status: SubagentStatus) -> &'static str {
+    match status {
+        SubagentStatus::Running => "inProgress",
+        SubagentStatus::Completed => "completed",
+        SubagentStatus::Failed => "failed",
+        SubagentStatus::Stopped => "interrupted",
+    }
+}
+
+/// `CollabAgentStatus` of the sub-agent in `agentsStates`.
+const fn subagent_agent_status(status: SubagentStatus) -> &'static str {
+    match status {
+        SubagentStatus::Running => "running",
+        SubagentStatus::Completed => "completed",
+        SubagentStatus::Failed => "errored",
+        SubagentStatus::Stopped => "interrupted",
     }
 }
 
@@ -345,6 +367,44 @@ pub fn item(item: &AgentItem) -> Value {
         AgentItem::Compaction { item_id, .. } => {
             json!({"type": "contextCompaction", "id": item_id.as_str()})
         }
+        AgentItem::Subagent {
+            item_id,
+            provenance,
+            agent_thread_id,
+            model,
+            prompt,
+            result,
+            status,
+            ..
+        } => {
+            let receivers = agent_thread_id
+                .iter()
+                .map(AppThreadId::as_str)
+                .collect::<Vec<_>>();
+            let states = agent_thread_id
+                .iter()
+                .map(|thread| {
+                    (
+                        thread.as_str().to_owned(),
+                        json!({"status": subagent_agent_status(*status), "message": result}),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>();
+            json!({
+                "type": "collabAgentToolCall",
+                "id": item_id.as_str(),
+                "tool": "spawnAgent",
+                "status": subagent_call_status(*status),
+                "senderThreadId": provenance
+                    .as_ref()
+                    .map_or("", |origin| origin.native_thread_id.as_str()),
+                "receiverThreadIds": receivers,
+                "prompt": prompt,
+                "model": model,
+                "reasoningEffort": null,
+                "agentsStates": states,
+            })
+        }
         AgentItem::CapabilityItem {
             item_id,
             capability,
@@ -422,5 +482,53 @@ mod tests {
 
         let unrecorded = turn(&finished_turn(None), ItemsView::Summary);
         assert!(unrecorded.get("codewide").is_none());
+    }
+
+    fn subagent(status: SubagentStatus, child: Option<&'static str>) -> AgentItem {
+        AgentItem::Subagent {
+            item_id: crate::agent::model::ItemId::from_static("toolu_spawn"),
+            provenance: Some(crate::agent::model::Provenance {
+                provider: crate::agent::model::ProviderId::from_static("claude"),
+                native_thread_id: crate::agent::model::ProviderThreadRef::from_static("parent"),
+            }),
+            agent_thread_id: child.map(AppThreadId::from_static),
+            agent_type: Some("Explore".into()),
+            background: true,
+            description: "Check the build".into(),
+            model: Some("haiku".into()),
+            prompt: "Run the build".into(),
+            result: Some("Build passes".into()),
+            status,
+        }
+    }
+
+    #[test]
+    fn a_subagent_is_a_spawn_collab_call_that_stays_in_progress_while_it_runs() {
+        let running = item(&subagent(SubagentStatus::Running, Some("parent:agent:a1")));
+        assert_eq!(running["type"], "collabAgentToolCall");
+        assert_eq!(running["tool"], "spawnAgent");
+        assert_eq!(running["status"], "inProgress");
+        assert_eq!(running["senderThreadId"], "parent");
+        assert_eq!(running["receiverThreadIds"], json!(["parent:agent:a1"]));
+        assert_eq!(running["prompt"], "Run the build");
+        assert_eq!(
+            running["agentsStates"]["parent:agent:a1"]["status"],
+            "running"
+        );
+
+        let finished = item(&subagent(
+            SubagentStatus::Completed,
+            Some("parent:agent:a1"),
+        ));
+        assert_eq!(finished["status"], "completed");
+        assert_eq!(
+            finished["agentsStates"]["parent:agent:a1"],
+            json!({"status": "completed", "message": "Build passes"})
+        );
+
+        let unnamed = item(&subagent(SubagentStatus::Stopped, None));
+        assert_eq!(unnamed["status"], "interrupted");
+        assert_eq!(unnamed["receiverThreadIds"], json!([]));
+        assert_eq!(unnamed["agentsStates"], json!({}));
     }
 }

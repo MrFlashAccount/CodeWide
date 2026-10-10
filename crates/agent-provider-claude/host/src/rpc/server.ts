@@ -431,7 +431,7 @@ export class RpcServer {
     if (this.catalog.models.length === 0 || this.account?.authenticated !== true) {
       await this.refreshProbe();
     }
-    return { result: { models: this.catalog.models } };
+    return { result: { models: this.catalog.models, prices: this.catalog.prices } };
   }
 
   private async operation(

@@ -18,6 +18,7 @@ export function ReadOnlyComposerContext({
         applyModelSettings={() => undefined}
         closeQuickControlMenu={() => undefined}
         controlError={null}
+        controls$={null}
         controlsResourceId={null}
         cwd={thread.cwd}
         newChat={false}

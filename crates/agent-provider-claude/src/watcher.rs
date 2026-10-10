@@ -6,7 +6,10 @@
 //! time; it never opens a record or interprets Claude's format. Reading a
 //! changed session is the Claude host's job (`nativeSession.read`). A
 //! filesystem notification triggers a debounced rescan; a periodic rescan
-//! covers a store created later and missed notifications.
+//! covers a store created later and missed notifications. Sub-agent
+//! transcripts (`<project>/<session id>/subagents/*.jsonl`) grow while their
+//! parent's record may stay unchanged (a background agent works while its
+//! parent waits), so a change among them re-reads the parent session.
 
 use std::{
     collections::HashMap,
@@ -24,12 +27,16 @@ use crate::store::Observation;
 const CHANGE_DEBOUNCE: Duration = Duration::from_millis(250);
 const CHANGE_CHANNEL_CAPACITY: usize = 1_024;
 const RECORD_EXTENSION: &str = "jsonl";
+const SUBAGENTS_DIRECTORY: &str = "subagents";
 
 /// A session record that appeared, changed or (`observed: None`) disappeared.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionChange {
     pub session_id: String,
     pub observed: Option<Observation>,
+    /// Only the session's sub-agent transcripts changed: its record matches
+    /// the index, yet the session must be read again.
+    pub subagents_changed: bool,
 }
 
 /// `<CLAUDE_CONFIG_DIR or ~/.claude>/projects`; `None` without either.
@@ -50,9 +57,21 @@ pub fn projects_root() -> Option<PathBuf> {
 /// `root`. A missing root has no sessions.
 #[must_use]
 pub fn scan(root: &Path) -> HashMap<String, Observation> {
-    let mut sessions = HashMap::new();
+    scan_store(root).records
+}
+
+/// Session records and, per session, the folded size and newest modification
+/// of its sub-agent transcripts.
+#[derive(Default)]
+struct StoreScan {
+    records: HashMap<String, Observation>,
+    subagents: HashMap<String, Observation>,
+}
+
+fn scan_store(root: &Path) -> StoreScan {
+    let mut scanned = StoreScan::default();
     let Ok(projects) = std::fs::read_dir(root) else {
-        return sessions;
+        return scanned;
     };
     for project in projects.filter_map(Result::ok) {
         let Ok(records) = std::fs::read_dir(project.path()) else {
@@ -60,34 +79,85 @@ pub fn scan(root: &Path) -> HashMap<String, Observation> {
         };
         for record in records.filter_map(Result::ok) {
             let path = record.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some(RECORD_EXTENSION) {
-                continue;
-            }
-            let (Some(session_id), Ok(metadata)) = (
-                path.file_stem().and_then(|stem| stem.to_str()),
-                record.metadata(),
-            ) else {
+            let Some(session_id) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .filter(|stem| !stem.is_empty())
+            else {
                 continue;
             };
-            if !metadata.is_file() || session_id.is_empty() {
-                continue;
+            if path.extension().and_then(|extension| extension.to_str()) == Some(RECORD_EXTENSION) {
+                if let Some(observed) = observe_record(&path) {
+                    scanned.records.insert(session_id.to_owned(), observed);
+                }
+            } else if let Some(observed) = observe_subagents(&path.join(SUBAGENTS_DIRECTORY)) {
+                scanned.subagents.insert(session_id.to_owned(), observed);
             }
-            let last_modified_ms = metadata
-                .modified()
-                .ok()
-                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-                .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
-                .unwrap_or(0);
-            sessions.insert(
-                session_id.to_owned(),
-                Observation {
-                    file_size: metadata.len(),
-                    last_modified_ms,
-                },
-            );
         }
     }
-    sessions
+    scanned
+}
+
+/// Size and modification time of one regular file.
+fn observe_record(path: &Path) -> Option<Observation> {
+    let metadata = std::fs::metadata(path)
+        .ok()
+        .filter(std::fs::Metadata::is_file)?;
+    let last_modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(0);
+    Some(Observation {
+        file_size: metadata.len(),
+        last_modified_ms,
+    })
+}
+
+/// The folded observation of every transcript in a sub-agent directory;
+/// `None` without one.
+fn observe_subagents(directory: &Path) -> Option<Observation> {
+    let transcripts = std::fs::read_dir(directory).ok()?;
+    transcripts
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().and_then(|extension| extension.to_str()) == Some(RECORD_EXTENSION)
+        })
+        .filter_map(|path| observe_record(&path))
+        .reduce(|folded, observed| Observation {
+            file_size: folded.file_size.saturating_add(observed.file_size),
+            last_modified_ms: folded.last_modified_ms.max(observed.last_modified_ms),
+        })
+}
+
+/// Sessions whose record is unchanged while their sub-agent transcripts
+/// changed, by session id.
+fn subagent_changes(
+    previous: &StoreScan,
+    current: &StoreScan,
+    record_changes: &[SessionChange],
+) -> Vec<SessionChange> {
+    let mut changes = current
+        .subagents
+        .iter()
+        .filter(|(session_id, observed)| previous.subagents.get(*session_id) != Some(*observed))
+        .filter(|(session_id, _)| {
+            !record_changes
+                .iter()
+                .any(|change| &change.session_id == *session_id)
+        })
+        .filter_map(|(session_id, _)| {
+            current.records.get(session_id).map(|record| SessionChange {
+                session_id: session_id.clone(),
+                observed: Some(*record),
+                subagents_changed: true,
+            })
+        })
+        .collect::<Vec<_>>();
+    changes.sort_by(|left, right| left.session_id.cmp(&right.session_id));
+    changes
 }
 
 /// The changes from `previous` to `current`, by session id.
@@ -102,6 +172,7 @@ pub fn diff<S: std::hash::BuildHasher>(
         .map(|(session_id, observed)| SessionChange {
             session_id: session_id.clone(),
             observed: Some(*observed),
+            subagents_changed: false,
         })
         .chain(
             previous
@@ -110,6 +181,7 @@ pub fn diff<S: std::hash::BuildHasher>(
                 .map(|session_id| SessionChange {
                     session_id: session_id.clone(),
                     observed: None,
+                    subagents_changed: false,
                 }),
         )
         .collect::<Vec<_>>();
@@ -129,7 +201,7 @@ pub fn spawn(root: PathBuf, rescan: Duration) -> mpsc::Receiver<SessionChange> {
 async fn run(root: PathBuf, rescan: Duration, sender: mpsc::Sender<SessionChange>) {
     let notified = Arc::new(Notify::new());
     let mut watcher: Option<RecommendedWatcher> = None;
-    let mut known = HashMap::new();
+    let mut known = StoreScan::default();
     let mut interval = tokio::time::interval(rescan);
     loop {
         tokio::select! {
@@ -141,10 +213,12 @@ async fn run(root: PathBuf, rescan: Duration, sender: mpsc::Sender<SessionChange
             watcher = watch(&root, notified.clone());
         }
         let scan_root = root.clone();
-        let Ok(current) = tokio::task::spawn_blocking(move || scan(&scan_root)).await else {
+        let Ok(current) = tokio::task::spawn_blocking(move || scan_store(&scan_root)).await else {
             continue;
         };
-        for change in diff(&known, &current) {
+        let records = diff(&known.records, &current.records);
+        let subagents = subagent_changes(&known, &current, &records);
+        for change in records.into_iter().chain(subagents) {
             if sender.send(change).await.is_err() {
                 return;
             }
@@ -222,10 +296,46 @@ mod tests {
             diff(&second, &scan(&root)),
             [SessionChange {
                 session_id: "session-b".into(),
-                observed: None
+                observed: None,
+                subagents_changed: false,
             }]
         );
         assert!(scan(&directory.path().join("missing")).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_growing_subagent_transcript_rereads_its_unchanged_parent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("projects");
+        write(&root.join("-work/parent.jsonl"), b"parent")?;
+        write(&root.join("-work/parent/subagents/agent-a.jsonl"), b"a")?;
+        let first = scan_store(&root);
+        assert_eq!(first.records.keys().collect::<Vec<_>>(), ["parent"]);
+
+        // The background agent writes; its parent's record stays as it was.
+        write(&root.join("-work/parent/subagents/agent-a.jsonl"), b"a b")?;
+        write(&root.join("-work/parent/subagents/agent-b.jsonl"), b"b")?;
+        let second = scan_store(&root);
+        let records = diff(&first.records, &second.records);
+        assert_eq!(records, []);
+        assert_eq!(
+            subagent_changes(&first, &second, &records),
+            [SessionChange {
+                session_id: "parent".into(),
+                observed: Some(first.records["parent"]),
+                subagents_changed: true,
+            }]
+        );
+
+        // A parent record change already re-reads the session.
+        write(&root.join("-work/parent.jsonl"), b"parent grows")?;
+        write(&root.join("-work/parent/subagents/agent-b.jsonl"), b"b c")?;
+        let third = scan_store(&root);
+        let records = diff(&second.records, &third.records);
+        assert_eq!(records.len(), 1);
+        assert_eq!(subagent_changes(&second, &third, &records), []);
         Ok(())
     }
 

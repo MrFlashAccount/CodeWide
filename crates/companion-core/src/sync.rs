@@ -542,6 +542,14 @@ impl SyncHub {
         {
             store.spawn_change_monitor(local_events.clone());
         }
+        // Providers without that surface (Claude) report history their own
+        // index rewrote from a session driven elsewhere (a terminal).
+        for changes in registry
+            .enabled()
+            .filter_map(|provider| provider.take_history_changes())
+        {
+            tokio::spawn(forward_history_changes(changes, local_events.clone()));
+        }
         let ingest_context = IngestContext {
             store: store.clone(),
             events: events.clone(),
@@ -1752,6 +1760,26 @@ impl SyncHub {
         }
     }
 
+    /// The sub-agent tree of a thread whose provider keeps its own stored
+    /// history (no `codex.native` surface): the rows its adapter published to
+    /// the companion thread index. `None` for `codex.native` threads, whose
+    /// native store answers.
+    async fn stored_subagent_descendants(
+        &self,
+        params: &Value,
+    ) -> Option<Result<Vec<IndexedThreadMetadata>, String>> {
+        let thread_id = params.get("threadId").and_then(Value::as_str)?;
+        let target = self.gateway.resolve_thread(thread_id, None).await.ok()?;
+        if target.native().is_some() {
+            return None;
+        }
+        Some(
+            self.store
+                .thread_descendants(thread_id)
+                .map_err(|error| error.to_string()),
+        )
+    }
+
     /// `companion/threadSubagents/read`: the provider's native subagents
     /// (`subagentThreads`) followed by the agents the thread spawned with the
     /// orchestration tools. Without spawned agents the answer is today's.
@@ -1781,15 +1809,25 @@ impl SyncHub {
             _ => Vec::new(),
         };
         let mut result = match gated {
-            Ok(()) => {
-                let Some(store) = self.thread_store(Capability::SubagentThreads) else {
+            Ok(()) => match self.stored_subagent_descendants(params).await {
+                Some(Ok(rows)) => json!({"threads": rows}),
+                Some(Err(error)) => {
+                    warn!(err = %error, "subagent tree is unreadable");
                     return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE).await;
-                };
-                match store.subagent_descendants(params) {
-                    Ok(result) => result,
-                    Err(error) => return send_rpc_error(socket, id.clone(), -32020, &error).await,
                 }
-            }
+                None => {
+                    let Some(store) = self.thread_store(Capability::SubagentThreads) else {
+                        return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE)
+                            .await;
+                    };
+                    match store.subagent_descendants(params) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            return send_rpc_error(socket, id.clone(), -32020, &error).await;
+                        }
+                    }
+                }
+            },
             Err(failure) if spawned.is_empty() => {
                 return send_rpc_failure(socket, id.clone(), &failure).await;
             }
@@ -2398,6 +2436,19 @@ async fn forward_provider_events(
                     return;
                 }
             }
+        }
+    }
+}
+
+/// Journals each provider history change as a thread invalidation.
+async fn forward_history_changes(
+    mut changes: tokio::sync::mpsc::Receiver<crate::agent::provider::HistoryChange>,
+    local: tokio::sync::mpsc::Sender<Value>,
+) {
+    while let Some(change) = changes.recv().await {
+        let payload = crate::agent::client_wire::history::history_invalidation(&change);
+        if local.send(payload).await.is_err() {
+            break;
         }
     }
 }
@@ -3190,6 +3241,58 @@ mod tests {
         assert_eq!(store.replay_head()?, 1);
         drop(ingest);
         task.await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_provider_history_change_is_journaled_as_a_thread_invalidation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("history.redb"))?);
+        let (ingest, receiver) = tokio::sync::mpsc::channel(4);
+        let (signals, mut delivered) = tokio::sync::broadcast::channel(4);
+        let context = IngestContext {
+            store: store.clone(),
+            events: signals,
+            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
+            content_projector: Arc::new(std::sync::RwLock::new(None)),
+            resources: None,
+            usage_projector: Arc::new(std::sync::Mutex::new(
+                crate::usage::LiveUsageProjector::new(
+                    store.clone(),
+                    agent_core::usage::UsagePricing::default(),
+                ),
+            )),
+        };
+        let ingest_task = tokio::spawn(ingest_events(receiver, context));
+        let (local, local_rx) = tokio::sync::mpsc::channel(4);
+        let local_task = tokio::spawn(forward_local_events(local_rx, ingest));
+        let (changes, changes_rx) = tokio::sync::mpsc::channel(4);
+        let forward_task = tokio::spawn(forward_history_changes(changes_rx, local));
+
+        changes
+            .send(crate::agent::provider::HistoryChange {
+                app_thread_id: crate::agent::model::AppThreadId::from_static("terminal-session"),
+                archived: false,
+            })
+            .await?;
+        // Subscribed sessions are woken for the journaled entry.
+        tokio::time::timeout(std::time::Duration::from_secs(5), delivered.recv()).await??;
+        let page = store.replay_after(Some(0))?;
+        let [(_, entry)] = page.entries.as_slice() else {
+            return Err("expected one journaled entry".into());
+        };
+        let journaled: Value = serde_json::from_slice(entry)?;
+        assert_eq!(journaled["method"], "companion/thread/invalidated");
+        assert_eq!(journaled["params"]["threadId"], "terminal-session");
+        assert_eq!(
+            journaled["codewideThreadPatch"]["operation"]["kind"],
+            "threadInvalidated"
+        );
+        drop(changes);
+        forward_task.await?;
+        local_task.await?;
+        ingest_task.await?;
         Ok(())
     }
 

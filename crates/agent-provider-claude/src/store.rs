@@ -6,13 +6,14 @@
 //! drops them when the companion schema asks for a rebuild or when
 //! [`CLAUDE_INDEX_LOGIC_VERSION`] changes, and the indexer reads every
 //! session again. Thread metadata stays companion state, published through
-//! [`HostThreadIndex`].
+//! [`HostThreadIndex`], including one row per sub-agent child thread
+//! ([`crate::subagents`]) under its parent, which serves
+//! `companion/threadSubagents/read`.
 
 use std::sync::Arc;
 
 use agent_core::model::{
-    AgentItem, AgentTurn, AppThreadId, NativeSession, NativeSessionReadResult, NativeSubagent,
-    TurnOrigin,
+    AgentItem, AgentTurn, AppThreadId, NativeSession, NativeSessionReadResult, TurnOrigin,
 };
 use companion_host::{
     index::{DerivedIndexSchema, META, StoreError, attach_derived, logic_version, table_exists},
@@ -24,16 +25,22 @@ use redb::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::subagents::{self, ChildThread, IndexedSubagent};
+
 /// Session id → [`StoredSession`].
 const SESSIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("claude_sessions");
 /// `session id \0 ordinal (u32 BE)` → one neutral turn.
 const SESSION_TURNS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("claude_session_turns");
 /// `app thread id \0 session id` → presence.
 const THREAD_SESSIONS: TableDefinition<&[u8], u8> = TableDefinition::new("claude_thread_sessions");
+/// `session id \0 agent id` → the sub-agent's neutral turns.
+const SUBAGENT_TURNS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("claude_subagent_turns");
 
 const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// Bumped whenever the derived rows change meaning; a change drops them.
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 1;
+/// 2: person prompts of interactive sessions, `subagent` items, sub-agent
+/// turns in their own table.
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 2;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;
@@ -56,17 +63,20 @@ impl DerivedIndexSchema for ClaudeIndexSchema {
             write.delete_table(SESSIONS)?;
             write.delete_table(SESSION_TURNS)?;
             write.delete_table(THREAD_SESSIONS)?;
+            write.delete_table(SUBAGENT_TURNS)?;
         }
         write.open_table(SESSIONS)?;
         write.open_table(SESSION_TURNS)?;
         write.open_table(THREAD_SESSIONS)?;
+        write.open_table(SUBAGENT_TURNS)?;
         Ok(())
     }
 
     fn is_current(&self, read: &ReadTransaction) -> Result<bool, StoreError> {
         Ok(
             logic_version(read, LOGIC_VERSION_KEY)? == Some(CLAUDE_INDEX_LOGIC_VERSION)
-                && table_exists(read, THREAD_SESSIONS)?,
+                && table_exists(read, THREAD_SESSIONS)?
+                && table_exists(read, SUBAGENT_TURNS)?,
         )
     }
 }
@@ -76,7 +86,9 @@ impl DerivedIndexSchema for ClaudeIndexSchema {
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
     pub session: NativeSession,
-    pub subagents: Vec<NativeSubagent>,
+    /// The session's sub-agents; their turns live in their own table, so a
+    /// session row stays small however much its sub-agents did.
+    pub subagents: Vec<IndexedSubagent>,
     pub turn_count: u32,
     /// Whether a person's turn exists (a thread without one is a shell).
     #[serde(default)]
@@ -181,7 +193,7 @@ impl ClaudeStore {
         let thread = &read.session.app_thread_id;
         let stored = StoredSession {
             session: read.session.clone(),
-            subagents: read.subagents.clone(),
+            subagents: subagents::index(read),
             turn_count: u32::try_from(read.turns.len())
                 .map_err(|_| StoreError::CorruptedIndex("too many turns in a session".into()))?,
             has_user_turn: read.turns.iter().any(|turn| {
@@ -194,9 +206,20 @@ impl ClaudeStore {
         };
         if self.session(session_id)?.as_ref() == Some(&stored)
             && self.session_turns(session_id)? == read.turns
+            && self.subagents_unchanged(session_id, read)?
         {
             return Ok(Replaced::Unchanged);
         }
+        let encoded_subagents = read
+            .subagents
+            .iter()
+            .map(|subagent| {
+                Ok((
+                    subagent_key(session_id, &subagent.agent_id),
+                    serde_json::to_vec(&subagent.turns)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
         let encoded_turns = read
             .turns
             .iter()
@@ -225,6 +248,12 @@ impl ClaudeStore {
                     StoreError::CorruptedIndex("too many turns in a session".into())
                 })?;
                 turns.insert(turn_key(session_id, ordinal).as_slice(), turn.as_slice())?;
+            }
+            let mut subagent_turns = write.open_table(SUBAGENT_TURNS)?;
+            let (start, end) = subagent_range(session_id);
+            subagent_turns.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
+            for (key, value) in &encoded_subagents {
+                subagent_turns.insert(key.as_slice(), value.as_slice())?;
             }
         }
         write.commit()?;
@@ -295,6 +324,9 @@ impl ClaudeStore {
             let mut turns = write.open_table(SESSION_TURNS)?;
             let (start, end) = turn_range(session_id);
             turns.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
+            let mut subagent_turns = write.open_table(SUBAGENT_TURNS)?;
+            let (start, end) = subagent_range(session_id);
+            subagent_turns.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
             previous.map(|previous| previous.session.app_thread_id)
         };
         write.commit()?;
@@ -355,6 +387,73 @@ impl ClaudeStore {
         Ok(Some(turns))
     }
 
+    /// Whether every indexed sub-agent transcript of the session equals the read's.
+    fn subagents_unchanged(
+        &self,
+        session_id: &str,
+        read: &NativeSessionReadResult,
+    ) -> Result<bool, StoreError> {
+        let transaction = self.database.begin_read()?;
+        let table = transaction.open_table(SUBAGENT_TURNS)?;
+        let (start, end) = subagent_range(session_id);
+        let indexed = table.range(start.as_slice()..=end.as_slice())?.count();
+        if indexed != read.subagents.len() {
+            return Ok(false);
+        }
+        for subagent in &read.subagents {
+            let key = subagent_key(session_id, &subagent.agent_id);
+            let Some(row) = table.get(key.as_slice())? else {
+                return Ok(false);
+            };
+            if serde_json::from_slice::<Vec<AgentTurn>>(row.value())? != subagent.turns {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The indexed child thread of a sub-agent (`<parent>:agent:<agent id>`);
+    /// `None` for any other id, an unknown agent or a deleted parent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the index cannot be read or a row is invalid.
+    pub fn child_thread(&self, thread: &AppThreadId) -> Result<Option<ChildThread>, StoreError> {
+        let Some((parent, agent_id)) = subagents::parse_child_thread_id(thread) else {
+            return Ok(None);
+        };
+        let sessions = self.thread_sessions(&parent)?;
+        if crate::catalog::is_deleted(&sessions.iter().collect::<Vec<_>>()) {
+            return Ok(None);
+        }
+        for stored in sessions {
+            let Some(subagent) = stored
+                .subagents
+                .iter()
+                .find(|subagent| subagent.agent_id == agent_id)
+            else {
+                continue;
+            };
+            let transaction = self.database.begin_read()?;
+            let table = transaction.open_table(SUBAGENT_TURNS)?;
+            let key = subagent_key(&stored.session.session_id, agent_id);
+            let turns = table
+                .get(key.as_slice())?
+                .map(|row| serde_json::from_slice::<Vec<AgentTurn>>(row.value()))
+                .transpose()?
+                .unwrap_or_default();
+            let cwd = thread_cwd(&stored);
+            return Ok(Some(ChildThread {
+                thread_id: thread.clone(),
+                parent,
+                cwd,
+                subagent: subagent.clone(),
+                turns,
+            }));
+        }
+        Ok(None)
+    }
+
     fn session_turns(&self, session_id: &str) -> Result<Vec<AgentTurn>, StoreError> {
         let read = self.database.begin_read()?;
         let table = read.open_table(SESSION_TURNS)?;
@@ -399,8 +498,49 @@ impl ClaudeStore {
             agent_nickname: None,
             agent_role: None,
             archived: false,
-        })
+        })?;
+        let children = sessions
+            .iter()
+            .flat_map(|stored| {
+                let cwd = thread_cwd(stored);
+                let created_at = session_start(&stored.session) / 1000;
+                stored.subagents.iter().filter_map(move |subagent| {
+                    subagents::thread_metadata(thread, &cwd, created_at, subagent)
+                })
+            })
+            .collect::<Vec<_>>();
+        if children.is_empty() {
+            return Ok(());
+        }
+        self.threads.put_thread_metadata_batch(&children)
     }
+}
+
+/// Where a session's turns run: the `CodeWide` thread's directory, else the session's.
+fn thread_cwd(stored: &StoredSession) -> String {
+    stored
+        .session
+        .codewide
+        .as_ref()
+        .map(|codewide| codewide.cwd.clone())
+        .or_else(|| stored.session.cwd.clone())
+        .unwrap_or_default()
+}
+
+fn subagent_key(session_id: &str, agent_id: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(session_id.len() + 1 + agent_id.len());
+    key.extend_from_slice(session_id.as_bytes());
+    key.push(0);
+    key.extend_from_slice(agent_id.as_bytes());
+    key
+}
+
+fn subagent_range(session_id: &str) -> (Vec<u8>, Vec<u8>) {
+    let mut start = session_id.as_bytes().to_vec();
+    start.push(0);
+    let mut end = start.clone();
+    end.push(u8::MAX);
+    (start, end)
 }
 
 /// When the session started; a store without a creation time sorts it by its
@@ -438,6 +578,96 @@ mod tests {
         let database = companion_host::database::open(path, "test")?;
         let threads = Arc::new(MemoryThreadIndex::default());
         Ok((ClaudeStore::attach(database, threads.clone())?, threads))
+    }
+
+    /// A session whose first turn spawned `agent` (still running when
+    /// `running`), with the agent's own transcript.
+    fn read_with_subagent(running: bool) -> NativeSessionReadResult {
+        let mut read = session_read("session-s", "thread-s", 30, &["plan"]);
+        let child = "thread-s:agent:a0001";
+        if let Some(turn) = read.turns.first_mut() {
+            turn.items.insert(
+                1,
+                AgentItem::Subagent {
+                    item_id: agent_core::model::ItemId::from_static("toolu_spawn"),
+                    provenance: None,
+                    agent_thread_id: AppThreadId::parse(child),
+                    agent_type: Some("Explore".into()),
+                    background: true,
+                    description: "Check the build".into(),
+                    model: None,
+                    prompt: "Run the build".into(),
+                    result: None,
+                    status: if running {
+                        agent_core::model::SubagentStatus::Running
+                    } else {
+                        agent_core::model::SubagentStatus::Completed
+                    },
+                },
+            );
+        }
+        let mut sub_turn = crate::test_support::turn("agent", "Run the build", 31);
+        if running {
+            sub_turn.status = agent_core::model::TurnStatus::InProgress;
+            sub_turn.completed_at = None;
+        }
+        read.subagents.push(agent_core::model::NativeSubagent {
+            agent_id: "a0001".into(),
+            parent_agent_id: None,
+            parent_tool_use_id: Some("toolu_spawn".into()),
+            turns: vec![sub_turn],
+        });
+        read
+    }
+
+    #[test]
+    fn sub_agents_are_child_threads_under_their_parent() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let (store, threads) = open(&directory.path().join("index.redb"))?;
+        let running = read_with_subagent(true);
+        assert_eq!(store.replace_session(&running)?, Replaced::Written);
+        assert_eq!(store.replace_session(&running)?, Replaced::Unchanged);
+
+        let child_id = AppThreadId::from_static("thread-s:agent:a0001");
+        let child = store.child_thread(&child_id)?.ok_or("child thread")?;
+        assert_eq!(child.parent.as_str(), "thread-s");
+        assert_eq!(child.turns.len(), 1);
+        assert!(child.active_turn().is_some());
+        let provider = agent_core::model::ProviderId::from_static("claude");
+        let thread = child.thread(&provider);
+        assert_eq!(thread.name.as_deref(), Some("Check the build"));
+        assert_eq!(thread.status, agent_core::model::ThreadStatus::Active);
+        assert_eq!(thread.preview, "Run the build");
+
+        let row = threads.metadata(child_id.as_str()).ok_or("child row")?;
+        assert_eq!(row.parent_thread_id.as_deref(), Some("thread-s"));
+        assert_eq!(row.agent_nickname.as_deref(), Some("Check the build"));
+        assert_eq!(row.agent_role.as_deref(), Some("Explore"));
+        assert_eq!(row.cwd, "/work/session-s");
+
+        // The agent finished: the same session re-read updates the child.
+        let finished = read_with_subagent(false);
+        assert_eq!(store.replace_session(&finished)?, Replaced::Written);
+        let child = store.child_thread(&child_id)?.ok_or("child thread")?;
+        assert!(child.active_turn().is_none());
+        assert_eq!(
+            child.thread(&provider).status,
+            agent_core::model::ThreadStatus::Idle
+        );
+
+        assert!(
+            store
+                .child_thread(&AppThreadId::from_static("thread-s:agent:unknown"))?
+                .is_none()
+        );
+        assert!(
+            store
+                .child_thread(&AppThreadId::from_static("thread-s"))?
+                .is_none()
+        );
+        store.remove_session("session-s")?;
+        assert!(store.child_thread(&child_id)?.is_none());
+        Ok(())
     }
 
     #[test]

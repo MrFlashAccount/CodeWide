@@ -10,9 +10,11 @@ import { useState } from "react";
 import { accountPoolOwner } from "../../data/agentProviders";
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
+import { useAppDialog } from "../../ui/AppDialog";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
 import { ProviderIcon } from "../../ui/ProviderIcon";
+import { SettingsGroupHeader } from "../../ui/SettingsGroupHeader";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AccountPoolFeature.styles";
 
@@ -28,6 +30,7 @@ export function AccountPoolEditor({
   onStartLogin,
   onUpdate,
 }: AccountPoolProps) {
+  const dialog = useAppDialog();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const owner = useSelector(() => accountPoolOwner(agentProviders?.state$[connectionId]?.get()));
@@ -65,33 +68,54 @@ export function AccountPoolEditor({
   const refreshAccounts = useEvent(() => {
     run(async () => onRefresh(connectionId));
   });
+  const explainFallback = useEvent(() => {
+    dialog.alert(
+      "Account switching",
+      "New turns use the active account. When it reaches a usage limit, CodeWide switches to the next backup account automatically.",
+      [{ text: "OK" }],
+    );
+  });
   const startAddingAccount = useEvent(() => {
     run(addAccount);
   });
   return (
     <>
       <View style={styles.accountPoolEditor}>
-        <View style={styles.accountPoolHeader}>
-          {owner !== null && <ProviderIcon provider={owner.id} size={iconSize.inline} />}
-          <View style={styles.flex}>
-            <Text style={styles.fieldLabel}>{`${owner?.name ?? "Codex"} accounts`}</Text>
-            <Text style={styles.menuActionSubtitle}>
-              Manual selection · automatic fallback on limit
-            </Text>
-          </View>
-          <Pressable
-            accessibilityLabel="Refresh Codex accounts"
-            disabled={busy}
-            onPress={refreshAccounts}
-            style={[styles.connectionMiniButton, busy && styles.disabled]}
-          >
-            {busy ? (
-              <ActivityIndicator color={colors.textMuted} size="small" />
-            ) : (
-              <Ionicons color={colors.textMuted} name="refresh" size={iconSize.action} />
-            )}
-          </Pressable>
-        </View>
+        <SettingsGroupHeader
+          leading={
+            owner === null ? undefined : (
+              <ProviderIcon color={colors.textMuted} provider={owner.id} size={iconSize.inline} />
+            )
+          }
+          title={`${owner?.name ?? "Codex"} accounts`}
+          trailing={
+            <>
+              <Pressable
+                accessibilityLabel="How account switching works"
+                onPress={explainFallback}
+                style={styles.connectionMiniButton}
+              >
+                <Ionicons
+                  color={colors.textMuted}
+                  name="information-circle-outline"
+                  size={iconSize.action}
+                />
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Refresh Codex accounts"
+                disabled={busy}
+                onPress={refreshAccounts}
+                style={[styles.connectionMiniButton, busy && styles.disabled]}
+              >
+                {busy ? (
+                  <ActivityIndicator color={colors.textMuted} size="small" />
+                ) : (
+                  <Ionicons color={colors.textMuted} name="refresh" size={iconSize.action} />
+                )}
+              </Pressable>
+            </>
+          }
+        />
         {profiles.length === 0 && (
           <Text style={styles.menuNotice}>
             {accountPool === null

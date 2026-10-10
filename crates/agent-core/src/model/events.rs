@@ -81,6 +81,10 @@ pub enum AgentEvent {
         /// The provider's own cost estimate of the turn (added within v1).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost: Option<ProviderCost>,
+        /// The model that served `last`, priced by the catalog `prices`
+        /// (added within v1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     #[serde(rename = "plan.updated")]
     PlanUpdated {

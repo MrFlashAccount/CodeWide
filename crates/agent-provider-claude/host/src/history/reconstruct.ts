@@ -27,6 +27,7 @@ import type {
 } from "../protocol.js";
 import { asClientMessageId, asTurnId } from "../protocol.js";
 import { isRecord, type ClaudeFrame } from "../mapping/frames.js";
+import { NotifiedStatuses } from "../mapping/subagents.js";
 import type { TurnOutcome } from "../mapping/result.js";
 import {
   CANCEL_MESSAGE,
@@ -220,6 +221,11 @@ class SegmentReplay {
   public finish(outcome: TurnOutcome): AgentTurn {
     return this.builder.finish(outcome, null).turn;
   }
+
+  /** The turn as still running: open items stay open. */
+  public snapshot(): AgentTurn {
+    return this.builder.snapshot();
+  }
 }
 
 /** Index timestamps win over the ones read from the store; the index adds the turn's usage. */
@@ -235,12 +241,12 @@ function withRecord(turn: AgentTurn, record: TurnRecord | null): AgentTurn {
   };
 }
 
-function replaySegment(
+/** Replays every entry of a segment; the caller finishes the turn. */
+function replayEntries(
   segment: HistorySegment,
-  records: readonly TurnRecord[],
+  record: TurnRecord | null,
   context: HistoryContext,
-): AgentTurn {
-  const record = recordOf(segment, records);
+): SegmentReplay {
   const [first, ...rest] = segment.entries;
   const replay = new SegmentReplay(turnIdentity(segment, record), promptIndex(record), {
     ...context,
@@ -250,7 +256,62 @@ function replaySegment(
   for (const entry of consumedFirst ? rest : segment.entries) {
     replay.apply(entry);
   }
-  return withRecord(replay.finish(outcomeOf(segment, record)), record);
+  return replay;
+}
+
+function replaySegment(
+  segment: HistorySegment,
+  records: readonly TurnRecord[],
+  context: HistoryContext,
+): AgentTurn {
+  const record = recordOf(segment, records);
+  return withRecord(
+    replayEntries(segment, record, context).finish(outcomeOf(segment, record)),
+    record,
+  );
+}
+
+/** The last turn of a sub-agent that still works: open items stay open. */
+const replayRunningSegment = (segment: HistorySegment, context: HistoryContext): AgentTurn =>
+  replayEntries(segment, null, context).snapshot();
+
+/**
+ * Sub-agent items carry the final status a later task notification of the
+ * same conversation level reported (a background agent finishes after the
+ * turn that started it).
+ */
+function withNotifiedStatuses(
+  turns: readonly AgentTurn[],
+  entries: readonly HistoryEntry[],
+): readonly AgentTurn[] {
+  const statuses = new NotifiedStatuses();
+  for (const entry of entries) {
+    if (entry.kind === "wake" && entry.notification !== null) {
+      statuses.record(entry.notification);
+    }
+  }
+  return turns.map((turn) =>
+    turn.items.some((item) => item.type === "subagent")
+      ? {
+          ...turn,
+          items: turn.items.map((item) => (item.type === "subagent" ? statuses.apply(item) : item)),
+        }
+      : turn,
+  );
+}
+
+/** The stored messages of one conversation level and what the turn index says about them. */
+interface Level {
+  readonly entries: readonly HistoryEntry[];
+  readonly hints: SegmentHints;
+  readonly records: readonly TurnRecord[];
+}
+
+function reconstructLevel(level: Level, context: HistoryContext): readonly AgentTurn[] {
+  const turns = historySegments(level.entries, level.hints).map((segment) =>
+    replaySegment(segment, level.records, context),
+  );
+  return withNotifiedStatuses(turns, level.entries);
 }
 
 /**
@@ -262,8 +323,9 @@ export function reconstructTurns(
   records: readonly TurnRecord[],
   context: HistoryContext,
 ): readonly AgentTurn[] {
-  return historySegments(historyEntries(messages, null), segmentHints(records)).map((segment) =>
-    replaySegment(segment, records, context),
+  return reconstructLevel(
+    { entries: historyEntries(messages, null), hints: segmentHints(records), records },
+    context,
   );
 }
 
@@ -276,14 +338,21 @@ export function subagentParent(messages: readonly unknown[]): string | null {
 
 /**
  * Rebuilds the turns of one sub-agent transcript. Sub-agents are never
- * host-driven, so their turn ids come from their messages alone.
+ * host-driven, so their turn ids come from their messages alone. The last
+ * turn of a sub-agent its parent still reports `running` stays in progress.
  */
 export function reconstructSubagentTurns(
   messages: readonly unknown[],
   context: HistoryContext,
+  running = false,
 ): readonly AgentTurn[] {
   const hints = { continuations: new Set<string>(), starts: new Map<string, TurnOrigin>() };
-  return historySegments(historyEntries(messages, subagentParent(messages)), hints).map((segment) =>
-    replaySegment(segment, [], context),
+  const entries = historyEntries(messages, subagentParent(messages));
+  const segments = historySegments(entries, hints);
+  const turns = segments.map((segment, index) =>
+    running && index === segments.length - 1
+      ? replayRunningSegment(segment, context)
+      : replaySegment(segment, [], context),
   );
+  return withNotifiedStatuses(turns, entries);
 }

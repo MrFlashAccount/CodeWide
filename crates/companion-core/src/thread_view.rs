@@ -140,7 +140,9 @@ impl ThreadViewService {
 
         let target = self.target(thread_id).await?;
         let Some(native) = target.native() else {
-            return self.sync_neutral(&target, after_turn_id, limit).await;
+            return self
+                .sync_neutral(&target, after_turn_id, source_witness, limit)
+                .await;
         };
         let thread_store = native.thread_store().ok_or_else(|| {
             ThreadViewError::History("Thread history storage is unavailable".into())
@@ -282,6 +284,7 @@ impl ThreadViewService {
         &self,
         target: &Target,
         after_turn_id: Option<&str>,
+        source_witness: Option<&str>,
         limit: usize,
     ) -> Result<Value, ThreadViewError> {
         let (read, shell_fence) = target
@@ -311,26 +314,13 @@ impl ThreadViewService {
             provider_history::latest(target, limit.clamp(1, 100))
                 .await
                 .map_err(|failure| ThreadViewError::Route(failure.message))?;
-        let current = head_turn_id.is_some() && after_turn_id == head_turn_id.as_deref();
-        let history = if current {
-            json!({
-                "kind": "current",
-                "headTurnId": head_turn_id,
-                "turns": [],
-                "hasMore": false,
-                "olderCursor": Value::Null,
-                "sourceWitness": provider_history::SOURCE_WITNESS,
-            })
-        } else {
-            json!({
-                "kind": "reset",
-                "headTurnId": head_turn_id,
-                "turns": turns.iter().map(|turn| items::turn(turn, ItemsView::Full)).collect::<Vec<_>>(),
-                "hasMore": false,
-                "olderCursor": older_cursor,
-                "sourceWitness": provider_history::SOURCE_WITNESS,
-            })
-        };
+        let history = provider_history::sync_history(
+            &turns,
+            head_turn_id.as_deref(),
+            older_cursor.as_deref(),
+            after_turn_id,
+            source_witness,
+        );
         let thread = items::thread(&read.thread, &target.wire, &[]);
         let through_cursor = fence.wait().await?;
         Ok(json!({

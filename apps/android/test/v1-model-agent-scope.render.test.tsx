@@ -52,7 +52,11 @@ const multiProvider: TurnControlsValue = {
   ],
 };
 
-function openPicker(agentScope: ModelAgentScope | null, models = multiProvider.models) {
+function openPicker(
+  agentScope: ModelAgentScope | null,
+  models: TurnControlsValue["models"] = multiProvider.models,
+  callbacks: { onApplySettings?: jest.Mock; onClose?: jest.Mock } = {},
+) {
   const view = render(
     <ModelThinkingMenu
       accessibilityLabel="Model and thinking"
@@ -60,8 +64,8 @@ function openPicker(agentScope: ModelAgentScope | null, models = multiProvider.m
       error={null}
       loading={false}
       models={models}
-      onApplySettings={jest.fn()}
-      onClose={jest.fn()}
+      onApplySettings={callbacks.onApplySettings ?? jest.fn()}
+      onClose={callbacks.onClose ?? jest.fn()}
       onFallbackPress={jest.fn()}
       onOpen={jest.fn()}
       selectedEffort="high"
@@ -90,7 +94,12 @@ const codexThread = {
 };
 
 it("groups a new chat's models by provider and says the agent is final", () => {
-  const scope = modelAgentScope(multiProvider, true, null);
+  const scope = modelAgentScope({
+    catalog: multiProvider,
+    forkIntoAgent: undefined,
+    newChat: true,
+    thread: null,
+  });
   expect(scope).toEqual({ kind: "newChat" });
   const view = openPicker(scope);
   expect(view.getByTestId("model-agent-note")).toHaveTextContent(
@@ -104,16 +113,60 @@ it("groups a new chat's models by provider and says the agent is final", () => {
   expect(view.getByRole("button", { name: "Opus" })).toBeTruthy();
 });
 
-it("names the agent of an existing thread and points to fork when it can switch", () => {
-  const claudeScope = modelAgentScope(multiProvider, false, claudeThread);
-  const claudeView = openPicker(claudeScope, multiProvider.models.slice(1));
+it("names the agent of an existing thread and opens the fork picker from the hint", () => {
+  const forkIntoAgent = jest.fn();
+  const onClose = jest.fn();
+  const claudeScope = modelAgentScope({
+    catalog: multiProvider,
+    forkIntoAgent,
+    newChat: false,
+    thread: claudeThread,
+  });
+  const claudeView = openPicker(claudeScope, multiProvider.models.slice(1), { onClose });
   expect(claudeView.getByTestId("model-agent-note")).toHaveTextContent(
-    "This chat uses Claude. Fork it from the thread menu to switch agents.",
+    "This chat uses Claude. Fork it to switch agents.",
   );
   expect(claudeView.queryAllByRole("header")).toHaveLength(0);
+  fireEvent.press(claudeView.getByRole("button", { name: "Fork into another agent" }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(forkIntoAgent).toHaveBeenCalledTimes(1);
+  expect(claudeView.queryByTestId("model-agent-note")).toBeNull();
 
-  const codexView = openPicker(modelAgentScope(multiProvider, false, codexThread));
+  const codexView = openPicker(
+    modelAgentScope({ catalog: multiProvider, forkIntoAgent, newChat: false, thread: codexThread }),
+  );
   expect(codexView.getByTestId("model-agent-note")).toHaveTextContent("This chat uses Codex.");
+  expect(codexView.queryByRole("button", { name: "Fork into another agent" })).toBeNull();
+});
+
+it("offers no fork action when the conversation cannot open the picker", () => {
+  const view = openPicker(
+    modelAgentScope({
+      catalog: multiProvider,
+      forkIntoAgent: undefined,
+      newChat: false,
+      thread: claudeThread,
+    }),
+    multiProvider.models.slice(1),
+  );
+  expect(view.getByTestId("model-agent-note")).toHaveTextContent("This chat uses Claude.");
+  expect(view.queryByRole("button", { name: "Fork into another agent" })).toBeNull();
+});
+
+it("hides thinking for a model without levels and applies it without an effort", () => {
+  const onApplySettings = jest.fn();
+  const models = [
+    row("opus", "Opus", claude),
+    { ...row("haiku", "Haiku", claude), defaultEffort: null, efforts: [] },
+  ] as TurnControlsValue["models"];
+  const view = openPicker(null, models, { onApplySettings });
+  expect(view.getByText("Thinking level")).toBeTruthy();
+  fireEvent.press(view.getByRole("button", { name: "Haiku" }));
+  expect(view.queryByText("Thinking level")).toBeNull();
+  fireEvent.press(view.getByRole("button", { name: "Apply model settings" }));
+  expect(onApplySettings).toHaveBeenCalledWith(
+    expect.objectContaining({ effort: null, executionChanged: true, model: "haiku" }),
+  );
 });
 
 it("keeps a single-provider or legacy picker unchanged", () => {
@@ -121,8 +174,17 @@ it("keeps a single-provider or legacy picker unchanged", () => {
     ...EMPTY_TURN_CONTROLS,
     models: [row("gpt-5.5", "GPT-5.5", null), row("gpt-5.4", "GPT-5.4", null)],
   };
-  expect(modelAgentScope(legacy, true, null)).toBeNull();
-  expect(modelAgentScope(legacy, false, { id: "legacy-thread" })).toBeNull();
+  expect(
+    modelAgentScope({ catalog: legacy, forkIntoAgent: undefined, newChat: true, thread: null }),
+  ).toBeNull();
+  expect(
+    modelAgentScope({
+      catalog: legacy,
+      forkIntoAgent: jest.fn(),
+      newChat: false,
+      thread: { id: "legacy-thread" },
+    }),
+  ).toBeNull();
   const view = openPicker(null, legacy.models);
   expect(view.queryByTestId("model-agent-note")).toBeNull();
   expect(view.queryAllByRole("header")).toHaveLength(0);

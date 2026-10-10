@@ -249,6 +249,7 @@ describe("Companion host update resource", () => {
         availability,
         canRetry: false,
         errorCode: code === "precondition_failed" ? "stale_target" : code,
+        errorMessage: availability === "error" ? message : null,
         phase: null,
       });
     },

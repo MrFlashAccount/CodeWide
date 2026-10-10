@@ -24,6 +24,7 @@ import {
 } from "./modelServiceTier";
 import { ModelAgentNote, ModelProviderHeader } from "./ModelAgentScope";
 import { groupsModelsByProvider, modelSections } from "./modelSections";
+import { clampModelEffort, modelEffortLevels } from "./modelEffort";
 import { modelEffortLabel } from "./modelEffortPresentation";
 import { ProviderIcon } from "./ProviderIcon";
 import { AppText as Text } from "./Typography";
@@ -74,10 +75,7 @@ function modelDraftChoice(
   models: readonly ModelControl[],
 ): ModelSettingsChoice | null {
   const model = models.find((candidate) => candidate.id === draft.model);
-  if (model === undefined || draft.effort === null) {
-    return null;
-  }
-  if (!model.efforts.includes(draft.effort) && draft.effort !== model.defaultEffort) {
+  if (model === undefined || clampModelEffort(model, draft.effort) !== draft.effort) {
     return null;
   }
   return {
@@ -112,7 +110,7 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
       current.status === "open" ? { ...current, modelsExpanded: !current.modelsExpanded } : current,
     );
   });
-  const selectModel = useEvent((model: string, effort: string) => {
+  const selectModel = useEvent((model: string, effort: string | null) => {
     setState((current) => {
       if (current.status !== "open") {
         return current;
@@ -165,6 +163,10 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
     setState({ status: "closed" });
     props.onClose();
   });
+  const close = useEvent(() => {
+    setState({ status: "closed" });
+    props.onClose();
+  });
   const trigger = createElement(
     Pressable,
     {
@@ -185,6 +187,7 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
       {state.status === "open" && (
         <ModelMenuContent
           apply={apply}
+          close={close}
           draft={state.draft}
           initial={state.initial}
           modelsExpanded={state.modelsExpanded}
@@ -202,6 +205,7 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
 
 function ModelMenuContent({
   apply,
+  close,
   draft,
   initial,
   modelsExpanded,
@@ -213,11 +217,12 @@ function ModelMenuContent({
   props,
 }: {
   apply: () => void;
+  close: () => void;
   draft: ModelDraft;
   initial: ModelDraft;
   modelsExpanded: boolean;
   onSelectEffort: (effort: string) => void;
-  onSelectModel: (model: string, effort: string) => void;
+  onSelectModel: (model: string, effort: string | null) => void;
   onSelectPersonality: (personality: ModelDraft["personality"]) => void;
   onSelectServiceTier: (serviceTier: string) => void;
   onToggleModels: () => void;
@@ -229,7 +234,7 @@ function ModelMenuContent({
   return (
     <View style={styles.content}>
       <Text style={styles.title}>Model & Thinking</Text>
-      <ModelAgentNote scope={props.agentScope} />
+      <ModelAgentNote onFork={close} scope={props.agentScope} />
       <MenuNotices error={props.error} loading={props.loading && props.models.length === 0} />
       <ModelControls
         model={model}
@@ -254,7 +259,7 @@ function ModelMenuContent({
         selected={draft.personality}
         visible={props.showPersonalityControls !== false}
       />
-      {model !== undefined && (
+      {model !== undefined && model.defaultEffort !== null && (
         <CodeWideSlider
           accessibilityLabel="Thinking level"
           formatValue={modelEffortLabel}
@@ -262,7 +267,7 @@ function ModelMenuContent({
           onSelect={onSelectEffort}
           selected={draft.effort}
           testID="thinking-level"
-          values={model.efforts.length > 0 ? model.efforts : [model.defaultEffort]}
+          values={modelEffortLevels(model)}
         />
       )}
       <ApplyButton disabled={!canApply} onPress={apply} />
@@ -362,7 +367,7 @@ function ModelChoices({
   /** Groups the rows under provider headers (a new chat on a multi-provider server). */
   grouped: boolean;
   models: readonly ModelControl[];
-  onChoose: (model: string, effort: string) => void;
+  onChoose: (model: string, effort: string | null) => void;
   selectedEffort: string | null;
   selectedModel: string | null;
 }): ReactNode {
@@ -396,15 +401,12 @@ function ModelRow({
   selectedEffort,
 }: {
   candidate: ModelControl;
-  onChoose: (model: string, effort: string) => void;
+  onChoose: (model: string, effort: string | null) => void;
   selected: boolean;
   selectedEffort: string | null;
 }): ReactNode {
   const choose = useEvent(() => {
-    const effort = candidate.efforts.includes(selectedEffort ?? "")
-      ? (selectedEffort ?? candidate.defaultEffort)
-      : candidate.defaultEffort;
-    onChoose(candidate.id, effort);
+    onChoose(candidate.id, clampModelEffort(candidate, selectedEffort));
   });
   return (
     <Pressable

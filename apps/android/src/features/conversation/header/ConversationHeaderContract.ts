@@ -7,6 +7,7 @@ import type { ThreadChatModel } from "../../../data/thread-chat-model";
 import type { ThreadForkOptions } from "../../../data/thread-fork";
 import type { ThreadHistoryModel } from "../../../data/thread-history-model";
 import type { ThreadListServer } from "../../connections/connectionPresentation";
+import type { ForkTargetPicker } from "../../turnActions/forkTargetPicker";
 import type { ReadForkTargets } from "../../turnActions/forkTargets";
 import type { ThreadListItem } from "../../threadList/threadListTypes";
 
@@ -22,6 +23,7 @@ export type ConversationHeaderProps = {
   dismissComposerKeyboardForOverlay: () => void;
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  forkPicker: ForkTargetPicker | undefined;
   forkTargets: ReadForkTargets | undefined;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;

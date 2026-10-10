@@ -9,12 +9,13 @@
  * `toolCall {namespace: null}` with their bare name. Pure; no I/O.
  */
 
-import type { AgentItem, ExecutionStatus, ItemId } from "../protocol.js";
+import type { AgentItem, AppThreadId, ExecutionStatus, ItemId } from "../protocol.js";
 import { asItemId } from "../protocol.js";
 import { clientToolOf } from "./clientTools.js";
 import { completedDiff, inputDiff } from "./diffs.js";
 import { isRecord, type JsonRecord, type ToolResultBlock } from "./frames.js";
 import { toJsonValue } from "./json.js";
+import { completeSubagent, isSubagentTool, startSubagent, withStatus } from "./subagents.js";
 import { unreachable } from "../support/unreachable.js";
 
 const BYTES_PER_KIB = 1024;
@@ -198,6 +199,9 @@ export function startItem(call: ToolCallInput, context: ToolContext): AgentItem 
       type: "command",
     };
   }
+  if (isSubagentTool(call.name)) {
+    return startSubagent(call.id, call.input);
+  }
   if (FILE_EDIT_TOOLS.has(call.name)) {
     return {
       changes: inputDiff(call.name, call.input),
@@ -247,6 +251,8 @@ function bashOutput(result: ToolResultBlock, toolUseResult: unknown): string {
 
 /** How a started tool call ended. */
 export interface ToolOutcome {
+  /** The thread the call ran in; names a spawned sub-agent's thread. */
+  readonly appThreadId: AppThreadId;
   readonly durationMs: number;
   readonly result: ToolResultBlock;
   readonly status: ExecutionStatus;
@@ -326,11 +332,22 @@ export function completeItem(
   call: ToolCallInput,
   outcome: ToolOutcome,
 ): AgentItem {
+  if (started.type === "subagent") {
+    return completeSubagent(started, {
+      appThreadId: outcome.appThreadId,
+      completed: outcome.status === "completed",
+      result: outcome.result,
+      toolUseResult: outcome.toolUseResult,
+    });
+  }
   return isToolItem(started) ? completeToolItem(started, call, outcome) : started;
 }
 
-/** Closes an item that never received its result (interrupt, exit). */
+/** Closes an item that never received its result (interrupt, exit); a sub-agent working for it is stopped. */
 export function failOpenItem(item: AgentItem): AgentItem {
+  if (item.type === "subagent") {
+    return withStatus(item, "stopped");
+  }
   return isToolItem(item) ? { ...item, status: "failed" } : item;
 }
 

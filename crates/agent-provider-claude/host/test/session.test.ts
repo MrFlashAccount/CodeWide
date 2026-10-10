@@ -353,6 +353,26 @@ describe("process loss", () => {
     startedTurn(await service.startTurn(THREAD, prompt("again")));
     expect(queries[2]?.options.identity.type).toBe("new");
   });
+
+  it("names a session held by a background Claude process", async () => {
+    const { service, queries, events } = harness();
+    createThread(service);
+    startedTurn(await service.startTurn(THREAD, prompt("a")));
+    queries[0]?.fail(
+      new Error(
+        "Claude Code process exited with code 1. stderr: Error: That session is running in the " +
+          "background (48d313bf). Run `claude attach 48d313bf` to open it, or `claude stop 48d313bf` " +
+          "first to resume it here.",
+      ),
+    );
+    await settle();
+    expect(completions(events)[0]?.turn.error).toEqual({
+      kind: "processExited",
+      message:
+        "This Claude session is running in the background in another Claude process. " +
+        "Wait for it to finish or run `claude stop 48d313bf` on the host, then try again.",
+    });
+  });
 });
 
 describe("restart", () => {

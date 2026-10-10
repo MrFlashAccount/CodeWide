@@ -2,16 +2,19 @@
 //! the watcher), a finished live turn and the startup backfill each ask the
 //! Claude host for a fresh neutral read (`nativeSession.read`); the index and
 //! the search documents are replaced only when the read differs. Reads that
-//! fail while the host is unavailable are retried once it is live again.
+//! fail while the host is unavailable are retried once it is live again. A
+//! watcher change that rewrites a thread with no live turn is published as a
+//! [`HistoryChange`], so open conversations of a session driven elsewhere (a
+//! terminal) refresh at once.
 
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use agent_core::{
     model::{
-        AppThreadId, ERROR_INVALID_REQUEST, NativeSessionListParams, NativeSessionListResult,
-        NativeSessionReadResult,
+        AppThreadId, ERROR_INVALID_REQUEST, NativeSessionCodewide, NativeSessionListParams,
+        NativeSessionListResult, NativeSessionReadResult, NativeThreadPresence,
     },
-    provider::{ProviderError, ProviderStatus},
+    provider::{HistoryChange, ProviderError, ProviderStatus},
 };
 use async_trait::async_trait;
 use tokio::sync::{mpsc, watch};
@@ -20,7 +23,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     search::ClaudeSearch,
     storage::Freshness,
-    store::{ClaudeStore, Observation},
+    store::{ClaudeStore, Observation, Replaced},
     watcher::SessionChange,
 };
 
@@ -63,6 +66,31 @@ pub struct ClaudeIndexer {
     search: Arc<ClaudeSearch>,
     sessions: Arc<dyn NativeSessions>,
     freshness: Arc<Freshness>,
+    history_changes: Option<mpsc::Sender<HistoryChange>>,
+}
+
+/// What one session read did to the index.
+struct Indexed {
+    /// The session's thread; `None` for a session that left the store unindexed.
+    thread: Option<AppThreadId>,
+    /// The thread whose indexed turns or listed facts were rewritten from Claude's store.
+    rewritten: Option<HistoryChange>,
+}
+
+/// The change to publish for a rewritten session; a deleted thread has none.
+fn history_change(
+    thread: &AppThreadId,
+    codewide: Option<&NativeSessionCodewide>,
+) -> Option<HistoryChange> {
+    let archived = match codewide.map(|codewide| &codewide.presence) {
+        Some(NativeThreadPresence::Deleted { .. }) => return None,
+        Some(NativeThreadPresence::Listed { archived }) => *archived,
+        None => false,
+    };
+    Some(HistoryChange {
+        app_thread_id: thread.clone(),
+        archived,
+    })
 }
 
 impl ClaudeIndexer {
@@ -78,7 +106,16 @@ impl ClaudeIndexer {
             search,
             sessions,
             freshness,
+            history_changes: None,
         }
+    }
+
+    /// Publishes every thread a watcher change rewrote while no live turn of
+    /// it runs (a live turn reaches clients through its own events).
+    #[must_use]
+    pub fn with_history_changes(mut self, changes: mpsc::Sender<HistoryChange>) -> Self {
+        self.history_changes = Some(changes);
+        self
     }
 
     /// Reads one session and replaces its indexed turns; a session the host
@@ -87,6 +124,12 @@ impl ClaudeIndexer {
     /// # Errors
     /// Returns host, index or search failures.
     pub async fn index_session(&self, session_id: &str) -> Result<Option<AppThreadId>, IndexError> {
+        self.read_session(session_id)
+            .await
+            .map(|indexed| indexed.thread)
+    }
+
+    async fn read_session(&self, session_id: &str) -> Result<Indexed, IndexError> {
         let previous = self
             .store
             .session(session_id)?
@@ -98,14 +141,20 @@ impl ClaudeIndexer {
             Ok(read) => {
                 let thread = read.session.app_thread_id.clone();
                 self.freshness.mark_stale(&thread);
-                self.store.replace_session(&read)?;
+                let replaced = self.store.replace_session(&read)?;
                 self.search.reindex_thread(&thread)?;
                 if let Some(previous) = previous.filter(|previous| previous != &thread) {
                     self.search.reindex_thread(&previous)?;
                     self.freshness.mark_fresh(&previous);
                 }
                 self.freshness.mark_fresh(&thread);
-                Ok(Some(thread))
+                let rewritten = (replaced == Replaced::Written)
+                    .then(|| history_change(&thread, read.session.codewide.as_ref()))
+                    .flatten();
+                Ok(Indexed {
+                    thread: Some(thread),
+                    rewritten,
+                })
             }
             Err(ProviderError::Rejected(rejection))
                 if rejection.code == ERROR_INVALID_REQUEST
@@ -116,7 +165,12 @@ impl ClaudeIndexer {
                     self.search.reindex_thread(thread)?;
                     self.freshness.mark_fresh(thread);
                 }
-                Ok(removed)
+                Ok(Indexed {
+                    rewritten: removed
+                        .as_ref()
+                        .and_then(|thread| history_change(thread, None)),
+                    thread: removed,
+                })
             }
             Err(error) => Err(error.into()),
         }
@@ -242,13 +296,22 @@ impl ClaudeIndexer {
     /// Returns host, index or search failures.
     pub async fn apply(&self, change: &SessionChange) -> Result<(), IndexError> {
         if let Some(observed) = change.observed
+            && !change.subagents_changed
             && self.store.is_current(&change.session_id, observed)?
         {
             return Ok(());
         }
-        self.index_session(&change.session_id)
-            .await
-            .map(|_thread| ())
+        let indexed = self.read_session(&change.session_id).await?;
+        if let (Some(sender), Some(rewritten)) = (&self.history_changes, indexed.rewritten)
+            && !self.freshness.is_running(&rewritten.app_thread_id)
+            && sender.try_send(rewritten).is_err()
+        {
+            warn!(
+                session_id = %change.session_id,
+                "Claude history change queue is full; the next change or open repairs the thread"
+            );
+        }
+        Ok(())
     }
 
     /// Runs until both input streams end: the backfill once the host is
@@ -315,9 +378,13 @@ impl ClaudeIndexer {
             tokio::select! {
                 change = changes.recv(), if changes_open => match change {
                     Some(change) => {
-                        if let Err(err) = self.apply(&change).await {
-                            report(&err, Some(&change.session_id), "Claude session indexing failed");
-                            pending_sessions.insert(change.session_id);
+                        // A large session takes a while to read; the echoes
+                        // queued meanwhile collapse into one read each.
+                        for change in coalesce(change, &mut changes) {
+                            if let Err(err) = self.apply(&change).await {
+                                report(&err, Some(&change.session_id), "Claude session indexing failed");
+                                pending_sessions.insert(change.session_id);
+                            }
                         }
                     }
                     None => changes_open = false,
@@ -344,6 +411,28 @@ impl ClaudeIndexer {
             }
         }
     }
+}
+
+/// `first` and every change already queued behind it, one per session: the
+/// newest observation wins and a sub-agent change is kept.
+fn coalesce(
+    first: SessionChange,
+    queued: &mut mpsc::Receiver<SessionChange>,
+) -> Vec<SessionChange> {
+    let mut changes = vec![first];
+    while let Ok(next) = queued.try_recv() {
+        match changes
+            .iter_mut()
+            .find(|change| change.session_id == next.session_id)
+        {
+            Some(change) => {
+                change.subagents_changed |= next.subagents_changed;
+                change.observed = next.observed;
+            }
+            None => changes.push(next),
+        }
+    }
+    changes
 }
 
 /// Logs a failed index step with the session it concerns (an opaque id,
@@ -483,6 +572,103 @@ mod tests {
         ))
     }
 
+    #[test]
+    fn queued_echoes_of_one_session_collapse_into_its_newest_observation() {
+        let (sender, mut queued) = mpsc::channel(8);
+        for next in [
+            change("a", 20),
+            SessionChange {
+                subagents_changed: true,
+                ..change("b", 5)
+            },
+            change("a", 30),
+            change("b", 6),
+        ] {
+            assert!(sender.try_send(next).is_ok());
+        }
+        let collapsed = coalesce(change("a", 10), &mut queued);
+        assert_eq!(
+            collapsed,
+            [
+                change("a", 30),
+                SessionChange {
+                    subagents_changed: true,
+                    ..change("b", 6)
+                },
+            ]
+        );
+    }
+
+    fn change(session_id: &str, size: u64) -> SessionChange {
+        SessionChange {
+            session_id: session_id.into(),
+            observed: Some(Observation {
+                file_size: size,
+                last_modified_ms: i64::try_from(size).unwrap_or(0) * 1000,
+            }),
+            subagents_changed: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_written_elsewhere_publishes_its_thread_unless_a_live_turn_runs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let host = Arc::new(FakeHost::default());
+        host.put(session_read("terminal", "terminal", 10, &["hello"]));
+        let database = companion_host::database::open(directory.path().join("index.redb"), "test")?;
+        let store = Arc::new(ClaudeStore::attach(
+            database,
+            Arc::new(MemoryThreadIndex::default()),
+        )?);
+        let search = Arc::new(ClaudeSearch::open(
+            &directory.path().join("search.sqlite"),
+            store.clone(),
+        )?);
+        let freshness = Arc::new(Freshness::default());
+        let (sender, mut changes) = mpsc::channel(8);
+        let indexer = ClaudeIndexer::new(store, search, host.clone(), freshness.clone())
+            .with_history_changes(sender);
+        let thread = AppThreadId::from_static("terminal");
+
+        // The startup backfill indexes without publishing.
+        indexer.backfill().await?;
+        assert!(changes.try_recv().is_err());
+
+        // A terminal appends a prompt: the open conversation must refresh.
+        host.put(session_read(
+            "terminal",
+            "terminal",
+            20,
+            &["hello", "again"],
+        ));
+        indexer.apply(&change("terminal", 20)).await?;
+        assert_eq!(
+            changes.try_recv()?,
+            HistoryChange {
+                app_thread_id: thread.clone(),
+                archived: false,
+            }
+        );
+
+        // An echo of the same record rewrites nothing and publishes nothing.
+        indexer.apply(&change("terminal", 20)).await?;
+        assert!(changes.try_recv().is_err());
+
+        // A turn the companion drives reaches clients through its own events.
+        freshness.started(&thread);
+        host.put(session_read(
+            "terminal",
+            "terminal",
+            30,
+            &["hello", "again", "live"],
+        ));
+        indexer.apply(&change("terminal", 30)).await?;
+        assert!(changes.try_recv().is_err());
+        freshness.finished(&thread);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn backfill_indexes_a_terminal_session_once_and_follows_changes()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -507,6 +693,7 @@ mod tests {
                 file_size: 10,
                 last_modified_ms: 10_000,
             }),
+            subagents_changed: false,
         };
         indexer.apply(&unchanged).await?;
         assert_eq!(host.reads().len(), 1);
@@ -523,6 +710,7 @@ mod tests {
                     file_size: 20,
                     last_modified_ms: 20_000,
                 }),
+                subagents_changed: false,
             })
             .await?;
         assert_eq!(
@@ -537,6 +725,7 @@ mod tests {
             .apply(&SessionChange {
                 session_id: "terminal".into(),
                 observed: None,
+                subagents_changed: false,
             })
             .await?;
         assert!(store.session_ids()?.is_empty());

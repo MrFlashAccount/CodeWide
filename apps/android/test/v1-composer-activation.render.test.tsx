@@ -78,6 +78,7 @@ function settingsCapabilities(scope: string): SettingsCapabilities {
     conversationOwner: { isCurrent: () => true, hasReplacement: () => false },
     onLoadControls: undefined,
     onUpdateSettings: undefined,
+    remoteThread: null,
     saveComposerPreferences: jest.fn(async () => undefined),
   };
 }
@@ -111,14 +112,11 @@ it("restores captured skill preferences to the outgoing draft without replacing 
   );
 });
 
-it("saves a model form as one settings update after Apply", () => {
+it("keeps a new chat's model form local until the first message", () => {
   const capabilities = settingsCapabilities("model-form");
-  const updateSettings = jest.fn(async () => undefined);
-  capabilities.onUpdateSettings = updateSettings;
   const hook = renderHook(() => useComposerSettings(capabilities));
 
   expect(capabilities.composerSession.read().preferences.model).toBeNull();
-  expect(updateSettings).not.toHaveBeenCalled();
   act(() => {
     hook.result.current.applyModelSettings({
       effort: "ultra",
@@ -129,15 +127,37 @@ it("saves a model form as one settings update after Apply", () => {
     });
   });
 
+  expect(capabilities.composerSession.read().preferences).toEqual(
+    expect.objectContaining({ effort: "ultra", model: "sol", serviceTier: "priority" }),
+  );
+});
+
+it("sends an existing thread's model form as one settings update after Apply", async () => {
+  const capabilities = { ...settingsCapabilities("thread-form"), newChat: false };
+  const updateSettings = jest.fn(async () => undefined);
+  capabilities.onUpdateSettings = updateSettings;
+  const hook = renderHook(() => useComposerSettings(capabilities));
+
+  await act(async () => {
+    hook.result.current.applyModelSettings({
+      effort: "ultra",
+      executionChanged: true,
+      model: "sol",
+      personality: null,
+      serviceTier: "priority",
+    });
+    await Promise.resolve();
+  });
+
   expect(updateSettings).toHaveBeenCalledTimes(1);
   expect(updateSettings).toHaveBeenCalledWith({
     effort: "ultra",
     model: "sol",
     serviceTier: "priority",
   });
-  expect(capabilities.composerSession.read().preferences).toEqual(
-    expect.objectContaining({ effort: "ultra", model: "sol", serviceTier: "priority" }),
-  );
+  // The thread's server settings stay the authority; nothing is persisted locally.
+  expect(capabilities.composerSession.read().preferences.model).toBeNull();
+  expect(hook.result.current.controls$.peek().overlay.model?.value).toBe("sol");
 });
 
 it("keeps a personality-only form save local", () => {

@@ -6,7 +6,7 @@ import { createHostUpdateTransport } from "../src/features/connections/hostUpdat
 
 const connectionFiles = [
   "ConnectionFeature.tsx",
-  "HostUpdateNotice.tsx",
+  "hostUpdatePresentation.ts",
   "HostUpdateSettings.tsx",
   "hostUpdateContract.ts",
   "hostUpdateResource.ts",

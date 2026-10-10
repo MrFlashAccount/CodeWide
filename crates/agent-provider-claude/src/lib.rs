@@ -20,30 +20,35 @@ pub mod resources;
 pub mod search;
 pub mod storage;
 pub mod store;
+pub mod subagents;
 #[cfg(test)]
 mod test_support;
 pub mod watcher;
 
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use agent_core::{
     model::{
         ACCOUNT_UPDATED_NOTIFICATION, AccountUpdatedParams, AgentEvent, AgentThread, AppThreadId,
-        CapabilityInvokeParams, CapabilitySet, Empty, InitializeResult, ModelCatalog,
-        NativeSessionListParams, NativeSessionListResult, NativeSessionReadParams,
-        NativeSessionReadResult, PROTOCOL_NAME, PROTOCOL_VERSION, PermissionProfileCatalog,
-        Provenance, ProviderAccount, ProviderDescriptor, ProviderId, ProviderRateLimits,
-        ProviderThreadRef, RATE_LIMITS_UPDATED_NOTIFICATION, RateLimitsUpdatedParams,
-        RequestRespondParams, RpcError, RpcErrorData, StartWhileActiveMode, ThreadCreateParams,
-        ThreadListParams, ThreadListResult, ThreadOwnsResult, ThreadReadResult, ThreadRef,
-        ThreadResult, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
-        ToolCallParams, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
-        TurnSteerResult,
+        CapabilityInvokeParams, CapabilitySet, ERROR_INVALID_REQUEST, Empty, InitializeResult,
+        ModelCatalog, ModelPriceEntry, NativeSessionListParams, NativeSessionListResult,
+        NativeSessionReadParams, NativeSessionReadResult, PROTOCOL_NAME, PROTOCOL_VERSION,
+        PermissionProfileCatalog, Provenance, ProviderAccount, ProviderDescriptor, ProviderId,
+        ProviderRateLimits, ProviderThreadRef, RATE_LIMITS_UPDATED_NOTIFICATION,
+        RateLimitsUpdatedParams, RequestRespondParams, RpcError, RpcErrorData,
+        StartWhileActiveMode, ThreadCreateParams, ThreadListParams, ThreadListResult,
+        ThreadOwnsResult, ThreadReadResult, ThreadRef, ThreadResult, ThreadTurnsParams,
+        ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, ToolCallParams,
+        TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+        thread_not_found_message, turns::page_turns,
     },
     provider::{
         AgentProvider, ClientToolHost, NativeThreadResources, ProviderAuth, ProviderError,
         ProviderEvent, ProviderFence, ProviderHealth, ProviderStatus, StoredMessageSearch,
     },
+    usage::{CatalogPricing, ModelPricing},
 };
 use agent_transport::{
     OrderedUpstreamEvent, UpstreamError, UpstreamHandle,
@@ -58,6 +63,7 @@ use tracing::{error, info, warn};
 pub use config::{ClaudeConfig, ClaudeConfigError};
 use indexer::NativeSessions;
 pub use storage::{ClaudeStorage, ClaudeStorageHost};
+use subagents::ChildThread;
 
 pub const PROVIDER_ID: &str = "claude";
 const EVENT_CHANNEL_CAPACITY: usize = 2_048;
@@ -120,6 +126,11 @@ pub struct ClaudeProvider {
     /// Latest subscription limits from the host's `rateLimits.updated`;
     /// `None` until the first report.
     rate_limits: Arc<watch::Sender<Option<ProviderRateLimits>>>,
+    /// The model prices of the host's latest catalog (`catalog.models`
+    /// `prices`), read on every catalog request and before the first turn.
+    pricing: Arc<CatalogPricing>,
+    /// Whether a price read started by a turn is in flight.
+    prices_pending: Arc<AtomicBool>,
 }
 
 impl ClaudeProvider {
@@ -202,6 +213,8 @@ impl ClaudeProvider {
             client_tools: Arc::new(OnceLock::new()),
             health,
             rate_limits: Arc::new(watch::Sender::new(None)),
+            pricing: Arc::new(CatalogPricing::default()),
+            prices_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -219,6 +232,86 @@ impl ClaudeProvider {
         for turn in &mut result.turns {
             turn.stamp(&origin);
         }
+    }
+
+    /// The indexed sub-agent child thread `thread` (`<parent>:agent:<agent
+    /// id>`); `None` when `thread` is not a child thread id. Child threads are
+    /// read-only and answered from the index alone: the host has no thread
+    /// for them.
+    fn child_thread(&self, thread: &AppThreadId) -> Option<Result<ChildThread, ProviderError>> {
+        subagents::parse_child_thread_id(thread)?;
+        let found = match &self.storage {
+            Some(storage) => storage.store().child_thread(thread).map_err(|err| {
+                warn!(err = %err, "Claude sub-agent index cannot be read");
+                ProviderError::Protocol(err.to_string())
+            }),
+            None => Ok(None),
+        };
+        Some(found.and_then(|child| {
+            child.ok_or_else(|| {
+                ProviderError::Rejected(RpcError::new(
+                    ERROR_INVALID_REQUEST,
+                    thread_not_found_message(thread.as_str()),
+                ))
+            })
+        }))
+    }
+
+    fn child_read(&self, child: &ChildThread) -> ThreadReadResult {
+        ThreadReadResult {
+            thread: child.thread(&self.id),
+            active_turn_id: child.active_turn().map(|turn| turn.turn_id.clone()),
+        }
+    }
+
+    fn child_turns(
+        &self,
+        child: &ChildThread,
+        params: &ThreadTurnsParams,
+    ) -> Result<ThreadTurnsResult, ProviderError> {
+        let mut result = page_turns(
+            &child.turns,
+            params.cursor.as_deref(),
+            params.limit,
+            params.sort_direction,
+            params.items_view,
+        )
+        .map_err(ProviderError::Rejected)?;
+        self.stamp_turns(&params.app_thread_id, &mut result);
+        Ok(result)
+    }
+
+    /// A fence after every event the host emitted so far, for a fenced read
+    /// the index answers.
+    async fn host_fence(&self, thread: &AppThreadId) -> Result<ProviderFence, ProviderError> {
+        let (_owned, fence): (ThreadOwnsResult, ProviderFence) = self
+            .call_fenced(
+                "thread.owns",
+                &ThreadRef {
+                    app_thread_id: thread.clone(),
+                },
+            )
+            .await?;
+        Ok(fence)
+    }
+
+    /// Reads the host's model prices in the background when no catalog
+    /// request has brought them yet, so a turn's usage can be priced. A failed
+    /// read is logged and retried by the next turn.
+    fn ensure_prices(&self) {
+        if !self.pricing.is_empty() || self.prices_pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let transport = self.transport.clone();
+        let pricing = self.pricing.clone();
+        let pending = self.prices_pending.clone();
+        tokio::spawn(async move {
+            match request::<_, ModelCatalog>(&transport, "catalog.models", &Empty {}).await {
+                Ok(catalog) => update_prices(&pricing, catalog.prices),
+                Err(err) => warn!(err = %err, "Claude model prices are unavailable"),
+            }
+            pending.store(false, Ordering::Release);
+        });
     }
 
     fn accepted(&self) -> Option<Box<InitializeResult>> {
@@ -365,6 +458,14 @@ async fn track_negotiation(
         if negotiation.send(next).is_err() {
             return;
         }
+    }
+}
+
+/// Replaces the price table with a catalog's prices; a catalog without
+/// prices (an older host) keeps the previous table.
+fn update_prices(pricing: &CatalogPricing, prices: BTreeMap<String, ModelPriceEntry>) {
+    if !prices.is_empty() {
+        pricing.replace(prices);
     }
 }
 
@@ -663,6 +764,9 @@ impl AgentProvider for ClaudeProvider {
         // Search and resources are served by this adapter's own index.
         capabilities.history_message_search = self.storage.is_some();
         capabilities.history_thread_resources = self.storage.is_some();
+        // Sub-agent transcripts are indexed child threads; the index
+        // publishes their tree to the companion thread index.
+        capabilities.subagent_threads = self.storage.is_some();
         // A cross-provider fork reads neutral history and creates a thread;
         // both are companion work over operations every host serves.
         capabilities.threads_cross_provider_fork = true;
@@ -710,7 +814,13 @@ impl AgentProvider for ClaudeProvider {
     }
 
     async fn catalog_models(&self) -> Result<ModelCatalog, ProviderError> {
-        self.call("catalog.models", &Empty {}).await
+        let catalog: ModelCatalog = self.call("catalog.models", &Empty {}).await?;
+        update_prices(&self.pricing, catalog.prices.clone());
+        Ok(catalog)
+    }
+
+    fn usage_pricing(&self) -> Option<Arc<dyn ModelPricing>> {
+        Some(self.pricing.clone())
     }
 
     async fn catalog_permission_profiles(&self) -> Result<PermissionProfileCatalog, ProviderError> {
@@ -727,6 +837,9 @@ impl AgentProvider for ClaudeProvider {
     }
 
     async fn thread_read(&self, thread: &AppThreadId) -> Result<ThreadReadResult, ProviderError> {
+        if let Some(child) = self.child_thread(thread) {
+            return child.map(|child| self.child_read(&child));
+        }
         self.call(
             "thread.read",
             &ThreadRef {
@@ -740,6 +853,10 @@ impl AgentProvider for ClaudeProvider {
         &self,
         thread: &AppThreadId,
     ) -> Result<(ThreadReadResult, ProviderFence), ProviderError> {
+        if let Some(child) = self.child_thread(thread) {
+            let read = self.child_read(&child?);
+            return Ok((read, self.host_fence(thread).await?));
+        }
         self.call_fenced(
             "thread.read",
             &ThreadRef {
@@ -768,6 +885,9 @@ impl AgentProvider for ClaudeProvider {
         &self,
         params: ThreadTurnsParams,
     ) -> Result<ThreadTurnsResult, ProviderError> {
+        if let Some(child) = self.child_thread(&params.app_thread_id) {
+            return self.child_turns(&child?, &params);
+        }
         let mut result = match self
             .storage
             .as_ref()
@@ -784,6 +904,10 @@ impl AgentProvider for ClaudeProvider {
         &self,
         params: ThreadTurnsParams,
     ) -> Result<(ThreadTurnsResult, ProviderFence), ProviderError> {
+        if let Some(child) = self.child_thread(&params.app_thread_id) {
+            let result = self.child_turns(&child?, &params)?;
+            return Ok((result, self.host_fence(&params.app_thread_id).await?));
+        }
         let (mut result, fence): (ThreadTurnsResult, ProviderFence) =
             self.call_fenced("thread.turns", &params).await?;
         self.stamp_turns(&params.app_thread_id, &mut result);
@@ -798,6 +922,9 @@ impl AgentProvider for ClaudeProvider {
     }
 
     async fn thread_owns(&self, thread: &AppThreadId) -> Result<bool, ProviderError> {
+        if let Some(child) = self.child_thread(thread) {
+            return Ok(child.is_ok());
+        }
         if self
             .storage
             .as_ref()
@@ -835,7 +962,9 @@ impl AgentProvider for ClaudeProvider {
         // The host's tool set is live process state: every turn carries it,
         // so a released or restarted session gets the tools again.
         params.client_tools = self.declared_tools();
-        self.call("turn.start", &params).await
+        let started = self.call("turn.start", &params).await;
+        self.ensure_prices();
+        started
     }
 
     fn install_client_tools(&self, host: Arc<dyn ClientToolHost>) {
@@ -877,6 +1006,12 @@ impl AgentProvider for ClaudeProvider {
         self.storage
             .as_ref()
             .map(|storage| -> Arc<dyn StoredMessageSearch> { storage.search() })
+    }
+
+    fn take_history_changes(
+        &self,
+    ) -> Option<tokio::sync::mpsc::Receiver<agent_core::provider::HistoryChange>> {
+        self.storage.as_ref()?.take_history_changes()
     }
 }
 

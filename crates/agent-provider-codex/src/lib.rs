@@ -404,6 +404,7 @@ impl AgentProvider for CodexProvider {
                 .and_then(Value::as_array)
                 .map(|rows| rows.iter().filter_map(mapping::model).collect())
                 .unwrap_or_default(),
+            prices: pricing::openai_prices().collect(),
         })
     }
 

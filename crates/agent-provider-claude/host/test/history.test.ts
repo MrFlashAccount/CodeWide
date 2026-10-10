@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentItem, AgentTurn } from "../src/protocol.js";
 import { asAppThreadId } from "../src/protocol.js";
-import { reconstructTurns } from "../src/history/reconstruct.js";
+import { reconstructSubagentTurns, reconstructTurns } from "../src/history/reconstruct.js";
 import type { TurnRecord } from "../src/state/threadState.js";
 
 interface SessionFixture {
@@ -275,5 +275,124 @@ describe("history from Claude's session store", () => {
       context,
     );
     expect(turns).toEqual([]);
+  });
+});
+
+/** Sub-agent transcripts a synthetic fixture carries next to its messages, by agent id. */
+function fixtureSubagents(name: string): ReadonlyMap<string, readonly unknown[]> {
+  const parsed: unknown = JSON.parse(
+    readFileSync(join(import.meta.dirname, "fixtures", "sessions", `${name}.json`), "utf8"),
+  );
+  const subagents = isRecord(parsed) ? parsed["subagents"] : null;
+  if (!isRecord(subagents)) throw new Error(`${name} has no sub-agents`);
+  return new Map(
+    Object.entries(subagents).map(([agentId, messages]) => [
+      agentId,
+      Array.isArray(messages) ? messages : [],
+    ]),
+  );
+}
+
+const userTexts = (turns: readonly AgentTurn[]): readonly string[] =>
+  turns.flatMap((turn) =>
+    turn.items.flatMap((item) =>
+      item.type === "userMessage"
+        ? item.content.flatMap((block) => (block.type === "text" ? [block.text] : []))
+        : [],
+    ),
+  );
+
+describe("history of an interactive terminal session", () => {
+  const messages = fixture("interactive_terminal_subagents");
+  const turns = reconstructTurns(messages, [], context);
+  const subagentItems = turns.flatMap((turn) =>
+    turn.items.flatMap((item) => (item.type === "subagent" ? [item] : [])),
+  );
+
+  it("shows every prompt a person typed, including queued and multi-block prompts", () => {
+    expect(userTexts(turns)).toEqual([
+      "Plan the release and check the build.",
+      "Also look at the changelog.",
+      "What is on this screenshot?",
+    ]);
+    const imageTurn = turns.find((turn) =>
+      turn.items.some(
+        (item) =>
+          item.type === "userMessage" && item.content.some((block) => block.type === "image"),
+      ),
+    );
+    expect(imageTurn?.items[0]).toMatchObject({
+      content: [
+        { text: "What is on this screenshot?", type: "text" },
+        { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
+      ],
+      type: "userMessage",
+    });
+  });
+
+  it("hides injected reminders, command echoes, task notifications and peer messages", () => {
+    const shown = userTexts(turns).join("\n");
+    for (const hidden of [
+      "Injected context",
+      "<command-name>",
+      "<local-command-stdout>",
+      "<task-notification>",
+      "Status update from a peer",
+    ]) {
+      expect(shown).not.toContain(hidden);
+    }
+  });
+
+  it("keeps queued prompts and notifications in the running turn and wakes on idle ones", () => {
+    expect(turns.map((turn) => turn.origin)).toEqual(["user", "user", "provider", "provider"]);
+    expect(turns[0]?.turnId).toBe(promptUuid(messages, "Plan the release"));
+    expect(types(turns[0])).toEqual([
+      "userMessage",
+      "reasoning",
+      "subagent",
+      "agentMessage",
+      "userMessage",
+      "subagent",
+      "agentMessage",
+    ]);
+    expect(orderingViolations(turns)).toEqual([]);
+  });
+
+  it("maps Agent calls to sub-agent items with their child thread and latest status", () => {
+    expect(subagentItems).toEqual([
+      expect.objectContaining({
+        agentThreadId: `${context.appThreadId}:agent:a1b2c3d4e5f600001`,
+        agentType: "general-purpose",
+        background: true,
+        description: "Check the build",
+        itemId: "toolu_bg",
+        prompt: "Run the build and report.",
+        result: null,
+        status: "completed",
+      }),
+      expect.objectContaining({
+        agentThreadId: `${context.appThreadId}:agent:a1b2c3d4e5f600002`,
+        agentType: "Explore",
+        background: false,
+        itemId: "toolu_fg",
+        model: "haiku",
+        result: "The changelog lists three fixes.",
+        status: "completed",
+      }),
+      expect.objectContaining({
+        agentThreadId: `${context.appThreadId}:agent:a1b2c3d4e5f600003`,
+        background: true,
+        itemId: "toolu_open",
+        status: "running",
+      }),
+    ]);
+  });
+
+  it("rebuilds a sub-agent transcript with its delegated prompt as the first user message", () => {
+    const transcript = fixtureSubagents("interactive_terminal_subagents").get("a1b2c3d4e5f600003");
+    const subagentTurns = reconstructSubagentTurns(transcript ?? [], context);
+    expect(subagentTurns).toHaveLength(1);
+    expect(types(subagentTurns[0])).toEqual(["userMessage", "command"]);
+    expect(userTexts(subagentTurns)).toEqual(["Watch the deploy until it ends."]);
   });
 });

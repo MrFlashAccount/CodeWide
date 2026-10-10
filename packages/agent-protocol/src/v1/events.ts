@@ -69,6 +69,11 @@ export type AgentEvent =
       readonly cost?: ProviderCost;
       /** The turn's last model request: the context size the turn ended with. */
       readonly last: TokenUsage;
+      /**
+       * The model that served `last` (added within v1), priced by the catalog
+       * `prices`; absent when the provider does not know it.
+       */
+      readonly model?: string;
       /** The thread's cumulative usage after this turn. */
       readonly total: TokenUsage;
       readonly turnId: TurnId;

@@ -6,13 +6,20 @@
  *
  * - An assistant message, or a user message carrying `tool_result` blocks,
  *   is a frame for the turn builder (the same classification as live).
- * - A user message with an `origin` (task notification, peer message) wakes
- *   the agent without a person: it starts a provider turn and is not shown.
+ * - A user message whose `origin` is not a person (`origin.kind` other than
+ *   `human`: task notification, peer message) wakes the agent: it is never
+ *   shown as a user message. A task notification also reports a sub-agent's
+ *   final status. Interactive Claude Code stamps a person's prompts with
+ *   `origin: {kind: "human"}`; SDK-driven sessions store them without one.
+ * - `isQueuedCommand` marks a message Claude delivered while the agent was
+ *   busy (queued prompt, notification): it belongs to the running turn.
  * - `[Request interrupted by user…]` ends the current turn as interrupted.
  * - The compact summary marks a compaction; the system message right before
  *   it is the compact boundary, whose uuid is the live compaction item id.
- * - Meta messages and command/markup echoes are skipped; every other
- *   top-level user message is a prompt.
+ * - Meta messages (`is_meta`: injected reminders, skill bodies) and
+ *   command/markup echoes (`<command-name>`, `<local-command-stdout>`,
+ *   `<system-reminder>`…) are hidden; every other top-level user message is
+ *   a prompt, with its text and image blocks.
  * - Only messages of one conversation level are read: the main conversation
  *   (`parent_tool_use_id` null, as live) or one sub-agent transcript (its
  *   spawning tool call).
@@ -20,6 +27,7 @@
 
 import type { UserContent } from "../protocol.js";
 import { classifyFrame, isRecord, type ClaudeFrame, type JsonRecord } from "../mapping/frames.js";
+import { taskNotificationOf, type TaskNotification } from "../mapping/subagents.js";
 import { HISTORY_HEADER } from "./prefix.js";
 
 /** One classified stored message. */
@@ -27,11 +35,21 @@ export type HistoryEntry =
   | {
       readonly content: readonly UserContent[];
       readonly kind: "prompt";
+      /** Delivered while the agent was busy: part of the running turn. */
+      readonly queued: boolean;
       readonly timestampMs: number;
       readonly uuid: string;
     }
   | { readonly kind: "interrupt"; readonly timestampMs: number; readonly uuid: string }
-  | { readonly kind: "wake"; readonly timestampMs: number; readonly uuid: string }
+  | {
+      readonly kind: "wake";
+      /** A task notification's facts, `null` for other wakes. */
+      readonly notification: TaskNotification | null;
+      /** Delivered while the agent was busy: part of the running turn. */
+      readonly queued: boolean;
+      readonly timestampMs: number;
+      readonly uuid: string;
+    }
   | { readonly kind: "compaction"; readonly timestampMs: number; readonly uuid: string }
   | {
       readonly frame: ClaudeFrame;
@@ -89,17 +107,42 @@ interface StoredMessage {
   readonly uuid: string;
 }
 
+/** `origin.kind` of a stored user message; `null` when it has no origin. */
+function originKind(raw: JsonRecord): string | null {
+  const origin = raw["origin"];
+  if (!isRecord(origin)) {
+    return null;
+  }
+  return str(origin["kind"]) ?? "unknown";
+}
+
+/** A message that wakes the agent without a person, or `null` for a person's message. */
+function wakeEntry(message: StoredMessage, text: string): HistoryEntry | null {
+  const origin = originKind(message.raw);
+  if (origin === null || origin === "human") {
+    return null;
+  }
+  return {
+    kind: "wake",
+    notification: origin === "task-notification" ? taskNotificationOf(text) : null,
+    queued: message.raw["isQueuedCommand"] === true,
+    timestampMs: message.timestampMs,
+    uuid: message.uuid,
+  };
+}
+
 function userEntry(message: StoredMessage): HistoryEntry | null {
   const { raw, timestampMs, uuid } = message;
   const body = isRecord(raw["message"]) ? raw["message"]["content"] : null;
   if (hasToolResult(body)) {
     return { frame: classifyFrame(raw), kind: "frame", timestampMs, uuid };
   }
-  if (isRecord(raw["origin"])) {
-    return { kind: "wake", timestampMs, uuid };
-  }
   const content = userBlocks(body);
   const text = firstText(content);
+  const wake = wakeEntry(message, text);
+  if (wake !== null) {
+    return wake;
+  }
   if (INTERRUPT_MARKER.test(text)) {
     return { kind: "interrupt", timestampMs, uuid };
   }
@@ -107,7 +150,10 @@ function userEntry(message: StoredMessage): HistoryEntry | null {
     return null;
   }
   const prompt = withoutHistoryPrefix(content);
-  return prompt.length === 0 ? null : { content: prompt, kind: "prompt", timestampMs, uuid };
+  const queued = raw["isQueuedCommand"] === true;
+  return prompt.length === 0
+    ? null
+    : { content: prompt, kind: "prompt", queued, timestampMs, uuid };
 }
 
 function storedMessage(value: unknown, parentToolUseId: string | null): StoredMessage | null {

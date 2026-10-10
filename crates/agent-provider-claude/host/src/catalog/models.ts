@@ -5,11 +5,13 @@
  * which makes no model call). The last successful list is kept; when the
  * probe fails the catalog serves that cache, or an empty list, and never
  * fails the RPC. Exactly one row is the default: the SDK's `default` alias
- * when present, otherwise the first row.
+ * when present, otherwise the first row. Prices come with the list
+ * (`prices.ts`).
  */
 
-import type { ModelEntry } from "../protocol.js";
+import type { ModelEntry, ModelPriceEntry } from "../protocol.js";
 import type { RawModel } from "../claude/port.js";
+import { catalogPrices } from "./prices.js";
 
 const EFFORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   high: "Deeper reasoning",
@@ -42,17 +44,24 @@ export function modelEntries(models: readonly RawModel[]): readonly ModelEntry[]
   }));
 }
 
-/** Keeps the last successful model list. */
+/** Keeps the last successful model list and the prices of its models. */
 export class ModelCatalog {
   private cached: readonly ModelEntry[] = [];
+  private cachedPrices: Readonly<Record<string, ModelPriceEntry>> = catalogPrices([]);
 
   update(models: readonly RawModel[]): void {
     if (models.length > 0) {
       this.cached = modelEntries(models);
+      this.cachedPrices = catalogPrices(models);
     }
   }
 
   get models(): readonly ModelEntry[] {
     return this.cached;
+  }
+
+  /** Known model prices, available before the first successful list. */
+  get prices(): Readonly<Record<string, ModelPriceEntry>> {
+    return this.cachedPrices;
   }
 }

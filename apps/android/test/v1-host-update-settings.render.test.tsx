@@ -44,22 +44,41 @@ it("keeps the real version shimmering while the Companion is disconnected", () =
       }}
     />,
   );
-  expect(view.getByTestId("host-update-version-shimmer").props.children).toBe("1.0.0");
+  expect(view.getByTestId("host-update-version-shimmer").props.children).toBe("Companion 1.0.0");
   expect(view.getByText(/device remains paired/u)).toBeTruthy();
   expect(view.queryByText("Updating…")).toBeNull();
 });
 
-it.each([
-  ["committed", null, "Companion updated and reconnected successfully."],
-  ["rolledBack", "New Companion did not reconnect", "Update rolled back:"],
-  ["failed", "Artifact verification failed", "Update failed:"],
-] as const)("renders the durable %s outcome", (phase, errorMessage, expected) => {
+it("confirms a committed update next to the new version", () => {
   const view = render(
     <Fixture
       update={{
         ...available(),
-        canApply: phase !== "committed",
-        canRetry: phase !== "committed",
+        canApply: false,
+        currentVersion: "1.1.0",
+        latestVersion: "1.1.0",
+        operationId: "operation-00000000000000000000",
+        phase: "committed",
+      }}
+    />,
+  );
+  expect(view.getByText("Companion 1.1.0")).toBeTruthy();
+  expect(view.getByText("macOS · updated")).toBeTruthy();
+  expect(view.queryByLabelText("Update Companion")).toBeNull();
+});
+
+it.each([
+  ["rolledBack", "New Companion did not reconnect", "Update rolled back: New Companion did not reconnect"],
+  ["failed", "Artifact verification failed", "Update failed: Artifact verification failed"],
+  ["failed", null, "The update failed. The current Companion version keeps running."],
+] as const)("renders the durable %s outcome with a retry", (phase, errorMessage, expected) => {
+  const onApply = jest.fn(async () => undefined);
+  const view = render(
+    <Fixture
+      onApply={onApply}
+      update={{
+        ...available(),
+        canRetry: true,
         errorCode: errorMessage === null ? null : "guardian_failure",
         errorMessage,
         operationId: "operation-00000000000000000000",
@@ -67,15 +86,38 @@ it.each([
       }}
     />,
   );
-  expect(view.getByText(new RegExp(expected, "u"))).toBeTruthy();
-  if (phase !== "committed") {
-    expect(view.getByLabelText("Retry Companion update")).toBeTruthy();
-  }
+  expect(view.getByText(expected)).toBeTruthy();
+  expect(view.queryByLabelText("Update Companion")).toBeNull();
+  fireEvent.press(view.getByLabelText("Retry Companion update"));
+  invokeAppDialogAction("Update Companion");
+  expect(onApply).toHaveBeenCalledWith("server", FINGERPRINT);
+});
+
+it("shows a manual-update rejection as setup guidance, not as a failed update", () => {
+  const view = render(
+    <Fixture
+      update={{
+        ...available(),
+        availability: "manualBootstrap",
+        canApply: false,
+        canCheck: false,
+        errorCode: "manual_update_required",
+        errorMessage: null,
+        latestVersion: null,
+        platform: "linux-x86-64",
+        targetFingerprint: null,
+      }}
+    />,
+  );
+  expect(view.getByText("Linux · remote updates not set up")).toBeTruthy();
+  expect(view.getByText(/install\/companion \| sh$/u)).toBeTruthy();
+  expect(view.getByLabelText("Copy installer command")).toBeTruthy();
+  expect(view.queryByText(/Update failed/u)).toBeNull();
 });
 
 it.each([
   ["unsupported", "cannot update remotely"],
-  ["manualBootstrap", "update guardian must be installed manually"],
+  ["manualBootstrap", "set up safe remote updates"],
   ["manualUpdate", "requires a manual update"],
 ] as const)("renders %s as a distinct manual recovery state", (availability, expected) => {
   const view = render(

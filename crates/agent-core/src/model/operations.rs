@@ -1,6 +1,8 @@
 //! Neutral operations and the JSON-RPC envelope (mirror of
 //! `packages/agent-protocol/src/v1/operations.ts` and `rpc.ts`).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -189,9 +191,45 @@ pub struct ModelEntry {
     pub input_modalities: Vec<InputModality>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// API list rates of one model in USD per million tokens.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelRates {
+    pub input: f64,
+    /// A cache read.
+    pub cached_input: f64,
+    /// A cache write (the provider's default cache lifetime).
+    pub cache_write_input: f64,
+    pub output: f64,
+}
+
+/// Rates of a request whose input exceeds `above_input_tokens`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LongContextRates {
+    pub above_input_tokens: u64,
+    pub rates: ModelRates,
+}
+
+/// The price of one model: the companion prices usage with it while the
+/// provider's own figure is unknown.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPriceEntry {
+    /// The price table the rates come from, e.g. `anthropic-api-2026-10-06`.
+    pub pricing_version: String,
+    pub rates: ModelRates,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_context: Option<LongContextRates>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelCatalog {
     pub models: Vec<ModelEntry>,
+    /// Prices by model id: every id a thread setting or a model request may
+    /// name, catalog aliases included (added within v1).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub prices: BTreeMap<String, ModelPriceEntry>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

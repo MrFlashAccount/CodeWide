@@ -14,6 +14,7 @@ import type {
   McpToolResult,
   Provenance,
   ProviderCost,
+  SubagentStatus,
   ThreadSettings,
   TokenUsage,
   TurnError,
@@ -22,6 +23,7 @@ import type {
   WebSearchAction,
 } from "../protocol.js";
 import {
+  asAppThreadId,
   asClientMessageId,
   asItemId,
   asProviderThreadRef,
@@ -30,6 +32,7 @@ import {
 } from "../protocol.js";
 import { isRecord } from "../mapping/frames.js";
 import {
+  bool,
   int,
   list,
   nullable,
@@ -228,6 +231,13 @@ const messageItems = {
   },
 };
 
+const subagentStatus: Check<SubagentStatus> = oneOf<SubagentStatus>([
+  "running",
+  "completed",
+  "failed",
+  "stopped",
+]);
+
 const otherItems = {
   capabilityItem: (reader: ObjectReader): AgentItem => ({
     capability: reader.at("capability", str),
@@ -247,6 +257,21 @@ const otherItems = {
     text: reader.at("text", str),
     type: "plan",
   }),
+  subagent: (reader: ObjectReader): AgentItem => {
+    const agentThreadId = reader.at("agentThreadId", nullable(str));
+    return {
+      agentThreadId: agentThreadId === null ? null : asAppThreadId(agentThreadId),
+      agentType: reader.at("agentType", nullable(str)),
+      background: reader.at("background", bool),
+      description: reader.at("description", str),
+      itemId: itemId(reader),
+      model: reader.at("model", nullable(str)),
+      prompt: reader.at("prompt", str),
+      result: reader.at("result", nullable(str)),
+      status: reader.at("status", subagentStatus),
+      type: "subagent",
+    };
+  },
   webSearch: (reader: ObjectReader): AgentItem => ({
     action: reader.at("action", nullable(webSearchAction)),
     itemId: itemId(reader),

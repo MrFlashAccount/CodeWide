@@ -25,6 +25,7 @@ import {
   reconstructTurns,
   type HistoryContext,
 } from "../history/reconstruct.js";
+import { agentIdOf } from "../mapping/subagents.js";
 import type { TurnRecord } from "../state/threadState.js";
 import { withActiveTurn } from "./history.js";
 import type { SessionCatalog } from "./sessionCatalog.js";
@@ -118,6 +119,53 @@ function historyContext(session: StoredSession, owner: SessionOwner | null): His
   return { appThreadId: asAppThreadId(session.sessionId), cwd: session.cwd ?? "" };
 }
 
+interface SubagentTranscript {
+  readonly agentId: string;
+  readonly messages: readonly unknown[];
+}
+
+/** Agent ids whose spawning item, in any of `turns`, still reports `running`. */
+function runningAgents(turns: readonly AgentTurn[], into: Set<string>): void {
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      const agentId =
+        item.type === "subagent" && item.status === "running" && item.agentThreadId !== null
+          ? agentIdOf(item.agentThreadId)
+          : null;
+      if (agentId !== null) {
+        into.add(agentId);
+      }
+    }
+  }
+}
+
+/**
+ * Each sub-agent transcript as neutral turns. A sub-agent its spawning item
+ * (in the main conversation or in another sub-agent) reports `running` keeps
+ * its last turn in progress.
+ */
+function nativeSubagents(
+  transcripts: readonly SubagentTranscript[],
+  turns: readonly AgentTurn[],
+  context: HistoryContext,
+): readonly NativeSubagent[] {
+  const settled = transcripts.map((transcript) => ({
+    ...transcript,
+    turns: reconstructSubagentTurns(transcript.messages, context),
+  }));
+  const running = new Set<string>();
+  runningAgents(turns, running);
+  for (const transcript of settled) {
+    runningAgents(transcript.turns, running);
+  }
+  return settled.map(({ agentId, messages, turns: settledTurns }) => ({
+    agentId,
+    parentAgentId: firstField(messages, "parent_agent_id"),
+    parentToolUseId: firstField(messages, "parent_tool_use_id"),
+    turns: running.has(agentId) ? reconstructSubagentTurns(messages, context, true) : settledTurns,
+  }));
+}
+
 export class NativeSessionReader {
   private readonly deps: NativeSessionDeps;
 
@@ -155,21 +203,15 @@ export class NativeSessionReader {
     return interactive.some((candidate) => candidate.sessionId === session.sessionId);
   }
 
-  private async subagents(
+  private async subagentTranscripts(
     location: SessionLocation,
-    context: HistoryContext,
-  ): Promise<readonly NativeSubagent[]> {
+  ): Promise<readonly SubagentTranscript[]> {
     const agentIds = (await this.deps.store.subagents(location)).toSorted();
     return Promise.all(
-      agentIds.map(async (agentId) => {
-        const messages = await this.deps.store.subagentMessages({ ...location, agentId });
-        return {
-          agentId,
-          parentAgentId: firstField(messages, "parent_agent_id"),
-          parentToolUseId: firstField(messages, "parent_tool_use_id"),
-          turns: reconstructSubagentTurns(messages, context),
-        };
-      }),
+      agentIds.map(async (agentId) => ({
+        agentId,
+        messages: await this.deps.store.subagentMessages({ ...location, agentId }),
+      })),
     );
   }
 
@@ -181,10 +223,10 @@ export class NativeSessionReader {
     const owner = this.deps.ownerOf(sessionId);
     const location: SessionLocation = { cwd: session.cwd, sessionId };
     const context = historyContext(session, owner);
-    const [messages, interactive, subagents] = await Promise.all([
+    const [messages, interactive, transcripts] = await Promise.all([
       this.deps.store.messages(location),
       this.isInteractive(session),
-      this.subagents(location, context),
+      this.subagentTranscripts(location),
     ]);
     const records = owner?.turns ?? [];
     const turns = withActiveTurn(
@@ -192,6 +234,7 @@ export class NativeSessionReader {
       owner?.activeTurn ?? null,
       records,
     );
+    const subagents = nativeSubagents(transcripts, turns, context);
     return {
       status: "ok",
       value: { session: nativeSession(session, owner, interactive), subagents, turns },

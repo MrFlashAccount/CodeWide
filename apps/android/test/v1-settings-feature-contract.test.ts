@@ -82,7 +82,7 @@ describe("M1 feature integration contracts", () => {
       "utf8",
     );
     expect(source).toContain("pendingAccountLogin !== null && (");
-    expect(source).toContain("Manual selection · automatic fallback on limit");
+    expect(source).toContain("How account switching works");
   });
   it("accounts/AccountProfileRow.tsx retains its migrated UI contract", () => {
     const source = readFileSync(

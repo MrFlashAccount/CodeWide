@@ -108,6 +108,8 @@ export type ClaudeFrame =
       readonly error: string | null;
       readonly kind: "assistant";
       readonly messageId: string;
+      /** Canonical API model id of the request that produced the message. */
+      readonly model: string | null;
       readonly parentToolUseId: string | null;
       /** Token counts of the model request that produced the message. */
       readonly usage: RequestFigures | null;
@@ -143,6 +145,17 @@ export type ClaudeFrame =
     }
   | { readonly kind: "compactBoundary"; readonly uuid: string | null }
   | { readonly count: number; readonly kind: "backgroundTasks" }
+  /**
+   * A task Claude started or finished (`task_started`, `task_notification`):
+   * for a sub-agent, `taskId` is its agent id and `toolUseId` the spawning
+   * call; `status` is the notification's raw status, `null` for a start.
+   */
+  | {
+      readonly kind: "task";
+      readonly status: string | null;
+      readonly taskId: string;
+      readonly toolUseId: string | null;
+    }
   | {
       readonly kind: "rateLimit";
       readonly status: string | null;
@@ -306,9 +319,25 @@ function systemFrame(value: JsonRecord): ClaudeFrame {
       return { kind: "compactBoundary", uuid: str(value["uuid"]) };
     case "background_tasks_changed":
       return { count: arr(value["tasks"]).length, kind: "backgroundTasks" };
+    case "task_started":
+    case "task_notification":
+      return taskFrame(value, subtype);
     default:
       return { kind: "other", type: `system:${subtype}` };
   }
+}
+
+function taskFrame(value: JsonRecord, subtype: string): ClaudeFrame {
+  const taskId = str(value["task_id"]);
+  if (taskId === null) {
+    return { kind: "other", type: `system:${subtype}` };
+  }
+  return {
+    kind: "task",
+    status: subtype === "task_notification" ? (str(value["status"]) ?? "unknown") : null,
+    taskId,
+    toolUseId: str(value["tool_use_id"]),
+  };
 }
 
 function assistantFrame(value: JsonRecord): ClaudeFrame {
@@ -321,6 +350,7 @@ function assistantFrame(value: JsonRecord): ClaudeFrame {
     error: str(value["error"]),
     kind: "assistant",
     messageId: str(message["id"]) ?? str(value["uuid"]) ?? "message",
+    model: str(message["model"]),
     parentToolUseId: str(value["parent_tool_use_id"]),
     usage: parseRequestFigures(message["usage"]),
     uuid: str(value["uuid"]),

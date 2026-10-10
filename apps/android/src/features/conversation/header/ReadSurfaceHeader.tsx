@@ -26,6 +26,7 @@ export function ReadSurfaceHeader(props: Props) {
       archived={false}
       currentUsage={null}
       deleteThread={undefined}
+      forkPicker={undefined}
       forkTargets={undefined}
       historyActivityModel={null}
       historyActivityResourceId={null}

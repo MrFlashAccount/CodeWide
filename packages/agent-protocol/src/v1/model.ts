@@ -120,6 +120,13 @@ export type ExecutionStatus = "inProgress" | "completed" | "failed" | "declined"
 /** Status of a call-like item. */
 export type CallStatus = "inProgress" | "completed" | "failed";
 
+/**
+ * Lifecycle of a sub-agent (added within v1): `running` while it works,
+ * including a background agent whose spawning call already returned;
+ * `stopped` when it was stopped, killed or its turn ended under it.
+ */
+export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
+
 export type FileChangeKind = "add" | "delete" | "update";
 
 export interface FileChange {
@@ -206,6 +213,23 @@ export type AgentItemBody =
   | { readonly itemId: ItemId; readonly path: string; readonly type: "imageView" }
   | { readonly itemId: ItemId; readonly text: string; readonly type: "plan" }
   | { readonly itemId: ItemId; readonly type: "compaction" }
+  /**
+   * A sub-agent the turn started (added within v1). `agentThreadId` is the
+   * read-only thread of the sub-agent's own transcript, once the provider
+   * knows the agent; `result` is the text the spawning call returned.
+   */
+  | {
+      readonly agentThreadId: AppThreadId | null;
+      readonly agentType: string | null;
+      readonly background: boolean;
+      readonly description: string;
+      readonly itemId: ItemId;
+      readonly model: string | null;
+      readonly prompt: string;
+      readonly result: string | null;
+      readonly status: SubagentStatus;
+      readonly type: "subagent";
+    }
   | {
       readonly capability: string;
       readonly itemId: ItemId;

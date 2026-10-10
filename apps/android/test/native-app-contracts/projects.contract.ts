@@ -94,7 +94,8 @@ it("keeps a server-scoped new chat local until the first send", () => {
   expect(projectWorkspaceAdapter).toContain("void loadTurnControls(connectionId, started.cwd)");
   expect(turnControlsOwner).toMatch(/"config\/read",\s*\{\s*cwd,\s*includeLayers: false,?\s*\}/u);
   expect(turnControlsOwner).toContain("isDefault: model.isDefault");
-  expect(ownerComposerMenu).toMatch(/composerModelSettings\(\s*newChat,\s*serverExecution,/u);
+  expect(ownerComposerMenu).toContain("? newChatControlsView(controls, draft)");
+  expect(ownerComposerMenu).toContain(": existingThreadControlsView({");
   expect(threadDetailDatabase).toContain("const chat = createThreadChatModel({");
   expect(nativeTransport).toContain('typeof bridge.listPortForwards !== "function"');
 });

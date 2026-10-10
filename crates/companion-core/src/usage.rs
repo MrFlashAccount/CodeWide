@@ -9,9 +9,9 @@ use std::{collections::HashMap, sync::Arc};
 use agent_core::{
     model::{ProviderCost, ProviderId},
     usage::{
-        ModelPricing, PROVIDER_COST_FIELD, ReplayPricing, RequestUsage, TokenCounts,
-        TurnUsageProjection, UsagePricing, UsageScopeProjection, UsageStatus, normalize_model,
-        provider_reported_cost,
+        ModelPricing, PROVIDER_COST_FIELD, REQUEST_MODEL_FIELD, ReplayPricing, RequestUsage,
+        TokenCounts, TurnUsageProjection, UsagePricing, UsageScopeProjection, UsageStatus,
+        normalize_model, provider_reported_cost,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -206,7 +206,11 @@ impl LiveUsageProjector {
                         turn.baseline = Some(total.saturating_sub(last));
                         turn.requests = None;
                     }
-                    let request_model = turn.model.as_deref().or(state.model.as_deref());
+                    let request_model = params
+                        .get(REQUEST_MODEL_FIELD)
+                        .and_then(Value::as_str)
+                        .or(turn.model.as_deref())
+                        .or(state.model.as_deref());
                     if is_new_request {
                         if let (Some(requests), Some(model)) =
                             (turn.requests.as_mut(), request_model)
@@ -734,6 +738,47 @@ mod tests {
             }))?
             .ok_or("final usage missing")?;
         assert_eq!(final_projection["turn"]["cost"]["totalCostUsd"], 0.02);
+        Ok(())
+    }
+
+    #[test]
+    fn a_reported_request_model_prices_the_request() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
+        let mut projector = LiveUsageProjector::new(store, pricing());
+        // The selected model is an alias no table prices.
+        projector.observe(&json!({
+            "method": "thread/settings/updated",
+            "params": {"threadId": "thread", "threadSettings": {"model": "alias"}}
+        }))?;
+        projector.observe(&json!({
+            "method": "turn/started",
+            "params": {"threadId": "thread", "turn": {"id": "turn"}}
+        }))?;
+        let unnamed = projector
+            .observe(&live_usage_event(12, 12))?
+            .ok_or("usage missing")?;
+        assert!(unnamed["turn"]["cost"].is_null());
+        let mut named = live_usage_event(30, 18);
+        named["params"][REQUEST_MODEL_FIELD] = json!("model-a");
+        let priced = projector.observe(&named)?.ok_or("usage missing")?;
+        // Only requests of a known model are priced; an unnamed one leaves the turn unpriced.
+        assert!(priced["turn"]["cost"].is_null());
+
+        projector.observe(&json!({
+            "method": "turn/started",
+            "params": {"threadId": "thread", "turn": {"id": "next"}}
+        }))?;
+        let mut first = live_usage_event(45, 15);
+        first["params"]["turnId"] = json!("next");
+        first["params"][REQUEST_MODEL_FIELD] = json!("model-a");
+        let usage = projector.observe(&first)?.ok_or("usage missing")?;
+        assert_eq!(usage["turn"]["cost"]["model"], "model-a");
+        assert!(
+            usage["turn"]["cost"]["totalCostUsd"]
+                .as_f64()
+                .is_some_and(|cost| cost > 0.0)
+        );
         Ok(())
     }
 

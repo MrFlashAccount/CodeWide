@@ -1,3 +1,4 @@
+import { clampModelEffort } from "../../ui/modelEffort";
 import { useLiveQuery } from "@tanstack/react-db";
 
 import { getUserPreferencesDatabase } from "../../data/user-preferences-database";
@@ -52,7 +53,7 @@ function validatedBackgroundModelSettings(
     model === null ||
     effort === null ||
     available === undefined ||
-    (available.defaultEffort !== effort && !available.efforts.includes(effort))
+    clampModelEffort(available, effort) !== effort
   ) {
     throw new Error("The selected Voice Assistant model is unavailable");
   }

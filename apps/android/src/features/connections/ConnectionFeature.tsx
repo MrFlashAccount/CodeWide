@@ -9,9 +9,9 @@ import {
   connectionStateLabel,
 } from "./connectionPresentation";
 import { ConnectionRowEditor } from "./ConnectionRowEditor";
-import { HostUpdateSettings } from "./HostUpdateSettings";
 import type { HostUpdateView } from "./hostUpdateSettingsContract";
 import { ServerIcon } from "./ServerIcon";
+import { ServerSoftwareSection } from "./ServerSoftwareSection";
 
 import type { ConnectionSettingsProps } from "./connectionSettingsContract";
 
@@ -63,25 +63,15 @@ export function connectionSettingsSections({
             {...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile })}
             {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}
           />
-          {hostUpdate !== undefined && (
-            <HostUpdateSettings
-              connectionId={connection.id}
-              connectionName={connection.displayName}
-              onApply={onApplyHostUpdate}
-              onCheck={onCheckHostUpdate}
-              update={hostUpdate}
-            />
-          )}
-          {relayUpdate !== undefined && relayUpdate.currentVersion !== null && (
-            <HostUpdateSettings
-              connectionId={connection.id}
-              connectionName={connection.displayName}
-              onApply={onApplyRelayUpdate}
-              onCheck={onCheckRelayUpdate}
-              subject="Relay"
-              update={relayUpdate}
-            />
-          )}
+          <ServerSoftwareSection
+            connection={connection}
+            hostUpdate={hostUpdate}
+            onApplyHostUpdate={onApplyHostUpdate}
+            onApplyRelayUpdate={onApplyRelayUpdate}
+            onCheckHostUpdate={onCheckHostUpdate}
+            onCheckRelayUpdate={onCheckRelayUpdate}
+            relayUpdate={relayUpdate}
+          />
         </>
       ),
       description: connectionDescription(

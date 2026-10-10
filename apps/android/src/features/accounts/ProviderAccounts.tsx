@@ -14,7 +14,7 @@ import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
 import { ProviderIcon } from "../../ui/ProviderIcon";
-import { AppText as Text } from "../../ui/Typography";
+import { SettingsGroupHeader } from "../../ui/SettingsGroupHeader";
 import { styles } from "./AccountPoolFeature.styles";
 import { AccountLimitRings } from "./AccountLimitRings";
 import {
@@ -61,12 +61,12 @@ function ProviderAccountSection({
 }): React.JSX.Element {
   return (
     <View style={styles.accountPoolEditor} testID={`provider-accounts-${entry.id}`}>
-      <View style={styles.accountPoolHeader}>
-        <ProviderIcon provider={entry.id} size={iconSize.inline} />
-        <Text accessibilityRole="header" style={[styles.fieldLabel, styles.flex]}>
-          {entry.name}
-        </Text>
-      </View>
+      <SettingsGroupHeader
+        leading={
+          <ProviderIcon color={colors.textMuted} provider={entry.id} size={iconSize.inline} />
+        }
+        title={entry.name}
+      />
       {providerAccountShowsLimits(entry) ? (
         <ProviderAccountLimitsRow entry={entry} serverName={serverName} />
       ) : (

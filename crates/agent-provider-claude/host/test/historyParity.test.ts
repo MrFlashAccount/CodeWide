@@ -50,6 +50,22 @@ const comparableTurn = (turn: AgentTurn): unknown => ({
   turnId: turn.turnId,
 });
 
+/**
+ * A background sub-agent's final status reaches its item live only while
+ * the turn that started it runs; history applies every later notification.
+ * Where live still says `running`, the rebuilt item may carry the final
+ * status; every other field must match.
+ */
+function liveSubagentStatus(historyTurn: AgentTurn, liveTurn: AgentTurn | undefined): AgentTurn {
+  const items = historyTurn.items.map((item) => {
+    const live = liveTurn?.items.find((candidate) => candidate.itemId === item.itemId);
+    return item.type === "subagent" && live?.type === "subagent" && live.status === "running"
+      ? { ...item, status: live.status }
+      : item;
+  });
+  return { ...historyTurn, items };
+}
+
 describe("history parity", () => {
   for (const scenario of scenarios) {
     it(scenario, async () => {
@@ -57,7 +73,10 @@ describe("history parity", () => {
         loadTranscript(join(fixtureDirectory, `${scenario}.ndjson`)),
       );
       const live = events.flatMap((event) => (event.type === "turn.completed" ? [event.turn] : []));
-      expect(history.map(comparableTurn)).toEqual(live.map(comparableTurn));
+      const comparableHistory = history.map((turn, index) =>
+        comparableTurn(liveSubagentStatus(turn, live[index])),
+      );
+      expect(comparableHistory).toEqual(live.map(comparableTurn));
     });
   }
 });

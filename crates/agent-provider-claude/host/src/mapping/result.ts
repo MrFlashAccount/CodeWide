@@ -22,6 +22,27 @@ export const AUTHENTICATION_MESSAGE =
 export const PROCESS_EXITED_MESSAGE = "Claude process exited unexpectedly";
 export const LOST_SESSION_MARKER = "No conversation found with session ID";
 
+const BACKGROUND_SESSION_PATTERN = /That session is running in the background \(([0-9a-f]+)\)/;
+
+/**
+ * User-facing failure of a Claude process that exited during a turn. A session
+ * already running as a `claude --bg` background agent cannot be resumed by a
+ * second process; the CLI names its short id in stderr.
+ */
+export function processExitedError(cause: Error): TurnError {
+  const background = BACKGROUND_SESSION_PATTERN.exec(cause.message);
+  if (background === null) {
+    return { kind: "processExited", message: PROCESS_EXITED_MESSAGE };
+  }
+  const shortId = background[1] ?? "";
+  return {
+    kind: "processExited",
+    message:
+      `This Claude session is running in the background in another Claude process. ` +
+      `Wait for it to finish or run \`claude stop ${shortId}\` on the host, then try again.`,
+  };
+}
+
 export function isInterruption(frame: ResultFrame): boolean {
   return frame.terminalReason !== null && frame.terminalReason.startsWith("aborted");
 }

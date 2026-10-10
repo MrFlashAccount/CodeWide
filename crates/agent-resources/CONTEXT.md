@@ -8,7 +8,7 @@ Thread resources shared by provider adapters: the resource model of a thread (fi
 
 - `data.rs` — `ResourceData` and its parts; items applied from the client wire (`apply_materialized_item`), from neutral items (`apply_agent_item`, the same result as the item's client-wire projection) or from a provider's records; path, diff and revision helpers.
 - `projection.rs` — `ResourceProjection`: finished turns and the active turn, `from_turns` over neutral turns, the last-turn scope.
-- `service.rs` — `ThreadResources<S: ProjectionSource>`: request handling, VCS overlay, live overlay from observed client-wire events and its eviction once the source shows the turn completed, prewarm.
+- `service.rs` — `ThreadResources<S: ProjectionSource>`: request handling, VCS overlay, live overlay from observed client-wire events and its eviction once the source shows the turn completed, prewarm; `source()` exposes the provider's projection source to its adapter.
 
 ## Users
 

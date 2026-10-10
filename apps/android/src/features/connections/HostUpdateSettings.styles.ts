@@ -1,52 +1,91 @@
 import { StyleSheet } from "react-native";
 
-import { colors, radii, spacing, typeScale, typeWeight } from "../../theme";
+import { colors, radii, spacing, typeScale } from "../../theme";
+import { listRowHeight } from "../../ui/AppListRow.types";
 
 export const styles = StyleSheet.create({
-  actions: {
+  callout: {
+    // Setup and progress are not warnings: a raised neutral surface keeps the
+    // tone calm, and only a real failure switches to the error container.
+    backgroundColor: colors.surfaceContainerHighest,
+    borderRadius: radii.medium,
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+    marginHorizontal: spacing.sm,
+    padding: spacing.sm,
+  },
+  calloutActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.xs,
   },
-  body: {
-    backgroundColor: colors.surfaceContainerLow,
+  calloutBody: {
+    flex: 1,
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  calloutError: {
+    backgroundColor: colors.errorContainer,
     borderRadius: radii.medium,
+    flexDirection: "row",
     gap: spacing.sm,
-    padding: spacing.md,
+    marginBottom: spacing.sm,
+    marginHorizontal: spacing.sm,
+    padding: spacing.sm,
   },
-  detail: {
-    color: colors.textMuted,
-    ...typeScale.body,
+  calloutIcon: {
+    marginTop: spacing.optical,
   },
-  error: {
-    color: colors.red,
-    ...typeScale.body,
+  calloutText: {
+    color: colors.text,
+    ...typeScale.label,
   },
-  label: {
+  calloutTextError: {
+    color: colors.onErrorContainer,
+    ...typeScale.label,
+  },
+  card: {
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radii.medium,
+    overflow: "hidden",
+  },
+  command: {
+    backgroundColor: colors.code,
+    borderRadius: radii.compact,
+    color: colors.text,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xxs,
+    ...typeScale.code,
+  },
+  description: {
     color: colors.textMuted,
     ...typeScale.label,
+  },
+  descriptionError: {
+    color: colors.red,
+  },
+  descriptionSuccess: {
+    color: colors.green,
   },
   row: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.sm,
-    justifyContent: "space-between",
+    gap: spacing.md,
+    minHeight: listRowHeight.double,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  text: {
+    flex: 1,
+    gap: spacing.xxs,
     minWidth: 0,
   },
-  status: {
-    color: colors.textMuted,
-    ...typeScale.body,
-  },
-  success: {
-    color: colors.green,
-    ...typeScale.body,
-  },
-  value: {
+  title: {
     color: colors.text,
-    flexShrink: 1,
     ...typeScale.body,
-    fontWeight: typeWeight.semibold,
   },
-  versionShimmer: {
-    alignItems: "flex-end",
-    flex: 1,
+  titleShimmer: {
+    alignSelf: "flex-start",
   },
 });

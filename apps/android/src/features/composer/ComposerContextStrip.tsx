@@ -6,6 +6,8 @@ import { ComposerControlChips } from "./settings/ComposerControlChips";
 type Props = Pick<
   ComposerFeatureProps,
   | "applyModelSettings"
+  | "controls$"
+  | "onForkIntoAgent"
   | "newChat"
   | "workspaceResources"
   | "controlsResourceId"
@@ -30,10 +32,12 @@ export function ComposerContextStrip({
   applyModelSettings,
   closeQuickControlMenu,
   controlError,
+  controls$,
   controlsResourceId,
   cwd,
   leadingContextChips,
   newChat,
+  onForkIntoAgent,
   onLoadControls,
   openControls,
   openQuickControlMenu,
@@ -58,6 +62,7 @@ export function ComposerContextStrip({
     >
       {leadingContextChips}
       <ComposerControlChips
+        controls$={controls$}
         cwd={cwd}
         error={controlError}
         newChat={newChat}
@@ -76,6 +81,7 @@ export function ComposerContextStrip({
         onFallback={openControls}
         onQuickOpen={openQuickControlMenu}
         onSelectPermissions={selectPermissions}
+        {...(onForkIntoAgent === undefined ? {} : { onForkIntoAgent })}
       />
       {toolContextChips}
     </ScrollView>

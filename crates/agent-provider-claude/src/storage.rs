@@ -18,7 +18,7 @@ use agent_core::{
         AgentEvent, AgentThread, AppThreadId, ProviderId, RpcError, ThreadListParams,
         ThreadListResult, ThreadStatus, ThreadTurnsParams, ThreadTurnsResult, turns::page_turns,
     },
-    provider::ProviderStatus,
+    provider::{HistoryChange, ProviderStatus},
 };
 use agent_resources::ThreadResources;
 use companion_host::{
@@ -39,6 +39,8 @@ use crate::{
 
 const RESCAN_INTERVAL: Duration = Duration::from_secs(30);
 const FINISHED_CHANNEL_CAPACITY: usize = 256;
+/// Pending history changes; the watcher coalesces echoes before they get here.
+const HISTORY_CHANGE_CAPACITY: usize = 256;
 
 /// What the companion host provides for the Claude adapter's storage.
 pub struct ClaudeStorageHost {
@@ -125,7 +127,7 @@ impl Freshness {
         }
     }
 
-    fn started(&self, thread: &AppThreadId) {
+    pub(crate) fn started(&self, thread: &AppThreadId) {
         self.active
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -133,11 +135,19 @@ impl Freshness {
         self.mark_stale(thread);
     }
 
-    fn finished(&self, thread: &AppThreadId) {
+    pub(crate) fn finished(&self, thread: &AppThreadId) {
         self.active
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(thread);
+    }
+
+    /// Whether a live turn of `thread` runs in the host.
+    pub(crate) fn is_running(&self, thread: &AppThreadId) -> bool {
+        self.active
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(thread)
     }
 
     fn is_fresh(&self, thread: &AppThreadId) -> bool {
@@ -163,6 +173,8 @@ pub struct ClaudeStorage {
     finished: Mutex<Option<mpsc::Sender<AppThreadId>>>,
     relist: Mutex<Option<mpsc::Sender<()>>>,
     projects_root: Option<PathBuf>,
+    history_changes: mpsc::Sender<HistoryChange>,
+    history_changes_rx: Mutex<Option<mpsc::Receiver<HistoryChange>>>,
 }
 
 impl ClaudeStorage {
@@ -178,6 +190,7 @@ impl ClaudeStorage {
         if let Some(vcs) = host.vcs {
             resources = resources.with_vcs(vcs);
         }
+        let (history_changes, history_changes_rx) = mpsc::channel(HISTORY_CHANGE_CAPACITY);
         Ok(Self {
             store,
             search,
@@ -186,6 +199,8 @@ impl ClaudeStorage {
             finished: Mutex::new(None),
             relist: Mutex::new(None),
             projects_root: host.projects_root,
+            history_changes,
+            history_changes_rx: Mutex::new(Some(history_changes_rx)),
         })
     }
 
@@ -209,8 +224,18 @@ impl ClaudeStorage {
             self.search.clone(),
             sessions,
             self.freshness.clone(),
-        );
+        )
+        .with_history_changes(self.history_changes.clone());
         tokio::spawn(indexer.run(changes, finished_rx, relist_rx, status));
+    }
+
+    /// Threads rewritten from Claude's store outside a live turn (a session
+    /// driven in a terminal); taken once by the companion.
+    pub fn take_history_changes(&self) -> Option<mpsc::Receiver<HistoryChange>> {
+        self.history_changes_rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// Observes one live event: a running turn makes its thread's index

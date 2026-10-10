@@ -22,6 +22,7 @@ import type {
   ClientMessageId,
   ItemId,
   Provenance,
+  TokenUsage,
   TurnError,
   TurnId,
   TurnOrigin,
@@ -40,6 +41,7 @@ import {
   todoPlan,
   toolDisposition,
 } from "../mapping/tools.js";
+import { notifiedStatus, withAgent, withStatus } from "../mapping/subagents.js";
 import { unreachable } from "../support/unreachable.js";
 import type { TurnOutcome } from "../mapping/result.js";
 
@@ -98,6 +100,24 @@ export class TurnBuilder {
 
   get origin(): TurnOrigin {
     return this.context.origin;
+  }
+
+  /** The usage of one complete model request while the turn runs; the SDK's cost comes only with the result. */
+  liveUsage(update: {
+    readonly contextWindow: number | null;
+    readonly last: TokenUsage;
+    readonly model: string | null;
+    readonly total: TokenUsage;
+  }): AgentEvent {
+    return {
+      appThreadId: this.context.appThreadId,
+      contextWindow: update.contextWindow,
+      last: update.last,
+      ...(update.model === null ? {} : { model: update.model }),
+      total: update.total,
+      turnId: this.context.turnId,
+      type: "usage.updated",
+    };
   }
 
   /** `error` field of the most recent top-level assistant frame. */
@@ -310,6 +330,26 @@ export class TurnBuilder {
     this.declined.add(toolUseId);
   }
 
+  /**
+   * A sub-agent of this turn started or finished: its item learns the agent
+   * thread and its final status. No event: the spawning call's completion or
+   * the turn's completion carries the item.
+   */
+  private onTask(frame: Extract<ClaudeFrame, { kind: "task" }>): void {
+    const slot = frame.toolUseId === null ? undefined : this.slots.get(asItemId(frame.toolUseId));
+    if (slot?.item.type !== "subagent") {
+      return;
+    }
+    if (frame.status === null) {
+      slot.item = withAgent(slot.item, this.context.appThreadId, frame.taskId);
+      return;
+    }
+    const status = notifiedStatus(frame.status);
+    if (status !== null && slot.completed) {
+      slot.item = withStatus(slot.item, status);
+    }
+  }
+
   /** Applies one classified top-level frame. Sub-agent frames must be filtered by the caller. */
   onFrame(frame: ClaudeFrame): AgentEvent[] {
     switch (frame.kind) {
@@ -326,6 +366,9 @@ export class TurnBuilder {
         };
         return [...this.start(item), ...this.complete(item)];
       }
+      case "task":
+        this.onTask(frame);
+        return [];
       case "init":
       case "backgroundTasks":
       case "rateLimit":
@@ -427,7 +470,13 @@ export class TurnBuilder {
       const completed = completeItem(
         slot.item,
         { id: result.toolUseId, input: call.input, name: call.name },
-        { durationMs, result, status, toolUseResult: frame.toolUseResult },
+        {
+          appThreadId: this.context.appThreadId,
+          durationMs,
+          result,
+          status,
+          toolUseResult: frame.toolUseResult,
+        },
       );
       events.push(...this.complete(completed));
       const image =

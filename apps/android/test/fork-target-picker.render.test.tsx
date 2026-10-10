@@ -1,8 +1,9 @@
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { parseAgentProviderId } from "../src/data/threadAgent";
 import { ThreadHeaderMenu } from "../src/features/turnActions/ThreadActions";
+import { useForkTargetPicker } from "../src/features/turnActions/forkTargetPicker";
 import type { ForkTargetChoice } from "../src/features/turnActions/forkTargets";
 import { AppNoticeContext } from "../src/ui/appNoticeContext";
 
@@ -34,6 +35,33 @@ function Wrapper(props: { readonly children: ReactNode }) {
   );
 }
 
+/** The header with the conversation-scoped picker, plus the composer's entry into it. */
+function HeaderWithPicker(props: {
+  readonly fork: () => Promise<void>;
+  readonly forkTargets: () => readonly ForkTargetChoice[] | null;
+}) {
+  const picker = useForkTargetPicker("scope");
+  return (
+    <>
+      <ThreadHeaderMenu
+        archived={false}
+        forkPicker={picker}
+        forkTargets={props.forkTargets}
+        onFork={props.fork}
+        onRenameRequest={jest.fn()}
+        pinned={false}
+        threadId="t1"
+      />
+      <Pressable
+        accessibilityLabel="Composer fork action"
+        onPress={() => {
+          picker.openForkTargets(props.forkTargets);
+        }}
+      />
+    </>
+  );
+}
+
 function openFork(screen: ReturnType<typeof render>) {
   fireEvent.press(screen.getAllByLabelText("Thread menu")[0]!);
   fireEvent.press(screen.getByLabelText("Thread menu: Fork thread"));
@@ -42,7 +70,7 @@ function openFork(screen: ReturnType<typeof render>) {
 it("forks at once with the same agent when there is no picker", async () => {
   const fork = jest.fn(async () => undefined);
   const screen = render(
-    <ThreadHeaderMenu archived={false} onFork={fork} onRenameRequest={jest.fn()} pinned={false} threadId="t1" forkTargets={() => null} />,
+    <HeaderWithPicker fork={fork} forkTargets={() => null} />,
     { wrapper: Wrapper },
   );
   openFork(screen);
@@ -53,7 +81,7 @@ it("forks at once with the same agent when there is no picker", async () => {
 it("asks for the target agent and forks into the chosen one", async () => {
   const fork = jest.fn(async () => undefined);
   const screen = render(
-    <ThreadHeaderMenu archived={false} onFork={fork} onRenameRequest={jest.fn()} pinned={false} threadId="t1" forkTargets={() => choices} />,
+    <HeaderWithPicker fork={fork} forkTargets={() => choices} />,
     { wrapper: Wrapper },
   );
   openFork(screen);
@@ -67,6 +95,21 @@ it("asks for the target agent and forks into the chosen one", async () => {
       ephemeral: false,
       target: { model: "gpt-5.5", provider: "codex" },
     }),
+  );
+  expect(screen.queryByTestId("fork-target-sheet")).toBeNull();
+});
+
+it("opens the header's picker from the composer's model picker", async () => {
+  const fork = jest.fn(async () => undefined);
+  const screen = render(<HeaderWithPicker fork={fork} forkTargets={() => choices} />, {
+    wrapper: Wrapper,
+  });
+  expect(screen.queryByTestId("fork-target-sheet")).toBeNull();
+  fireEvent.press(screen.getByLabelText("Composer fork action"));
+  expect(screen.getByTestId("fork-target-sheet")).toBeTruthy();
+  fireEvent.press(screen.getByText("Same agent"));
+  await waitFor(() =>
+    expect(fork).toHaveBeenCalledWith({ boundary: { kind: "all" }, ephemeral: false, target: null }),
   );
   expect(screen.queryByTestId("fork-target-sheet")).toBeNull();
 });

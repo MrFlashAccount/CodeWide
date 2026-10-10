@@ -27,6 +27,14 @@ impl MemoryThreadIndex {
             .get(thread)
             .map(|metadata| metadata.cwd.clone())
     }
+
+    pub(crate) fn metadata(&self, thread: &str) -> Option<IndexedThreadMetadata> {
+        self.threads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(thread)
+            .cloned()
+    }
 }
 
 impl HostThreadIndex for MemoryThreadIndex {

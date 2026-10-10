@@ -106,6 +106,12 @@ impl<S: ProjectionSource> ThreadResources<S> {
         }
     }
 
+    /// The provider's projection source.
+    #[must_use]
+    pub fn source(&self) -> &S {
+        &self.source
+    }
+
     /// The workspace VCS, when attached.
     #[must_use]
     pub fn vcs(&self) -> Option<&dyn WorkspaceVcs> {

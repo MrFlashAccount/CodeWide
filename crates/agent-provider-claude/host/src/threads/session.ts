@@ -66,6 +66,7 @@ import {
   isInterruption,
   isLostSession,
   PROCESS_EXITED_MESSAGE,
+  processExitedError,
   turnOutcome,
   type TurnOutcome,
 } from "../mapping/result.js";
@@ -109,6 +110,8 @@ import {
 import type { RateLimitSink } from "../account/rateLimitReporter.js";
 import { ClientToolCalls, type ClientToolCaller } from "./clientToolCalls.js";
 import { promptContent } from "./prompt.js";
+import { contextWindowOf } from "../catalog/contextWindows.js";
+import { LiveUsageMeter, type LiveRequest } from "./liveUsage.js";
 import { TurnBuilder } from "./turnBuilder.js";
 import { unreachable } from "../support/unreachable.js";
 
@@ -168,6 +171,8 @@ interface ActiveTurn {
   interruptTimer: NodeJS.Timeout | null;
   /** The context size of the turn's latest top-level model request. */
   lastRequest: TokenUsage | null;
+  /** Requests reported live since the turn's last result. */
+  readonly liveUsage: LiveUsageMeter;
   /** Steers whose `aborted_*` restart result must not end the turn. */
   pendingSteerAborts: number;
   readonly prompts: PromptRecord[];
@@ -259,6 +264,8 @@ export class ClaudeSession {
   private backgroundTasks = 0;
   /** The context size of the session's latest top-level model request, across turns. */
   private lastRequest: TokenUsage | null = null;
+  /** The context window the SDK last reported for this thread's model. */
+  private contextWindow: number | null = null;
   private mcpServers: readonly string[] = [];
   private idleTimer: NodeJS.Timeout | null = null;
   private idleSinceMs: number | null = null;
@@ -377,6 +384,7 @@ export class ClaudeSession {
       interruptRequested: false,
       interruptTimer: null,
       lastRequest: null,
+      liveUsage: new LiveUsageMeter(),
       pendingSteerAborts: 0,
       prompts: start.prompts,
       releaseAfter: false,
@@ -770,7 +778,13 @@ export class ClaudeSession {
     this.finishTurn(
       active.interruptRequested
         ? { status: "interrupted" }
-        : { error: { kind: "processExited", message: PROCESS_EXITED_MESSAGE }, status: "failed" },
+        : {
+            error:
+              error === null
+                ? { kind: "processExited", message: PROCESS_EXITED_MESSAGE }
+                : processExitedError(error),
+            status: "failed",
+          },
     );
   }
 
@@ -795,6 +809,10 @@ export class ClaudeSession {
       case "result":
         this.onResult(frame);
         this.resultSeen();
+        return;
+      case "task":
+        // Sub-agent progress updates the active turn's item; it never wakes a turn.
+        this.emitAll(this.active?.builder.onFrame(frame) ?? []);
         return;
       case "other":
         return;
@@ -840,6 +858,7 @@ export class ClaudeSession {
       active.anchors.push(uuid);
     }
     this.observeRequest(active, frame);
+    this.reportLiveRequest(active, active.liveUsage.observe(frame));
     this.emitAll(active.builder.onFrame(frame));
   }
 
@@ -859,16 +878,40 @@ export class ClaudeSession {
   }
 
   /**
+   * Reports one complete request while the turn runs: its usage, the thread
+   * totals including it, and the model that priced it. The result that ends
+   * the turn later reports the measured totals and the SDK's cost.
+   */
+  private reportLiveRequest(active: ActiveTurn, request: LiveRequest | null): void {
+    if (request === null) {
+      return;
+    }
+    const measured = addUsage(this.thread.state().totalUsage, active.usage?.usage ?? ZERO_USAGE);
+    this.emitAll([
+      active.builder.liveUsage({
+        contextWindow: this.contextWindow ?? contextWindowOf(request.model),
+        last: request.usage,
+        model: request.model,
+        total: addUsage(measured, active.liveUsage.sinceResult),
+      }),
+    ]);
+  }
+
+  /**
    * Adds the usage a result measures (against the session's persisted
    * totals) to the active turn, including results that do not end it.
    */
   private meterResult(active: ActiveTurn, frame: ResultFrame): void {
+    active.liveUsage.resultMeasured();
     const { baseline, delta } = meterResult(this.thread.state().usageBaseline, {
       mainLoop: frame.mainLoopUsage,
       totals: frame.modelUsage,
     });
     if (delta === null) {
       return;
+    }
+    if (delta.contextWindow !== null) {
+      this.contextWindow = delta.contextWindow;
     }
     active.usage = addDelta(active.usage, delta);
     this.thread.update((state) => ({ ...state, usageBaseline: baseline }));

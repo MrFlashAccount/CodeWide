@@ -1,13 +1,16 @@
 //! The `OpenAI` API-equivalent price table of Codex models and the usage
 //! projection of turns read back from rollouts.
 //!
-//! The table is declared to the companion through
-//! `AgentProvider::usage_pricing`; costs are display estimates and never
-//! persisted.
+//! The table is data for the shared `CatalogPricing` and is declared to the
+//! companion through `AgentProvider::usage_pricing`; costs are display
+//! estimates and never persisted.
 
+use std::sync::LazyLock;
+
+use agent_core::model::{LongContextRates, ModelPriceEntry, ModelRates};
 use agent_core::usage::{
-    CostProjection, ModelPrice, ModelPricing, TokenCounts, TurnUsageProjection,
-    UsageScopeProjection, UsageStatus, add_cost, cache_hit_percent, normalize_model,
+    CatalogPricing, CostProjection, ModelPricing, TokenCounts, TurnUsageProjection,
+    UsageScopeProjection, UsageStatus, add_cost,
 };
 use serde_json::Value;
 
@@ -17,20 +20,19 @@ const LONG_CONTEXT_INPUT_TOKENS: u64 = 272_000;
 /// `OpenAI` standard API rates (<https://developers.openai.com/api/docs/pricing>).
 pub struct OpenAiPricing;
 
+static TABLE: LazyLock<CatalogPricing> = LazyLock::new(|| CatalogPricing::new(openai_prices()));
+
 impl ModelPricing for OpenAiPricing {
     fn request_cost(&self, model: &str, usage: TokenCounts) -> Option<CostProjection> {
-        estimate_cost(model, usage, true)
+        TABLE.request_cost(model, usage)
     }
 
     fn session_cost(&self, model: &str, usage: TokenCounts) -> Option<CostProjection> {
-        // Cumulative counters do not preserve the request boundaries needed to
-        // reconstruct long-context multipliers. Keep the estimate deterministic
-        // and price the aggregate at the selected model's base API rates.
-        estimate_cost(model, usage, false)
+        TABLE.session_cost(model, usage)
     }
 
     fn input_price(&self, model: &str) -> Option<f64> {
-        price_for(model).map(|price| price.input)
+        TABLE.input_price(model)
     }
 }
 
@@ -81,97 +83,52 @@ pub fn parse_rollout_usage(payload: &Value) -> Option<(TokenCounts, TokenCounts,
     Some((total, last, context))
 }
 
-fn price_for(model: &str) -> Option<ModelPrice> {
-    match normalize_model(model).as_str() {
-        "gpt-6-astra" => Some(ModelPrice {
-            input: 10.0,
-            cached_input: 1.0,
-            output: 50.0,
-        }),
-        "gpt-6.1-sol" => Some(ModelPrice {
-            input: 2.0,
-            cached_input: 0.1,
-            output: 10.0,
-        }),
-        "gpt-6-sol" => Some(ModelPrice {
-            input: 2.0,
-            cached_input: 0.2,
-            output: 10.0,
-        }),
-        "gpt-6-luna" => Some(ModelPrice {
-            input: 0.1,
-            cached_input: 0.01,
-            output: 0.5,
-        }),
-        "gpt-5.6" | "gpt-5.6-sol" => Some(ModelPrice {
-            input: 4.0,
-            cached_input: 0.4,
-            output: 20.0,
-        }),
-        "gpt-5.6-terra" => Some(ModelPrice {
-            input: 2.0,
-            cached_input: 0.2,
-            output: 12.0,
-        }),
-        "gpt-5.6-luna" => Some(ModelPrice {
-            input: 0.2,
-            cached_input: 0.02,
-            output: 1.2,
-        }),
-        _ => None,
-    }
-}
+/// Model ids with their input, cached-input and output rates. A cache write
+/// is billed at 1.25× input; a request above 272K input tokens at 2× input
+/// and 1.5× output.
+const OPENAI_RATES: &[(&str, f64, f64, f64)] = &[
+    ("gpt-6-astra", 10.0, 1.0, 50.0),
+    ("gpt-6.1-sol", 2.0, 0.1, 10.0),
+    ("gpt-6-sol", 2.0, 0.2, 10.0),
+    ("gpt-6-luna", 0.1, 0.01, 0.5),
+    ("gpt-5.6", 4.0, 0.4, 20.0),
+    ("gpt-5.6-sol", 4.0, 0.4, 20.0),
+    ("gpt-5.6-terra", 2.0, 0.2, 12.0),
+    ("gpt-5.6-luna", 0.2, 0.02, 1.2),
+];
 
-fn estimate_cost(
-    model: &str,
-    usage: TokenCounts,
-    apply_long_context_multiplier: bool,
-) -> Option<CostProjection> {
-    let model = normalize_model(model);
-    let price = price_for(&model)?;
-    let cached = usage.cached_input_tokens.min(usage.input_tokens);
-    let cache_write = usage
-        .cache_write_input_tokens
-        .min(usage.input_tokens.saturating_sub(cached));
-    let uncached = usage
-        .input_tokens
-        .saturating_sub(cached)
-        .saturating_sub(cache_write);
-    let long_context =
-        apply_long_context_multiplier && usage.input_tokens > LONG_CONTEXT_INPUT_TOKENS;
-    let input_multiplier = if long_context { 2.0 } else { 1.0 };
-    let output_multiplier = if long_context { 1.5 } else { 1.0 };
-    let uncached_cost = cost(uncached, price.input * input_multiplier);
-    let cached_cost = cost(cached, price.cached_input * input_multiplier);
-    let cache_write_cost = cost(cache_write, price.input * 1.25 * input_multiplier);
-    let output_cost = cost(usage.output_tokens, price.output * output_multiplier);
-    Some(CostProjection {
-        model,
-        pricing_version: PRICING_VERSION.into(),
-        currency: "USD".into(),
-        basis: "apiEquivalent".into(),
-        price,
-        uncached_input_tokens: uncached,
-        cached_input_tokens: cached,
-        cache_write_input_tokens: cache_write,
-        output_tokens: usage.output_tokens,
-        cache_hit_percent: cache_hit_percent(cached, usage.input_tokens),
-        uncached_input_cost_usd: uncached_cost,
-        cached_input_cost_usd: cached_cost,
-        cache_write_input_cost_usd: cache_write_cost,
-        output_cost_usd: output_cost,
-        total_cost_usd: uncached_cost + cached_cost + cache_write_cost + output_cost,
-    })
-}
-
-// WHY: a display estimate; token counts far below 2^52 convert exactly.
-#[allow(clippy::cast_precision_loss)]
-fn cost(tokens: u64, dollars_per_million: f64) -> f64 {
-    tokens as f64 * dollars_per_million / 1_000_000.0
+/// The table as catalog `prices`.
+pub(crate) fn openai_prices() -> impl Iterator<Item = (String, ModelPriceEntry)> {
+    OPENAI_RATES
+        .iter()
+        .map(|&(model, input, cached_input, output)| {
+            let rates = ModelRates {
+                input,
+                cached_input,
+                cache_write_input: input * 1.25,
+                output,
+            };
+            let price = ModelPriceEntry {
+                pricing_version: PRICING_VERSION.into(),
+                rates,
+                long_context: Some(LongContextRates {
+                    above_input_tokens: LONG_CONTEXT_INPUT_TOKENS,
+                    rates: ModelRates {
+                        input: input * 2.0,
+                        cached_input: cached_input * 2.0,
+                        cache_write_input: rates.cache_write_input * 2.0,
+                        output: output * 1.5,
+                    },
+                }),
+            };
+            (model.to_owned(), price)
+        })
 }
 
 #[cfg(test)]
 mod tests {
+    use agent_core::usage::ModelPrice;
+
     use super::*;
 
     fn request_cost(model: &str, usage: TokenCounts) -> Option<CostProjection> {

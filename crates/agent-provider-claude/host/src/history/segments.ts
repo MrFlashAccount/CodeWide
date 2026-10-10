@@ -4,8 +4,10 @@
  * - the first persisted message of a turn the host drove starts that turn
  *   (the turn index knows it);
  * - a prompt starts a user turn, unless the turn index knows it as a steer
- *   or a resent first prompt inside the current turn;
- * - a wake message starts a provider turn;
+ *   or a resent first prompt inside the current turn, or Claude queued it
+ *   while a turn ran (a prompt typed while the agent was busy);
+ * - a wake message starts a provider turn, unless Claude queued it while a
+ *   turn ran (a notification delivered into the running turn);
  * - an interrupt marker ends the current turn as interrupted;
  * - an agent frame or a compaction with no open turn starts a provider turn
  *   (for example, a background task finishing after the turn ended).
@@ -60,6 +62,22 @@ class Segmenter {
     }
   }
 
+  /** A prompt continues the open turn when the index says so or Claude queued it into a running turn. */
+  private prompt(entry: Extract<HistoryEntry, { readonly kind: "prompt" }>): void {
+    if (this.hints.continuations.has(entry.uuid) || (entry.queued && this.open !== null)) {
+      this.append(entry, "user");
+    } else {
+      this.start("user", entry);
+    }
+  }
+
+  /** A wake starts a provider turn unless Claude delivered it into a running turn. */
+  private wake(entry: Extract<HistoryEntry, { readonly kind: "wake" }>): void {
+    if (!entry.queued || this.open === null) {
+      this.start("provider", null);
+    }
+  }
+
   public add(entry: HistoryEntry): void {
     const indexedStart = this.hints.starts.get(entry.uuid);
     if (indexedStart !== undefined && this.open?.entries[0]?.uuid !== entry.uuid) {
@@ -68,14 +86,10 @@ class Segmenter {
     }
     switch (entry.kind) {
       case "prompt":
-        if (this.hints.continuations.has(entry.uuid)) {
-          this.append(entry, "user");
-        } else {
-          this.start("user", entry);
-        }
+        this.prompt(entry);
         return;
       case "wake":
-        this.start("provider", null);
+        this.wake(entry);
         return;
       case "interrupt":
         if (this.open !== null) {

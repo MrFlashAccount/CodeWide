@@ -6,6 +6,7 @@ import { useComposerState } from "../composer/composerState";
 import { useGoalResource } from "../goal/goalResource";
 import { useComposerProjectSelection } from "../projects/composerProjectSelection";
 import { useQueueVisibility } from "../queue/queueVisibility";
+import { useForkTargetPicker } from "../turnActions/forkTargetPicker";
 import { useThreadRename } from "../turnActions/threadRename";
 import { useConversationActivation } from "./conversationActivation";
 import type { ConversationCompositionCapabilities } from "./conversationCompositionCapabilities";
@@ -41,6 +42,7 @@ export function useConversationScopeFeatures(props: {
     draftConnectionId: activation.draftConnectionId,
     draftThreadId: activation.draftThreadId,
     newChat: props.surfaceInputs.newChat,
+    remoteThread: props.readInputs.remoteThread,
     voiceController: props.composerInputs.voiceController,
     workspaceResources: props.composerInputs.workspaceResources,
   });
@@ -60,6 +62,7 @@ export function useConversationScopeFeatures(props: {
     changesPreferencesBinding.changesPreferences,
   );
   const threadRenameBinding = useThreadRename(activation.composerScope);
+  const forkTargetPicker = useForkTargetPicker(activation.composerScope);
   const timelineState = useConversationTimelineState({
     composerScope: activation.composerScope,
     draftConnectionId: activation.draftConnectionId,
@@ -91,6 +94,7 @@ export function useConversationScopeFeatures(props: {
     changesPreferencesBinding,
     composerProjectSelectionBinding,
     composerStateBinding,
+    forkTargetPicker,
     goalResource,
     overlayScrollOwnershipBinding,
     overlayScrollStateBinding,

@@ -76,6 +76,29 @@ export interface ModelEntry {
   readonly model: string;
 }
 
+/** API list rates of one model in USD per million tokens. */
+export interface ModelRates {
+  /** A cache read. */
+  readonly cachedInput: number;
+  /** A cache write (the provider's default cache lifetime). */
+  readonly cacheWriteInput: number;
+  /** Uncached input. */
+  readonly input: number;
+  readonly output: number;
+}
+
+/**
+ * The price of one model (added within v1): the companion prices usage with
+ * it while the provider's own figure is unknown.
+ */
+export interface ModelPriceEntry {
+  /** Rates of a request whose input exceeds `aboveInputTokens`; absent when the model has one rate card. */
+  readonly longContext?: { readonly aboveInputTokens: number; readonly rates: ModelRates };
+  /** The price table the rates come from, e.g. `anthropic-api-2026-10-06`. */
+  readonly pricingVersion: string;
+  readonly rates: ModelRates;
+}
+
 export interface PermissionProfileEntry {
   readonly description: string;
   readonly displayName: string;
@@ -152,7 +175,15 @@ export interface OperationMap {
   };
   readonly "catalog.models": {
     readonly params: Record<string, never>;
-    readonly result: { readonly models: readonly ModelEntry[] };
+    readonly result: {
+      readonly models: readonly ModelEntry[];
+      /**
+       * Prices by model id (added within v1): every id a thread setting or a
+       * model request may name, catalog aliases included. Absent when the
+       * provider knows no prices.
+       */
+      readonly prices?: Readonly<Record<string, ModelPriceEntry>>;
+    };
   };
   readonly "catalog.permissionProfiles": {
     readonly params: Record<string, never>;

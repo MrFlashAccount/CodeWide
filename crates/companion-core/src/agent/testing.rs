@@ -172,7 +172,10 @@ impl AgentProvider for FakeProvider {
     }
 
     async fn catalog_models(&self) -> Result<ModelCatalog, ProviderError> {
-        Ok(ModelCatalog { models: Vec::new() })
+        Ok(ModelCatalog {
+            models: Vec::new(),
+            prices: std::collections::BTreeMap::new(),
+        })
     }
 
     async fn catalog_permission_profiles(&self) -> Result<PermissionProfileCatalog, ProviderError> {
@@ -457,6 +460,7 @@ impl AgentProvider for ScriptedProvider {
                 default_effort: None,
                 input_modalities: Vec::new(),
             }],
+            prices: std::collections::BTreeMap::new(),
         })
     }
 

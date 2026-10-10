@@ -144,7 +144,9 @@ export function hostUpdateHttpFailureView(
     canRetry: false,
     disconnected: false,
     errorCode: failure.errorCode,
-    errorMessage: error.message,
+    // A manual-update rejection is a known capability state, not a failed update;
+    // its message is a machine code that `availability` already classifies.
+    errorMessage: failure.availability === "error" ? error.message : null,
     operationId: null,
     phase: null,
   };

@@ -179,6 +179,30 @@ export class MemorySessionStore implements SessionStore {
         type: "user",
         uuid,
       });
+    } else if (
+      type === "system" &&
+      frame["subtype"] === "task_notification" &&
+      typeof frame["task_id"] === "string"
+    ) {
+      // Claude persists a finished task's notification as a queued
+      // `<task-notification>` user message with a task-notification origin.
+      const toolUseId =
+        typeof frame["tool_use_id"] === "string"
+          ? `<tool-use-id>${frame["tool_use_id"]}</tool-use-id>`
+          : "";
+      const status = typeof frame["status"] === "string" ? frame["status"] : "completed";
+      this.append(location, {
+        isQueuedCommand: true,
+        message: {
+          content: `<task-notification>\n<task-id>${frame["task_id"]}</task-id>\n${toolUseId}\n<status>${status}</status>\n</task-notification>`,
+          role: "user",
+        },
+        origin: { kind: "task-notification" },
+        parent_agent_id: null,
+        parent_tool_use_id: null,
+        type: "user",
+        uuid,
+      });
     } else if (type === "system" && frame["subtype"] === "compact_boundary") {
       this.append(location, {
         message: undefined,

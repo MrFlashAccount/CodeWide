@@ -429,8 +429,6 @@ pub fn rows<S: std::hash::BuildHasher>(
 
 #[cfg(test)]
 mod tests {
-    use agent_core::model::NativeSubagent;
-
     use super::*;
     use crate::test_support::session_read;
 
@@ -438,7 +436,7 @@ mod tests {
         let read = session_read(session, thread, size, prompts);
         StoredSession {
             session: read.session,
-            subagents: Vec::<NativeSubagent>::new(),
+            subagents: Vec::new(),
             turn_count: u32::try_from(prompts.len()).unwrap_or(0),
             has_user_turn: !prompts.is_empty(),
         }

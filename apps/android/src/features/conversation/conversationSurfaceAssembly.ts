@@ -79,6 +79,7 @@ export function createConversationSurfaceAssembly(props: {
     workspaceMode: props.projectsInputs.workspaceMode,
     workspaceSupport: props.projectsInputs.workspaceSupport,
   });
+  const forkTargets = props.actionsInputs.forkTargets;
   const composerView = createConversationComposerContent({
     activation: props.scoped.activation,
     attachmentsInputs: props.attachmentsInputs,
@@ -89,6 +90,12 @@ export function createConversationSurfaceAssembly(props: {
     getStableTransferAccess: props.getStableTransferAccess,
     goalContent: props.goalContent,
     goalInputs: props.goalInputs,
+    onForkIntoAgent:
+      props.actionsInputs.onFork === undefined || forkTargets === undefined
+        ? undefined
+        : () => {
+            props.scoped.forkTargetPicker.openForkTargets(forkTargets);
+          },
     overlayScrollOwnershipBinding: props.scoped.overlayScrollOwnershipBinding,
     readInputs: props.readInputs,
     surfaceInputs: props.surfaceInputs,
@@ -108,6 +115,7 @@ export function createConversationSurfaceAssembly(props: {
     deleteThread: props.toolsBinding.deleteThread,
     draftConnectionId: props.scoped.activation.draftConnectionId,
     draftThreadId: props.scoped.activation.draftThreadId,
+    forkPicker: props.scoped.forkTargetPicker,
     historyActivityModel: props.readInputs.historyActivityModel,
     historyActivityResourceId: props.readInputs.historyActivityResourceId,
     newChat: props.surfaceInputs.newChat,

@@ -27,6 +27,7 @@ export function ConversationHeader({
   dismissComposerKeyboardForOverlay,
   draftConnectionId,
   draftThreadId,
+  forkPicker,
   forkTargets,
   historyActivityModel,
   historyActivityResourceId,
@@ -155,6 +156,7 @@ export function ConversationHeader({
           {...(onCompact === undefined ? {} : { onCompact })}
           {...(onFork === undefined ? {} : { onFork })}
           {...(forkTargets === undefined ? {} : { forkTargets })}
+          {...(forkPicker === undefined ? {} : { forkPicker })}
           {...(deleteThread === undefined ? {} : { onDelete: deleteThread })}
         />
       )}

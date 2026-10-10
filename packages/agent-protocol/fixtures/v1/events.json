@@ -413,7 +413,8 @@
           "turnId": "0199a3c4-8000-7000-8000-000000000001",
           "last": { "inputTokens": 1200, "cachedInputTokens": 1000, "outputTokens": 80, "reasoningOutputTokens": 0, "totalTokens": 1280 },
           "total": { "inputTokens": 5400, "cachedInputTokens": 4000, "outputTokens": 300, "reasoningOutputTokens": 0, "totalTokens": 5700 },
-          "contextWindow": 200000
+          "contextWindow": 200000,
+          "model": "claude-sonnet-4-5"
         }
       }
     },

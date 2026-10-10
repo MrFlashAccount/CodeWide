@@ -69,6 +69,17 @@ const arr =
       inner(entry, `${path}[${String(index)}]`, errors);
     });
   };
+const record =
+  (inner: Check): Check =>
+  (value, path, errors) => {
+    if (!isRecord(value)) {
+      errors.push(`${path}: expected object`);
+      return;
+    }
+    for (const [key, entry] of Object.entries(value)) {
+      inner(entry, `${path}.${key}`, errors);
+    }
+  };
 /** Checks that may be absent: an absent field is valid, a present one is checked. */
 const optionalChecks = new WeakSet<Check>();
 const optional = (inner: Check): Check => {
@@ -204,6 +215,17 @@ const item = tagged(
     },
     plan: { itemId: str, text: str },
     reasoning: { content: arr(str), itemId: str, summary: arr(str) },
+    subagent: {
+      agentThreadId: nullable(str),
+      agentType: nullable(str),
+      background: bool,
+      description: str,
+      itemId: str,
+      model: nullable(str),
+      prompt: str,
+      result: nullable(str),
+      status: literal("running", "completed", "failed", "stopped"),
+    },
     toolCall: {
       arguments: json,
       durationMs: nullable(int),
@@ -234,6 +256,12 @@ const usd: Check = (value, path, errors) => {
     errors.push(`${path}: expected non-negative number`);
   }
 };
+const modelRates = obj({ cachedInput: usd, cacheWriteInput: usd, input: usd, output: usd });
+const modelPriceEntry = obj({
+  longContext: optional(obj({ aboveInputTokens: int, rates: modelRates })),
+  pricingVersion: str,
+  rates: modelRates,
+});
 const providerCost = obj({
   basis: literal("list", "managed"),
   model: str,
@@ -386,6 +414,7 @@ export const checkEvent: Check = tagged("type", {
     contextWindow: nullable(int),
     cost: optional(providerCost),
     last: tokenUsage,
+    model: optional(str),
     total: tokenUsage,
     turnId: str,
   },
@@ -445,6 +474,7 @@ const operationChecks: Readonly<
           model: str,
         }),
       ),
+      prices: optional(record(modelPriceEntry)),
     }),
   },
   "catalog.permissionProfiles": {

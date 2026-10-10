@@ -154,6 +154,18 @@ pub enum CallStatus {
     Failed,
 }
 
+/// Lifecycle of a sub-agent (added within v1): `Running` while it works,
+/// including a background agent whose spawning call already returned;
+/// `Stopped` when it was stopped, killed or its turn ended under it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubagentStatus {
+    Running,
+    Completed,
+    Failed,
+    Stopped,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileChangeKind {
@@ -285,6 +297,21 @@ pub enum AgentItem {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provenance: Option<Provenance>,
     },
+    /// A sub-agent the turn started (added within v1). `agent_thread_id` is
+    /// the read-only thread of the sub-agent's own transcript, once known.
+    Subagent {
+        item_id: ItemId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provenance: Option<Provenance>,
+        agent_thread_id: Option<AppThreadId>,
+        agent_type: Option<String>,
+        background: bool,
+        description: String,
+        model: Option<String>,
+        prompt: String,
+        result: Option<String>,
+        status: SubagentStatus,
+    },
     CapabilityItem {
         item_id: ItemId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -311,6 +338,7 @@ impl AgentItem {
             | Self::ImageView { provenance, .. }
             | Self::Plan { provenance, .. }
             | Self::Compaction { provenance, .. }
+            | Self::Subagent { provenance, .. }
             | Self::CapabilityItem { provenance, .. } => provenance.as_ref(),
         }
     }
@@ -328,6 +356,7 @@ impl AgentItem {
         | Self::ImageView { provenance, .. }
         | Self::Plan { provenance, .. }
         | Self::Compaction { provenance, .. }
+        | Self::Subagent { provenance, .. }
         | Self::CapabilityItem { provenance, .. }) = self;
         if provenance.is_none() {
             *provenance = Some(origin.clone());
@@ -348,6 +377,7 @@ impl AgentItem {
             | Self::ImageView { item_id, .. }
             | Self::Plan { item_id, .. }
             | Self::Compaction { item_id, .. }
+            | Self::Subagent { item_id, .. }
             | Self::CapabilityItem { item_id, .. } => item_id,
         }
     }

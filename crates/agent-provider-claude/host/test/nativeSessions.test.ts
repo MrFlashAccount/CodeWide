@@ -248,6 +248,55 @@ describe("nativeSession.read", () => {
       },
     ]);
   });
+
+  it("keeps a still-running background sub-agent's last turn in progress", async () => {
+    const memory = new MemorySessionStore();
+    const fixture: unknown = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "fixtures", "sessions", "interactive_terminal_subagents.json"),
+        "utf8",
+      ),
+    );
+    const subagents: unknown =
+      typeof fixture === "object" && fixture !== null ? Reflect.get(fixture, "subagents") : null;
+    if (typeof subagents !== "object" || subagents === null) throw new Error("no sub-agents");
+    const sessionId = "5f0c2a1e-3b4d-4e6f-8a9b-0c1d2e3f4a5b";
+    memory.addInteractive(
+      {
+        createdAtMs: 1_791_547_200_000,
+        cwd: "/workspace",
+        fileSize: 4096,
+        firstPrompt: "Plan the release and check the build.",
+        lastModifiedMs: 1_791_547_222_000,
+        sessionId,
+        summary: "Release plan",
+        title: null,
+      },
+      sessionMessages("interactive_terminal_subagents"),
+    );
+    memory.subagentTranscripts.set(
+      sessionId,
+      new Map(
+        Object.entries(subagents).map(([agentId, messages]: [string, unknown]) => [
+          agentId,
+          Array.isArray(messages) ? messages : [],
+        ]),
+      ),
+    );
+    const { service } = harness({ store: memory });
+    const read = await service.readNativeSession(sessionId);
+    const value = read.status === "ok" ? read.value : null;
+    const statusOf = (agentId: string): unknown =>
+      value?.subagents.find((subagent) => subagent.agentId === agentId)?.turns.at(-1)?.status;
+    expect(statusOf("a1b2c3d4e5f600001")).toBe("completed");
+    expect(statusOf("a1b2c3d4e5f600003")).toBe("inProgress");
+    expect(
+      value?.subagents.map((subagent) => [subagent.agentId, subagent.parentToolUseId]),
+    ).toEqual([
+      ["a1b2c3d4e5f600001", "toolu_bg"],
+      ["a1b2c3d4e5f600003", "toolu_open"],
+    ]);
+  });
 });
 
 describe("native session operations over JSON-RPC", () => {

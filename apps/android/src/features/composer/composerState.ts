@@ -17,6 +17,7 @@ export function useComposerState({
   draftConnectionId,
   draftThreadId,
   newChat,
+  remoteThread,
   voiceController,
   workspaceResources,
 }: {
@@ -29,6 +30,7 @@ export function useComposerState({
   draftConnectionId: string | null;
   draftThreadId: string | null;
   newChat: boolean;
+  remoteThread: Parameters<typeof useComposerEditing>[0]["remoteThread"];
   voiceController: ComposerWorkspaceCapabilities["voiceController"];
   workspaceResources: Parameters<typeof useComposerEditing>[0]["workspaceResources"];
 }) {
@@ -54,6 +56,7 @@ export function useComposerState({
     onLoadControls: composerInputs.onLoadControls,
     onUpdateSettings: composerInputs.onUpdateSettings,
     queuedComposerEdit: queueEditStateBinding.queuedComposerEdit,
+    remoteThread,
     saveComposerPreferences: composerInputs.saveComposerPreferences,
     saveDraft: composerInputs.saveDraft,
     saveDraftAttachments: composerInputs.saveDraftAttachments,
