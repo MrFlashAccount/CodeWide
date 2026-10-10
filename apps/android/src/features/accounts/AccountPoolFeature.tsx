@@ -8,7 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSelector } from "@legendapp/state/react";
 import { useState } from "react";
 import { accountPoolPresence } from "../../data/agentProviders";
-import { ActivityIndicator, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { useAppDialog } from "../../ui/AppDialog";
 import { AppListRow } from "../../ui/AppListRow";
@@ -25,7 +25,6 @@ export function AccountPoolEditor({
   onActivate,
   onCancelLogin,
   onConsumeResetCredit,
-  onRefresh,
   onRemove,
   onStartLogin,
   onUpdate,
@@ -72,9 +71,6 @@ export function AccountPoolEditor({
       },
     );
   });
-  const refreshAccounts = useEvent(() => {
-    run(async () => onRefresh(connectionId));
-  });
   const explainFallback = useEvent(() => {
     dialog.alert(
       "Account switching",
@@ -100,37 +96,23 @@ export function AccountPoolEditor({
           }
           title={owner === null ? "Accounts" : `${owner.name} accounts`}
           trailing={
-            <>
-              <Pressable
-                accessibilityLabel="How account switching works"
-                onPress={explainFallback}
-                style={styles.connectionMiniButton}
-              >
-                <Ionicons
-                  color={colors.textMuted}
-                  name="information-circle-outline"
-                  size={iconSize.action}
-                />
-              </Pressable>
-              <Pressable
-                accessibilityLabel={`Refresh ${accountName}s`}
-                disabled={busy}
-                onPress={refreshAccounts}
-                style={[styles.connectionMiniButton, busy && styles.disabled]}
-              >
-                {busy ? (
-                  <ActivityIndicator color={colors.textMuted} size="small" />
-                ) : (
-                  <Ionicons color={colors.textMuted} name="refresh" size={iconSize.action} />
-                )}
-              </Pressable>
-            </>
+            <Pressable
+              accessibilityLabel="How account switching works"
+              onPress={explainFallback}
+              style={styles.connectionMiniButton}
+            >
+              <Ionicons
+                color={colors.textMuted}
+                name="information-circle-outline"
+                size={iconSize.action}
+              />
+            </Pressable>
           }
         />
         {profiles.length === 0 && (
           <Text style={styles.menuNotice}>
             {accountPool === null
-              ? "Account data is not available yet. Refresh to try again."
+              ? "Account data is not available yet. Refresh the server to try again."
               : `No ${accountName}s connected.`}
           </Text>
         )}

@@ -48,7 +48,21 @@
       { "method": "item/reasoning/summaryPartAdded", "kind": "reasoningPart", "field": "summary" },
       { "method": "item/reasoning/summaryTextDelta", "kind": "reasoningDelta", "field": "summary" },
       { "method": "item/reasoning/textDelta", "kind": "reasoningDelta", "field": "content" }
-    ]
+    ],
+    "liveActivity": {
+      "field": "operation.liveActivity",
+      "absent": "unchanged",
+      "null": "cleared",
+      "kinds": [
+        { "kind": "reasoning", "fields": ["title"] },
+        { "kind": "planStep", "fields": ["step"] },
+        { "kind": "command", "fields": ["command"] },
+        { "kind": "fileEdit", "fields": ["path", "more"] },
+        { "kind": "tool", "fields": ["server", "tool"] },
+        { "kind": "webSearch", "fields": [] },
+        { "kind": "compacting", "fields": [] }
+      ]
+    }
   },
   "webSocketPaths": [
     "/v1/app-server",

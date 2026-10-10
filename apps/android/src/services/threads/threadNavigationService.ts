@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { KeyboardController } from "react-native-keyboard-controller";
 import { appLogger } from "../../observability/logger";
+import { subscribeMissingThreads } from "../../data/missingThread";
 import { recordTiming } from "../../data/operational-metrics";
 import {
   beginThreadNavigation,
@@ -177,6 +179,15 @@ export function useThreadNavigationService(
   const closeActiveThread = useEvent((): void => {
     router.dismissToAll();
   });
+
+  // A thread the Companion no longer has cannot stay open: it is unselected.
+  const closeMissingThread = useEvent((connectionId: string, threadId: string): void => {
+    const current = router.currentThread;
+    if (current?.connectionId.value === connectionId && current.threadId.value === threadId) {
+      router.dismissToAll();
+    }
+  });
+  useEffect(() => subscribeMissingThreads(closeMissingThread), [closeMissingThread]);
   return {
     closeActiveThread,
     getThreadLink,

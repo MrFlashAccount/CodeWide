@@ -245,6 +245,25 @@ impl IndexStore {
         Ok(table.get(child)?.map(|value| value.value().to_owned()))
     }
 
+    /// The link record of a linked child thread.
+    ///
+    /// # Errors
+    /// Returns an error when the index cannot be read.
+    pub fn agent_subagent_link(&self, child: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let read = self.database.begin_read()?;
+        let Some(parent) = read
+            .open_table(AGENT_SUBAGENT_PARENTS)?
+            .get(child)?
+            .map(|value| value.value().to_owned())
+        else {
+            return Ok(None);
+        };
+        let table = read.open_table(AGENT_SUBAGENT_CHILDREN)?;
+        Ok(table
+            .get(subagent_key(&parent, child).as_str())?
+            .map(|value| value.value().to_vec()))
+    }
+
     /// Every linked child thread id.
     ///
     /// # Errors

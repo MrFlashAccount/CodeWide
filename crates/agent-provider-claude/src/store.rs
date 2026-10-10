@@ -39,8 +39,9 @@ const SUBAGENT_TURNS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("clau
 const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// Bumped whenever the derived rows change meaning; a change drops them.
 /// 2: person prompts of interactive sessions, `subagent` items, sub-agent
-/// turns in their own table.
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 2;
+/// turns in their own table. 3: each session's newest conversation message
+/// ([`StoredSession::newest_message`]).
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 3;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;
@@ -93,9 +94,34 @@ pub struct StoredSession {
     /// Whether a person's turn exists (a thread without one is a shell).
     #[serde(default)]
     pub has_user_turn: bool,
+    /// The preview of the session's newest conversation message
+    /// ([`crate::preview::newest_message`]); `None` when no turn holds one.
+    pub newest_message: Option<String>,
 }
 
 impl StoredSession {
+    /// The row a fresh neutral read of the session is indexed as.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session has more turns than an ordinal holds.
+    pub fn from_read(read: &NativeSessionReadResult) -> Result<Self, StoreError> {
+        Ok(Self {
+            session: read.session.clone(),
+            subagents: subagents::index(read),
+            turn_count: u32::try_from(read.turns.len())
+                .map_err(|_| StoreError::CorruptedIndex("too many turns in a session".into()))?,
+            has_user_turn: read.turns.iter().any(|turn| {
+                turn.origin == TurnOrigin::User
+                    || turn
+                        .items
+                        .iter()
+                        .any(|item| matches!(item, AgentItem::UserMessage { .. }))
+            }),
+            newest_message: crate::preview::newest_message(&read.turns),
+        })
+    }
+
     #[must_use]
     pub fn app_thread_id(&self) -> &AppThreadId {
         &self.session.app_thread_id
@@ -191,19 +217,7 @@ impl ClaudeStore {
     pub fn replace_session(&self, read: &NativeSessionReadResult) -> Result<Replaced, StoreError> {
         let session_id = read.session.session_id.as_str();
         let thread = &read.session.app_thread_id;
-        let stored = StoredSession {
-            session: read.session.clone(),
-            subagents: subagents::index(read),
-            turn_count: u32::try_from(read.turns.len())
-                .map_err(|_| StoreError::CorruptedIndex("too many turns in a session".into()))?,
-            has_user_turn: read.turns.iter().any(|turn| {
-                turn.origin == TurnOrigin::User
-                    || turn
-                        .items
-                        .iter()
-                        .any(|item| matches!(item, AgentItem::UserMessage { .. }))
-            }),
-        };
+        let stored = StoredSession::from_read(read)?;
         if self.session(session_id)?.as_ref() == Some(&stored)
             && self.session_turns(session_id)? == read.turns
             && self.subagents_unchanged(session_id, read)?
@@ -498,6 +512,7 @@ impl ClaudeStore {
             agent_nickname: None,
             agent_role: None,
             archived: false,
+            running: None,
         })?;
         let children = sessions
             .iter()

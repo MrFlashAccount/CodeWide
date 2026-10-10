@@ -7,6 +7,9 @@
 #![cfg(unix)]
 #![allow(clippy::too_many_lines)]
 
+#[path = "agent_providers/usage_replay.rs"]
+mod usage_replay;
+
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -88,6 +91,7 @@ struct FakeNeutral {
     status: watch::Sender<ProviderStatus>,
     /// Stored history of a provider with its own index (Claude-like).
     stored: std::sync::OnceLock<Arc<FakeStored>>,
+    pricing: Arc<agent_core::usage::CatalogPricing>,
 }
 
 /// Thread resources and message search of a provider's own index.
@@ -198,6 +202,7 @@ impl FakeNeutral {
                 events: Mutex::new(Some(receiver)),
                 status,
                 stored: std::sync::OnceLock::new(),
+                pricing: Arc::new(agent_core::usage::CatalogPricing::default()),
             }),
             sender,
         )
@@ -274,6 +279,10 @@ fn not_found(id: &AppThreadId) -> ProviderError {
 
 #[async_trait]
 impl AgentProvider for FakeNeutral {
+    fn usage_pricing(&self) -> Option<Arc<dyn agent_core::usage::ModelPricing>> {
+        Some(self.pricing.clone())
+    }
+
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
             id: ProviderId::from_static(FAKE),

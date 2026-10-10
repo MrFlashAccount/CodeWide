@@ -156,6 +156,9 @@ pub struct HistoryChange {
     pub app_thread_id: AppThreadId,
     /// The thread's archive state, carried to the thread list.
     pub archived: bool,
+    /// The thread's list preview after the change: its newest conversation
+    /// message (`AgentThread.preview`); `None` when the thread has none.
+    pub preview: Option<String>,
 }
 
 /// One entry of a provider's ordered event stream.

@@ -243,3 +243,30 @@ it("reveals lazily loaded nonempty history after expansion", async () => {
   );
   expect(within(view.getByTestId("turn-activity-list")).getByText("Loaded update")).toBeVisible();
 });
+
+it("spans the row while a running turn shows only a subagent", () => {
+  const spawn: Turn["items"][number] = {
+    agentsStates: {},
+    id: "spawn",
+    model: null,
+    prompt: "Audit the renderer boundary.",
+    reasoningEffort: null,
+    receiverThreadIds: ["child"],
+    senderThreadId: "turn",
+    status: "inProgress",
+    tool: "spawnAgent",
+    type: "collabAgentToolCall",
+  };
+  const item = completedTurn([spawn]);
+  const running: TurnItem = {
+    ...item,
+    turn: {
+      ...item.turn,
+      completedAt: null,
+      items: item.turn.items.filter((entry) => entry.type !== "agentMessage"),
+      status: "inProgress",
+    },
+  };
+  // The subagent's name and description need the width; navigation alone used to shrink the bubble.
+  expect(projectTurnPresentation(running, null, false, false).agentBubbleFill).toBe(true);
+});

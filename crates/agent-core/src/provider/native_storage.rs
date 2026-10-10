@@ -44,7 +44,8 @@ pub enum HistoryPageError {
 /// Thread catalog visibility and durable turn history of native threads.
 #[async_trait]
 pub trait NativeThreadStore: Send + Sync {
-    /// Prepares one journaled event for client replay.
+    /// Adds native catalog metadata to an event already priced by the host
+    /// using the thread's provider context. Must preserve its usage costs.
     ///
     /// # Errors
     /// Returns an error when the catalog cannot classify the event.

@@ -1,4 +1,8 @@
+import { RpcResponseError, type RpcClient } from "@codewide/sync-client";
 import { describe, expect, it, vi } from "vitest";
+import { subscribeMissingThreads } from "../src/data/missingThread";
+import type { ThreadDetailDatabase } from "../src/data/thread-detail-database-contract";
+import type { ThreadSummaryDatabase } from "../src/data/thread-summary-database-contract";
 import { createThreadSyncRuntime } from "../src/data/thread-sync-runtime";
 import { createThreadSyncForeground } from "../src/data/thread-sync-foreground";
 
@@ -100,5 +104,62 @@ describe("V1 shared thread sync lifetime", () => {
       "catalog:server",
       "thread:server:thread",
     ]);
+  });
+
+  it("forgets a thread the Companion no longer has and reports it missing", async () => {
+    const session = {};
+    const done = () => undefined;
+    // WHY: the read touches only these members before the RPC fails; a full detail database is SQLite-backed.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const details = {
+      beginProjectionSnapshot: () => done,
+      chat: { beginBackendRefresh: () => done },
+      getThread: () => null,
+      historyCursor: () => null,
+      historySourceWitness: () => undefined,
+      latestSealedTurnId: async () => null,
+      liveRevision: () => 0,
+    } as unknown as ThreadDetailDatabase;
+    const removed: [string, readonly string[]][] = [];
+    // WHY: only catalog removal is reachable after a not-found read.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const summaries = {
+      removeCatalogEntries: async (connectionId: string, threadIds: readonly string[]) => {
+        removed.push([connectionId, threadIds]);
+      },
+    } as unknown as ThreadSummaryDatabase;
+    const sync = createThreadSyncRuntime({
+      clearInvalidationArchived: () => undefined,
+      getDetails: () => details,
+      // WHY: the session is only compared by identity; the RPC goes through rpcAfterAttach.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      getSession: () => session as RpcClient,
+      getSummaries: () => summaries,
+      loadTurnControls: async () => {
+        throw new Error("no controls");
+      },
+      readInvalidationArchived: () => undefined,
+      refreshSubagents: async () => undefined,
+      refreshThreadCatalog: async () => undefined,
+      rpcAfterAttach: async () => {
+        throw new RpcResponseError(-32_073, "thread not found: gone");
+      },
+      transferAccess: async () => {
+        throw new Error("no transfer authority");
+      },
+    });
+    const missing: string[] = [];
+    const unsubscribe = subscribeMissingThreads((connectionId, threadId) => {
+      missing.push(`${connectionId}/${threadId}`);
+    });
+    try {
+      await expect(sync.readThread("server", "gone", undefined, true)).rejects.toThrow(
+        "thread not found: gone",
+      );
+    } finally {
+      unsubscribe();
+    }
+    expect(removed).toEqual([["server", ["gone"]]]);
+    expect(missing).toEqual(["server/gone"]);
   });
 });

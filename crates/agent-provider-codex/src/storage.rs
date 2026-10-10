@@ -10,12 +10,9 @@ use std::{
     sync::Arc,
 };
 
-use agent_core::{
-    provider::{
-        HistoryPageError, HistorySyncRequest, NativeMessageSearch, NativeThreadResources,
-        NativeThreadStore,
-    },
-    usage::price_replay_payload,
+use agent_core::provider::{
+    HistoryPageError, HistorySyncRequest, NativeMessageSearch, NativeThreadResources,
+    NativeThreadStore,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -25,7 +22,6 @@ use tracing::warn;
 use crate::{
     catalog::CatalogError,
     history_service::{HistoryService, HistoryServiceError},
-    pricing::OpenAiPricing,
     resources::ResourceService,
     rollout_changes,
 };
@@ -58,7 +54,7 @@ impl CodexStorage {
 impl NativeThreadStore for CodexStorage {
     fn replay_event(&self, payload: Value) -> Result<Value, String> {
         self.history
-            .catalog_event(price_replay_payload(payload, &OpenAiPricing))
+            .catalog_event(payload)
             .map_err(|error| error.to_string())
     }
 

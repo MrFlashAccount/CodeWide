@@ -84,15 +84,34 @@ export function usageAccountRows(
   );
 }
 
+/**
+ * The pool owner a server with a provider list reports. Every Companion's
+ * pool belongs to the same provider, so an older Companion that does not say
+ * shares it, and its accounts merge with the same accounts elsewhere.
+ */
+function reportedPoolOwner(
+  servers: readonly AccountUsageServer[],
+  providerStates: Readonly<Record<string, AgentProvidersState | undefined>> | undefined,
+): AgentProviderStatusEntry | null {
+  for (const server of servers) {
+    const presence = accountPoolPresence(providerStates?.[server.id]);
+    if (presence.kind === "present" && presence.owner !== null) {
+      return presence.owner;
+    }
+  }
+  return null;
+}
+
 function poolAccountRows(
   sources: readonly AccountUsageSource[],
   servers: readonly AccountUsageServer[],
   providerStates: Readonly<Record<string, AgentProvidersState | undefined>> | undefined,
 ): UsageAccountRow[] {
+  const reportedOwner = reportedPoolOwner(servers, providerStates);
   return sources.flatMap((source) => {
     const server = servers.find((candidate) => candidate.id === source.id);
     const presence = accountPoolPresence(providerStates?.[source.id]);
-    const owner = presence.kind === "present" ? presence.owner : null;
+    const owner = presence.kind === "present" ? (presence.owner ?? reportedOwner) : null;
     return accountUsageProfiles([source]).map((account): UsageAccountRow => ({
       active: account.profile.enabled && account.profile.active,
       key: `${source.id}/${account.profile.id}`,
@@ -131,7 +150,7 @@ function poolProfileNote(profile: AccountPoolProfile, stale: boolean): UsageAcco
     return { kind: "note", text: "Disabled", tone: "muted" };
   }
   if (profile.rateLimitsError !== null) {
-    return { kind: "note", text: "Can't connect", tone: "problem" };
+    return { kind: "note", text: "Unavailable", tone: "problem" };
   }
   if (profile.exhaustedIndefinitely) {
     return { kind: "note", text: "Limit reached", tone: "problem" };

@@ -14,6 +14,8 @@ import { AppText as Text } from "../../ui/Typography";
 interface SettingsServer {
   readonly content: ReactNode;
   readonly description: string;
+  /** Shown at the right of the detail page's header, e.g. the server's refresh. */
+  readonly headerAction?: ReactNode;
   readonly id: string;
   readonly leading: ReactNode;
   /** Detail-page open intent, for reads the page shows. */
@@ -142,6 +144,7 @@ export function SettingsSheet(props: SettingsSheetProps) {
           <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
             {title}
           </Text>
+          {page.kind === "server" ? selectedServer?.headerAction : null}
         </View>
         <AppSheetScrollView
           contentContainerStyle={styles.content}

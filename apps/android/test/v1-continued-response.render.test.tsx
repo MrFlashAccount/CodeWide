@@ -191,3 +191,19 @@ it("draws no activity group and no zero count for a turn without activity", () =
   expect(view.queryByText(/Activity/u)).toBeNull();
   expect(view.queryByText(/· 0/u)).toBeNull();
 });
+
+it("keeps a running head's own rows when its continuation already finished", () => {
+  // Claude answered a wake while the head still waited for an approval.
+  const running = completedTurn("head", head.turn.items, { ...oneCommandMetrics, completedAt: null, status: "inProgress" });
+  const rows = projectTimelineRows([running, wake], {
+    enabled: true,
+    searchMessageItemId: null,
+    threadSearchActive: false,
+  }).filter((row) => row.kind === "turnSlice");
+  const headRows = rows.filter((row) => row.item === running);
+  // Not folded into an empty history slice: a running turn has none to show.
+  expect(headRows.length).toBeGreaterThan(0);
+  expect(headRows.every((row) => row.parts.every((part) => part.kind !== "empty"))).toBe(true);
+  // Both turns still share one bubble.
+  expect(rows.every((row) => row.group?.members.length === 2)).toBe(true);
+});

@@ -392,7 +392,13 @@ export const checkEvent: Check = tagged("type", {
   "plan.updated": {
     appThreadId: str,
     explanation: nullable(str),
-    plan: arr(obj({ status: literal("pending", "inProgress", "completed"), step: str })),
+    plan: arr(
+      obj({
+        activeForm: optional(str),
+        status: literal("pending", "inProgress", "completed"),
+        step: str,
+      }),
+    ),
     turnId: str,
   },
   "request.opened": {

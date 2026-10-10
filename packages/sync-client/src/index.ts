@@ -11,3 +11,5 @@ export * from "./command-output";
 export * from "./question-history";
 
 export * from "./activity-metrics";
+
+export * from "./live-activity";

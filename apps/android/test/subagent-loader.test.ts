@@ -57,6 +57,16 @@ describe("subagent descendant loading", () => {
     expect(subagentActivity(spawn("item/started", "sendInput"))).toBeNull();
   });
 
+  it("refreshes descendants once a CodeWide spawning call completes", () => {
+    const call = (method: string, tool = "codewide_spawn_agent") => ({
+      method,
+      params: { threadId: "root", item: { type: "dynamicToolCall", tool } },
+    });
+    expect(subagentActivity(call("item/completed"))).toEqual({ rootThreadId: "root", spawning: false });
+    expect(subagentActivity(call("item/started"))).toBeNull();
+    expect(subagentActivity(call("item/completed", "codewide_wait_agent"))).toBeNull();
+  });
+
   it("loads the descendant tree from one local parent-index RPC", async () => {
     const rpc = vi.fn(async () => ({
       threads: [
@@ -76,5 +86,19 @@ describe("subagent descendant loading", () => {
     ]);
     expect(rpc).toHaveBeenCalledOnce();
     expect(rpc).toHaveBeenCalledWith("companion/threadSubagents/read", { threadId: "root" });
+  });
+
+  it("takes a sub-agent's status from its index row when the provider reports it", async () => {
+    const rpc = vi.fn(async () => ({
+      threads: [
+        { ...indexedThread("running", "root"), running: true },
+        { ...indexedThread("done", "root"), running: false },
+        indexedThread("codex", "root"),
+      ],
+    }));
+    // WHY: the loader calls only `rpc`; the remaining client surface is not part of this read.
+    const session = { rpc } as unknown as RpcClient;
+    const statuses = (await loadSubagentDescendants(session, "root")).map(({ thread }) => thread.status.type);
+    expect(statuses).toEqual(["active", "idle", "notLoaded"]);
   });
 });

@@ -12,6 +12,8 @@ type IndexedSubagent = {
   id: string;
   modelProvider: string;
   parentThreadId: string | null;
+  /** Whether the sub-agent runs now, when its provider's index knows it (Claude). */
+  running?: boolean;
   source: Thread["source"];
   updatedAt: number;
 };
@@ -54,6 +56,10 @@ export function subagentActivity(payload: Record<string, unknown>): SubagentActi
     }
     return payload.method === "item/completed" ? { rootThreadId, spawning: false } : null;
   }
+  // CodeWide orchestration: the spawning call completes once the Companion has linked the agent.
+  if (item.type === "dynamicToolCall" && item.tool === "codewide_spawn_agent") {
+    return payload.method === "item/completed" ? { rootThreadId, spawning: false } : null;
+  }
   return null;
 }
 
@@ -69,6 +75,18 @@ export async function loadSubagentDescendants(
     archived: metadata.archived,
     thread: indexedSubagentThread(metadata, rootThreadId),
   }));
+}
+
+/**
+ * A provider that indexes its sub-agents itself (Claude) says whether one
+ * runs; other children (Codex) report their status through live thread events,
+ * so their index row stays `notLoaded` until one arrives.
+ */
+function indexedSubagentStatus(running: boolean | undefined): Thread["status"] {
+  if (running === undefined) {
+    return { type: "notLoaded" };
+  }
+  return running ? { activeFlags: [], type: "active" } : { type: "idle" };
 }
 
 function indexedSubagentThread(metadata: IndexedSubagent, rootThreadId: string): Thread {
@@ -101,7 +119,7 @@ function indexedSubagentThread(metadata: IndexedSubagent, rootThreadId: string):
     sectionEnteredAt: null,
     sessionId: rootThreadId,
     source: metadata.source,
-    status: { type: "notLoaded" },
+    status: indexedSubagentStatus(metadata.running),
     threadSource: null,
     turns: [],
     updatedAt: metadata.updatedAt,

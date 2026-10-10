@@ -165,6 +165,7 @@ fn prepare_thread_terminal_fixtures(
         agent_nickname: None,
         agent_role: None,
         archived: false,
+        running: None,
     })?;
     let catalog_cwd = root.join("catalog-cwd");
     std::fs::create_dir_all(&catalog_cwd)?;

@@ -548,4 +548,12 @@ pub enum PlanStepStatus {
 pub struct PlanStep {
     pub step: String,
     pub status: PlanStepStatus,
+    /// The step's present-tense label shown while it runs (Claude's
+    /// `TodoWrite` `activeForm`). Absent when the provider has none.
+    #[serde(
+        default,
+        rename = "activeForm",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub active_form: Option<String>,
 }

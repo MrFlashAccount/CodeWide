@@ -291,3 +291,31 @@ fn the_oracle_detects_a_delta_before_its_item() {
     ];
     assert!(repair_reason(&payloads).is_some());
 }
+
+/// A Claude `TodoWrite` reaches the live activity as its present-tense step,
+/// its tools as their labels, and the turn's end clears it.
+#[test]
+fn claude_golden_stream_publishes_the_running_step_and_clears_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = golden_directory().join("codewide_tools_approvals.neutral.jsonl");
+    let mut projector = EventProjector::new(claude_wire());
+    let mut tracker = crate::thread_activity::LiveActivityTracker::default();
+    let mut published = Vec::new();
+    for line in std::fs::read_to_string(&path)?.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event: AgentEvent = serde_json::from_str(line)?;
+        for payload in projector.project(event) {
+            if let Some(change) = tracker.observe(&payload) {
+                published.push(change.to_wire());
+            }
+        }
+    }
+    assert!(
+        published.contains(&serde_json::json!({"kind": "planStep", "step": "Fixing"})),
+        "{published:?}"
+    );
+    assert_eq!(published.last(), Some(&Value::Null), "{published:?}");
+    Ok(())
+}

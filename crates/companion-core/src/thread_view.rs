@@ -8,7 +8,10 @@ use crate::agent::{
         gateway::{ClientWireGateway, Target},
         history as provider_history, items,
     },
-    model::{ItemsView, SortDirection, ThreadSettings, ThreadStatus, ThreadTurnsParams},
+    model::{
+        ItemsView, SortDirection, ThreadSettings, ThreadStatus, ThreadTurnsParams,
+        thread_not_found_message,
+    },
     provider::{HistorySyncRequest, NativeSurface, ProviderError, ProviderFence},
 };
 
@@ -65,6 +68,20 @@ pub enum ThreadViewError {
     InvalidActiveTurn,
     #[error("thread/resume returned invalid execution settings")]
     InvalidExecutionSettings,
+}
+
+impl ThreadViewError {
+    /// Whether the error says that `thread_id` does not exist: the companion
+    /// knows no such thread, or its provider no longer has it.
+    #[must_use]
+    pub fn is_thread_not_found(&self, thread_id: &str) -> bool {
+        let message = match self {
+            Self::Route(message) | Self::Rpc(message) => message.as_str(),
+            Self::Upstream(ProviderError::Rejected(error)) => error.message.as_str(),
+            _ => return false,
+        };
+        message == thread_not_found_message(thread_id)
+    }
 }
 
 impl ThreadViewService {
@@ -440,6 +457,26 @@ fn rpc_result(response: &Value) -> Result<Value, ThreadViewError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::model::RpcError;
+
+    #[test]
+    fn only_a_missing_thread_reads_as_not_found() {
+        let missing = thread_not_found_message("t");
+        assert!(ThreadViewError::Route(missing.clone()).is_thread_not_found("t"));
+        assert!(ThreadViewError::Rpc(missing.clone()).is_thread_not_found("t"));
+        assert!(
+            ThreadViewError::Upstream(ProviderError::Rejected(RpcError::new(-32_600, missing)))
+                .is_thread_not_found("t")
+        );
+        assert!(
+            !ThreadViewError::Route(thread_not_found_message("other")).is_thread_not_found("t")
+        );
+        assert!(
+            !ThreadViewError::Route("Thread binding is unavailable".into())
+                .is_thread_not_found("t")
+        );
+        assert!(!ThreadViewError::InvalidRequest.is_thread_not_found("t"));
+    }
 
     #[test]
     fn failed_turn_allows_next_queued_prompt_only_with_explicit_authority()

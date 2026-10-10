@@ -1,4 +1,10 @@
 import {
+  reportedSubagentStatesOfBatch,
+  rootsWithChangedSubagentActivity,
+  withActiveSubagents,
+  withReportedStatus,
+} from "./threadSummarySubagentActivity";
+import {
   isQuestionAnswerDelivery,
   projectQuestionAnswerDelivery,
 } from "./questionAnswerProjection";
@@ -229,11 +235,40 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     });
   };
 
+  /** Recomputes one root's `activeSubagents` from its loaded descendants. */
+  const refreshActiveSubagents = async (connectionId: string, rootThreadId: string) => {
+    await writes.run(async () => {
+      if (disposed) {
+        return;
+      }
+      const rows = await loadConnectionRows(connectionId);
+      const root = rows.find((row) => row.remoteThreadId === rootThreadId);
+      if (root === undefined) {
+        return;
+      }
+      const next = withActiveSubagents(root, rows);
+      if (next === root) {
+        return;
+      }
+      const change = { type: "update" as const, value: next };
+      storage.begin();
+      storage.write(change);
+      const checkpoint = storage.commit({ durable: true });
+      publishModelChanges([change], false);
+      await checkpoint;
+    });
+  };
+
   const replaceSnapshotRows = async (
     connectionId: string,
     snapshots: SyncSnapshotThread[],
     options: {
       missingScope: (current: readonly StoredThreadSummary[]) => ReadonlySet<string>;
+      /**
+       * An index read that does not know live status (a sub-agent row without
+       * `running`) keeps a live `active` and newer recency, as catalog pages do.
+       */
+      retainLiveState: boolean;
       throughCursor: number | undefined;
     },
   ): Promise<void> => {
@@ -262,12 +297,16 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           excludedKeys.add(key);
           continue;
         }
-        const row = projectThreadSummarySnapshot(
+        const projected = projectThreadSummarySnapshot(
           connectionId,
           snapshot.thread,
           snapshot.archived,
           previous,
         );
+        const row =
+          options.retainLiveState && previous !== undefined
+            ? retainLiveCatalogState(projected, previous)
+            : projected;
         row.projectionCursor = Math.max(
           threadSummaryProjectionCursor(row),
           options.throughCursor ?? 0,
@@ -313,6 +352,89 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       );
       await checkpoint;
     });
+  };
+
+  /**
+   * Adds to `changed` the root rows whose sub-agents started or stopped
+   * running with this batch. Only a child's status change reads the
+   * connection's rows; streamed content does not.
+   */
+  const applySubagentActivity = async (
+    connectionId: string,
+    current: ReadonlyMap<string, StoredThreadSummary>,
+    changed: Map<string, StoredThreadSummary | null>,
+  ): Promise<void> => {
+    const children = [...changed].flatMap(([key, row]) =>
+      row !== null &&
+      row.parentThreadId !== null &&
+      current.get(key)?.status.type !== row.status.type
+        ? [row]
+        : [],
+    );
+    if (children.length === 0) {
+      return;
+    }
+    const rows = new Map(
+      (await loadConnectionRows(connectionId)).map((row) => [
+        threadSummaryKey(row.connectionId, row.remoteThreadId),
+        row,
+      ]),
+    );
+    for (const [key, row] of changed) {
+      if (row === null) {
+        rows.delete(key);
+      } else {
+        rows.set(key, row);
+      }
+    }
+    for (const root of rootsWithChangedSubagentActivity(children, [...rows.values()])) {
+      changed.set(threadSummaryKey(root.connectionId, root.remoteThreadId), root);
+    }
+  };
+
+  /**
+   * Sets the status of a non-primary provider's sub-agents from their
+   * parent's `collabAgentToolCall` (see `reportedSubagentStates`); their child
+   * rows have no live events of their own.
+   */
+  const applyReportedSubagentStates = async (batch: {
+    readonly changed: Map<string, StoredThreadSummary | null>;
+    readonly connectionId: string;
+    readonly current: Map<string, StoredThreadSummary>;
+    readonly events: readonly SyncEvent[];
+  }): Promise<void> => {
+    const { changed, connectionId, current } = batch;
+    const rowOf = (threadId: string) => {
+      const key = threadSummaryKey(connectionId, threadId);
+      return changed.get(key) ?? current.get(key);
+    };
+    const reported = reportedSubagentStatesOfBatch(
+      batch.events.map((event) => ({
+        parentThreadId: threadIdFromEvent(event.payload),
+        payload: event.payload,
+      })),
+      rowOf,
+    );
+    if (reported.size === 0) {
+      return;
+    }
+    for (const child of await loadRows(connectionId, [...reported.keys()])) {
+      const key = threadSummaryKey(child.connectionId, child.remoteThreadId);
+      const pending = changed.get(key);
+      if (pending === null) {
+        continue;
+      }
+      if (!current.has(key)) {
+        current.set(key, child);
+      }
+      const next = withReportedStatus(
+        pending ?? child,
+        reported.get(child.remoteThreadId) === true,
+      );
+      if (next !== null) {
+        changed.set(key, next);
+      }
+    }
   };
 
   const applyEventBatch = async (
@@ -370,9 +492,11 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           changed.set(mutation.key, mutation.value);
         }
       }
+      await applyReportedSubagentStates({ changed, connectionId, current, events });
       if (changed.size === 0) {
         return;
       }
+      await applySubagentActivity(connectionId, current, changed);
       storage.begin();
       for (const [key, row] of changed) {
         if (row === null) {
@@ -541,6 +665,8 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
               .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
               .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
           ),
+        // An authoritative snapshot replaces the rows it lists as they are.
+        retainLiveState: false,
         throughCursor: cursor,
       });
     },
@@ -776,6 +902,8 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
               .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
               .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
           ),
+        // An authoritative snapshot replaces the rows it lists as they are.
+        retainLiveState: false,
         throughCursor: undefined,
       });
     },
@@ -783,8 +911,10 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       const projected = snapshots.filter(({ thread }) => thread.parentThreadId !== null);
       await replaceSnapshotRows(connectionId, projected, {
         missingScope: (current) => threadSummaryDescendantKeys(current, rootThreadId),
+        retainLiveState: true,
         throughCursor: undefined,
       });
+      await refreshActiveSubagents(connectionId, rootThreadId);
     },
     async rollbackDelete(connectionId, threadId, commandId) {
       await clearDeleteCommand(connectionId, threadId, commandId);
@@ -898,6 +1028,7 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
     left.updatedAt === right.updatedAt &&
     left.recencyAt === right.recencyAt &&
     left.status.type === right.status.type &&
+    (left.activeSubagents ?? false) === (right.activeSubagents ?? false) &&
     left.pinned === right.pinned &&
     left.pinCursor === right.pinCursor &&
     left.archived === right.archived &&

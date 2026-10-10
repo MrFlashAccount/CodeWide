@@ -14,7 +14,6 @@ export type AccountPoolProps = {
     profileId: string,
     creditId: string | null,
   ) => Promise<AccountResetCreditConsumption>;
-  onRefresh: (connectionId: string) => Promise<AccountPoolSnapshot>;
   onRemove: (connectionId: string, profileId: string) => Promise<AccountPoolSnapshot>;
   onStartLogin: (
     connectionId: string,

@@ -21,6 +21,7 @@ use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    catalog,
     search::ClaudeSearch,
     storage::Freshness,
     store::{ClaudeStore, Observation, Replaced},
@@ -77,20 +78,27 @@ struct Indexed {
     rewritten: Option<HistoryChange>,
 }
 
-/// The change to publish for a rewritten session; a deleted thread has none.
+/// The change to publish for a rewritten session, with the thread's preview
+/// from the index it was written to; a deleted thread has none.
 fn history_change(
+    store: &ClaudeStore,
     thread: &AppThreadId,
     codewide: Option<&NativeSessionCodewide>,
-) -> Option<HistoryChange> {
+) -> Result<Option<HistoryChange>, IndexError> {
     let archived = match codewide.map(|codewide| &codewide.presence) {
-        Some(NativeThreadPresence::Deleted { .. }) => return None,
+        Some(NativeThreadPresence::Deleted { .. }) => return Ok(None),
         Some(NativeThreadPresence::Listed { archived }) => *archived,
         None => false,
     };
-    Some(HistoryChange {
+    let sessions = store.thread_sessions(thread)?;
+    let preview = catalog::threads(&sessions)
+        .first()
+        .and_then(catalog::thread_preview);
+    Ok(Some(HistoryChange {
         app_thread_id: thread.clone(),
         archived,
-    })
+        preview,
+    }))
 }
 
 impl ClaudeIndexer {
@@ -148,9 +156,11 @@ impl ClaudeIndexer {
                     self.freshness.mark_fresh(&previous);
                 }
                 self.freshness.mark_fresh(&thread);
-                let rewritten = (replaced == Replaced::Written)
-                    .then(|| history_change(&thread, read.session.codewide.as_ref()))
-                    .flatten();
+                let rewritten = if replaced == Replaced::Written {
+                    history_change(&self.store, &thread, read.session.codewide.as_ref())?
+                } else {
+                    None
+                };
                 Ok(Indexed {
                     thread: Some(thread),
                     rewritten,
@@ -165,10 +175,12 @@ impl ClaudeIndexer {
                     self.search.reindex_thread(thread)?;
                     self.freshness.mark_fresh(thread);
                 }
+                let rewritten = match &removed {
+                    Some(thread) => history_change(&self.store, thread, None)?,
+                    None => None,
+                };
                 Ok(Indexed {
-                    rewritten: removed
-                        .as_ref()
-                        .and_then(|thread| history_change(thread, None)),
+                    rewritten,
                     thread: removed,
                 })
             }
@@ -648,6 +660,8 @@ mod tests {
             HistoryChange {
                 app_thread_id: thread.clone(),
                 archived: false,
+                // The list row shows the newest message, not the first prompt.
+                preview: Some("answer to again".into()),
             }
         );
 

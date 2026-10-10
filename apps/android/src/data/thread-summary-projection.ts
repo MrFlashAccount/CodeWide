@@ -98,6 +98,10 @@ export function projectThreadSummarySnapshot(
     codewideAgent: readThreadAgent(thread) ?? previous?.codewideAgent ?? null,
     cwd: thread.cwd,
     firstUnreadAgentTurnId: previous?.firstUnreadAgentTurnId ?? null,
+    // Derived from the child rows, which a root snapshot does not carry.
+    ...(previous?.activeSubagents === undefined
+      ? {}
+      : { activeSubagents: previous.activeSubagents }),
     gitOriginUrl: thread.gitInfo?.originUrl ?? previous?.gitOriginUrl ?? null,
     lastSeenCursor: previous?.lastSeenCursor ?? 0,
     latestActivityCursor: previous?.latestActivityCursor ?? 0,

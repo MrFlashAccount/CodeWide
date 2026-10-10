@@ -18,7 +18,6 @@ use crate::store::StoredSession;
 /// The prompt that opens a replacement session's history prefix; it is not
 /// the person's first prompt.
 const HISTORY_HEADER: &str = "[Historical conversation from this thread]";
-const PREVIEW_MAX_UTF16: usize = 200;
 const MAX_PAGE: usize = 500;
 
 /// One indexed thread: its sessions (oldest first) and whether it has a
@@ -107,13 +106,7 @@ pub fn row(
             }
         }
     }
-    let first_prompt = thread.sessions.iter().find_map(|stored| {
-        stored
-            .session
-            .first_prompt
-            .as_deref()
-            .filter(|prompt| !prompt.starts_with(HISTORY_HEADER))
-    });
+    let first_prompt = first_prompt(thread);
     let name = name(thread, codewide);
     let created_at = codewide.map_or_else(
         || {
@@ -173,13 +166,7 @@ pub fn row(
             provider: provider.clone(),
             cwd,
             name,
-            // The text the user wrote, as the conversation shows it.
-            preview: first_prompt
-                .and_then(|prompt| {
-                    agent_core::user_text::display_text(prompt, &crate::user_text::ClaudeUserText)
-                })
-                .map(|prompt| preview(&prompt))
-                .unwrap_or_default(),
+            preview: preview(thread, first_prompt).unwrap_or_default(),
             created_at,
             updated_at,
             recency_at,
@@ -217,16 +204,33 @@ fn discovered_settings() -> ThreadSettings {
     }
 }
 
-/// The first 200 UTF-16 code units, as the host's preview.
-fn preview(prompt: &str) -> String {
-    let mut units = 0;
-    prompt
-        .chars()
-        .take_while(|character| {
-            units += character.len_utf16();
-            units <= PREVIEW_MAX_UTF16
-        })
-        .collect()
+/// The thread's preview (`AgentThread.preview`): the newest conversation
+/// message of its newest session that holds one, else the person's first
+/// prompt (a thread whose turns are not indexed yet); `None` without either.
+#[must_use]
+pub fn thread_preview(thread: &IndexedThread<'_>) -> Option<String> {
+    preview(thread, first_prompt(thread))
+}
+
+fn preview(thread: &IndexedThread<'_>, first_prompt: Option<&str>) -> Option<String> {
+    thread
+        .sessions
+        .iter()
+        .rev()
+        .find_map(|stored| stored.newest_message.clone())
+        .or_else(|| first_prompt.and_then(crate::preview::user_text))
+}
+
+/// The person's first prompt (a replacement session's history prefix is
+/// not one).
+fn first_prompt<'a>(thread: &IndexedThread<'a>) -> Option<&'a str> {
+    thread.sessions.iter().find_map(|stored| {
+        stored
+            .session
+            .first_prompt
+            .as_deref()
+            .filter(|prompt| !prompt.starts_with(HISTORY_HEADER))
+    })
 }
 
 fn session_start(session: &NativeSession) -> i64 {
@@ -440,12 +444,7 @@ mod tests {
 
     fn stored(session: &str, thread: &str, size: i64, prompts: &[&str]) -> StoredSession {
         let read = session_read(session, thread, size, prompts);
-        StoredSession {
-            session: read.session,
-            subagents: Vec::new(),
-            turn_count: u32::try_from(prompts.len()).unwrap_or(0),
-            has_user_turn: !prompts.is_empty(),
-        }
+        StoredSession::from_read(&read).unwrap_or_else(|_| unreachable!("a fixture fits"))
     }
 
     fn codewide(
@@ -502,7 +501,7 @@ mod tests {
             "chain-b",
             "chain",
             30,
-            &["[Historical conversation from this thread] …"],
+            &["[Historical conversation from this thread] …", "follow up"],
         );
         second.session.title = Some("Generated".into());
         for session in [&mut first, &mut second] {
@@ -546,7 +545,10 @@ mod tests {
         assert_eq!(ids(&listed), ["chain", "terminal"]);
         let chain = &listed.threads[0];
         assert_eq!(chain.name, None, "a cleared title hides the store title");
-        assert_eq!(chain.preview, "first prompt");
+        assert_eq!(
+            chain.preview, "answer to follow up",
+            "the preview is the newest message of the chain's newest session"
+        );
         assert_eq!((chain.created_at, chain.updated_at), (5, 30));
         assert_eq!(
             chain.cwd, "/work/codewide",
@@ -571,6 +573,26 @@ mod tests {
             ids(&list(rows_of(&sessions_again, &provider), &search)?),
             ["terminal"]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn the_preview_is_the_newest_message_not_the_first_prompt() -> Result<(), RpcError> {
+        let provider = ProviderId::from_static("claude");
+        let sessions = vec![stored(
+            "terminal",
+            "terminal",
+            20,
+            &["first question", "second question", "third question"],
+        )];
+        let listed = list(rows_of(&sessions, &provider), &params(false))?;
+        assert_eq!(listed.threads[0].preview, "answer to third question");
+
+        // A session listed before its turns were read shows the first prompt.
+        let mut unread = stored("unread", "unread", 21, &[]);
+        unread.session.first_prompt = Some("  only   the prompt ".into());
+        let listed = list(rows_of(&[unread], &provider), &params(false))?;
+        assert_eq!(listed.threads[0].preview, "only the prompt");
         Ok(())
     }
 

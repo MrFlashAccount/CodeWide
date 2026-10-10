@@ -234,7 +234,6 @@ export function ConnectionRowEditor({
                 onActivate={onActivateAccountProfile}
                 onCancelLogin={onCancelAccountLogin}
                 onConsumeResetCredit={onConsumeAccountResetCredit}
-                onRefresh={onRefreshAccountPool}
                 onRemove={onRemoveAccountProfile}
                 onStartLogin={onStartAccountLogin}
                 onUpdate={onUpdateAccountProfile}

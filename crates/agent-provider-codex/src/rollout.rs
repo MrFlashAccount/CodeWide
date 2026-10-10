@@ -786,6 +786,8 @@ fn thread_metadata_from_record(
         archived: path
             .components()
             .any(|component| component.as_os_str() == "archived_sessions"),
+        // Codex reports a child's status through its own live thread events.
+        running: None,
     })
 }
 

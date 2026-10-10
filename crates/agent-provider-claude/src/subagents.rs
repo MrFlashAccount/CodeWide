@@ -190,8 +190,10 @@ impl ChildThread {
 }
 
 /// The companion thread-index row of a child thread: its parent, nickname
-/// (description) and role (agent type), in the shape of a spawned Codex
-/// sub-agent so `companion/threadSubagents/read` serves it unchanged.
+/// (description), role (agent type) and whether it is running, in the shape
+/// of a spawned Codex sub-agent so `companion/threadSubagents/read` serves it
+/// unchanged. A Claude child has no live thread of its own, so `running` is
+/// the only status a client gets for it.
 #[must_use]
 pub fn thread_metadata(
     parent: &AppThreadId,
@@ -228,6 +230,7 @@ pub fn thread_metadata(
         agent_nickname: subagent.description.clone(),
         agent_role: subagent.agent_type.clone(),
         archived: false,
+        running: Some(subagent.running),
     })
 }
 
@@ -250,5 +253,24 @@ mod tests {
         );
         assert!(parse_child_thread_id(&parent).is_none());
         assert!(parse_child_thread_id(&AppThreadId::from_static("5f0c2a1e:agent:")).is_none());
+    }
+
+    #[test]
+    fn a_child_row_says_whether_the_sub_agent_runs() {
+        let parent = AppThreadId::from_static("5f0c2a1e-3b4d-4e6f-8a9b-0c1d2e3f4a5b");
+        let subagent = |running: bool| IndexedSubagent {
+            agent_id: "a1b2c3d4e5f600001".into(),
+            parent_agent_id: None,
+            parent_tool_use_id: None,
+            description: Some("Audit".into()),
+            agent_type: Some("Explore".into()),
+            started_at: Some(10),
+            updated_at: Some(20),
+            running,
+        };
+        for running in [true, false] {
+            let row = thread_metadata(&parent, "/repo", 1, &subagent(running));
+            assert_eq!(row.and_then(|row| row.running), Some(running));
+        }
     }
 }

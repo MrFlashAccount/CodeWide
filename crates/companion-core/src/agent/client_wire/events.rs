@@ -15,7 +15,7 @@ use tracing::debug;
 use super::{WireProvider, items, request_ids, settings};
 use crate::agent::model::{
     AgentEvent, AgentThread, AppThreadId, ApprovalDecision, ApprovalKind, Capability, ItemDelta,
-    NativeRequestId, PlanStepStatus, RuntimeRequest, RuntimeRequestId, ThreadSettings,
+    NativeRequestId, PlanStep, PlanStepStatus, RuntimeRequest, RuntimeRequestId, ThreadSettings,
     ThreadStatus, TokenUsage,
 };
 
@@ -226,14 +226,7 @@ impl EventProjector {
                     "threadId": app_thread_id.as_str(),
                     "turnId": turn_id.as_str(),
                     "explanation": explanation,
-                    "plan": plan.iter().map(|step| json!({
-                        "step": step.step,
-                        "status": match step.status {
-                            PlanStepStatus::Pending => "pending",
-                            PlanStepStatus::InProgress => "inProgress",
-                            PlanStepStatus::Completed => "completed",
-                        },
-                    })).collect::<Vec<_>>(),
+                    "plan": plan.iter().map(plan_step).collect::<Vec<_>>(),
                 }
             })],
             AgentEvent::DiffUpdated {
@@ -449,6 +442,24 @@ fn merge(target: &mut Value, extra: Value) {
     if let (Some(target), Value::Object(extra)) = (target.as_object_mut(), extra) {
         target.extend(extra);
     }
+}
+
+/// A Codex-shaped plan step. The present-tense label travels in a
+/// companion-owned field the Codex shape lacks; the live activity reducer
+/// reads it.
+fn plan_step(step: &PlanStep) -> Value {
+    let mut wire = json!({
+        "step": step.step,
+        "status": match step.status {
+            PlanStepStatus::Pending => "pending",
+            PlanStepStatus::InProgress => "inProgress",
+            PlanStepStatus::Completed => "completed",
+        },
+    });
+    if let Some(active_form) = &step.active_form {
+        wire[crate::thread_activity::PLAN_STEP_ACTIVE_FORM_FIELD] = json!(active_form);
+    }
+    wire
 }
 
 fn now_ms() -> u64 {

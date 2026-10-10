@@ -790,10 +790,35 @@ fn bounded_diff(mut bytes: Vec<u8>) -> BoundedDiff {
 }
 
 async fn synthetic_added_diff(root: &Path, relative: &Path) -> Result<BoundedDiff, VcsError> {
-    let bytes = tokio::fs::read(root.join(relative))
+    let path = root.join(relative);
+    let display = relative.to_string_lossy().replace('\\', "/");
+    // Git records a symlink as its target text and an untracked nested repository as a
+    // directory entry. Reading either through the link would fail on directories and could
+    // expose content outside the workspace.
+    let metadata = tokio::fs::symlink_metadata(&path)
+        .await
+        .map_err(|error| VcsError::Command(format!("could not inspect added file: {error}")))?;
+    if metadata.file_type().is_symlink() {
+        let target = tokio::fs::read_link(&path)
+            .await
+            .map_err(|error| VcsError::Command(format!("could not read added symlink: {error}")))?;
+        let target = target.to_string_lossy();
+        return Ok(bounded_diff(
+            format!(
+                "diff --git a/{display} b/{display}\nnew file mode 120000\n--- /dev/null\n+++ b/{display}\n@@ -0,0 +1 @@\n+{target}\n\\ No newline at end of file\n"
+            )
+            .into_bytes(),
+        ));
+    }
+    if metadata.is_dir() {
+        return Ok(BoundedDiff {
+            text: format!("diff --git a/{display} b/{display}\nnew file mode 160000\n"),
+            truncated: false,
+        });
+    }
+    let bytes = tokio::fs::read(&path)
         .await
         .map_err(|error| VcsError::Command(format!("could not read added file: {error}")))?;
-    let display = relative.to_string_lossy().replace('\\', "/");
     if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
         return Ok(BoundedDiff {
             text: format!(
@@ -1761,6 +1786,31 @@ mod tests {
         assert_eq!(diff.status, VcsFileStatus::Untracked);
         assert_eq!((diff.additions, diff.deletions), (2, 0));
         assert!(diff.diff.contains("--- /dev/null\n+++ b/new.txt"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_diff_records_untracked_symlink_target_without_following_it() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let outside = tempfile::tempdir().expect("outside directory");
+        initialize_git_repository(directory.path()).await;
+        tokio::fs::symlink(outside.path(), directory.path().join("builds"))
+            .await
+            .expect("symlink creates");
+        let provider = GitProvider;
+        let snapshot = provider
+            .changes(directory.path(), VcsScope::Unstaged)
+            .await
+            .expect("snapshot loads despite a symlink to a directory");
+        let file = snapshot.files.first().expect("symlink is listed");
+        assert_eq!(file.status, VcsFileStatus::Untracked);
+        assert_eq!((file.additions, file.deletions), (Some(1), Some(0)));
+        let diff = provider.diff(&snapshot, file).await.expect("diff loads");
+        assert!(diff.diff.contains("new file mode 120000"));
+        assert!(
+            diff.diff
+                .contains(&format!("+{}\n", outside.path().to_string_lossy()))
+        );
     }
 
     #[tokio::test]

@@ -171,7 +171,13 @@ function VirtualizedAgentMessage({
         animateLayout={presentation.rawTurn.status === "inProgress" && props.animateLiveUpdates}
         errorContext={`Thread: ${props.turn.threadId}\nTurn: ${props.turn.id}`}
         errorResetKey={`${props.turn.key}:agent`}
-        fill={presentation.agentBubbleFill}
+        // The slices of one bubble share its width: a bubble of several turns,
+        // or one carrying an approval card, spans the row.
+        fill={
+          presentation.agentBubbleFill ||
+          (props.requestPrompt !== null && props.requestPrompt !== undefined) ||
+          (props.group !== null && props.group.members.length > 1)
+        }
         footer={renderFooterForPlacement({
           group: props.group,
           placement: props.bubble,

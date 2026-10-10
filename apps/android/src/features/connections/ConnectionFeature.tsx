@@ -11,6 +11,7 @@ import {
 import { ConnectionRowEditor } from "./ConnectionRowEditor";
 import type { HostUpdateView } from "./hostUpdateSettingsContract";
 import { ServerIcon } from "./ServerIcon";
+import { ServerRefreshButton } from "./ServerRefreshButton";
 import { ServerSoftwareSection } from "./ServerSoftwareSection";
 
 import type { ConnectionSettingsProps } from "./connectionSettingsContract";
@@ -41,6 +42,27 @@ export function connectionSettingsSections({
   return connections.map((connection) => {
     const hostUpdate = hostUpdates[connection.id];
     const relayUpdate = relayUpdates[connection.id];
+    const refreshes: (() => Promise<void>)[] = [];
+    if (onRefreshAccountPool !== undefined) {
+      refreshes.push(async () => {
+        await onRefreshAccountPool(connection.id);
+      });
+    }
+    if (agentProviders !== undefined) {
+      refreshes.push(async () => {
+        await agentProviders.refresh(connection.id);
+      });
+    }
+    if (hostUpdate !== undefined) {
+      refreshes.push(async () => {
+        await onCheckHostUpdate(connection.id);
+      });
+    }
+    if (relayUpdate !== undefined && relayUpdate.currentVersion !== null) {
+      refreshes.push(async () => {
+        await onCheckRelayUpdate(connection.id);
+      });
+    }
     return {
       content: (
         // One column, so the page gap does not stack on top of the section spacing.
@@ -79,6 +101,9 @@ export function connectionSettingsSections({
         connectionStateLabel(connection.state, connection.enabled, connection.health),
         hostUpdate,
         relayUpdate,
+      ),
+      headerAction: (
+        <ServerRefreshButton refreshes={refreshes} serverName={connection.displayName} />
       ),
       id: connection.id,
       ...(agentProviders === undefined

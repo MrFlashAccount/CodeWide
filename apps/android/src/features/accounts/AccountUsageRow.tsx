@@ -34,18 +34,13 @@ export function AccountProviderHeading({
 
 /** One account: who, its plan and reset, and the shares left or what is wrong with it. */
 export function AccountUsageRow({ row }: { readonly row: UsageAccountRow }): React.JSX.Element {
-  const exhausted = row.value.kind === "remaining" && row.value.weekly === 0;
+  const alert = rowAlert(row);
   return (
     <View style={styles.row} testID={`usage-account-${row.key}`}>
       <View
         accessibilityLabel={row.active ? "Account in use" : "Account not in use"}
         accessible
-        style={[
-          styles.dot,
-          row.active
-            ? { backgroundColor: exhausted ? colors.red : colors.green }
-            : styles.dotInactive,
-        ]}
+        style={[styles.dot, dotStyle(row, alert)]}
       />
       <View style={styles.content}>
         <View style={styles.titleRow}>
@@ -54,31 +49,78 @@ export function AccountUsageRow({ row }: { readonly row: UsageAccountRow }): Rea
           </Text>
           <AccountServers servers={row.servers} />
         </View>
-        <View
-          accessibilityLabel={`${row.plan}${row.resetsIn === null ? "" : ` · resets in ${row.resetsIn}`}`}
-          accessible
-          style={styles.metadataRow}
-        >
-          <Text numberOfLines={1} style={styles.metadata}>
-            {row.plan}
+        {alert === null ? (
+          <AccountMetadata row={row} />
+        ) : (
+          <Text
+            numberOfLines={1}
+            style={[styles.alert, { color: alert.color }]}
+            testID={`usage-account-${alert.tone}-${row.key}`}
+          >
+            {alert.text}
           </Text>
-          {row.resetsIn === null ? null : (
-            <>
-              <Text style={styles.metadata}>·</Text>
-              <Ionicons color={colors.textDim} name="refresh-outline" size={iconSize.indicator} />
-              <Text numberOfLines={1} style={styles.metadata}>
-                {row.resetsIn}
-              </Text>
-            </>
-          )}
-        </View>
+        )}
       </View>
       <AccountUsageValue row={row} />
     </View>
   );
 }
 
-/** The shares left as rings and the weekly percentage, or a note toned by severity. */
+/** A problem or a needed refresh replaces the plan line and colors the status dot. */
+interface RowAlert {
+  readonly color: string;
+  readonly text: string;
+  readonly tone: "attention" | "problem";
+}
+
+function rowAlert(row: UsageAccountRow): RowAlert | null {
+  const value = row.value;
+  if (value.kind !== "note" || value.tone === "muted") {
+    return null;
+  }
+  return {
+    color: value.tone === "problem" ? colors.red : colors.amber,
+    text: value.text,
+    tone: value.tone,
+  };
+}
+
+function dotStyle(row: UsageAccountRow, alert: RowAlert | null) {
+  if (alert !== null) {
+    return { backgroundColor: alert.color };
+  }
+  if (!row.active) {
+    return styles.dotInactive;
+  }
+  const exhausted = row.value.kind === "remaining" && row.value.weekly === 0;
+  return { backgroundColor: exhausted ? colors.red : colors.green };
+}
+
+/** The plan and, when known, the time to the weekly reset. */
+function AccountMetadata({ row }: { readonly row: UsageAccountRow }) {
+  return (
+    <View
+      accessibilityLabel={`${row.plan}${row.resetsIn === null ? "" : ` · resets in ${row.resetsIn}`}`}
+      accessible
+      style={styles.metadataRow}
+    >
+      <Text numberOfLines={1} style={styles.metadata}>
+        {row.plan}
+      </Text>
+      {row.resetsIn === null ? null : (
+        <>
+          <Text style={styles.metadata}>·</Text>
+          <Ionicons color={colors.textDim} name="refresh-outline" size={iconSize.indicator} />
+          <Text numberOfLines={1} style={styles.metadata}>
+            {row.resetsIn}
+          </Text>
+        </>
+      )}
+    </View>
+  );
+}
+
+/** The shares left as rings and the weekly percentage, or a muted note. */
 function AccountUsageValue({ row }: { readonly row: UsageAccountRow }) {
   const value = row.value;
   if (value.kind === "remaining") {
@@ -90,6 +132,7 @@ function AccountUsageValue({ row }: { readonly row: UsageAccountRow }) {
               ? { kind: "absent" }
               : { kind: "present", remainingPercent: value.fiveHour }
           }
+          size="inline"
           testID={`usage-account-rings-${row.key}`}
           weeklyRemainingPercent={value.weekly}
         />
@@ -102,25 +145,8 @@ function AccountUsageValue({ row }: { readonly row: UsageAccountRow }) {
       </View>
     );
   }
-  if (value.tone === "muted") {
-    return <Text style={styles.mutedNote}>{value.text}</Text>;
-  }
-  const problem = value.tone === "problem";
-  return (
-    <View
-      style={[styles.pill, problem ? styles.pillProblem : styles.pillAttention]}
-      testID={`usage-account-${value.tone}-${row.key}`}
-    >
-      <Ionicons
-        color={problem ? colors.red : colors.amber}
-        name={problem ? "alert-circle" : "warning-outline"}
-        size={iconSize.indicator}
-      />
-      <Text style={[styles.pillText, { color: problem ? colors.red : colors.amber }]}>
-        {value.text}
-      </Text>
-    </View>
-  );
+  // A problem or a needed refresh is told on the plan line instead.
+  return value.tone === "muted" ? <Text style={styles.mutedNote}>{value.text}</Text> : null;
 }
 
 /** The servers of an account as their icons; the names are the accessibility label. */
@@ -148,6 +174,10 @@ function AccountServers({ servers }: { readonly servers: readonly AccountUsageSe
 }
 
 const styles = StyleSheet.create({
+  alert: {
+    ...typeScale.caption,
+    fontWeight: typeWeight.semibold,
+  },
   content: {
     flex: 1,
     gap: spacing.xxs,
@@ -200,21 +230,6 @@ const styles = StyleSheet.create({
     ...typeScale.body,
     color: colors.text,
     fontVariant: ["tabular-nums"],
-  },
-  pill: {
-    alignItems: "center",
-    borderRadius: radii.pill,
-    flexDirection: "row",
-    flexShrink: 0,
-    gap: spacing.optical,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
-  },
-  pillAttention: { backgroundColor: colors.warningContainer },
-  pillProblem: { backgroundColor: colors.errorContainer },
-  pillText: {
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
   },
   row: {
     alignItems: "center",

@@ -61,6 +61,22 @@ function providers(claude: Record<string, unknown>): AgentProvidersState {
 }
 
 describe("usage account rows", () => {
+  it("merges the accounts of an older Companion that reports no provider list", () => {
+    const olderCompanion: readonly AgentProvidersState[] = [
+      { status: "unsupported" },
+      { error: "unknown method", status: "error", value: null },
+    ];
+    for (const laptop of olderCompanion) {
+      const rows = usageAccountRows(
+        [source("buddy", [profile("dev@example.com", true)]), source("laptop", [profile("dev@example.com", false)])],
+        servers,
+        { buddy: providers({ accountLabel: null, auth: "unauthenticated" }), laptop },
+      );
+      // The older Companion's pool shares the reported owner, so the account is one row.
+      expect(rows.filter((row) => row.label === "dev@example.com").map((row) => [row.provider?.id, row.servers.length])).toEqual([["codex", 0]]);
+    }
+  });
+
   it("shows one row per account, listing every server it is signed in on", () => {
     const rows = usageAccountRows(
       [

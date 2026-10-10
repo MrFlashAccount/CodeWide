@@ -13,6 +13,7 @@
 //! `docs/agent-providers.md#orchestration-tools`.
 
 pub mod children;
+pub mod lineage;
 pub mod profiles;
 pub mod tools;
 pub mod tracker;
@@ -160,13 +161,7 @@ impl OrchestrationService {
                     "updatedAt": link.created_at,
                     "modelProvider": model_provider,
                     "cliVersion": "",
-                    "source": {"subagent": {"thread_spawn": {
-                        "parent_thread_id": link.parent_thread_id,
-                        "depth": 1,
-                        "agent_path": null,
-                        "agent_nickname": link.name,
-                        "agent_role": null,
-                    }}},
+                    "source": lineage::subagent_source(link),
                     "agentNickname": link.name,
                     "agentRole": null,
                     "archived": false,
@@ -331,14 +326,6 @@ impl OrchestrationService {
             .await
             .map_err(|failure| format!("cannot create the agent's thread: {}", failure.message))?;
         let child = thread.app_thread_id.clone();
-        if target.native_surface().is_none() {
-            // A native provider announces its own thread; a neutral one is
-            // announced here, as for a client `thread/start`.
-            let (_, started) = ClientWireGateway::started_thread(&thread, &wire);
-            if self.journal.send(started).await.is_err() {
-                warn!("journal closed before an agent thread was announced");
-            }
-        }
         let link = ChildLink::new(
             caller.thread.as_str().to_owned(),
             child.as_str().to_owned(),
@@ -351,6 +338,14 @@ impl OrchestrationService {
             error!(err = ?err, app_thread_id = %child, "subagent link was not written");
             format!("agent thread {child} was created but could not be linked to this thread")
         })?;
+        // Announced after the link, so the journal projects it as the
+        // caller's subagent. A neutral provider's thread is announced only
+        // here; a native provider announced it during creation, before the
+        // link, and this repeats it with the lineage.
+        let (_, started) = ClientWireGateway::started_thread(&thread, &wire);
+        if self.journal.send(started).await.is_err() {
+            warn!("journal closed before an agent thread was announced");
+        }
         self.tracker
             .register(child.as_str(), ChildState::Running { turn_id: None });
         if let Some(name) = request.name

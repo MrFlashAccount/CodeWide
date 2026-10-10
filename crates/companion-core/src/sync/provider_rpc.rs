@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use tracing::{info, warn};
 
 use super::{
-    MergedMethod, SessionSocket, SyncHub, rpc_is_known_read, send_json, send_rpc_error,
-    send_rpc_failure,
+    MergedMethod, STORAGE_UNAVAILABLE, SessionSocket, SyncHub, rpc_is_known_read, send_json,
+    send_rpc_error, send_rpc_failure,
 };
 use crate::{
     agent::{
@@ -213,6 +213,13 @@ pub(super) async fn forward_rpc_response(
     {
         warn!(err = ?error, "thread pin projection failed");
         return send_rpc_error(socket, id, -32020, "Thread pin projection unavailable").await;
+    }
+    if let Some(result) = response.get_mut("result")
+        && let Err(error) =
+            crate::agent::orchestration::lineage::annotate_result(&observers.pins, method, result)
+    {
+        warn!(err = ?error, "spawned agent lineage projection failed");
+        return send_rpc_error(socket, id, -32020, STORAGE_UNAVAILABLE).await;
     }
     if let (Some(orchestration), Some(result)) = (&observers.orchestration, response.get("result"))
     {

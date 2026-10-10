@@ -35,6 +35,7 @@ mod sync_live;
 mod sync_pending;
 pub mod telemetry;
 pub mod terminal;
+pub mod thread_activity;
 pub mod thread_patch;
 mod thread_pins;
 pub mod thread_view;

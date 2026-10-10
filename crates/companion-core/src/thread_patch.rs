@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::thread_activity::{LIVE_ACTIVITY_FIELD, LiveActivityChange};
+
 pub const THREAD_PATCH_FIELD: &str = "codewideThreadPatch";
 
 /// Adds a stable, companion-owned projection patch while preserving the raw
@@ -12,14 +14,29 @@ pub fn attach_thread_patch(payload: Value) -> Value {
 
 /// Adds the semantic patch plus an optional companion-owned usage projection.
 #[must_use]
-pub fn attach_thread_patch_with_usage(mut payload: Value, usage: Option<Value>) -> Value {
+pub fn attach_thread_patch_with_usage(payload: Value, usage: Option<Value>) -> Value {
+    attach_thread_patch_with_projections(payload, usage, None)
+}
+
+/// Adds the semantic patch with the companion-owned usage projection and the
+/// live activity change this notification published. An absent
+/// `liveActivity` means unchanged; `null` means cleared.
+#[must_use]
+pub fn attach_thread_patch_with_projections(
+    mut payload: Value,
+    usage: Option<Value>,
+    activity: Option<&LiveActivityChange>,
+) -> Value {
     let Some(mut patch) = compile_thread_patch(&payload) else {
         return payload;
     };
-    if let Some(usage) = usage
-        && let Some(operation) = patch.get_mut("operation").and_then(Value::as_object_mut)
-    {
-        operation.insert("usage".into(), usage);
+    if let Some(operation) = patch.get_mut("operation").and_then(Value::as_object_mut) {
+        if let Some(usage) = usage {
+            operation.insert("usage".into(), usage);
+        }
+        if let Some(activity) = activity {
+            operation.insert(LIVE_ACTIVITY_FIELD.into(), activity.to_wire());
+        }
     }
     if let Some(object) = payload.as_object_mut() {
         object.insert(THREAD_PATCH_FIELD.into(), patch);
@@ -353,6 +370,39 @@ mod tests {
         assert_eq!(
             projected[THREAD_PATCH_FIELD]["operation"]["usage"]["status"],
             "live"
+        );
+    }
+
+    #[test]
+    fn carries_a_live_activity_change_and_its_clearing() {
+        let event = || {
+            json!({
+                "method": "item/started",
+                "params": {"threadId": "thread", "turnId": "turn", "item": {"type": "webSearch", "id": "w"}}
+            })
+        };
+        let set = attach_thread_patch_with_projections(
+            event(),
+            None,
+            Some(&LiveActivityChange::Set(
+                crate::thread_activity::LiveActivity::WebSearch,
+            )),
+        );
+        assert_eq!(
+            set[THREAD_PATCH_FIELD]["operation"][LIVE_ACTIVITY_FIELD],
+            json!({"kind": "webSearch"})
+        );
+        let cleared =
+            attach_thread_patch_with_projections(event(), None, Some(&LiveActivityChange::Cleared));
+        assert_eq!(
+            cleared[THREAD_PATCH_FIELD]["operation"].get(LIVE_ACTIVITY_FIELD),
+            Some(&Value::Null)
+        );
+        let unchanged = attach_thread_patch_with_projections(event(), None, None);
+        assert!(
+            unchanged[THREAD_PATCH_FIELD]["operation"]
+                .get(LIVE_ACTIVITY_FIELD)
+                .is_none()
         );
     }
 

@@ -150,6 +150,20 @@ impl ChildLinks {
             .await
     }
 
+    /// The link of one child, read on the caller's thread (wire projection).
+    ///
+    /// # Errors
+    /// Returns the store failure or an invalid record.
+    pub fn link_of_blocking(
+        store: &IndexStore,
+        child: &str,
+    ) -> Result<Option<ChildLink>, LinkError> {
+        store
+            .agent_subagent_link(child)?
+            .map(|record| serde_json::from_slice(&record).map_err(LinkError::from))
+            .transpose()
+    }
+
     /// Every linked child id (startup).
     ///
     /// # Errors

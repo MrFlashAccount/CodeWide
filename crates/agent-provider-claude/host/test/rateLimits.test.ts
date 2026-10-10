@@ -158,6 +158,17 @@ describe("RateLimitBook", () => {
     expect(book.apply([statusOnly], 2)).toBeNull();
     expect(book.apply([afterReset], 3)?.windows[0]?.usedPercent).toBeNull();
   });
+
+  it("keeps the percentage when another report rounds the same reset differently", () => {
+    const book = new RateLimitBook();
+    // The usage read's ISO reset floors to …399; the streamed event says …400.
+    const read = window("five_hour", 25, RESET - 1);
+    const streamed = window("five_hour", null, RESET);
+    if (read === null || streamed === null) throw new Error("windows");
+    book.apply([read], 1);
+    expect(book.apply([streamed], 2)?.windows[0]?.usedPercent ?? 25).toBe(25);
+    expect(book.snapshot()?.windows[0]?.usedPercent).toBe(25);
+  });
 });
 
 describe("sessions report limits", () => {

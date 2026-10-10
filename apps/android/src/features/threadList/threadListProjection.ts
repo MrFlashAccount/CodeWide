@@ -74,15 +74,20 @@ export function deduplicateThreadSummaries(
   return [...byKey.values()];
 }
 
+/** The row's live state: a pending request, a running turn or sub-agent, or a failure. */
+function listItemState(thread: StoredThreadSummary): NonNullable<ThreadListItem["state"]> | null {
+  if (thread.pendingRequestCount > 0) {
+    return "approval";
+  }
+  // A thread whose own turn ended is still in progress while its sub-agents run.
+  if (thread.status.type === "active" || thread.activeSubagents === true) {
+    return "running";
+  }
+  return thread.status.type === "systemError" ? "failed" : null;
+}
+
 export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListItem {
-  const state =
-    thread.pendingRequestCount > 0
-      ? "approval"
-      : thread.status.type === "active"
-        ? "running"
-        : thread.status.type === "systemError"
-          ? "failed"
-          : null;
+  const state = listItemState(thread);
   return {
     agentBadge: threadAgentBadge(thread),
     agentProvider: threadAgentBadgeProvider(thread),

@@ -250,7 +250,6 @@ it("renders Add account as the final compact list row", () => {
       onConsumeResetCredit={jest.fn(() =>
         Promise.resolve({ accountPool, outcome: "reset" as const }),
       )}
-      onRefresh={jest.fn(() => Promise.resolve(accountPool))}
       onRemove={jest.fn(() => Promise.resolve(accountPool))}
       onStartLogin={jest.fn(() =>
         Promise.resolve({
@@ -289,7 +288,6 @@ function poolEditor(capabilities: readonly string[]) {
       onActivate={jest.fn(() => Promise.resolve(accountPool))}
       onCancelLogin={jest.fn(() => Promise.resolve())}
       onConsumeResetCredit={jest.fn(() => Promise.resolve({ accountPool, outcome: "reset" as const }))}
-      onRefresh={jest.fn(() => Promise.resolve(accountPool))}
       onRemove={jest.fn(() => Promise.resolve(accountPool))}
       onStartLogin={jest.fn(() => Promise.resolve({ loginId: "login", userCode: "CODE", verificationUrl: "https://example.com" }))}
       onUpdate={jest.fn(() => Promise.resolve(accountPool))}
@@ -373,4 +371,21 @@ it("does not offer Use for an expired banked reset", () => {
   expect(view.getByText(/Expired/u)).toBeTruthy();
   expect(view.queryByLabelText("Use Earlier reset for account@example.com")).toBeNull();
   expect(view.getByLabelText("Use Later reset for account@example.com")).toBeTruthy();
+});
+
+it("tells an account the server cannot use without expanding it, and hides its saved limits", () => {
+  const account = {
+    ...profile(Math.floor(NOW / 1_000) + 3_600),
+    exhaustedUntil: null,
+    rateLimitsError: "account pool storage failed: invalid auth.json",
+  };
+  const { view } = renderRow(account);
+  const row = view.getByTestId("account-profile-account");
+  expect(row.props.accessibilityLabel).toContain("Account unavailable");
+  expect(row.props.accessibilityLabel).toContain("Limits unavailable");
+  expect(view.getByText(/^Unavailable · Pro · Primary/u)).toBeOnTheScreen();
+  expect(view.getByTestId("account-status-account")).toHaveStyle({ backgroundColor: colors.red });
+  // Twelve-day-old figures are not drawn as current shares.
+  expect(view.queryByTestId("account-limit-rings-account-weekly-progress")).toBeNull();
+  expect(view.queryByTestId("account-limit-rings-account-five-hour")).toBeNull();
 });

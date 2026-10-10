@@ -140,6 +140,11 @@ export function projectThread(view: ThreadView): AgentThread {
     createdAt: createdAt(view),
     cwd: cwdOf(view),
     name: threadName(view),
+    // `AgentThread.preview` is the newest conversation message. The host
+    // reads no history for a listing, so it reports the first prompt; the
+    // Rust adapter overlays the preview of its native index on every thread
+    // the index knows. This stays only for a thread not indexed yet (where
+    // the first prompt is the only message) or when the index is unavailable.
     preview: firstPrompt(view)?.slice(0, PREVIEW_MAX_CHARACTERS) ?? "",
     provider: PROVIDER_ID,
     status: view.status,

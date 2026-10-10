@@ -59,6 +59,7 @@ mod outbox;
 mod outbox_state;
 mod provider_rpc;
 mod queue;
+mod replay;
 mod search_routing;
 
 use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
@@ -70,7 +71,11 @@ use outbox_state::{
 };
 use provider_rpc::{RpcResultObservers, forward_rpc_response};
 use queue::{queue_changed_thread_id, queue_command, queue_rpc};
+use replay::ReplayProjector;
 
+/// `companion/thread/sync` of a thread that does not exist (deleted, or never
+/// known here): the client forgets the thread instead of retrying.
+const THREAD_SYNC_NOT_FOUND: i64 = -32_073;
 const MAX_REPLAY_ENTRIES: usize = 2_048;
 const MAX_REPLAY_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_LIVE_SIGNALS: usize = 128;
@@ -90,6 +95,7 @@ const STORAGE_UNAVAILABLE: &str = "Thread history storage is unavailable";
 pub struct SyncHub {
     port_inventory: Option<crate::port_inventory::PortInventory>,
     gateway: Arc<ClientWireGateway>,
+    replay: Arc<ReplayProjector>,
     store: Arc<IndexStore>,
     thread_view: ThreadViewService,
     events: tokio::sync::broadcast::Sender<DurableSignal>,
@@ -381,7 +387,7 @@ impl RecentTurnStarts {
 }
 
 fn spawn_live_replay_task(
-    thread_store: Option<Arc<dyn NativeThreadStore>>,
+    replay: Arc<ReplayProjector>,
     socket: SessionSocket,
     store: Arc<IndexStore>,
     mut events: tokio::sync::broadcast::Receiver<DurableSignal>,
@@ -395,13 +401,9 @@ fn spawn_live_replay_task(
                     if head <= delivered_cursor {
                         continue;
                     }
-                    let result = send_live_replay_after(
-                        &socket,
-                        store.clone(),
-                        delivered_cursor,
-                        thread_store.as_deref(),
-                    )
-                    .await;
+                    let result =
+                        send_live_replay_after(&socket, store.clone(), delivered_cursor, &replay)
+                            .await;
                     if matches!(result, Err(LiveReplayError::SnapshotRequired)) {
                         warn!(
                             delivered_cursor,
@@ -413,13 +415,7 @@ fn spawn_live_replay_task(
                 Ok(DurableSignal::Failed) => Err(LiveReplayError::Journal),
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     debug!(skipped, "sync client coalesced live wake-up signals");
-                    send_live_replay_after(
-                        &socket,
-                        store.clone(),
-                        delivered_cursor,
-                        thread_store.as_deref(),
-                    )
-                    .await
+                    send_live_replay_after(&socket, store.clone(), delivered_cursor, &replay).await
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
@@ -593,6 +589,7 @@ impl SyncHub {
         }
         Self {
             port_inventory: None,
+            replay: Arc::new(ReplayProjector::new(registry.clone(), bindings.clone())),
             gateway,
             store,
             thread_view,
@@ -822,22 +819,6 @@ impl SyncHub {
             .thread_store()
     }
 
-    /// Prepares one journaled event for replay through the thread store of the
-    /// `codex.native` owner; without one the event is only priced from its
-    /// stored provider-reported costs (no price table exists then).
-    fn replay_event(
-        thread_store: Option<&dyn NativeThreadStore>,
-        payload: Value,
-    ) -> Result<Value, String> {
-        match thread_store {
-            Some(thread_store) => thread_store.replay_event(payload),
-            None => Ok(agent_core::usage::price_replay_payload(
-                payload,
-                &agent_core::usage::UsagePricing::default(),
-            )),
-        }
-    }
-
     fn projects(&self) -> Option<Arc<ProjectService>> {
         match self.projects.read() {
             Ok(slot) => slot.clone(),
@@ -944,14 +925,12 @@ impl SyncHub {
 
         let mut ready = false;
         if !snapshot_required {
-            let thread_store = self.thread_store(Capability::CodexNative);
             for (cursor, payload) in replay.entries {
-                let Ok(payload) = serde_json::from_slice::<Value>(&payload)
-                    .map_err(|_| ())
-                    .and_then(|payload| {
-                        Self::replay_event(thread_store.as_deref(), payload).map_err(|_| ())
-                    })
-                else {
+                let payload = match serde_json::from_slice::<Value>(&payload) {
+                    Ok(payload) => self.replay.project(payload).await,
+                    Err(error) => Err(error.to_string()),
+                };
+                let Ok(payload) = payload else {
                     close_with(socket, 1011, "replay_journal_failed").await;
                     return None;
                 };
@@ -1025,7 +1004,7 @@ impl SyncHub {
                 return;
             };
             replay_task = Some(spawn_live_replay_task(
-                self.thread_store(Capability::CodexNative),
+                self.replay.clone(),
                 socket.clone(),
                 self.store.clone(),
                 events,
@@ -1109,11 +1088,12 @@ impl SyncHub {
                                         snapshot_started_at = Some(Instant::now());
                                         continue;
                                     }
-                                    let thread_store = self.thread_store(Capability::CodexNative);
                                     for (cursor, payload) in replay.entries {
-                                        let Ok(payload) = serde_json::from_slice::<Value>(&payload)
-                    .map_err(|_| ())
-                    .and_then(|payload| Self::replay_event(thread_store.as_deref(), payload).map_err(|_| ())) else {
+                                        let payload = match serde_json::from_slice::<Value>(&payload) {
+                                            Ok(payload) => self.replay.project(payload).await,
+                                            Err(error) => Err(error.to_string()),
+                                        };
+                                        let Ok(payload) = payload else {
                                             close_with(&socket, 1011, "replay_journal_failed").await;
                                             break 'session;
                                         };
@@ -1135,7 +1115,7 @@ impl SyncHub {
                                         && let Some(events) = replay_events.take()
                                     {
                                         replay_task = Some(spawn_live_replay_task(
-                            self.thread_store(Capability::CodexNative),
+                            self.replay.clone(),
                                             socket.clone(),
                                             self.store.clone(),
                                             events,
@@ -1946,7 +1926,14 @@ impl SyncHub {
                         .await?;
                 }
                 Err(error) => {
-                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
+                    let thread_id = params.get("threadId").and_then(Value::as_str);
+                    let code = if thread_id.is_some_and(|thread| error.is_thread_not_found(thread))
+                    {
+                        THREAD_SYNC_NOT_FOUND
+                    } else {
+                        -32020
+                    };
+                    send_rpc_error(socket, id.clone(), code, &error.to_string()).await?;
                 }
             }
             return Ok(true);
@@ -2133,6 +2120,12 @@ impl SyncHub {
                 "Thread pin projection unavailable",
             )
             .await;
+        }
+        if let Err(error) =
+            crate::agent::orchestration::lineage::annotate_result(&self.store, method, &mut result)
+        {
+            warn!(err = ?error, "spawned agent lineage projection failed");
+            return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE).await;
         }
         if let Some(resources) = self.thread_resources() {
             resources.observe_rpc_result(method, &result).await;
@@ -2381,7 +2374,7 @@ async fn send_live_replay_after(
     socket: &SessionSocket,
     store: Arc<IndexStore>,
     cursor: u64,
-    thread_store: Option<&dyn NativeThreadStore>,
+    projector: &ReplayProjector,
 ) -> Result<u64, LiveReplayError> {
     let replay = tokio::task::spawn_blocking(move || store.replay_after(Some(cursor)))
         .await
@@ -2393,8 +2386,10 @@ async fn send_live_replay_after(
     for (event_cursor, payload) in replay.entries {
         let payload =
             serde_json::from_slice::<Value>(&payload).map_err(|_| LiveReplayError::Journal)?;
-        let payload =
-            SyncHub::replay_event(thread_store, payload).map_err(|_| LiveReplayError::Journal)?;
+        let payload = projector
+            .project(payload)
+            .await
+            .map_err(|_| LiveReplayError::Journal)?;
         send_json(
             socket,
             &json!({ "type": "event", "cursor": event_cursor, "payload": payload }),
@@ -2595,10 +2590,11 @@ async fn ingest_events(
     context: IngestContext,
 ) {
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
+    let mut live_activity = crate::thread_activity::LiveActivityTracker::default();
     while let Some(first) = ingest.recv().await {
         let first = match first {
             IngestInput::Payload(payload) => {
-                let Some(payload) = project_user_text(&context, payload, None) else {
+                let Some(payload) = project_ingest_payload(&context, payload, None) else {
                     continue;
                 };
                 (payload, ResourceRoute::Owner)
@@ -2609,7 +2605,8 @@ async fn ingest_events(
                 provider,
             } => {
                 observe_payload_provider(&context, &payload, &provider);
-                let Some(payload) = project_user_text(&context, payload, Some(&provider)) else {
+                let Some(payload) = project_ingest_payload(&context, payload, Some(&provider))
+                else {
                     continue;
                 };
                 (payload, resources)
@@ -2631,7 +2628,7 @@ async fn ingest_events(
             }
             match tokio::time::timeout(remaining, ingest.recv()).await {
                 Ok(Some(IngestInput::Payload(payload))) => {
-                    if let Some(payload) = project_user_text(&context, payload, None) {
+                    if let Some(payload) = project_ingest_payload(&context, payload, None) {
                         payloads.push((payload, ResourceRoute::Owner));
                     }
                 }
@@ -2641,7 +2638,9 @@ async fn ingest_events(
                     provider,
                 })) => {
                     observe_payload_provider(&context, &payload, &provider);
-                    if let Some(payload) = project_user_text(&context, payload, Some(&provider)) {
+                    if let Some(payload) =
+                        project_ingest_payload(&context, payload, Some(&provider))
+                    {
                         payloads.push((payload, resources));
                     }
                 }
@@ -2652,9 +2651,14 @@ async fn ingest_events(
                 Ok(None) | Err(_) => break,
             }
         }
-        if ingest_payload_batch(&context, &mut stream_diagnostics, payloads)
-            .await
-            .is_err()
+        if ingest_payload_batch(
+            &context,
+            &mut stream_diagnostics,
+            &mut live_activity,
+            payloads,
+        )
+        .await
+        .is_err()
         {
             break;
         }
@@ -2670,14 +2674,22 @@ async fn ingest_events(
 /// provider's own store (keyed by thread id).
 type OwnResources = HashMap<String, Arc<dyn NativeThreadResources>>;
 
-/// Cleans a payload's user messages with its provider's cleaner (the
-/// primary's for the owner stream); `None` when it carries nothing the user
-/// wrote and is not delivered.
-fn project_user_text(
+/// Projects a payload before the journal: a spawned agent's `thread/started`
+/// gets its caller as parent, and user messages are cleaned with the
+/// provider's cleaner (the primary's for the owner stream); `None` when it
+/// carries nothing the user wrote and is not delivered.
+fn project_ingest_payload(
     context: &IngestContext,
-    payload: Value,
+    mut payload: Value,
     provider: Option<&ProviderId>,
 ) -> Option<Value> {
+    if let Err(error) =
+        crate::agent::orchestration::lineage::annotate_notification(&context.store, &mut payload)
+    {
+        // The thread is delivered without its parent; it is listed as a
+        // chat until a later read projects the link.
+        warn!(err = ?error, "spawned agent lineage projection failed");
+    }
     crate::user_message_projection::project_notification(
         payload,
         context.user_text.for_provider(provider),
@@ -2721,9 +2733,62 @@ fn split_resource_routes(
     (payloads, without_resources, own_resources)
 }
 
+/// Adds the companion-owned projections to one payload before it is
+/// journaled: usage, activity metrics, live activity and content references.
+fn project_journal_payload(
+    context: &IngestContext,
+    projector: Option<&ContentProjector>,
+    live_activity: &mut crate::thread_activity::LiveActivityTracker,
+    payload: Value,
+) -> Result<Value, ()> {
+    let (usage, replay_pricing, thread_pricing) = {
+        let mut projector = match context.usage_projector.lock() {
+            Ok(projector) => projector,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let usage = projector.observe(&payload);
+        let replay_pricing = projector.replay_pricing(&payload);
+        (usage, replay_pricing, projector.thread_pricing(&payload))
+    };
+    let Ok(usage) = usage else {
+        warn!("usage projection persistence failed");
+        let _ = context.events.send(DurableSignal::Failed);
+        return Err(());
+    };
+    let metrics = crate::activity_metrics_live::observe(
+        &context.store,
+        &payload,
+        usage.as_ref(),
+        &thread_pricing,
+    )
+    .map_err(|_| {
+        let _ = context.events.send(DurableSignal::Failed);
+    })?;
+    // Streamed reasoning text is read before content projection may
+    // externalize it.
+    let activity = live_activity.observe(&payload);
+    let payload = match projector {
+        Some(projector) => projector.project_notification(payload),
+        None => payload,
+    };
+    let projected = crate::activity_metrics_live::attach(
+        crate::thread_patch::attach_thread_patch_with_projections(
+            payload,
+            usage,
+            activity.as_ref(),
+        ),
+        metrics,
+    );
+    Ok(agent_core::usage::prepare_replay_payload(
+        projected,
+        replay_pricing,
+    ))
+}
+
 async fn ingest_payload_batch(
     context: &IngestContext,
     stream_diagnostics: &mut AgentStreamDiagnostics,
+    live_activity: &mut crate::thread_activity::LiveActivityTracker,
     batch: Vec<(Value, ResourceRoute)>,
 ) -> Result<(), ()> {
     let (mut payloads, without_resources, own_resources) = split_resource_routes(batch);
@@ -2760,41 +2825,12 @@ async fn ingest_payload_batch(
     payloads = coalesce_stream_text_deltas(payloads);
     let mut projected_payloads = Vec::with_capacity(payloads.len());
     for payload in payloads {
-        let (usage, replay_pricing, thread_pricing) = {
-            let mut projector = match context.usage_projector.lock() {
-                Ok(projector) => projector,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            let usage = projector.observe(&payload);
-            let replay_pricing = projector.replay_pricing(&payload);
-            (usage, replay_pricing, projector.thread_pricing(&payload))
-        };
-        let Ok(usage) = usage else {
-            warn!("usage projection persistence failed");
-            let _ = context.events.send(DurableSignal::Failed);
-            return Err(());
-        };
-        let metrics = crate::activity_metrics_live::observe(
-            &context.store,
-            &payload,
-            usage.as_ref(),
-            &thread_pricing,
-        )
-        .map_err(|_| {
-            let _ = context.events.send(DurableSignal::Failed);
-        })?;
-        let payload = match &projector {
-            Some(projector) => projector.project_notification(payload),
-            None => payload,
-        };
-        let projected = crate::activity_metrics_live::attach(
-            crate::thread_patch::attach_thread_patch_with_usage(payload, usage),
-            metrics,
-        );
-        projected_payloads.push(agent_core::usage::prepare_replay_payload(
-            projected,
-            replay_pricing,
-        ));
+        projected_payloads.push(project_journal_payload(
+            context,
+            projector.as_deref(),
+            live_activity,
+            payload,
+        )?);
     }
     payloads = projected_payloads;
     stream_diagnostics.observe_emitted_batch(&payloads);
@@ -2938,6 +2974,7 @@ fn observe_subagent_metadata(
         agent_nickname: None,
         agent_role: None,
         archived: false,
+        running: None,
     })
 }
 
@@ -3321,6 +3358,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn journaled_patches_publish_live_activity_changes_only()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("activity.redb"))?);
+        let (ingest, receiver) = tokio::sync::mpsc::channel(8);
+        let (signals, _) = tokio::sync::broadcast::channel(8);
+        let (fence, resolved) = tokio::sync::oneshot::channel();
+        let context = IngestContext {
+            store: store.clone(),
+            events: signals,
+            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
+            content_projector: Arc::new(std::sync::RwLock::new(None)),
+            resources: None,
+            usage_projector: Arc::new(std::sync::Mutex::new(
+                crate::usage::LiveUsageProjector::new(
+                    store.clone(),
+                    agent_core::usage::UsagePricing::default(),
+                ),
+            )),
+            user_text: crate::user_message_projection::UserTextCleaners::new(
+                std::collections::HashMap::new(),
+                ProviderId::from_static("codex"),
+            ),
+        };
+        let task = tokio::spawn(ingest_events(receiver, context));
+        let item = |id: &str| {
+            json!({"method": "item/started", "params": {
+                "threadId": "thread", "turnId": "turn",
+                "item": {"type": "webSearch", "id": id}
+            }})
+        };
+        for payload in [
+            item("first"),
+            item("second"),
+            json!({"method": "turn/completed", "params": {
+                "threadId": "thread", "turn": {"id": "turn", "status": "completed", "items": []}
+            }}),
+        ] {
+            ingest.send(IngestInput::Payload(payload)).await?;
+        }
+        ingest.send(IngestInput::Fence(fence)).await?;
+        assert_eq!(resolved.await??, 3);
+
+        let activities = store
+            .replay_after(Some(0))?
+            .entries
+            .into_iter()
+            .map(|(_, bytes)| {
+                let event: Value = serde_json::from_slice(&bytes)?;
+                Ok(event[crate::thread_patch::THREAD_PATCH_FIELD]["operation"]
+                    .get(crate::thread_activity::LIVE_ACTIVITY_FIELD)
+                    .cloned())
+            })
+            .collect::<Result<Vec<_>, serde_json::Error>>()?;
+        assert_eq!(
+            activities,
+            [Some(json!({"kind": "webSearch"})), None, Some(Value::Null)],
+            "replaying the journal reproduces each change once"
+        );
+        drop(ingest);
+        task.await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn a_provider_history_change_is_journaled_as_a_thread_invalidation()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
@@ -3354,6 +3456,7 @@ mod tests {
             .send(crate::agent::provider::HistoryChange {
                 app_thread_id: crate::agent::model::AppThreadId::from_static("terminal-session"),
                 archived: false,
+                preview: None,
             })
             .await?;
         // Subscribed sessions are woken for the journaled entry.
@@ -3414,6 +3517,7 @@ mod tests {
             agent_nickname: None,
             agent_role: None,
             archived: false,
+            running: None,
         })?;
 
         observe_subagent_metadata(

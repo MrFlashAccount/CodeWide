@@ -171,6 +171,13 @@ export function usageReadWindows(response: unknown): readonly ProviderRateLimitW
 }
 
 /**
+ * Reports of one window disagree on its reset by a rounding second (the usage
+ * read's ISO time keeps fractions the streamed epoch seconds round); a reset
+ * moves it by the window's length.
+ */
+const RESET_TOLERANCE_SECONDS = 60;
+
+/**
  * A later report replaces the figures it carries. A missing percentage keeps
  * the earlier one unless the window reset in between.
  */
@@ -182,7 +189,9 @@ function merged(
     return next;
   }
   const reset =
-    next.resetsAt !== null && previous.resetsAt !== null && next.resetsAt !== previous.resetsAt;
+    next.resetsAt !== null &&
+    previous.resetsAt !== null &&
+    Math.abs(next.resetsAt - previous.resetsAt) > RESET_TOLERANCE_SECONDS;
   return {
     ...next,
     resetsAt: next.resetsAt ?? previous.resetsAt,

@@ -451,6 +451,8 @@ export interface ClientToolTextContent {
 export type PlanStepStatus = "pending" | "inProgress" | "completed";
 
 export interface PlanStep {
+  /** The step's present-tense label shown while it runs (Claude's `TodoWrite` `activeForm`). */
+  readonly activeForm?: string;
   readonly status: PlanStepStatus;
   readonly step: string;
 }

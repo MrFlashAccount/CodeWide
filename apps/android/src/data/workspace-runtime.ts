@@ -68,6 +68,10 @@ import {
 } from "./serverRequestDelivery";
 import { readGlobalSupervisorWorkCatalog } from "./globalSupervisorWorkCatalog";
 import { createThreadSyncProjection } from "./thread-sync-projection";
+import {
+  clearConnectionLiveActivity,
+  createThreadLiveActivityProjection,
+} from "./threadLiveActivity";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
 import { createThreadSyncRuntime } from "./thread-sync-runtime";
@@ -316,17 +320,19 @@ async function startWorkspaceRuntime(): Promise<void> {
           });
         });
       },
-      projection: createGlobalSupervisorAttentionProjection(
-        createThreadSyncProjection({
-          accountRateLimits,
-          agentProviders,
-          catalog: workspaceCatalog,
-          details,
-          resources,
-          summaries,
-          sync: workspaceThreadSync,
-        }),
-        globalSupervisorAttention,
+      projection: createThreadLiveActivityProjection(
+        createGlobalSupervisorAttentionProjection(
+          createThreadSyncProjection({
+            accountRateLimits,
+            agentProviders,
+            catalog: workspaceCatalog,
+            details,
+            resources,
+            summaries,
+            sync: workspaceThreadSync,
+          }),
+          globalSupervisorAttention,
+        ),
       ),
     };
     const supervisor: WorkspaceSyncSupervisor = new NativeEngineSupervisor(nativeSupervisorOptions);
@@ -451,6 +457,7 @@ export async function deleteLocalConnectionData(connectionId: string): Promise<v
   await snapshot.pendingRequests?.deleteConnection(connectionId);
   await snapshot.threadDetails?.deleteConnection(connectionId);
   await snapshot.threadSummaries?.deleteConnection(connectionId);
+  clearConnectionLiveActivity(connectionId);
   await snapshot.threadUiState?.deleteConnection(connectionId);
   await snapshot.accountRateLimits?.deleteConnection(connectionId);
   await snapshot.resources?.deleteConnection(connectionId);

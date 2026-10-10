@@ -173,9 +173,14 @@ async fn spawn_creates_a_linked_thread_on_another_provider_and_starts_the_prompt
             .as_deref(),
         Some("claude")
     );
-    let announced = harness.journal.recv().await.ok_or("no thread/started")?;
+    let mut announced = harness.journal.recv().await.ok_or("no thread/started")?;
     assert_eq!(announced["method"], "thread/started");
     assert_eq!(announced["params"]["thread"]["id"], child);
+    // The link precedes the announcement, so the journal delivers the agent
+    // as the caller's subagent, never as a standalone chat.
+    super::lineage::annotate_notification(&harness.store, &mut announced)?;
+    assert_eq!(announced["params"]["thread"]["parentThreadId"], PARENT);
+    assert_eq!(announced["params"]["thread"]["agentNickname"], "reviewer");
 
     let rows = harness.service.subagent_rows(PARENT).await?;
     assert_eq!(rows.len(), 1);

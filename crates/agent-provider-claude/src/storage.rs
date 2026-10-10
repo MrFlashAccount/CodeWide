@@ -270,7 +270,9 @@ impl ClaudeStorage {
         }
     }
 
-    /// Whether the index lists `thread` exactly as the host reported it.
+    /// Whether the index lists `thread` exactly as the host reported it. The
+    /// preview is the index's own (the host only knows the first prompt), so
+    /// it never asks for a listing pass.
     fn lists_as(&self, thread: &AgentThread) -> bool {
         let Ok(sessions) = self.store.thread_sessions(&thread.app_thread_id) else {
             return false;
@@ -279,7 +281,32 @@ impl ClaudeStorage {
         indexed
             .first()
             .and_then(|indexed| catalog::row(indexed, &thread.provider, thread.status))
-            .is_some_and(|row| &row.thread == thread)
+            .is_some_and(|mut row| {
+                row.thread.preview.clone_from(&thread.preview);
+                &row.thread == thread
+            })
+    }
+
+    /// Replaces the preview of host-projected threads with the indexed one,
+    /// so every `AgentThread.preview` is the thread's newest conversation
+    /// message whichever side answered. A thread the index does not know yet
+    /// keeps the host's (its first prompt, then the only message).
+    pub fn overlay_previews<'a>(&self, threads: impl IntoIterator<Item = &'a mut AgentThread>) {
+        for thread in threads {
+            let sessions = match self.store.thread_sessions(&thread.app_thread_id) {
+                Ok(sessions) => sessions,
+                Err(err) => {
+                    warn!(err = %err, "Claude session index cannot be read; keeping the host preview");
+                    return;
+                }
+            };
+            if let Some(preview) = catalog::threads(&sessions)
+                .first()
+                .and_then(catalog::thread_preview)
+            {
+                thread.preview = preview;
+            }
+        }
     }
 
     /// Marks the catalog behind the host until the next listing pass.
@@ -473,6 +500,14 @@ mod tests {
             .map_err(|error| error.message)?;
         assert_eq!(page.threads[0].status, ThreadStatus::Idle);
 
+        // The host's first-prompt preview is not a listing difference.
+        let mut first_prompt = reported.clone();
+        first_prompt.preview = "hello".into();
+        storage.observe_event(&AgentEvent::ThreadUpdated {
+            thread: first_prompt,
+        });
+        assert!(storage.list(&params, &provider).is_some());
+
         // A rename the index has not seen falls back to the host.
         reported.name = Some("Renamed".into());
         storage.observe_event(&AgentEvent::ThreadUpdated { thread: reported });
@@ -485,6 +520,45 @@ mod tests {
             turn: turn("terminal", "next", 20),
         });
         assert!(storage.list(&params, &provider).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn host_projected_threads_show_the_indexed_newest_message()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let storage = storage(directory.path())?;
+        let indexed = session_read("terminal", "terminal", 10, &["hello", "again"]);
+        storage.store.replace_session(&indexed)?;
+        let host_row = |id: &'static str, preview: &str| AgentThread {
+            app_thread_id: AppThreadId::from_static(id),
+            provider: ProviderId::from_static("claude"),
+            cwd: "/work".into(),
+            name: None,
+            preview: preview.into(),
+            created_at: 1,
+            updated_at: 1,
+            recency_at: None,
+            archived: false,
+            origin: agent_core::model::ThreadOrigin::External,
+            status: ThreadStatus::Active,
+            settings: agent_core::model::ThreadSettings {
+                model: "default".into(),
+                effort: None,
+                permission_profile: ":read-only".into(),
+                service_tier: None,
+            },
+        };
+        let mut threads = vec![
+            host_row("terminal", "hello"),
+            host_row("fresh", "new prompt"),
+        ];
+        storage.overlay_previews(&mut threads);
+        assert_eq!(threads[0].preview, "answer to again");
+        assert_eq!(
+            threads[1].preview, "new prompt",
+            "a thread not indexed yet keeps the host's preview"
+        );
         Ok(())
     }
 

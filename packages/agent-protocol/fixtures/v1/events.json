@@ -444,7 +444,7 @@
           "explanation": null,
           "plan": [
             { "step": "Reproduce", "status": "completed" },
-            { "step": "Fix", "status": "inProgress" },
+            { "step": "Fix", "status": "inProgress", "activeForm": "Fixing" },
             { "step": "Verify", "status": "pending" }
           ]
         }

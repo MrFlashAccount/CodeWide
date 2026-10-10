@@ -19,6 +19,7 @@ pub mod discovery;
 pub mod indexer;
 pub mod legacy_install;
 pub mod preflight;
+pub mod preview;
 pub mod resources;
 pub mod search;
 pub mod storage;
@@ -259,6 +260,14 @@ impl ClaudeProvider {
                 ))
             })
         }))
+    }
+
+    /// The indexed preview over threads the host projected (it only knows
+    /// the first prompt); without storage the host's preview stays.
+    fn overlay_previews<'a>(&self, threads: impl IntoIterator<Item = &'a mut AgentThread>) {
+        if let Some(storage) = &self.storage {
+            storage.overlay_previews(threads);
+        }
     }
 
     fn child_read(&self, child: &ChildThread) -> ThreadReadResult {
@@ -848,13 +857,16 @@ impl AgentProvider for ClaudeProvider {
         if let Some(child) = self.child_thread(thread) {
             return child.map(|child| self.child_read(&child));
         }
-        self.call(
-            "thread.read",
-            &ThreadRef {
-                app_thread_id: thread.clone(),
-            },
-        )
-        .await
+        let mut read: ThreadReadResult = self
+            .call(
+                "thread.read",
+                &ThreadRef {
+                    app_thread_id: thread.clone(),
+                },
+            )
+            .await?;
+        self.overlay_previews([&mut read.thread]);
+        Ok(read)
     }
 
     async fn thread_read_fenced(
@@ -865,13 +877,16 @@ impl AgentProvider for ClaudeProvider {
             let read = self.child_read(&child?);
             return Ok((read, self.host_fence(thread).await?));
         }
-        self.call_fenced(
-            "thread.read",
-            &ThreadRef {
-                app_thread_id: thread.clone(),
-            },
-        )
-        .await
+        let (mut read, fence): (ThreadReadResult, ProviderFence) = self
+            .call_fenced(
+                "thread.read",
+                &ThreadRef {
+                    app_thread_id: thread.clone(),
+                },
+            )
+            .await?;
+        self.overlay_previews([&mut read.thread]);
+        Ok((read, fence))
     }
 
     async fn thread_list(
@@ -886,7 +901,9 @@ impl AgentProvider for ClaudeProvider {
         {
             return indexed.map_err(ProviderError::Rejected);
         }
-        self.call("thread.list", &params).await
+        let mut listed: ThreadListResult = self.call("thread.list", &params).await?;
+        self.overlay_previews(&mut listed.threads);
+        Ok(listed)
     }
 
     async fn thread_turns(

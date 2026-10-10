@@ -9,7 +9,7 @@
  * `toolCall {namespace: null}` with their bare name. Pure; no I/O.
  */
 
-import type { AgentItem, AppThreadId, ExecutionStatus, ItemId } from "../protocol.js";
+import type { AgentItem, AppThreadId, ExecutionStatus, ItemId, PlanStep } from "../protocol.js";
 import { asItemId } from "../protocol.js";
 import { clientToolOf } from "./clientTools.js";
 import { completedDiff, inputDiff } from "./diffs.js";
@@ -358,17 +358,19 @@ function todoStatus(raw: string | null): "pending" | "inProgress" | "completed" 
   return raw === "in_progress" ? "inProgress" : "pending";
 }
 
-/** Plan steps from a TodoWrite input. */
-export function todoPlan(
-  input: JsonRecord,
-): readonly { readonly status: "pending" | "inProgress" | "completed"; readonly step: string }[] {
+/** Plan steps from a TodoWrite input; `activeForm` is the step's running label. */
+export function todoPlan(input: JsonRecord): readonly PlanStep[] {
   const todos: readonly unknown[] = Array.isArray(input["todos"]) ? input["todos"] : [];
   return todos.flatMap((todo) => {
     if (!isRecord(todo)) {
       return [];
     }
-    const step = str(todo["content"]) ?? str(todo["activeForm"]) ?? "";
-    return [{ status: todoStatus(str(todo["status"])), step }];
+    const activeForm = str(todo["activeForm"]);
+    const step = str(todo["content"]) ?? activeForm ?? "";
+    const status = todoStatus(str(todo["status"]));
+    return [
+      activeForm === null || activeForm === "" ? { status, step } : { activeForm, status, step },
+    ];
   });
 }
 

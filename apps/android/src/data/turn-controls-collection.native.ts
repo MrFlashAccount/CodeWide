@@ -12,7 +12,9 @@ export function createTurnControlsCollection(): Collection<TurnControlsRow, stri
     getKey: (row) => row.id,
     id: "workspace-turn-controls-v2",
     legacyCollectionId: "workspace-turn-controls-v2",
-    schemaVersion: 2,
+    // v3: drops catalogs persisted before provider annotations; a stale row read
+    // under a fallback key is never refreshed and lacks `provider`/`providers`.
+    schemaVersion: 3,
     tableName: "codewide_turn_controls",
   }).collection;
 }

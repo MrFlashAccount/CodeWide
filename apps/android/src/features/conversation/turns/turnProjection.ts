@@ -417,10 +417,20 @@ function prepareTurnPresentation(turn: TurnRow) {
         part.kind === "collapsedActivity" ||
         (part.kind === "activity" && activitySegmentUsesDisclosure(part)),
     );
+  // Subagent rows are navigation, not disclosure, but their names and
+  // descriptions need the row's width: a turn showing one spans the row.
+  const hasSubagentRows = visibleLiveActivitySequence.some(
+    (part) =>
+      part.kind === "activity" &&
+      part.blocks.some(
+        (block) => block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity",
+      ),
+  );
   const agentBubbleFill =
     hasQuestions ||
     artifacts.length > 0 ||
     hasDisclosedBubbleActivity ||
+    hasSubagentRows ||
     (latestAgentTextReference?.byteLength ?? 0) > 0 ||
     (hasGeneratedAgentResponse && richMarkdownLayout(latestAgentBlock?.body ?? "") === "fill");
   const hasAgentContent =

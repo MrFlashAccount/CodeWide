@@ -6,6 +6,11 @@ import { unknownRecord } from "./unknownRecord";
 type ActiveThreadStatus = Extract<Thread["status"], { type: "active" }>;
 
 export type StoredThreadSummary = {
+  /**
+   * A root thread whose loaded sub-agents are running; absent in older rows
+   * and on child rows. See `threadSummarySubagentActivity.ts`.
+   */
+  activeSubagents?: boolean;
   agentNickname?: string | null;
   agentRole?: string | null;
   archived: boolean;

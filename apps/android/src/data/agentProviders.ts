@@ -153,8 +153,17 @@ export type AccountPoolPresence =
   | { readonly kind: "present"; readonly owner: AgentProviderStatusEntry | null };
 
 /** The account pool of a server's provider list (see {@link AccountPoolPresence}). */
+/**
+ * An older Companion either reports the provider list method as unknown or
+ * fails it some other way before any list arrives.
+ */
+function isOlderCompanion(state: AgentProvidersState | undefined): boolean {
+  return state?.status === "unsupported" || (state?.status === "error" && state.value === null);
+}
+
 export function accountPoolPresence(state: AgentProvidersState | undefined): AccountPoolPresence {
-  if (state?.status === "unsupported") {
+  // Such a Companion keeps its pool as it always was.
+  if (isOlderCompanion(state)) {
     return { kind: "present", owner: null };
   }
   const value = state === undefined ? null : agentProvidersValue(state);

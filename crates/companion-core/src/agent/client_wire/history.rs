@@ -195,7 +195,8 @@ pub fn sync_history(
 
 /// The thread invalidation of a [`HistoryChange`], in the shape of the Codex
 /// rollout invalidation: the client re-reads the open conversation through
-/// `companion/thread/sync` and refreshes the thread list row.
+/// `companion/thread/sync` and refreshes the thread list row, whose preview
+/// becomes the change's `previewText` when the provider reported one.
 ///
 /// It carries no `turnActive`. The change travels the local route while the
 /// provider's own turn events travel the provider route, so it can be
@@ -205,6 +206,14 @@ pub fn sync_history(
 #[must_use]
 pub fn history_invalidation(change: &HistoryChange) -> Value {
     let thread_id = change.app_thread_id.as_str();
+    let mut summary = json!({
+        "activity": true,
+        "conversationMessage": false,
+        "finalAgentResponse": false
+    });
+    if let (Some(preview), Some(fields)) = (&change.preview, summary.as_object_mut()) {
+        fields.insert("previewText".into(), Value::String(preview.clone()));
+    }
     json!({
         "method": "companion/thread/invalidated",
         "params": {
@@ -218,11 +227,7 @@ pub fn history_invalidation(change: &HistoryChange) -> Value {
             "operation": {
                 "kind": "threadInvalidated",
                 "archived": change.archived,
-                "summary": {
-                    "activity": true,
-                    "conversationMessage": false,
-                    "finalAgentResponse": false
-                }
+                "summary": summary
             }
         }
     })
@@ -312,6 +317,7 @@ mod tests {
         let payload = history_invalidation(&HistoryChange {
             app_thread_id: AppThreadId::from_static("terminal-session"),
             archived: true,
+            preview: Some("Newest answer".into()),
         });
         assert_eq!(payload["method"], "companion/thread/invalidated");
         let patch = &payload[crate::thread_patch::THREAD_PATCH_FIELD];
@@ -320,6 +326,22 @@ mod tests {
         assert_eq!(patch["operation"]["kind"], "threadInvalidated");
         assert_eq!(patch["operation"]["archived"], true);
         assert_eq!(patch["operation"]["summary"]["activity"], true);
+        // The list row shows the thread's newest message at once.
+        assert_eq!(
+            patch["operation"]["summary"]["previewText"],
+            "Newest answer"
+        );
+        let without_preview = history_invalidation(&HistoryChange {
+            app_thread_id: AppThreadId::from_static("terminal-session"),
+            archived: false,
+            preview: None,
+        });
+        assert!(
+            without_preview[crate::thread_patch::THREAD_PATCH_FIELD]["operation"]["summary"]
+                .get("previewText")
+                .is_none(),
+            "an unknown preview keeps the row's current one"
+        );
         // Lifecycle stays with the provider's ordered turn events.
         assert!(patch["operation"].get("turnActive").is_none());
         assert!(payload["params"].get("turnActive").is_none());
