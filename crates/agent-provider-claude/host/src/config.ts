@@ -1,8 +1,11 @@
 /**
  * Command-line configuration of the Claude agent host process.
  *
- * The companion launches `<runtime> <entry> --claude-executable <abs>
- * --journal-directory <abs> --idle-release-minutes <5..240>`. The state
+ * The companion launches `<host> --claude-executable <abs>
+ * --journal-directory <abs> --idle-release-minutes <5..240> [--agent-sdk <abs>]`
+ * (a source checkout: `<runtime> <entry> …`). `--agent-sdk` is the `sdk.mjs`
+ * of the Agent SDK the companion installed; without it the host imports its
+ * own installed package. The state
  * directory flag keeps its former name `--journal-directory` so that existing
  * companion builds keep working; `--state-directory` is accepted as its
  * replacement (exactly one of the two). Values are validated here; an invalid
@@ -12,6 +15,8 @@
 import { isAbsolute } from "node:path";
 
 export interface HostConfig {
+  /** Absolute path of the Agent SDK's `sdk.mjs`; `null` imports the installed package. */
+  readonly agentSdk: string | null;
   /** Absolute path of the user's `claude` executable. */
   readonly claudeExecutable: string;
   /** Minutes without activity before an idle session's process is released. */
@@ -35,6 +40,7 @@ export const IDLE_RELEASE_MINUTES = {
 } as const;
 
 const KNOWN_FLAGS: ReadonlySet<string> = new Set([
+  "--agent-sdk",
   "--claude-executable",
   "--idle-release-minutes",
   "--journal-directory",
@@ -85,6 +91,15 @@ function idleMinutesOf(values: ReadonlyMap<string, string>): number | null {
     : null;
 }
 
+/** `null` without the flag; `undefined` for a relative path. */
+function agentSdkOf(values: ReadonlyMap<string, string>): string | null | undefined {
+  const entry = values.get("--agent-sdk");
+  if (entry === undefined) {
+    return null;
+  }
+  return isAbsolute(entry) ? entry : undefined;
+}
+
 export function parseConfig(argv: readonly string[]): ConfigResult {
   const flags = parseFlags(argv);
   if (flags.status === "error") {
@@ -108,5 +123,12 @@ export function parseConfig(argv: readonly string[]): ConfigResult {
       status: "error",
     };
   }
-  return { config: { claudeExecutable, idleReleaseMinutes, stateDirectory }, status: "ok" };
+  const agentSdk = agentSdkOf(flags.values);
+  if (agentSdk === undefined) {
+    return { error: "--agent-sdk must be an absolute path", status: "error" };
+  }
+  return {
+    config: { agentSdk, claudeExecutable, idleReleaseMinutes, stateDirectory },
+    status: "ok",
+  };
 }

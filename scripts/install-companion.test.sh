@@ -67,14 +67,11 @@ test -r "$unit_root/codewide-companion-update.service"
 test -r "$unit_root/codewide-companion-memory-watch.service"
 test -r "$unit_root/codewide-companion-memory-watch.timer"
 test -s "$test_home/.codewide/host.token"
-# The Claude agent host payload is staged for its installer, not activated.
-test -x "$install_root/libexec/codewide-install-claude-provider"
-test -f "$install_root/share/claude-agent-host/dist/main.js"
-test "$(cat "$install_root/share/claude-agent-host/VERSION")" = "$version"
+# The Claude agent host ships inside the companion binary: no separate
+# installer, payload or provider configuration is written.
+test ! -e "$install_root/current/libexec/codewide-install-claude-provider"
+test ! -e "$install_root/current/share/claude-agent-host"
 test ! -e "$test_home/.local/state/codewide/companion/agent-providers.json"
-# CI has no `claude`; node stands in (a dry run only runs `--version`).
-HOME="$test_home" "$install_root/libexec/codewide-install-claude-provider" --dry-run \
-  --node "$(command -v node)" --claude "$(command -v node)" --service-path /usr/bin:/bin >/dev/null
 
 installed_sha256=$(sha256sum "$install_root/current/bin/codewide-companion" | awk '{print $1}')
 tampered_root="$test_root/tampered"

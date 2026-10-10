@@ -1,5 +1,7 @@
 import { StyleSheet } from "react-native";
 
+import { SETTINGS_ROW_LEADING_SIZE } from "../../ui/settingsRowLayout";
+
 import { colors, radii, spacing, typeScale } from "../../theme";
 import { listRowHeight } from "../../ui/AppListRow.types";
 
@@ -9,10 +11,11 @@ export const styles = StyleSheet.create({
     // tone calm, and only a real failure switches to the error container.
     backgroundColor: colors.surfaceContainerHighest,
     borderRadius: radii.medium,
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-    marginHorizontal: spacing.sm,
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+    // The callout text starts in the row's text column.
+    marginLeft: spacing.md + SETTINGS_ROW_LEADING_SIZE + spacing.md - spacing.sm,
+    marginRight: spacing.md,
     padding: spacing.sm,
   },
   calloutActions: {
@@ -20,22 +23,15 @@ export const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.xs,
   },
-  calloutBody: {
-    flex: 1,
-    gap: spacing.xs,
-    minWidth: 0,
-  },
   calloutError: {
     backgroundColor: colors.errorContainer,
     borderRadius: radii.medium,
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-    marginHorizontal: spacing.sm,
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+    // The callout text starts in the row's text column.
+    marginLeft: spacing.md + SETTINGS_ROW_LEADING_SIZE + spacing.md - spacing.sm,
+    marginRight: spacing.md,
     padding: spacing.sm,
-  },
-  calloutIcon: {
-    marginTop: spacing.optical,
   },
   calloutText: {
     color: colors.text,
@@ -51,11 +47,16 @@ export const styles = StyleSheet.create({
     overflow: "hidden",
   },
   command: {
+    alignItems: "center",
     backgroundColor: colors.code,
     borderRadius: radii.compact,
+    flexDirection: "row",
+    paddingLeft: spacing.xs,
+  },
+  commandText: {
     color: colors.text,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xxs,
+    flex: 1,
+    minWidth: 0,
     ...typeScale.code,
   },
   description: {
@@ -67,6 +68,10 @@ export const styles = StyleSheet.create({
   },
   descriptionSuccess: {
     color: colors.green,
+  },
+  leadingSlot: {
+    alignItems: "center",
+    width: SETTINGS_ROW_LEADING_SIZE,
   },
   row: {
     alignItems: "center",

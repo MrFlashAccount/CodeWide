@@ -11,6 +11,8 @@ export const styles = StyleSheet.create({
     gap: spacing.xxs,
   },
   softwareSection: {
-    marginTop: spacing.md,
+    // The connection editor above ends with `spacing.xs` of padding; together
+    // they match the `spacing.md` + `spacing.xxs` gap before account sections.
+    marginTop: spacing.sm,
   },
 });

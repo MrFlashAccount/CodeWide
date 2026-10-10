@@ -5,6 +5,7 @@
  * with their turn.
  */
 
+import { ModelCatalog } from "../src/catalog/models.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
@@ -12,6 +13,7 @@ import { asAppThreadId, asTurnId } from "../src/protocol.js";
 import type { AgentEvent, ClientToolSpec, ToolCallParams } from "../src/protocol.js";
 import type { ClientToolBinding, QueryOpenOptions } from "../src/claude/port.js";
 import { clientToolServer } from "../src/claude/sdkClientTools.js";
+import { loadAgentSdk } from "../src/claude/sdkModule.js";
 import { createMemoryLogger } from "../src/log.js";
 import { startItem } from "../src/mapping/tools.js";
 import { RpcServer, TOOL_CALL_CANCELLED } from "../src/rpc/server.js";
@@ -93,7 +95,7 @@ describe("client tool mapping", () => {
 
 describe("SDK client tool server", () => {
   async function connect(binding: ClientToolBinding): Promise<Client> {
-    const server = clientToolServer(binding);
+    const server = clientToolServer(await loadAgentSdk(null), binding);
     const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
     await server.instance.connect(serverSide);
     const client = new Client({ name: "test", version: "1" });
@@ -146,6 +148,7 @@ describe("tool.call over the stdio channel", () => {
     const lines: Record<string, unknown>[] = [];
     const { service, queries, rateLimits } = harness();
     const rpc = new RpcServer({
+      models: new ModelCatalog(),
       rateLimits,
       service,
       runtime: scriptedRuntime().runtime,

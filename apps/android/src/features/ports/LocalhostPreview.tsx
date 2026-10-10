@@ -80,7 +80,7 @@ export function LocalhostPreview({
           <Ionicons color={colors.accent} name="globe-outline" size={iconSize.illustration} />
           <Text style={styles.sheetTitle}>Open a bounded localhost tunnel</Text>
           <Text style={styles.menuNotice}>
-            Only 127.0.0.1 on the selected Codex server is reachable. The tunnel expires
+            Only 127.0.0.1 on the selected Companion server is reachable. The tunnel expires
             automatically.
           </Text>
           <Text style={styles.fieldLabel}>Local service</Text>

@@ -1,6 +1,5 @@
 /**
- * The Agent SDK query adapter. Together with `sdkSessionStore.ts` the only
- * module that imports `@anthropic-ai/claude-agent-sdk`.
+ * The Agent SDK query adapter over the SDK `sdkModule.ts` loaded.
  *
  * Every query receives the options a profile fixes plus, always explicitly,
  * `permissionMode`, `settingSources`, `env: process.env`,
@@ -11,16 +10,16 @@
  */
 
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  query,
-  type CanUseTool,
-  type EffortLevel,
-  type Options,
-  type PermissionResult,
-  type PermissionUpdate,
-  type Query,
-  type SDKUserMessage,
+import type {
+  CanUseTool,
+  EffortLevel,
+  Options,
+  PermissionResult,
+  PermissionUpdate,
+  Query,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { AgentSdk } from "./sdkModule.js";
 import type {
   ClaudeQuery,
   ClaudeRuntime,
@@ -161,13 +160,14 @@ function baseOptions(claudeExecutable: string): Options {
  * profiles: unset, so settings decide) plus the client tool server.
  */
 function mcpServersOption(
+  sdk: AgentSdk,
   profile: ProfileOptions,
   clientTools: QueryOpenOptions["clientTools"],
 ): Pick<Options, "mcpServers"> {
   if (clientTools === null) {
     return profile.mcpServers === null ? {} : { mcpServers: {} };
   }
-  return { mcpServers: { [CLIENT_TOOL_SERVER]: clientToolServer(clientTools) } };
+  return { mcpServers: { [CLIENT_TOOL_SERVER]: clientToolServer(sdk, clientTools) } };
 }
 
 type AccountField = (key: string) => string | null;
@@ -251,7 +251,7 @@ const EFFORTS: ReadonlySet<unknown> = new Set<EffortLevel>([
 const isEffort = (value: string): value is EffortLevel => EFFORTS.has(value);
 
 /** Creates the production runtime bound to the user's `claude` executable. */
-export function createSdkRuntime(claudeExecutable: string): ClaudeRuntime {
+export function createSdkRuntime(sdk: AgentSdk, claudeExecutable: string): ClaudeRuntime {
   return {
     open(options: QueryOpenOptions): ClaudeQuery {
       const input = new InputQueue();
@@ -280,14 +280,14 @@ export function createSdkRuntime(claudeExecutable: string): ClaudeRuntime {
           ? { allowDangerouslySkipPermissions: true }
           : {}),
         ...(profile.strictMcpConfig ? { strictMcpConfig: true } : {}),
-        ...mcpServersOption(profile, options.clientTools),
+        ...mcpServersOption(sdk, profile, options.clientTools),
         tools:
           profile.tools === null ? { preset: "claude_code", type: "preset" } : [...profile.tools],
         ...(options.identity.type === "new"
           ? { sessionId: options.identity.sessionId }
           : { resume: options.identity.sessionId }),
       };
-      const handle: Query = query({ options: sdkOptions, prompt: input });
+      const handle: Query = sdk.query({ options: sdkOptions, prompt: input });
       return {
         close: () => {
           input.end();
@@ -309,7 +309,7 @@ export function createSdkRuntime(claudeExecutable: string): ClaudeRuntime {
 
     async probe(): Promise<ProbeResult> {
       const input = new InputQueue();
-      const handle = query({
+      const handle = sdk.query({
         options: {
           ...baseOptions(claudeExecutable),
           mcpServers: {},

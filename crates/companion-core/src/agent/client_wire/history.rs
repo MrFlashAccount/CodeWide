@@ -28,8 +28,12 @@ use crate::agent::{
 };
 
 /// Opaque witness of the provider-owned history source. The provider's
-/// journal is append-only per thread, so one constant witness is exact.
-pub const SOURCE_WITNESS: &str = "codewide-agent-history-v1";
+/// journal is append-only per thread, so one constant witness is exact. Its
+/// version names the projection client caches sealed: a client holding turns
+/// of another projection is answered with a reset, so its cache is replaced
+/// rather than extended. v2: user messages projected for display. v3:
+/// compaction items numbered within their turn.
+pub const SOURCE_WITNESS: &str = "codewide-agent-history-v3";
 const MAX_PAGE_SIZE: u64 = 100;
 
 /// Direction of a semantic page relative to its anchor.
@@ -160,7 +164,13 @@ pub fn sync_history(
     let witness = turn_witness(turns.last());
     let anchor = after_turn_id
         .and_then(|after| turns.iter().position(|turn| turn.turn_id.as_str() == after));
-    let Some(anchor) = anchor else {
+    // Cached turns of another projection are replaced, not extended.
+    let current_projection = source_witness.is_none_or(|witness| {
+        witness
+            .strip_prefix(SOURCE_WITNESS)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
+    });
+    let Some(anchor) = anchor.filter(|_| current_projection) else {
         return json!({
             "kind": "reset",
             "headTurnId": head_turn_id,
@@ -185,7 +195,13 @@ pub fn sync_history(
 
 /// The thread invalidation of a [`HistoryChange`], in the shape of the Codex
 /// rollout invalidation: the client re-reads the open conversation through
-/// `companion/thread/sync` and marks the thread list row active.
+/// `companion/thread/sync` and refreshes the thread list row.
+///
+/// It carries no `turnActive`. The change travels the local route while the
+/// provider's own turn events travel the provider route, so it can be
+/// journaled after a turn that started later; a lifecycle bit here would
+/// retire that running turn. The provider's ordered `thread.updated` events
+/// own the lifecycle.
 #[must_use]
 pub fn history_invalidation(change: &HistoryChange) -> Value {
     let thread_id = change.app_thread_id.as_str();
@@ -194,7 +210,6 @@ pub fn history_invalidation(change: &HistoryChange) -> Value {
         "params": {
             "threadId": thread_id,
             "archived": change.archived,
-            "turnActive": false,
             "source": "providerHistory"
         },
         "codewideThreadPatch": {
@@ -203,7 +218,6 @@ pub fn history_invalidation(change: &HistoryChange) -> Value {
             "operation": {
                 "kind": "threadInvalidated",
                 "archived": change.archived,
-                "turnActive": false,
                 "summary": {
                     "activity": true,
                     "conversationMessage": false,
@@ -280,6 +294,12 @@ mod tests {
         assert_eq!(ids(&appended), ["c"]);
         assert_eq!(appended["headTurnId"], "c");
 
+        // Turns cached from another projection are replaced by a reset.
+        let stale = witness.replacen("history-v3", "history-v2", 1);
+        let replaced = sync_history(&newer, Some("c"), Some("a"), Some("b"), Some(&stale));
+        assert_eq!(replaced["kind"], "reset");
+        assert_eq!(ids(&replaced), ["a", "b", "c"]);
+
         // An anchor outside the window resets it.
         let reset = sync_history(&newer, Some("c"), Some("a"), Some("gone"), Some(&witness));
         assert_eq!(reset["kind"], "reset");
@@ -300,6 +320,9 @@ mod tests {
         assert_eq!(patch["operation"]["kind"], "threadInvalidated");
         assert_eq!(patch["operation"]["archived"], true);
         assert_eq!(patch["operation"]["summary"]["activity"], true);
+        // Lifecycle stays with the provider's ordered turn events.
+        assert!(patch["operation"].get("turnActive").is_none());
+        assert!(payload["params"].get("turnActive").is_none());
         // The companion's own patch compiler leaves it as is.
         assert_eq!(
             crate::thread_patch::attach_thread_patch(payload.clone()),

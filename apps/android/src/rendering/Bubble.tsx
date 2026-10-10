@@ -110,9 +110,9 @@ const styles = StyleSheet.create({
   agentSurface: {
     alignSelf: "stretch",
     backgroundColor: colors.messageSurface,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
   },
   content: { minWidth: 0 },
   segmentedAgentSurface: {
@@ -123,19 +123,19 @@ const styles = StyleSheet.create({
   segmentedAgentSurfaceEnd: {
     borderBottomLeftRadius: radii.bubble,
     borderBottomRightRadius: radii.bubble,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
   },
   segmentedAgentSurfaceStart: {
     borderTopLeftRadius: radii.bubble,
     borderTopRightRadius: radii.bubble,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
   },
   userSurface: {
     alignSelf: "flex-end",
     backgroundColor: colors.messageSurface,
     maxWidth: "82%",
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
   },
 });

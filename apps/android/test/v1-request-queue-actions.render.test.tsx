@@ -23,10 +23,11 @@ it("keeps a request pending until response settles and exposes rejection for ret
   const screen = render(<ApprovalPrompt request={request} requestCount={1} onRespond={respond} />);
   fireEvent.press(screen.getByText("Accept once"));
   expect(respond).toHaveBeenCalledWith(request, { decision: "accept" });
-  expect(screen.getByText("RESOLVING…")).toBeOnTheScreen();
+  expect(screen.getByTestId("approval-title-pending")).toBeOnTheScreen();
+  expect(screen.getByText("Command approval")).toBeOnTheScreen();
   await act(async () => response.reject(new Error("Connection lost")));
   await waitFor(() => expect(screen.getByText("Connection lost")).toBeOnTheScreen());
-  expect(screen.queryByText("RESOLVING…")).toBeNull();
+  expect(screen.queryByTestId("approval-title-pending")).toBeNull();
 });
 
 it("keeps queued action busy through refresh, exposes failure and preserves the command id", async () => {

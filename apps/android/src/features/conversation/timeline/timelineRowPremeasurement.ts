@@ -205,6 +205,11 @@ function dynamicPresentationReason(
   if (isLeadingPlacement(row.placement) && presentation.preTurnBlocks.length > 0) {
     return "leading-activity";
   }
+  // A bubble shared by several turns combines their history and chrome; its
+  // slices keep native layout instead of a per-turn exact size.
+  if (row.group !== null) {
+    return "composite-row";
+  }
   // WHY: Exact hints are lifetime-fixed sizes in LegendList. Expansion lives inside
   // the row and does not replace its identity, so even collapsed history must allow
   // native layout updates. Keep its premeasured height only as an initial estimate.

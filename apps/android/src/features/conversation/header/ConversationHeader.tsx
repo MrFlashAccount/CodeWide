@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View } from "react-native";
 import { contextUsageFromProjection } from "../../../data/account-rate-limits";
-import { readThreadAgent } from "../../../data/threadAgent";
+import { DEFAULT_SERVER_ICON_ID } from "../../../data/serverIcons";
 import { colors, iconSize } from "../../../theme";
 import { InlineEmoji } from "../../../ui/InlineIcon";
 import { leadingEmoji } from "../../../ui/ThreadTitle";
@@ -51,9 +51,6 @@ export function ConversationHeader({
   threadChatModel,
   threadSearchVisible,
 }: ConversationHeaderProps) {
-  const agent = readThreadAgent(remoteThread);
-  // In multi-provider mode a thread with account limits shows its own provider's pool.
-  const accountsOwnerName = agent?.providerName ?? null;
   return (
     <View style={styles.conversationHeader} testID="conversation-header">
       {compact && (
@@ -104,7 +101,6 @@ export function ConversationHeader({
       )}
       {!newChat && (
         <WorkspaceAccountUsageMenu
-          accountsOwnerName={accountsOwnerName}
           align="end"
           compactionCount={sessionCompactionCount}
           currentUsage={currentUsage}
@@ -113,6 +109,7 @@ export function ConversationHeader({
           providerLimits={providerLimits}
           servers={[
             {
+              iconId: server?.iconId ?? DEFAULT_SERVER_ICON_ID,
               id: server?.id ?? "active-server",
               name: server?.name ?? "Server",
             },

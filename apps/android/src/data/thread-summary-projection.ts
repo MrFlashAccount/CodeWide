@@ -130,6 +130,35 @@ export function projectThreadSummarySnapshot(
   };
 }
 
+/**
+ * Keeps live state that a paginated catalog row must not roll back.
+ *
+ * The page comes from the provider state store and may describe an earlier moment than events
+ * already applied to the row. A listed `notLoaded` only says the provider does not hold the thread
+ * in memory; a turn that runs elsewhere is still active, and its end arrives as an ordered
+ * lifecycle event. Recency, which orders the list, never moves backwards.
+ */
+export function retainLiveCatalogState(
+  page: StoredThreadSummary,
+  previous: StoredThreadSummary,
+): StoredThreadSummary {
+  if (page.status.type === "notLoaded" && previous.status.type === "active") {
+    page.status = previous.status;
+  }
+  if (
+    previous.recencyAt !== null &&
+    (page.recencyAt === null || page.recencyAt < previous.recencyAt)
+  ) {
+    page.recencyAt = previous.recencyAt;
+  }
+  return page;
+}
+
+/** A catalog head refresh evicts absent rows, but never one whose live turn or request is open. */
+export function catalogHeadEvictable(row: StoredThreadSummary): boolean {
+  return row.status.type !== "active" && row.pendingRequestCount === 0;
+}
+
 function selectPreview(
   snapshotPreview: string | null | undefined,
   listedPreview: string,

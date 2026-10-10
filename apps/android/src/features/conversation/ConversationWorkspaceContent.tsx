@@ -1,4 +1,5 @@
 import { agentProviders } from "../../data/workspace-runtime";
+import { threadOpenElsewhere } from "../../data/threadDirectInput";
 import { ConversationComposition } from "./ConversationComposition";
 import { forkTargetChoices } from "../turnActions/forkTargets";
 import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
@@ -177,7 +178,8 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         newChat: props.newChatDraft !== null,
         onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,
-        readOnly: false,
+        // A thread another process holds opens read-only until it lets go.
+        readOnly: threadOpenElsewhere(remoteThread),
         server: props.servers.find((server) => server.id === props.activeConnectionId),
         thread: visibleThread,
         unread: props.activeThread?.unread ?? 0,

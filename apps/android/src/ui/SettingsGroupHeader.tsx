@@ -23,7 +23,7 @@ export function SettingsGroupHeader({
       <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
         {title}
       </Text>
-      {trailing}
+      {trailing !== undefined && <View style={styles.trailing}>{trailing}</View>}
     </View>
   );
 }
@@ -34,7 +34,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xs,
     minHeight: touchTarget,
-    paddingLeft: spacing.xxs,
+    // Rows inset their content by `spacing.md`, and their trailing 48dp action
+    // sits inside the same inset: matching it puts the header label over the
+    // row leading slot and the header actions in the rows' action column.
+    paddingHorizontal: spacing.md,
   },
   title: {
     color: colors.textMuted,
@@ -44,5 +47,9 @@ const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
     letterSpacing: typeTracking.caps,
     textTransform: "uppercase",
+  },
+  trailing: {
+    alignItems: "center",
+    flexDirection: "row",
   },
 });

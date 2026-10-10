@@ -417,7 +417,10 @@ pub(crate) fn summary_projection_state_from_file(
     Ok(builder)
 }
 
-pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 11;
+/// Version of the projection client caches sealed. 12: the Companion projects
+/// user messages for display (model-only context hidden, envelopes removed),
+/// so cached raw user messages are replaced.
+pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 12;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct SummaryProjectionState {

@@ -42,7 +42,7 @@ export type ThreadAgentCapability =
 /** Persistable descriptor: the bound provider and its supported capability names. */
 export type ThreadAgent = {
   readonly capabilities: readonly string[];
-  /** Whether the provider is the host's primary provider; only non-primary threads get a badge. */
+  /** Whether the provider is the host's primary provider. */
   readonly primary: boolean;
   /** `null` only for a malformed descriptor whose provider id is unusable. */
   readonly provider: AgentProviderId | null;
@@ -74,7 +74,7 @@ export function parseAgentProviderId(value: unknown): AgentProviderId | null {
  * Reads a thread-like value's `codewideAgent` extension. Capabilities are a record
  * whose supported entries are `true` or a mode such as `"busy"`; a list of
  * supported names is accepted too. Unknown or `false` entries are unsupported.
- * A descriptor without `primary` is treated as primary (no badge) and one without
+ * A descriptor without `primary` is treated as primary and one without
  * a usable `providerName` shows its provider id. Returns `null` (legacy: Codex
  * with every capability) only when the descriptor is absent (or `null`); a
  * malformed descriptor yields an agent without capabilities.

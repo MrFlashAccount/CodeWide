@@ -1,10 +1,7 @@
 import type { SendMode, TurnSendOptions } from "../../data/thread-delivery-state";
 import type { TurnControlsValue } from "../../data/turn-controls-types";
 import type { NewThreadDraft } from "../../services/threads/newThreadService";
-import {
-  threadSelectionKey,
-  type SelectWorkspaceThread,
-} from "../../services/threads/threadRouteParams";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import type { ComposerWorkspaceCapabilities } from "../composer/workspaceCapabilities";
 import type { ProjectsWorkspaceCapabilities, ThreadStartAgent } from "./workspaceCapabilities";
 
@@ -21,7 +18,7 @@ type NewChatSubmissionInput = {
   readonly commands: Pick<ProjectsWorkspaceCapabilities, "startThread" | "startThreadInWorkspace"> &
     Pick<ComposerWorkspaceCapabilities, "sendText">;
   readonly draftChat: NewThreadDraft;
-  readonly setActiveThreadId: SelectWorkspaceThread;
+  readonly setActiveThreadId: (selectionKey: string) => void;
 };
 
 /** Binds one activation; awaits preserve the original draft and admission scope. */

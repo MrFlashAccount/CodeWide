@@ -210,3 +210,11 @@ export interface SessionStore {
   /** Ids of the session's sub-agents; empty when it has none. */
   readonly subagents: (location: SessionLocation) => Promise<readonly string[]>;
 }
+
+/**
+ * Ids of the sessions Claude processes run right now: background agents,
+ * terminals and SDK queries, this host's own included.
+ */
+export interface RunningSessions {
+  readonly list: () => Promise<ReadonlySet<string>>;
+}

@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::config::ClaudeConfig;
+use crate::config::{ClaudeConfig, HostLaunch};
 
 const SHEBANG_LIMIT: u64 = 256;
 
@@ -55,11 +55,13 @@ impl std::fmt::Display for PreflightProblem {
 #[must_use]
 pub fn preflight(config: &ClaudeConfig, inherited_path: Option<&OsStr>) -> Vec<PreflightProblem> {
     let search_path = config.host_search_path(inherited_path);
+    let mut executables = match &config.host {
+        HostLaunch::Executable { executable, .. } => vec![("hostExecutable", executable)],
+        HostLaunch::Script { runtime, .. } => vec![("runtimeExecutable", runtime)],
+    };
+    executables.push(("claudeExecutable", &config.claude_executable));
     let mut problems = Vec::new();
-    for (field, executable) in [
-        ("runtimeExecutable", &config.runtime_executable),
-        ("claudeExecutable", &config.claude_executable),
-    ] {
+    for (field, executable) in executables {
         if !is_executable(executable) {
             problems.push(PreflightProblem::NotExecutable { field });
             continue;
@@ -70,10 +72,16 @@ pub fn preflight(config: &ClaudeConfig, inherited_path: Option<&OsStr>) -> Vec<P
             problems.push(PreflightProblem::InterpreterNotFound { field, interpreter });
         }
     }
-    if !config.sidecar_entry.is_file() {
-        problems.push(PreflightProblem::NotAFile {
-            field: "sidecarEntry",
-        });
+    match &config.host {
+        HostLaunch::Script { entry, .. } if !entry.is_file() => {
+            problems.push(PreflightProblem::NotAFile {
+                field: "sidecarEntry",
+            });
+        }
+        HostLaunch::Executable { agent_sdk, .. } if !agent_sdk.is_file() => {
+            problems.push(PreflightProblem::NotAFile { field: "agentSdk" });
+        }
+        HostLaunch::Script { .. } | HostLaunch::Executable { .. } => {}
     }
     problems
 }
@@ -136,10 +144,13 @@ mod tests {
         std::fs::create_dir_all(entry.parent().ok_or("no parent")?)?;
         std::fs::write(&entry, "")?;
         let config = |environment: serde_json::Value| {
-            ClaudeConfig::parse(&json!({
-                "runtimeExecutable": node, "sidecarEntry": entry, "claudeExecutable": claude,
-                "journalDirectory": root.path().join("journal"), "environment": environment,
-            }))
+            ClaudeConfig::parse(
+                &json!({
+                    "runtimeExecutable": node, "sidecarEntry": entry, "claudeExecutable": claude,
+                    "journalDirectory": root.path().join("journal"), "environment": environment,
+                }),
+                &crate::config::ClaudeDefaults::default(),
+            )
         };
 
         // `node` resolves through the runtime directory the adapter prepends,
@@ -153,9 +164,17 @@ mod tests {
         // script's interpreter is unresolved.
         let bun = root.path().join("other/bin/bun");
         executable(&bun, "")?;
+        let base = config(json!({"PATH": "/nonexistent"}))?;
+        let entry = match &base.host {
+            HostLaunch::Script { entry, .. } => entry.clone(),
+            HostLaunch::Executable { .. } => return Err("a script host was configured".into()),
+        };
         let missing = ClaudeConfig {
-            runtime_executable: bun,
-            ..config(json!({"PATH": "/nonexistent"}))?
+            host: HostLaunch::Script {
+                runtime: bun,
+                entry,
+            },
+            ..base
         };
         assert_eq!(
             preflight(&missing, None),
@@ -172,10 +191,13 @@ mod tests {
         let root = tempfile::tempdir()?;
         let plain = root.path().join("plain");
         std::fs::write(&plain, "")?;
-        let config = ClaudeConfig::parse(&json!({
-            "runtimeExecutable": plain, "sidecarEntry": root.path(), "claudeExecutable": plain,
-            "journalDirectory": root.path().join("journal"),
-        }))?;
+        let config = ClaudeConfig::parse(
+            &json!({
+                "runtimeExecutable": plain, "sidecarEntry": root.path(), "claudeExecutable": plain,
+                "journalDirectory": root.path().join("journal"),
+            }),
+            &crate::config::ClaudeDefaults::default(),
+        )?;
         assert_eq!(
             preflight(&config, None),
             [

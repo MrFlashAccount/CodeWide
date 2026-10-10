@@ -162,7 +162,7 @@ const thread = obj({
   provider: str,
   recencyAt: nullable(int),
   settings,
-  status: literal("idle", "active", "notLoaded", "failed"),
+  status: literal("idle", "active", "notLoaded", "failed", "openElsewhere"),
   updatedAt: int,
 });
 const userContent = tagged("type", {

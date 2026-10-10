@@ -1,15 +1,17 @@
 //! `providers.claude` entry of `agent-providers.json`.
 //!
-//! Every path is absolute; the idle release window is bounded. An invalid
+//! Every field is optional. Without an entry, or with `{}`, Claude runs the
+//! agent host shipped with this companion and the user's `claude` found on
+//! the machine ([`ClaudeDefaults`]); `false` disables Claude. An invalid
 //! entry disables Claude (the caller logs the full error once) and never
 //! affects other providers.
 //!
-//! `environment` is the part of the user's environment the installer
-//! captured for the host child, because a service manager (systemd user
-//! units, launchd) starts the companion with a minimal `PATH`: an npm-global
-//! `claude` is a `#!/usr/bin/env node` script, and Claude's Bash tool inherits
-//! the host's `PATH`. Only `PATH` and `CLAUDE_CONFIG_DIR` are accepted; no
-//! credential or `ANTHROPIC_*` value can be configured here.
+//! `environment` overrides the environment the host child gets, because a
+//! service manager (systemd user units, launchd) starts the companion with a
+//! minimal `PATH` and Claude's Bash tool inherits the host's `PATH`; without
+//! it the user's login-shell `PATH` is used. Only `PATH` and
+//! `CLAUDE_CONFIG_DIR` are accepted; no credential or `ANTHROPIC_*` value
+//! can be configured here.
 
 use std::{
     ffi::{OsStr, OsString},
@@ -39,6 +41,18 @@ pub enum ClaudeConfigError {
     SearchPath,
     #[error("providers.claude.{field} must not contain ':'")]
     PathSeparator { field: &'static str },
+    #[error(
+        "this companion ships no Claude agent host; set providers.claude.hostExecutable or runtimeExecutable with sidecarEntry"
+    )]
+    NoHost,
+    #[error(
+        "`claude` was not found on this machine; install Claude Code or set providers.claude.claudeExecutable"
+    )]
+    NoClaude,
+    #[error(
+        "the Claude Agent SDK is not installed; set providers.claude.agentSdk or let the companion download it"
+    )]
+    NoAgentSdk,
 }
 
 #[derive(Deserialize)]
@@ -53,18 +67,53 @@ struct RawEnvironment {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawClaudeConfig {
-    runtime_executable: PathBuf,
-    sidecar_entry: PathBuf,
-    claude_executable: PathBuf,
-    journal_directory: PathBuf,
+    host_executable: Option<PathBuf>,
+    agent_sdk: Option<PathBuf>,
+    runtime_executable: Option<PathBuf>,
+    sidecar_entry: Option<PathBuf>,
+    claude_executable: Option<PathBuf>,
+    journal_directory: Option<PathBuf>,
     idle_release_minutes: Option<u32>,
     environment: Option<RawEnvironment>,
+}
+
+/// What the companion knows about this machine before reading
+/// `providers.claude`; every entry field falls back to it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ClaudeDefaults {
+    /// The self-contained host executable shipped with this companion.
+    pub bundled_host: Option<PathBuf>,
+    /// `sdk.mjs` of the Agent SDK the companion installed for that host.
+    pub agent_sdk: Option<PathBuf>,
+    /// The user's `claude`, found on the machine.
+    pub claude_executable: Option<PathBuf>,
+    /// The host's metadata directory (`<state dir>/claude-journal`).
+    pub journal_directory: PathBuf,
+    /// The user's login-shell `PATH`, the host child's `PATH` unless the
+    /// entry configures one.
+    pub login_path: Option<Vec<PathBuf>>,
+}
+
+/// How the companion starts the Claude agent host.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HostLaunch {
+    /// A self-contained host executable (`bun build --compile` with the
+    /// Agent SDK left out): the one shipped with this companion, or
+    /// `hostExecutable`. It loads the SDK from `agent_sdk` (`sdk.mjs`).
+    Executable {
+        executable: PathBuf,
+        agent_sdk: PathBuf,
+    },
+    /// A JavaScript runtime running the host's entry script
+    /// (`runtimeExecutable` + `sidecarEntry`), for development.
+    Script { runtime: PathBuf, entry: PathBuf },
 }
 
 /// The configured environment of the host child.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HostEnvironment {
-    /// `PATH` captured by the installer; `None` keeps the companion's own.
+    /// `PATH` of the host child (configured, else the login shell's);
+    /// `None` keeps the companion's own.
     pub search_path: Option<Vec<PathBuf>>,
     /// `CLAUDE_CONFIG_DIR`; `None` keeps the companion's own (or Claude's
     /// default `~/.claude`).
@@ -74,8 +123,7 @@ pub struct HostEnvironment {
 /// Validated Claude provider configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaudeConfig {
-    pub runtime_executable: PathBuf,
-    pub sidecar_entry: PathBuf,
+    pub host: HostLaunch,
     pub claude_executable: PathBuf,
     pub journal_directory: PathBuf,
     pub idle_release_minutes: u32,
@@ -100,12 +148,19 @@ fn search_path(value: &str) -> Result<Vec<PathBuf>, ClaudeConfigError> {
     }
 }
 
-fn environment(raw: Option<RawEnvironment>) -> Result<HostEnvironment, ClaudeConfigError> {
-    let Some(raw) = raw else {
-        return Ok(HostEnvironment::default());
-    };
+fn environment(
+    raw: Option<RawEnvironment>,
+    login_path: Option<&Vec<PathBuf>>,
+) -> Result<HostEnvironment, ClaudeConfigError> {
+    let raw = raw.unwrap_or(RawEnvironment {
+        path: None,
+        claude_config_dir: None,
+    });
     Ok(HostEnvironment {
-        search_path: raw.path.as_deref().map(search_path).transpose()?,
+        search_path: match raw.path.as_deref() {
+            Some(configured) => Some(search_path(configured)?),
+            None => login_path.cloned(),
+        },
         claude_config_dir: raw
             .claude_config_dir
             .map(|directory| absolute(directory, "environment.CLAUDE_CONFIG_DIR"))
@@ -126,22 +181,78 @@ fn executable_directory(
     }
 }
 
-fn existing(path: &Path, field: &'static str) -> Result<(), ClaudeConfigError> {
+fn existing(path: PathBuf, field: &'static str) -> Result<PathBuf, ClaudeConfigError> {
+    let path = absolute(path, field)?;
     if path.exists() {
-        Ok(())
+        Ok(path)
     } else {
         Err(ClaudeConfigError::Missing { field })
     }
 }
 
+fn host_launch(
+    raw: &mut RawClaudeConfig,
+    defaults: &ClaudeDefaults,
+) -> Result<HostLaunch, ClaudeConfigError> {
+    let configured_sdk = raw.agent_sdk.take();
+    let agent_sdk = || match configured_sdk.clone() {
+        Some(path) => existing(path, "agentSdk"),
+        None => defaults
+            .agent_sdk
+            .clone()
+            .ok_or(ClaudeConfigError::NoAgentSdk),
+    };
+    match (
+        raw.host_executable.take(),
+        raw.runtime_executable.take(),
+        raw.sidecar_entry.take(),
+    ) {
+        (Some(executable), None, None) => Ok(HostLaunch::Executable {
+            executable: existing(executable, "hostExecutable")?,
+            agent_sdk: agent_sdk()?,
+        }),
+        (None, Some(runtime), Some(entry)) => {
+            let runtime = existing(runtime, "runtimeExecutable")?;
+            executable_directory(&runtime, "runtimeExecutable")?;
+            Ok(HostLaunch::Script {
+                runtime,
+                entry: existing(entry, "sidecarEntry")?,
+            })
+        }
+        (None, None, None) => Ok(HostLaunch::Executable {
+            executable: defaults
+                .bundled_host
+                .clone()
+                .ok_or(ClaudeConfigError::NoHost)?,
+            agent_sdk: agent_sdk()?,
+        }),
+        _ => Err(ClaudeConfigError::Invalid(
+            "set either hostExecutable or runtimeExecutable with sidecarEntry".into(),
+        )),
+    }
+}
+
+impl HostLaunch {
+    /// The program the companion starts.
+    #[must_use]
+    pub fn program(&self) -> &Path {
+        match self {
+            Self::Executable { executable, .. } => executable,
+            Self::Script { runtime, .. } => runtime,
+        }
+    }
+}
+
 impl ClaudeConfig {
-    /// Parses and validates the entry. Executables and the sidecar entry
-    /// must exist; the journal directory is created by the sidecar.
+    /// Parses and validates the entry over `defaults`. Configured paths
+    /// must be absolute and exist; the journal directory is created by the
+    /// host.
     ///
     /// # Errors
-    /// Returns the first violated rule.
-    pub fn parse(entry: &Value) -> Result<Self, ClaudeConfigError> {
-        let raw: RawClaudeConfig = serde_json::from_value(entry.clone())
+    /// Returns the first violated rule, or why no host or no `claude` is
+    /// available.
+    pub fn parse(entry: &Value, defaults: &ClaudeDefaults) -> Result<Self, ClaudeConfigError> {
+        let mut raw: RawClaudeConfig = serde_json::from_value(entry.clone())
             .map_err(|error| ClaudeConfigError::Invalid(error.to_string()))?;
         let idle_release_minutes = raw
             .idle_release_minutes
@@ -149,31 +260,51 @@ impl ClaudeConfig {
         if !(MIN_IDLE_RELEASE_MINUTES..=MAX_IDLE_RELEASE_MINUTES).contains(&idle_release_minutes) {
             return Err(ClaudeConfigError::IdleRelease);
         }
-        let config = Self {
-            runtime_executable: absolute(raw.runtime_executable, "runtimeExecutable")?,
-            sidecar_entry: absolute(raw.sidecar_entry, "sidecarEntry")?,
-            claude_executable: absolute(raw.claude_executable, "claudeExecutable")?,
-            journal_directory: absolute(raw.journal_directory, "journalDirectory")?,
-            idle_release_minutes,
-            environment: environment(raw.environment)?,
+        let host = host_launch(&mut raw, defaults)?;
+        let claude_executable = match raw.claude_executable {
+            Some(executable) => existing(executable, "claudeExecutable")?,
+            None => defaults
+                .claude_executable
+                .clone()
+                .ok_or(ClaudeConfigError::NoClaude)?,
         };
-        existing(&config.runtime_executable, "runtimeExecutable")?;
-        existing(&config.sidecar_entry, "sidecarEntry")?;
-        existing(&config.claude_executable, "claudeExecutable")?;
-        executable_directory(&config.runtime_executable, "runtimeExecutable")?;
-        executable_directory(&config.claude_executable, "claudeExecutable")?;
-        Ok(config)
+        executable_directory(&claude_executable, "claudeExecutable")?;
+        Ok(Self {
+            host,
+            claude_executable,
+            journal_directory: match raw.journal_directory {
+                Some(directory) => absolute(directory, "journalDirectory")?,
+                None => defaults.journal_directory.clone(),
+            },
+            idle_release_minutes,
+            environment: environment(raw.environment, defaults.login_path.as_ref())?,
+        })
     }
 
-    /// The host child's `PATH`: the directories of `runtimeExecutable` and
-    /// `claudeExecutable` first (so `#!/usr/bin/env node` scripts find the
-    /// configured runtime), then the configured `PATH`, else `inherited` (the
-    /// companion's own). Duplicates keep their first position.
+    /// The configuration without a `providers.claude` entry: the shipped
+    /// host and the `claude` found on the machine.
+    ///
+    /// # Errors
+    /// Returns why Claude cannot run (no shipped host, no `claude`).
+    pub fn automatic(defaults: &ClaudeDefaults) -> Result<Self, ClaudeConfigError> {
+        Self::parse(&Value::Object(serde_json::Map::new()), defaults)
+    }
+
+    /// The host child's `PATH`: the directories of the script runtime (when
+    /// one is configured) and of `claude` first, so `#!/usr/bin/env node`
+    /// scripts find them, then the configured or login-shell `PATH`, else
+    /// `inherited` (the companion's own). Duplicates keep their first
+    /// position.
     #[must_use]
     pub fn host_search_path(&self, inherited: Option<&OsStr>) -> Vec<PathBuf> {
         let mut entries = Vec::new();
-        let leading = [&self.runtime_executable, &self.claude_executable]
+        let runtime = match &self.host {
+            HostLaunch::Script { runtime, .. } => Some(runtime),
+            HostLaunch::Executable { .. } => None,
+        };
+        let leading = runtime
             .into_iter()
+            .chain([&self.claude_executable])
             .map(|executable| executable.parent().unwrap_or(executable).to_path_buf());
         let rest: Vec<PathBuf> = match &self.environment.search_path {
             Some(configured) => configured.clone(),
@@ -225,18 +356,26 @@ impl ClaudeConfig {
         }
     }
 
-    /// Sidecar command-line arguments (paths and numbers only, no secrets).
+    /// Host command-line arguments after the program (paths and numbers
+    /// only, no secrets): the entry script for a script host, then the
+    /// host's own flags.
     #[must_use]
-    pub fn sidecar_args(&self) -> Vec<std::ffi::OsString> {
-        vec![
-            self.sidecar_entry.clone().into_os_string(),
+    pub fn host_args(&self) -> Vec<OsString> {
+        let mut args = match &self.host {
+            HostLaunch::Script { entry, .. } => vec![entry.clone().into_os_string()],
+            HostLaunch::Executable { agent_sdk, .. } => {
+                vec!["--agent-sdk".into(), agent_sdk.clone().into_os_string()]
+            }
+        };
+        args.extend([
             "--claude-executable".into(),
             self.claude_executable.clone().into_os_string(),
             "--journal-directory".into(),
             self.journal_directory.clone().into_os_string(),
             "--idle-release-minutes".into(),
             self.idle_release_minutes.to_string().into(),
-        ]
+        ]);
+        args
     }
 }
 
@@ -245,6 +384,16 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn defaults(directory: &Path) -> ClaudeDefaults {
+        ClaudeDefaults {
+            bundled_host: None,
+            agent_sdk: None,
+            claude_executable: None,
+            journal_directory: directory.join("claude-journal"),
+            login_path: None,
+        }
+    }
 
     #[test]
     fn accepts_absolute_existing_paths_and_bounds_idle_release()
@@ -261,37 +410,41 @@ mod tests {
                 "idleReleaseMinutes": idle,
             })
         };
-        let config = ClaudeConfig::parse(&entry(json!(30)))?;
+        let defaults = defaults(directory.path());
+        let config = ClaudeConfig::parse(&entry(json!(30)), &defaults)?;
         assert_eq!(config.idle_release_minutes, 30);
         assert_eq!(
-            config.sidecar_args()[1..3],
+            config.host_args()[..3],
             [
-                std::ffi::OsString::from("--claude-executable"),
+                file.clone().into_os_string(),
+                OsString::from("--claude-executable"),
                 file.clone().into_os_string()
             ]
         );
         assert!(matches!(
-            ClaudeConfig::parse(&entry(json!(4))),
+            ClaudeConfig::parse(&entry(json!(4)), &defaults),
             Err(ClaudeConfigError::IdleRelease)
         ));
         assert!(matches!(
-            ClaudeConfig::parse(&entry(json!(241))),
+            ClaudeConfig::parse(&entry(json!(241)), &defaults),
             Err(ClaudeConfigError::IdleRelease)
         ));
         Ok(())
     }
 
     #[test]
-    fn rejects_relative_missing_and_unknown_fields() -> Result<(), Box<dyn std::error::Error>> {
+    fn rejects_relative_missing_mixed_and_unknown_fields() -> Result<(), Box<dyn std::error::Error>>
+    {
         let directory = tempfile::tempdir()?;
         let file = directory.path().join("bin");
         std::fs::write(&file, "")?;
+        let defaults = defaults(directory.path());
         let relative = json!({
             "runtimeExecutable": "node", "sidecarEntry": file, "claudeExecutable": file,
             "journalDirectory": directory.path()
         });
         assert!(matches!(
-            ClaudeConfig::parse(&relative),
+            ClaudeConfig::parse(&relative, &defaults),
             Err(ClaudeConfigError::NotAbsolute {
                 field: "runtimeExecutable"
             })
@@ -301,18 +454,89 @@ mod tests {
             "claudeExecutable": file, "journalDirectory": directory.path()
         });
         assert!(matches!(
-            ClaudeConfig::parse(&missing),
+            ClaudeConfig::parse(&missing, &defaults),
             Err(ClaudeConfigError::Missing {
                 field: "sidecarEntry"
             })
         ));
-        let unknown = json!({
-            "runtimeExecutable": file, "sidecarEntry": file, "claudeExecutable": file,
-            "journalDirectory": directory.path(), "apiKey": "x"
-        });
+        let mixed =
+            json!({"hostExecutable": file, "runtimeExecutable": file, "claudeExecutable": file});
         assert!(matches!(
-            ClaudeConfig::parse(&unknown),
+            ClaudeConfig::parse(&mixed, &defaults),
             Err(ClaudeConfigError::Invalid(_))
+        ));
+        let unknown = json!({"claudeExecutable": file, "hostExecutable": file, "apiKey": "x"});
+        assert!(matches!(
+            ClaudeConfig::parse(&unknown, &defaults),
+            Err(ClaudeConfigError::Invalid(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn an_empty_entry_runs_the_shipped_host_with_the_found_claude()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let host = directory.path().join("claude-agent-host");
+        let claude = directory.path().join("bin/claude");
+        let login = vec![PathBuf::from("/opt/tools/bin"), PathBuf::from("/usr/bin")];
+        let sdk = directory.path().join("agent-sdk/sdk.mjs");
+        let found = ClaudeDefaults {
+            bundled_host: Some(host.clone()),
+            agent_sdk: Some(sdk.clone()),
+            claude_executable: Some(claude.clone()),
+            login_path: Some(login),
+            ..defaults(directory.path())
+        };
+        let config = ClaudeConfig::automatic(&found)?;
+        assert_eq!(
+            config.host,
+            HostLaunch::Executable {
+                executable: host.clone(),
+                agent_sdk: sdk.clone()
+            }
+        );
+        assert_eq!(config.host.program(), host);
+        assert_eq!(
+            config.journal_directory,
+            directory.path().join("claude-journal")
+        );
+        assert_eq!(
+            config.host_args()[..3],
+            [
+                OsString::from("--agent-sdk"),
+                sdk.into_os_string(),
+                OsString::from("--claude-executable")
+            ]
+        );
+        assert_eq!(
+            config.host_search_path(Some(OsStr::new("/usr/bin:/bin"))),
+            [
+                directory.path().join("bin"),
+                "/opt/tools/bin".into(),
+                "/usr/bin".into()
+            ]
+        );
+        assert!(matches!(
+            ClaudeConfig::automatic(&ClaudeDefaults {
+                bundled_host: None,
+                ..found.clone()
+            }),
+            Err(ClaudeConfigError::NoHost)
+        ));
+        assert!(matches!(
+            ClaudeConfig::automatic(&ClaudeDefaults {
+                agent_sdk: None,
+                ..found.clone()
+            }),
+            Err(ClaudeConfigError::NoAgentSdk)
+        ));
+        assert!(matches!(
+            ClaudeConfig::automatic(&ClaudeDefaults {
+                claude_executable: None,
+                ..found
+            }),
+            Err(ClaudeConfigError::NoClaude)
         ));
         Ok(())
     }
@@ -329,6 +553,7 @@ mod tests {
         let claude = claude_dir.join("claude");
         std::fs::write(&node, "")?;
         std::fs::write(&claude, "")?;
+        let defaults = defaults(directory.path());
         let entry = |environment: Option<Value>| {
             let mut entry = json!({
                 "runtimeExecutable": node, "sidecarEntry": node, "claudeExecutable": claude,
@@ -347,8 +572,8 @@ mod tests {
                 .map(|(_, value)| value)
         };
 
-        // An old entry (no environment) keeps the companion's PATH after the prepend.
-        let legacy = ClaudeConfig::parse(&entry(None))?;
+        // No environment and no login-shell PATH keep the companion's PATH after the prepend.
+        let legacy = ClaudeConfig::parse(&entry(None), &defaults)?;
         assert_eq!(legacy.environment, HostEnvironment::default());
         assert_eq!(
             path(&legacy, Some("/usr/bin:/bin")),
@@ -362,10 +587,13 @@ mod tests {
 
         // A captured PATH replaces the inherited one; duplicates collapse.
         let config_dir = directory.path().join("claude-config");
-        let captured = ClaudeConfig::parse(&entry(Some(json!({
-            "PATH": format!("{}:/opt/tools/bin:/usr/bin", runtime_dir.display()),
-            "CLAUDE_CONFIG_DIR": config_dir,
-        }))))?;
+        let captured = ClaudeConfig::parse(
+            &entry(Some(json!({
+                "PATH": format!("{}:/opt/tools/bin:/usr/bin", runtime_dir.display()),
+                "CLAUDE_CONFIG_DIR": config_dir,
+            }))),
+            &defaults,
+        )?;
         assert_eq!(
             path(&captured, Some("/usr/bin:/bin")),
             Some(OsString::from(format!(
@@ -388,6 +616,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let file = directory.path().join("bin");
         std::fs::write(&file, "")?;
+        let defaults = defaults(directory.path());
         let entry = |environment: Value| {
             json!({
                 "runtimeExecutable": file, "sidecarEntry": file, "claudeExecutable": file,
@@ -396,18 +625,18 @@ mod tests {
         };
         for invalid_path in ["", "/usr/bin:", "bin:/usr/bin", "/usr/bin::/bin"] {
             assert!(matches!(
-                ClaudeConfig::parse(&entry(json!({"PATH": invalid_path}))),
+                ClaudeConfig::parse(&entry(json!({"PATH": invalid_path})), &defaults),
                 Err(ClaudeConfigError::SearchPath)
             ));
         }
         assert!(matches!(
-            ClaudeConfig::parse(&entry(json!({"CLAUDE_CONFIG_DIR": "claude"}))),
+            ClaudeConfig::parse(&entry(json!({"CLAUDE_CONFIG_DIR": "claude"})), &defaults),
             Err(ClaudeConfigError::NotAbsolute {
                 field: "environment.CLAUDE_CONFIG_DIR"
             })
         ));
         assert!(matches!(
-            ClaudeConfig::parse(&entry(json!({"ANTHROPIC_API_KEY": "x"}))),
+            ClaudeConfig::parse(&entry(json!({"ANTHROPIC_API_KEY": "x"})), &defaults),
             Err(ClaudeConfigError::Invalid(_))
         ));
         Ok(())

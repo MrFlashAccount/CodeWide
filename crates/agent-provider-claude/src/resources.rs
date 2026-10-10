@@ -312,6 +312,8 @@ mod tests {
             changes["changeScopes"],
             json!(["session", "uncommitted", "branch"])
         );
+        assert_eq!(changes["vcs"]["provider"], "git");
+        assert_eq!(changes["vcs"]["branch"], "feature");
         assert_eq!(changes["changes"][0]["path"], CHANGED);
         let diff = resources
             .read(

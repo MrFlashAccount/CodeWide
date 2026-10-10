@@ -38,8 +38,8 @@ export function processExitedError(cause: Error): TurnError {
   return {
     kind: "processExited",
     message:
-      `This Claude session is running in the background in another Claude process. ` +
-      `Wait for it to finish or run \`claude stop ${shortId}\` on the host, then try again.`,
+      `This conversation is open in another app: a Claude background agent is running this ` +
+      `session. Wait for it to finish or run \`claude stop ${shortId}\` on the host, then try again.`,
   };
 }
 

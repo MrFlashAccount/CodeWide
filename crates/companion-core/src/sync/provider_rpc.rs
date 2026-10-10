@@ -48,6 +48,8 @@ pub(super) struct RpcResultObservers {
     /// Effective permission profiles of threads, for spawned agents.
     pub(super) orchestration: Option<Arc<OrchestrationService>>,
     pub(super) wire: WireProvider,
+    /// The responding provider's cleaner of its own formats in user text.
+    pub(super) user_text: Arc<dyn agent_core::user_text::UserTextCleaner>,
 }
 
 fn transport_code(error: &ProviderError) -> i64 {
@@ -221,6 +223,13 @@ pub(super) async fn forward_rpc_response(
     }
     if let (Some(resources), Some(result)) = (observers.resources, response.get("result")) {
         resources.observe_rpc_result(method, result).await;
+    }
+    if let Some(result) = response.get_mut("result") {
+        *result = crate::user_message_projection::project_rpc_result(
+            method,
+            result.take(),
+            observers.user_text.as_ref(),
+        );
     }
     if let (Some(projector), Some(result)) = (projector, response.get_mut("result")) {
         *result = projector.project_rpc_result(method, result.take());
@@ -769,6 +778,7 @@ async fn handle_thread_list(
                 multi_provider: false,
                 ..wire.clone()
             },
+            user_text: hub.user_text_cleaner(Some(&wire.descriptor.id)),
         },
     )
     .await

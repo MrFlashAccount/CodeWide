@@ -131,11 +131,13 @@ function HostUpdateRow({
   const description = hostUpdateDescription(update);
   return (
     <View style={styles.row}>
-      <Ionicons
-        color={colors.textMuted}
-        name={subject === "Relay" ? "git-network-outline" : "cube-outline"}
-        size={iconSize.action}
-      />
+      <View style={styles.leadingSlot}>
+        <Ionicons
+          color={colors.textMuted}
+          name={subject === "Relay" ? "git-network-outline" : "cube-outline"}
+          size={iconSize.action}
+        />
+      </View>
       <View style={styles.text}>
         <HostUpdateTitle
           pending={pending}
@@ -218,15 +220,11 @@ function HostUpdateRowAction({
 
 const CALLOUT_LOOK = {
   failure: {
-    iconColor: colors.red,
-    iconName: "alert-circle-outline",
     liveRegion: "assertive",
     surface: styles.calloutError,
     text: styles.calloutTextError,
   },
   neutral: {
-    iconColor: colors.textMuted,
-    iconName: "information-circle-outline",
     liveRegion: "polite",
     surface: styles.callout,
     text: styles.calloutText,
@@ -248,23 +246,15 @@ function HostUpdateCallout({
   const look = CALLOUT_LOOK[guidance.kind === "failure" ? "failure" : "neutral"];
   return (
     <View style={look.surface}>
-      <Ionicons
-        color={look.iconColor}
-        name={look.iconName}
-        size={iconSize.inline}
-        style={styles.calloutIcon}
-      />
-      <View style={styles.calloutBody}>
-        <Text accessibilityLiveRegion={look.liveRegion} style={look.text}>
-          {guidance.text}
-        </Text>
-        {guidance.kind === "setup" && guidance.command !== null && (
-          <InstallerCommand command={guidance.command} />
-        )}
-        {guidance.kind === "failure" && (
-          <FailureActions actions={actions} subject={subject} update={update} />
-        )}
-      </View>
+      <Text accessibilityLiveRegion={look.liveRegion} style={look.text}>
+        {guidance.text}
+      </Text>
+      {guidance.kind === "setup" && guidance.command !== null && (
+        <InstallerCommand command={guidance.command} />
+      )}
+      {guidance.kind === "failure" && (
+        <FailureActions actions={actions} subject={subject} update={update} />
+      )}
     </View>
   );
 }
@@ -282,21 +272,24 @@ function InstallerCommand({ command }: { readonly command: string }): React.JSX.
     );
   });
   return (
-    <>
-      <Text numberOfLines={2} selectable style={styles.command}>
+    <View style={styles.command}>
+      <Text ellipsizeMode="middle" numberOfLines={1} selectable style={styles.commandText}>
         {command}
       </Text>
-      <View style={styles.calloutActions}>
-        <AppButton
-          accessibilityLabel="Copy installer command"
-          onPress={copy}
-          size="sm"
-          variant="secondary"
-        >
-          {copied ? "Copied" : "Copy command"}
-        </AppButton>
-      </View>
-    </>
+      <AppButton
+        accessibilityLabel={copied ? "Installer command copied" : "Copy installer command"}
+        isIconOnly
+        onPress={copy}
+        size="sm"
+        variant="ghost"
+      >
+        <Ionicons
+          color={copied ? colors.green : colors.textMuted}
+          name={copied ? "checkmark" : "copy-outline"}
+          size={iconSize.action}
+        />
+      </AppButton>
+    </View>
   );
 }
 

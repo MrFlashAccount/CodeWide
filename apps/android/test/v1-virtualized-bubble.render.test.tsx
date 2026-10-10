@@ -1,7 +1,10 @@
 import { render } from "@testing-library/react-native";
 import { StyleSheet, View } from "react-native";
-import { Bubble } from "../src/rendering/Bubble";
+import { Card } from "../src/features/conversation/turns/Card";
+import { TurnActivity } from "../src/features/conversation/turns/TurnActivity";
+import { Bubble, BubbleContent } from "../src/rendering/Bubble";
 import { colors, radii, spacing } from "../src/theme";
+import { AppText as Text } from "../src/ui/Typography";
 
 function surface(segment?: "end" | "middle" | "start") {
   const view = render(
@@ -18,9 +21,9 @@ it("keeps the agent bubble inset uniform around its rounded corners", () => {
   expect(surface()).toMatchObject({
     backgroundColor: colors.messageSurface,
     borderRadius: radii.bubble,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
   });
   expect(radii.bubble - radii.small).toBe(spacing.md);
 });
@@ -33,9 +36,39 @@ it("uses the same corner and inset geometry for user bubbles", () => {
   );
   expect(view.getByTestId("user-surface")).toHaveStyle({
     borderRadius: radii.bubble,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
+  });
+});
+
+it("keeps outer vertical rhythm on the bubble instead of stacking nested activity insets", () => {
+  const result = render(
+    <Bubble testID="activity-bubble" variant="agent">
+      <BubbleContent>
+        <TurnActivity expanded label="Tools" onToggle={() => {}} showToggle={false}>
+          <Card icon="terminal-outline" title="Command">
+            <Text>Output</Text>
+          </Card>
+        </TurnActivity>
+      </BubbleContent>
+    </Bubble>,
+  );
+
+  expect(result.getByTestId("activity-bubble")).toHaveStyle({
+    paddingBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  });
+  expect(result.getByTestId("turn-activity")).toHaveStyle({ marginTop: 0 });
+  expect(result.getByTestId("turn-activity-list")).toHaveStyle({
+    gap: spacing.xxs,
+    paddingBottom: 0,
+    paddingTop: 0,
+  });
+  expect(result.getByTestId("protocol-card")).toHaveStyle({
+    paddingBottom: 0,
+    paddingTop: 0,
   });
 });
 
@@ -47,7 +80,7 @@ it("composes experimental rows into the same continuous bubble surface", () => {
     borderTopRightRadius: radii.bubble,
     paddingBottom: 0,
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
   });
   expect(surface("middle")).toMatchObject({
     backgroundColor: colors.messageSurface,
@@ -61,7 +94,7 @@ it("composes experimental rows into the same continuous bubble surface", () => {
     borderBottomLeftRadius: radii.bubble,
     borderBottomRightRadius: radii.bubble,
     borderRadius: 0,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingTop: 0,
   });

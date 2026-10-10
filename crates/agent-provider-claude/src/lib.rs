@@ -12,9 +12,12 @@
 //! credentials or tokens, never opens Claude's session records itself, and
 //! never emits client-wire JSON.
 
+pub mod agent_sdk;
 pub mod catalog;
 pub mod config;
+pub mod discovery;
 pub mod indexer;
+pub mod legacy_install;
 pub mod preflight;
 pub mod resources;
 pub mod search;
@@ -23,6 +26,7 @@ pub mod store;
 pub mod subagents;
 #[cfg(test)]
 mod test_support;
+pub mod user_text;
 pub mod watcher;
 
 use std::collections::BTreeMap;
@@ -181,8 +185,8 @@ impl ClaudeProvider {
         };
         UpstreamHandle::spawn_supervised_stdio(
             SupervisedCommand {
-                program: config.runtime_executable.clone(),
-                args: config.sidecar_args(),
+                program: config.host.program().to_path_buf(),
+                args: config.host_args(),
                 env: config.host_environment(std::env::var_os("PATH").as_deref()),
                 label: "claude-agent-host",
             },
@@ -823,6 +827,10 @@ impl AgentProvider for ClaudeProvider {
         Some(self.pricing.clone())
     }
 
+    fn user_text_cleaner(&self) -> Option<Arc<dyn agent_core::user_text::UserTextCleaner>> {
+        Some(Arc::new(user_text::ClaudeUserText))
+    }
+
     async fn catalog_permission_profiles(&self) -> Result<PermissionProfileCatalog, ProviderError> {
         self.call("catalog.permissionProfiles", &Empty {}).await
     }
@@ -1060,12 +1068,15 @@ sleep 5
         )?;
         let claude = directory.join("claude");
         std::fs::write(&claude, "")?;
-        Ok(ClaudeConfig::parse(&json!({
-            "runtimeExecutable": "/bin/sh",
-            "sidecarEntry": script,
-            "claudeExecutable": claude,
-            "journalDirectory": directory.join("journal"),
-        }))?)
+        Ok(ClaudeConfig::parse(
+            &json!({
+                "runtimeExecutable": "/bin/sh",
+                "sidecarEntry": script,
+                "claudeExecutable": claude,
+                "journalDirectory": directory.join("journal"),
+            }),
+            &crate::config::ClaudeDefaults::default(),
+        )?)
     }
 
     async fn wait_live(provider: &ClaudeProvider) -> Result<(), Box<dyn std::error::Error>> {
@@ -1181,12 +1192,15 @@ sleep 5
         )?;
         let claude = directory.path().join("claude");
         std::fs::write(&claude, "")?;
-        let provider = ClaudeProvider::spawn(&ClaudeConfig::parse(&json!({
-            "runtimeExecutable": "/bin/sh",
-            "sidecarEntry": script,
-            "claudeExecutable": claude,
-            "journalDirectory": directory.path().join("journal"),
-        }))?);
+        let provider = ClaudeProvider::spawn(&ClaudeConfig::parse(
+            &json!({
+                "runtimeExecutable": "/bin/sh",
+                "sidecarEntry": script,
+                "claudeExecutable": claude,
+                "journalDirectory": directory.path().join("journal"),
+            }),
+            &crate::config::ClaudeDefaults::default(),
+        )?);
         let spec = agent_core::model::ClientToolSpec {
             name: "codewide_list_agents".into(),
             description: "List".into(),
@@ -1293,12 +1307,15 @@ sleep 5
         )?;
         let claude = directory.path().join("claude");
         std::fs::write(&claude, "")?;
-        let provider = ClaudeProvider::spawn(&ClaudeConfig::parse(&json!({
-            "runtimeExecutable": "/bin/sh",
-            "sidecarEntry": script,
-            "claudeExecutable": claude,
-            "journalDirectory": directory.path().join("journal"),
-        }))?);
+        let provider = ClaudeProvider::spawn(&ClaudeConfig::parse(
+            &json!({
+                "runtimeExecutable": "/bin/sh",
+                "sidecarEntry": script,
+                "claudeExecutable": claude,
+                "journalDirectory": directory.path().join("journal"),
+            }),
+            &crate::config::ClaudeDefaults::default(),
+        )?);
         let _events = provider.take_events();
         let mut health = provider
             .subscribe_health()
@@ -1359,12 +1376,15 @@ sleep 5
         std::fs::write(&claude, "")?;
         let script = directory.path().join("never.sh");
         std::fs::write(&script, "sleep 5\n")?;
-        let provider = ClaudeProvider::spawn(&ClaudeConfig::parse(&json!({
-            "runtimeExecutable": "/bin/sh",
-            "sidecarEntry": script,
-            "claudeExecutable": claude,
-            "journalDirectory": directory.path(),
-        }))?);
+        let provider = ClaudeProvider::spawn(&ClaudeConfig::parse(
+            &json!({
+                "runtimeExecutable": "/bin/sh",
+                "sidecarEntry": script,
+                "claudeExecutable": claude,
+                "journalDirectory": directory.path(),
+            }),
+            &crate::config::ClaudeDefaults::default(),
+        )?);
         let error = provider
             .thread_read(&AppThreadId::from_static("t"))
             .await

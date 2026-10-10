@@ -77,6 +77,9 @@ export class TurnBuilder {
   private currentMessageId: string | null = null;
   private heldAgentMessage: string | null = null;
   private userMessageCount = 0;
+  /** Compactions of this turn so far; numbers their items. */
+  private compactionCount = 0;
+  private openCompaction: AgentItem | null = null;
   private lastAssistantError: string | null = null;
   private mcpServers: readonly string[] = [];
   readonly startedAt: number;
@@ -350,6 +353,31 @@ export class TurnBuilder {
     }
   }
 
+  /**
+   * Claude started compacting: the item runs until the compact boundary. Its
+   * id is the turn's compaction ordinal, so a replay of the stored history,
+   * which keeps only the boundary, gives the same item the same id.
+   */
+  private startCompaction(): AgentEvent[] {
+    if (this.openCompaction !== null) {
+      return [];
+    }
+    this.compactionCount += 1;
+    this.openCompaction = {
+      itemId: asItemId(`${this.context.turnId}:compaction:${String(this.compactionCount)}`),
+      type: "compaction",
+    };
+    return this.start(this.openCompaction);
+  }
+
+  /** The compact boundary: completes the running compaction, or a compaction never seen starting. */
+  private completeCompaction(): AgentEvent[] {
+    const events = this.openCompaction === null ? this.startCompaction() : [];
+    const item = this.openCompaction;
+    this.openCompaction = null;
+    return item === null ? events : [...events, ...this.complete(item)];
+  }
+
   /** Applies one classified top-level frame. Sub-agent frames must be filtered by the caller. */
   onFrame(frame: ClaudeFrame): AgentEvent[] {
     switch (frame.kind) {
@@ -359,13 +387,10 @@ export class TurnBuilder {
         return this.onAssistant(frame);
       case "user":
         return this.onUser(frame);
-      case "compactBoundary": {
-        const item: AgentItem = {
-          itemId: asItemId(frame.uuid ?? `${this.context.turnId}:compact`),
-          type: "compaction",
-        };
-        return [...this.start(item), ...this.complete(item)];
-      }
+      case "compacting":
+        return this.startCompaction();
+      case "compactBoundary":
+        return this.completeCompaction();
       case "task":
         this.onTask(frame);
         return [];

@@ -32,7 +32,12 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
-export type ThreadStatus = "idle" | "active" | "notLoaded" | "failed";
+/**
+ * `openElsewhere`: another process of the provider holds the thread's native
+ * session (for example a `claude --bg` background agent or a terminal), so
+ * this host cannot run a turn in it until that process lets go.
+ */
+export type ThreadStatus = "idle" | "active" | "notLoaded" | "failed" | "openElsewhere";
 
 /** How the thread came to exist: from a CodeWide client, another client, or the global supervisor. */
 export type ThreadOrigin = "interactive" | "external" | "supervisor";

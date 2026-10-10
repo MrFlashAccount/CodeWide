@@ -122,9 +122,22 @@ const DERIVED_BOUNDARY_LOSSES: Readonly<Record<string, string>> = {
   turn_interrupt_restart: "the interrupt marker is written by the CLI, not by this fake store",
 };
 
+/**
+ * A compaction is numbered within its turn, so where the turn boundary is
+ * derived differently its id follows that turn; it must still be in place.
+ */
 const itemIds = (turns: readonly AgentTurn[]): readonly string[] =>
   turns.flatMap((turn) =>
-    turn.items.filter((item) => item.type !== "userMessage").map((item) => item.itemId),
+    turn.items.flatMap((item): readonly string[] => {
+      switch (item.type) {
+        case "userMessage":
+          return [];
+        case "compaction":
+          return [item.type];
+        default:
+          return [item.itemId];
+      }
+    }),
   );
 
 describe("history parity without the host's turn index", () => {

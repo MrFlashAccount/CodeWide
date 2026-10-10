@@ -22,6 +22,23 @@ function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgres
 }
 
 describe("thread render window", () => {
+  it("keeps every item of a turn without a user message in the response, even with stale pre-turn markers", () => {
+    const items: FakeItem[] = [
+      { type: "commandExecution", id: "first", codewidePreTurn: true },
+      { type: "commandExecution", id: "second" },
+      { type: "agentMessage", id: "answer", phase: "final_answer" },
+    ];
+
+    const completed = selectTurnRenderWindow(turn(items, "completed"));
+    expect(completed.preTurnActivityIndexes).toEqual([]);
+    expect(completed.collapsedActivityIndexes).toEqual([0, 1]);
+    expect(completed.latestAgentIndex).toBe(2);
+
+    const active = selectTurnRenderWindow(turn(items, "inProgress"));
+    expect(active.preTurnActivityIndexes).toEqual([]);
+    expect(active.liveActivityIndexes).toEqual([0, 1, 2]);
+  });
+
   it("keeps pre-turn compaction outside the bubble while projecting other pre-turn activity into it", () => {
     const items: FakeItem[] = [
       { type: "contextCompaction", id: "compaction" },
@@ -287,7 +304,8 @@ it("keeps async question messages out of final-response selection and streaming 
 
 describe("provider-initiated (wake) turn without a user message", () => {
   // A Claude background task can start a turn by itself. Its items arrive with
-  // the projected pre-turn flag because no user boundary ever materializes.
+  // the projected pre-turn flag because no user boundary ever materializes;
+  // without a user message the whole turn is the response.
   const wakeItems: FakeItem[] = [
     { type: "commandExecution", id: "tool", codewidePreTurn: true },
     { type: "agentMessage", id: "commentary", phase: "commentary", codewidePreTurn: true },
@@ -295,11 +313,11 @@ describe("provider-initiated (wake) turn without a user message", () => {
     { type: "agentMessage", id: "answer", phase: "final_answer", codewidePreTurn: true },
   ];
 
-  it("streams agent text as the response while the wake turn is active", () => {
+  it("streams the whole wake turn as the response while it is active", () => {
     const active = selectTurnRenderWindow(turn(wakeItems));
     expect(active.userItemIndexes).toEqual([]);
-    expect(active.liveActivityIndexes).toEqual([1, 3]);
-    expect(active.preTurnActivityIndexes).toEqual([0, 2]);
+    expect(active.liveActivityIndexes).toEqual([0, 1, 2, 3]);
+    expect(active.preTurnActivityIndexes).toEqual([]);
     expect(active.latestAgentIndex).toBe(3);
   });
 

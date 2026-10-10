@@ -55,9 +55,6 @@ describe("bubble attachment projections", () => {
       { kind: "image", name: "flow.SVG", source: { path: "/mnt/data/flow.SVG", type: "path" } },
     ]);
   });
-  it("recognizes image attachments in the persisted user file envelope", () => {
-    expect(projectUserMessageAttachments([{ type: "text", text: "# Files mentioned by the user:\n\n## drawing.png: /tmp/drawing.png\n\n## My request for Codex:\n\nLook." }])[0]?.kind).toBe("image");
-  });
   it("rejects malformed metadata rather than manufacturing broken cards", () => {
     expect(projectAgentArtifacts({ codewide: { artifacts: [null, { savedPath: 3 }, { codewideAsset: {} }] }, items: [null, 3] })).toEqual([]);
   });

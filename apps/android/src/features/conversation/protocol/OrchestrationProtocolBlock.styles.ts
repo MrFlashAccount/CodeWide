@@ -12,7 +12,11 @@ import {
 const PRESSED_OPACITY = 0.68;
 
 export const styles = StyleSheet.create({
-  bubbleNestedSurface: { backgroundColor: "transparent" },
+  bubbleNestedSurface: {
+    backgroundColor: "transparent",
+    paddingBottom: 0,
+    paddingTop: 0,
+  },
   card: {
     alignSelf: "stretch",
     backgroundColor: colors.surfaceContainerLow,

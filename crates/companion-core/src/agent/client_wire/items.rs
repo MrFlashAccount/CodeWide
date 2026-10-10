@@ -46,7 +46,7 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
         "cliVersion": provider.descriptor.version,
         "originator": null,
         "source": "appServer",
-        "canAcceptDirectInput": (thread.status != ThreadStatus::NotLoaded).then_some(true),
+        "canAcceptDirectInput": can_accept_direct_input(thread.status),
         "threadSource": null,
         "agentNickname": null,
         "agentRole": null,
@@ -59,11 +59,23 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
     projected
 }
 
-/// Projects a thread lifecycle status.
+/// Whether this companion can run a turn in the thread: unknown (`None`) for
+/// a thread no process has loaded, `false` while another process holds it.
+#[must_use]
+pub const fn can_accept_direct_input(status: ThreadStatus) -> Option<bool> {
+    match status {
+        ThreadStatus::NotLoaded => None,
+        ThreadStatus::OpenElsewhere => Some(false),
+        ThreadStatus::Idle | ThreadStatus::Active | ThreadStatus::Failed => Some(true),
+    }
+}
+
+/// Projects a thread lifecycle status. A thread open elsewhere runs nothing
+/// here: it is idle on the wire and `canAcceptDirectInput` carries the lock.
 #[must_use]
 pub fn thread_status(status: ThreadStatus) -> Value {
     match status {
-        ThreadStatus::Idle => json!({"type": "idle"}),
+        ThreadStatus::Idle | ThreadStatus::OpenElsewhere => json!({"type": "idle"}),
         ThreadStatus::Active => json!({"type": "active", "activeFlags": []}),
         ThreadStatus::NotLoaded => json!({"type": "notLoaded"}),
         ThreadStatus::Failed => json!({"type": "systemError"}),

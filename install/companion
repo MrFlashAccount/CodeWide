@@ -301,13 +301,6 @@ backup_target "$install_root/bootstrap/codewide-companion-update-guardian" updat
 backup_target "$install_root/bootstrap/config.json" update-config
 backup_current_link
 
-claude_host_payload=
-claude_installer_source=
-# Older bundles carry no Claude agent host.
-if [ -d "$payload/share/claude-agent-host" ] && [ -x "$payload/libexec/codewide-install-claude-provider" ]; then
-  claude_host_payload="$payload/share/claude-agent-host"
-  claude_installer_source="$payload/libexec/codewide-install-claude-provider"
-fi
 deployment_started=1
 CODEWIDE_COMPANION_BINARY="$payload/bin/codewide-companion" \
 CODEWIDE_COMPANION_GIT_PLUGIN_BINARY="$payload/libexec/codewide-vcs-git" \
@@ -317,8 +310,6 @@ CODEWIDE_COMPANION_UNIT_SOURCE="$payload/systemd/user/codewide-companion.service
 CODEWIDE_COMPANION_UPDATE_UNIT_SOURCE="$payload/systemd/user/codewide-companion-update.service" \
 CODEWIDE_COMPANION_MEMORY_WATCH_SERVICE_SOURCE="$payload/systemd/user/codewide-companion-memory-watch.service" \
 CODEWIDE_COMPANION_MEMORY_WATCH_TIMER_SOURCE="$payload/systemd/user/codewide-companion-memory-watch.timer" \
-CODEWIDE_COMPANION_CLAUDE_HOST_PAYLOAD="$claude_host_payload" \
-CODEWIDE_COMPANION_CLAUDE_INSTALLER_SOURCE="$claude_installer_source" \
 CODEWIDE_COMPANION_INSTALL_ROOT="$install_root" \
 CODEWIDE_COMPANION_UNIT_ROOT="$unit_root" \
 CODEWIDE_COMPANION_ARTIFACT_DIGEST="$expected" \
@@ -331,9 +322,6 @@ CODEWIDE_COMPANION_ACTIVATE="$activate" \
 deployment_started=0
 
 printf 'Installed codewide-companion %s as immutable generation %s\n' "$version" "$expected"
-if [ -n "$claude_installer_source" ]; then
-  printf 'To enable the Claude provider: %s/current/libexec/codewide-install-claude-provider\n' "$install_root"
-fi
 if [ "$activate" -eq 1 ]; then
   printf '%s\n' 'Started codewide-companion.service and its memory monitor.'
 else

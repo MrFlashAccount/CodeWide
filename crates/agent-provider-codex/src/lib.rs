@@ -35,6 +35,7 @@ pub mod rollout_store;
 pub mod storage;
 #[cfg(test)]
 mod test_support;
+pub mod user_text;
 
 use std::sync::{Arc, RwLock};
 
@@ -662,6 +663,10 @@ impl AgentProvider for CodexProvider {
 
     fn usage_pricing(&self) -> Option<Arc<dyn ModelPricing>> {
         Some(Arc::new(pricing::OpenAiPricing))
+    }
+
+    fn user_text_cleaner(&self) -> Option<Arc<dyn agent_core::user_text::UserTextCleaner>> {
+        Some(Arc::new(user_text::CodexUserText))
     }
 }
 

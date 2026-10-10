@@ -48,10 +48,10 @@ user unit sets no `RUST_LOG`; read the records with
 configured providers from `agent-providers.json` as JSON and exits non-zero
 unless every configured provider could start. It is offline (configuration
 and file metadata only). Codex is always enabled; a host without Codex is not
-supported. The optional Claude provider is enabled with
-`libexec/codewide-install-claude-provider` from the release bundle (or
-`scripts/install-claude-provider.sh` in a checkout), which also installs
-`deploy/claude-provider.conf` as a drop-in for the companion unit; see
+supported. Claude needs no setup: the release binary ships the Claude agent
+host (feature `embedded-claude-host`), downloads the Claude Agent SDK from npm
+on its first start and runs Claude when a signed-in `claude` is found;
+`"claude": false` in `agent-providers.json` turns it off. See
 [docs/agent-providers.md](../../docs/agent-providers.md#install-and-configuration).
 
 ## Running locally
@@ -69,9 +69,8 @@ and mutation mode must be configured by the deployment owner.
 ## Distribution
 
 The portable `x86_64-unknown-linux-musl` release bundle contains the headless
-host, bundled Git provider, memory watcher, user-systemd units, and the Claude
-agent host payload (`share/claude-agent-host`, without its npm dependencies)
-with its installer (`libexec/codewide-install-claude-provider`). After a
+host (with the Claude agent host inside), bundled Git provider, memory
+watcher and user-systemd units. After a
 release is published, the checksummed standalone installer installs and starts
 that bundle with:
 

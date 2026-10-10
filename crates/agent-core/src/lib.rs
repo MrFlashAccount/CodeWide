@@ -10,3 +10,4 @@ pub mod model;
 pub mod provider;
 pub mod request_ids;
 pub mod usage;
+pub mod user_text;

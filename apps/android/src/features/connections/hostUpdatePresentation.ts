@@ -110,6 +110,8 @@ function availabilitySummary(update: HostUpdateView): HostUpdateSummary {
       return muted("remote updates unavailable");
     case "manualBootstrap":
       return muted("remote updates not set up");
+    case "unofficialBuild":
+      return muted("unofficial build");
     case "manualUpdate":
       return muted("manual update required");
     case "error":
@@ -157,11 +159,14 @@ function availabilityGuidance(
   subject: HostUpdateSubject,
 ): HostUpdateGuidance | null {
   const command = installerCommand(update.platform);
-  const install =
-    command === null
-      ? `Install the latest ${subject} on the server`
-      : "Run the installer on the server";
+  const install = installInstruction(subject, command !== null);
   switch (update.availability) {
+    case "unofficialBuild":
+      return {
+        command: null,
+        kind: "setup",
+        text: `This ${subject} was built outside an official release, so it cannot update remotely. Install an official release to enable remote updates.`,
+      };
     case "unsupported":
       return {
         command,
@@ -186,6 +191,16 @@ function availabilityGuidance(
     default:
       return null;
   }
+}
+
+/** Relay runs on its own host, so its installer runs there, not on this server. */
+function installInstruction(subject: HostUpdateSubject, hasCommand: boolean): string {
+  if (subject === "Relay") {
+    return hasCommand ? "Run the Relay installer on the Relay host" : "Reinstall Relay on its host";
+  }
+  return hasCommand
+    ? "Run the official installer on this server"
+    : `Install the latest official ${subject} release on this server`;
 }
 
 function installerCommand(platform: HostUpdatePlatform | null): string | null {

@@ -44,16 +44,38 @@ export function modelEntries(models: readonly RawModel[]): readonly ModelEntry[]
   }));
 }
 
+/**
+ * The catalog id of a model a session recorded: the row with that id, else
+ * the alias row that resolves to it (not `default`, whose target moves), else
+ * the recorded id itself.
+ */
+export function catalogModelId(models: readonly RawModel[], recorded: string): string {
+  if (models.some((model) => model.value === recorded)) {
+    return recorded;
+  }
+  const alias = models.find(
+    (model) => model.value !== "default" && model.resolvedModel === recorded,
+  );
+  return alias?.value ?? recorded;
+}
+
 /** Keeps the last successful model list and the prices of its models. */
 export class ModelCatalog {
   private cached: readonly ModelEntry[] = [];
+  private cachedRaw: readonly RawModel[] = [];
   private cachedPrices: Readonly<Record<string, ModelPriceEntry>> = catalogPrices([]);
 
   update(models: readonly RawModel[]): void {
     if (models.length > 0) {
       this.cached = modelEntries(models);
+      this.cachedRaw = models;
       this.cachedPrices = catalogPrices(models);
     }
+  }
+
+  /** `catalogModelId` over the last successful list. */
+  idFor(recorded: string): string {
+    return catalogModelId(this.cachedRaw, recorded);
   }
 
   get models(): readonly ModelEntry[] {

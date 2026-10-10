@@ -1,39 +1,67 @@
 import { Platform, StyleSheet } from "react-native";
-import {
-  colors,
-  controlSize,
-  radii,
-  spacing,
-  touchTarget,
-  typeScale,
-  typeWeight,
-} from "../../theme";
+import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../theme";
+
+const APPROVAL_ACTION_MIN_WIDTH = controlSize.touch + controlSize.touch;
 
 export const styles = StyleSheet.create({
   answerOptions: { gap: spacing.xxs },
+  approvalAction: {
+    alignItems: "center",
+    borderRadius: radii.small,
+    borderWidth: 1,
+    flexBasis: APPROVAL_ACTION_MIN_WIDTH,
+    flexGrow: 1,
+    justifyContent: "center",
+    minHeight: controlSize.regular,
+    paddingHorizontal: spacing.xs,
+  },
+  approvalActionPrimary: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  approvalActionPrimaryText: { color: colors.onPrimary },
+  approvalActionQuiet: {
+    backgroundColor: "transparent",
+    borderColor: "transparent",
+  },
+  approvalActionQuietText: { color: colors.textMuted },
   approvalActions: {
+    alignItems: "center",
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.compact,
+    gap: spacing.xs,
     justifyContent: "flex-end",
+    marginTop: spacing.xxs,
   },
-  approvalButton: {
-    minHeight: controlSize.regular,
-    paddingHorizontal: spacing.sm,
+  approvalActionSecondary: {
+    backgroundColor: "transparent",
+    borderColor: colors.outline,
+  },
+  approvalActionSecondaryText: { color: colors.text },
+  approvalActionText: {
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+    includeFontPadding: false,
+    textAlign: "center",
   },
   approvalCard: {
-    backgroundColor: colors.warningContainer,
+    backgroundColor: colors.surfaceContainerLow,
+    borderColor: colors.border,
     borderRadius: radii.medium,
-    gap: spacing.xxs,
+    borderWidth: 1,
+    gap: spacing.xs,
     marginHorizontal: spacing.xs,
     marginTop: spacing.xxs,
-    padding: spacing.xs,
+    padding: spacing.sm,
   },
   approvalCommand: {
     backgroundColor: colors.code,
+    borderColor: colors.borderSoft,
     borderRadius: radii.small,
+    borderWidth: 1,
     color: colors.text,
-    padding: spacing.compact,
+    paddingHorizontal: spacing.inputInset,
+    paddingVertical: spacing.xs,
     ...typeScale.code,
     fontFamily: Platform.select({
       android: "monospace",
@@ -44,21 +72,27 @@ export const styles = StyleSheet.create({
     color: colors.textDim,
     ...typeScale.label,
   },
-  approvalDeclineButton: {
-    alignItems: "center",
-    borderRadius: radii.medium,
-    justifyContent: "center",
-    minHeight: controlSize.regular,
-    paddingHorizontal: spacing.inputInset,
-  },
-  approvalDeclineText: {
-    color: colors.textMuted,
-    fontWeight: typeWeight.semibold,
+  approvalIcon: {
+    backgroundColor: colors.warningContainer,
+    borderRadius: radii.small,
+    height: controlSize.compact,
+    lineHeight: controlSize.compact,
+    textAlign: "center",
+    width: controlSize.compact,
   },
   approvalInline: {
-    backgroundColor: colors.warningContainer,
+    backgroundColor: "transparent",
+    borderBottomWidth: 0,
+    borderColor: colors.borderSoft,
+    borderLeftWidth: 0,
+    borderRadius: 0,
+    borderRightWidth: 0,
+    borderTopWidth: 1,
     marginHorizontal: 0,
-    marginTop: spacing.optical,
+    marginTop: spacing.sm,
+    paddingBottom: 0,
+    paddingHorizontal: 0,
+    paddingTop: spacing.sm,
   },
   approvalInput: {
     backgroundColor: colors.surface,
@@ -70,10 +104,10 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     ...typeScale.label,
   },
-  approvalPending: {
-    color: colors.amber,
-    ...typeScale.caption,
-    fontWeight: typeWeight.semibold,
+  approvalMetaRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.compact,
   },
   approvalQuestion: { gap: spacing.xxs },
   approvalQueueCount: {
@@ -88,13 +122,16 @@ export const styles = StyleSheet.create({
   approvalTitle: {
     color: colors.text,
     ...typeScale.body,
-    flex: 1,
     fontWeight: typeWeight.semibold,
   },
   approvalTitleRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.compact,
+  },
+  approvalTitleSlot: {
+    flex: 1,
+    minWidth: 0,
   },
   errorText: {
     color: colors.red,
@@ -109,34 +146,9 @@ export const styles = StyleSheet.create({
     color: colors.text,
     ...typeScale.title,
   },
-  primaryButton: {
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    borderRadius: radii.medium,
-    justifyContent: "center",
-    minHeight: touchTarget,
-    paddingHorizontal: spacing.md,
-  },
-  primaryButtonText: {
-    color: colors.onPrimary,
-    fontWeight: typeWeight.semibold,
-  },
   rawLink: {
     color: colors.accent,
     ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
-  secondaryButton: {
-    alignItems: "center",
-    borderColor: colors.outline,
-    borderRadius: radii.medium,
-    borderWidth: 1,
-    justifyContent: "center",
-    minHeight: touchTarget,
-    paddingHorizontal: spacing.md,
-  },
-  secondaryButtonText: {
-    color: colors.text,
     fontWeight: typeWeight.semibold,
   },
 });

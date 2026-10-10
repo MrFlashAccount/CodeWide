@@ -143,25 +143,28 @@ export function agentProvidersValue(state: AgentProvidersState): AgentProvidersS
 }
 
 /**
- * Name of the provider that owns the server's account pool (`accounts.pool`),
- * only when the server lists several providers; `null` otherwise, so a
- * single-provider or older server keeps its plain "Accounts" wording.
+ * Whether the server offers an account pool: only a provider declaring
+ * `accounts.pool` does. `owner` is `null` for an older Companion without the
+ * provider list, which always served one pool; the list is `pending` until read.
  */
-export function accountPoolOwnerName(state: AgentProvidersState | undefined): string | null {
-  return accountPoolOwner(state)?.name ?? null;
-}
+export type AccountPoolPresence =
+  | { readonly kind: "absent" }
+  | { readonly kind: "pending" }
+  | { readonly kind: "present"; readonly owner: AgentProviderStatusEntry | null };
 
-/** The provider owning the account pool, under the same multi-provider rule as its name. */
-export function accountPoolOwner(
-  state: AgentProvidersState | undefined,
-): AgentProviderStatusEntry | null {
-  const value = state === undefined ? null : agentProvidersValue(state);
-  if (value === null || value.providers.length < MULTI_PROVIDER_COUNT) {
-    return null;
+/** The account pool of a server's provider list (see {@link AccountPoolPresence}). */
+export function accountPoolPresence(state: AgentProvidersState | undefined): AccountPoolPresence {
+  if (state?.status === "unsupported") {
+    return { kind: "present", owner: null };
   }
-  return (
-    value.providers.find((entry) => entry.capabilities?.includes("accounts.pool") === true) ?? null
+  const value = state === undefined ? null : agentProvidersValue(state);
+  if (value === null) {
+    return { kind: "pending" };
+  }
+  const owner = value.providers.find(
+    (entry) => entry.capabilities?.includes("accounts.pool") === true,
   );
+  return owner === undefined ? { kind: "absent" } : { kind: "present", owner };
 }
 
 function parseEntry(value: unknown): AgentProviderStatusEntry | null {

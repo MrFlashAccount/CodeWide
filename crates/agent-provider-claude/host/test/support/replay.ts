@@ -254,6 +254,10 @@ export async function replayTranscript(entries: readonly TranscriptEntry[]): Pro
   const service = new ThreadService({
     // Recorded fixtures carry no client tools.
     callClientTool: () => Promise.reject(new Error("replays declare no client tools")),
+    models: { idFor: (recorded) => recorded },
+    openElsewherePollMs: 60_000,
+    // Recorded fixtures run no other Claude process.
+    runningSessions: { list: async () => new Set<string>() },
     catalog: new SessionCatalog(store),
     sessionStore: store,
     stateStore: new ThreadStateStore(directory),

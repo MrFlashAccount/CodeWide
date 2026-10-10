@@ -26,6 +26,7 @@ Codex-owned storage:
 - `message_search/` — full-text search over stored messages: incremental rollout indexing into the shared `agent-search` schema, read through its `query` and `context`.
 - `account_pool.rs` — the `OpenAI` account pool.
 - `pricing.rs` — the `OpenAI` API-equivalent rates (data for the shared `CatalogPricing`, published as `catalog.models` `prices` and served as `OpenAiPricing`) and the usage projection of turns read back from rollouts.
+- `user_text.rs` — `CodexUserText`, Codex's own formats in user text: model-only context the App Server sends as user input and Codex Desktop's envelopes (request heading, browser context, image tags, realtime delegation, question replies). Declared through `AgentProvider::user_text_cleaner` and used by thread-list previews.
 
 Host construction (`apps/companion-linux/src/main.rs`, `crates/companion-core/src/managed_runtime.rs`): open the host index with `IndexStore::open_with(path, &[&ROLLOUT_INDEX_SCHEMA])`, attach `RolloutStore::attach(index.database(), index)`, then `CodexProvider::new(upstream).with_storage(CodexStorage::new(history).with_resources(resources))`. The Codex-only `SyncHub` constructors in `companion-core` (`agent/providers/codex_hub.rs`) attach `CodexStorage::new(history)` without resources. The golden replay of recorded App Server streams through this adapter and the wire projector lives in `companion-core` (`agent/providers/codex_golden_tests.rs`), next to the projector.
 

@@ -60,8 +60,7 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerTurnProjection).toContain("normalizeThreadItem(");
   expect(ownerTurnProjection).toContain("connectionId(row.connectionId)");
   expect(ownerUserMessageContent).toContain('testID="user-image-gallery"');
-  expect(ownerUserMessageContent).toContain("text={normalized.text}");
-  expect(ownerUserMessageContent).toContain("normalizeUserMessage(part.text)");
+  expect(ownerUserMessageContent).toContain("text={part.text}");
   expect(ownerUserMessageContent).toContain("<RichMarkdown\n          source={text}");
   expect(ownerOptimisticTurn).toContain('testID="optimistic-turn-footer"');
   expect(ownerOptimisticTurn).toContain("const deliveryLabel = failed");

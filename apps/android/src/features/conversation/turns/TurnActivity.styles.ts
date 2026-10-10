@@ -12,6 +12,11 @@ export const styles = StyleSheet.create({
     flexShrink: 0,
     justifyContent: "center",
   },
+  bubbleNestedActivity: { marginTop: 0 },
+  bubbleNestedActivityList: {
+    paddingBottom: 0,
+    paddingTop: 0,
+  },
   pressed: { opacity: 0.68 },
   thinkingStatusSection: {
     alignItems: "flex-start",

@@ -40,7 +40,7 @@ import type { ClaudeRuntime } from "../claude/port.js";
 import type { Logger } from "../log.js";
 import { isRecord } from "../mapping/frames.js";
 import { PERMISSION_PROFILES } from "../permissions/profiles.js";
-import { ModelCatalog } from "../catalog/models.js";
+import type { ModelCatalog } from "../catalog/models.js";
 import type { OperationResult, ThreadService, UserMessage } from "../threads/service.js";
 import { ShapeError } from "../validation/checks.js";
 import { unreachable } from "../support/unreachable.js";
@@ -188,6 +188,8 @@ export const TOOL_CALL_CANCELLED = "The tool call was cancelled.";
 
 export interface ServerDeps {
   readonly logger: Logger;
+  /** The model catalog the server refreshes; shared with the thread service. */
+  readonly models: ModelCatalog;
   /** Owner of the subscription limits; the server reports its snapshot. */
   readonly rateLimits: Pick<RateLimitReporter, "snapshot" | "usageRead">;
   readonly runtime: ClaudeRuntime;
@@ -200,7 +202,6 @@ export class RpcServer {
   private initialized = false;
   private negotiated = false;
   private readonly buffered: AgentEvent[] = [];
-  private readonly catalog = new ModelCatalog();
   private probing: Promise<void> | null = null;
   private lastProbeAtMs: number | null = null;
   private account: InitializeResult["account"] = null;
@@ -280,7 +281,7 @@ export class RpcServer {
     this.probing ??= this.deps.runtime
       .probe()
       .then((probe) => {
-        this.catalog.update(probe.models);
+        this.deps.models.update(probe.models);
         if (probe.account !== null) {
           this.updateAccount(probe.account);
         }
@@ -428,10 +429,10 @@ export class RpcServer {
   private async models(): Promise<Reply> {
     // A signed-out runtime is probed again (at most once per minute), so a
     // sign-in on the server reaches the companion through `account.updated`.
-    if (this.catalog.models.length === 0 || this.account?.authenticated !== true) {
+    if (this.deps.models.models.length === 0 || this.account?.authenticated !== true) {
       await this.refreshProbe();
     }
-    return { result: { models: this.catalog.models, prices: this.catalog.prices } };
+    return { result: { models: this.deps.models.models, prices: this.deps.models.prices } };
   }
 
   private async operation(

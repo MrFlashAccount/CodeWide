@@ -2,7 +2,6 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedTurnMetadata } from "@codewide/sync-client";
 
 import type { NativeCommandDelivery } from "../native/native-transport";
-import { projectCodexVisibleTurn } from "./codex-contextual-user-message";
 import { compactTurnArtifactReferences } from "./turn-artifacts";
 import type { PendingDeliveryState } from "./thread-delivery-state";
 import type { StoredDraftAttachment } from "./thread-ui-state-types";
@@ -114,7 +113,7 @@ export function projectResidentThreadTimeline(
 ): ProjectedThreadChatTimelineEntry[] {
   const authoritativeClientIds = new Set<string>();
   for (const turn of turns) {
-    for (const item of projectCodexVisibleTurn(turn).items) {
+    for (const item of turn.items) {
       if (
         item.type === "userMessage" &&
         typeof item.clientId === "string" &&
@@ -130,8 +129,7 @@ export function projectResidentThreadTimeline(
       delivery.state !== "failed" &&
       !authoritativeClientIds.has(delivery.commandId),
   );
-  const visibleTurns = turns.flatMap((turn) => {
-    const projected = projectCodexVisibleTurn(turn);
+  const visibleTurns = turns.flatMap((projected) => {
     // turn/started, metadata-only recovery and empty reasoning/agent items can
     // precede userMessage. They are lifecycle evidence, not an answer above a
     // still-sending prompt. Preserve unloaded history when no local start owns
@@ -143,9 +141,7 @@ export function projectResidentThreadTimeline(
     ) {
       return [];
     }
-    return projected !== turn && projected.items.length === 0 && turn.status !== "inProgress"
-      ? []
-      : [projected];
+    return [projected];
   });
   const turnTimestamps = visibleTurns.flatMap((turn) => {
     const value = protocolTimestampMs(turn.startedAt);

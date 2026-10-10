@@ -356,3 +356,85 @@ describe("version-1 journal", () => {
     ).toEqual([["legacy-turn", "client-1"]]);
   });
 });
+
+describe("sessions open in another Claude process", () => {
+  const statusUpdates = (events: ReturnType<typeof harness>["events"], appThreadId: string) =>
+    events.flatMap((event) =>
+      event.type === "thread.updated" && event.thread.appThreadId === appThreadId
+        ? [event.thread.status]
+        : [],
+    );
+
+  it("locks a session another process runs, refuses its turns and releases it live", async () => {
+    const { service, queries, events, runningSessions } = harness({
+      openElsewherePollMs: 5,
+      store: storeWithTerminalSession(),
+    });
+    await listed(service);
+    runningSessions.add(TERMINAL);
+    await service.read(TERMINAL);
+    await settle();
+    expect(statusUpdates(events, TERMINAL)).toEqual(["openElsewhere"]);
+    expect(await service.read(TERMINAL)).toMatchObject({
+      value: { thread: { status: "openElsewhere" } },
+    });
+    expect(await service.startTurn(TERMINAL, prompt("continue"))).toMatchObject({
+      message: expect.stringContaining("conversation is open in another app"),
+      status: "error",
+    });
+    expect(queries).toHaveLength(0);
+    runningSessions.delete(TERMINAL);
+    await expect
+      .poll(() => statusUpdates(events, TERMINAL))
+      .toEqual(["openElsewhere", "notLoaded"]);
+    startedTurn(await service.startTurn(TERMINAL, prompt("continue")));
+    expect(queries).toHaveLength(1);
+  });
+
+  it("does not count the session of this host's own live query", async () => {
+    const { service, queries, events, runningSessions } = harness();
+    createThread(service);
+    startedTurn(await service.startTurn(THREAD, prompt("hello")));
+    queries[0]?.push(frames.init);
+    await settle();
+    runningSessions.add(THREAD);
+    await service.read(THREAD);
+    await settle();
+    expect(statusUpdates(events, THREAD)).not.toContain("openElsewhere");
+    expect(await service.read(THREAD)).toMatchObject({ value: { thread: { status: "active" } } });
+  });
+});
+
+describe("the model of a session started outside CodeWide", () => {
+  const answeredBy = (uuid: string, model: string) => {
+    const answer = storedAnswer(uuid, "Done.");
+    return { ...answer, message: { ...answer.message, model } };
+  };
+
+  it("reports and continues with the catalog model the session last answered with", async () => {
+    const store = new MemorySessionStore();
+    store.addInteractive(terminalSession(), [
+      storedPrompt("p-1", "Fix the flaky test"),
+      answeredBy("a-1", "claude-sonnet-4-6"),
+      storedPrompt("p-2", "Now refactor"),
+      answeredBy("a-2", "claude-opus-5-5"),
+      answeredBy("a-3", "<synthetic>"),
+    ]);
+    const { service, queries } = harness({
+      modelIdFor: (recorded) => (recorded === "claude-opus-5-5" ? "opus" : recorded),
+      store,
+    });
+    expect(await service.read(TERMINAL)).toMatchObject({
+      value: { thread: { settings: { model: "opus" } } },
+    });
+    startedTurn(await service.startTurn(TERMINAL, prompt("continue")));
+    expect(queries[0]?.options.model).toBe("opus");
+  });
+
+  it("keeps the default when the session recorded no model", async () => {
+    const { service } = harness({ store: storeWithTerminalSession() });
+    expect(await service.read(TERMINAL)).toMatchObject({
+      value: { thread: { settings: { model: "default" } } },
+    });
+  });
+});

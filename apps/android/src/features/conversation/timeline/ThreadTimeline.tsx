@@ -44,7 +44,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
       timelineRow.kind === "turnLead" ||
       (timelineRow.kind === "turnSlice" &&
         !timelineRow.followsLead &&
-        (timelineRow.placement === "start" || timelineRow.placement === "single"));
+        (timelineRow.bubble === "start" || timelineRow.bubble === "single"));
     const dateLabel = startsTurn ? (dateLabels?.before ?? null) : null;
     const virtualizedSearchFocus =
       timelineRow.kind === "turnSlice" &&
@@ -147,9 +147,11 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                     <VirtualizedTurnTimelineItem
                       agentDateLabel={dateLabels?.agent ?? null}
                       animateLiveUpdates={props.animateLiveUpdates}
+                      bubble={timelineRow.bubble}
                       compact={props.timelineCompact}
                       followsLead={timelineRow.followsLead}
                       forceExpanded={props.threadSearchActive}
+                      group={timelineRow.group}
                       parts={timelineRow.parts}
                       placement={timelineRow.placement}
                       presentation={virtualizedPresentation}

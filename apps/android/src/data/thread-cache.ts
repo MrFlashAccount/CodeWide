@@ -1,6 +1,5 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 
-import { normalizeUserMessage } from "../rendering/user-message-normalizer";
 import { unknownRecord } from "./unknownRecord";
 
 export const MAX_CACHED_THREAD_TURNS = 6;
@@ -46,7 +45,7 @@ export function latestThreadMessagePreview(thread: Thread): string | null {
       if (item?.type === "userMessage") {
         const authored = item.content
           .filter((part) => part.type === "text")
-          .map((part) => normalizeUserMessage(part.text).text)
+          .map((part) => part.text)
           .join(" ");
         const text = compactPreview(authored);
         if (text !== "") {

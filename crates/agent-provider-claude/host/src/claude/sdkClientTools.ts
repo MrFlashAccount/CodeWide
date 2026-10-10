@@ -9,11 +9,9 @@
  * so one bad spec never disables the others or the session.
  */
 
-import {
-  createSdkMcpServer,
-  tool,
-  type McpSdkServerConfigWithInstance,
-  type SdkMcpToolDefinition,
+import type {
+  McpSdkServerConfigWithInstance,
+  SdkMcpToolDefinition,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -21,6 +19,7 @@ import type { ToolCallResult } from "../protocol.js";
 import { CLIENT_TOOL_SERVER } from "../mapping/clientTools.js";
 import { isRecord } from "../mapping/frames.js";
 import type { ClientToolBinding } from "./port.js";
+import type { AgentSdk } from "./sdkModule.js";
 
 type ObjectShape = z.ZodObject["shape"];
 
@@ -69,7 +68,10 @@ const callToolResult = (result: ToolCallResult): CallToolResult => ({
 });
 
 /** The SDK MCP server that carries `binding`'s client tools. */
-export function clientToolServer(binding: ClientToolBinding): McpSdkServerConfigWithInstance {
+export function clientToolServer(
+  sdk: Pick<AgentSdk, "createSdkMcpServer" | "tool">,
+  binding: ClientToolBinding,
+): McpSdkServerConfigWithInstance {
   const tools = binding.specs.flatMap((spec): SdkMcpToolDefinition<ObjectShape>[] => {
     const shape = objectShape(spec.inputSchema);
     if (shape.status === "error") {
@@ -77,12 +79,12 @@ export function clientToolServer(binding: ClientToolBinding): McpSdkServerConfig
       return [];
     }
     return [
-      tool(spec.name, spec.description, shape.shape, async (args, extra) =>
+      sdk.tool(spec.name, spec.description, shape.shape, async (args, extra) =>
         callToolResult(
           await binding.invoke({ arguments: args, signal: signalOf(extra), tool: spec.name }),
         ),
       ),
     ];
   });
-  return createSdkMcpServer({ alwaysLoad: true, name: CLIENT_TOOL_SERVER, tools });
+  return sdk.createSdkMcpServer({ alwaysLoad: true, name: CLIENT_TOOL_SERVER, tools });
 }

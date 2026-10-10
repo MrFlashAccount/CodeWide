@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSdkSessionStore } from "../src/claude/sdkSessionStore.js";
+import { loadAgentSdk } from "../src/claude/sdkModule.js";
 
 const TERMINAL = "11111111-1111-4111-8111-111111111111";
 const PROGRAMMATIC = "22222222-2222-4222-8222-222222222222";
@@ -75,7 +76,7 @@ describe("Claude session store through the Agent SDK", () => {
   });
 
   it("lists interactive sessions separately from SDK-started ones", async () => {
-    const store = createSdkSessionStore();
+    const store = createSdkSessionStore(await loadAgentSdk(null));
     expect(
       (await store.list({ dir: null, limit: null, offset: 0, scope: "interactive" })).map(
         (session) => session.sessionId,
@@ -89,7 +90,7 @@ describe("Claude session store through the Agent SDK", () => {
   });
 
   it("pages one project directory with change metadata", async () => {
-    const store = createSdkSessionStore();
+    const store = createSdkSessionStore(await loadAgentSdk(null));
     const first = await store.list({ dir: CWD, limit: 1, offset: 0, scope: "all" });
     const second = await store.list({ dir: CWD, limit: 1, offset: 1, scope: "all" });
     expect([...first, ...second].map((session) => session.sessionId).toSorted()).toEqual([
@@ -105,7 +106,7 @@ describe("Claude session store through the Agent SDK", () => {
   });
 
   it("reads metadata and messages", async () => {
-    const store = createSdkSessionStore();
+    const store = createSdkSessionStore(await loadAgentSdk(null));
     expect(await store.info({ cwd: CWD, sessionId: TERMINAL })).toMatchObject({
       createdAtMs: Date.parse("2026-10-01T10:00:00.000Z"),
       cwd: CWD,
@@ -125,7 +126,7 @@ describe("Claude session store through the Agent SDK", () => {
   });
 
   it("renames and deletes; a repeated delete reports the session missing", async () => {
-    const store = createSdkSessionStore();
+    const store = createSdkSessionStore(await loadAgentSdk(null));
     await store.rename({ cwd: CWD, sessionId: TERMINAL }, "Greeting");
     expect(await store.info({ cwd: CWD, sessionId: TERMINAL })).toMatchObject({
       title: "Greeting",

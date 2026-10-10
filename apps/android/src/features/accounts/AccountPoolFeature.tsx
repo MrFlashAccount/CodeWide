@@ -7,7 +7,7 @@ import { AccountProfileRow } from "./AccountProfileRow";
 import { Ionicons } from "@expo/vector-icons";
 import { useSelector } from "@legendapp/state/react";
 import { useState } from "react";
-import { accountPoolOwner } from "../../data/agentProviders";
+import { accountPoolPresence } from "../../data/agentProviders";
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { useAppDialog } from "../../ui/AppDialog";
@@ -33,7 +33,14 @@ export function AccountPoolEditor({
   const dialog = useAppDialog();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const owner = useSelector(() => accountPoolOwner(agentProviders?.state$[connectionId]?.get()));
+  // Without a provider resource this is an older Companion: it always served one pool.
+  const presence = useSelector(() =>
+    agentProviders === undefined
+      ? accountPoolPresence({ status: "unsupported" })
+      : accountPoolPresence(agentProviders.state$[connectionId]?.get()),
+  );
+  const owner = presence.kind === "present" ? presence.owner : null;
+  const accountName = owner === null ? "account" : `${owner.name} account`;
   const profiles = accountPool?.profiles ?? [];
   const profileIds = profiles
     .map((profile) => profile.id)
@@ -78,6 +85,10 @@ export function AccountPoolEditor({
   const startAddingAccount = useEvent(() => {
     run(addAccount);
   });
+  // Only a provider declaring `accounts.pool` has a pool to manage.
+  if (presence.kind !== "present") {
+    return null;
+  }
   return (
     <>
       <View style={styles.accountPoolEditor}>
@@ -87,7 +98,7 @@ export function AccountPoolEditor({
               <ProviderIcon color={colors.textMuted} provider={owner.id} size={iconSize.inline} />
             )
           }
-          title={`${owner?.name ?? "Codex"} accounts`}
+          title={owner === null ? "Accounts" : `${owner.name} accounts`}
           trailing={
             <>
               <Pressable
@@ -102,7 +113,7 @@ export function AccountPoolEditor({
                 />
               </Pressable>
               <Pressable
-                accessibilityLabel="Refresh Codex accounts"
+                accessibilityLabel={`Refresh ${accountName}s`}
                 disabled={busy}
                 onPress={refreshAccounts}
                 style={[styles.connectionMiniButton, busy && styles.disabled]}
@@ -120,7 +131,7 @@ export function AccountPoolEditor({
           <Text style={styles.menuNotice}>
             {accountPool === null
               ? "Account data is not available yet. Refresh to try again."
-              : "No Codex accounts connected."}
+              : `No ${accountName}s connected.`}
           </Text>
         )}
         {accountPool?.allExhausted === true && (
@@ -143,14 +154,18 @@ export function AccountPoolEditor({
           />
         ))}
         <AppListRow
-          accessibilityLabel="Add Codex account"
+          accessibilityLabel={`Add ${accountName}`}
           disabled={busy}
           fixedHeight={listRowHeight.single}
-          leadingIcon={{ color: colors.textMuted, name: "add", size: iconSize.action }}
+          leading={
+            <View style={styles.accountLeadingSlot}>
+              <Ionicons color={colors.textMuted} name="add" size={iconSize.action} />
+            </View>
+          }
           onPress={startAddingAccount}
           position={profiles.length === 0 ? "only" : "last"}
-          testID="add-codex-account"
-          title="Add Codex account"
+          testID="add-pool-account"
+          title={`Add ${accountName}`}
         />
       </View>
       {pendingAccountLogin !== null && (
@@ -160,6 +175,7 @@ export function AccountPoolEditor({
           copyAccountCode={copyAccountCode}
           loginActionBusy={loginActionBusy}
           openAccountSignIn={openAccountSignIn}
+          providerName={owner?.name ?? null}
           userCode={pendingAccountLogin.userCode}
         />
       )}

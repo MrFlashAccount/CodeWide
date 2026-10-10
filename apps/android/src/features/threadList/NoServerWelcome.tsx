@@ -37,7 +37,7 @@ export function NoServerWelcome({
         <Text accessibilityRole="header" style={styles.title}>
           Welcome to CodeWide
         </Text>
-        <Text style={styles.description}>Your Codex workspace on your phone, wherever you go.</Text>
+        <Text style={styles.description}>Your coding agents on your phone, wherever you go.</Text>
         <ConnectButton onPress={onConnect} />
         <Text style={styles.hint}>Follow the setup steps for your computer's OS.</Text>
       </View>

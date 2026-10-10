@@ -144,6 +144,8 @@ export type ClaudeFrame =
       readonly userMessageUuids: readonly string[];
     }
   | { readonly kind: "compactBoundary"; readonly uuid: string | null }
+  /** Claude started compacting the context; the compact boundary follows when it is done. */
+  | { readonly kind: "compacting" }
   | { readonly count: number; readonly kind: "backgroundTasks" }
   /**
    * A task Claude started or finished (`task_started`, `task_notification`):
@@ -317,6 +319,10 @@ function systemFrame(value: JsonRecord): ClaudeFrame {
     }
     case "compact_boundary":
       return { kind: "compactBoundary", uuid: str(value["uuid"]) };
+    case "status":
+      return value["status"] === "compacting"
+        ? { kind: "compacting" }
+        : { kind: "other", type: "system:status" };
     case "background_tasks_changed":
       return { count: arr(value["tasks"]).length, kind: "backgroundTasks" };
     case "task_started":

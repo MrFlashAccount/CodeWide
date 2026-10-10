@@ -43,7 +43,8 @@ export function connectionSettingsSections({
     const relayUpdate = relayUpdates[connection.id];
     return {
       content: (
-        <>
+        // One column, so the page gap does not stack on top of the section spacing.
+        <View>
           <ConnectionRowEditor
             accountPool={
               accountRateLimits.find((row) => row.connectionId === connection.id)?.accountPool ??
@@ -72,7 +73,7 @@ export function connectionSettingsSections({
             onCheckRelayUpdate={onCheckRelayUpdate}
             relayUpdate={relayUpdate}
           />
-        </>
+        </View>
       ),
       description: connectionDescription(
         connectionStateLabel(connection.state, connection.enabled, connection.health),

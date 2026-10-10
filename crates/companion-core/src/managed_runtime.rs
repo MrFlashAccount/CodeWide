@@ -61,6 +61,8 @@ pub struct ManagedRuntimeConfig {
     pub host_display_name: HostDisplayName,
     pub listen_address: SocketAddr,
     pub host_update_guardian: Option<SharedHostUpdateGuardian>,
+    /// The Claude agent host executable inside the application bundle.
+    pub claude_host: Option<PathBuf>,
 }
 
 impl ManagedRuntimeConfig {
@@ -79,6 +81,7 @@ impl ManagedRuntimeConfig {
             host_display_name,
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
             host_update_guardian: None,
+            claude_host: None,
         }
     }
 
@@ -95,6 +98,14 @@ impl ManagedRuntimeConfig {
     }
 
     /// Installs the platform-owned host replacement boundary for private V1 routes.
+    /// The Claude agent host shipped with the application; with it Claude
+    /// runs without a `providers.claude` entry.
+    #[must_use]
+    pub fn with_claude_host(mut self, claude_host: Option<PathBuf>) -> Self {
+        self.claude_host = claude_host;
+        self
+    }
+
     #[must_use]
     pub fn with_host_update_guardian(mut self, guardian: SharedHostUpdateGuardian) -> Self {
         self.host_update_guardian = Some(guardian);
@@ -248,8 +259,10 @@ impl ManagedRuntime {
                 state_directory: config.state_directory.clone(),
                 files: files.clone(),
                 vcs: Some(vcs.clone()),
+                claude_host: config.claude_host.clone(),
             }),
-        );
+        )
+        .await;
         let mut sync = SyncHub::with_registry(registry, store.clone(), config.enable_mutations)
             .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
             .with_dictation(dictation)

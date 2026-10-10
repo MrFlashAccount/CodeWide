@@ -9,8 +9,9 @@ import { turnOutcome } from "../src/mapping/result.js";
 import { keepTail, MAX_COMMAND_OUTPUT_BYTES, splitMcpToolName } from "../src/mapping/tools.js";
 import { decodeCursor, encodeCursor, listThreads } from "../src/threads/listing.js";
 import { historyPrefix, HISTORY_PREFIX_MAX_BYTES } from "../src/history/prefix.js";
-import type { AgentThread } from "../src/protocol.js";
-import { asAppThreadId, PROVIDER_ID } from "../src/protocol.js";
+import type { AgentEvent, AgentThread } from "../src/protocol.js";
+import { asAppThreadId, asTurnId, PROVIDER_ID } from "../src/protocol.js";
+import { TurnBuilder } from "../src/threads/turnBuilder.js";
 
 const result = (overrides: Record<string, unknown>) => {
   const frame = classifyFrame({
@@ -39,6 +40,46 @@ describe("frames", () => {
       expect(() => classifyFrame(value)).not.toThrow();
     }
     expect(classifyFrame({ type: "brand_new" })).toEqual({ kind: "other", type: "brand_new" });
+  });
+});
+
+describe("compaction", () => {
+  const status = (value: string | null) =>
+    classifyFrame({ type: "system", subtype: "status", status: value });
+  const boundary = classifyFrame({ type: "system", subtype: "compact_boundary", uuid: "b-1" });
+  const builder = () => {
+    const turn = new TurnBuilder({
+      appThreadId: asAppThreadId("00000000-0000-4000-8000-0000000000aa"),
+      cwd: "/tmp",
+      nowMs: () => 0,
+      origin: "user",
+      turnId: asTurnId("turn-1"),
+    });
+    turn.begin(null);
+    return turn;
+  };
+  const lifecycle = (events: readonly AgentEvent[]) =>
+    events.flatMap((event) =>
+      event.type === "item.started" || event.type === "item.completed"
+        ? [`${event.type}:${event.item.itemId}`]
+        : [],
+    );
+
+  it("runs from the compacting status to the compact boundary", () => {
+    const live = builder();
+    expect(lifecycle(live.onFrame(status("compacting")))).toEqual([
+      "item.started:turn-1:compaction:1",
+    ]);
+    expect(live.onFrame(status(null))).toEqual([]);
+    expect(lifecycle(live.onFrame(boundary))).toEqual(["item.completed:turn-1:compaction:1"]);
+  });
+
+  it("gives a replayed boundary the id of the live compaction", () => {
+    const replayed = builder();
+    expect(lifecycle(replayed.onFrame(boundary))).toEqual([
+      "item.started:turn-1:compaction:1",
+      "item.completed:turn-1:compaction:1",
+    ]);
   });
 });
 

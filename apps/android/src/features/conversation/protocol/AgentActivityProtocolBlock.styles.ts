@@ -7,7 +7,11 @@ export const styles = StyleSheet.create({
     flexShrink: 0,
     ...typeScale.caption,
   },
-  bubbleNestedSurface: { backgroundColor: "transparent" },
+  bubbleNestedSurface: {
+    backgroundColor: "transparent",
+    paddingBottom: 0,
+    paddingTop: 0,
+  },
   card: {
     alignSelf: "stretch",
     backgroundColor: colors.surfaceContainerLow,

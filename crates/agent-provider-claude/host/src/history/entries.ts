@@ -15,7 +15,8 @@
  *   busy (queued prompt, notification): it belongs to the running turn.
  * - `[Request interrupted by user…]` ends the current turn as interrupted.
  * - The compact summary marks a compaction; the system message right before
- *   it is the compact boundary, whose uuid is the live compaction item id.
+ *   it is the compact boundary, whose uuid anchors the turn the live
+ *   compaction ran in.
  * - Meta messages (`is_meta`: injected reminders, skill bodies) and
  *   command/markup echoes (`<command-name>`, `<local-command-stdout>`,
  *   `<system-reminder>`…) are hidden; every other top-level user message is

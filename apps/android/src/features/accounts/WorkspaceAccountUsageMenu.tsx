@@ -3,8 +3,6 @@ import { useLiveQuery } from "@tanstack/react-db";
 import type { ComponentProps } from "react";
 
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
-import { accountsSectionTitle } from "../../data/account-usage-presentation";
-import { accountPoolOwnerName } from "../../data/agentProviders";
 import type { AgentProvidersResource } from "../../data/agentProvidersResource";
 import {
   threadListAccountUsageSources,
@@ -13,6 +11,7 @@ import {
 import type { ProviderLimitsSource } from "./conversationAccountCapabilities";
 import { providerLimitsEntry } from "./providerAccountPresentation";
 import { UsageMenu } from "./UsageMenu";
+import { usageAccountRows } from "./usageAccounts";
 
 /**
  * Account updates repaint this menu without invalidating the sidebar or conversation.
@@ -21,15 +20,12 @@ import { UsageMenu } from "./UsageMenu";
  * such a thread's provider-level subscription limits come from `providerLimits`.
  */
 export function WorkspaceAccountUsageMenu({
-  accountsOwnerName,
   agentProviders,
   database,
   providerLimits,
   servers,
   ...props
-}: Omit<ComponentProps<typeof UsageMenu>, "accountSources" | "accountsTitle" | "providerLimits"> & {
-  /** Pool owner known from the context (a thread's own agent); otherwise read from `agentProviders`. */
-  accountsOwnerName?: string | null;
+}: Omit<ComponentProps<typeof UsageMenu>, "accountSources" | "providerLimits"> & {
   agentProviders?: Pick<AgentProvidersResource, "state$"> | null;
   database: Pick<AccountRateLimitsDatabase, "collection"> | null;
   /** A thread's own provider whose subscription limits the menu shows (no account pool). */
@@ -46,16 +42,14 @@ export function WorkspaceAccountUsageMenu({
           providerLimits.provider,
         ),
   );
-  const ownerNames =
-    accountsOwnerName === undefined
-      ? servers.map((server) => accountPoolOwnerName(providerStates?.[server.id]))
-      : [accountsOwnerName];
   const sources =
     database === null ? undefined : threadListAccountUsageSources(servers, null, query.data ?? []);
+  const rows =
+    sources === undefined ? undefined : usageAccountRows(sources, servers, providerStates);
   return (
     <UsageMenu
       {...props}
-      accountsTitle={accountsSectionTitle(ownerNames)}
+      {...(rows === undefined ? {} : { accountRows: rows })}
       providerLimits={providerEntry}
       {...(sources === undefined ? {} : { accountSources: sources })}
     />

@@ -146,9 +146,9 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
         : null;
   const conversationActions = createConversationScopeBindings(
     props.features,
-    scope.newChatDraft !== null
+    props.destination.kind === "draft"
       ? {
-          draft: scope.newChatDraft,
+          draft: props.destination.draft,
           kind: "draft",
           onSend: createNewChatSubmission({
             catalogModels: () =>
@@ -160,8 +160,8 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
               startThread: props.features.projects.startThread,
               startThreadInWorkspace: props.features.projects.startThreadInWorkspace,
             },
-            draftChat: scope.newChatDraft,
-            setActiveThreadId: props.onSelectThread,
+            draftChat: props.destination.draft,
+            setActiveThreadId: props.destination.openAdmittedThread,
           }),
         }
       : scope.activeRemoteThreadId === null

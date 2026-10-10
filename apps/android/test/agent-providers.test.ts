@@ -1,9 +1,7 @@
 import { RpcResponseError } from "@codewide/sync-client";
 import { describe, expect, it, vi } from "vitest";
 
-import { accountsSectionTitle } from "../src/data/account-usage-presentation";
 import {
-  accountPoolOwnerName,
   hostDeclaresCapability,
   parseAgentProvidersResult,
 } from "../src/data/agentProviders";
@@ -94,14 +92,9 @@ describe("agent provider list", () => {
     expect(agentProviderStatusLines({ status: "unsupported" })).toEqual([]);
   });
 
-  it("names the account pool owner only in multi-provider mode", () => {
+  it("reads host capabilities from the provider list", () => {
     const parsed = parseAgentProvidersResult(providers);
     if (parsed === null) throw new Error("fixture must parse");
-    expect(accountPoolOwnerName({ status: "ready", value: parsed })).toBe("Codex");
-    expect(accountPoolOwnerName({ status: "unsupported" })).toBeNull();
-    expect(accountsSectionTitle(["Codex"])).toBe("Codex accounts");
-    expect(accountsSectionTitle(["Codex", null])).toBe("Accounts");
-    expect(accountsSectionTitle([])).toBe("Accounts");
     expect(hostDeclaresCapability({ status: "ready", value: parsed }, "realtimeVoice")).toBe(true);
     expect(hostDeclaresCapability({ status: "ready", value: parsed }, "goals")).toBe(false);
     expect(hostDeclaresCapability(undefined, "realtimeVoice")).toBeNull();

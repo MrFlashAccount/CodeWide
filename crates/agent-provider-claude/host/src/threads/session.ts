@@ -219,12 +219,12 @@ const outcomeRecord = (outcome: TurnOutcome): TurnOutcomeRecord => outcome;
 /** Frames that carry conversation content. */
 type ContentFrame = Extract<
   ClaudeFrame,
-  { readonly kind: "assistant" | "compactBoundary" | "stream" | "user" }
+  { readonly kind: "assistant" | "compactBoundary" | "compacting" | "stream" | "user" }
 >;
 
 /** Uuid Claude persists a frame under, when the frame is one it persists. */
 function persistedUuid(frame: ContentFrame): string | null {
-  return frame.kind === "stream" ? null : frame.uuid;
+  return frame.kind === "stream" || frame.kind === "compacting" ? null : frame.uuid;
 }
 
 /** Whether a content frame belongs to the top-level conversation. */
@@ -237,6 +237,7 @@ function isTopLevelContent(frame: ContentFrame): boolean {
     case "user":
       return frame.parentToolUseId === null && !frame.isSynthetic && frame.toolResults.length > 0;
     case "compactBoundary":
+    case "compacting":
       return true;
     default:
       return unreachable(frame);
@@ -818,6 +819,7 @@ export class ClaudeSession {
         return;
       case "assistant":
       case "compactBoundary":
+      case "compacting":
       case "stream":
       case "user":
         this.onContent(frame);

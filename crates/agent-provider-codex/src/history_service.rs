@@ -1079,7 +1079,11 @@ fn summary_preview(turn: &Value) -> Option<String> {
                 .flatten()
                 .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
                 .filter_map(|part| part.get("text").and_then(Value::as_str))
-                .map(normalize_preview)
+                // The text the user wrote, as the conversation shows it.
+                .filter_map(|text| {
+                    agent_core::user_text::display_text(text, &crate::user_text::CodexUserText)
+                })
+                .map(|text| normalize_preview(&text))
                 .find(|text| !text.is_empty()),
             _ => None,
         };
@@ -1841,10 +1845,24 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{HistoryService, HistoryServiceError, SummaryCache, sync_history, turns_page};
+    use super::{
+        HistoryService, HistoryServiceError, SummaryCache, summary_preview, sync_history,
+        turns_page,
+    };
     use crate::{catalog::SessionCatalog, rollout::rollout_file_id};
 
     const THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
+
+    #[test]
+    fn a_running_turn_previews_the_text_the_user_wrote() {
+        let turn = json!({"status": "inProgress", "items": [
+            {"type": "userMessage", "content": [
+                {"type": "text", "text": "<environment_context><cwd>/w</cwd></environment_context>"},
+                {"type": "text", "text": "# Files mentioned by the user:\n\n## a.md: /w/a.md\n\n## My request for Codex:\n\nRead   the file"}
+            ]}
+        ]});
+        assert_eq!(summary_preview(&turn).as_deref(), Some("Read the file"));
+    }
 
     fn history_service(root: &Path) -> Result<HistoryService, Box<dyn std::error::Error>> {
         Ok(HistoryService::new(

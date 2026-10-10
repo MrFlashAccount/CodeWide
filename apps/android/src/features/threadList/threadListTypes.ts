@@ -1,7 +1,7 @@
 export type ThreadListItem = {
-  /** Provider label for a thread not bound to its host's primary provider. */
+  /** Declared provider label; absent only for a legacy or malformed descriptor. */
   agentBadge?: string | null;
-  /** Provider id of the badged thread, for its mark; set together with `agentBadge`. */
+  /** Declared provider id for its mark; set with `agentBadge` when valid. */
   agentProvider?: string | null;
   archived?: boolean;
   id: string;

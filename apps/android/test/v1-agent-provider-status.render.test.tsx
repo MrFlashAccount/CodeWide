@@ -84,54 +84,6 @@ it("does not read the account pool when the menu has no account database", () =>
   expect(onRefresh).not.toHaveBeenCalled();
 });
 
-it("titles the account rows with the pool owner's provider", () => {
-  const view = render(
-    <UsageMenu
-      accountSources={[
-        {
-          id: "server",
-          name: "Server",
-          rateLimits: {
-            accountPool: {
-              activeProfileId: "a",
-              allExhausted: false,
-              nextResetAt: null,
-              profiles: [
-                {
-                  active: true,
-                  email: null,
-                  enabled: true,
-                  exhaustedIndefinitely: false,
-                  exhaustedUntil: null,
-                  id: "a",
-                  lastUsedAt: null,
-                  planType: null,
-                  priority: 0,
-                  rateLimits: null,
-                  rateLimitsError: null,
-                  rateLimitsUpdatedAt: null,
-                },
-              ],
-            },
-            connectionId: "server",
-            error: null,
-            id: "server",
-            snapshot: null,
-            status: "ready",
-            updatedAt: 0,
-          },
-        },
-      ]}
-      accountsTitle="Codex accounts"
-    >
-      <Pressable accessibilityLabel="Menu">
-        <Text>Menu</Text>
-      </Pressable>
-    </UsageMenu>,
-  );
-  expect(openMenuBody(view).getByText("Codex accounts")).toBeOnTheScreen();
-});
-
 it("marks the server's agents with their sign-in status, not as accounts", () => {
   const value = parseAgentProvidersResult({
     hostCapabilities: {},

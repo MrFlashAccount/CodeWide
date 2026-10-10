@@ -413,6 +413,8 @@ async fn vcs_snapshot_replaces_rollout_changes_without_dropping_attachments() {
     assert_eq!(value["changes"][0]["itemId"], "vcs:snapshot:file");
     assert_eq!(value["attachments"][0]["key"], "attachment");
     assert_eq!(value["changeScopes"], json!(["session", "branch"]));
+    assert_eq!(value["vcs"]["provider"], "arc");
+    assert_eq!(value["vcs"]["branch"], "feature");
     assert!(
         value["revision"]
             .as_str()

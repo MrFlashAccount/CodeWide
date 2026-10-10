@@ -180,6 +180,8 @@ struct IngestContext {
     /// Live usage, priced by each thread's own provider table (also for
     /// live activity estimates).
     usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
+    /// Each provider's cleaner of its own formats in user text.
+    user_text: crate::user_message_projection::UserTextCleaners,
 }
 
 struct InitialSession {
@@ -559,6 +561,7 @@ impl SyncHub {
                 .owner(Capability::HistoryThreadResources)
                 .and_then(|provider| provider.native_surface()?.thread_resources()),
             usage_projector: usage_projector.clone(),
+            user_text: registry.user_text_cleaners(),
         };
         tokio::spawn(ingest_events(ordered_ingest_rx, ingest_context));
         if let Some(owner) = registry.owner(Capability::RequestsDynamicToolCall) {
@@ -1553,8 +1556,45 @@ impl SyncHub {
             pins: self.store.clone(),
             resources: self.thread_resources(),
             projects: self.projects(),
+            user_text: self.user_text_cleaner(Some(&wire.descriptor.id)),
             wire: wire.clone(),
         }
+    }
+
+    /// A provider's cleaner of its own formats in user text; the primary's
+    /// for a thread of no known provider.
+    fn user_text_cleaner(
+        &self,
+        provider: Option<&ProviderId>,
+    ) -> Arc<dyn agent_core::user_text::UserTextCleaner> {
+        let registry = self.gateway.registry();
+        provider
+            .and_then(|id| registry.get(id))
+            .unwrap_or_else(|| registry.primary())
+            .user_text_cleaner()
+            .unwrap_or_else(|| Arc::new(agent_core::user_text::NoUserTextFormats))
+    }
+
+    /// The user text cleaner of the thread an RPC names (`params.threadId`).
+    async fn thread_user_text_cleaner(
+        &self,
+        params: &Value,
+    ) -> Arc<dyn agent_core::user_text::UserTextCleaner> {
+        let thread = params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .and_then(crate::agent::model::AppThreadId::parse);
+        let provider = match thread {
+            Some(thread) => self
+                .gateway
+                .bindings()
+                .provider_of(&thread)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        self.user_text_cleaner(provider.as_ref())
     }
 
     async fn handle_thread_pin_import_rpc(
@@ -1892,7 +1932,7 @@ impl SyncHub {
         if let Some(searched) = self.search(method, params).await {
             match searched {
                 Ok(result) => {
-                    self.send_projected_rpc_result(socket, id, method, result)
+                    self.send_projected_rpc_result(socket, id, method, params, result)
                         .await?;
                 }
                 Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await?,
@@ -1902,7 +1942,7 @@ impl SyncHub {
         if method == "companion/thread/sync" {
             match self.thread_view.sync(params).await {
                 Ok(result) => {
-                    self.send_projected_rpc_result(socket, id, method, result)
+                    self.send_projected_rpc_result(socket, id, method, params, result)
                         .await?;
                 }
                 Err(error) => {
@@ -1930,7 +1970,7 @@ impl SyncHub {
             };
             match page {
                 Some(Ok(result)) => {
-                    self.send_projected_rpc_result(socket, id, method, result)
+                    self.send_projected_rpc_result(socket, id, method, params, result)
                         .await?;
                 }
                 Some(Err(HistoryPageError::Stale(message))) => {
@@ -1953,7 +1993,7 @@ impl SyncHub {
         };
         match result {
             Ok(result) => {
-                self.send_projected_rpc_result(socket, id, method, result)
+                self.send_projected_rpc_result(socket, id, method, params, result)
                     .await?;
             }
             Err(error) => send_rpc_error(socket, id.clone(), -32020, &error).await?,
@@ -2059,7 +2099,7 @@ impl SyncHub {
             };
             match provider_history::page(target, params, anchor).await {
                 Ok(result) => {
-                    self.send_projected_rpc_result(socket, id, method, result)
+                    self.send_projected_rpc_result(socket, id, method, params, result)
                         .await?;
                 }
                 Err(failure) => send_rpc_failure(socket, id.clone(), &failure).await?,
@@ -2074,6 +2114,7 @@ impl SyncHub {
         socket: &SessionSocket,
         id: &Value,
         method: &str,
+        params: &Value,
         mut result: Value,
     ) -> Result<(), ()> {
         if let Some(thread) = result.get_mut("thread")
@@ -2096,6 +2137,11 @@ impl SyncHub {
         if let Some(resources) = self.thread_resources() {
             resources.observe_rpc_result(method, &result).await;
         }
+        let result = crate::user_message_projection::project_rpc_result(
+            method,
+            result,
+            self.thread_user_text_cleaner(params).await.as_ref(),
+        );
         let result = match self.projector() {
             Some(projector) => projector.project_rpc_result(method, result),
             None => result,
@@ -2551,13 +2597,21 @@ async fn ingest_events(
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     while let Some(first) = ingest.recv().await {
         let first = match first {
-            IngestInput::Payload(payload) => (payload, ResourceRoute::Owner),
+            IngestInput::Payload(payload) => {
+                let Some(payload) = project_user_text(&context, payload, None) else {
+                    continue;
+                };
+                (payload, ResourceRoute::Owner)
+            }
             IngestInput::ProviderPayload {
                 payload,
                 resources,
                 provider,
             } => {
                 observe_payload_provider(&context, &payload, &provider);
+                let Some(payload) = project_user_text(&context, payload, Some(&provider)) else {
+                    continue;
+                };
                 (payload, resources)
             }
             control => {
@@ -2577,7 +2631,9 @@ async fn ingest_events(
             }
             match tokio::time::timeout(remaining, ingest.recv()).await {
                 Ok(Some(IngestInput::Payload(payload))) => {
-                    payloads.push((payload, ResourceRoute::Owner));
+                    if let Some(payload) = project_user_text(&context, payload, None) {
+                        payloads.push((payload, ResourceRoute::Owner));
+                    }
                 }
                 Ok(Some(IngestInput::ProviderPayload {
                     payload,
@@ -2585,7 +2641,9 @@ async fn ingest_events(
                     provider,
                 })) => {
                     observe_payload_provider(&context, &payload, &provider);
-                    payloads.push((payload, resources));
+                    if let Some(payload) = project_user_text(&context, payload, Some(&provider)) {
+                        payloads.push((payload, resources));
+                    }
                 }
                 Ok(Some(command)) => {
                     control = Some(command);
@@ -2611,6 +2669,20 @@ async fn ingest_events(
 /// Thread resources observed by a payload: the owner's, none, or the
 /// provider's own store (keyed by thread id).
 type OwnResources = HashMap<String, Arc<dyn NativeThreadResources>>;
+
+/// Cleans a payload's user messages with its provider's cleaner (the
+/// primary's for the owner stream); `None` when it carries nothing the user
+/// wrote and is not delivered.
+fn project_user_text(
+    context: &IngestContext,
+    payload: Value,
+    provider: Option<&ProviderId>,
+) -> Option<Value> {
+    crate::user_message_projection::project_notification(
+        payload,
+        context.user_text.for_provider(provider),
+    )
+}
 
 /// Records the provider of a payload's thread for usage pricing. A failed
 /// read only leaves the thread priced as before; the batch's usage write
@@ -3222,6 +3294,10 @@ mod tests {
                     agent_core::usage::UsagePricing::default(),
                 ),
             )),
+            user_text: crate::user_message_projection::UserTextCleaners::new(
+                std::collections::HashMap::new(),
+                ProviderId::from_static("codex"),
+            ),
         };
         let task = tokio::spawn(ingest_events(receiver, context));
         ingest
@@ -3263,6 +3339,10 @@ mod tests {
                     agent_core::usage::UsagePricing::default(),
                 ),
             )),
+            user_text: crate::user_message_projection::UserTextCleaners::new(
+                std::collections::HashMap::new(),
+                ProviderId::from_static("codex"),
+            ),
         };
         let ingest_task = tokio::spawn(ingest_events(receiver, context));
         let (local, local_rx) = tokio::sync::mpsc::channel(4);

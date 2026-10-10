@@ -96,6 +96,9 @@ impl ThreadViewService {
                 ThreadStatus::Idle | ThreadStatus::NotLoaded | ThreadStatus::Failed => {
                     ThreadActivity::Idle
                 }
+                // Another process holds the session: a queued turn waits until
+                // it lets go instead of failing against it.
+                ThreadStatus::OpenElsewhere => ThreadActivity::Unavailable,
             });
         };
         let response = native

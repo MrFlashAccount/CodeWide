@@ -4,7 +4,6 @@ const UPDATE_UNIT: &str = include_str!("../deploy/codewide-companion-update.serv
 const INSTALL_SCRIPT: &str = include_str!("../deploy/install.sh");
 const VERIFY_SCRIPT: &str = include_str!("../deploy/verify.sh");
 const RELEASE_SCRIPT: &str = include_str!("../../../scripts/release-companion");
-const CLAUDE_DROP_IN: &str = include_str!("../deploy/claude-provider.conf");
 
 fn settings(unit: &str) -> Vec<&str> {
     unit.lines()
@@ -21,23 +20,18 @@ fn companion_service_keeps_the_default_log_filter() {
 }
 
 #[test]
-fn claude_drop_in_relaxes_only_the_proven_properties() {
-    assert_eq!(
-        settings(CLAUDE_DROP_IN),
-        [
-            "[Service]",
-            "RestrictAddressFamilies=AF_NETLINK",
-            "RestrictNamespaces=user mnt pid net ipc uts cgroup",
-        ]
-    );
+fn companion_service_relaxes_only_what_claude_is_proven_to_need() {
+    // Claude runs inside this unit by default: AF_NETLINK and the namespace
+    // types bubblewrap creates are the only measured relaxations.
     let unit = settings(COMPANION_UNIT);
-    for kept in [
+    for expected in [
         "ProtectSystem=full",
         "NoNewPrivileges=true",
-        "RestrictNamespaces=true",
-        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+        "CapabilityBoundingSet=",
+        "RestrictNamespaces=user mnt pid net ipc uts cgroup",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
     ] {
-        assert!(unit.contains(&kept), "the base unit keeps {kept}");
+        assert!(unit.contains(&expected), "the unit sets {expected}");
     }
 }
 

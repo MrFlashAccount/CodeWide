@@ -14,6 +14,7 @@ import { renderContextRingView } from "./ContextRingView";
 import { SessionUsageSummary } from "./SessionUsageSummary";
 import { styles } from "./UsageMenu.styles";
 import { AccountUsageSection } from "./accountUsage";
+import type { UsageAccountRow } from "./usageAccounts";
 import { ProviderUsageSection } from "./ProviderUsageSection";
 
 import { appLogger } from "../../observability/logger";
@@ -64,8 +65,8 @@ type UsageMenuView = {
 };
 
 export function UsageMenu({
+  accountRows,
   accountSources,
-  accountsTitle,
   actions = EMPTY_USAGE_ACTIONS,
   align = "start",
   children,
@@ -76,9 +77,9 @@ export function UsageMenu({
   providerLimits = null,
   thread,
 }: {
+  /** The accounts shown, one row per account across the listed servers. */
+  accountRows?: readonly UsageAccountRow[];
   accountSources?: readonly AccountUsageSource[];
-  /** Account section title; "Accounts" when absent. */
-  accountsTitle?: string;
   actions?: UsageMenuAction[];
   align?: "start" | "center" | "end";
   children: ReactElement<PressableProps>;
@@ -133,8 +134,8 @@ export function UsageMenu({
       width={contentWidth}
     >
       <UsageMenuContent
+        accountRows={accountRows}
         accountSources={accountSources}
-        accountsTitle={accountsTitle}
         actions={actions}
         compactionCount={compactionCount}
         hasLeadingSection={hasLeadingSection}
@@ -163,8 +164,8 @@ function projectUsageMenu(
 }
 
 function UsageMenuContent({
+  accountRows,
   accountSources,
-  accountsTitle,
   actions,
   compactionCount,
   hasLeadingSection,
@@ -175,8 +176,8 @@ function UsageMenuContent({
   showThreadUsage,
   view,
 }: {
+  readonly accountRows: readonly UsageAccountRow[] | undefined;
   readonly accountSources: readonly AccountUsageSource[] | undefined;
-  readonly accountsTitle: string | undefined;
   readonly actions: readonly UsageMenuAction[];
   readonly compactionCount: number | null | undefined;
   readonly hasLeadingSection: boolean;
@@ -194,9 +195,9 @@ function UsageMenuContent({
         <ProviderUsageSection entry={providerLimits} hasContext={showThreadUsage} />
       )}
       <AccountUsageSection
+        accountRows={accountRows}
         accountSources={accountSources}
         hasContext={showThreadUsage}
-        {...(accountsTitle === undefined ? {} : { title: accountsTitle })}
       />
       {showThreadUsage ? (
         <SessionUsageSummary

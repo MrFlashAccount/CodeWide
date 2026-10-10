@@ -173,7 +173,13 @@ pub fn row(
             provider: provider.clone(),
             cwd,
             name,
-            preview: first_prompt.map(preview).unwrap_or_default(),
+            // The text the user wrote, as the conversation shows it.
+            preview: first_prompt
+                .and_then(|prompt| {
+                    agent_core::user_text::display_text(prompt, &crate::user_text::ClaudeUserText)
+                })
+                .map(|prompt| preview(&prompt))
+                .unwrap_or_default(),
             created_at,
             updated_at,
             recency_at,

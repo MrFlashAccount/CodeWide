@@ -228,7 +228,12 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
   if (patch.threadId !== thread.id) return false;
   const params = patch.operation;
   let changed = true;
-  if (params.kind === "threadStatus" && params.status !== undefined) thread.status = params.status as Thread["status"];
+  if (params.kind === "threadStatus" && params.status !== undefined) {
+    thread.status = params.status as Thread["status"];
+    // The companion carries the lock of a thread open in another process here;
+    // App Server status changes omit it and keep the snapshot's value.
+    if (typeof params.canAcceptDirectInput === "boolean") thread.canAcceptDirectInput = params.canAcceptDirectInput;
+  }
   else if (params.kind === "threadName") thread.name = typeof params.threadName === "string" ? params.threadName : null;
   else if (params.kind === "threadSettings") updateThreadSettings(thread, params.threadSettings);
   else if (params.kind === "turnStarted") {

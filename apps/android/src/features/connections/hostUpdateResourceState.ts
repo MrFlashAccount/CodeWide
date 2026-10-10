@@ -276,19 +276,19 @@ function classifyHttpFailure(error: HostUpdateHttpError): {
   readonly errorCode: string;
 } {
   const manual = error.code === "manual_update_required";
-  const bootstrap = manual && /bootstrap/iu.test(error.message);
   return {
-    availability: failureAvailability(manual, bootstrap),
-    canCheck: !bootstrap && !manual,
+    availability: manual ? manualAvailability(error.message) : "error",
+    canCheck: !manual,
     errorCode: failureCode(error, manual),
   };
 }
 
-function failureAvailability(manual: boolean, bootstrap: boolean): HostUpdateView["availability"] {
-  if (bootstrap) {
-    return "manualBootstrap";
+/** Classifies a host's manual-update reason; unknown reasons stay a generic manual update. */
+function manualAvailability(reason: string | null): HostUpdateView["availability"] {
+  if (reason === "unofficial_build") {
+    return "unofficialBuild";
   }
-  return manual ? "manualUpdate" : "error";
+  return reason !== null && /bootstrap/iu.test(reason) ? "manualBootstrap" : "manualUpdate";
 }
 
 function failureCode(error: HostUpdateHttpError, manual: boolean): string {
@@ -301,12 +301,7 @@ function hostUpdateAvailability(
   status: HostUpdateStatus,
   capabilityReady: boolean,
 ): HostUpdateView["availability"] {
-  if (capabilityReady) {
-    return "ready";
-  }
-  return /bootstrap/iu.test(status.capability.unavailableReason ?? "")
-    ? "manualBootstrap"
-    : "manualUpdate";
+  return capabilityReady ? "ready" : manualAvailability(status.capability.unavailableReason);
 }
 
 function terminalRetry(operation: HostUpdateOperation | null): boolean {

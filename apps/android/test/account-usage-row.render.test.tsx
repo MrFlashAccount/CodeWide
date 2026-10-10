@@ -1,28 +1,55 @@
 import { describe, expect, it } from "@jest/globals";
 import { render } from "@testing-library/react-native";
-import { Text } from "react-native";
 
-import { AccountUsageRow } from "../src/features/accounts/AccountUsageRow";
-import { colors } from "../src/theme";
+import { AccountProviderHeading, AccountUsageRow } from "../src/features/accounts/AccountUsageRow";
+import type { UsageAccountRow } from "../src/features/accounts/usageAccounts";
 
-describe("compact account usage row", () => {
-  it("puts plan, reset icon, date and countdown in a single secondary line", () => {
-    const view = render(<AccountUsageRow label="account@example.com" plan="Pro X 20" status="active" reset={{ absolute: "14 сент., 22:52", relative: "in 7d" }}><Text>100% left</Text></AccountUsageRow>);
+function row(overrides: Partial<UsageAccountRow>): UsageAccountRow {
+  return {
+    active: true,
+    key: "server/account",
+    label: "account@example.com",
+    plan: "Pro",
+    provider: { id: "codex", name: "Codex" },
+    resetsIn: "3d 8h",
+    servers: [],
+    value: { fiveHour: 78, kind: "remaining", weekly: 35 },
+    ...overrides,
+  };
+}
+
+describe("usage menu account row", () => {
+  it("shows the shares left as rings and a percentage, and the reset as an icon and time", () => {
+    const view = render(<AccountUsageRow row={row({})} />);
     expect(view.getByText("account@example.com")).toBeTruthy();
-    expect(view.getByText("100% left")).toBeTruthy();
-    expect(view.getByLabelText("Pro X 20 · Resets 14 сент., 22:52 · in 7d")).toBeTruthy();
-    expect(view.getByText("14 сент., 22:52").props.numberOfLines).toBe(1);
-    expect(view.getByText("· in 7d").props.numberOfLines).toBe(1);
-    expect(view.getByText("refresh-outline")).toBeTruthy();
-    expect(view.queryByText(/active|Resets/u)).toBeNull();
+    expect(view.getByTestId("usage-account-rings-server/account")).toBeTruthy();
+    expect(view.getByLabelText("Pro · resets in 3d 8h")).toBeTruthy();
+    expect(view.getByText("3d 8h")).toBeTruthy();
+    expect(view.queryByText(/reset/u)).toBeNull();
+    expect(view.getByLabelText("Account in use")).toBeTruthy();
   });
 
-  it.each([
-    ["active", colors.green], ["exhausted", colors.red], ["inactive", colors.textDim], ["disabled", colors.textDim],
-  ] as const)("shows %s with an accessible status dot", (status, color) => {
-    const view = render(<AccountUsageRow label="Account" plan="Plus" status={status} reset={null}><Text>Unavailable</Text></AccountUsageRow>);
-    expect(view.getByLabelText(`Account ${status}`)).toHaveStyle({ backgroundColor: color });
-    expect(view.getByText("Plus")).toBeTruthy();
-    expect(view.queryByText("refresh-outline")).toBeNull();
+  it("tones a refresh in amber and a problem with the account in red", () => {
+    const stale = render(<AccountUsageRow row={row({ value: { kind: "note", text: "Refresh", tone: "attention" } })} />);
+    expect(stale.getByTestId("usage-account-attention-server/account")).toBeTruthy();
+    const broken = render(<AccountUsageRow row={row({ value: { kind: "note", text: "Signed out", tone: "problem" } })} />);
+    expect(broken.getByTestId("usage-account-problem-server/account")).toBeTruthy();
+    expect(broken.getByText("Signed out")).toBeTruthy();
+  });
+
+  it("marks servers by their icons, not by name", () => {
+    const view = render(
+      <AccountUsageRow
+        row={row({ servers: [{ iconId: "laptop", id: "laptop", name: "Laptop" }] })}
+      />,
+    );
+    expect(view.getByLabelText("On Laptop")).toBeTruthy();
+    expect(view.queryByText("Laptop")).toBeNull();
+  });
+
+  it("heads a provider's accounts with its mark and name", () => {
+    const view = render(<AccountProviderHeading provider={{ id: "claude", name: "Claude" }} />);
+    expect(view.getByText("Claude")).toBeTruthy();
+    expect(view.getByTestId("provider-icon-claude", { includeHiddenElements: true })).toBeTruthy();
   });
 });

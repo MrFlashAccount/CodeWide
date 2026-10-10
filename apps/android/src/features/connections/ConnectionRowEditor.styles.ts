@@ -1,4 +1,6 @@
 import { Platform, StyleSheet } from "react-native";
+
+import { SETTINGS_ROW_LEADING_SIZE } from "../../ui/settingsRowLayout";
 import {
   colors,
   controlSize,
@@ -127,6 +129,10 @@ export const styles = StyleSheet.create({
     marginTop: spacing.xxs,
   },
   flex: { flex: 1 },
+  leadingSlot: {
+    alignItems: "center",
+    width: SETTINGS_ROW_LEADING_SIZE,
+  },
   primaryButton: {
     alignItems: "center",
     backgroundColor: colors.primary,

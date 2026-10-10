@@ -47,7 +47,7 @@ it("disables the skill entry when the thread's agent does not accept skills", ()
   expect(select).toHaveBeenCalledWith("files");
 });
 
-it("shows the provider badge only on rows that carry one", () => {
+it("shows every declared provider and reserves the same slot for a legacy row", () => {
   const thread = { id: "t", pinned: false, preview: "Preview", serverId: "server", title: "Title", unread: 0, timestamp: 1 };
   const badged = render(
     <ThreadRowContent selected={false} server={undefined} thread={{ ...thread, agentBadge: "Claude", agentProvider: "claude" }} />,
@@ -58,8 +58,17 @@ it("shows the provider badge only on rows that carry one", () => {
   expect(badge).not.toHaveTextContent("Claude");
   expect(badged.queryByText("Claude")).toBeNull();
   expect(badged.getByTestId("provider-icon-claude", { includeHiddenElements: true })).toBeTruthy();
+  const codex = render(
+    <ThreadRowContent
+      selected={false}
+      server={undefined}
+      thread={{ ...thread, agentBadge: "Codex", agentProvider: "codex" }}
+    />,
+  );
+  expect(codex.getByTestId("provider-icon-codex", { includeHiddenElements: true })).toBeTruthy();
   const plain = render(<ThreadRowContent selected={false} server={undefined} thread={thread} />);
   expect(plain.queryByTestId("thread-agent-badge")).toBeNull();
+  expect(plain.getByTestId("thread-provider-slot")).toBeTruthy();
 });
 
 it("marks provider-aware model rows with their provider and keeps a legacy catalog plain", () => {

@@ -295,6 +295,12 @@ pub trait AgentProvider: Send + Sync {
         let _ = host;
     }
 
+    /// The provider's cleaner of its own envelopes and model-only context in
+    /// user text (`crate::user_text`); `None` when it adds none.
+    fn user_text_cleaner(&self) -> Option<Arc<dyn crate::user_text::UserTextCleaner>> {
+        None
+    }
+
     /// The `codex.native` compatibility surface; `None` unless the provider
     /// declares the `codex.native` capability.
     fn native_surface(&self) -> Option<&dyn NativeSurface> {

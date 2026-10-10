@@ -665,6 +665,10 @@ pub(crate) async fn thread_resources_from_vcs(
                 .collect(),
         )
         .await;
+    let vcs = json!({
+        "provider": snapshot.repository.provider,
+        "branch": snapshot.repository.branch
+    });
     let snapshot_id = snapshot.snapshot_id.clone();
     let mut changes = futures_util::stream::iter(snapshot.files.into_iter().enumerate())
         .map(|(index, file)| {
@@ -705,6 +709,7 @@ pub(crate) async fn thread_resources_from_vcs(
         "revision": format!("vcs.{}.{}", snapshot.snapshot_id, attachment_revision),
         "changeScope": snapshot.scope,
         "changeScopes": changes_menu_scopes(&snapshot.available_scopes),
+        "vcs": vcs,
         "changes": changes,
         "attachments": rollout_data.attachments
     }))

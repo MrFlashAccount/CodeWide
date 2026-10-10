@@ -79,7 +79,7 @@ export const renderRegistry = {
     collapsible: true,
   })) satisfies Renderer,
   agentMessage: ((_item, payload) => ({
-    title: "Codex",
+    title: "Agent",
     body: text(payload.text),
     status: text(payload.phase),
     durationMs: null,

@@ -9,9 +9,21 @@ import type { PendingServerRequest } from "../../data/pending-request-types";
 import { basename } from "../../rendering/changed-file-path";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
+import { WaveText } from "../../ui/WaveText";
 import { mcpElicitationFields, parseElicitationValue } from "./elicitationForm";
 import { isSafeHttpUrl } from "../../rendering/http-link";
 import { styles } from "./RequestFeature.styles";
+
+function ApprovalCwd({ cwd }: { cwd: string }): React.JSX.Element {
+  return (
+    <View style={styles.approvalMetaRow}>
+      <Ionicons color={colors.textDim} name="folder-outline" size={iconSize.inline} />
+      <Text numberOfLines={1} selectable style={styles.approvalCwd}>
+        {basename(cwd)}
+      </Text>
+    </View>
+  );
+}
 
 function ApprovalForm({
   embedded = false,
@@ -53,6 +65,7 @@ function ApprovalForm({
   const command = typeof params.command === "string" ? params.command : null;
   const cwd = typeof params.cwd === "string" ? params.cwd : null;
   const reason = typeof params.reason === "string" ? params.reason : null;
+  const title = approvalTitle(method, params);
   const elicitationMessage =
     method === "mcpServer/elicitation/request" && typeof params.message === "string"
       ? params.message
@@ -86,14 +99,34 @@ function ApprovalForm({
     }
   };
   return (
-    <View style={[styles.approvalCard, embedded && styles.approvalInline]}>
+    <View
+      style={[styles.approvalCard, embedded && styles.approvalInline]}
+      testID="approval-request"
+    >
       <View style={styles.approvalTitleRow}>
-        <Ionicons color={colors.amber} name="shield-checkmark-outline" size={iconSize.action} />
-        <Text ellipsizeMode="tail" numberOfLines={1} style={styles.approvalTitle}>
-          {approvalTitle(method, params)}
-        </Text>
+        <Ionicons
+          color={colors.amber}
+          name="shield-checkmark-outline"
+          size={iconSize.inline}
+          style={styles.approvalIcon}
+        />
+        {waiting ? (
+          <WaveText
+            containerStyle={styles.approvalTitleSlot}
+            style={styles.approvalTitle}
+            testID="approval-title-pending"
+            text={title}
+          />
+        ) : (
+          <Text
+            ellipsizeMode="tail"
+            numberOfLines={1}
+            style={[styles.approvalTitle, styles.approvalTitleSlot]}
+          >
+            {title}
+          </Text>
+        )}
         {requestCount > 1 && <Text style={styles.approvalQueueCount}>1/{requestCount}</Text>}
-        {waiting && <Text style={styles.approvalPending}>RESOLVING…</Text>}
       </View>
       {reason !== null && (
         <Text numberOfLines={1} style={styles.approvalReason}>
@@ -110,11 +143,7 @@ function ApprovalForm({
           {command}
         </Text>
       )}
-      {cwd !== null && (
-        <Text numberOfLines={1} selectable style={styles.approvalCwd}>
-          ⌁ {basename(cwd)}
-        </Text>
-      )}
+      {cwd !== null && <ApprovalCwd cwd={cwd} />}
       <RequestFields
         answers={answers}
         elicitationFields={elicitationFields}

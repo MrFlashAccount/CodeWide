@@ -6,6 +6,7 @@
  * sub-agent transcripts, and v1 result shapes.
  */
 
+import { ModelCatalog } from "../src/catalog/models.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -304,6 +305,7 @@ describe("native session operations over JSON-RPC", () => {
     const lines: unknown[] = [];
     const { service, rateLimits } = harness({ store: store() });
     const rpc = new RpcServer({
+      models: new ModelCatalog(),
       logger: createMemoryLogger(),
       rateLimits,
       runtime: scriptedRuntime().runtime,
@@ -357,7 +359,8 @@ describe("native session CodeWide metadata and provenance", () => {
       recencyAt: null,
       settings: {
         effort: null,
-        model: "default",
+        // The model the terminal session last answered with, not `default`.
+        model: "claude-haiku-4-5-20251001",
         permissionProfile: ":read-only",
         serviceTier: null,
       },

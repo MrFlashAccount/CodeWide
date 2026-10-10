@@ -3,6 +3,7 @@
  * buffering until `initialized`.
  */
 
+import { ModelCatalog } from "../src/catalog/models.js";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer } from "../src/rpc/server.js";
 import { createMemoryLogger } from "../src/log.js";
@@ -14,6 +15,7 @@ function server() {
   const { runtime } = scriptedRuntime();
 
   const rpc = new RpcServer({
+    models: new ModelCatalog(),
     rateLimits,
     service,
     runtime,
@@ -44,6 +46,7 @@ describe("rpc server", () => {
       ];
       let probes = 0;
       const rpc = new RpcServer({
+        models: new ModelCatalog(),
         rateLimits,
         service,
         runtime: {

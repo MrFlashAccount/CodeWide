@@ -2,9 +2,10 @@ import { StyleSheet, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 
 import { colors } from "../../theme";
+import { SETTINGS_ROW_LEADING_SIZE } from "../../ui/settingsRowLayout";
 import { accountLimitProgressColor } from "./accountResetPresentation";
 
-const SIZE = 36;
+const SIZE = SETTINGS_ROW_LEADING_SIZE;
 const DIAMETER_TO_RADIUS = 2;
 const CENTER = SIZE / DIAMETER_TO_RADIUS;
 const OUTER_STROKE_WIDTH = 2;

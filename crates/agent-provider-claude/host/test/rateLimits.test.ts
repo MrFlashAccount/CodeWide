@@ -4,6 +4,7 @@
  * notification.
  */
 
+import { ModelCatalog } from "../src/catalog/models.js";
 import { describe, expect, it } from "vitest";
 import { USAGE_READ_INTERVAL_MS } from "../src/account/rateLimitReporter.js";
 import { classifyFrame } from "../src/mapping/frames.js";
@@ -198,6 +199,7 @@ describe("rateLimits.updated", () => {
     const { service, rateLimits } = harness();
     const { runtime } = scriptedRuntime();
     const rpc = new RpcServer({
+      models: new ModelCatalog(),
       logger: createMemoryLogger(),
       rateLimits,
       runtime: {

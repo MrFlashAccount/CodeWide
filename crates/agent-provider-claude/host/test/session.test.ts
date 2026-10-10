@@ -369,8 +369,8 @@ describe("process loss", () => {
     expect(completions(events)[0]?.turn.error).toEqual({
       kind: "processExited",
       message:
-        "This Claude session is running in the background in another Claude process. " +
-        "Wait for it to finish or run `claude stop 48d313bf` on the host, then try again.",
+        "This conversation is open in another app: a Claude background agent is running this " +
+        "session. Wait for it to finish or run `claude stop 48d313bf` on the host, then try again.",
     });
   });
 });

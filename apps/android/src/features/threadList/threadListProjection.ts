@@ -99,20 +99,16 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
   };
 }
 
-/**
- * A thread bound to a provider other than its host's primary one is labelled with
- * the provider's display name, because the provider decides which features the
- * thread has. The name is display text only; nothing branches on it.
- */
+/** The thread's declared provider name, used only to label its provider mark. */
 function threadAgentBadge(thread: StoredThreadSummary): string | null {
   const agent = thread.codewideAgent;
-  return agent === null || agent === undefined || agent.primary ? null : agent.providerName;
+  return agent === null || agent === undefined ? null : agent.providerName;
 }
 
-/** The badged thread's provider id, for its mark; `null` exactly when there is no badge. */
+/** The thread's declared provider id, for its mark; `null` for legacy or malformed data. */
 function threadAgentBadgeProvider(thread: StoredThreadSummary): string | null {
   const agent = thread.codewideAgent;
-  return agent === null || agent === undefined || agent.primary ? null : agent.provider;
+  return agent === null || agent === undefined ? null : agent.provider;
 }
 
 function threadNeedsAttention(thread: StoredThreadSummary): boolean {

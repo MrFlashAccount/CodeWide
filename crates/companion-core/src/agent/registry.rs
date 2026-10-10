@@ -134,6 +134,24 @@ impl ProviderRegistry {
         )
     }
 
+    /// The enabled providers' cleaners of their own formats in user text;
+    /// a thread of an unknown provider uses the primary's.
+    #[must_use]
+    pub(crate) fn user_text_cleaners(&self) -> crate::user_message_projection::UserTextCleaners {
+        crate::user_message_projection::UserTextCleaners::new(
+            self.ids
+                .iter()
+                .zip(&self.providers)
+                .filter_map(|(id, provider)| {
+                    provider
+                        .user_text_cleaner()
+                        .map(|cleaner| (id.clone(), cleaner))
+                })
+                .collect(),
+            self.primary_id().clone(),
+        )
+    }
+
     #[must_use]
     pub fn get(&self, id: &ProviderId) -> Option<&Arc<dyn AgentProvider>> {
         self.ids

@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
+import type { ReactElement } from "react";
 import { View } from "react-native";
-import { formatThreadTime } from "../../data/device-time";
+import { readDeviceTimePreferences } from "../../data/device-time";
 import { plainThreadPreview } from "../../data/thread-cache";
 import { colors, iconSize } from "../../theme";
 import { ProviderIcon } from "../../ui/ProviderIcon";
@@ -9,12 +10,13 @@ import { AppText as Text } from "../../ui/Typography";
 import { ServerIcon } from "../connections/ServerIcon";
 import { styles } from "./ThreadRow.styles";
 import type { ThreadRowProps } from "./threadRowContract";
+import { formatThreadRecency } from "./threadTime";
 
 export function ThreadRowContent({
   selected,
   server,
   thread,
-}: Pick<ThreadRowProps, "thread" | "server" | "selected">) {
+}: Pick<ThreadRowProps, "thread" | "server" | "selected">): ReactElement {
   return (
     <>
       {selected && <View style={styles.selectionBar} />}
@@ -42,16 +44,6 @@ export function ThreadRowContent({
             </View>
           )}
           <View style={styles.threadMeta}>
-            {typeof thread.agentBadge === "string" && (
-              <View
-                accessibilityLabel={`Agent ${thread.agentBadge}`}
-                accessible
-                style={styles.threadAgentBadge}
-                testID="thread-agent-badge"
-              >
-                <ProviderIcon provider={thread.agentProvider ?? ""} size={iconSize.indicator} />
-              </View>
-            )}
             {thread.needsAttention === true ? (
               <View
                 accessibilityLabel="Требуется твоё внимание"
@@ -67,8 +59,13 @@ export function ThreadRowContent({
                 </View>
               )
             )}
+            <ThreadProviderSlot
+              label={thread.agentBadge ?? null}
+              provider={thread.agentProvider ?? null}
+            />
             <Text numberOfLines={1} style={styles.threadTime} testID="thread-time">
-              {thread.time ?? formatThreadTime(thread.timestamp ?? 0)}
+              {thread.time ??
+                formatThreadRecency(thread.timestamp ?? 0, readDeviceTimePreferences())}
             </Text>
           </View>
         </View>
@@ -79,5 +76,23 @@ export function ThreadRowContent({
         </View>
       </View>
     </>
+  );
+}
+
+function ThreadProviderSlot({
+  label,
+  provider,
+}: {
+  readonly label: string | null;
+  readonly provider: string | null;
+}): ReactElement {
+  return (
+    <View style={styles.threadAgentBadge} testID="thread-provider-slot">
+      {label !== null && (
+        <View accessibilityLabel={`Agent ${label}`} accessible testID="thread-agent-badge">
+          <ProviderIcon provider={provider ?? ""} size={iconSize.indicator} />
+        </View>
+      )}
+    </View>
   );
 }

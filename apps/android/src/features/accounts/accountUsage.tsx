@@ -1,37 +1,33 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { ActivityIndicator, View } from "react-native";
 
-import {
-  accountProfileRateLimitsStale,
-  relativeResetTime,
-  selectWeeklyRateLimit,
-} from "../../data/account-rate-limits";
-import {
-  accountUsageProfiles,
-  type AccountUsageSource,
-} from "../../data/account-usage-presentation";
+import { relativeResetTime, selectWeeklyRateLimit } from "../../data/account-rate-limits";
+import type { AccountUsageSource } from "../../data/account-usage-presentation";
 import { formatDeviceDateTime } from "../../data/device-time";
 import { colors, iconSize } from "../../theme";
 import { AnimatedNumber, integerNumberFormat } from "../../ui/AnimatedNumber";
 import { AppText as Text } from "../../ui/Typography";
-import { AccountUsageRow } from "./AccountUsageRow";
+import { AccountProviderHeading, AccountUsageRow } from "./AccountUsageRow";
+import type { UsageAccountRow } from "./usageAccounts";
 
 import { styles } from "./UsageMenu.styles";
 
 /** Presents the existing account snapshots and stale/error states without creating another cache. */
+const NO_ACCOUNT_ROWS: readonly UsageAccountRow[] = [];
+
 export function AccountUsageSection({
+  accountRows = NO_ACCOUNT_ROWS,
   accountSources,
   hasContext,
-  title = "Accounts",
 }: {
+  /** One row per account across the listed servers. */
+  accountRows?: readonly UsageAccountRow[] | undefined;
   accountSources: readonly AccountUsageSource[] | undefined;
   hasContext: boolean;
-  title?: string;
 }) {
   const singleRateLimits =
     accountSources?.length === 1 ? (accountSources[0]?.rateLimits ?? null) : null;
   const weekly = selectWeeklyRateLimit(singleRateLimits?.snapshot ?? null);
-  const accountProfiles = accountUsageProfiles(accountSources ?? []);
   const loading =
     accountSources?.some(
       (source) => source.rateLimits?.status === "loading" && source.rateLimits.snapshot === null,
@@ -45,7 +41,7 @@ export function AccountUsageSection({
   const exhausted =
     accountSources?.some((source) => source.rateLimits?.accountPool?.allExhausted === true) ??
     false;
-  return accountSources !== undefined && accountProfiles.length > 0 ? (
+  return accountSources !== undefined && accountRows.length > 0 ? (
     <View
       style={[styles.section, hasContext && styles.dividedSection]}
       testID="usage-accounts-section"
@@ -53,7 +49,7 @@ export function AccountUsageSection({
       <View style={styles.weeklyTitle}>
         <Ionicons color={colors.textMuted} name="people-outline" size={iconSize.inline} />
         <Text accessibilityRole="header" style={styles.title}>
-          {title}
+          Accounts
         </Text>
         {(loading || refreshing) && (
           <ActivityIndicator
@@ -63,55 +59,14 @@ export function AccountUsageSection({
           />
         )}
       </View>
-      {accountProfiles.map((account) => {
-        const profile = account.profile;
-        const profileWeekly = selectWeeklyRateLimit(profile.rateLimits);
-        const resetAt = profile.exhaustedUntil ?? profileWeekly?.window.resetsAt ?? null;
-        const profileStale = profile.enabled && accountProfileRateLimitsStale(profile);
-        return (
-          <AccountUsageRow
-            key={account.id}
-            label={account.label}
-            plan={account.detail}
-            reset={
-              profile.enabled && !profileStale && resetAt !== null
-                ? { absolute: formatDeviceDateTime(resetAt), relative: relativeResetTime(resetAt) }
-                : null
-            }
-            status={
-              !profile.enabled
-                ? "disabled"
-                : profile.exhaustedUntil !== null ||
-                    profile.exhaustedIndefinitely ||
-                    profileWeekly?.remainingPercent === 0
-                  ? "exhausted"
-                  : profile.active
-                    ? "active"
-                    : "inactive"
-            }
-            testID={`usage-account-${profile.id}`}
-          >
-            {!profile.enabled || profileStale || profileWeekly === null ? (
-              <Text style={[styles.secondaryValue, styles.unavailable]}>
-                {!profile.enabled
-                  ? "Disabled"
-                  : profileStale
-                    ? "Refresh required"
-                    : profile.exhaustedIndefinitely
-                      ? "Limit reached"
-                      : "Unavailable"}
-              </Text>
-            ) : (
-              <AnimatedNumber
-                format={integerNumberFormat}
-                style={styles.accountValue}
-                suffix="% left"
-                value={Math.round(profileWeekly.remainingPercent)}
-              />
-            )}
-          </AccountUsageRow>
-        );
-      })}
+      {accountRows.map((row, index) => (
+        <View key={row.key}>
+          {row.provider !== null && row.provider.id !== accountRows[index - 1]?.provider?.id ? (
+            <AccountProviderHeading provider={row.provider} />
+          ) : null}
+          <AccountUsageRow row={row} />
+        </View>
+      ))}
       {exhausted && (
         <Text style={styles.error}>
           {aggregateAccounts
@@ -128,7 +83,7 @@ export function AccountUsageSection({
       <View style={styles.weeklyTitle}>
         <Ionicons color={colors.textMuted} name="people-outline" size={17} />
         <Text accessibilityRole="header" style={styles.title}>
-          {title}
+          Accounts
         </Text>
         {(loading || refreshing) && (
           <ActivityIndicator

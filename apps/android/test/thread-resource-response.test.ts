@@ -73,6 +73,25 @@ describe("V1 thread resource response boundary", () => {
     expect(next.changes).toHaveLength(1);
   });
 
+  it("preserves the VCS identity of the exact changes snapshot", () => {
+    const patch = parseThreadResourcesPatch(
+      {
+        threadId: "thread",
+        revision: "git-r1",
+        changeScope: "branch",
+        changes: [change],
+        vcs: { branch: "feature/current", provider: "git" },
+      },
+      "thread",
+      "changes",
+    );
+
+    expect(mergeThreadResources(null, patch).vcs).toEqual({
+      branch: "feature/current",
+      provider: "git",
+    });
+  });
+
   it("validates the session origin used to distinguish a removed new file", () => {
     const patch = parseThreadResourcesPatch(
       {

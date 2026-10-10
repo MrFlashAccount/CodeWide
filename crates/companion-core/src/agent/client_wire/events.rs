@@ -289,10 +289,13 @@ impl EventProjector {
             .as_ref()
             .is_none_or(|previous| previous.status != next.status)
         {
-            payloads.push(json!({
-                "method": "thread/status/changed",
-                "params": {"threadId": id, "status": items::thread_status(next.status)}
-            }));
+            let mut params = json!({"threadId": id, "status": items::thread_status(next.status)});
+            // The client keeps the lock of a thread open elsewhere live from
+            // this field; an unloaded thread leaves its last known value.
+            if let Some(accepts) = items::can_accept_direct_input(next.status) {
+                params["canAcceptDirectInput"] = json!(accepts);
+            }
+            payloads.push(json!({"method": "thread/status/changed", "params": params}));
         }
         let name_changed = previous
             .as_ref()
@@ -546,6 +549,28 @@ mod tests {
         );
         assert_eq!(changed[1]["params"]["threadName"], "Named");
         assert_eq!(changed[3]["params"]["threadSettings"]["model"], "m2");
+    }
+
+    #[test]
+    fn a_thread_open_elsewhere_locks_and_releases_direct_input_live() {
+        let mut projector = projector();
+        let _ = projector.project(AgentEvent::ThreadUpdated {
+            thread: thread(ThreadStatus::Idle, None, false, "m"),
+        });
+        let locked = projector.project(AgentEvent::ThreadUpdated {
+            thread: thread(ThreadStatus::OpenElsewhere, None, false, "m"),
+        });
+        assert_eq!(methods(&locked), ["thread/status/changed"]);
+        assert_eq!(locked[0]["params"]["status"], json!({"type": "idle"}));
+        assert_eq!(locked[0]["params"]["canAcceptDirectInput"], false);
+        let released = projector.project(AgentEvent::ThreadUpdated {
+            thread: thread(ThreadStatus::Idle, None, false, "m"),
+        });
+        assert_eq!(released[0]["params"]["canAcceptDirectInput"], true);
+        let unloaded = projector.project(AgentEvent::ThreadUpdated {
+            thread: thread(ThreadStatus::NotLoaded, None, false, "m"),
+        });
+        assert!(unloaded[0]["params"].get("canAcceptDirectInput").is_none());
     }
 
     #[test]

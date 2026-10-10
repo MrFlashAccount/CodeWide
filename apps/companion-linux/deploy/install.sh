@@ -13,11 +13,6 @@ memory_watch_source=${CODEWIDE_COMPANION_MEMORY_WATCH_SOURCE:-"$repo_root/apps/c
 memory_watch_service_source=${CODEWIDE_COMPANION_MEMORY_WATCH_SERVICE_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service"}
 memory_watch_timer_source=${CODEWIDE_COMPANION_MEMORY_WATCH_TIMER_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer"}
 install_root=${CODEWIDE_COMPANION_INSTALL_ROOT:-"$HOME/.local/lib/codewide"}
-# Optional release payload of the Claude agent host and its installer. They
-# are staged into the generation; the Claude provider is enabled by running
-# $install_root/current/libexec/codewide-install-claude-provider.
-claude_host_payload=${CODEWIDE_COMPANION_CLAUDE_HOST_PAYLOAD:-}
-claude_installer_source=${CODEWIDE_COMPANION_CLAUDE_INSTALLER_SOURCE:-}
 unit_root=${CODEWIDE_COMPANION_UNIT_ROOT:-"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"}
 state_home=${XDG_STATE_HOME:-$HOME/.local/state}
 state_root="$state_home/codewide/companion"
@@ -59,15 +54,6 @@ if [ ! -d "$generation" ]; then
   install -m 0755 "$binary" "$staging/bin/codewide-companion"
   install -m 0755 "$git_plugin_binary" "$staging/libexec/codewide-vcs-git"
   install -m 0755 "$memory_watch_source" "$staging/libexec/codewide-companion-memory-watch"
-  if [ -n "$claude_host_payload" ] && [ -n "$claude_installer_source" ]; then
-    # The running host lives in its own install directory; this copy is only
-    # the installer's source and ships with this generation.
-    test -f "$claude_host_payload/dist/main.js"
-    mkdir -p "$staging/share"
-    install -m 0755 "$claude_installer_source" "$staging/libexec/codewide-install-claude-provider"
-    cp -R "$claude_host_payload" "$staging/share/claude-agent-host"
-    chmod 0755 "$staging/share" "$staging/share/claude-agent-host"
-  fi
   printf '{"schemaVersion":1,"version":"%s","build":"%s","sourceRevision":"%s","artifactDigest":"%s"}\n' \
     "$version" "$build" "$source_revision" "$artifact_digest" >"$staging/metadata.json"
   chmod 0600 "$staging/metadata.json"

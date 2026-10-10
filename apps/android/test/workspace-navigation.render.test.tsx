@@ -1508,7 +1508,7 @@ it("replaces /new after successful first admission and retires only the captured
       },
       commands,
       draftChat: captured,
-      setActiveThreadId: result.current.navigation.selectThread,
+      setActiveThreadId: result.current.navigation.openAdmittedDraftThread,
     })("hello", { type: "start" }, {});
   });
 
@@ -1521,6 +1521,80 @@ it("replaces /new after successful first admission and retires only the captured
     router.back();
   });
   expect(mockRouterHistory()[0]?.pathname).toBe("/");
+});
+
+it("keeps the chat the user switched to while the draft was being created", async () => {
+  resetMockRouter("/");
+  router.push("/new");
+  const drafts = new NewThreadService();
+  const captured = drafts.open("server", null);
+  const created = Promise.withResolvers<string>();
+  const commands = {
+    sendText: jest.fn(async () => "command"),
+    startThread: jest.fn(() => created.promise),
+    startThreadInWorkspace: jest.fn(async () => "unused"),
+  };
+  const { result } = renderHook(useMountedThreadNavigation);
+
+  const sent = createNewChatSubmission({
+    catalogModels: () => [],
+    closeDraft: (draftId) => {
+      drafts.close(draftId);
+    },
+    commands,
+    draftChat: captured,
+    setActiveThreadId: result.current.navigation.openAdmittedDraftThread,
+  })("hello", { type: "start" }, {});
+  act(() => {
+    router.back();
+    router.push({
+      params: { connectionId: "server", threadId: "other" },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+  await act(async () => {
+    created.resolve("thread");
+    await sent;
+  });
+
+  expect(drafts.current()).toBeNull();
+  expect(mockRouterHistory().map((entry) => [entry.pathname, entry.params["threadId"]])).toEqual([
+    ["/", undefined],
+    ["/threads/[connectionId]/[threadId]", "other"],
+  ]);
+});
+
+it("still opens the created chat when the user only left the draft for a non-chat screen", async () => {
+  resetMockRouter("/");
+  router.push("/new");
+  const created = Promise.withResolvers<string>();
+  const commands = {
+    sendText: jest.fn(async () => "command"),
+    startThread: jest.fn(() => created.promise),
+    startThreadInWorkspace: jest.fn(async () => "unused"),
+  };
+  const { result } = renderHook(useMountedThreadNavigation);
+
+  const sent = createNewChatSubmission({
+    catalogModels: () => [],
+    closeDraft: () => undefined,
+    commands,
+    draftChat: new NewThreadService().open("server", null),
+    setActiveThreadId: result.current.navigation.openAdmittedDraftThread,
+  })("hello", { type: "start" }, {});
+  act(() => {
+    router.push("/projects");
+  });
+  await act(async () => {
+    created.resolve("thread");
+    await sent;
+  });
+
+  const destination = mockRouterHistory().at(-1);
+  expect([destination?.pathname, destination?.params["threadId"]]).toEqual([
+    "/threads/[connectionId]/[threadId]",
+    "thread",
+  ]);
 });
 
 it("retains the exact draft and /new destination when first admission fails", async () => {
@@ -1544,7 +1618,7 @@ it("retains the exact draft and /new destination when first admission fails", as
       },
       commands,
       draftChat: captured,
-      setActiveThreadId: result.current.navigation.selectThread,
+      setActiveThreadId: result.current.navigation.openAdmittedDraftThread,
     })("hello", { type: "start" }, {}),
   ).rejects.toThrow("admission failed");
 

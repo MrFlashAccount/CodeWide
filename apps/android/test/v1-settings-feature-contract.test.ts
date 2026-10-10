@@ -74,7 +74,7 @@ describe("M1 feature integration contracts", () => {
     expect(source).toContain("One-time code");
     expect(source).toContain('{codeCopied ? "Copied" : "Copy"}');
     expect(source).toMatch(/enableDynamicSizing: true,\s*enableOverDrag: false/u);
-    expect(source).toContain('dismissLabel: "Close Codex account sign-in"');
+    expect(source).toContain("dismissLabel: `Close ${account} sign-in`");
   });
   it("accounts/AccountPoolFeature.tsx retains its migrated UI contract", () => {
     const source = readFileSync(

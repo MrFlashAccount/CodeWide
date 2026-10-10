@@ -115,6 +115,25 @@ it("shows a manual-update rejection as setup guidance, not as a failed update", 
   expect(view.queryByText(/Update failed/u)).toBeNull();
 });
 
+it("tells an unofficial build apart and offers no installer that could replace it", () => {
+  const view = render(
+    <Fixture
+      update={{
+        ...available(),
+        availability: "unofficialBuild",
+        canApply: false,
+        canCheck: false,
+        latestVersion: null,
+        platform: "linux-x86-64",
+        targetFingerprint: null,
+      }}
+    />,
+  );
+  expect(view.getByText("Linux · unofficial build")).toBeTruthy();
+  expect(view.getByText(/built outside an official release/u)).toBeTruthy();
+  expect(view.queryByLabelText("Copy installer command")).toBeNull();
+});
+
 it.each([
   ["unsupported", "cannot update remotely"],
   ["manualBootstrap", "set up safe remote updates"],

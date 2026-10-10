@@ -846,9 +846,6 @@ impl ContentProjector {
         }
         if object.get("type").and_then(Value::as_str) == Some("userMessage") {
             compact_user_images(object, &self.content);
-            if let Some(parts) = object.get_mut("content").and_then(Value::as_array_mut) {
-                crate::user_message_projection::project_desktop_content(parts);
-            }
             attach_user_message_attachments(object);
         }
         if object.get("type").and_then(Value::as_str) == Some("imageGeneration")
@@ -2344,6 +2341,25 @@ mod tests {
         );
     }
 
+    /// The companion's composition: user text first, then content.
+    fn user_text_item(raw: Value) -> Value {
+        let mut notification = json!({"method":"item/completed", "params":{}});
+        notification["params"]["item"] = raw;
+        crate::user_message_projection::project_notification(
+            notification,
+            &agent_core::user_text::NoUserTextFormats,
+        )
+        .map_or(Value::Null, |mut payload| payload["params"]["item"].take())
+    }
+
+    fn user_text_result(method: &str, value: Value) -> Value {
+        crate::user_message_projection::project_rpc_result(
+            method,
+            value,
+            &agent_core::user_text::NoUserTextFormats,
+        )
+    }
+
     #[tokio::test]
     async fn desktop_file_envelope_projects_as_media_and_authored_text_on_every_read_lane() {
         let directory = tempfile::tempdir().expect("content directory");
@@ -2373,7 +2389,7 @@ mod tests {
                 ]
                 .join(newline);
                 let raw = json!({"id":"user", "type":"userMessage", "content":[{"type":"text", "text":text, "text_elements":[]}]});
-                let expected = projector.project_item(raw.clone());
+                let expected = projector.project_item(user_text_item(raw.clone()));
                 assert_eq!(
                     expected["content"],
                     json!([
@@ -2390,18 +2406,24 @@ mod tests {
                     ])
                 );
                 assert_eq!(projector.project_item(expected.clone()), expected);
-                let event = projector.project_notification(
-                    json!({"method":"item/completed", "params":{"item":raw}}),
-                );
+                let event = projector.project_notification(json!({
+                    "method":"item/completed", "params":{"item":user_text_item(raw.clone())}
+                }));
                 assert_eq!(event["params"]["item"], expected);
                 let page = projector.project_rpc_result(
                     "thread/turns/list",
-                    json!({"data":[{"id":"turn", "items":[raw]}]}),
+                    user_text_result(
+                        "thread/turns/list",
+                        json!({"data":[{"id":"turn", "items":[raw.clone()]}]}),
+                    ),
                 );
                 assert_eq!(page["data"][0]["items"][0], expected);
                 let sync = projector.project_rpc_result(
                     "companion/thread/sync",
-                    json!({"history":{"turns":[{"id":"turn", "items":[raw]}]}}),
+                    user_text_result(
+                        "companion/thread/sync",
+                        json!({"history":{"turns":[{"id":"turn", "items":[raw]}]}}),
+                    ),
                 );
                 assert_eq!(sync["history"]["turns"][0]["items"][0], expected);
             }
@@ -2416,14 +2438,14 @@ mod tests {
                 .path()
                 .join("cas"),
         ));
-        let projected = projector.project_item(json!({
+        let projected = projector.project_item(user_text_item(json!({
             "id": "user-message",
             "type": "userMessage",
             "content": [{
                 "type": "text",
                 "text": "# Files mentioned by the user:\n\n## plan.md: /srv/codex/plan.md\n\n## page.html: `/srv/codex/page.html`\n\n## My request for Codex:\n\nReview both."
             }]
-        }));
+        })));
 
         assert_eq!(projected["codewideAttachments"]["version"], 1);
         assert_eq!(

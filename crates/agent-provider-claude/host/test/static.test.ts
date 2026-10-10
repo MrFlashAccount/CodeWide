@@ -52,7 +52,7 @@ const code = (text: string): string =>
   text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("source boundaries", () => {
-  it("imports the Agent SDK only from the SDK adapters", () => {
+  it("imports the Agent SDK only from the SDK adapters, and its values only through the loader", () => {
     const importers = sources.filter((path) =>
       importLines(readFileSync(path, "utf8")).some((line) =>
         line.includes("@anthropic-ai/claude-agent-sdk"),
@@ -60,9 +60,19 @@ describe("source boundaries", () => {
     );
     expect(importers.map((path) => relative(root, path)).toSorted()).toEqual([
       "src/claude/sdkClientTools.ts",
+      "src/claude/sdkModule.ts",
       "src/claude/sdkRuntime.ts",
       "src/claude/sdkSessionStore.ts",
     ]);
+    // Only the loader imports SDK values; the packaged host leaves the SDK
+    // out and loads the package the companion downloaded.
+    for (const path of importers) {
+      for (const line of importLines(readFileSync(path, "utf8"))) {
+        if (line.includes("@anthropic-ai/claude-agent-sdk")) {
+          expect(line).toMatch(/^import type\b/);
+        }
+      }
+    }
   });
 
   it("imports @codewide packages type-only", () => {

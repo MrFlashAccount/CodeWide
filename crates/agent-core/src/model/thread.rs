@@ -16,6 +16,9 @@ pub enum ThreadStatus {
     Active,
     NotLoaded,
     Failed,
+    /// Another process of the provider holds the thread's native session; the
+    /// provider cannot run a turn in it until that process lets go.
+    OpenElsewhere,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

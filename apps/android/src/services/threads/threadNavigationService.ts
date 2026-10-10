@@ -60,6 +60,8 @@ export type V1ThreadRouter = {
 /** Qualified thread navigation commands consumed by the mounted workspace. */
 export type ThreadNavigationService = ThreadListNavigation & {
   readonly closeActiveThread: () => void;
+  /** Opens a chat created from the new-chat draft unless the user has since opened another chat. */
+  readonly openAdmittedDraftThread: (selectionKey: string) => void;
   readonly openSearchThread: (target: LocatedSearchHit, query: string) => void;
   readonly selectThread: (selectionKey: string | null) => void;
 };
@@ -133,6 +135,13 @@ export function useThreadNavigationService(
     }
   });
 
+  // Creation outlives the draft route, so only this persistent owner sees the live destination.
+  const openAdmittedDraftThread = useEvent((selectionKey: string): void => {
+    if (router.currentThread === null) {
+      selectThread(selectionKey);
+    }
+  });
+
   // Render callback: link props must use this render's route, before layout effects publish handlers.
   const getThreadLink = (thread: { readonly id: string; readonly serverId: string }): ThreadLink =>
     router.link({
@@ -168,5 +177,12 @@ export function useThreadNavigationService(
   const closeActiveThread = useEvent((): void => {
     router.dismissToAll();
   });
-  return { closeActiveThread, getThreadLink, openSearchThread, prepareThreadLink, selectThread };
+  return {
+    closeActiveThread,
+    getThreadLink,
+    openAdmittedDraftThread,
+    openSearchThread,
+    prepareThreadLink,
+    selectThread,
+  };
 }

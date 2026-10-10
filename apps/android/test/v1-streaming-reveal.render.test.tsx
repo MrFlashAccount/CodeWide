@@ -63,6 +63,8 @@ function turnBody(turn: TurnItem, animateLiveUpdates: boolean) {
       onFixUnsupportedBlock={undefined}
       onLoadItems={undefined}
       parts={row.parts}
+      bubble={row.bubble}
+      group={row.group}
       placement={row.placement}
       presentation={projectTurnPresentation(turn, null, false, false)}
       requestPrompt={null}

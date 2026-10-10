@@ -143,6 +143,8 @@ export interface Harness {
   readonly rateLimits: RateLimitReporter;
   /** Every snapshot the reporter published. */
   readonly publishedLimits: ProviderRateLimits[];
+  /** Session ids the fake `claude agents` reports as running; tests mutate it. */
+  readonly runningSessions: Set<string>;
 }
 
 export function harness(
@@ -151,8 +153,12 @@ export function harness(
     readonly idleReleaseMs?: number;
     readonly stateDirectory?: string;
     readonly store?: MemorySessionStore;
+    readonly openElsewherePollMs?: number;
+    /** Recorded model id → catalog id; identity by default. */
+    readonly modelIdFor?: (recorded: string) => string;
   } = {},
 ): Harness {
+  const runningSessions = new Set<string>();
   const store = options.store ?? new MemorySessionStore();
   const { runtime, queries } = scriptedRuntime(store);
   const logger = createMemoryLogger();
@@ -189,6 +195,9 @@ export function harness(
     interruptTimeoutMs: options.interruptTimeoutMs ?? 50,
     idleReleaseMs: options.idleReleaseMs ?? 30 * 60 * 1000,
     backgroundDeferMaxMs: 4 * 60 * 60 * 1000,
+    models: { idFor: options.modelIdFor ?? ((recorded) => recorded) },
+    openElsewherePollMs: options.openElsewherePollMs ?? 60_000,
+    runningSessions: { list: async () => new Set(runningSessions) },
   });
   return {
     service,
@@ -199,6 +208,7 @@ export function harness(
     logs: logger.lines,
     stateDirectory,
     clock,
+    runningSessions,
     rateLimits,
     publishedLimits,
   };

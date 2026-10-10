@@ -8,7 +8,6 @@ import {
   userImageSourceProjection,
   type PrivateImageAssetProjection,
 } from "./image-source";
-import { normalizeUserMessage } from "./user-message-normalizer";
 
 export type UserMessageAttachmentSource =
   | { path: string; type: "path" }
@@ -83,15 +82,6 @@ export function projectUserMessageAttachments(
         source: { path: part.path, type: "path" },
       });
       continue;
-    }
-    if (part.type === "text" && typeof part.text === "string") {
-      for (const file of normalizeUserMessage(part.text).files) {
-        push({
-          kind: fileMediaKind(file.name) ?? "file",
-          name: file.name,
-          source: { path: file.path, type: "path" },
-        });
-      }
     }
   }
   for (const attachment of localAttachments) {

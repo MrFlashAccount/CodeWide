@@ -36,11 +36,23 @@ export interface ThreadView {
    * thread shows its preview at once; `null` otherwise. Never stored.
    */
   readonly livePrompt: string | null;
+  /**
+   * Catalog id of the model a session CodeWide never touched last answered
+   * with, when read; its settings report it instead of `default`.
+   */
+  readonly recordedModel: string | null;
   /** Sessions of the thread's chain that exist in Claude's store, oldest first. */
   readonly sessions: readonly StoredSession[];
   /** Host metadata, or `null` for a session CodeWide never touched. */
   readonly state: ThreadState | null;
   readonly status: ThreadStatus;
+}
+
+/** Settings of a session CodeWide never configured, with its recorded model when known. */
+export function discoveredSettings(recordedModel: string | null): ThreadSettings {
+  return recordedModel === null
+    ? DISCOVERED_SETTINGS
+    : { ...DISCOVERED_SETTINGS, model: recordedModel };
 }
 
 /** The person's first prompt (a replacement session's history prefix is not one). */
@@ -83,10 +95,16 @@ function updatedAt(view: ThreadView): number {
 
 /** Facts only the host's metadata holds, with the defaults of a session CodeWide never touched. */
 function hostFacts(
-  state: ThreadState | null,
+  view: ThreadView,
 ): Pick<AgentThread, "archived" | "origin" | "recencyAt" | "settings"> {
+  const state = view.state;
   if (state === null) {
-    return { archived: false, origin: "external", recencyAt: null, settings: DISCOVERED_SETTINGS };
+    return {
+      archived: false,
+      origin: "external",
+      recencyAt: null,
+      settings: discoveredSettings(view.recordedModel),
+    };
   }
   return {
     archived: isArchived(state),
@@ -126,7 +144,7 @@ export function projectThread(view: ThreadView): AgentThread {
     provider: PROVIDER_ID,
     status: view.status,
     updatedAt: updatedAt(view),
-    ...hostFacts(view.state),
+    ...hostFacts(view),
   };
 }
 

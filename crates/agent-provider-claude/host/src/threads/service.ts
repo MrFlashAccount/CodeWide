@@ -39,7 +39,7 @@ import {
   nativeSessionNotFoundMessage,
   threadNotFoundMessage,
 } from "../protocol.js";
-import type { SessionStore, StoredSession } from "../claude/port.js";
+import type { RunningSessions, SessionStore, StoredSession } from "../claude/port.js";
 import { isProfileId, unsupportedProfileMessage } from "../permissions/profiles.js";
 import {
   currentSessionId,
@@ -63,12 +63,15 @@ import { unreachable } from "../support/unreachable.js";
 import { listThreads, type ListRow } from "./listing.js";
 import {
   codewideMetadata,
-  DISCOVERED_SETTINGS,
+  discoveredSettings,
   isShell,
   projectThread,
   searchText,
   type ThreadView,
 } from "./projection.js";
+import type { ModelCatalog } from "../catalog/models.js";
+import { OpenElsewhere } from "./openElsewhere.js";
+import { RecordedModels } from "./recordedModels.js";
 import { ThreadRegistry, type RegistryDeps, type ThreadEntry } from "./registry.js";
 import type { SessionCatalog } from "./sessionCatalog.js";
 
@@ -92,8 +95,18 @@ const seconds = (ms: number): number => Math.floor(ms / MS_PER_SECOND);
 
 export interface ServiceDeps extends RegistryDeps {
   readonly catalog: SessionCatalog;
+  /** Maps a recorded model id to the catalog's id for it. */
+  readonly models: Pick<ModelCatalog, "idFor">;
+  /** How often the running sessions are re-read while one is held elsewhere. */
+  readonly openElsewherePollMs: number;
+  readonly runningSessions: RunningSessions;
   readonly sessionStore: SessionStore;
 }
+
+/** Matched by clients as the "conversation open elsewhere" failure. */
+export const OPEN_ELSEWHERE_MESSAGE =
+  "This conversation is open in another app: another Claude process is running this session. " +
+  "Close it there, then try again here.";
 
 /** A thread id resolved against the host's metadata and Claude's store. */
 type Resolved =
@@ -187,6 +200,8 @@ export class ThreadService {
   private readonly registry: ThreadRegistry;
   private readonly history: ThreadHistory;
   private readonly native: NativeSessionReader;
+  private readonly openElsewhere: OpenElsewhere;
+  private readonly recordedModels: RecordedModels;
   private readonly deps: ServiceDeps;
 
   public constructor(deps: ServiceDeps) {
@@ -196,6 +211,16 @@ export class ThreadService {
       catalog: deps.catalog,
       ownerOf: (sessionId) => this.sessionOwner(sessionId),
       store: deps.sessionStore,
+    });
+    this.recordedModels = new RecordedModels(deps.sessionStore);
+    this.openElsewhere = new OpenElsewhere({
+      changed: (sessionIds) => {
+        this.onOpenElsewhereChanged(sessionIds);
+      },
+      logger: deps.logger,
+      ownsLive: (sessionId) => this.ownsLive(sessionId),
+      pollMs: deps.openElsewherePollMs,
+      running: deps.runningSessions,
     });
     this.registry = new ThreadRegistry(deps, {
       historyLines: async (entry) =>
@@ -224,7 +249,32 @@ export class ThreadService {
 
   /** Ends every live session (host shutdown). */
   public shutdown(): void {
+    this.openElsewhere.shutdown();
     this.registry.shutdown();
+  }
+
+  /** Whether a live query of this host runs `sessionId`. */
+  private ownsLive(sessionId: string): boolean {
+    const entry = this.registry.ownerOf(sessionId);
+    return entry !== null && entry.session.isLive && currentSessionId(entry.state) === sessionId;
+  }
+
+  /** Publishes the threads whose current session another process took or released. */
+  private onOpenElsewhereChanged(sessionIds: ReadonlySet<string>): void {
+    for (const sessionId of sessionIds) {
+      const entry = this.registry.ownerOf(sessionId);
+      if (entry !== null) {
+        if (!isDeleted(entry.state) && currentSessionId(entry.state) === sessionId) {
+          this.emitUpdated(this.project(entry));
+        }
+        continue;
+      }
+      // Only a session Claude's listing showed is a thread clients may know.
+      const session = this.deps.catalog.cached(sessionId);
+      if (session !== null && UUID.test(sessionId)) {
+        this.emitUpdated(projectThread(this.discoveredView(session)));
+      }
+    }
   }
 
   /** The host thread a native session belongs to, with the live turn running in it. */
@@ -277,13 +327,13 @@ export class ThreadService {
 
   private viewOf(entry: ThreadEntry, sessions: readonly StoredSession[]): ThreadView {
     const session = entry.session;
-    const live = session.isLive ? "idle" : "notLoaded";
     return {
       appThreadId: entry.state.appThreadId,
       livePrompt: livePrompt(session.activeSnapshot()),
+      recordedModel: null,
       sessions,
       state: entry.state,
-      status: session.activeTurnId === null ? live : "active",
+      status: this.entryStatus(entry),
     };
   }
 
@@ -306,13 +356,25 @@ export class ThreadService {
     return projectThread(this.viewOf(entry, this.cachedSessions(entry.state)));
   }
 
-  private static discoveredView(session: StoredSession): ThreadView {
+  private entryStatus(entry: ThreadEntry): ThreadView["status"] {
+    const session = entry.session;
+    if (session.activeTurnId !== null) {
+      return "active";
+    }
+    if (session.isLive) {
+      return "idle";
+    }
+    return this.openElsewhere.isHeld(currentSessionId(entry.state)) ? "openElsewhere" : "notLoaded";
+  }
+
+  private discoveredView(session: StoredSession): ThreadView {
     return {
       appThreadId: session.sessionId,
       livePrompt: null,
+      recordedModel: this.recordedModelOf(session.sessionId),
       sessions: [session],
       state: null,
-      status: "notLoaded",
+      status: this.openElsewhere.isHeld(session.sessionId) ? "openElsewhere" : "notLoaded",
     };
   }
 
@@ -332,9 +394,17 @@ export class ThreadService {
   private async currentView(
     resolved: Resolved & { readonly type: "discovered" | "entry" },
   ): Promise<ThreadView> {
-    return resolved.type === "entry"
-      ? this.viewOf(resolved.entry, await this.freshSessions(resolved.entry.state))
-      : ThreadService.discoveredView(resolved.session);
+    if (resolved.type === "entry") {
+      return this.viewOf(resolved.entry, await this.freshSessions(resolved.entry.state));
+    }
+    await this.recordedModels.load(resolved.session);
+    return this.discoveredView(resolved.session);
+  }
+
+  /** Catalog id of the session's last answering model, from the last read. */
+  private recordedModelOf(sessionId: string): string | null {
+    const recorded = this.recordedModels.cached(sessionId);
+    return recorded === null ? null : this.deps.models.idFor(recorded);
   }
 
   /** Host metadata for a session CodeWide has not touched yet. */
@@ -354,7 +424,8 @@ export class ThreadService {
       recencyAt: null,
       sessionIds: [session.sessionId],
       sessionStarted: true,
-      settings: DISCOVERED_SETTINGS,
+      // CodeWide continues the session with the model it last answered with.
+      settings: discoveredSettings(this.recordedModelOf(session.sessionId)),
       title: { type: "none" },
       // A discovered session may hold usage the host never measured.
       totalCost: { type: "unknown" },
@@ -373,6 +444,7 @@ export class ThreadService {
       case "entry":
         return resolved.entry;
       case "discovered":
+        await this.recordedModels.load(resolved.session);
         return this.adopt(resolved.session, { archived: false, type: "listed" });
       case "deleted":
       case "missing":
@@ -467,6 +539,9 @@ export class ThreadService {
     if (!isListed(resolved)) {
       return notFound(appThreadId);
     }
+    // Opening a thread is when a client needs to know whether it can write;
+    // the read itself never waits for the CLI.
+    this.openElsewhere.refreshInBackground();
     const thread = projectThread(await this.currentView(resolved));
     return ok({
       activeTurnId: resolved.type === "entry" ? resolved.entry.session.activeTurnId : null,
@@ -503,7 +578,7 @@ export class ThreadService {
     for (const sessionId of snapshot.interactive) {
       const session = snapshot.sessions.get(sessionId);
       if (session !== undefined && !claimed.has(sessionId)) {
-        rows.push(listRow(ThreadService.discoveredView(session)));
+        rows.push(listRow(this.discoveredView(session)));
       }
     }
     const result = listThreads(rows, params);
@@ -694,6 +769,14 @@ export class ThreadService {
     }
     if (entry.state.cwd.length === 0) {
       return fail(ERROR_CODES.invalidRequest, "the Claude session has no working directory");
+    }
+    // A session that never started cannot be held; a live one is this host's.
+    if (
+      entry.state.sessionStarted &&
+      !entry.session.isLive &&
+      (await this.openElsewhere.check(currentSessionId(entry.state)))
+    ) {
+      return fail(ERROR_CODES.invalidRequest, OPEN_ELSEWHERE_MESSAGE);
     }
     return ok(entry);
   }

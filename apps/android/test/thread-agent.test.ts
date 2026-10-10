@@ -231,7 +231,7 @@ describe("capability-gated thread actions", () => {
 });
 
 describe("thread list provider badge", () => {
-  it("labels only threads bound to a provider other than the host's primary provider", () => {
+  it("labels every thread with a declared provider and leaves legacy identity unknown", () => {
     const claude = summary("claude-thread", {
       codewideAgent: { capabilities: [], primary: false, provider: provider("claude"), providerName: "Claude" },
     });
@@ -239,7 +239,8 @@ describe("thread list provider badge", () => {
       codewideAgent: { capabilities: ["review"], primary: true, provider: provider("codex"), providerName: "Codex" },
     });
     expect(storedThreadToListItem(claude).agentBadge).toBe("Claude");
-    expect(storedThreadToListItem(codex).agentBadge).toBeNull();
+    expect(storedThreadToListItem(codex).agentBadge).toBe("Codex");
+    expect(storedThreadToListItem(codex).agentProvider).toBe("codex");
     expect(storedThreadToListItem(summary("legacy-thread")).agentBadge).toBeNull();
   });
 });
