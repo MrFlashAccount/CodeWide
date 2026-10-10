@@ -46,7 +46,7 @@ it("keeps a server-scoped new chat local until the first send", () => {
   );
   expect(ownerActiveConversationScope).toContain("title: \"New Chat\"");
   expect(ownerConversationWorkspace).toMatch(
-    /createConversationScopeBindings\(\s*props\.features,\s*scope\.newChatDraft !== null/u,
+    /createConversationScopeBindings\(\s*props\.features,\s*props\.destination\.kind === "draft"/u,
   );
   expect(ownerNewChatSubmission).toMatch(
     /await commands\.startThreadInWorkspace\(\s*draftChat\.connectionId,\s*draftChat\.cwd,\s*\{\s*agent,\s*requestId: draftChat\.id,?\s*\}\s*\)/u,

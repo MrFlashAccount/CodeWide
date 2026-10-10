@@ -49,7 +49,7 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerTurnActivity).toContain("showToggle={!shouldAutoExpand}");
   expect(ownerTurnActivity).toContain("if (props.showToggle === false)");
   expect(ownerTurnActivity).toMatch(
-    /style=\{\[\s*styles\.turnActivityList,\s*!showToggle && styles\.turnActivityListWithoutToggle,?\s*\]\}/u,
+    /style=\{\[\s*styles\.turnActivityList,\s*insideBubbleSurface && styles\.bubbleNestedActivityList,\s*!showToggle && styles\.turnActivityListWithoutToggle,?\s*\]\}/u,
   );
   expect(ownerTurnActivityStyles).toMatch(
     /turnActivityListWithoutToggle: \{\s*paddingLeft: 0,?\s*\}/u,

@@ -141,9 +141,11 @@ describe("M1 feature integration contracts", () => {
       new URL("../src/features/connections/ConnectionRowEditor.tsx", import.meta.url),
       "utf8",
     );
+    // "Connection" is the group header; the row's title is the live state.
+    expect(sourceHasJsxElement(source, "SettingsGroupHeader", ['title="Connection"'])).toBe(true);
     expect(
       sourceHasJsxElement(source, "AppListRow", [
-        'title="Connection"',
+        "title={connectionStateLabel(connection.state, connection.enabled, connection.health)}",
         "description={connection.endpoint}",
       ]),
     ).toBe(true);
