@@ -111,8 +111,8 @@ struct CompanionMenuStateTests {
     @Test func providerConnectionsAreProjectedBesideEachOther() throws {
         let providers = try CompanionAgentProvider.decodeList("""
         {"providers":[
-          {"id":"codex","name":"Codex","primary":true,"status":"live"},
-          {"id":"claude","name":"Claude","primary":false,"status":"reconnecting"}
+          {"id":"codex","name":"Codex","primary":true,"status":"live","version":"0.159.0"},
+          {"id":"claude","name":"Claude","primary":false,"status":"reconnecting","version":"2.1.111"}
         ]}
         """)
         var snapshot = CompanionMenuSnapshot(connection: .connected)
@@ -121,6 +121,7 @@ struct CompanionMenuStateTests {
         #expect(snapshot.visibleAgentProviders.map(\.id) == ["codex", "claude"])
         #expect(snapshot.visibleAgentProviders.map(\.connectionSummary) == ["Connected", "Reconnecting"])
         #expect(snapshot.visibleAgentProviders.first?.primary == true)
+        #expect(snapshot.visibleAgentProviders.map(\.version) == ["0.159.0", "2.1.111"])
     }
 
     @Test func disabledProvidersAreNotPresentedAsConnections() throws {

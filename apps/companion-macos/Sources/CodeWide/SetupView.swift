@@ -172,10 +172,16 @@ struct SetupView: View {
     }
 
     private func providerConnectionSummary(_ provider: CompanionAgentProvider) -> String {
-        guard provider.id == "codex",
-              let profile = snapshot.profiles.first(where: \.selected),
-              profile.state.isAvailable else { return provider.connectionSummary }
-        return "\(provider.connectionSummary) · \(profile.displayName)"
+        var details = [provider.connectionSummary]
+        if provider.id == "codex",
+           let profile = snapshot.profiles.first(where: \.selected),
+           profile.state.isAvailable {
+            details.append(profile.displayName)
+        }
+        if let version = provider.version {
+            details.append(version)
+        }
+        return details.joined(separator: " · ")
     }
 
     private var profileSelection: Binding<String?> {

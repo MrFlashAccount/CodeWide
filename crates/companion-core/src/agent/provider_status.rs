@@ -56,8 +56,9 @@ pub fn snapshot(registry: &ProviderRegistry) -> Value {
     })
 }
 
-/// A data-minimized provider snapshot for trusted host UI. Subscription,
-/// account and capability fields stay inside their existing client-wire owner.
+/// A data-minimized provider snapshot for trusted host UI. It includes the
+/// provider runtime version, while subscription, account and capability fields
+/// stay inside their existing client-wire owner.
 #[must_use]
 pub fn connection_snapshot(registry: &ProviderRegistry) -> Value {
     let mut providers = registry
@@ -70,6 +71,7 @@ pub fn connection_snapshot(registry: &ProviderRegistry) -> Value {
             "name": disabled_provider_name(id),
             "primary": false,
             "status": "disabled",
+            "version": null,
         })
     }));
     json!({"providers": providers})
@@ -78,11 +80,16 @@ pub fn connection_snapshot(registry: &ProviderRegistry) -> Value {
 fn connection_entry(registry: &ProviderRegistry, provider: &dyn AgentProvider) -> Value {
     let descriptor = provider.descriptor();
     let health = provider.health();
+    let version = match descriptor.version.trim() {
+        "" => None,
+        value => Some(value.to_owned()),
+    };
     json!({
         "id": descriptor.id.as_str(),
         "name": descriptor.display_name,
         "primary": registry.is_primary(&descriptor.id),
         "status": runtime_status(&health, provider.status()),
+        "version": version,
     })
 }
 
@@ -386,9 +393,9 @@ mod tests {
             snapshot,
             json!({
                 "providers": [
-                    {"id": "codex", "name": "CODEX", "primary": true, "status": "live"},
-                    {"id": "claude", "name": "CLAUDE", "primary": false, "status": "live"},
-                    {"id": "gemini", "name": "Gemini", "primary": false, "status": "disabled"},
+                    {"id": "codex", "name": "CODEX", "primary": true, "status": "live", "version": "1"},
+                    {"id": "claude", "name": "CLAUDE", "primary": false, "status": "live", "version": "1"},
+                    {"id": "gemini", "name": "Gemini", "primary": false, "status": "disabled", "version": null},
                 ]
             })
         );

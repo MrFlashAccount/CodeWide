@@ -14,12 +14,14 @@ struct CompanionAgentProvider: Decodable, Equatable, Identifiable {
     let name: String
     let primary: Bool
     let status: RuntimeStatus
+    let version: String?
 
     private enum CodingKeys: String, CodingKey {
         case id
         case name
         case primary
         case status
+        case version
     }
 
     init(from decoder: any Decoder) throws {
@@ -28,6 +30,11 @@ struct CompanionAgentProvider: Decodable, Equatable, Identifiable {
         name = try Self.boundedText(values.decode(String.self, forKey: .name), maximum: 64)
         primary = try values.decode(Bool.self, forKey: .primary)
         status = try values.decode(RuntimeStatus.self, forKey: .status)
+        if let decodedVersion = try values.decodeIfPresent(String.self, forKey: .version) {
+            version = try Self.boundedText(decodedVersion, maximum: 128)
+        } else {
+            version = nil
+        }
     }
 
     var isEnabled: Bool {

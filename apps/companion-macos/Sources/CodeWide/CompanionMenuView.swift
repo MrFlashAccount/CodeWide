@@ -213,11 +213,11 @@ struct CompanionMenuView<MoreActions: View>: View {
             if provider.primary {
                 detail("Role", value: "Primary provider")
             }
+            if let version = provider.version {
+                detail(provider.name, value: version)
+            }
             if provider.id == "codex" {
                 detail("Profile", value: snapshot.profileName)
-                if let version = snapshot.serverVersion {
-                    detail("Codex", value: version)
-                }
             }
         }
         .padding(.horizontal, 6)
