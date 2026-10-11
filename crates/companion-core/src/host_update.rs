@@ -165,6 +165,8 @@ pub enum ReleaseAdmissionError {
     InvalidSignature,
     #[error("release descriptor is not currently fresh")]
     StaleDescriptor,
+    #[error("release descriptor sequence must be greater than zero")]
+    InvalidSequence,
     #[error("release sequence is not newer than the accepted sequence")]
     Replay,
     #[error("release target is missing for this platform")]
@@ -293,7 +295,7 @@ pub fn verify_signed_release_descriptor(
         return Err(ReleaseAdmissionError::StaleDescriptor);
     }
     if descriptor.sequence == 0 {
-        return Err(ReleaseAdmissionError::Replay);
+        return Err(ReleaseAdmissionError::InvalidSequence);
     }
     Ok(descriptor)
 }

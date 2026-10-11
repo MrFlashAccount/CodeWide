@@ -234,7 +234,7 @@ fn baseline_verifier_checks_trust_freshness_and_sequence_without_upgrade_admissi
     let (zero_sequence, zero_key, _) = signed_fixture("0.9.0", 0, &unrelated_digest);
     assert_eq!(
         verify_signed_release_descriptor(&zero_sequence, &zero_key, 200, "release-v1"),
-        Err(ReleaseAdmissionError::Replay)
+        Err(ReleaseAdmissionError::InvalidSequence)
     );
 }
 

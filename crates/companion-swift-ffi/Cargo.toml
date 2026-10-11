@@ -27,6 +27,8 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 uniffi = { version = "0.32.1", features = ["cli"] }
 
 [dev-dependencies]
+base64 = "0.22.1"
+p256 = { version = "0.13.2", features = ["ecdsa", "pkcs8"] }
 tempfile = "3.21.0"
 
 [lints]

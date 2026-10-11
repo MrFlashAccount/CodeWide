@@ -64,13 +64,7 @@ if ! printf '%s\n' "$source_revision" | grep -Eq '^[0-9a-f]{40}$'; then
   echo "CODEWIDE_SOURCE_REVISION must be a full lowercase Git revision." >&2
   exit 1
 fi
-case "$release_tag" in
-  ''|v[0-9]*.[0-9]*.[0-9]*|release-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].[0-9]*) ;;
-  *)
-    echo "CODEWIDE_RELEASE_TAG must be v<version> or release-YYYY-MM-DD.N." >&2
-    exit 2
-    ;;
-esac
+sh "$mac_root/scripts/validate-release-tag.sh" "$release_tag"
 if ! printf '%s\n' "$build_number" | grep -Eq '^[1-9][0-9]*([.][0-9]+){0,2}$'; then
   echo "CODEWIDE_BUILD_NUMBER must contain one to three numeric components." >&2
   exit 1
