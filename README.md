@@ -236,6 +236,20 @@ Relay keys, and paired computers are preserved; a failed startup restores the
 previous executable and running service. Use `--no-start` only for a manually
 managed, binary-only installation.
 
+To move an older machine-wide installation to the rootless user service, run
+the official migration once as the user who will own Relay:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay-migrate-user | sh
+```
+
+The migration asks for `sudo` once to stop and archive the old system service,
+then preserves its identity, port, and paired computers in the user service.
+Any pre-existing user state is retained as
+`~/.local/state/codewide/relay-before-system-migration`; the old system unit and
+binary remain under `/var/lib/codewide-relay/system-to-user-v1` for rollback.
+Future installer runs and signed updates use the user service without `sudo`.
+
 To connect a Mac, run:
 
 ```sh

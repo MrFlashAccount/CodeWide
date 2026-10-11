@@ -66,6 +66,31 @@ Relay's identity or routes. Ambiguous system/user services and a running
 unmanaged foreground daemon are rejected before installation rather than
 replaced silently.
 
+### Migrating a legacy system service
+
+An existing machine-wide Relay cannot become rootless without one privileged
+cutover: its service, executable, and state are owned by root and its process
+already owns the listening port. Run the repository-owned migration as the
+login user that should own Relay:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay-migrate-user | sh
+```
+
+The command validates the active legacy service before changing anything, asks
+for `sudo` once, and copies the current identity, route registry, port, and
+pending invitations into the user state. It then installs the normal rootless
+service and verifies that the port, certificate identity, routes, service
+readiness, and login-shell command resolution are unchanged. A failed cutover
+restores the old unit, binary, service, and any user state that was present.
+
+After success, the previous system unit and executable remain in
+`/var/lib/codewide-relay/system-to-user-v1`, while pre-existing user state is
+kept at
+`${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay-before-system-migration`.
+Future runs of `install/relay` and signed automatic updates operate entirely in
+user scope and do not request `sudo`.
+
 Run the `pair` command printed by the installer to connect a Mac. The public
 address is detected automatically; `--state` and `--address` are not needed in
 the ordinary case.
