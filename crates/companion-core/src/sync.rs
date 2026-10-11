@@ -1522,6 +1522,10 @@ impl SyncHub {
                 object.insert("params".into(), prepared);
             }
         }
+        if method == "thread/fork" && target.native().is_none() {
+            let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+            return provider_rpc::handle_neutral_fork(self, socket, &target, &params, id).await;
+        }
         if target.native().is_none() {
             return provider_rpc::handle_neutral_thread_rpc(
                 self,

@@ -9,12 +9,13 @@ use tokio::sync::{mpsc, watch};
 
 use super::{
     model::{
-        AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ModelCatalog,
-        PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
-        RequestRespondParams, RpcError, SortDirection, ThreadCreateParams, ThreadListParams,
-        ThreadListResult, ThreadOrigin, ThreadReadResult, ThreadSettings, ThreadSortKey,
-        ThreadStatus, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
-        TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+        AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ForkBoundary,
+        ModelCatalog, PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
+        RequestRespondParams, RpcError, SortDirection, ThreadCreateParams, ThreadForkParams,
+        ThreadListParams, ThreadListResult, ThreadOrigin, ThreadReadResult, ThreadSettings,
+        ThreadSortKey, ThreadStatus, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams,
+        ThreadUpdateResult, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
+        TurnSteerResult,
     },
     provider::{
         AgentProvider, ProviderAuth, ProviderError, ProviderEvent, ProviderFence, ProviderHealth,
@@ -328,6 +329,7 @@ pub(crate) struct ScriptedProvider {
     pub(crate) steered: Mutex<Vec<TurnSteerParams>>,
     pub(crate) interrupted: Mutex<Vec<TurnInterruptParams>>,
     pub(crate) updated: Mutex<Vec<ThreadUpdateParams>>,
+    pub(crate) forked: Mutex<Vec<ThreadForkParams>>,
     next_id: std::sync::atomic::AtomicU64,
     status: watch::Sender<ProviderStatus>,
 }
@@ -357,6 +359,7 @@ impl ScriptedProvider {
             steered: Mutex::new(Vec::new()),
             interrupted: Mutex::new(Vec::new()),
             updated: Mutex::new(Vec::new()),
+            forked: Mutex::new(Vec::new()),
             next_id: std::sync::atomic::AtomicU64::new(1),
             status,
         }
@@ -553,6 +556,33 @@ impl AgentProvider for ScriptedProvider {
         _: ThreadTurnsParams,
     ) -> Result<(ThreadTurnsResult, ProviderFence), ProviderError> {
         Err(unsupported())
+    }
+
+    async fn thread_fork(&self, params: ThreadForkParams) -> Result<AgentThread, ProviderError> {
+        let mut forked = self
+            .thread(params.app_thread_id.as_str())
+            .ok_or_else(|| not_found(&params.app_thread_id))?;
+        forked.app_thread_id = params.fork_app_thread_id.clone().unwrap_or_else(|| {
+            AppThreadId::parse(&self.next("thread"))
+                .unwrap_or_else(|| AppThreadId::from_static("x"))
+        });
+        let mut turns = locked(&self.turns)
+            .get(params.app_thread_id.as_str())
+            .cloned()
+            .unwrap_or_default();
+        let position = |turn_id: &crate::agent::model::TurnId| {
+            turns.iter().position(|turn| &turn.turn_id == turn_id)
+        };
+        let kept = match &params.boundary {
+            ForkBoundary::All => turns.len(),
+            ForkBoundary::Through { turn_id } => position(turn_id).map_or(0, |index| index + 1),
+            ForkBoundary::Before { turn_id } => position(turn_id).unwrap_or(0),
+        };
+        turns.truncate(kept);
+        self.set_turns(forked.app_thread_id.as_str(), turns);
+        locked(&self.forked).push(params);
+        locked(&self.threads).push(forked.clone());
+        Ok(forked)
     }
 
     async fn thread_update(

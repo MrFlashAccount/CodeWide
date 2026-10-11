@@ -1,7 +1,8 @@
 import type { ThreadForkParams } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { AgentProviderId } from "./threadAgent";
 
-type ThreadForkBoundary =
+/** How much of the source thread's history the fork keeps. */
+export type ThreadForkBoundary =
   | { kind: "all" }
   | { kind: "through"; turnId: string }
   | { kind: "before"; turnId: string };

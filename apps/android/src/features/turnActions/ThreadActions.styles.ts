@@ -1,7 +1,35 @@
 import { StyleSheet } from "react-native";
-import { colors, radii, touchTarget, typeScale } from "../../theme";
+import { colors, controlSize, radii, spacing, touchTarget, typeScale } from "../../theme";
+
+const DISABLED_OPACITY = 0.45;
 
 export const styles = StyleSheet.create({
+  forkButton: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    backgroundColor: colors.accent,
+    borderRadius: radii.pill,
+    justifyContent: "center",
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.md,
+  },
+  forkButtonDisabled: {
+    opacity: DISABLED_OPACITY,
+  },
+  forkButtonText: {
+    ...typeScale.body,
+    color: colors.onPrimary,
+  },
+  forkHandoffNote: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  forkModelRow: {
+    flexDirection: "row",
+  },
+  forkSheet: {
+    gap: spacing.md,
+  },
   headerIcon: {
     alignItems: "center",
     borderRadius: radii.large,

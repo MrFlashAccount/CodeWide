@@ -438,3 +438,88 @@ describe("the model of a session started outside CodeWide", () => {
     });
   });
 });
+
+describe("forks", () => {
+  const FORK = "6b8f0c2a-1d3e-4f5a-8b9c-0d1e2f3a4b5c";
+
+  function storeWithTwoTurns(): MemorySessionStore {
+    const store = new MemorySessionStore();
+    store.addInteractive(terminalSession(), [
+      storedPrompt("p-1", "Fix the flaky test"),
+      storedAnswer("a-1", "Fixed."),
+      storedPrompt("p-2", "Now add a regression test"),
+      storedAnswer("a-2", "Added."),
+    ]);
+    return store;
+  }
+
+  const prompts = async (
+    service: ReturnType<typeof harness>["service"],
+    appThreadId: string,
+  ): Promise<readonly string[]> => {
+    const page = await service.turns({
+      appThreadId,
+      cursor: null,
+      itemsView: "full",
+      limit: 50,
+      sortDirection: "asc",
+    });
+    if (page.status !== "ok") throw new Error(page.message);
+    return page.value.turns.flatMap((turn) =>
+      turn.items.flatMap((item) =>
+        item.type === "userMessage"
+          ? item.content.flatMap((content) => (content.type === "text" ? [content.text] : []))
+          : [],
+      ),
+    );
+  };
+
+  it("copies the history through a turn into a thread with its own session", async () => {
+    const { service, store } = harness({ store: storeWithTwoTurns() });
+    const forked = await service.fork(TERMINAL, FORK, { kind: "through", turnId: "p-1" });
+    expect(forked).toMatchObject({ status: "ok", value: { appThreadId: FORK, cwd: "/repo" } });
+    expect(await prompts(service, FORK)).toEqual(["Fix the flaky test"]);
+    expect(await prompts(service, TERMINAL)).toEqual([
+      "Fix the flaky test",
+      "Now add a regression test",
+    ]);
+    expect(store.forked).toEqual([[TERMINAL, "a-1"]]);
+  });
+
+  it("keeps everything, or the turns before a turn", async () => {
+    const { service } = harness({ store: storeWithTwoTurns() });
+    expect(await service.fork(TERMINAL, FORK, { kind: "all" })).toMatchObject({ status: "ok" });
+    expect(await prompts(service, FORK)).toEqual([
+      "Fix the flaky test",
+      "Now add a regression test",
+    ]);
+    const before = "7c9a1d3b-2e4f-4a6b-9c0d-1e2f3a4b5c6d";
+    expect(await service.fork(TERMINAL, before, { kind: "before", turnId: "p-2" })).toMatchObject({
+      status: "ok",
+    });
+    expect(await prompts(service, before)).toEqual(["Fix the flaky test"]);
+  });
+
+  it("refuses an empty fork and an unknown turn, and repeats return the same copy", async () => {
+    const { service, store } = harness({ store: storeWithTwoTurns() });
+    expect(await service.fork(TERMINAL, FORK, { kind: "before", turnId: "p-1" })).toMatchObject({
+      status: "error",
+    });
+    expect(await service.fork(TERMINAL, FORK, { kind: "through", turnId: "gone" })).toMatchObject({
+      status: "error",
+    });
+    expect(await service.fork(TERMINAL, null, { kind: "all" })).toMatchObject({ status: "error" });
+    expect(store.forked).toEqual([]);
+    const first = await service.fork(TERMINAL, FORK, { kind: "all" });
+    expect(await service.fork(TERMINAL, FORK, { kind: "all" })).toEqual(first);
+    expect(store.forked).toHaveLength(1);
+  });
+
+  it("deleting the copy leaves the source's sessions", async () => {
+    const { service, store } = harness({ store: storeWithTwoTurns() });
+    await service.fork(TERMINAL, FORK, { kind: "all" });
+    expect(await service.update(FORK, { type: "deleted" })).toMatchObject({ status: "ok" });
+    expect(store.sessions.has(TERMINAL)).toBe(true);
+    expect(await prompts(service, TERMINAL)).toHaveLength(2);
+  });
+});

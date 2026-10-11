@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export type MessageActionMenuRequest = {
   copyText: string;
-  onFork?: () => Promise<void>;
+  onFork?: () => Promise<void> | void;
   onReview?: () => Promise<void> | void;
 };
 

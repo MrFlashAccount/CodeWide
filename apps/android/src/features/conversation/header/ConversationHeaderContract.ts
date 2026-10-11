@@ -8,7 +8,7 @@ import type { ThreadForkOptions } from "../../../data/thread-fork";
 import type { ThreadHistoryModel } from "../../../data/thread-history-model";
 import type { ThreadListServer } from "../../connections/connectionPresentation";
 import type { ForkTargetPicker } from "../../turnActions/forkTargetPicker";
-import type { ReadForkTargets } from "../../turnActions/forkTargets";
+import type { ReadForkOffer } from "../../turnActions/forkTargets";
 import type { ThreadListItem } from "../../threadList/threadListTypes";
 
 /** Display state and actions accepted by the conversation header. */
@@ -23,8 +23,8 @@ export type ConversationHeaderProps = {
   dismissComposerKeyboardForOverlay: () => void;
   draftConnectionId: string | null;
   draftThreadId: string | null;
+  forkOffer: ReadForkOffer | undefined;
   forkPicker: ForkTargetPicker | undefined;
-  forkTargets: ReadForkTargets | undefined;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
   newChat: boolean;

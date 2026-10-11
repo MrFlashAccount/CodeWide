@@ -517,6 +517,14 @@ const operationChecks: Readonly<
     params: obj({ appThreadId: nullable(str), clientTools, cwd: str, settings }),
     result: obj({ thread }),
   },
+  "thread.fork": {
+    params: obj({
+      appThreadId: str,
+      boundary: tagged("kind", { all: {}, before: { turnId: str }, through: { turnId: str } }),
+      forkAppThreadId: nullable(str),
+    }),
+    result: obj({ thread }),
+  },
   "thread.list": {
     params: obj({
       archived: bool,

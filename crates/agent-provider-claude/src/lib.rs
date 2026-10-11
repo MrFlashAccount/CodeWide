@@ -43,11 +43,11 @@ use agent_core::{
         PermissionProfileCatalog, Provenance, ProviderAccount, ProviderDescriptor, ProviderId,
         ProviderRateLimits, ProviderThreadRef, RATE_LIMITS_UPDATED_NOTIFICATION,
         RateLimitsUpdatedParams, RequestRespondParams, RpcError, RpcErrorData,
-        StartWhileActiveMode, ThreadCreateParams, ThreadListParams, ThreadListResult,
-        ThreadOwnsResult, ThreadReadResult, ThreadRef, ThreadResult, ThreadTurnsParams,
-        ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, ToolCallParams,
-        TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
-        thread_not_found_message, turns::page_turns,
+        StartWhileActiveMode, ThreadCreateParams, ThreadForkParams, ThreadListParams,
+        ThreadListResult, ThreadOwnsResult, ThreadReadResult, ThreadRef, ThreadResult,
+        ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
+        ToolCallParams, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
+        TurnSteerResult, thread_not_found_message, turns::page_turns,
     },
     provider::{
         AgentProvider, ClientToolHost, NativeThreadResources, ProviderAuth, ProviderError,
@@ -83,7 +83,7 @@ pub const CAPABILITIES: CapabilitySet = CapabilitySet {
     threads_host_minted_ids: true,
     threads_external_discovery: true,
     threads_compact: true,
-    threads_fork: false,
+    threads_fork: true,
     requests_user_input: true,
     requests_mcp_elicitation: false,
     requests_dynamic_tool_call: false,
@@ -851,6 +851,11 @@ impl AgentProvider for ClaudeProvider {
     ) -> Result<AgentThread, ProviderError> {
         params.client_tools = self.declared_tools();
         let result: ThreadResult = self.call("thread.create", &params).await?;
+        Ok(result.thread)
+    }
+
+    async fn thread_fork(&self, params: ThreadForkParams) -> Result<AgentThread, ProviderError> {
+        let result: ThreadResult = self.call("thread.fork", &params).await?;
         Ok(result.thread)
     }
 

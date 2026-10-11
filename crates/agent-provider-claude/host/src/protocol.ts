@@ -68,7 +68,7 @@ export const CLAUDE_CAPABILITIES = {
   "threads.compact": true,
   "threads.crossProviderFork": true,
   "threads.externalDiscovery": true,
-  "threads.fork": false,
+  "threads.fork": true,
   "threads.hostMintedIds": true,
   "turns.providerInitiated": true,
   "turns.startWhileActive": "busy",

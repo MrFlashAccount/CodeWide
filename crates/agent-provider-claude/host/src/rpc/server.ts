@@ -455,6 +455,12 @@ export class RpcServer {
         }
         return threadReply(created);
       }
+      case "thread.fork": {
+        const params = validateParams(method, rawParams);
+        return threadReply(
+          await service.fork(params.appThreadId, params.forkAppThreadId, params.boundary),
+        );
+      }
       case "thread.read":
         return reply(await service.read(validateParams(method, rawParams).appThreadId));
       case "thread.list":

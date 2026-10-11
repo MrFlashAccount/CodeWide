@@ -423,6 +423,44 @@ pub(super) async fn handle_cross_provider_fork(
     }
 }
 
+/// `thread/fork` of a thread on a provider without the native surface: a
+/// copy on the same provider (`thread.fork`), announced like a created
+/// thread and marked with the source as `forkedFromId`.
+pub(super) async fn handle_neutral_fork(
+    hub: &SyncHub,
+    socket: &SessionSocket,
+    source: &Target,
+    params: &Value,
+    id: Value,
+) -> Result<(), ()> {
+    let thread = match hub.gateway.fork_thread(source, params).await {
+        Ok(thread) => thread,
+        Err(failure) => return send_rpc_failure(socket, id, &failure).await,
+    };
+    let (mut response, mut started) = ClientWireGateway::started_thread(&thread, &source.wire);
+    for projected in [
+        response.get_mut("thread"),
+        started.pointer_mut("/params/thread"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        projected["forkedFromId"] = json!(source.thread_id.as_str());
+    }
+    if hub.local_events.send(started).await.is_err() {
+        warn!("local replay ingestor closed after thread fork");
+    }
+    forward_rpc_response(
+        socket,
+        json!({"id": "thread-fork", "result": response}),
+        id,
+        "thread/fork",
+        hub.projector(),
+        hub.observers(&source.wire),
+    )
+    .await
+}
+
 /// A host-level call owned by the first provider declaring `owner`.
 pub(super) async fn handle_host(
     hub: &SyncHub,

@@ -23,7 +23,7 @@ fn round_trip_result(operation: &str, result: &Value) -> Result<Value, String> {
         "initialize" => round_trip::<InitializeResult>(result),
         "catalog.models" => round_trip::<ModelCatalog>(result),
         "catalog.permissionProfiles" => round_trip::<PermissionProfileCatalog>(result),
-        "thread.create" => round_trip::<ThreadResult>(result),
+        "thread.create" | "thread.fork" => round_trip::<ThreadResult>(result),
         "thread.read" => round_trip::<ThreadReadResult>(result),
         "thread.list" => round_trip::<ThreadListResult>(result),
         "thread.turns" => round_trip::<ThreadTurnsResult>(result),

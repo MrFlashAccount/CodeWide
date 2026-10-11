@@ -3,15 +3,14 @@ import { useEvent } from "../../react/useEvent";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { useAppNotice } from "../../ui/useAppNotice";
-import type { ForkTargetChoice } from "./forkTargets";
 import { copySessionId } from "./turnActions";
 
 import type { ThreadHeaderProps } from "./threadHeaderContract";
 
 export function useThreadHeaderActions({
   archived,
+  forkOffer,
   forkPicker,
-  forkTargets,
   onArchive,
   onCompact,
   onDelete,
@@ -35,7 +34,7 @@ export function useThreadHeaderActions({
       selected: pinned,
     },
     {
-      disabled: onFork === undefined,
+      disabled: onFork === undefined || forkPicker === undefined || forkOffer === undefined,
       icon: "git-branch-outline",
       id: "fork",
       label: "Fork thread",
@@ -83,17 +82,13 @@ export function useThreadHeaderActions({
       onRenameRequest();
     } else if (id === "pin") {
       run(onTogglePin, pinned ? "Unpin" : "Pin");
-    } else if (id === "fork" && onFork !== undefined) {
-      const picked =
-        forkTargets !== undefined &&
-        forkPicker !== undefined &&
-        forkPicker.openForkTargets(forkTargets);
-      if (!picked) {
-        run(
-          async () => onFork({ boundary: { kind: "all" }, ephemeral: false, target: null }),
-          "Fork",
-        );
-      }
+    } else if (
+      id === "fork" &&
+      onFork !== undefined &&
+      forkPicker !== undefined &&
+      forkOffer !== undefined
+    ) {
+      forkPicker.openFork({ kind: "all" }, forkOffer);
     } else if (id === "compact") {
       run(onCompact, "Compact");
     } else if (id === "archive") {
@@ -116,25 +111,5 @@ export function useThreadHeaderActions({
     }
   });
 
-  const closeForkTargets = useEvent(() => {
-    forkPicker?.closeForkTargets();
-  });
-  const selectForkTarget = useEvent((choice: ForkTargetChoice) => {
-    forkPicker?.closeForkTargets();
-    if (onFork !== undefined) {
-      run(
-        async () => onFork({ boundary: { kind: "all" }, ephemeral: false, target: choice.target }),
-        "Fork",
-      );
-    }
-  });
-
-  return {
-    actions,
-    closeForkTargets,
-    forkChoices: forkPicker?.forkChoices ?? null,
-    handleAction,
-    run,
-    selectForkTarget,
-  };
+  return { actions, handleAction, run };
 }

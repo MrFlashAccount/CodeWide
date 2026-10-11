@@ -1,7 +1,9 @@
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
+import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { agentProviders } from "../../data/workspace-runtime";
 import { threadOpenElsewhere } from "../../data/threadDirectInput";
 import { ConversationComposition } from "./ConversationComposition";
-import { forkTargetChoices } from "../turnActions/forkTargets";
+import { forkOffer } from "../turnActions/forkTargets";
 import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
 /**
@@ -41,12 +43,13 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       )}
       actions={{
         archived: props.activeThread?.archived ?? false,
-        forkTargets:
+        forkOffer:
           gated.onFork === undefined
             ? undefined
             : () =>
-                forkTargetChoices(
+                forkOffer(
                   remoteThread,
+                  serverThreadModel(remoteThread),
                   props.runtime.resources?.turnControls.get(props.activeControlsResourceId ?? "")
                     ?.value?.models ?? [],
                 ),
@@ -191,4 +194,9 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       }}
     />
   );
+}
+
+/** The model the server reports for the thread, the composer chip's settled value. */
+function serverThreadModel(thread: Thread | null): string | null {
+  return thread === null ? null : (projectedThreadExecutionSettings(thread)?.model ?? null);
 }

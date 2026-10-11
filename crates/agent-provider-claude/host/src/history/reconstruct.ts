@@ -329,6 +329,37 @@ export function reconstructTurns(
   );
 }
 
+/** Where one rebuilt turn ends in the stored messages. */
+export interface TurnEnd {
+  /** Uuid of the turn's last stored top-level message. */
+  readonly lastUuid: string;
+  readonly turnId: TurnId;
+}
+
+/**
+ * The turns of a thread in order, each with its last stored message: the
+ * point a fork through that turn copies the session to. Same segmentation
+ * and identities as `reconstructTurns`.
+ */
+export function turnEnds(
+  messages: readonly unknown[],
+  records: readonly TurnRecord[],
+): readonly TurnEnd[] {
+  return historySegments(historyEntries(messages, null), segmentHints(records)).flatMap(
+    (segment) => {
+      const last = segment.entries.at(-1);
+      return last === undefined
+        ? []
+        : [
+            {
+              lastUuid: last.uuid,
+              turnId: turnIdentity(segment, recordOf(segment, records)).turnId,
+            },
+          ];
+    },
+  );
+}
+
 /** The tool call that spawned a sub-agent, read from its first stored message. */
 export function subagentParent(messages: readonly unknown[]): string | null {
   const first: unknown = messages[0];

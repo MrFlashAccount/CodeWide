@@ -3,7 +3,6 @@ import { projectedTurnMetadata } from "@codewide/sync-client";
 import { Ionicons } from "@expo/vector-icons";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { StyleSheet, View } from "react-native";
-import type { ThreadForkOptions } from "../../../data/thread-fork";
 import { useEvent } from "../../../react/useEvent";
 import { MarkdownLocalLinkProvider } from "../../../rendering/MarkdownLinkHandler";
 import { SearchMessageFocus } from "../../../rendering/SearchMessageFocus";
@@ -270,7 +269,8 @@ const styles = StyleSheet.create({
 
 export function useThreadTimelineActions(
   onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined,
-  onFork: ((options: ThreadForkOptions) => Promise<void>) | undefined,
+  /** Opens the conversation's "Fork" sheet for a fork through `turnId`; absent without a fork. */
+  openForkThroughTurn: ((turnId: string) => void) | undefined,
   onLoadTurnItems: ((turnId: string) => Promise<void>) | undefined,
 ) {
   const fixUnsupportedBlock = useEvent(async (block: RenderBlock) => {
@@ -279,11 +279,11 @@ export function useThreadTimelineActions(
     }
     await onFixUnsupportedBlock(block);
   });
-  const forkThroughTurn = useEvent(async (turnId: string) => {
-    if (onFork === undefined) {
+  const forkThroughTurn = useEvent((turnId: string) => {
+    if (openForkThroughTurn === undefined) {
       throw new Error("Thread fork is unavailable");
     }
-    await onFork({ boundary: { kind: "through", turnId }, ephemeral: false, target: null });
+    openForkThroughTurn(turnId);
   });
   const loadStableTurnItems = useEvent(async (turnId: string) => {
     if (onLoadTurnItems === undefined) {

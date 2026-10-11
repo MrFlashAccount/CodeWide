@@ -5,6 +5,7 @@ import { projectInlineQueue } from "../queue/QueueFeature";
 import { useConversationRequestPrompts } from "../requests/ConversationRequestPrompts";
 import type { ConversationCompositionCapabilities } from "./conversationCompositionCapabilities";
 import { ConversationSelectionPlaceholder } from "./ConversationEmptyState";
+import { messageForkOpener } from "../turnActions/forkTargetPicker";
 import { useConversationScopeFeatures } from "./conversationScopeFeatures";
 import { createConversationSurfaceAssembly } from "./conversationSurfaceAssembly";
 import { useConversationTools } from "./ConversationTools";
@@ -57,7 +58,7 @@ export function ConversationComposition(
   );
   const threadTimelineActionsBinding = useThreadTimelineActions(
     props.diagnostics.onFixUnsupportedBlock,
-    props.actions.onFork,
+    messageForkOpener(scoped.forkTargetPicker, props.actions.forkOffer),
     props.read.onLoadTurnItems,
   );
 

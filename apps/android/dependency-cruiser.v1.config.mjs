@@ -166,6 +166,7 @@ const featurePublicModules = {
   ],
   turnActions: [
     "ThreadActions",
+    "ThreadForkSheet",
     "ThreadRenameDialog",
     "threadRename",
     "turnActions",
