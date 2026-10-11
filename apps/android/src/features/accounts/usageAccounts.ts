@@ -111,7 +111,9 @@ function poolAccountRows(
   return sources.flatMap((source) => {
     const server = servers.find((candidate) => candidate.id === source.id);
     const presence = accountPoolPresence(providerStates?.[source.id]);
-    const owner = presence.kind === "present" ? (presence.owner ?? reportedOwner) : null;
+    // A server that listed pool profiles has a pool, even while its provider
+    // list is still loading: its rows take the owner another server reports.
+    const owner = (presence.kind === "present" ? presence.owner : null) ?? reportedOwner;
     return accountUsageProfiles([source]).map((account): UsageAccountRow => ({
       active: account.profile.enabled && account.profile.active,
       key: `${source.id}/${account.profile.id}`,

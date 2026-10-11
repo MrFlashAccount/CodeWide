@@ -61,10 +61,13 @@ function providers(claude: Record<string, unknown>): AgentProvidersState {
 }
 
 describe("usage account rows", () => {
-  it("merges the accounts of an older Companion that reports no provider list", () => {
+  it("merges the accounts of a server that reports no provider list yet or ever", () => {
     const olderCompanion: readonly AgentProvidersState[] = [
       { status: "unsupported" },
       { error: "unknown method", status: "error", value: null },
+      // Not read yet, or still loading: its pool rows already exist.
+      { status: "idle" },
+      { status: "loading", value: null },
     ];
     for (const laptop of olderCompanion) {
       const rows = usageAccountRows(

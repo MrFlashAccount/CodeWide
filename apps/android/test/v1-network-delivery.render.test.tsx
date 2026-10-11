@@ -104,10 +104,11 @@ async function setup(resident: boolean) {
   details.setRemoteLoader(createThreadSyncRemoteLoader(details, sync));
   await sync.observeThread("server", "thread");
   const reads = jest.spyOn(sync, "readThread");
+  const refreshAgentProviders = jest.fn(async (_connectionId: string) => undefined);
   const reconnect = createThreadSyncReconnect({
     catalog: { refreshThreadCatalog: async () => undefined }, details,
     readConnection: () => model.rows$.peek()[0],
-    refreshAccountRateLimits: async () => undefined, sync,
+    refreshAccountRateLimits: async () => undefined, refreshAgentProviders, sync,
   });
   const subscription = model.subscribeChanges(reconnect.accept);
   const state = (rpcAvailable: boolean, epoch: number, status = "unvalidated", projectionState = rpcAvailable ? "live" : "connecting") => session.receive({
@@ -123,7 +124,7 @@ async function setup(resident: boolean) {
       frames: [{ cursor, payload: JSON.stringify({ type: "event", cursor, payload }) }] });
     session.receive({ contractVersion: 2, connectionId: "server", type: "journalAdvanced", projectionCursor: cursor, data: "{}" });
   };
-  return { details, model, sync, reads, state, event, async close() {
+  return { details, model, sync, reads, refreshAgentProviders, state, event, async close() {
     subscription.unsubscribe(); reconnect.close(); session.stop(); model.close(); await details.close();
   } };
 }
@@ -186,6 +187,8 @@ it("coalesces repeated capabilities and a real RPC loss without dropping the pen
   await act(async () => { await jest.advanceTimersByTimeAsync(1000); });
   expect(test.reads).toHaveBeenCalledTimes(1);
   expect(test.reads).toHaveBeenLastCalledWith("server", "thread", undefined, true);
+  // The provider list (sign-ins, limits, pool owner) is read with every recovery.
+  expect(test.refreshAgentProviders).toHaveBeenLastCalledWith("server");
   const old = Promise.withResolvers<string>();
   mockNative.engineRpc.mockReturnValueOnce(old.promise);
   const pending = test.sync.readThread("server", "thread");

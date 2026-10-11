@@ -383,6 +383,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       readConnection: (connectionId) =>
         connectionState.rows$.peek().find((row) => row.connectionId === connectionId),
       refreshAccountRateLimits,
+      refreshAgentProviders: async (connectionId) => agentProviders.refresh(connectionId),
       sync: workspaceThreadSync,
     });
     const connectionChanges = connectionState.subscribeChanges(reconnect.accept, {
